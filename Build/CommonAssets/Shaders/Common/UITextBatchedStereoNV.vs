@@ -49,9 +49,10 @@ mat4 getTextModelMatrix(uint textIndex)
 
 void main()
 {
+    vec2 corner = Position.xy;
+
     if (TextDebugMode == 3)
     {
-        vec2 corner = TexCoord0.xy;
         vec2 ndc = vec2(-0.94, 0.74) + corner * vec2(0.44, 0.18);
         FragPos = vec3(ndc, 0.0);
         gl_Position = vec4(ndc, 0.0, 1.0);
@@ -72,7 +73,7 @@ void main()
     vec4 tfm = GlyphTransforms[gl_InstanceID];
     vec4 uv = GlyphTexCoords[gl_InstanceID];
 
-    vec4 position = vec4(tfm.xy + (TexCoord0.xy * tfm.zw), 0.0, 1.0);
+    vec4 position = vec4(tfm.xy + (corner * tfm.zw), 0.0, 1.0);
 
     mat4 leftMvpMatrix = LeftEyeViewProjectionMatrix_VTX * modelMatrix;
     mat4 rightMvpMatrix = RightEyeViewProjectionMatrix_VTX * modelMatrix;
@@ -82,6 +83,6 @@ void main()
     gl_SecondaryPositionNV = rightMvpMatrix * position;
     gl_Layer = 0;
     FragNorm = Normal;
-    FragUV0 = mix(uv.xy, uv.zw, Position.xy);
+    FragUV0 = mix(uv.xy, uv.zw, corner);
     InstanceTextColor = textColor;
 }

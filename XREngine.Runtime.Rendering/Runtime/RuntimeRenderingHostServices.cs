@@ -3,324 +3,26 @@ using System.Diagnostics;
 using System.IO;
 using System.Numerics;
 using System.Threading;
-using XREngine.Core.Files;
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
-using XREngine.Rendering.Commands;
 using XREngine.Scene;
-using XREngine.Scene.Transforms;
-
 namespace XREngine.Rendering;
 
-public enum RuntimeGraphicsApiKind
-{
-    Unknown = 0,
-    OpenGL,
-    Vulkan
-}
-
-public interface IRuntimeRenderPipelineHost
-{
-}
-
-public interface IRuntimeRenderPipelineDebugContext
-{
-    string DebugName { get; }
-    string DebugDescriptor { get; }
-}
-
-public interface IRuntimeRenderPipelineFrameContext : IRuntimeRenderPipelineDebugContext
-{
-    IRuntimeRenderPipelineHost? PipelineHost { get; }
-    IRuntimeRenderCommandExecutionState RenderState { get; }
-    IRuntimeRenderCamera? LastSceneCamera { get; }
-    IRuntimeRenderCamera? LastRenderingCamera { get; }
-    IRuntimeViewportHost? LastWindowViewport { get; }
-    bool? EffectiveOutputHDRThisFrame { get; }
-    EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; }
-    uint? EffectiveMsaaSampleCountThisFrame { get; }
-    float? EffectiveTsrRenderScaleThisFrame { get; }
-}
-
-public interface IRuntimeGpuRenderPassHost
-{
-    int RenderPass { get; }
-    uint CommandCapacity { get; }
-    uint ActiveViewCount { get; }
-    uint IndirectSourceViewId { get; }
-    void ConfigureViewSet(ReadOnlySpan<GPUViewDescriptor> descriptors, ReadOnlySpan<GPUViewConstants> constants);
-    void SetIndirectSourceViewId(uint viewId);
-    void GetVisibleCounts(out uint drawCount, out uint instanceCount, out uint overflowMarker);
-    uint ReadPerViewDrawCount(uint viewId);
-}
-
-public interface IRuntimeRenderCommandSceneContext
-{
-    void RenderGpuPass(IRuntimeGpuRenderPassHost gpuPass);
-    void RecordGpuVisibility(uint draws, uint instances);
-}
-
-public interface IRuntimeRenderCamera
-{
-    TransformBase Transform { get; }
-    Matrix4x4 ProjectionMatrix { get; }
-    float NearZ { get; }
-    float FarZ { get; }
-    bool? StereoEyeLeft { get; }
-    bool RendersLayer(int layer);
-    float DistanceFromRenderNearPlane(Vector3 point);
-}
-
-public interface IRuntimeCullingCamera : IRuntimeRenderCamera
-{
-    Frustum WorldFrustum();
-    BoundingRectangleF? GetOrthoCameraBounds();
-}
-
-public interface IRuntimeRenderCommandExecutionState
-{
-    IRuntimeViewportHost? WindowViewport { get; }
-    IRuntimeRenderCommandSceneContext? RenderingScene { get; }
-    IRuntimeRenderCamera? SceneCamera { get; }
-    IRuntimeRenderCamera? RenderingCamera { get; }
-    IRuntimeRenderCamera? StereoRightEyeCamera { get; }
-    bool StereoPass { get; }
-}
-
-public interface IRuntimeRendererHost
-{
-}
-
-public interface IRuntimeRenderWindowHost
-{
-}
-
-public interface IRuntimeViewportHost
-{
-    int Width { get; }
-    int Height { get; }
-    int InternalWidth { get; }
-    int InternalHeight { get; }
-}
-
-public interface IRuntimeScreenSpaceUserInterface
-{
-    bool IsActive { get; }
-    bool IsScreenSpace { get; }
-    void ResizeScreenSpace(Vector2 size);
-    void ResizeCameraSpace(XRCamera camera, XRCameraParameters parameters);
-    void ClearCameraSpaceCamera(XRCamera camera);
-    bool TryGetImGuiDisplayMetrics(
-        IRuntimeViewportHost? viewport,
-        XRCamera? camera,
-        out Vector2 displaySize,
-        out Vector2 displayPosition,
-        out Vector2 framebufferScale);
-    void CollectVisibleItemsScreenSpace(IRuntimeViewportHost? viewport);
-    void SwapBuffersScreenSpace();
-    void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO);
-}
-
-public interface IRuntimeWindowScenePanelAdapter : IDisposable
-{
-    XRTexture2D? Texture { get; }
-    XRFrameBuffer? FrameBuffer { get; }
-    void InvalidateResources();
-    void InvalidateResourcesImmediate();
-    void OnFramebufferResized(IRuntimeRenderWindowHost window, int framebufferWidth, int framebufferHeight);
-    bool TryRenderScenePanelMode(IRuntimeRenderWindowHost window);
-    void EndScenePanelMode(IRuntimeRenderWindowHost window);
-}
-
-public interface IRuntimeRenderingHostServices
-{
-    IDisposable? StartProfileScope([System.Runtime.CompilerServices.CallerMemberName] string? scopeName = null);
-    bool AllowShaderPipelines { get; }
-    bool EnableExactTransparencyTechniques { get; }
-    bool UseInterleavedMeshBuffer { get; }
-    bool UseIntegerUniformsInShaders { get; }
-    bool RemapBlendshapeDeltas { get; }
-    bool AllowBlendshapes { get; }
-    bool PopulateVertexDataInParallel { get; }
-    bool ProcessMeshImportsAsynchronously { get; }
-    bool AllowSkinning { get; }
-    bool OptimizeSkinningTo4Weights { get; }
-    bool OptimizeSkinningWeightsIfPossible { get; }
-    bool IsRenderThread { get; }
-    bool IsRendererActive { get; }
-    bool IsShadowPass { get; }
-    bool IsStereoPass { get; }
-    bool IsSceneCapturePass { get; }
-    bool RenderCullingVolumesEnabled { get; }
-    bool IsNvidia { get; }
-    string AssetFileExtension { get; }
-    string? TextureFallbackPath { get; }
-    XRMaterial? InvalidMaterial { get; }
-    Vector3 DefaultLuminance { get; }
-    long ElapsedTicks { get; }
-    float ElapsedTime { get; }
-    double RenderDeltaSeconds { get; }
-    long LastRenderTimestampTicks { get; }
-    long TrackedVramBytes { get; }
-    long TrackedVramBudgetBytes { get; }
-    bool EnableGpuIndirectDebugLogging { get; }
-    TextureRuntimeLogMode TextureLogMode { get; }
-    double TextureSlowCpuDecodeResizeMilliseconds { get; }
-    double TextureSlowMipBuildMilliseconds { get; }
-    double TextureSlowUploadChunkMilliseconds { get; }
-    double TextureSlowTransitionMilliseconds { get; }
-    double TextureSlowQueueWaitMilliseconds { get; }
-    double TextureUploadFrameBudgetMilliseconds { get; }
-    ETwoPlayerPreference TwoPlayerViewportPreference { get; }
-    EThreePlayerPreference ThreePlayerViewportPreference { get; }
-    RuntimeGraphicsApiKind CurrentRenderBackend { get; }
-    IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState { get; }
-    IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext { get; }
-    bool IsPlayModeTransitioning { get; }
-    string PlayModeStateName { get; }
-    EAntiAliasingMode DefaultAntiAliasingMode { get; }
-    uint DefaultMsaaSampleCount { get; }
-    bool DefaultOutputHDR { get; }
-    float DefaultTsrRenderScale { get; }
-    bool ForwardDepthPrePassEnabled { get; }
-    bool ForwardPrePassSharesGBufferTargets { get; }
-    bool ProvidesShadowAtlasSettings { get; }
-    bool UseSpotShadowAtlas { get; }
-    bool UseDirectionalShadowAtlas { get; }
-    uint ShadowAtlasPageSize { get; }
-    int MaxShadowAtlasPages { get; }
-    long MaxShadowAtlasMemoryBytes { get; }
-    int MaxShadowTilesRenderedPerFrame { get; }
-    float MaxShadowRenderMilliseconds { get; }
-    uint MinShadowAtlasTileResolution { get; }
-    uint MaxShadowAtlasTileResolution { get; }
-    RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window);
-    IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports();
-    IEnumerable<IPawnController> EnumerateLocalPlayers();
-    XRCamera.EDepthMode ResolveSceneCameraDepthModePreference();
-    IRuntimeInputControllablePawn? EnsurePawnForCamera(SceneNode sceneNode, CameraComponent camera, ELocalPlayerIndex playerIndex, Type? pawnType = null);
-    void PickViewportPhysicsAsync(
-        XRViewport viewport,
-        CameraComponent camera,
-        Vector2 normalizedViewportPosition,
-        LayerMask layerMask,
-        object? filter,
-        SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
-        Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
-        bool useUnjitteredProjection);
-    IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline);
-    void LogOutput(string message);
-    void LogWarning(string message);
-    void LogException(Exception ex, string? context = null);
-    void RecordMissingAsset(string assetPath, string category, string? context = null);
-    byte[] ReadAllBytes(string filePath);
-    string ResolveTextureStreamingAuthorityPath(string filePath);
-    SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format);
-    bool TryScheduleSparseTextureStreamingTransitionAsync(
-        XRTexture2D texture,
-        SparseTextureStreamingTransitionRequest request,
-        CancellationToken cancellationToken,
-        Action<SparseTextureStreamingTransitionResult> onCompleted,
-        Action<Exception>? onError = null);
-    SparseTextureStreamingFinalizeResult FinalizeSparseTextureStreamingTransition(
-        XRTexture2D texture,
-        SparseTextureStreamingTransitionRequest request,
-        SparseTextureStreamingTransitionResult transitionResult);
-    EnumeratorJob ScheduleEnumeratorJob(
-        Func<IEnumerable> routineFactory,
-        JobPriority priority = JobPriority.Normal,
-        Action? completed = null,
-        Action<Exception>? error = null,
-        CancellationToken cancellationToken = default);
-    void SubscribeViewportSwapBuffers(Action swapBuffers);
-    void UnsubscribeViewportSwapBuffers(Action swapBuffers);
-    void SubscribeViewportCollectVisible(Action collectVisible);
-    void UnsubscribeViewportCollectVisible(Action collectVisible);
-    void SubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame);
-    void UnsubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame);
-    void SubscribePlayModeTransitions(Action callback);
-    void UnsubscribePlayModeTransitions(Action callback);
-    void EnqueueRenderThreadTask(Action task);
-    void EnqueueRenderThreadTask(Action task, string reason);
-    void EnqueueRenderThreadCoroutine(Func<bool> task);
-    void EnqueueRenderThreadCoroutine(Func<bool> task, string reason);
-    void ProcessRenderThreadTasks();
-    IDisposable? PushTransformId(uint transformId);
-    void RecordOctreeSkippedMove();
-    void ProcessGpuPhysicsChainDispatches();
-    void ProcessGpuPhysicsChainCompletions();
-    void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color);
-    void RenderDebugLine(Vector3 start, Vector3 end, ColorF4 color);
-    void RenderDebugSphere(Vector3 center, float radius, bool solid, ColorF4 color);
-    void RenderDebugCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color);
-    void RenderDebugAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color);
-    void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color);
-    void RenderDebugQuad(Vector3 center, Rotator rotation, Vector2 extents, bool solid, ColorF4 color);
-    void RenderDebugPoint(Vector3 position, ColorF4 color);
-    void RenderDebugText(Vector3 position, string text, ColorF4 color);
-    void RenderDebugShapes();
-    TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new();
-    IRuntimeRenderPipelineHost? CreateDefaultRenderPipeline();
-    IRuntimeRendererHost CreateRenderer(IRuntimeRenderWindowHost window, RuntimeGraphicsApiKind apiKind);
-    IRuntimeWindowScenePanelAdapter CreateWindowScenePanelAdapter();
-    BoundingRectangle? GetScenePanelRenderRegion(IRuntimeRenderWindowHost window);
-    bool AllowWindowClose(IRuntimeRenderWindowHost window);
-    void RemoveWindow(IRuntimeRenderWindowHost window);
-    void ReplicateWindowTargetWorldChange(IRuntimeRenderWindowHost window);
-    void BeginRenderStatsFrame();
-    bool IsWindowScenePanelPresentationEnabled { get; }
-    int ScenePanelResizeDebounceMs { get; }
-    bool ForceFullViewport { get; }
-    bool RenderWindowsWhileInVR { get; }
-    bool EnableVrFoveatedViewSet { get; }
-    bool IsInVR { get; }
-    bool IsOpenXRActive { get; }
-    bool VrMirrorComposeFromEyeTextures { get; }
-    Vector2 VrFoveationCenterUv { get; }
-    float VrFoveationInnerRadius { get; }
-    float VrFoveationOuterRadius { get; }
-    Vector3 VrFoveationShadingRates { get; }
-    float VrFoveationVisibilityMargin { get; }
-    bool VrFoveationForceFullResForUiAndNearField { get; }
-    float VrFoveationFullResNearDistanceMeters { get; }
-    void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight);
-    void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws);
-    void DestroyObjectsForRenderer(IRuntimeRendererHost renderer);
-    bool IsViewportCurrentlyRendering(IRuntimeViewportHost viewport);
-    bool ShouldForceDebugOpaquePipeline { get; }
-    IRuntimeRenderPipelineHost? CreateDebugOpaquePipelineOverride();
-    void PrepareUpscaleBridgeForFrame(IRuntimeViewportHost viewport, IRuntimeRenderPipelineFrameContext pipeline);
-    void ConfigureMaterialProgram(XRMaterialBase material, XRRenderProgram program);
-    int GetBytesPerPixel(ESizedInternalFormat format);
-    int GetBytesPerPixel(ERenderBufferStorage storage);
-    void AddFrameBufferBandwidth(long totalBytes);
-    void DispatchCompute(XRRenderProgram program, uint groupCountX, uint groupCountY, uint groupCountZ);
-    bool TryBlitFrameBufferToFrameBuffer(
-        XRFrameBuffer sourceFrameBuffer,
-        XRFrameBuffer destinationFrameBuffer,
-        EReadBufferMode readBuffer,
-        bool colorBit,
-        bool depthBit,
-        bool stencilBit,
-        bool linearFilter);
-    bool TryBlitViewportToFrameBuffer(
-        IRuntimeViewportGrabSource viewport,
-        XRFrameBuffer framebuffer,
-        EReadBufferMode readBuffer,
-        bool colorBit,
-        bool depthBit,
-        bool stencilBit,
-        bool linearFilter);
-}
-
+/// <summary>
+/// Static access point for the host service implementation used by runtime rendering code.
+/// </summary>
 public static class RuntimeRenderingHostServices
 {
     private static IRuntimeRenderingHostServices _current = new DefaultRuntimeRenderingHostServices();
 
+    /// <summary>
+    /// Current concrete host services. Assigning <see langword="null"/> resets to the safe default no-op host.
+    /// </summary>
     public static IRuntimeRenderingHostServices Current
     {
         get => _current;
@@ -338,71 +40,87 @@ public static class RuntimeRenderingHostServices
     {
         private readonly Stopwatch _elapsedStopwatch = Stopwatch.StartNew();
 
+        #region Profiling
+
         public IDisposable? StartProfileScope(string? scopeName)
             => null;
 
-        public bool AllowShaderPipelines => false;
-        public bool EnableExactTransparencyTechniques => false;
-        public bool UseInterleavedMeshBuffer => false;
-        public bool UseIntegerUniformsInShaders => false;
-        public bool RemapBlendshapeDeltas => false;
-        public bool AllowBlendshapes => true;
-        public bool PopulateVertexDataInParallel => true;
-        public bool ProcessMeshImportsAsynchronously => false;
-        public bool AllowSkinning => true;
-        public bool OptimizeSkinningTo4Weights => false;
-        public bool OptimizeSkinningWeightsIfPossible => false;
-        public bool IsRenderThread => true;
-        public bool IsRendererActive => false;
-        public bool IsShadowPass => false;
-        public bool IsStereoPass => false;
-        public bool IsSceneCapturePass => false;
-        public bool RenderCullingVolumesEnabled => false;
-        public bool IsNvidia => false;
-        public string AssetFileExtension => "asset";
-        public string? TextureFallbackPath => null;
-        public XRMaterial? InvalidMaterial => null;
-        public Vector3 DefaultLuminance => new(0.2126f, 0.7152f, 0.0722f);
+        #endregion
+
+        #region Import and shader settings
+
+        public bool AllowShaderPipelines => RuntimeRenderingHostServiceDefaults.AllowShaderPipelines;
+        public bool EnableExactTransparencyTechniques => RuntimeRenderingHostServiceDefaults.EnableExactTransparencyTechniques;
+        public bool UseInterleavedMeshBuffer => RuntimeRenderingHostServiceDefaults.UseInterleavedMeshBuffer;
+        public bool UseIntegerUniformsInShaders => RuntimeRenderingHostServiceDefaults.UseIntegerUniformsInShaders;
+        public bool RemapBlendshapeDeltas => RuntimeRenderingHostServiceDefaults.RemapBlendshapeDeltas;
+        public bool AllowBlendshapes => RuntimeRenderingHostServiceDefaults.AllowBlendshapes;
+        public bool PopulateVertexDataInParallel => RuntimeRenderingHostServiceDefaults.PopulateVertexDataInParallel;
+        public bool ProcessMeshImportsAsynchronously => RuntimeRenderingHostServiceDefaults.ProcessMeshImportsAsynchronously;
+        public bool AllowSkinning => RuntimeRenderingHostServiceDefaults.AllowSkinning;
+        public bool OptimizeSkinningTo4Weights => RuntimeRenderingHostServiceDefaults.OptimizeSkinningTo4Weights;
+        public bool OptimizeSkinningWeightsIfPossible => RuntimeRenderingHostServiceDefaults.OptimizeSkinningWeightsIfPossible;
+
+        #endregion
+
+        #region Frame and render state
+
+        public bool IsRenderThread => RuntimeRenderingHostServiceDefaults.IsRenderThread;
+        public bool IsRendererActive => RuntimeRenderingHostServiceDefaults.IsRendererActive;
+        public bool IsShadowPass => RuntimeRenderingHostServiceDefaults.IsShadowPass;
+        public bool IsStereoPass => RuntimeRenderingHostServiceDefaults.IsStereoPass;
+        public bool IsSceneCapturePass => RuntimeRenderingHostServiceDefaults.IsSceneCapturePass;
+        public bool RenderCullingVolumesEnabled => RuntimeRenderingHostServiceDefaults.RenderCullingVolumesEnabled;
+        public bool IsNvidia => RuntimeRenderingHostServiceDefaults.IsNvidia;
+        public Vector3 DefaultLuminance => new(
+            RuntimeRenderingHostServiceDefaults.DefaultLuminanceX,
+            RuntimeRenderingHostServiceDefaults.DefaultLuminanceY,
+            RuntimeRenderingHostServiceDefaults.DefaultLuminanceZ);
         public long ElapsedTicks => _elapsedStopwatch.ElapsedTicks;
         public float ElapsedTime => (float)_elapsedStopwatch.Elapsed.TotalSeconds;
-        public double RenderDeltaSeconds => 0.0;
-        public long LastRenderTimestampTicks => 0L;
-        public long TrackedVramBytes => 0L;
-        public long TrackedVramBudgetBytes => long.MaxValue;
-        public bool EnableGpuIndirectDebugLogging => false;
-        public TextureRuntimeLogMode TextureLogMode => TextureRuntimeLogMode.Summary;
-        public double TextureSlowCpuDecodeResizeMilliseconds => 5.0;
-        public double TextureSlowMipBuildMilliseconds => 5.0;
-        public double TextureSlowUploadChunkMilliseconds => 2.0;
-        public double TextureSlowTransitionMilliseconds => 8.0;
-        public double TextureSlowQueueWaitMilliseconds => 100.0;
-        public double TextureUploadFrameBudgetMilliseconds => 2.0;
-        public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
-        public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
-        public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;
+        public double UpdateDeltaSeconds => RuntimeRenderingHostServiceDefaults.DefaultDeltaSeconds;
+        public long LastUpdateTimestampTicks => RuntimeRenderingHostServiceDefaults.DefaultTimestampTicks;
+        public double RenderDeltaSeconds => RuntimeRenderingHostServiceDefaults.DefaultDeltaSeconds;
+        public long LastRenderTimestampTicks => RuntimeRenderingHostServiceDefaults.DefaultTimestampTicks;
+        public long TrackedVramBytes => RuntimeRenderingHostServiceDefaults.DefaultTrackedVramBytes;
+        public long TrackedVramBudgetBytes => RuntimeRenderingHostServiceDefaults.DefaultTrackedVramBudgetBytes;
+        public bool EnableGpuIndirectDebugLogging => RuntimeRenderingHostServiceDefaults.EnableGpuIndirectDebugLogging;
+        public ETwoPlayerPreference TwoPlayerViewportPreference => RuntimeRenderingHostServiceDefaults.TwoPlayerViewportPreference;
+        public EThreePlayerPreference ThreePlayerViewportPreference => RuntimeRenderingHostServiceDefaults.ThreePlayerViewportPreference;
+        public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeRenderingHostServiceDefaults.CurrentRenderBackend;
         public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => null;
         public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext => null;
-        public bool IsPlayModeTransitioning => false;
-        public string PlayModeStateName => "Stopped";
-        public EAntiAliasingMode DefaultAntiAliasingMode => EAntiAliasingMode.None;
-        public uint DefaultMsaaSampleCount => 1u;
-        public bool DefaultOutputHDR => false;
-        public float DefaultTsrRenderScale => 1.0f;
-        public bool ForwardDepthPrePassEnabled => true;
-        public bool ForwardPrePassSharesGBufferTargets => true;
-        public bool ProvidesShadowAtlasSettings => false;
-        public bool UseSpotShadowAtlas => true;
-        public bool UseDirectionalShadowAtlas => true;
-        public uint ShadowAtlasPageSize => 4096u;
-        public int MaxShadowAtlasPages => 1;
-        public long MaxShadowAtlasMemoryBytes => 0L;
-        public int MaxShadowTilesRenderedPerFrame => 16;
-        public float MaxShadowRenderMilliseconds => 2.0f;
-        public uint MinShadowAtlasTileResolution => 128u;
-        public uint MaxShadowAtlasTileResolution => 4096u;
+        public bool IsPlayModeTransitioning => RuntimeRenderingHostServiceDefaults.IsPlayModeTransitioning;
+        public string PlayModeStateName => RuntimeRenderingHostServiceDefaults.PlayModeStateName;
+        public EAntiAliasingMode DefaultAntiAliasingMode => RuntimeRenderingHostServiceDefaults.DefaultAntiAliasingMode;
+        public uint DefaultMsaaSampleCount => RuntimeRenderingHostServiceDefaults.DefaultMsaaSampleCount;
+        public bool DefaultOutputHDR => RuntimeRenderingHostServiceDefaults.DefaultOutputHDR;
+        public float DefaultTsrRenderScale => RuntimeRenderingHostServiceDefaults.DefaultTsrRenderScale;
+        public bool ForwardDepthPrePassEnabled => RuntimeRenderingHostServiceDefaults.ForwardDepthPrePassEnabled;
+        public bool ForwardPrePassSharesGBufferTargets => RuntimeRenderingHostServiceDefaults.ForwardPrePassSharesGBufferTargets;
+
+        #endregion
+
+        #region Shadow settings
+
+        public bool ProvidesShadowAtlasSettings => RuntimeRenderingHostServiceDefaults.ProvidesShadowAtlasSettings;
+        public bool UseSpotShadowAtlas => RuntimeRenderingHostServiceDefaults.UseSpotShadowAtlas;
+        public bool UseDirectionalShadowAtlas => RuntimeRenderingHostServiceDefaults.UseDirectionalShadowAtlas;
+        public bool UsePointShadowAtlas => RuntimeRenderingHostServiceDefaults.UsePointShadowAtlas;
+        public uint ShadowAtlasPageSize => RuntimeRenderingHostServiceDefaults.ShadowAtlasPageSize;
+        public int MaxShadowAtlasPages => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasPages;
+        public long MaxShadowAtlasMemoryBytes => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasMemoryBytes;
+        public int MaxShadowTilesRenderedPerFrame => RuntimeRenderingHostServiceDefaults.MaxShadowTilesRenderedPerFrame;
+        public float MaxShadowRenderMilliseconds => RuntimeRenderingHostServiceDefaults.MaxShadowRenderMilliseconds;
+        public uint MinShadowAtlasTileResolution => RuntimeRenderingHostServiceDefaults.MinShadowAtlasTileResolution;
+        public uint MaxShadowAtlasTileResolution => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasTileResolution;
+
+        #endregion
+
+        #region Viewports, cameras, and players
 
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)
-            => RuntimeGraphicsApiKind.Unknown;
+            => RuntimeRenderingHostServiceDefaults.CurrentRenderBackend;
 
         public IEnumerable<IRuntimeViewportHost> EnumerateActiveViewports()
             => [];
@@ -411,7 +129,7 @@ public static class RuntimeRenderingHostServices
             => [];
 
         public XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
-            => XRCamera.EDepthMode.Normal;
+            => RuntimeRenderingHostServiceDefaults.SceneCameraDepthModePreference;
 
         public IRuntimeInputControllablePawn? EnsurePawnForCamera(SceneNode sceneNode, CameraComponent camera, ELocalPlayerIndex playerIndex, Type? pawnType = null)
             => null;
@@ -428,6 +146,10 @@ public static class RuntimeRenderingHostServices
         {
             physicsFinishedCallback(null);
         }
+
+        #endregion
+
+        #region Pipeline context and diagnostics
 
         public IDisposable? PushRenderingPipeline(IRuntimeRenderPipelineFrameContext pipeline)
             => null;
@@ -448,6 +170,21 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        #endregion
+
+        #region Asset and texture IO
+
+        public string AssetFileExtension => RuntimeRenderingHostServiceDefaults.AssetFileExtension;
+        public string? TextureFallbackPath => null;
+        public XRMaterial? InvalidMaterial => null;
+        public TextureRuntimeLogMode TextureLogMode => RuntimeRenderingHostServiceDefaults.TextureLogMode;
+        public double TextureSlowCpuDecodeResizeMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowCpuDecodeResizeMilliseconds;
+        public double TextureSlowMipBuildMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowMipBuildMilliseconds;
+        public double TextureSlowUploadChunkMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowUploadChunkMilliseconds;
+        public double TextureSlowTransitionMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowTransitionMilliseconds;
+        public double TextureSlowQueueWaitMilliseconds => RuntimeRenderingHostServiceDefaults.TextureSlowQueueWaitMilliseconds;
+        public double TextureUploadFrameBudgetMilliseconds => RuntimeRenderingHostServiceDefaults.TextureUploadFrameBudgetMilliseconds;
+
         public byte[] ReadAllBytes(string filePath)
             => File.ReadAllBytes(filePath);
 
@@ -455,7 +192,7 @@ public static class RuntimeRenderingHostServices
             => string.IsNullOrWhiteSpace(filePath) ? filePath : Path.GetFullPath(filePath);
 
         public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
-            => SparseTextureStreamingSupport.Unsupported("No renderer-specific sparse texture capability service is configured.");
+            => SparseTextureStreamingSupport.Unsupported(RuntimeRenderingHostServiceDefaults.SparseTextureStreamingUnsupportedReason);
 
         public bool TryScheduleSparseTextureStreamingTransitionAsync(
             XRTexture2D texture,
@@ -469,7 +206,7 @@ public static class RuntimeRenderingHostServices
             XRTexture2D texture,
             SparseTextureStreamingTransitionRequest request,
             SparseTextureStreamingTransitionResult transitionResult)
-            => SparseTextureStreamingFinalizeResult.Failed("RuntimeRenderingHostServices.Current has not been configured for sparse texture finalization.");
+            => SparseTextureStreamingFinalizeResult.Failed(RuntimeRenderingHostServiceDefaults.SparseTextureStreamingFinalizeNotConfiguredReason);
 
         public EnumeratorJob ScheduleEnumeratorJob(
             Func<IEnumerable> routineFactory,
@@ -477,7 +214,11 @@ public static class RuntimeRenderingHostServices
             Action? completed = null,
             Action<Exception>? error = null,
             CancellationToken cancellationToken = default)
-            => throw new InvalidOperationException("RuntimeRenderingHostServices.Current has not been configured for job scheduling.");
+            => throw new InvalidOperationException(RuntimeRenderingHostServiceDefaults.JobSchedulingNotConfiguredMessage);
+
+        #endregion
+
+        #region Scheduling and frame callbacks
 
         public void SubscribeViewportSwapBuffers(Action swapBuffers)
         {
@@ -526,6 +267,10 @@ public static class RuntimeRenderingHostServices
         public void ProcessRenderThreadTasks()
         {
         }
+
+        #endregion
+
+        #region Debug drawing and scene maintenance
 
         public IDisposable? PushTransformId(uint transformId)
             => null;
@@ -582,6 +327,10 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        #endregion
+
+        #region Factories and window presentation
+
         public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
             => null;
 
@@ -589,7 +338,7 @@ public static class RuntimeRenderingHostServices
             => null;
 
         public IRuntimeRendererHost CreateRenderer(IRuntimeRenderWindowHost window, RuntimeGraphicsApiKind apiKind)
-            => throw new InvalidOperationException("RuntimeRenderingHostServices.Current has not been configured to create renderers.");
+            => throw new InvalidOperationException(RuntimeRenderingHostServiceDefaults.RendererCreationNotConfiguredMessage);
 
         public IRuntimeWindowScenePanelAdapter CreateWindowScenePanelAdapter()
             => NullRuntimeWindowScenePanelAdapter.Instance;
@@ -612,21 +361,31 @@ public static class RuntimeRenderingHostServices
         {
         }
 
-        public bool IsWindowScenePanelPresentationEnabled => false;
-        public int ScenePanelResizeDebounceMs => 100;
-        public bool ForceFullViewport => false;
-        public bool RenderWindowsWhileInVR => false;
-        public bool EnableVrFoveatedViewSet => false;
-        public bool IsInVR => false;
-        public bool IsOpenXRActive => false;
-        public bool VrMirrorComposeFromEyeTextures => false;
-        public Vector2 VrFoveationCenterUv => new(0.5f, 0.5f);
-        public float VrFoveationInnerRadius => 0.35f;
-        public float VrFoveationOuterRadius => 0.85f;
-        public Vector3 VrFoveationShadingRates => new(1.0f, 0.7f, 0.5f);
-        public float VrFoveationVisibilityMargin => 0.05f;
-        public bool VrFoveationForceFullResForUiAndNearField => true;
-        public float VrFoveationFullResNearDistanceMeters => 1.5f;
+        public bool IsWindowScenePanelPresentationEnabled => RuntimeRenderingHostServiceDefaults.IsWindowScenePanelPresentationEnabled;
+        public int ScenePanelResizeDebounceMs => RuntimeRenderingHostServiceDefaults.ScenePanelResizeDebounceMs;
+        public bool ForceFullViewport => RuntimeRenderingHostServiceDefaults.ForceFullViewport;
+
+        #endregion
+
+        #region VR and desktop mirror
+
+        public bool RenderWindowsWhileInVR => RuntimeRenderingHostServiceDefaults.RenderWindowsWhileInVR;
+        public bool EnableVrFoveatedViewSet => RuntimeRenderingHostServiceDefaults.EnableVrFoveatedViewSet;
+        public bool IsInVR => RuntimeRenderingHostServiceDefaults.IsInVR;
+        public bool IsOpenXRActive => RuntimeRenderingHostServiceDefaults.IsOpenXRActive;
+        public bool VrMirrorComposeFromEyeTextures => RuntimeRenderingHostServiceDefaults.VrMirrorComposeFromEyeTextures;
+        public Vector2 VrFoveationCenterUv => new(
+            RuntimeRenderingHostServiceDefaults.VrFoveationCenterU,
+            RuntimeRenderingHostServiceDefaults.VrFoveationCenterV);
+        public float VrFoveationInnerRadius => RuntimeRenderingHostServiceDefaults.VrFoveationInnerRadius;
+        public float VrFoveationOuterRadius => RuntimeRenderingHostServiceDefaults.VrFoveationOuterRadius;
+        public Vector3 VrFoveationShadingRates => new(
+            RuntimeRenderingHostServiceDefaults.VrFoveationInnerShadingRate,
+            RuntimeRenderingHostServiceDefaults.VrFoveationMiddleShadingRate,
+            RuntimeRenderingHostServiceDefaults.VrFoveationOuterShadingRate);
+        public float VrFoveationVisibilityMargin => RuntimeRenderingHostServiceDefaults.VrFoveationVisibilityMargin;
+        public bool VrFoveationForceFullResForUiAndNearField => RuntimeRenderingHostServiceDefaults.VrFoveationForceFullResForUiAndNearField;
+        public float VrFoveationFullResNearDistanceMeters => RuntimeRenderingHostServiceDefaults.VrFoveationFullResNearDistanceMeters;
 
         public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         {
@@ -636,14 +395,18 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        #endregion
+
+        #region Backend utilities
+
         public void DestroyObjectsForRenderer(IRuntimeRendererHost renderer)
         {
         }
 
         public bool IsViewportCurrentlyRendering(IRuntimeViewportHost viewport)
-            => false;
+            => RuntimeRenderingHostServiceDefaults.IsViewportCurrentlyRendering;
 
-        public bool ShouldForceDebugOpaquePipeline => false;
+        public bool ShouldForceDebugOpaquePipeline => RuntimeRenderingHostServiceDefaults.ShouldForceDebugOpaquePipeline;
 
         public IRuntimeRenderPipelineHost? CreateDebugOpaquePipelineOverride()
             => null;
@@ -657,10 +420,10 @@ public static class RuntimeRenderingHostServices
         }
 
         public int GetBytesPerPixel(ESizedInternalFormat format)
-            => 4;
+            => RuntimeRenderingHostServiceDefaults.FallbackBytesPerPixel;
 
         public int GetBytesPerPixel(ERenderBufferStorage storage)
-            => 4;
+            => RuntimeRenderingHostServiceDefaults.FallbackBytesPerPixel;
 
         public void AddFrameBufferBandwidth(long totalBytes)
         {
@@ -690,6 +453,11 @@ public static class RuntimeRenderingHostServices
             bool linearFilter)
             => false;
 
+        #endregion
+
+        /// <summary>
+        /// Null object used when no editor scene-panel presentation adapter is installed.
+        /// </summary>
         private sealed class NullRuntimeWindowScenePanelAdapter : IRuntimeWindowScenePanelAdapter
         {
             public static NullRuntimeWindowScenePanelAdapter Instance { get; } = new();

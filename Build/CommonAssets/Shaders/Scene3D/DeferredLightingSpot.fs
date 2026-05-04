@@ -26,7 +26,7 @@ layout(binding = 2) uniform sampler2D RMSE; //PBR: Roughness, Metallic, Specular
 layout(binding = 3) uniform sampler2D DepthView; //Depth
 #endif
 uniform sampler2D ShadowMap; //Spot Shadow Map
-uniform sampler2D SpotShadowAtlas;
+uniform sampler2DArray SpotShadowAtlas;
 
 uniform float ScreenWidth;
 uniform float ScreenHeight;
@@ -44,6 +44,7 @@ uniform vec4 ShadowBiasParams = vec4(1.0f, 2.0f, 1.0f, 0.0f); // depth texels, s
 uniform bool LightHasShadowMap = true; // Added
 uniform bool SpotShadowAtlasEnabled = false;
 uniform int SpotShadowAtlasRecordIndex = -1;
+uniform int SpotShadowAtlasPageIndex = 0;
 uniform int SpotShadowAtlasFallbackMode = 1;
 uniform vec4 SpotShadowAtlasUvScaleBias = vec4(1.0f, 1.0f, 0.0f, 0.0f);
 uniform vec4 SpotShadowAtlasDepthParams = vec4(0.1f, 1.0f, 0.0f, 1.0f); // near, far, local texel size, requested/allocated scale
@@ -417,6 +418,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 		lit = XRENGINE_SampleLinearDepthShadowAtlasFilteredAsPerspective(
 			SpotShadowAtlas,
 			vec3(fragCoord.xy, atlasDepth),
+			float(SpotShadowAtlasPageIndex),
 			fragCoord.z,
 			SpotShadowAtlasUvScaleBias,
 			atlasLocalTexelSize,
@@ -435,7 +437,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 
 		if (ShadowDebugMode != 0)
 		{
-			float centerDepth = XRENGINE_LinearDepth01ToPerspectiveDepth(texture(SpotShadowAtlas, atlasUv).r, atlasNearZ, atlasFarZ);
+			float centerDepth = XRENGINE_LinearDepth01ToPerspectiveDepth(texture(SpotShadowAtlas, vec3(atlasUv, float(SpotShadowAtlasPageIndex))).r, atlasNearZ, atlasFarZ);
 			_dbgShadowMargin = centerDepth - (fragCoord.z - atlasBias);
 		}
 	}

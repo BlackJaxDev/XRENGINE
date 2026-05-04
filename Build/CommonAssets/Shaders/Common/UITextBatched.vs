@@ -53,9 +53,13 @@ mat4 getTextModelMatrix(uint textIndex)
 
 void main()
 {
+    // Quad corner is the per-vertex Position attribute (0..1 in xy from VertexQuad.PosZ(bottomLeftOrigin=true)).
+    // Using Position rather than TexCoord0 keeps both the position math and the UV mix on the same
+    // attribute, avoiding any reliance on a duplicated TexCoord0 stream.
+    vec2 corner = Position.xy;
+
     if (TextDebugMode == 3)
     {
-        vec2 corner = TexCoord0.xy;
         vec2 ndc = vec2(-0.94, 0.74) + corner * vec2(0.44, 0.18);
         FragPos = vec3(ndc, 0.0);
         gl_Position = vec4(ndc, 0.0, 1.0);
@@ -78,12 +82,12 @@ void main()
     mat4 mvpMatrix = ViewProjectionMatrix_VTX * modelMatrix;
 
     // Position the glyph quad: tfm.xy = offset, tfm.zw = size
-    vec4 position = vec4(tfm.xy + (TexCoord0.xy * tfm.zw), 0.0, 1.0);
+    vec4 position = vec4(tfm.xy + (corner * tfm.zw), 0.0, 1.0);
 
     FragPos = (mvpMatrix * position).xyz;
     gl_Position = mvpMatrix * position;
     FragNorm = Normal;
     // Interpolate UVs within the glyph's atlas region
-    FragUV0 = mix(uv.xy, uv.zw, Position.xy);
+    FragUV0 = mix(uv.xy, uv.zw, corner);
     InstanceTextColor = textColor;
 }

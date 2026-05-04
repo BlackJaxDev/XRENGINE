@@ -13,6 +13,10 @@ namespace XREngine.Rendering.Shaders.Generator
     {
         public override bool UseNVStereo => true;
     }
+    public class DirectionalCascadeInstancedVertexShaderGenerator(XRMesh mesh) : DefaultVertexShaderGenerator(mesh)
+    {
+        public override bool UseDirectionalCascadeInstancedLayering => true;
+    }
     /// <summary>
     /// Generates a typical vertex shader for use with most models.
     /// </summary>
@@ -242,6 +246,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
         public virtual bool UseOVRMultiView => false;
         public virtual bool UseNVStereo => false;
+        public virtual bool UseDirectionalCascadeInstancedLayering => false;
 
         private bool UseComputeSkinning => Engine.Rendering.Settings.CalculateSkinningInComputeShader && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
         private bool UseComputeBlendshapes => Mesh.BlendshapeCount > 0
@@ -329,6 +334,10 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line("#extension GL_NV_viewport_array2 : require");
                 Line("#extension GL_NV_stereo_view_rendering : require");
             }
+            else if (UseDirectionalCascadeInstancedLayering && !Engine.Rendering.State.IsVulkan)
+            {
+                Line("#extension GL_ARB_shader_viewport_layer_array : require");
+            }
         }
 
         protected override void WriteInputs()
@@ -345,6 +354,11 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             WriteUniformBufferBlocks();
             base.WriteUniforms();
+            if (UseDirectionalCascadeInstancedLayering)
+            {
+                Line("uniform int CascadeLayerCount;");
+                Line("uniform mat4 CascadeViewProjectionMatrices[8];");
+            }
         }
 
         /// <summary>
@@ -778,6 +792,8 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 AssignFragPosOut(localInputPosName);
                 Assign_GL_Position(finalPosName);
+                if (UseDirectionalCascadeInstancedLayering)
+                    AssignDirectionalCascadeLayeredPosition(localInputPosName);
             }
         }
 
@@ -901,6 +917,15 @@ namespace XREngine.Rendering.Shaders.Generator
         /// <param name="finalPositionName"></param>
         private void Assign_GL_Position(string finalPositionName)
             => Line($"gl_Position = {finalPositionName};");
+
+        private void AssignDirectionalCascadeLayeredPosition(string localInputPositionName)
+        {
+            Line("int xreCascadeLayerCount = clamp(CascadeLayerCount, 1, 8);");
+            Line("int xreCascadeLayer = gl_InstanceID % xreCascadeLayerCount;");
+            Line($"vec3 xreCascadeWorldPos = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
+            Line("gl_Position = CascadeViewProjectionMatrices[xreCascadeLayer] * vec4(xreCascadeWorldPos, 1.0f);");
+            Line("gl_Layer = xreCascadeLayer;");
+        }
 
         /// <summary>
         /// Assigns gl_SecondaryPositionNV to the final right eye position.

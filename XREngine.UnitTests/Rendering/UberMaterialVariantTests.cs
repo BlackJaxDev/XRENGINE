@@ -149,6 +149,27 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
+    public void PrepareUberVariantImmediately_DoesNotReassignAlreadyActiveVariant()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_Color", display="Color", mode=static)
+            uniform vec4 _Color;
+            """,
+            new ShaderVector4(new Vector4(0.8f, 0.7f, 0.6f, 1.0f), "_Color"));
+
+        material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
+        XRShader activeShader = material.GetShader(EShaderType.Fragment).ShouldNotBeNull();
+        long shaderStateRevision = material.ShaderStateRevision;
+
+        material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
+
+        material.GetShader(EShaderType.Fragment).ShouldBeSameAs(activeShader);
+        material.ShaderStateRevision.ShouldBe(shaderStateRevision);
+    }
+
+    [Test]
     public void DefaultForwardPlusUberParameters_DoNotEmitWithoutAuthoredStrength()
     {
         ShaderVar[] parameters = global::XREngine.ModelImporter.CreateDefaultForwardPlusUberShaderParameters();

@@ -48,8 +48,9 @@ namespace XREngine.Scene
         private static readonly string[] _directionalShadowMapArrayNames = CreateIndexedNames("DirectionalShadowMapArrays", MaxForwardDirectionalLights);
         private static readonly string[] _pointShadowMapNames = CreateIndexedNames("PointLightShadowMaps", 4);
         private static readonly string[] _spotShadowMapNames = CreateIndexedNames("SpotLightShadowMaps", 4);
-        private static readonly string[] _spotShadowAtlasPageNames = CreateIndexedNames("SpotLightShadowAtlasPages", 2);
-        private static readonly string[] _directionalShadowAtlasPageNames = CreateIndexedNames("DirectionalShadowAtlasPages", 2);
+        private const string PointShadowAtlasName = "PointLightShadowAtlas";
+        private const string SpotShadowAtlasName = "SpotLightShadowAtlas";
+        private const string DirectionalShadowAtlasName = "DirectionalShadowAtlas";
 
         private static string[] CreateIndexedNames(string prefix, int count)
         {
@@ -114,6 +115,24 @@ namespace XREngine.Scene
             public Vector4 Params3;
             public Vector4 Params4;
             public Vector4 Params5;
+            public IVector4 AtlasPacked0Face0;
+            public IVector4 AtlasPacked0Face1;
+            public IVector4 AtlasPacked0Face2;
+            public IVector4 AtlasPacked0Face3;
+            public IVector4 AtlasPacked0Face4;
+            public IVector4 AtlasPacked0Face5;
+            public Vector4 AtlasParams0Face0;
+            public Vector4 AtlasParams0Face1;
+            public Vector4 AtlasParams0Face2;
+            public Vector4 AtlasParams0Face3;
+            public Vector4 AtlasParams0Face4;
+            public Vector4 AtlasParams0Face5;
+            public Vector4 AtlasParams1Face0;
+            public Vector4 AtlasParams1Face1;
+            public Vector4 AtlasParams1Face2;
+            public Vector4 AtlasParams1Face3;
+            public Vector4 AtlasParams1Face4;
+            public Vector4 AtlasParams1Face5;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -304,6 +323,48 @@ namespace XREngine.Scene
                 BrightnessPadding = new Vector4(light.Brightness, 0.0f, 0.0f, 0.0f),
             };
 
+        private static void SetPointAtlasFaceMetadata(
+            ref ForwardPointShadowGpu data,
+            int faceIndex,
+            IVector4 packed0,
+            Vector4 params0,
+            Vector4 params1)
+        {
+            switch (faceIndex)
+            {
+                case 0:
+                    data.AtlasPacked0Face0 = packed0;
+                    data.AtlasParams0Face0 = params0;
+                    data.AtlasParams1Face0 = params1;
+                    break;
+                case 1:
+                    data.AtlasPacked0Face1 = packed0;
+                    data.AtlasParams0Face1 = params0;
+                    data.AtlasParams1Face1 = params1;
+                    break;
+                case 2:
+                    data.AtlasPacked0Face2 = packed0;
+                    data.AtlasParams0Face2 = params0;
+                    data.AtlasParams1Face2 = params1;
+                    break;
+                case 3:
+                    data.AtlasPacked0Face3 = packed0;
+                    data.AtlasParams0Face3 = params0;
+                    data.AtlasParams1Face3 = params1;
+                    break;
+                case 4:
+                    data.AtlasPacked0Face4 = packed0;
+                    data.AtlasParams0Face4 = params0;
+                    data.AtlasParams1Face4 = params1;
+                    break;
+                case 5:
+                    data.AtlasPacked0Face5 = packed0;
+                    data.AtlasParams0Face5 = params0;
+                    data.AtlasParams1Face5 = params1;
+                    break;
+            }
+        }
+
         private static ForwardSpotLightGpu CreateForwardSpotLightGpu(SpotLightComponent light)
         {
             Matrix4x4 lightView = light.ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
@@ -441,8 +502,7 @@ namespace XREngine.Scene
             const int forwardContactNormalArrayUnit = 31;
             const int directionalShadowAtlasStartUnit = 9;
             const int spotShadowAtlasStartUnit = 32;
-            const int maxForwardSpotAtlasPages = 2;
-            const int maxForwardDirectionalAtlasPages = 2;
+            const int pointShadowAtlasStartUnit = 34;
 
             // Debug: log that we're being called
             if (!_loggedForwardLightingOnce)
@@ -828,6 +888,14 @@ namespace XREngine.Scene
             }
 
             int pointShadowSlot = 0;
+            bool usePointAtlas = Engine.Rendering.Settings.UsePointShadowAtlas;
+            XRTexture2DArray pointAtlasTexture = usePointAtlas &&
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Point, EShadowMapEncoding.Depth, 0, out XRTexture2DArray pointAtlas)
+                    ? pointAtlas
+                    : DummyShadowMapArray;
+            int pointAtlasLayerCount = checked((int)Math.Max(1u, pointAtlasTexture.Depth));
+            program.Sampler(PointShadowAtlasName, pointAtlasTexture, pointShadowAtlasStartUnit);
+
             if (pointLightCount == 0)
                 _forwardPointShadowMetadataBuffer!.Set(0, default(ForwardPointShadowGpu));
             for (int i = 0; i < pointLightCount; ++i)
@@ -836,14 +904,16 @@ namespace XREngine.Scene
                 int shadowSlot = -1;
 
                 XRTexture? shadowTexture = FindShadowMapTexture(light);
-                if (shadowTexture is XRTextureCube shadowCube && pointShadowSlot < maxForwardShadowedPointLights)
+                if (!usePointAtlas &&
+                    shadowTexture is XRTextureCube shadowCube &&
+                    pointShadowSlot < maxForwardShadowedPointLights)
                 {
                     shadowSlot = pointShadowSlot;
                     program.Sampler(_pointShadowMapNames[pointShadowSlot], shadowCube, pointShadowStartUnit + pointShadowSlot);
                     pointShadowSlot++;
                 }
 
-                _forwardPointShadowMetadataBuffer!.Set((uint)i, new ForwardPointShadowGpu
+                ForwardPointShadowGpu pointShadowData = new()
                 {
                     Packed0 = new IVector4(shadowSlot, light.FilterSamples, light.BlockerSamples, light.VogelTapCount),
                     Packed1 = new IVector4((int)light.SoftShadowMode, light.ShadowDebugMode, light.EnableContactShadows ? 1 : 0, light.ContactShadowSamples),
@@ -853,29 +923,57 @@ namespace XREngine.Scene
                     Params3 = new Vector4(light.ContactShadowThickness, light.ContactShadowFadeStart, light.ContactShadowFadeEnd, light.ContactShadowNormalOffset),
                     Params4 = new Vector4(light.ContactShadowJitterStrength, 0.0f, 0.0f, 0.0f),
                     Params5 = light.ShadowBiasParameters,
-                });
+                };
+
+                for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
+                {
+                    IVector4 atlasPacked0 = new(0, -1, (int)(usePointAtlas ? ShadowFallbackMode.ContactOnly : ShadowFallbackMode.Legacy), -1);
+                    Vector4 atlasParams0 = Vector4.Zero;
+                    Vector4 atlasParams1 = new(light.ShadowNearPlaneDistance, MathF.Max(light.Radius, light.ShadowNearPlaneDistance + 0.001f), 0.0f, 1.0f);
+
+                    if (usePointAtlas &&
+                        TryGetPointShadowAtlasFaceAllocation(light, faceIndex, out ShadowAtlasAllocation allocation, out int recordIndex))
+                    {
+                        ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
+                            ? allocation.ActiveFallback
+                            : ShadowFallbackMode.Lit;
+                        bool atlasResident = allocation.IsResident &&
+                            allocation.LastRenderedFrame != 0u &&
+                            allocation.ActiveFallback == ShadowFallbackMode.None &&
+                            allocation.PageIndex >= 0 &&
+                            allocation.PageIndex < pointAtlasLayerCount;
+                        uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
+                        float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
+                        float resolutionScale = light.GetShadowAtlasResolutionScale(sampleResolution);
+
+                        atlasPacked0 = new IVector4(atlasResident ? 1 : 0, allocation.PageIndex, (int)fallback, recordIndex);
+                        atlasParams0 = allocation.UvScaleBias;
+                        atlasParams1 = new Vector4(light.ShadowNearPlaneDistance, MathF.Max(light.Radius, light.ShadowNearPlaneDistance + 0.001f), texelSize, resolutionScale);
+                    }
+
+                    SetPointAtlasFaceMetadata(ref pointShadowData, faceIndex, atlasPacked0, atlasParams0, atlasParams1);
+                }
+
+                _forwardPointShadowMetadataBuffer!.Set((uint)i, pointShadowData);
             }
             for (; pointShadowSlot < maxForwardShadowedPointLights; ++pointShadowSlot)
                 program.Sampler(_pointShadowMapNames[pointShadowSlot], DummyPointShadowMap, pointShadowStartUnit + pointShadowSlot);
 
             int spotShadowSlot = 0;
             bool useSpotAtlas = Engine.Rendering.Settings.UseSpotShadowAtlas;
-            for (int pageIndex = 0; pageIndex < maxForwardSpotAtlasPages; pageIndex++)
-            {
-                XRTexture2D atlasTexture = ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Spot, EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
-                    ? pageTexture
-                    : DummyShadowMap;
-                program.Sampler(_spotShadowAtlasPageNames[pageIndex], atlasTexture, spotShadowAtlasStartUnit + pageIndex);
-            }
+            XRTexture2DArray spotAtlasTexture = useSpotAtlas &&
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Spot, EShadowMapEncoding.Depth, 0, out XRTexture2DArray spotAtlas)
+                    ? spotAtlas
+                    : DummyShadowMapArray;
+            int spotAtlasLayerCount = checked((int)Math.Max(1u, spotAtlasTexture.Depth));
+            program.Sampler(SpotShadowAtlasName, spotAtlasTexture, spotShadowAtlasStartUnit);
 
-            for (int pageIndex = 0; pageIndex < maxForwardDirectionalAtlasPages; pageIndex++)
-            {
-                XRTexture2D atlasTexture = useDirectionalShadowAtlas &&
-                    ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, EShadowMapEncoding.Depth, pageIndex, out XRTexture2D pageTexture)
-                        ? pageTexture
-                        : DummyShadowMap;
-                program.Sampler(_directionalShadowAtlasPageNames[pageIndex], atlasTexture, directionalShadowAtlasStartUnit + pageIndex);
-            }
+            XRTexture2DArray directionalAtlasTexture = useDirectionalShadowAtlas &&
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, EShadowMapEncoding.Depth, 0, out XRTexture2DArray directionalAtlas)
+                    ? directionalAtlas
+                    : DummyShadowMapArray;
+            int directionalAtlasLayerCount = checked((int)Math.Max(1u, directionalAtlasTexture.Depth));
+            program.Sampler(DirectionalShadowAtlasName, directionalAtlasTexture, directionalShadowAtlasStartUnit);
 
             if (spotLightCount == 0)
                 _forwardSpotShadowMetadataBuffer!.Set(0, default(ForwardSpotShadowGpu));
@@ -898,7 +996,7 @@ namespace XREngine.Scene
                         allocation.LastRenderedFrame != 0u &&
                         allocation.ActiveFallback == ShadowFallbackMode.None &&
                         allocation.PageIndex >= 0 &&
-                        allocation.PageIndex < maxForwardSpotAtlasPages;
+                        allocation.PageIndex < spotAtlasLayerCount;
                     float atlasNearPlane = light.ShadowCamera?.NearZ ?? 0.1f;
                     float atlasFarPlane = light.ShadowCamera?.FarZ ?? MathF.Max(atlasNearPlane + 0.001f, light.Distance);
                     uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
@@ -970,7 +1068,7 @@ namespace XREngine.Scene
                         _directionalShadowAtlasPacked0,
                         atlasRecordOffset,
                         perLightUseCascades ? dirLight.ActiveCascadeCount : 1,
-                        maxForwardDirectionalAtlasPages);
+                        directionalAtlasLayerCount);
                     _directionalShadowAtlasEnabled[i] = perLightAtlasSampleable ? 1 : 0;
                     if (perLightAtlasSampleable)
                     {

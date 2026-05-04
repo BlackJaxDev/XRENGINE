@@ -319,6 +319,7 @@ namespace XREngine.Rendering.OpenGL
             // Async compile+link state: set when shader compilation and program linking
             // have been dispatched to the shared context thread.
             private volatile bool _asyncCompileLinkPending;
+            private volatile bool _asyncCompileLinkQueueWaitPending;
 
             /// <summary>
             /// Async link phases used when GL_ARB_parallel_shader_compile is active.
@@ -341,6 +342,9 @@ namespace XREngine.Rendering.OpenGL
             private long _uberLinkStartTimestamp;
             private double _uberCompileMilliseconds;
             private string? _linkRequestStackTrace;
+            private long _asyncPendingStartTimestamp;
+            private long _lastAsyncPendingWarningTimestamp;
+            private const double AsyncShaderSlowWarningSeconds = 2.0;
 
             /// <summary>
             /// Pre-computes the shader source hash and binary cache lookup.
@@ -499,13 +503,56 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private bool HasPendingAsyncWork
-                => _asyncBinaryUploadPending || _asyncCompileLinkPending || _asyncLinkPhase != EAsyncLinkPhase.Idle;
+                => _asyncBinaryUploadPending ||
+                   _asyncCompileLinkPending ||
+                   _asyncCompileLinkQueueWaitPending ||
+                   _asyncLinkPhase != EAsyncLinkPhase.Idle;
 
             private void RegisterPendingAsyncProgram()
-                => PendingAsyncPrograms[this] = 0;
+            {
+                if (_asyncPendingStartTimestamp == 0)
+                    _asyncPendingStartTimestamp = Stopwatch.GetTimestamp();
+
+                PendingAsyncPrograms[this] = 0;
+            }
 
             private void UnregisterPendingAsyncProgram()
-                => PendingAsyncPrograms.TryRemove(this, out _);
+            {
+                PendingAsyncPrograms.TryRemove(this, out _);
+                ResetAsyncPendingDiagnostics();
+            }
+
+            private void RestartAsyncPendingDiagnostics()
+            {
+                _asyncPendingStartTimestamp = Stopwatch.GetTimestamp();
+                _lastAsyncPendingWarningTimestamp = 0;
+            }
+
+            private void ResetAsyncPendingDiagnostics()
+            {
+                _asyncPendingStartTimestamp = 0;
+                _lastAsyncPendingWarningTimestamp = 0;
+            }
+
+            private void ReportSlowAsyncPending(string phase)
+            {
+                long now = Stopwatch.GetTimestamp();
+                if (_asyncPendingStartTimestamp == 0)
+                    _asyncPendingStartTimestamp = now;
+
+                double elapsedSeconds = StopwatchTicksToSeconds(now - _asyncPendingStartTimestamp);
+                if (elapsedSeconds < AsyncShaderSlowWarningSeconds)
+                    return;
+
+                double warningElapsedSeconds = _lastAsyncPendingWarningTimestamp == 0
+                    ? double.PositiveInfinity
+                    : StopwatchTicksToSeconds(now - _lastAsyncPendingWarningTimestamp);
+                if (warningElapsedSeconds < AsyncShaderSlowWarningSeconds)
+                    return;
+
+                _lastAsyncPendingWarningTimestamp = now;
+                Debug.OpenGLWarning($"[ShaderAsync] Program '{Data.Name ?? "<unnamed>"}' hash={Hash} phase={phase} still pending after {elapsedSeconds:F2}s; continuing non-blocking poll.");
+            }
 
             internal static void PollPendingAsyncPrograms(int maxPrograms)
             {
@@ -555,7 +602,7 @@ namespace XREngine.Rendering.OpenGL
             private bool _hashComputed;
 
             /// <summary>
-            /// Continues an in-progress async compile/link operation (GL_ARB_parallel_shader_compile).
+            /// Continues an in-progress driver async compile/link operation.
             /// Called from <see cref="Link"/> when <see cref="_asyncLinkPhase"/> is not Idle.
             /// </summary>
             private bool ContinueAsyncLink()
@@ -586,7 +633,10 @@ namespace XREngine.Rendering.OpenGL
                         }
 
                         if (anyPending && !anyFailed)
-                            return false; // Still compiling — retry next frame
+                        {
+                            ReportSlowAsyncPending("compile");
+                            return false; // Still compiling - retry next frame
+                        }
 
                         double compileMilliseconds = CompleteUberBackendCompileTracking();
 
@@ -638,6 +688,7 @@ namespace XREngine.Rendering.OpenGL
                         _asyncLinkedProgramId = bindingId;
                         _asyncAttachedShaderIds = [.. attachedShaderIds];
                         _asyncLinkPhase = EAsyncLinkPhase.Linking;
+                        RestartAsyncPendingDiagnostics();
                         RegisterPendingAsyncProgram();
                         return false; // Will poll link completion next frame
                     }
@@ -649,7 +700,10 @@ namespace XREngine.Rendering.OpenGL
 
                         Api.GetProgram(linkedProgramId, (GLEnum)GLShader.GL_COMPLETION_STATUS_ARB, out int complete);
                         if (complete == 0)
-                            return false; // Still linking — retry next frame
+                        {
+                            ReportSlowAsyncPending("link");
+                            return false; // Still linking - retry next frame
+                        }
 
                         Api.GetProgram(linkedProgramId, GLEnum.LinkStatus, out int status);
                         bool linked = status != 0;
@@ -680,6 +734,7 @@ namespace XREngine.Rendering.OpenGL
                         _asyncLinkedProgramId = 0;
                         _shaderCache.ForEach(x => x.Value.Destroy());
                         _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                        UnregisterPendingAsyncProgram();
                         return IsLinked;
                     }
                     default:
@@ -739,6 +794,7 @@ namespace XREngine.Rendering.OpenGL
                     CleanupAsyncLink();
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
+                _asyncCompileLinkQueueWaitPending = false;
                 ResetUberBackendTracking();
                 UnregisterPendingAsyncProgram();
             }
@@ -829,6 +885,9 @@ namespace XREngine.Rendering.OpenGL
 
             private static double StopwatchTicksToMilliseconds(long ticks)
                 => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
+
+            private static double StopwatchTicksToSeconds(long ticks)
+                => ticks <= 0L ? 0.0 : (double)ticks / Stopwatch.Frequency;
 
             private void DetachShaders(uint programId, ReadOnlySpan<uint> attachedShaderIds)
                 => DetachShaders(Api, programId, attachedShaderIds);
@@ -1064,40 +1123,49 @@ namespace XREngine.Rendering.OpenGL
 
                     // If another GLRenderProgram with the same hash is already compiling,
                     // defer until its binary lands in the cache.
-                    if (!InFlightCompilations.TryAdd(Hash, 0))
+                    bool waitingForCompileQueue = _asyncCompileLinkQueueWaitPending;
+                    if (!waitingForCompileQueue && !InFlightCompilations.TryAdd(Hash, 0))
                         return false;
 
                     {
                         _cachedProgram = null;
-                        CaptureLinkRequestStackTrace();
-                        Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
+                        if (!waitingForCompileQueue)
+                        {
+                            CaptureLinkRequestStackTrace();
+                            Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
+                        }
 
-                        // When the shared context compile+link queue is available and the driver
-                        // does NOT have GL_ARB_parallel_shader_compile, offload the entire
-                        // compile → attach → link pipeline to the background thread.
-                        // This keeps the main render thread free while the driver's shader compiler runs.
+                        // Prefer the configured shared context compile+link queue. It can
+                        // safely block without freezing the render thread.
                         var compileQueue = Renderer.ProgramCompileLinkQueue;
-                        if (Engine.Rendering.Settings.AsyncProgramCompilation
-                            && !Engine.Rendering.State.HasParallelShaderCompile
+                        if (Renderer.UseSharedContextProgramCompileLinkQueue
                             && compileQueue is not null
-                            && compileQueue.IsAvailable
-                            && compileQueue.CanEnqueue)
+                            && compileQueue.IsAvailable)
                         {
                             GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs ?? PrepareCompileInputs();
                             bool allResolved = inputs is { Length: > 0 };
 
                             if (allResolved)
                             {
+                                if (!compileQueue.CanEnqueue)
+                                {
+                                    _asyncCompileLinkQueueWaitPending = true;
+                                    RegisterPendingAsyncProgram();
+                                    return false;
+                                }
+
                                 if (TryResolveUberVariantHash(inputs!, out ulong queuedVariantHash))
                                     BeginUberBackendCompileTracking(queuedVariantHash);
 
                                 compileQueue.EnqueueCompileAndLink(bindingId, inputs!);
+                                _asyncCompileLinkQueueWaitPending = false;
                                 _asyncCompileLinkPending = true;
                                 RegisterPendingAsyncProgram();
                                 return false;
                             }
                             // If source resolution failed, fall through to the synchronous path.
                         }
+                        _asyncCompileLinkQueueWaitPending = false;
 
                         using (Engine.Profiler.Start("GLRenderProgram.Link.GenerateShaders"))
                         {
@@ -1114,9 +1182,9 @@ namespace XREngine.Rendering.OpenGL
                             }
                         }
 
-                        // When GL_ARB_parallel_shader_compile is active, CompileShader() is non-blocking.
+                        // When driver parallel shader compile is active, CompileShader() is non-blocking.
                         // Shaders may still be compiling — enter the async state machine and return.
-                        if (Engine.Rendering.State.HasParallelShaderCompile &&
+                        if (Renderer.UseDriverParallelShaderCompile &&
                             _shaderCache.Values.Any(s => s.IsCompilePending))
                         {
                             _asyncLinkPhase = EAsyncLinkPhase.Compiling;
@@ -1170,12 +1238,13 @@ namespace XREngine.Rendering.OpenGL
                             using var linkProf = Engine.Profiler.Start("GLRenderProgram.Link.DriverLinkProgram");
                             Api.LinkProgram(bindingId);
 
-                            // When the extension is active, LinkProgram is also non-blocking.
-                            if (Engine.Rendering.State.HasParallelShaderCompile)
+                            // When driver parallel shader compile is active, LinkProgram is also non-blocking.
+                            if (Renderer.UseDriverParallelShaderCompile)
                             {
                                 _asyncLinkedProgramId = bindingId;
                                 _asyncAttachedShaderIds = [.. attachedShaderIds];
                                 _asyncLinkPhase = EAsyncLinkPhase.Linking;
+                                RestartAsyncPendingDiagnostics();
                                 RegisterPendingAsyncProgram();
                                 return false;
                             }

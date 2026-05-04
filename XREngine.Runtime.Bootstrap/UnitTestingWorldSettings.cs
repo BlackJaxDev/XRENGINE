@@ -239,6 +239,14 @@ public class UnitTestingWorldSettings
     public bool HasStaticModelsToImport => ModelsToImport?.Any(m => (m?.Enabled ?? false) && m.Kind == UnitTestModelImportKind.Static) ?? false;
 
     public bool AllowShaderPipelines = false;
+    public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy { get; set; } = EOpenGLShaderLinkStrategy.Auto;
+    public bool AllowBinaryProgramCaching { get; set; } = true;
+    public bool AsyncProgramBinaryUpload { get; set; } = true;
+    public bool AsyncProgramCompilation { get; set; } = true;
+    public int MaxAsyncShaderProgramsPerFrame { get; set; } = 4;
+    public int OpenGLShaderCompilerThreadCount { get; set; } = -1;
+    public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true;
+    public int OpenGLParallelShaderCompileProbeTimeoutMs { get; set; } = 25;
     public bool RenderMeshBounds = true;
 
     public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;

@@ -228,11 +228,43 @@ namespace XREngine
                 /// If true, the current render is a stereo pass - all meshes are rendered twice to layers 0 and 1 with either OVR_MultiView2 or a geometry shader.
                 /// </summary>
                 public static bool IsStereoPass => RenderingPipelineState?.StereoPass ?? false;
+                /// <summary>
+                /// If true, the current shadow pass renders directional cascades into a layered texture-array framebuffer.
+                /// </summary>
+                public static bool IsDirectionalCascadeLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false;
+                /// <summary>
+                /// If true, the current directional cascade shadow pass uses draw instancing as the cascade dimension.
+                /// </summary>
+                public static bool IsDirectionalCascadeInstancedLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeInstancedLayeredShadowPass ?? false;
+                /// <summary>
+                /// Number of active cascade layers in the current directional cascade layered shadow pass.
+                /// </summary>
+                public static int DirectionalCascadeShadowLayerCount => RenderingPipelineState?.DirectionalCascadeShadowLayerCount ?? 0;
 
                 /// <summary>
                 /// If true, OpenGL multiview shader support is available (GL_OVR_multiview2 or GL_EXT_multiview).
                 /// </summary>
                 public static bool HasOvrMultiViewExtension { get; internal set; } = false;
+                /// <summary>
+                /// If true, the active OpenGL context supports layered framebuffer attachments for texture arrays.
+                /// </summary>
+                public static bool SupportsOpenGLLayeredFramebuffers { get; internal set; }
+                /// <summary>
+                /// If true, the active OpenGL context supports writing texture-array layers from geometry shaders.
+                /// </summary>
+                public static bool SupportsOpenGLGeometryShaderLayeredRendering { get; internal set; }
+                /// <summary>
+                /// If true, the active OpenGL context supports writing gl_Layer from the vertex stage.
+                /// </summary>
+                public static bool SupportsOpenGLVertexShaderLayeredRendering { get; internal set; }
+                /// <summary>
+                /// If true, the active OpenGL context exposes viewport-array layered rendering features.
+                /// </summary>
+                public static bool SupportsOpenGLViewportArray { get; internal set; }
+                /// <summary>
+                /// Maximum OpenGL viewports reported by GL_MAX_VIEWPORTS. Defaults to 1 when unavailable.
+                /// </summary>
+                public static int MaxOpenGLViewports { get; internal set; } = 1;
                 /// <summary>
                 /// If true, Vulkan multiview support is available and enabled (VK_KHR_multiview / Vulkan 1.1+ multiview feature).
                 /// </summary>
@@ -287,10 +319,23 @@ namespace XREngine
                 public static bool HasVulkanRtxIo { get; internal set; }
 
                 /// <summary>
-                /// If true, GL_ARB_parallel_shader_compile is available and enabled.
-                /// Shader compilation and program linking are non-blocking; poll COMPLETION_STATUS_ARB for completion.
+                /// If true, GL_ARB_parallel_shader_compile or GL_KHR_parallel_shader_compile is available.
+                /// Shader compilation and program linking can be non-blocking when the OpenGL renderer
+                /// selects the driver-parallel link strategy.
                 /// </summary>
                 public static bool HasParallelShaderCompile { get; internal set; }
+
+                /// <summary>
+                /// Name of the OpenGL parallel shader compile extension selected by the active context.
+                /// Empty when unsupported or disabled.
+                /// </summary>
+                public static string OpenGLParallelShaderCompileExtension { get; internal set; } = string.Empty;
+
+                /// <summary>
+                /// True when the tiny startup probe found the driver-parallel shader-link path reliable
+                /// enough for Auto mode to use.
+                /// </summary>
+                public static bool OpenGLParallelShaderCompileProbePassed { get; internal set; }
 
                 /// <summary>
                 /// All OpenGL extensions reported by the current OpenGL context (via GL_NUM_EXTENSIONS + glGetStringi).

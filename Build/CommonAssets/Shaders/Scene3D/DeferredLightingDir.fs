@@ -28,7 +28,7 @@ layout(binding = 3) uniform sampler2D DepthView; //Depth
 #endif
 uniform sampler2D ShadowMap; //Directional Shadow Map
 uniform sampler2DArray ShadowMapArray; //Directional Cascaded Shadow Map
-layout(binding = 30) uniform sampler2D DirectionalShadowAtlasPages[2];
+layout(binding = 30) uniform sampler2DArray DirectionalShadowAtlas;
 uniform bool UseCascadedDirectionalShadows = false;
 uniform bool LightHasShadowMap = true;
 uniform bool EnableCascadedShadows = true;
@@ -576,53 +576,31 @@ float SampleDirectionalAtlasPage(
 	in float maxPenumbra,
 	in int vogelTapCount)
 {
-	if (pageIndex == 0)
-	{
-		return XRENGINE_SampleShadowAtlasFiltered(
-			DirectionalShadowAtlasPages[0],
-			localCoord,
-			uvScaleBias,
-			localTexelSize,
-			bias,
-			blockerSamples,
-			filterSamples,
-			filterRadius,
-			blockerSearchRadius,
-			softMode,
-			lightSourceRadius,
-			minPenumbra,
-			maxPenumbra,
-			vogelTapCount);
-	}
+	if (pageIndex < 0 || pageIndex >= textureSize(DirectionalShadowAtlas, 0).z)
+		return 1.0f;
 
-	if (pageIndex == 1)
-	{
-		return XRENGINE_SampleShadowAtlasFiltered(
-			DirectionalShadowAtlasPages[1],
-			localCoord,
-			uvScaleBias,
-			localTexelSize,
-			bias,
-			blockerSamples,
-			filterSamples,
-			filterRadius,
-			blockerSearchRadius,
-			softMode,
-			lightSourceRadius,
-			minPenumbra,
-			maxPenumbra,
-			vogelTapCount);
-	}
-
-	return 1.0f;
+	return XRENGINE_SampleShadowAtlasFiltered(
+		DirectionalShadowAtlas,
+		localCoord,
+		float(pageIndex),
+		uvScaleBias,
+		localTexelSize,
+		bias,
+		blockerSamples,
+		filterSamples,
+		filterRadius,
+		blockerSearchRadius,
+		softMode,
+		lightSourceRadius,
+		minPenumbra,
+		maxPenumbra,
+		vogelTapCount);
 }
 
 float ReadDirectionalAtlasCenterDepth(in int pageIndex, in vec2 uv)
 {
-	if (pageIndex == 0)
-		return texture(DirectionalShadowAtlasPages[0], uv).r;
-	if (pageIndex == 1)
-		return texture(DirectionalShadowAtlasPages[1], uv).r;
+	if (pageIndex >= 0 && pageIndex < textureSize(DirectionalShadowAtlas, 0).z)
+		return texture(DirectionalShadowAtlas, vec3(uv, float(pageIndex))).r;
 	return 1.0f;
 }
 
@@ -673,7 +651,7 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 		if (DirectionalShadowAtlasEnabled)
 		{
 			ivec4 atlasI0 = DirectionalShadowAtlasPacked0[cascadeIndex];
-			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < 2;
+			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < textureSize(DirectionalShadowAtlas, 0).z;
 			if (atlasEnabled)
 			{
 				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[cascadeIndex];

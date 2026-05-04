@@ -77,6 +77,32 @@ public sealed class RuntimeModularizationPhase3RenderingTests
     }
 
     [Test]
+    public void RuntimeTimingFacade_SeparatesUpdateAndRenderDeltaContracts()
+    {
+        string runtimeHostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
+        string runtimeFacadeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngineFacade.cs");
+        string engineHostSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
+        string skyboxSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Misc/SkyboxComponent.cs");
+
+        runtimeHostSource.ShouldContain("double UpdateDeltaSeconds { get; }");
+        runtimeHostSource.ShouldContain("long LastUpdateTimestampTicks { get; }");
+        runtimeHostSource.ShouldContain("double RenderDeltaSeconds { get; }");
+        runtimeHostSource.ShouldContain("long LastRenderTimestampTicks { get; }");
+
+        engineHostSource.ShouldContain("public double UpdateDeltaSeconds => Engine.Time.Timer.Update.Delta;");
+        engineHostSource.ShouldContain("public long LastUpdateTimestampTicks => Engine.Time.Timer.Update.LastTimestampTicks;");
+        engineHostSource.ShouldContain("public double RenderDeltaSeconds => Engine.Time.Timer.Render.Delta;");
+
+        runtimeFacadeSource.ShouldContain("public RuntimeTimerFrame Update { get; } = new(ERuntimeTimerFrameKind.Update);");
+        runtimeFacadeSource.ShouldContain("public RuntimeTimerFrame Render { get; } = new(ERuntimeTimerFrameKind.Render);");
+        runtimeFacadeSource.ShouldContain("RuntimeRenderingHostServices.Current.UpdateDeltaSeconds");
+        runtimeFacadeSource.ShouldContain("RuntimeRenderingHostServices.Current.RenderDeltaSeconds");
+
+        skyboxSource.ShouldContain("Engine.Time.Timer.Update.Delta");
+        skyboxSource.ShouldNotContain("float dt = Math.Max(0.0f, Engine.Delta);");
+    }
+
+    [Test]
     public void P2a_PipelineFrameAndScreenSpaceUiContracts_SourceContracts_ArePresent()
     {
         string runtimeHostSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");

@@ -228,6 +228,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncLinkedProgramId = 0;
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
+                _asyncCompileLinkQueueWaitPending = false;
                 _linkRequestStackTrace = null;
                 UnregisterPendingAsyncProgram();
                 _hashComputed = false;

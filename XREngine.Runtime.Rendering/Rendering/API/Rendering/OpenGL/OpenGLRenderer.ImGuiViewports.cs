@@ -54,11 +54,13 @@ namespace XREngine.Rendering.OpenGL
 
             private static readonly RenderImDrawDataDelegate? RenderImDrawData = CreateRenderImDrawDataDelegate();
             private static readonly TranslateInputKeyDelegate? TranslateInputKey = CreateTranslateInputKeyDelegate();
+            private static readonly List<IWindow> AbandonedShutdownWindows = [];
 
             private readonly OpenGLRenderer _renderer;
             private readonly ImGuiController _controller;
             private readonly IWindow _mainWindow;
             private readonly Dictionary<uint, PlatformWindow> _platformWindows = [];
+            private readonly List<PendingPlatformWindowDisposal> _pendingPlatformWindowDisposals = [];
             private readonly List<ImGuiPlatformMonitor> _monitorScratch = [];
 
             private readonly ViewportCallback _platformCreateWindow;
@@ -107,6 +109,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly nint _rendererSetWindowSizePtr;
             private readonly nint _rendererRenderWindowPtr;
             private readonly nint _rendererSwapBuffersPtr;
+            private const int PlatformWindowDisposalQuietFrames = 2;
             #endregion
 
             #region Instance state and resources
@@ -328,6 +331,7 @@ namespace XREngine.Rendering.OpenGL
                 nint previousContext = ImGui.GetCurrentContext();
                 try
                 {
+                    DisposePendingPlatformWindows();
                     UpdatePlatformMonitors();
                     ImGui.UpdatePlatformWindows();
                     ImGui.RenderPlatformWindowsDefault();
@@ -389,8 +393,9 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 foreach (PlatformWindow window in _platformWindows.Values)
-                    window.Dispose();
+                    window.AbandonNativeWindowForShutdown();
                 _platformWindows.Clear();
+                AbandonPendingPlatformWindowsForShutdown();
             }
             #endregion
 
@@ -596,6 +601,84 @@ namespace XREngine.Rendering.OpenGL
             private IWindow GetWindow(ImGuiViewportPtr viewport)
                 => GetPlatformWindow(viewport)?.Window ?? _mainWindow;
 
+            private void QueuePlatformWindowDispose(PlatformWindow window)
+            {
+                if (!window.BeginDispose())
+                    return;
+
+                // GLFW window destruction can re-enter native close/event handling.
+                // Docking back into the main viewport can also retire a platform
+                // window while the drag mouse button is still down, so wait for a
+                // short quiet period before destroying the native window.
+                _pendingPlatformWindowDisposals.Add(new PendingPlatformWindowDisposal(window));
+            }
+
+            private void DisposePendingPlatformWindows(bool force = false)
+            {
+                if (_pendingPlatformWindowDisposals.Count == 0)
+                    return;
+
+                bool mouseButtonsReleased = force || AreMouseButtonsReleased();
+                bool preparedMainContext = false;
+                int writeIndex = 0;
+
+                for (int i = 0; i < _pendingPlatformWindowDisposals.Count; i++)
+                {
+                    PendingPlatformWindowDisposal pending = _pendingPlatformWindowDisposals[i];
+
+                    if (!force && !mouseButtonsReleased)
+                    {
+                        pending.QuietFramesRemaining = PlatformWindowDisposalQuietFrames;
+                        _pendingPlatformWindowDisposals[writeIndex++] = pending;
+                        continue;
+                    }
+
+                    if (!force && pending.QuietFramesRemaining > 0)
+                    {
+                        pending.QuietFramesRemaining--;
+                        _pendingPlatformWindowDisposals[writeIndex++] = pending;
+                        continue;
+                    }
+
+                    if (!preparedMainContext)
+                    {
+                        preparedMainContext = true;
+                        try
+                        {
+                            _mainWindow.MakeCurrent();
+                        }
+                        catch (Exception ex)
+                        {
+                            LogCallbackException("PrepareMainOpenGLContextForViewportDispose", ex);
+                        }
+                    }
+
+                    pending.Window.Dispose();
+                }
+
+                if (writeIndex < _pendingPlatformWindowDisposals.Count)
+                    _pendingPlatformWindowDisposals.RemoveRange(writeIndex, _pendingPlatformWindowDisposals.Count - writeIndex);
+            }
+
+            private void AbandonPendingPlatformWindowsForShutdown()
+            {
+                if (_pendingPlatformWindowDisposals.Count == 0)
+                    return;
+
+                for (int i = 0; i < _pendingPlatformWindowDisposals.Count; i++)
+                    _pendingPlatformWindowDisposals[i].Window.AbandonNativeWindowForShutdown();
+
+                _pendingPlatformWindowDisposals.Clear();
+            }
+
+            private bool AreMouseButtonsReleased()
+            {
+                if (!TryReadMouseButtonState(out bool leftDown, out bool rightDown, out bool middleDown))
+                    return false;
+
+                return !leftDown && !rightDown && !middleDown;
+            }
+
             private void PlatformCreateWindow(ImGuiViewport* nativeViewport)
             {
                 try
@@ -625,7 +708,7 @@ namespace XREngine.Rendering.OpenGL
                     if (window is not null)
                     {
                         _platformWindows.Remove(window.ViewportId);
-                        window.Dispose();
+                        QueuePlatformWindowDispose(window);
                     }
 
                     viewport.PlatformUserData = nint.Zero;
@@ -1300,6 +1383,18 @@ namespace XREngine.Rendering.OpenGL
 
             #region Nested platform window wrapper
 
+            private struct PendingPlatformWindowDisposal
+            {
+                public PendingPlatformWindowDisposal(PlatformWindow window)
+                {
+                    Window = window;
+                    QuietFramesRemaining = PlatformWindowDisposalQuietFrames;
+                }
+
+                public PlatformWindow Window;
+                public int QuietFramesRemaining;
+            }
+
             private sealed class PlatformWindow : IDisposable
             {
                 private readonly OpenGLImGuiMultiViewportController _owner;
@@ -1307,6 +1402,7 @@ namespace XREngine.Rendering.OpenGL
                 private IInputContext? _input;
                 private IMouse? _mouse;
                 private readonly List<IKeyboard> _keyboards = [];
+                private bool _disposeStarted;
                 private bool _disposed;
 
                 public PlatformWindow(OpenGLImGuiMultiViewportController owner, ImGuiViewportPtr viewport)
@@ -1341,20 +1437,40 @@ namespace XREngine.Rendering.OpenGL
                 public IWindow Window { get; }
                 public uint ViewportId { get; }
                 public bool Focused { get; private set; }
-                public bool IsDisposed => _disposed;
+                public bool IsDisposed => _disposeStarted;
                 public nint Handle => GCHandle.ToIntPtr(_handle);
 
-                public void Dispose()
+                public bool BeginDispose()
                 {
-                    if (_disposed)
-                        return;
+                    if (_disposeStarted)
+                        return false;
 
-                    _disposed = true;
+                    _disposeStarted = true;
 
                     Window.Load -= OnLoad;
                     Window.FocusChanged -= OnFocusChanged;
                     Window.Closing -= OnClosing;
                     DetachInput();
+
+                    try
+                    {
+                        Window.IsVisible = false;
+                    }
+                    catch
+                    {
+                    }
+
+                    return true;
+                }
+
+                public void Dispose()
+                {
+                    BeginDispose();
+
+                    if (_disposed)
+                        return;
+
+                    _disposed = true;
 
                     try
                     {
@@ -1366,6 +1482,21 @@ namespace XREngine.Rendering.OpenGL
 
                     if (_handle.IsAllocated)
                         _handle.Free();
+                }
+
+                public void AbandonNativeWindowForShutdown()
+                {
+                    BeginDispose();
+
+                    if (_disposed)
+                        return;
+
+                    _disposed = true;
+
+                    if (_handle.IsAllocated)
+                        _handle.Free();
+
+                    AbandonedShutdownWindows.Add(Window);
                 }
 
                 private void OnLoad()
@@ -1439,6 +1570,9 @@ namespace XREngine.Rendering.OpenGL
 
                 private void OnClosing()
                 {
+                    if (_disposeStarted)
+                        return;
+
                     _owner.RequestClose(ViewportId);
 
                     try

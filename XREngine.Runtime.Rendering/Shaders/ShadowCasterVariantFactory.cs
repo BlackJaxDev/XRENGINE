@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Shaders;
@@ -90,6 +91,46 @@ public static class ShadowCasterVariantFactory
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };
         return variant;
+    }
+
+    public static XRMaterial CreateDirectionalCascadeMaterialVariant(XRMaterial sourceMaterial, bool useGeometryShader)
+    {
+        ArgumentNullException.ThrowIfNull(sourceMaterial);
+
+        List<XRShader> shaders = [];
+        if (useGeometryShader)
+            shaders.Add(XRShader.EngineShader("DirectionalCascadeShadowDepth.gs", EShaderType.Geometry));
+
+        XRShader fragmentShader = CreateDirectionalCascadeFragmentShader(sourceMaterial);
+        shaders.Add(fragmentShader);
+
+        XRMaterial variant = new(shaders)
+        {
+            Parameters = [],
+            Textures = [],
+            RenderPass = sourceMaterial.RenderPass,
+            BillboardMode = sourceMaterial.BillboardMode,
+            AlphaCutoff = sourceMaterial.AlphaCutoff,
+            TransparencyMode = sourceMaterial.TransparencyMode,
+            TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
+            TransparentSortPriority = sourceMaterial.TransparentSortPriority,
+            ShadowBindingSourceMaterial = sourceMaterial,
+            DirectionalCascadeShadowMaterialKind = useGeometryShader
+                ? EDirectionalCascadeShadowMaterialKind.GeometryShader
+                : EDirectionalCascadeShadowMaterialKind.InstancedLayered,
+            RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
+        };
+        return variant;
+    }
+
+    private static XRShader CreateDirectionalCascadeFragmentShader(XRMaterial sourceMaterial)
+    {
+        XRShader? fragmentShader = sourceMaterial.FragmentShaders.FirstOrDefault();
+        if (fragmentShader is null)
+            return new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing);
+
+        return ShaderHelper.GetShadowCasterForwardVariant(fragmentShader)
+            ?? new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing);
     }
 
     private static RenderingParameters CreateRenderOptions(RenderingParameters? source)

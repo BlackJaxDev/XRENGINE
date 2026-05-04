@@ -126,6 +126,32 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
+            /// <summary>
+            /// Completes a previously dispatched ARB_parallel_shader_compile compile by
+            /// querying the regular compile status. Drivers are allowed to block here,
+            /// so this is only used as a stale-async fallback.
+            /// </summary>
+            public bool CompleteCompileBlocking()
+            {
+                if (!_compilePending)
+                    return true;
+
+                _compilePending = false;
+                Api.GetShader(BindingId, GLEnum.CompileStatus, out int status);
+                IsCompiled = status != 0;
+
+                if (!IsCompiled)
+                {
+                    Api.GetShaderInfoLog(BindingId, out string? info);
+                    if (!string.IsNullOrEmpty(info))
+                        Debug.OpenGLWarning(info);
+                    else
+                        Debug.OpenGLWarning("Unable to compile shader, but no error was returned.");
+                }
+
+                return true;
+            }
+
             public EventList<GLRenderProgram> ActivePrograms { get; } = new() { ThreadSafe = true };
 
             private static ShaderType ToGLEnum(EShaderType mode)
@@ -221,7 +247,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.CompileShader(BindingId);
 
-                if (Engine.Rendering.State.HasParallelShaderCompile)
+                if (Renderer.UseDriverParallelShaderCompile)
                 {
                     _compilePending = true;
                     info = null;
@@ -249,7 +275,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.CompileShader(BindingId);
 
-                if (Engine.Rendering.State.HasParallelShaderCompile)
+                if (Renderer.UseDriverParallelShaderCompile)
                 {
                     _compilePending = true;
                     return false;

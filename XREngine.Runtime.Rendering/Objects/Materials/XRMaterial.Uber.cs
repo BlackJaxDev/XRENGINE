@@ -365,19 +365,31 @@ public partial class XRMaterial
         EnsureUberStateInitialized(fragmentShader, manifest);
         XRShader canonicalShader = ResolveCanonicalUberFragmentShader(fragmentShader);
 
-        UberShaderVariantTelemetry.RecordRequest();
-        SetUberVariantStatus(new UberMaterialVariantStatus
-        {
-            Stage = EUberMaterialVariantStage.Preparing,
-            ActiveVariantHash = ActiveUberVariant.VariantHash,
-            RequestedVariantHash = RequestedUberVariant.VariantHash,
-        });
-
         try
         {
-            Stopwatch adoptionStopwatch = Stopwatch.StartNew();
             UberShaderVariantBuilder.PreparedUberVariant prepared = UberShaderVariantBuilder.PrepareVariant(this, canonicalShader, manifest);
             SetRequestedUberVariant(prepared.Request);
+
+            if (ActiveUberVariant.Equals(prepared.BindingState) &&
+                ReferenceEquals(GetShader(EShaderType.Fragment), prepared.FragmentShader))
+            {
+                return true;
+            }
+
+            UberShaderVariantTelemetry.RecordRequest();
+            SetUberVariantStatus(new UberMaterialVariantStatus
+            {
+                Stage = EUberMaterialVariantStage.Preparing,
+                ActiveVariantHash = ActiveUberVariant.VariantHash,
+                RequestedVariantHash = prepared.Request.VariantHash,
+                CacheHit = prepared.CacheHit,
+                PreparationMilliseconds = prepared.PreparationMilliseconds,
+                UniformCount = prepared.UniformCount,
+                SamplerCount = prepared.SamplerCount,
+                GeneratedSourceLength = prepared.GeneratedSourceLength,
+            });
+
+            Stopwatch adoptionStopwatch = Stopwatch.StartNew();
             SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
             SetActiveUberVariant(prepared.BindingState);
             adoptionStopwatch.Stop();

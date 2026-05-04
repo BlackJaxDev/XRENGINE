@@ -30,6 +30,7 @@ public static class UnitTestingWorldSettingsStore
         }
 
         RuntimeBootstrapState.Settings = settings;
+        BootstrapRenderSettings.ApplyOpenGLShaderLinkSettings(settings);
         return settings;
     }
 

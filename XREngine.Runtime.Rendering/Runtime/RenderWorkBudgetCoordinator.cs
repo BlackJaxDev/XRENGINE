@@ -30,6 +30,7 @@ internal static class RenderWorkBudgetCoordinator
     private const double StartupBoostMaxMilliseconds = 5000.0;
     private const double StartupBoostBudgetMultiplier = 2.0;
     private const float LowPriorityShadowDeferThreshold = 5000.0f;
+    private const double TextureCatchupShadowDeferWaitMilliseconds = 8.0;
 
     private static long s_frameId = long.MinValue;
     private static long s_firstFrameId = long.MinValue;
@@ -96,9 +97,22 @@ internal static class RenderWorkBudgetCoordinator
     public static bool ShouldDeferShadowAtlasLowPriorityTile(float priority, bool editorPinned)
     {
         EnsureFrame();
-        return !editorPinned
-            && Volatile.Read(ref s_urgentTextureRepairQueueDepth) > 0
-            && priority < LowPriorityShadowDeferThreshold;
+        if (editorPinned)
+            return false;
+
+        int textureQueueDepth = Volatile.Read(ref s_textureUploadQueueDepth);
+        int urgentTextureRepairDepth = Volatile.Read(ref s_urgentTextureRepairQueueDepth);
+        if (textureQueueDepth <= 0 && urgentTextureRepairDepth <= 0)
+            return false;
+
+        bool textureCatchupActive =
+            IsStartupBoostActive() ||
+            urgentTextureRepairDepth > 0 ||
+            Volatile.Read(ref s_oldestTextureQueueWaitMilliseconds) >= TextureCatchupShadowDeferWaitMilliseconds;
+        if (!textureCatchupActive)
+            return false;
+
+        return textureQueueDepth > 0 || priority < LowPriorityShadowDeferThreshold;
     }
 
     public static void RecordShaderUploadQueue(int depth)

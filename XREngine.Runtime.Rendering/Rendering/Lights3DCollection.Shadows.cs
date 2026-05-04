@@ -94,6 +94,7 @@ namespace XREngine.Scene
             {
                 SpotLightComponent => Engine.Rendering.Settings.UseSpotShadowAtlas,
                 DirectionalLightComponent => Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                PointLightComponent => Engine.Rendering.Settings.UsePointShadowAtlas,
                 _ => false,
             };
 
@@ -259,7 +260,11 @@ namespace XREngine.Scene
                         light.RenderShadowMap(collectVisibleNow);
                 }
                 for (int i = 0; i < DynamicPointLights.Count; i++)
-                    DynamicPointLights[i].RenderShadowMap(collectVisibleNow);
+                {
+                    PointLightComponent light = DynamicPointLights[i];
+                    if (!Engine.Rendering.Settings.UsePointShadowAtlas)
+                        light.RenderShadowMap(collectVisibleNow);
+                }
             }
             finally
             {
@@ -432,8 +437,34 @@ namespace XREngine.Scene
 
         private void SubmitPointShadowAtlasRequests()
         {
-            // Point atlas rendering is not implemented yet; point lights continue to
-            // use their cubemap shadow path until the atlas renderer supports faces.
+            if (!Engine.Rendering.Settings.UsePointShadowAtlas)
+                return;
+
+            int count = DynamicPointLights.Count;
+            for (int i = 0; i < count; i++)
+            {
+                PointLightComponent light = DynamicPointLights[i];
+                if (!ShouldSubmitShadowAtlasRequest(light))
+                    continue;
+
+                float basePriority = 3000.0f + EstimatePointPriority(light);
+                for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
+                {
+                    if (!light.TryGetShadowFaceCamera(faceIndex, out XRCamera faceCamera))
+                        continue;
+
+                    float faceRelevance = EstimatePointFaceRelevance(light, faceIndex);
+                    uint desiredResolution = GetDesiredPointFaceShadowAtlasResolution(light, faceRelevance);
+                    SubmitShadowAtlasRequest(
+                        light,
+                        EShadowProjectionType.PointFace,
+                        faceIndex,
+                        faceCamera,
+                        priority: basePriority + faceRelevance * 750.0f - faceIndex * 0.01f,
+                        fallback: ShadowFallbackMode.ContactOnly,
+                        desiredResolutionOverride: desiredResolution);
+                }
+            }
         }
 
         private void SubmitShadowAtlasRequest(
@@ -442,7 +473,8 @@ namespace XREngine.Scene
             int faceOrCascadeIndex,
             XRCamera camera,
             float priority,
-            ShadowFallbackMode fallback)
+            ShadowFallbackMode fallback,
+            uint? desiredResolutionOverride = null)
         {
             EShadowMapEncoding encoding = EShadowMapEncoding.Depth;
             ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, faceOrCascadeIndex, encoding);
@@ -450,7 +482,7 @@ namespace XREngine.Scene
             Matrix4x4 projection = camera.ProjectionMatrix;
             float projNear = MathF.Max(0.0f, camera.NearZ);
             float projFar = MathF.Max(camera.FarZ, camera.NearZ + 0.001f);
-            uint desiredResolution = GetDesiredShadowAtlasResolution(light);
+            uint desiredResolution = desiredResolutionOverride ?? GetDesiredShadowAtlasResolution(light);
             uint minimumResolution = GetMinimumShadowAtlasResolution(desiredResolution);
             ulong contentHash = BuildShadowContentHash(light, projectionType, faceOrCascadeIndex, encoding, view, projection, projNear, projFar);
             bool canReusePreviousFrame = light.Type != ELightType.Dynamic;
@@ -459,6 +491,7 @@ namespace XREngine.Scene
                 previous.ContentVersion != contentHash ||
                 !canReusePreviousFrame ||
                 !previous.IsResident;
+            float refreshPriority = priority + EstimateRefreshPriorityBonus(hasPrevious, previous);
 
             ShadowMapRequest request = new(
                 key,
@@ -474,7 +507,7 @@ namespace XREngine.Scene
                 MathF.Max(camera.FarZ, camera.NearZ + 0.001f),
                 desiredResolution,
                 minimumResolution,
-                priority,
+                refreshPriority,
                 contentHash,
                 isDirty,
                 canReusePreviousFrame,
@@ -483,6 +516,23 @@ namespace XREngine.Scene
 
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
             ShadowAtlas.Submit(request);
+        }
+
+        private float EstimateRefreshPriorityBonus(bool hasPrevious, in ShadowAtlasAllocation previous)
+        {
+            const float neverRenderedBonus = 5000.0f;
+            const float perFrameAgeBonus = 250.0f;
+            const ulong maxAgeFrames = 20u;
+
+            if (!hasPrevious || !previous.IsResident || previous.LastRenderedFrame == 0u)
+                return neverRenderedBonus;
+
+            ulong currentFrame = ShadowAtlas.CurrentFrameId;
+            if (currentFrame <= previous.LastRenderedFrame)
+                return 0.0f;
+
+            ulong ageFrames = Math.Min(currentFrame - previous.LastRenderedFrame, maxAgeFrames);
+            return ageFrames * perFrameAgeBonus;
         }
 
         private static bool ShouldSubmitShadowAtlasRequest(LightComponent light)
@@ -555,6 +605,47 @@ namespace XREngine.Scene
         private float EstimatePointPriority(PointLightComponent light)
             => EstimateLocalPriority(light.Transform.RenderTranslation, light.Radius, light.Brightness);
 
+        private uint GetDesiredPointFaceShadowAtlasResolution(PointLightComponent light, float faceRelevance)
+        {
+            uint desired = GetDesiredShadowAtlasResolution(light);
+            if (faceRelevance < 0.15f)
+                desired = Math.Max(ShadowAtlas.Settings.MinTileResolution, desired >> 2);
+            else if (faceRelevance < 0.45f)
+                desired = Math.Max(ShadowAtlas.Settings.MinTileResolution, desired >> 1);
+
+            return ShadowAtlasManager.NormalizeTileResolution(
+                desired,
+                ShadowAtlas.Settings.MinTileResolution,
+                ShadowAtlas.Settings.MaxTileResolution,
+                ShadowAtlas.Settings.PageSize);
+        }
+
+        private float EstimatePointFaceRelevance(PointLightComponent light, int faceIndex)
+        {
+            if (_shadowAtlasCameraScratch.Count == 0)
+                return 1.0f;
+
+            Vector3 lightPosition = light.Transform.RenderTranslation;
+            Vector3 faceForward = PointLightComponent.GetShadowFaceForward(faceIndex);
+            float best = 0.0f;
+            for (int i = 0; i < _shadowAtlasCameraScratch.Count; i++)
+            {
+                Vector3 toCamera = _shadowAtlasCameraScratch[i].Transform.RenderTranslation - lightPosition;
+                float lengthSq = toCamera.LengthSquared();
+                if (lengthSq <= 0.000001f)
+                {
+                    best = 1.0f;
+                    continue;
+                }
+
+                Vector3 direction = toCamera / MathF.Sqrt(lengthSq);
+                float alignment = Vector3.Dot(direction, faceForward);
+                best = MathF.Max(best, Math.Clamp((alignment + 1.0f) * 0.5f, 0.0f, 1.0f));
+            }
+
+            return MathF.Max(best, 0.05f);
+        }
+
         private float EstimateLocalPriority(Vector3 center, float radius, float intensity)
         {
             if (_shadowAtlasCameraScratch.Count == 0)
@@ -586,7 +677,10 @@ namespace XREngine.Scene
                 DynamicSpotLights[i].SetShadowAtlasDiagnostic(default);
 
             for (int i = 0; i < DynamicPointLights.Count; i++)
+            {
+                DynamicPointLights[i].ClearShadowAtlasFaceSlots();
                 DynamicPointLights[i].SetShadowAtlasDiagnostic(default);
+            }
 
             for (int i = 0; i < ShadowAtlas.Requests.Count; i++)
             {
@@ -626,6 +720,7 @@ namespace XREngine.Scene
 
             int shadowRecordIndex =
                 request.ProjectionType == EShadowProjectionType.SpotPrimary ||
+                (request.ProjectionType == EShadowProjectionType.PointFace && request.FaceOrCascadeIndex == 0) ||
                 request.ProjectionType == EShadowProjectionType.DirectionalPrimary ||
                 request.ProjectionType == EShadowProjectionType.DirectionalCascade
                     ? recordIndex
@@ -652,6 +747,17 @@ namespace XREngine.Scene
                         request.FarPlane,
                         request.DesiredResolution);
                 }
+            }
+            else if (request.Light is PointLightComponent pointLight &&
+                request.ProjectionType == EShadowProjectionType.PointFace)
+            {
+                pointLight.SetShadowAtlasFaceSlot(
+                    request.FaceOrCascadeIndex,
+                    allocation,
+                    recordIndex,
+                    request.NearPlane,
+                    request.FarPlane,
+                    request.DesiredResolution);
             }
 
             light.SetShadowAtlasDiagnostic(new ShadowRequestDiagnostic(
@@ -819,9 +925,24 @@ namespace XREngine.Scene
             return false;
         }
 
+        internal bool TryGetPointShadowAtlasFaceAllocation(
+            PointLightComponent light,
+            int faceIndex,
+            out ShadowAtlasAllocation allocation,
+            out int shadowRecordIndex)
+        {
+            ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.PointFace, faceIndex, EShadowMapEncoding.Depth);
+            if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
+                return true;
+
+            allocation = default;
+            shadowRecordIndex = -1;
+            return false;
+        }
+
         internal bool TryGetResidentSpotShadowAtlasTexture(
             SpotLightComponent light,
-            out XRTexture2D texture,
+            out XRTexture2DArray texture,
             out ShadowAtlasAllocation allocation,
             out int shadowRecordIndex)
         {

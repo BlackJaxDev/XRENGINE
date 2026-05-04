@@ -195,6 +195,9 @@ namespace XREngine.Rendering
             bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
 
             BaseVersion ver;
+            if (!useMeshDeform && Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
+                return GetDirectionalCascadeInstancedVersion();
+
             bool preferNV = Engine.Rendering.Settings.PreferNVStereo;
             bool hasNvMaterialVertexShader = MaterialHasMatchingVertexShader(HasNVStereoViewRendering);
             bool hasMultiViewMaterialVertexShader = MaterialHasMatchingVertexShader(HasMultiViewExtension);
@@ -265,6 +268,7 @@ namespace XREngine.Rendering
         public BaseVersion GetMeshDeformDefaultVersion() => GetOrCreateVersion(3);
         public BaseVersion GetMeshDeformOVRMultiViewVersion() => GetOrCreateVersion(4);
         public BaseVersion GetMeshDeformNVStereoVersion() => GetOrCreateVersion(5);
+        public BaseVersion GetDirectionalCascadeInstancedVersion() => GetOrCreateVersion(6);
 
         private static bool HasNVStereoViewRendering(XRShader x)
             => x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
@@ -316,6 +320,7 @@ namespace XREngine.Rendering
                 3 => new MeshDeformVersion(this, NoSpecialExtensions, true),
                 4 => new MeshDeformVersion(this, HasMultiViewExtension, false) { UseOVRMultiView = true },
                 5 => new MeshDeformVersion(this, HasNVStereoViewRendering, false) { UseNVStereo = true },
+                6 => new Version<DirectionalCascadeInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
                 _ => throw new ArgumentOutOfRangeException(nameof(versionKey), versionKey, "Unknown mesh renderer shader version."),
             };
 

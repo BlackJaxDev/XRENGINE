@@ -11,6 +11,16 @@ using Color = System.Drawing.Color;
 
 namespace XREngine.Rendering
 {
+    /// <summary>
+    /// Identifies engine-created directional cascade shadow variants that need layered draw handling.
+    /// </summary>
+    public enum EDirectionalCascadeShadowMaterialKind
+    {
+        None = 0,
+        InstancedLayered = 1,
+        GeometryShader = 2,
+    }
+
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRMaterialInspector")]
     public partial class XRMaterial : XRMaterialBase
     {
@@ -31,9 +41,19 @@ namespace XREngine.Rendering
         [YamlIgnore]
         private bool _pointShadowCasterGeometryVariantResolved;
         [YamlIgnore]
+        private XRMaterial? _directionalCascadeInstancedShadowCasterVariant;
+        [YamlIgnore]
+        private bool _directionalCascadeInstancedShadowCasterVariantResolved;
+        [YamlIgnore]
+        private XRMaterial? _directionalCascadeGeometryShadowCasterVariant;
+        [YamlIgnore]
+        private bool _directionalCascadeGeometryShadowCasterVariantResolved;
+        [YamlIgnore]
         private XRMaterial? _shadowBindingSourceMaterial;
         [YamlIgnore]
         private XRMaterial? _shadowUniformSourceMaterial;
+        [YamlIgnore]
+        private EDirectionalCascadeShadowMaterialKind _directionalCascadeShadowMaterialKind;
 
         private UberMaterialAuthoredState _uberAuthoredState = UberMaterialAuthoredState.Empty;
         [YamlIgnore]
@@ -343,13 +363,25 @@ namespace XREngine.Rendering
         }
 
         public void SetRequestedUberVariant(UberMaterialVariantRequest? request)
-            => RequestedUberVariant = request ?? UberMaterialVariantRequest.Empty;
+        {
+            UberMaterialVariantRequest next = request ?? UberMaterialVariantRequest.Empty;
+            if (!RequestedUberVariant.Equals(next))
+                RequestedUberVariant = next;
+        }
 
         public void SetActiveUberVariant(UberMaterialVariantBindingState? bindingState)
-            => ActiveUberVariant = bindingState ?? UberMaterialVariantBindingState.Empty;
+        {
+            UberMaterialVariantBindingState next = bindingState ?? UberMaterialVariantBindingState.Empty;
+            if (!ActiveUberVariant.Equals(next))
+                ActiveUberVariant = next;
+        }
 
         public void SetUberVariantStatus(UberMaterialVariantStatus? status)
-            => UberVariantStatus = status ?? UberMaterialVariantStatus.Empty;
+        {
+            UberMaterialVariantStatus next = status ?? UberMaterialVariantStatus.Empty;
+            if (!UberVariantStatus.Equals(next))
+                UberVariantStatus = next;
+        }
 
         public void ClearUberVariantRuntimeState()
         {
@@ -527,6 +559,14 @@ namespace XREngine.Rendering
             set => SetField(ref _shadowUniformSourceMaterial, value);
         }
 
+        [Browsable(false)]
+        [YamlIgnore]
+        public EDirectionalCascadeShadowMaterialKind DirectionalCascadeShadowMaterialKind
+        {
+            get => _directionalCascadeShadowMaterialKind;
+            internal set => SetField(ref _directionalCascadeShadowMaterialKind, value);
+        }
+
         public XRMaterial? GetPointShadowCasterVariant(bool useGeometryShader)
         {
             if (useGeometryShader)
@@ -549,6 +589,28 @@ namespace XREngine.Rendering
             return _pointShadowCasterVariant;
         }
 
+        public XRMaterial? GetDirectionalCascadeShadowCasterVariant(bool useGeometryShader)
+        {
+            if (useGeometryShader)
+            {
+                if (!_directionalCascadeGeometryShadowCasterVariantResolved)
+                {
+                    _directionalCascadeGeometryShadowCasterVariant = ShadowCasterVariantFactory.CreateDirectionalCascadeMaterialVariant(this, useGeometryShader: true);
+                    _directionalCascadeGeometryShadowCasterVariantResolved = true;
+                }
+
+                return _directionalCascadeGeometryShadowCasterVariant;
+            }
+
+            if (!_directionalCascadeInstancedShadowCasterVariantResolved)
+            {
+                _directionalCascadeInstancedShadowCasterVariant = ShadowCasterVariantFactory.CreateDirectionalCascadeMaterialVariant(this, useGeometryShader: false);
+                _directionalCascadeInstancedShadowCasterVariantResolved = true;
+            }
+
+            return _directionalCascadeInstancedShadowCasterVariant;
+        }
+
         public void InvalidateDepthNormalPrePassVariant()
         {
             _depthNormalPrePassVariant?.Destroy();
@@ -567,6 +629,12 @@ namespace XREngine.Rendering
             _pointShadowCasterGeometryVariant?.Destroy();
             _pointShadowCasterGeometryVariant = null;
             _pointShadowCasterGeometryVariantResolved = false;
+            _directionalCascadeInstancedShadowCasterVariant?.Destroy();
+            _directionalCascadeInstancedShadowCasterVariant = null;
+            _directionalCascadeInstancedShadowCasterVariantResolved = false;
+            _directionalCascadeGeometryShadowCasterVariant?.Destroy();
+            _directionalCascadeGeometryShadowCasterVariant = null;
+            _directionalCascadeGeometryShadowCasterVariantResolved = false;
         }
 
         private static bool IsManagedTransparencyRenderPass(int renderPass)

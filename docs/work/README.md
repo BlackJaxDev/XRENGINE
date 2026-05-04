@@ -28,7 +28,8 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Ambient occlusion | Stable doc + testing | [../features/gi/ambient-occlusion.md](../features/gi/ambient-occlusion.md) | HBAO+ and non-HBAO implementation trackers are complete; remaining validation lives in [testing/ambient-occlusion.md](testing/ambient-occlusion.md). |
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/gpu-rendering.md](todo/gpu-rendering.md) | Broad GPU-driven rendering work remains active. |
-| Shadow filtering and atlas allocation | Active | [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | VSM/EVSM filtering, dynamic atlas LOD allocation, and post-v1 advanced shadow follow-ups for directional, spot, and point lights. |
+| Advanced flat mirrors | Active | [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md) | Planar reflection design covering CPU/GPU dispatch, forward/deferred integration, stencil masking, reflection targets, recursion, and VR. |
+| Shadow filtering and atlas allocation | Active | [todo/directional-cascade-layered-rendering-todo.md](todo/directional-cascade-layered-rendering-todo.md), [todo/shadow-atlas-region-organization-todo.md](todo/shadow-atlas-region-organization-todo.md), [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | VSM/EVSM filtering, dynamic atlas LOD allocation, region organization performance, and post-v1 advanced shadow follow-ups for directional, spot, and point lights. Directional cascade layered rendering is implemented for the legacy texture-array path; grouped atlas cascade rendering is now tracked as the next parity phase. |
 | Texture management runtime | Active | [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md), [todo/texture-streaming-cooked-cache-todo.md](todo/texture-streaming-cooked-cache-todo.md), [todo/texture-streaming-consolidation-todo.md](todo/texture-streaming-consolidation-todo.md), [design/texture-management-runtime-design.md](design/texture-management-runtime-design.md) | Phased implementation tracker plus focused cooked-cache and consolidation follow-ups for runtime texture residency, upload scheduling, GL storage safety, VRAM telemetry, and dedicated texture logging. |
 | OpenVR VRClient GPU handoff | Active | [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
 | GPU-driven animation | Active | [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/gpu-driven-animation.md). |
@@ -66,6 +67,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/physics-finalization.md](todo/physics-finalization.md)
 - [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md)
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
+- [todo/shadow-atlas-region-organization-todo.md](todo/shadow-atlas-region-organization-todo.md)
 - [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md)
 - [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md)
 - [todo/texture-streaming-cooked-cache-todo.md](todo/texture-streaming-cooked-cache-todo.md)
@@ -78,6 +80,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 ## Active Design Docs
 
 - [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
+- [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md)
 - [design/atmospheric-scattering-component-design.md](design/atmospheric-scattering-component-design.md)
 - [design/bindless-deferred-texturing-plan.md](design/bindless-deferred-texturing-plan.md)
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)

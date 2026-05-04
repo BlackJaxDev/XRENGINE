@@ -70,6 +70,14 @@ public static partial class EditorUnitTests
         s.TickGroupedItemsInParallel = Toggles.TickGroupedItemsInParallel;
         s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR;
         s.AllowShaderPipelines = Toggles.AllowShaderPipelines;
+        s.AllowBinaryProgramCaching = Toggles.AllowBinaryProgramCaching;
+        s.AsyncProgramBinaryUpload = Toggles.AsyncProgramBinaryUpload;
+        s.AsyncProgramCompilation = Toggles.AsyncProgramCompilation;
+        s.MaxAsyncShaderProgramsPerFrame = Toggles.MaxAsyncShaderProgramsPerFrame;
+        s.OpenGLShaderLinkStrategy = Toggles.OpenGLShaderLinkStrategy;
+        s.OpenGLShaderCompilerThreadCount = Toggles.OpenGLShaderCompilerThreadCount;
+        s.OpenGLParallelShaderCompileProbeEnabled = Toggles.OpenGLParallelShaderCompileProbeEnabled;
+        s.OpenGLParallelShaderCompileProbeTimeoutMs = Toggles.OpenGLParallelShaderCompileProbeTimeoutMs;
         s.RenderVRSinglePassStereo = Toggles.SinglePassStereoVR;
         if (Toggles.RenderPhysicsDebug)
             s.PhysicsVisualizeSettings.SetAllTrue();

@@ -39,6 +39,11 @@ public unsafe partial class VulkanRenderer
         // Intel PCI vendor ID.
         Engine.Rendering.State.IsIntel = properties.VendorID == 0x8086;
         Engine.Rendering.State.IsVulkan = true;
+        Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers = false;
+        Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering = false;
+        Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering = false;
+        Engine.Rendering.State.SupportsOpenGLViewportArray = false;
+        Engine.Rendering.State.MaxOpenGLViewports = 1;
         Engine.Rendering.State.VulkanDeviceName = Silk.NET.Core.Native.SilkMarshal.PtrToString((nint)properties.DeviceName);
         Engine.Rendering.State.VulkanVendorId = properties.VendorID;
         Engine.Rendering.State.VulkanDeviceId = properties.DeviceID;

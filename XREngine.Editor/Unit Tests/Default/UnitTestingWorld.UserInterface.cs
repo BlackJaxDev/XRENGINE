@@ -175,6 +175,10 @@ public static partial class EditorUnitTests
             UITextComponent text = textNode.AddComponent<UITextComponent>()!;
             text.DisableBatching = false;
             text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+            // [FpsTextDiag] Isolation test: HardClipSpaceQuad bypasses model+vp math and SSBO indexing.
+            // If a cyan rectangle appears at top-left, the program runs and the failure is in vp/model/SSBO data.
+            // If nothing appears, the bound program/VAO/FBO is the problem.
+            text.BatchedDebugMode = EBatchedTextDebugMode.HardClipSpaceQuad;
             text.RenderCommand2D.ZIndex = int.MaxValue;
             text.Font = font;
             text.FontSize = 22;

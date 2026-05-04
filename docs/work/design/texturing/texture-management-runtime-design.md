@@ -1,15 +1,14 @@
 # Texture Management Runtime Design
 
-Last Updated: 2026-05-01
+Last Updated: 2026-05-04
 Status: design
 Scope: runtime texture residency, upload scheduling, diagnostics, and render-thread safety for imported and engine-owned textures.
 
 Related docs:
 
-- [Texture management runtime TODO](../todo/texture-management-runtime-todo.md)
+- [Texture management runtime TODO](../../todo/texturing/texture-management-runtime-todo.md)
 - [Sparse texture streaming plan](sparse-texture-streaming-plan.md)
-- [Startup FPS drop remediation](startup-fps-drop-remediation-plan.md)
-- [Default render pipeline notes](../../architecture/rendering/default-render-pipeline-notes.md)
+- [Default render pipeline notes](../../../architecture/rendering/default-render-pipeline-notes.md)
 - [Neural texture compression plan](neural%20texture%20compression.md)
 
 ## 1. Summary
@@ -67,6 +66,7 @@ Slow shadow tile renders took large chunks of render-thread time during the same
 - This document does not require full virtual texturing or bindless textures for the first milestone.
 - This document does not require a new compressed texture asset format before fixing runtime stalls.
 - This document does not make every render target participate in imported-texture streaming policy.
+- This document does not remove YAML from authoring or persisted asset serialization; it only separates the runtime cooked streaming cache from human-readable asset files.
 
 ## 5. Core Invariants
 
@@ -171,6 +171,24 @@ Texture uploads, shader compilation, mesh uploads, and shadow atlas updates all 
 - Render-thread stall warning thresholds.
 
 Texture streaming can then defer non-urgent promotions when shadow atlas work is already over budget, and shadow atlas can defer low-priority tiles when urgent visible texture repair is pending.
+
+### 6.5 Cooked Texture Streaming Cache Format
+
+The runtime cooked texture streaming cache should be a directly addressable binary container, not YAML with a large binary-text payload. YAML remains appropriate for authoring surfaces, persisted scene assets, and embedded `XRTexture2D` round-trips such as font atlases, but it is a poor hot-path cache format because it requires UTF-8 parsing, text-to-binary decoding, larger files, and often full-object hydration before the streamer can reach the mip data it needs.
+
+The binary cache container should include:
+
+- Magic and cache version.
+- Source freshness token or content hash.
+- Source width and height.
+- Logical mip count.
+- Pixel format and sized internal format.
+- Color space and texture role when available.
+- Preview mip index.
+- Per-mip or per-page offsets, lengths, and optional compression metadata.
+- Raw or compressed mip/page blobs aligned for efficient selected-range reads and upload staging.
+
+Runtime streaming reads should be metadata-first: `IsTextureStreamingAssetUsable` reads only the header and manifest, while resident-data loading reads only the mip/page blobs needed for the requested target. Existing YAML/cooked-asset hydration may remain as a temporary legacy fallback only long enough to regenerate stale cache entries. The cache version must be bumped when this binary container lands so old entries are invalidated cleanly.
 
 ## 7. Policy Improvements
 

@@ -49,6 +49,7 @@ public sealed class ShadowAtlasManager
     private int _publishedFrameIndex;
     private ShadowAtlasManagerSettings _settings;
     private ulong _frameId;
+    private ulong _fallbackFrameId;
     private ulong _generation;
     private int _queueOverflowCount;
     private int _tilesScheduledThisFrame;
@@ -75,6 +76,7 @@ public sealed class ShadowAtlasManager
     }
 
     public ShadowAtlasManagerSettings Settings => _settings;
+    public ulong CurrentFrameId => _frameId;
     public ShadowAtlasFrameData PublishedFrameData => _frameBuffers[_publishedFrameIndex];
     public IReadOnlyList<ShadowMapRequest> Requests => _requests;
 
@@ -114,7 +116,18 @@ public sealed class ShadowAtlasManager
 
     private void BeginFrameCore(ulong frameId, int activeCameraCount)
     {
-        _frameId = frameId;
+        if (frameId != 0u)
+        {
+            _frameId = frameId;
+        }
+        else
+        {
+            unchecked { _fallbackFrameId++; }
+            if (_fallbackFrameId == 0u)
+                _fallbackFrameId = 1u;
+            _frameId = _fallbackFrameId;
+        }
+
         _activeCameraCount = Math.Max(0, activeCameraCount);
         _queueOverflowCount = 0;
         _tilesScheduledThisFrame = 0;
@@ -340,16 +353,28 @@ public sealed class ShadowAtlasManager
         int deferredByTexture = 0;
         int firstDeferredRequestIndex = -1;
 
-        for (int i = 0; i < _requests.Count && scheduled < budget; i++)
+        bool hasLastRenderedRequest = false;
+        ShadowMapRequest lastRenderedRequest = default;
+
+        for (int i = 0; i < _requests.Count; i++)
         {
-            if (scheduled > 0 && HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
+            ShadowMapRequest request = _requests[i];
+            if (scheduled >= budget &&
+                (!hasLastRenderedRequest || !ShouldContinueBudgetedLightSet(lastRenderedRequest, request)))
             {
                 deferredByBudget = _requests.Count - i;
                 firstDeferredRequestIndex = i;
                 break;
             }
 
-            ShadowMapRequest request = _requests[i];
+            if (scheduled > 0 && HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
+                (!hasLastRenderedRequest || !ShouldContinueBudgetedLightSet(lastRenderedRequest, request)))
+            {
+                deferredByBudget = _requests.Count - i;
+                firstDeferredRequestIndex = i;
+                break;
+            }
+
             if (!_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation allocation))
             {
                 LogDirectionalRequestRenderState(request, default, "NoCurrentAllocation", requiresRender: false);
@@ -382,16 +407,23 @@ public sealed class ShadowAtlasManager
                 continue;
             }
 
-            MarkTileRendered(request.Key, allocation);
+            MarkTileRendered(request, allocation);
             if (_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation renderedAllocation))
                 LogDirectionalRequestRenderState(request, renderedAllocation, "Rendered", requiresRender: true);
+            lastRenderedRequest = request;
+            hasLastRenderedRequest = true;
             scheduled++;
 
             if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
             {
-                deferredByBudget = _requests.Count - i - 1;
-                firstDeferredRequestIndex = i + 1;
-                break;
+                int nextRequestIndex = i + 1;
+                if (nextRequestIndex >= _requests.Count ||
+                    !ShouldContinueBudgetedLightSet(lastRenderedRequest, _requests[nextRequestIndex]))
+                {
+                    deferredByBudget = _requests.Count - nextRequestIndex;
+                    firstDeferredRequestIndex = nextRequestIndex;
+                    break;
+                }
             }
         }
 
@@ -473,6 +505,26 @@ public sealed class ShadowAtlasManager
         return elapsedMilliseconds >= maxRenderMilliseconds;
     }
 
+    private static bool ShouldContinueBudgetedLightSet(
+        in ShadowMapRequest renderedRequest,
+        in ShadowMapRequest candidateRequest)
+    {
+        if (renderedRequest.Key.LightId != candidateRequest.Key.LightId)
+            return false;
+
+        // Once a multi-tile light refresh starts, finish the adjacent tiles for
+        // that light so receivers do not see partially refreshed shadow sets.
+        if (renderedRequest.ProjectionType == EShadowProjectionType.DirectionalCascade &&
+            candidateRequest.ProjectionType == EShadowProjectionType.DirectionalCascade)
+            return true;
+
+        if (renderedRequest.ProjectionType == EShadowProjectionType.PointFace &&
+            candidateRequest.ProjectionType == EShadowProjectionType.PointFace)
+            return true;
+
+        return false;
+    }
+
     private static double ElapsedMilliseconds(long startTimestamp)
         => (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
 
@@ -501,7 +553,7 @@ public sealed class ShadowAtlasManager
     public bool TryGetAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
         => PublishedFrameData.TryGetAllocation(key, out allocation);
 
-    public bool TryGetPageTexture(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding, int pageIndex, out XRTexture2D texture)
+    public bool TryGetPageTexture(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding, int pageIndex, out XRTexture2DArray texture)
     {
         if (GetEncodingState(atlasKind, encoding).TryGetPageResource(pageIndex, out ShadowAtlasPageResource? resource) &&
             resource is not null)
@@ -520,7 +572,7 @@ public sealed class ShadowAtlasManager
         => atlasKind == EShadowAtlasKind.Directional &&
            encoding == EShadowMapEncoding.Depth;
 
-    public bool TryGetPageRasterDepthTexture(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding, int pageIndex, out XRTexture2D texture)
+    public bool TryGetPageRasterDepthTexture(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding, int pageIndex, out XRTexture2DArray texture)
     {
         if (GetEncodingState(atlasKind, encoding).TryGetPageResource(pageIndex, out ShadowAtlasPageResource? resource) &&
             resource is not null)
@@ -543,6 +595,7 @@ public sealed class ShadowAtlasManager
         _currentAllocationIndices.Clear();
         _queueOverflowCount = 0;
         _tilesScheduledThisFrame = 0;
+        _fallbackFrameId = 0u;
         _generation = 0;
         ResetResources();
     }
@@ -605,6 +658,7 @@ public sealed class ShadowAtlasManager
         int lod = CalculateLodLevel(resolution, _settings.PageSize);
         int atlasId = GetAtlasId(atlasKind, request.Encoding);
         ulong lastRendered = 0u;
+        ulong contentVersion = request.ContentHash;
         if (_previousAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation prior) &&
             prior.IsResident &&
             prior.AtlasKind == atlasKind &&
@@ -615,6 +669,7 @@ public sealed class ShadowAtlasManager
             prior.Resolution == resolution)
         {
             lastRendered = prior.LastRenderedFrame;
+            contentVersion = prior.ContentVersion;
         }
 
         bool requiresFreshRender = request.IsDirty || !request.CanReusePreviousFrame;
@@ -626,6 +681,8 @@ public sealed class ShadowAtlasManager
             ? request.Fallback
             : ShadowFallbackMode.None;
         SkipReason skipReason = reuseStaleTile ? SkipReason.StaleTileReused : SkipReason.None;
+        if (!reuseStaleTile)
+            contentVersion = request.ContentHash;
 
         return new ShadowAtlasAllocation(
             request.Key,
@@ -637,7 +694,7 @@ public sealed class ShadowAtlasManager
             UvScaleBias: uv,
             Resolution: resolution,
             LodLevel: lod,
-            ContentVersion: request.ContentHash,
+            ContentVersion: contentVersion,
             LastRenderedFrame: lastRendered,
             IsResident: true,
             IsStaticCacheBacked: false,
@@ -645,16 +702,17 @@ public sealed class ShadowAtlasManager
             SkipReason: skipReason);
     }
 
-    private void MarkTileRendered(ShadowRequestKey key, ShadowAtlasAllocation allocation)
+    private void MarkTileRendered(ShadowMapRequest request, ShadowAtlasAllocation allocation)
     {
-        ulong renderedFrameId = _frameId != 0u ? _frameId : 1u;
         ShadowAtlasAllocation rendered = allocation with
         {
-            LastRenderedFrame = renderedFrameId,
+            ContentVersion = request.ContentHash,
+            LastRenderedFrame = _frameId,
             ActiveFallback = ShadowFallbackMode.None,
+            SkipReason = SkipReason.None,
         };
-        _currentAllocations[key] = rendered;
-        if (_currentAllocationIndices.TryGetValue(key, out int index))
+        _currentAllocations[request.Key] = rendered;
+        if (_currentAllocationIndices.TryGetValue(request.Key, out int index))
             _frameAllocations[index] = rendered;
     }
 
@@ -709,6 +767,8 @@ public sealed class ShadowAtlasManager
                 => primaryDirectionalLight.RenderPrimaryShadowAtlasTile(page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             EShadowProjectionType.DirectionalCascade when request.Light is DirectionalLightComponent cascadeDirectionalLight
                 => cascadeDirectionalLight.RenderCascadeShadowAtlasTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
+            EShadowProjectionType.PointFace when request.Light is PointLightComponent pointLight
+                => pointLight.RenderShadowAtlasFaceTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             _ => false,
         };
 
@@ -990,7 +1050,7 @@ public sealed class ShadowAtlasManager
         return settings with
         {
             PageSize = pageSize,
-            MaxPages = 1,
+            MaxPages = Math.Clamp(settings.MaxPages, 1, 64),
             MaxMemoryBytes = Math.Max(0L, settings.MaxMemoryBytes),
             MaxTilesRenderedPerFrame = Math.Max(0, settings.MaxTilesRenderedPerFrame),
             MaxRenderMilliseconds = MathF.Max(0.0f, settings.MaxRenderMilliseconds),
@@ -1004,6 +1064,8 @@ public sealed class ShadowAtlasManager
     {
         private readonly List<ShadowAtlasPageResource> _pages = new();
         private readonly List<ShadowBuddyPageAllocator> _allocators = new();
+        private XRTexture2DArray? _textureArray;
+        private XRTexture2DArray? _rasterDepthTextureArray;
 
         public EShadowAtlasKind AtlasKind { get; } = atlasKind;
         public EShadowMapEncoding Encoding { get; } = encoding;
@@ -1059,7 +1121,7 @@ public sealed class ShadowAtlasManager
                 return false;
             }
 
-            CreatePage(settings.PageSize);
+            CreatePage(settings);
             pageIndex = _allocators.Count - 1;
             if (_allocators[pageIndex].TryAllocate(size, out x, out y))
             {
@@ -1089,14 +1151,14 @@ public sealed class ShadowAtlasManager
         public void ResetResources()
         {
             for (int i = 0; i < _pages.Count; i++)
-            {
                 _pages[i].FrameBuffer.Destroy();
-                _pages[i].Texture.Destroy();
-                _pages[i].RasterDepthTexture.Destroy();
-            }
 
             _pages.Clear();
             _allocators.Clear();
+            _textureArray?.Destroy();
+            _textureArray = null;
+            _rasterDepthTextureArray?.Destroy();
+            _rasterDepthTextureArray = null;
             ResidentBytes = 0L;
             LargestFreeRect = 0;
             FreeTexelCount = 0L;
@@ -1112,8 +1174,10 @@ public sealed class ShadowAtlasManager
                 return false;
             }
 
-            long pageBytes = GetPageBytes(settings.PageSize);
-            if (settings.MaxMemoryBytes > 0 && currentTotalResidentBytes + pageBytes > settings.MaxMemoryBytes)
+            long allocationBytes = _textureArray is null
+                ? GetArrayBytes(settings)
+                : 0L;
+            if (settings.MaxMemoryBytes > 0 && currentTotalResidentBytes + allocationBytes > settings.MaxMemoryBytes)
             {
                 skipReason = SkipReason.MemoryBudgetExceeded;
                 return false;
@@ -1123,15 +1187,15 @@ public sealed class ShadowAtlasManager
             return true;
         }
 
-        private static int GetPageLimit(ShadowAtlasManagerSettings _)
-            => 1;
+        private static int GetPageLimit(ShadowAtlasManagerSettings settings)
+            => Math.Max(1, settings.MaxPages);
 
-        private void CreatePage(uint pageSize)
+        private void CreatePage(ShadowAtlasManagerSettings settings)
         {
-            ShadowAtlasPageDescriptor descriptor = CreateDescriptor(AtlasKind, Encoding, _pages.Count, pageSize);
-            _pages.Add(new ShadowAtlasPageResource(descriptor));
-            _allocators.Add(new ShadowBuddyPageAllocator(checked((int)pageSize)));
-            ResidentBytes += descriptor.EstimatedBytes;
+            EnsureTextureArrays(settings);
+            ShadowAtlasPageDescriptor descriptor = CreateDescriptor(AtlasKind, Encoding, _pages.Count, settings.PageSize);
+            _pages.Add(new ShadowAtlasPageResource(descriptor, _textureArray!, _rasterDepthTextureArray!));
+            _allocators.Add(new ShadowBuddyPageAllocator(checked((int)settings.PageSize)));
         }
 
         public bool TryGetPageResource(int pageIndex, out ShadowAtlasPageResource? resource)
@@ -1146,8 +1210,50 @@ public sealed class ShadowAtlasManager
             return false;
         }
 
-        private long GetPageBytes(uint pageSize)
-            => CreateDescriptor(AtlasKind, Encoding, _pages.Count, pageSize).EstimatedBytes;
+        private long GetArrayBytes(ShadowAtlasManagerSettings settings)
+            => checked(CreateDescriptor(AtlasKind, Encoding, 0, settings.PageSize).EstimatedBytes * GetPageLimit(settings));
+
+        private void EnsureTextureArrays(ShadowAtlasManagerSettings settings)
+        {
+            if (_textureArray is not null && _rasterDepthTextureArray is not null)
+                return;
+
+            int pageLimit = GetPageLimit(settings);
+            ShadowAtlasPageDescriptor descriptor = CreateDescriptor(AtlasKind, Encoding, 0, settings.PageSize);
+            _textureArray = new XRTexture2DArray(
+                checked((uint)pageLimit),
+                descriptor.PageSize,
+                descriptor.PageSize,
+                descriptor.InternalFormat,
+                descriptor.PixelFormat,
+                descriptor.PixelType,
+                allocateData: false)
+            {
+                SamplerName = $"ShadowAtlas_{AtlasKind}_{Encoding}",
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
+            };
+            _rasterDepthTextureArray = new XRTexture2DArray(
+                checked((uint)pageLimit),
+                descriptor.PageSize,
+                descriptor.PageSize,
+                EPixelInternalFormat.DepthComponent24,
+                EPixelFormat.DepthComponent,
+                EPixelType.UnsignedInt,
+                allocateData: false)
+            {
+                SamplerName = $"ShadowAtlasDepth_{AtlasKind}_{Encoding}",
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
+            };
+            ResidentBytes = GetArrayBytes(settings);
+        }
 
         private static ShadowAtlasPageDescriptor CreateDescriptor(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding, int pageIndex, uint pageSize)
         {

@@ -152,8 +152,24 @@ internal static class LightComponentEditorShared
 
         if (light is PointLightComponent)
         {
-            ImGui.TextColored(AtlasDiagnosticTextColor, "Active: legacy point cubemap shadows");
-            ImGui.TextDisabled("Point atlas rendering, sampling, and atlas-page preview are not implemented yet.");
+            bool usePointAtlas = Engine.Rendering.Settings.UsePointShadowAtlas;
+            if (ImGui.Checkbox("Use Point Shadow Atlas", ref usePointAtlas))
+                Engine.Rendering.Settings.UsePointShadowAtlas = usePointAtlas;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Global renderer setting. When enabled, dynamic point lights render six atlas face tiles instead of a legacy cubemap.");
+
+            if (usePointAtlas)
+            {
+                ImGui.TextColored(AtlasActiveTextColor, "Active: point shadow atlas");
+                ImGui.TextDisabled("Resolution controls request per-face atlas tile size; actual size can be demoted by budget.");
+                ImGui.TextDisabled("Point atlas pages use R16F radial depth. Missing faces fall back to contact-only visibility.");
+            }
+            else
+            {
+                ImGui.TextColored(AtlasDiagnosticTextColor, "Active: legacy point cubemap shadows");
+                ImGui.TextDisabled("Point atlas requests are disabled. Cubemap face resolution and storage format are used directly.");
+            }
+
             return;
         }
 
@@ -182,6 +198,9 @@ internal static class LightComponentEditorShared
     private static bool IsSpotShadowAtlasActive(LightComponent light)
         => light is SpotLightComponent && Engine.Rendering.Settings.UseSpotShadowAtlas;
 
+    private static bool IsPointShadowAtlasActive(LightComponent light)
+        => light is PointLightComponent && Engine.Rendering.Settings.UsePointShadowAtlas;
+
     private static bool IsDirectionalShadowAtlasActive(LightComponent light)
         => light is DirectionalLightComponent && Engine.Rendering.Settings.UseDirectionalShadowAtlas;
 
@@ -195,11 +214,15 @@ internal static class LightComponentEditorShared
 
         if (light is PointLightComponent)
         {
+            bool pointAtlasActive = IsPointShadowAtlasActive(light);
             ShadowResolutionEditState editState = GetShadowResolutionEditState(light);
-            if (DrawCommittedIntInput("Cubemap Face Resolution", ref editState.CubemapResolution))
+            string resolutionLabel = pointAtlasActive ? "Requested Face Tile Resolution" : "Cubemap Face Resolution";
+            if (DrawCommittedIntInput(resolutionLabel, ref editState.CubemapResolution))
                 CommitShadowMapResolution(light, editState, editState.CubemapResolution, editState.CubemapResolution);
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Point-light shadows render one square cubemap face per direction.");
+                ImGui.SetTooltip(pointAtlasActive
+                    ? "Desired atlas tile size for each point-light face. The allocator can demote individual faces to fit page, memory, and frame budgets."
+                    : "Point-light shadows render one square cubemap face per direction.");
         }
         else
         {
@@ -218,12 +241,12 @@ internal static class LightComponentEditorShared
                 ImGui.SetTooltip("Desired atlas tile height. Atlas allocations are square and use the larger requested dimension.");
         }
 
-        if (IsSpotShadowAtlasActive(light))
+        if (IsSpotShadowAtlasActive(light) || IsPointShadowAtlasActive(light))
         {
             ImGui.BeginDisabled();
             DrawShadowMapStorageFormatCombo(light);
             ImGui.EndDisabled();
-            ImGui.TextDisabled("Ignored by the active spot atlas. This value is kept for the legacy fallback path.");
+            ImGui.TextDisabled("Ignored by the active shadow atlas. This value is kept for the legacy fallback path.");
         }
         else
         {
@@ -633,6 +656,9 @@ internal static class LightComponentEditorShared
         if (TryDrawSpotAtlasPreview(light))
             return;
 
+        if (TryDrawPointAtlasPreview(light))
+            return;
+
         if (TryDrawDirectionalAtlasPreview(light))
             return;
 
@@ -710,7 +736,7 @@ internal static class LightComponentEditorShared
             return true;
         }
 
-        if (!world.Lights.ShadowAtlas.TryGetPageTexture(allocation.AtlasKind, EShadowMapEncoding.Depth, allocation.PageIndex, out XRTexture2D pageTexture))
+        if (!world.Lights.ShadowAtlas.TryGetPageTexture(allocation.AtlasKind, EShadowMapEncoding.Depth, allocation.PageIndex, out XRTexture2DArray pageTexture))
         {
             ImGui.TextDisabled($"Atlas page {allocation.PageIndex} texture is unavailable.");
             return true;
@@ -725,13 +751,13 @@ internal static class LightComponentEditorShared
         string details =
             $"Record {recordIndex} | Page {allocation.PageIndex}\n" +
             $"Tile {allocation.InnerPixelRect.X},{allocation.InnerPixelRect.Y} {allocation.InnerPixelRect.Width}x{allocation.InnerPixelRect.Height}\n" +
-            $"Page {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n" +
+            $"Page {allocation.PageIndex} of {pageTexture.Depth} | {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n" +
             $"Last rendered frame {allocation.LastRenderedFrame}";
 
         DrawAtlasTileAndPagePreview(
             "Spot Shadow Atlas Tile",
             "Spot Shadow Atlas Page",
-            pageTexture,
+            GetOrCreate2DArrayPreviewView(pageTexture, allocation.PageIndex),
             allocation.PageIndex,
             uv0,
             uv1,
@@ -740,6 +766,213 @@ internal static class LightComponentEditorShared
             details);
         return true;
     }
+
+    private static bool TryDrawPointAtlasPreview(LightComponent light)
+    {
+        if (!IsPointShadowAtlasActive(light) || light is not PointLightComponent pointLight)
+            return false;
+
+        XRWorldInstance? world = pointLight.WorldAs<XRWorldInstance>();
+        if (world?.Lights is null)
+        {
+            ImGui.TextDisabled("Point atlas preview unavailable until the light belongs to a world.");
+            return true;
+        }
+
+        string lightLabel = pointLight.SceneNode?.Name ?? pointLight.Name ?? pointLight.GetType().Name;
+        ImGui.TextDisabled("Previewing active point atlas pages and face tiles.");
+        ImGui.TextDisabled($"{lightLabel}: {PointLightComponent.ShadowFaceCount} atlas face request(s)");
+        DrawPointAtlasPagesOverview(world, pointLight, lightLabel);
+        ImGui.SeparatorText("Face Tiles");
+
+        int drawnTileCount = 0;
+        for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
+        {
+            string faceLabel = GetPointFaceLabel(faceIndex);
+            if (!TryGetPointFaceAtlasAllocation(world, pointLight, faceIndex, out int recordIndex, out ShadowAtlasAllocation allocation))
+            {
+                ImGui.TextDisabled($"{faceLabel}: no atlas allocation published yet.");
+                continue;
+            }
+
+            if (!allocation.IsResident)
+            {
+                ImGui.TextDisabled($"{faceLabel}: not resident. Fallback: {allocation.ActiveFallback}, skip: {allocation.SkipReason}");
+                continue;
+            }
+
+            if (!world.Lights.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Point, EShadowMapEncoding.Depth, allocation.PageIndex, out XRTexture2DArray pageTexture))
+            {
+                ImGui.TextDisabled($"{faceLabel}: atlas page {allocation.PageIndex} unavailable.");
+                continue;
+            }
+
+            if (drawnTileCount > 0 && drawnTileCount % ArrayPreviewsPerRow != 0)
+                ImGui.SameLine();
+
+            DrawPointAtlasFaceTilePreview(
+                pageTexture,
+                allocation,
+                recordIndex,
+                lightLabel,
+                faceLabel);
+            drawnTileCount++;
+        }
+
+        return true;
+    }
+
+    private static void DrawPointAtlasFaceTilePreview(
+        XRTexture2DArray pageTexture,
+        ShadowAtlasAllocation allocation,
+        int recordIndex,
+        string lightLabel,
+        string faceLabel)
+    {
+        XRTexture2DArrayView pageView = GetOrCreate2DArrayPreviewView(pageTexture, allocation.PageIndex);
+        Vector4 uv = allocation.UvScaleBias;
+        Vector2 uv0 = new(uv.Z, uv.W + uv.Y);
+        Vector2 uv1 = new(uv.Z + uv.X, uv.W);
+        Vector2 tilePixelSize = new(
+            MathF.Max(1.0f, allocation.InnerPixelRect.Width),
+            MathF.Max(1.0f, allocation.InnerPixelRect.Height));
+        string renderedState = allocation.LastRenderedFrame == 0u
+            ? "Allocated but not rendered yet"
+            : $"Last rendered frame {allocation.LastRenderedFrame}";
+        string details =
+            $"{lightLabel} | Face {faceLabel}\n" +
+            $"Record {recordIndex} | Page {allocation.PageIndex}\n" +
+            $"Tile {allocation.InnerPixelRect.X},{allocation.InnerPixelRect.Y} {allocation.InnerPixelRect.Width}x{allocation.InnerPixelRect.Height}\n" +
+            $"Page {allocation.PageIndex} of {pageTexture.Depth} | {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n" +
+            $"{renderedState}";
+
+        Draw2DTexturePreview(
+            $"Point Shadow Atlas Face {faceLabel}",
+            pageView,
+            uv0,
+            uv1,
+            tilePixelSize,
+            details,
+            inlineCaption: faceLabel);
+    }
+
+    private static void DrawPointAtlasPagesOverview(
+        XRWorldInstance world,
+        PointLightComponent light,
+        string lightLabel)
+    {
+        ImGui.SeparatorText("Atlas Pages");
+
+        ShadowAtlasFrameData frameData = world.Lights.ShadowAtlas.PublishedFrameData;
+        int drawnPageCount = 0;
+        for (int pageSlot = 0; pageSlot < frameData.PageCount; pageSlot++)
+        {
+            ShadowAtlasPageDescriptor descriptor = frameData.GetPage(pageSlot);
+            if (descriptor.AtlasKind != EShadowAtlasKind.Point ||
+                descriptor.Encoding != EShadowMapEncoding.Depth)
+                continue;
+
+            if (!world.Lights.ShadowAtlas.TryGetPageTexture(descriptor.AtlasKind, descriptor.Encoding, descriptor.PageIndex, out XRTexture2DArray pageTexture))
+                continue;
+
+            if (drawnPageCount > 0 && drawnPageCount % ArrayPreviewsPerRow != 0)
+                ImGui.SameLine();
+
+            DrawPointAtlasPagePreview(
+                world,
+                light,
+                pageTexture,
+                descriptor,
+                lightLabel,
+                frameData.FrameId);
+            drawnPageCount++;
+        }
+
+        if (drawnPageCount == 0)
+            ImGui.TextDisabled("No point depth atlas pages published yet.");
+    }
+
+    private static void DrawPointAtlasPagePreview(
+        XRWorldInstance world,
+        PointLightComponent light,
+        XRTexture2DArray pageTexture,
+        ShadowAtlasPageDescriptor descriptor,
+        string lightLabel,
+        ulong frameId)
+    {
+        XRTexture2DArrayView pageView = GetOrCreate2DArrayPreviewView(pageTexture, descriptor.PageIndex);
+        if (!TryGetTexturePreviewData(pageView, out nint handle, out _, out Vector2 pixelSize, out string? failureReason))
+        {
+            ImGui.TextDisabled(failureReason ?? $"Point atlas page {descriptor.PageIndex} preview unavailable.");
+            return;
+        }
+
+        Vector2 displaySize = GetPreviewSize(pixelSize);
+        string details =
+            $"{lightLabel}\n" +
+            $"Point Atlas Page {descriptor.PageIndex}\n" +
+            $"Layer {descriptor.PageIndex} of {pageTexture.Depth} | {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n" +
+            $"Published frame {frameId}\n" +
+            "Outlined rectangles are this point light's assigned face tiles on this page.";
+
+        bool openLargeView = false;
+        ImGui.PushID($"PointAtlasPage{descriptor.PageIndex}");
+        ImGui.BeginGroup();
+        ImGui.Image(handle, displaySize, new Vector2(0.0f, 1.0f), new Vector2(1.0f, 0.0f));
+        DrawPointAtlasPageOverlays(world, light, descriptor.PageIndex, pixelSize);
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(details);
+            if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                openLargeView = true;
+        }
+
+        if (ImGui.SmallButton("View Larger"))
+            openLargeView = true;
+
+        if (openLargeView)
+            ComponentEditorLayout.RequestPreviewDialog($"Point Shadow Atlas Page {descriptor.PageIndex}", handle, pixelSize, flipVertically: true);
+
+        ImGui.TextDisabled($"Point Atlas Page {descriptor.PageIndex}");
+        ImGui.EndGroup();
+        ImGui.PopID();
+    }
+
+    private static void DrawPointAtlasPageOverlays(
+        XRWorldInstance world,
+        PointLightComponent light,
+        int pageIndex,
+        Vector2 pixelSize)
+    {
+        for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
+        {
+            if (TryGetPointFaceAtlasAllocation(world, light, faceIndex, out _, out ShadowAtlasAllocation allocation) &&
+                allocation.IsResident &&
+                allocation.PageIndex == pageIndex)
+            {
+                DrawAtlasOverlay(pixelSize, allocation.InnerPixelRect);
+            }
+        }
+    }
+
+    private static bool TryGetPointFaceAtlasAllocation(
+        XRWorldInstance world,
+        PointLightComponent light,
+        int faceIndex,
+        out int recordIndex,
+        out ShadowAtlasAllocation allocation)
+    {
+        ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.PointFace, faceIndex, EShadowMapEncoding.Depth);
+        if (world.Lights.ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out recordIndex, out allocation))
+            return true;
+
+        recordIndex = -1;
+        allocation = default;
+        return false;
+    }
+
+    private static string GetPointFaceLabel(int faceIndex)
+        => (uint)faceIndex < (uint)CubemapFaces.Length ? CubemapFaces[faceIndex].Label : $"Face {faceIndex}";
 
     private static bool TryDrawDirectionalAtlasPreview(LightComponent light)
     {
@@ -844,12 +1077,13 @@ internal static class LightComponentEditorShared
             return;
         }
 
-        if (!world.Lights.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, EShadowMapEncoding.Depth, slot.PageIndex, out XRTexture2D pageTexture))
+        if (!world.Lights.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, EShadowMapEncoding.Depth, slot.PageIndex, out XRTexture2DArray pageTexture))
         {
             ImGui.TextDisabled($"{slotLabel}: atlas page {slot.PageIndex} unavailable.");
             return;
         }
 
+        XRTexture2DArrayView pageView = GetOrCreate2DArrayPreviewView(pageTexture, slot.PageIndex);
         Vector4 uv = slot.UvScaleBias;
         Vector2 uv0 = new(uv.Z, uv.W + uv.Y);
         Vector2 uv1 = new(uv.Z + uv.X, uv.W);
@@ -860,14 +1094,14 @@ internal static class LightComponentEditorShared
             $"{lightLabel} | {slotLabel}\n" +
             $"Record {slot.RecordIndex} | Page {slot.PageIndex}\n" +
             $"Tile {slot.InnerPixelRect.X},{slot.InnerPixelRect.Y} {slot.InnerPixelRect.Width}x{slot.InnerPixelRect.Height}\n" +
-            $"Page {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n";
+            $"Page {slot.PageIndex} of {pageTexture.Depth} | {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n";
         if (!string.IsNullOrEmpty(extraDetails))
             details += $"{extraDetails}\n";
         details += $"Last rendered frame {slot.LastRenderedFrame}";
 
         Draw2DTexturePreview(
             previewLabel,
-            pageTexture,
+            pageView,
             uv0,
             uv1,
             tilePixelSize,
@@ -878,7 +1112,7 @@ internal static class LightComponentEditorShared
     private static void DrawAtlasTileAndPagePreview(
         string tileLabel,
         string pageLabel,
-        XRTexture2D pageTexture,
+        XRTexture pageTexture,
         int pageIndex,
         Vector2 tileUv0,
         Vector2 tileUv1,
@@ -931,7 +1165,7 @@ internal static class LightComponentEditorShared
                 descriptor.Encoding != EShadowMapEncoding.Depth)
                 continue;
 
-            if (!world.Lights.ShadowAtlas.TryGetPageTexture(descriptor.AtlasKind, descriptor.Encoding, descriptor.PageIndex, out XRTexture2D pageTexture))
+            if (!world.Lights.ShadowAtlas.TryGetPageTexture(descriptor.AtlasKind, descriptor.Encoding, descriptor.PageIndex, out XRTexture2DArray pageTexture))
                 continue;
 
             if (drawnPageCount > 0 && drawnPageCount % ArrayPreviewsPerRow != 0)
@@ -954,14 +1188,15 @@ internal static class LightComponentEditorShared
 
     private static void DrawDirectionalAtlasPagePreview(
         DirectionalLightComponent light,
-        XRTexture2D pageTexture,
+        XRTexture2DArray pageTexture,
         ShadowAtlasPageDescriptor descriptor,
         bool useCascades,
         int activeCascades,
         string lightLabel,
         ulong frameId)
     {
-        if (!TryGetTexturePreviewData(pageTexture, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason))
+        XRTexture2DArrayView pageView = GetOrCreate2DArrayPreviewView(pageTexture, descriptor.PageIndex);
+        if (!TryGetTexturePreviewData(pageView, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason))
         {
             ImGui.TextDisabled(failureReason ?? $"Atlas page {descriptor.PageIndex} preview unavailable.");
             return;
@@ -971,7 +1206,7 @@ internal static class LightComponentEditorShared
         string details =
             $"{lightLabel}\n" +
             $"Atlas Page {descriptor.PageIndex}\n" +
-            $"{pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n" +
+            $"Layer {descriptor.PageIndex} of {pageTexture.Depth} | {pageTexture.Width}x{pageTexture.Height} | {pageTexture.SizedInternalFormat}\n" +
             $"Published frame {frameId}\n" +
             "Outlined rectangles are this directional light's assigned tiles on this page.";
 
@@ -1104,7 +1339,7 @@ internal static class LightComponentEditorShared
 
     private static void Draw2DTexturePreview(
         string label,
-        XRTexture2D texture,
+        XRTexture texture,
         Vector2 uv0,
         Vector2 uv1,
         Vector2? sourcePixelSizeOverride,

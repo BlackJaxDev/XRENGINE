@@ -195,9 +195,11 @@ namespace XREngine.Components.Capture.Lights.Types
             SyncDynamicWorldRegistration();
         }
 
+        protected virtual bool UsesAtlasOnlyShadowMapResource => false;
+
         protected void EnsureShadowMapForActiveDynamicLight()
         {
-            if (Type != ELightType.Dynamic || !CastsShadows || ShadowMap is not null)
+            if (Type != ELightType.Dynamic || !CastsShadows || ShadowMap is not null || UsesAtlasOnlyShadowMapResource)
                 return;
 
             SetShadowMapResolution(

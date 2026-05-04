@@ -162,6 +162,112 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
+    public void SolveAllocations_AllocatesSixPointFacesIndependently()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 1024u, maxPages: 1);
+        PointLightComponent light = CreatePointLight(256u);
+        ShadowMapRequest[] requests = new ShadowMapRequest[PointLightComponent.ShadowFaceCount];
+        for (int faceIndex = 0; faceIndex < requests.Length; faceIndex++)
+        {
+            requests[faceIndex] = CreateRequest(
+                light,
+                EShadowProjectionType.PointFace,
+                faceIndex,
+                desiredResolution: 256u,
+                minimumResolution: 256u,
+                priority: 100.0f - faceIndex,
+                contentHash: (ulong)(faceIndex + 1));
+        }
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, requests);
+
+        frameData.Metrics.PageCount.ShouldBe(1);
+        frameData.Metrics.ResidentTileCount.ShouldBe(PointLightComponent.ShadowFaceCount);
+        frameData.Metrics.SkippedRequestCount.ShouldBe(0);
+        AssertNoResidentOverlaps(frameData);
+        for (int faceIndex = 0; faceIndex < requests.Length; faceIndex++)
+        {
+            frameData.TryGetAllocation(requests[faceIndex].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
+            allocation.AtlasKind.ShouldBe(EShadowAtlasKind.Point);
+            allocation.PageIndex.ShouldBe(0);
+            allocation.Resolution.ShouldBe(256u);
+            allocation.IsResident.ShouldBeTrue();
+            allocation.Key.FaceOrCascadeIndex.ShouldBe(faceIndex);
+        }
+    }
+
+    [Test]
+    public void SolveAllocations_DemotesOversizedPointFacesBeforeSkippingFaces()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 4096u, maxPages: 1);
+        PointLightComponent light = CreatePointLight(4096u);
+        ShadowMapRequest[] requests = new ShadowMapRequest[PointLightComponent.ShadowFaceCount];
+        for (int faceIndex = 0; faceIndex < requests.Length; faceIndex++)
+        {
+            requests[faceIndex] = CreateRequest(
+                light,
+                EShadowProjectionType.PointFace,
+                faceIndex,
+                desiredResolution: 4096u,
+                minimumResolution: 128u,
+                priority: 1000.0f - faceIndex,
+                contentHash: (ulong)(faceIndex + 1));
+        }
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, requests);
+
+        frameData.Metrics.PageCount.ShouldBe(1);
+        frameData.Metrics.ResidentTileCount.ShouldBe(PointLightComponent.ShadowFaceCount);
+        frameData.Metrics.SkippedRequestCount.ShouldBe(0);
+        AssertNoResidentOverlaps(frameData);
+        for (int faceIndex = 0; faceIndex < requests.Length; faceIndex++)
+        {
+            frameData.TryGetAllocation(requests[faceIndex].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
+            allocation.IsResident.ShouldBeTrue();
+            allocation.Resolution.ShouldBeLessThan(4096u);
+            allocation.Resolution.ShouldBeGreaterThanOrEqualTo(128u);
+        }
+    }
+
+    [Test]
+    public void SolveAllocations_AllowsPartialPointFaceResidency()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
+        PointLightComponent light = CreatePointLight(256u);
+        ShadowMapRequest[] requests = new ShadowMapRequest[PointLightComponent.ShadowFaceCount];
+        for (int faceIndex = 0; faceIndex < requests.Length; faceIndex++)
+        {
+            requests[faceIndex] = CreateRequest(
+                light,
+                EShadowProjectionType.PointFace,
+                faceIndex,
+                desiredResolution: 256u,
+                minimumResolution: 256u,
+                priority: 100.0f - faceIndex,
+                contentHash: (ulong)(faceIndex + 1));
+        }
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, requests);
+
+        frameData.Metrics.ResidentTileCount.ShouldBe(4);
+        frameData.Metrics.SkippedRequestCount.ShouldBe(2);
+        AssertNoResidentOverlaps(frameData);
+        for (int faceIndex = 0; faceIndex < 4; faceIndex++)
+        {
+            frameData.TryGetAllocation(requests[faceIndex].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
+            allocation.IsResident.ShouldBeTrue();
+            allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.None);
+        }
+
+        for (int faceIndex = 4; faceIndex < requests.Length; faceIndex++)
+        {
+            frameData.TryGetAllocation(requests[faceIndex].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
+            allocation.IsResident.ShouldBeFalse();
+            allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.StaleTile);
+        }
+    }
+
+    [Test]
     public void Submit_WhenQueueIsFullPublishesQueueOverflowDiagnostic()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1, maxRequests: 1);

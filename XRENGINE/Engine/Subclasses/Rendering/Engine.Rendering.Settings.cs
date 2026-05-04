@@ -389,6 +389,10 @@ namespace XREngine
                 private bool _asyncProgramBinaryUpload = true;
                 private bool _asyncProgramCompilation = true;
                 private int _maxAsyncShaderProgramsPerFrame = 4;
+                private EOpenGLShaderLinkStrategy _openGLShaderLinkStrategy = EOpenGLShaderLinkStrategy.Auto;
+                private int _openGLShaderCompilerThreadCount = -1;
+                private bool _openGLParallelShaderCompileProbeEnabled = true;
+                private int _openGLParallelShaderCompileProbeTimeoutMs = 25;
                 private bool _calculateBlendshapesInComputeShader = true;
                 private bool _calculateSkinningInComputeShader = true;
                 private bool _useDetailPreservingComputeMipmaps = true;
@@ -483,6 +487,7 @@ namespace XREngine
                 private bool _cullShadowCollectionByCameraFrusta = true;
                 private bool _useSpotShadowAtlas = true;
                 private bool _useDirectionalShadowAtlas = true;
+                private bool _usePointShadowAtlas = true;
                 private uint _shadowAtlasPageSize = 4096u;
                 private int _maxShadowAtlasPages = 1;
                 private long _maxShadowAtlasMemoryBytes = 0L;
@@ -584,6 +589,20 @@ namespace XREngine
                             "[DirectionalShadowAudit][Setting] frame={0} UseDirectionalShadowAtlas={1}",
                             Engine.Rendering.State.RenderFrameId,
                             value);
+                    }
+                }
+
+                [Category("Shadows")]
+                [Description("If true, point light faces render and sample through the dynamic shadow atlas. Disable to use legacy per-light cubemap shadows for debugging.")]
+                public bool UsePointShadowAtlas
+                {
+                    get => Volatile.Read(ref _usePointShadowAtlas);
+                    set
+                    {
+                        if (!SetField(ref _usePointShadowAtlas, value))
+                            return;
+
+                        Volatile.Write(ref _usePointShadowAtlas, value);
                     }
                 }
 
@@ -956,6 +975,55 @@ namespace XREngine
                 {
                     get => _maxAsyncShaderProgramsPerFrame;
                     set => SetField(ref _maxAsyncShaderProgramsPerFrame, Math.Max(1, value));
+                }
+
+                /// <summary>
+                /// Selects how uncached OpenGL shader programs are compiled and linked.
+                /// Auto prefers the shared-context queue and falls back to synchronous linking.
+                /// Use DriverParallel to explicitly exercise GL_ARB/KHR_parallel_shader_compile.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Selects how uncached OpenGL shader programs are compiled and linked. Auto prefers the shared-context queue and falls back to synchronous linking; DriverParallel explicitly exercises GL_ARB/KHR_parallel_shader_compile.")]
+                public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy
+                {
+                    get => _openGLShaderLinkStrategy;
+                    set => SetField(ref _openGLShaderLinkStrategy, value);
+                }
+
+                /// <summary>
+                /// Requested worker-thread count for GL_ARB/KHR_parallel_shader_compile.
+                /// Use -1 to request the engine default, 0 to request no driver worker threads,
+                /// or a positive value to request an explicit count.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Requested worker-thread count for GL_ARB/KHR_parallel_shader_compile. Use -1 for the engine default, 0 for no driver worker threads, or a positive explicit count.")]
+                public int OpenGLShaderCompilerThreadCount
+                {
+                    get => _openGLShaderCompilerThreadCount;
+                    set => SetField(ref _openGLShaderCompilerThreadCount, Math.Max(-1, value));
+                }
+
+                /// <summary>
+                /// If true, startup performs a tiny GL_ARB/KHR_parallel_shader_compile
+                /// smoke test before using the explicit DriverParallel link path.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, startup performs a tiny GL_ARB/KHR_parallel_shader_compile smoke test before using the explicit DriverParallel link path.")]
+                public bool OpenGLParallelShaderCompileProbeEnabled
+                {
+                    get => _openGLParallelShaderCompileProbeEnabled;
+                    set => SetField(ref _openGLParallelShaderCompileProbeEnabled, value);
+                }
+
+                /// <summary>
+                /// Maximum time spent polling the startup driver-parallel shader-link probe.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Maximum time in milliseconds spent polling the startup driver-parallel shader-link probe.")]
+                public int OpenGLParallelShaderCompileProbeTimeoutMs
+                {
+                    get => _openGLParallelShaderCompileProbeTimeoutMs;
+                    set => SetField(ref _openGLParallelShaderCompileProbeTimeoutMs, Math.Max(0, value));
                 }
 
                 /// <summary>

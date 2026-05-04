@@ -81,7 +81,8 @@ public partial class GLTexture2D
                     : residentBaseMipLevel + residentMipCount;
                 requestedLevels = Math.Max(requestedLevels, Math.Max(1, requiredSparseLevels));
             }
-
+            
+            /*
             if (requestedLevels != requestedLevelsBeforeMipFloor)
             {
                 Debug.OpenGL(
@@ -92,6 +93,7 @@ public partial class GLTexture2D
                     $"requestedLevelsBefore={requestedLevelsBeforeMipFloor} requestedLevelsAfter={requestedLevels} dims={width}x{height} " +
                     $"sparseEnabled={Data.SparseTextureStreamingEnabled}.");
             }
+            */
 
             uint levels = (uint)requestedLevels;
             uint legalLevels = GetLegalMipLevelCount(width, height);

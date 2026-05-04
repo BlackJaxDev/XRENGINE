@@ -235,6 +235,23 @@
   "TestAnimation": false,
   // Indicates if the engine should use shader pipelines to mix and match shader stages. This will break debug shape rendering, and seems to render slower than making combined programs.
   "AllowShaderPipelines": false,
+  // Selects the OpenGL shader compile/link path used by startup model shaders.
+  // OpenGLShaderLinkStrategy: Auto, SharedContext, DriverParallel, Synchronous
+  "OpenGLShaderLinkStrategy": "Auto",
+  // Allows linked OpenGL shader programs to be cached as driver binaries.
+  "AllowBinaryProgramCaching": true,
+  // Uploads cached OpenGL program binaries on a shared GL context thread when possible.
+  "AsyncProgramBinaryUpload": true,
+  // Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it.
+  "AsyncProgramCompilation": true,
+  // Maximum number of pending async OpenGL shader programs to advance per render frame.
+  "MaxAsyncShaderProgramsPerFrame": 4,
+  // Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.
+  "OpenGLShaderCompilerThreadCount": -1,
+  // Runs a small startup probe before using the explicit DriverParallel OpenGL link path.
+  "OpenGLParallelShaderCompileProbeEnabled": true,
+  // Maximum time spent polling the startup driver-parallel OpenGL shader-link probe.
+  "OpenGLParallelShaderCompileProbeTimeoutMs": 25,
   // Enables or disables RenderMeshBounds.
   "RenderMeshBounds": false,
   // Selects the RenderAPI enum value.

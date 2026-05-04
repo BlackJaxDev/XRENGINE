@@ -127,7 +127,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private void PrepareUberVariantForCurrentMaterial()
-                => MeshRenderer.Material?.PrepareUberVariantImmediately();
+                => MeshRenderer.Material?.EnsureUberVariantPreparedForRendering();
 
             private void CaptureMaterialShaderState()
             {
@@ -292,7 +292,7 @@ namespace XREngine.Rendering.OpenGL
                 var renderState = Engine.Rendering.State.RenderingPipelineState;
                 bool pointLightShadowPass = renderState?.ShadowPass == true
                     && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
-                    && UsesPointLightShadowCubemap(globalMaterialOverride);
+                    && UsesPointLightShadowDepthOutput(globalMaterialOverride);
                 bool forceGeneratedVertexProgram = (renderState?.ForceGeneratedVertexProgram ?? false) || pointLightShadowPass;
                 vertexProgram = forceGeneratedVertexProgram
                     ? GetForcedGeneratedVertexProgram()

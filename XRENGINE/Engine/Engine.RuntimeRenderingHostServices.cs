@@ -60,6 +60,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public Vector3 DefaultLuminance => Engine.Rendering.Settings.DefaultLuminance;
     public long ElapsedTicks => Engine.ElapsedTicks;
     public float ElapsedTime => Engine.ElapsedTime;
+    public double UpdateDeltaSeconds => Engine.Time.Timer.Update.Delta;
+    public long LastUpdateTimestampTicks => Engine.Time.Timer.Update.LastTimestampTicks;
     public double RenderDeltaSeconds => Engine.Time.Timer.Render.Delta;
     public long LastRenderTimestampTicks => Engine.Time.Timer.Render.LastTimestampTicks;
     public long TrackedVramBytes => Engine.Rendering.Stats.AllocatedVRAMBytes;
@@ -103,6 +105,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool ProvidesShadowAtlasSettings => true;
     public bool UseSpotShadowAtlas => Engine.Rendering.Settings.UseSpotShadowAtlas;
     public bool UseDirectionalShadowAtlas => Engine.Rendering.Settings.UseDirectionalShadowAtlas;
+    public bool UsePointShadowAtlas => Engine.Rendering.Settings.UsePointShadowAtlas;
     public uint ShadowAtlasPageSize => Engine.Rendering.Settings.ShadowAtlasPageSize;
     public int MaxShadowAtlasPages => Engine.Rendering.Settings.MaxShadowAtlasPages;
     public long MaxShadowAtlasMemoryBytes => Engine.Rendering.Settings.MaxShadowAtlasMemoryBytes;
