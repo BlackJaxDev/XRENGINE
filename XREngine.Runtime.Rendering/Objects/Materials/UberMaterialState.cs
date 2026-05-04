@@ -14,9 +14,41 @@ public enum EUberMaterialVariantStage
     Failed,
 }
 
-public sealed record UberMaterialFeatureState(string Id, bool Enabled, bool ExplicitlyAuthored);
+public sealed record UberMaterialFeatureState
+{
+    public UberMaterialFeatureState()
+    {
+    }
 
-public sealed record UberMaterialPropertyState(string Name, EShaderUiPropertyMode Mode, string? StaticLiteral);
+    public UberMaterialFeatureState(string id, bool enabled, bool explicitlyAuthored)
+    {
+        Id = id;
+        Enabled = enabled;
+        ExplicitlyAuthored = explicitlyAuthored;
+    }
+
+    public string Id { get; init; } = string.Empty;
+    public bool Enabled { get; init; }
+    public bool ExplicitlyAuthored { get; init; }
+}
+
+public sealed record UberMaterialPropertyState
+{
+    public UberMaterialPropertyState()
+    {
+    }
+
+    public UberMaterialPropertyState(string name, EShaderUiPropertyMode mode, string? staticLiteral)
+    {
+        Name = name;
+        Mode = mode;
+        StaticLiteral = staticLiteral;
+    }
+
+    public string Name { get; init; } = string.Empty;
+    public EShaderUiPropertyMode Mode { get; init; }
+    public string? StaticLiteral { get; init; }
+}
 
 public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredState>
 {

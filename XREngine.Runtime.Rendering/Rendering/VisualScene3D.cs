@@ -132,15 +132,24 @@ namespace XREngine.Scene
         {
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems");
             int visibleRenderables = 0;
+            bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
+            int commandsBefore = modelDiagActive ? commands.GetUpdatingCommandCount() : 0;
 
             bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
-                => item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
+            {
+                bool allowed = item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
+                if (!allowed && modelDiagActive)
+                    ModelRenderDiagnostics.LogRejected(item, cullingVolume, commands, camera, containsOnly, collectMirrors);
+                return allowed;
+            }
 
             void AddRenderCommands(ITreeItem item)
             {
                 if (item is RenderInfo renderable)
                 {
                     visibleRenderables++;
+                    if (modelDiagActive && renderable is RenderInfo3D renderInfo3D)
+                        ModelRenderDiagnostics.LogVisibilityAccepted(renderInfo3D, commands, camera, collectMirrors);
                     renderable.CollectCommands(commands, camera);
                 }
             }
@@ -148,15 +157,28 @@ namespace XREngine.Scene
             if (IsGpuCulling)
             {
                 using var gpuSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu");
-                CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors);
+                visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive);
             }
             else
             {
-                int commandsBefore = commands.GetUpdatingCommandCount();
+                int cpuCommandsBefore = commands.GetUpdatingCommandCount();
                 using var octreeSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree");
                 RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
-                int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - commandsBefore);
+                int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - cpuCommandsBefore);
                 Engine.Rendering.Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
+            }
+
+            if (modelDiagActive)
+            {
+                int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - commandsBefore);
+                ModelRenderDiagnostics.LogCollectSummary(
+                    this,
+                    _renderables.Count,
+                    visibleRenderables,
+                    emittedCommands,
+                    IsGpuCulling,
+                    camera,
+                    collectMirrors);
             }
         }
 
@@ -363,6 +385,14 @@ namespace XREngine.Scene
 
                         if (!_isGpuDispatchActive)
                             RenderTree.Add(operation.renderable);
+
+                        ModelRenderDiagnostics.LogSceneRegistration(
+                            this,
+                            operation.renderable,
+                            added: true,
+                            _isGpuDispatchActive,
+                            _isCpuGpuCommandMirrorActive,
+                            _renderables.Count);
                     }
                 }
                 else if (_renderableSet.Remove(operation.renderable))
@@ -376,6 +406,13 @@ namespace XREngine.Scene
                         RenderTree.Remove(operation.renderable);
 
                     _renderables.Remove(operation.renderable);
+                    ModelRenderDiagnostics.LogSceneRegistration(
+                        this,
+                        operation.renderable,
+                        added: false,
+                        _isGpuDispatchActive,
+                        _isCpuGpuCommandMirrorActive,
+                        _renderables.Count);
                 }
             }
         }
@@ -402,18 +439,31 @@ namespace XREngine.Scene
             }
         }
 
-        private void CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors)
+        private int CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors, bool modelDiagActive)
         {
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
+            int visibleRenderables = 0;
 
             // Iterate by index to avoid per-frame ToArray() allocation.
             // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.
             for (int i = 0; i < _renderables.Count; i++)
             {
                 var renderable = _renderables[i];
-                if (renderable.AllowRender(collectionVolume, commands, camera, false, collectMirrors))
-                    renderable.CollectCommands(commands, camera);
+                bool allowed = renderable.AllowRender(collectionVolume, commands, camera, false, collectMirrors);
+                if (!allowed)
+                {
+                    if (modelDiagActive)
+                        ModelRenderDiagnostics.LogRejected(renderable, collectionVolume, commands, camera, containsOnly: false, collectMirrors);
+                    continue;
+                }
+
+                visibleRenderables++;
+                if (modelDiagActive)
+                    ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
+                renderable.CollectCommands(commands, camera);
             }
+
+            return visibleRenderables;
         }
 
         private void TrackRenderable(RenderInfo3D renderable)

@@ -389,7 +389,39 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public void RenderDebugLine(Vector3 start, Vector3 end, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugSphere(Vector3 center, float radius, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color)
+        {
+        }
+
         public void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugQuad(Vector3 center, XREngine.Data.Transforms.Rotations.Rotator rotation, Vector2 extents, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugPoint(Vector3 position, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugText(Vector3 position, string text, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugShapes()
         {
         }
 

@@ -681,7 +681,7 @@ public static partial class EditorUnitTests
                         // VRHeightScaleComponent depends on VRState. For desktop locomotion we just scale once to fit the capsule.
                         if (Toggles.VRPawn)
                             heightScale = rootNode.AddComponent<VRHeightScaleComponent>()!;
-                        else
+                        else if (Toggles.Locomotion)
                         {
                             var desktopHeightScale = rootNode.AddComponent<HeightScaleComponent>()!;
                             heightScale = desktopHeightScale;

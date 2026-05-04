@@ -546,6 +546,7 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             ApplyHighlightRenderOptionsOverride(mat);
+            ModelRenderDiagnostics.LogCommandCollect(this, _rc, passes, camera, distance);
 
             return true;
         }
