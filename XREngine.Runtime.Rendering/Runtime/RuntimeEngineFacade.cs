@@ -11,6 +11,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
@@ -230,18 +231,43 @@ internal static partial class Engine
         public static class Debug
         {
             public static void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugLine(start, end, color);
+
+            public static void RenderSphere(Vector3 center, float radius, bool solid, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugSphere(center, radius, solid, color);
+
+            public static void RenderCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugCone(center, up, radius, height, solid, color);
+
+            public static void RenderAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugAABB(halfExtents, center, solid, color);
+
+            public static void RenderBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugBox(halfExtents, center, transform, solid, color);
+
+            public static void RenderQuad(Vector3 center, Rotator rotation, Vector2 extents, bool solid, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugQuad(center, rotation, extents, solid, color);
+
+            public static void RenderQuad(Vector3 center, Quaternion rotation, Vector2 extents, bool solid, ColorF4 color)
             {
+                Rotator rotator = Rotator.FromQuaternion(rotation);
+                RuntimeRenderingHostServices.Current.RenderDebugQuad(center, rotator, extents, solid, color);
             }
 
-            public static void RenderSphere(Vector3 center, float radius, bool solid, ColorF4 color) { }
-            public static void RenderCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color) { }
-            public static void RenderAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color) { }
-            public static void RenderBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color) { }
-            public static void RenderQuad(Vector3 center, Quaternion rotation, Vector2 extents, bool solid, ColorF4 color) { }
-            public static void RenderQuad(Vector3 center, object rotation, Vector2 extents, bool solid, ColorF4 color) { }
-            public static void RenderPoint(Vector3 position, ColorF4 color) { }
-            public static void RenderText(Vector3 position, string text, ColorF4 color) { }
-            public static void RenderShapes() { }
+            public static void RenderQuad(Vector3 center, object rotation, Vector2 extents, bool solid, ColorF4 color)
+            {
+                if (rotation is Rotator rotator)
+                    RuntimeRenderingHostServices.Current.RenderDebugQuad(center, rotator, extents, solid, color);
+            }
+
+            public static void RenderPoint(Vector3 position, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugPoint(position, color);
+
+            public static void RenderText(Vector3 position, string text, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugText(position, text, color);
+
+            public static void RenderShapes()
+                => RuntimeRenderingHostServices.Current.RenderDebugShapes();
         }
 
         public static class Stats

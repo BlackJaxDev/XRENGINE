@@ -747,19 +747,19 @@ namespace XREngine.Rendering.Physics.Physx
         private XRMeshRenderer MakePointsRenderer()
         {
             var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugPointMaterial());
-            //rend.GetDefaultVersion().AllowShaderPipelines = false;
+            rend.GetDefaultVersion().AllowShaderPipelines = false;
             return rend;
         }
         private XRMeshRenderer MakeLineRenderer()
         {
             var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugLineMaterial());
-            //rend.GetDefaultVersion().AllowShaderPipelines = false;
+            rend.GetDefaultVersion().AllowShaderPipelines = false;
             return rend;
         }
         private XRMeshRenderer MakeTrianglesRenderer()
         {
             var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugTriangleMaterial());
-            //rend.GetDefaultVersion().AllowShaderPipelines = false;
+            rend.GetDefaultVersion().AllowShaderPipelines = false;
             return rend;
         }
 

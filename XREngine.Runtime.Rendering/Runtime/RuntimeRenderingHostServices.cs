@@ -8,6 +8,7 @@ using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering.Commands;
 using XREngine.Scene;
@@ -253,7 +254,15 @@ public interface IRuntimeRenderingHostServices
     void ProcessGpuPhysicsChainDispatches();
     void ProcessGpuPhysicsChainCompletions();
     void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color);
+    void RenderDebugLine(Vector3 start, Vector3 end, ColorF4 color);
+    void RenderDebugSphere(Vector3 center, float radius, bool solid, ColorF4 color);
+    void RenderDebugCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color);
+    void RenderDebugAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color);
     void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color);
+    void RenderDebugQuad(Vector3 center, Rotator rotation, Vector2 extents, bool solid, ColorF4 color);
+    void RenderDebugPoint(Vector3 position, ColorF4 color);
+    void RenderDebugText(Vector3 position, string text, ColorF4 color);
+    void RenderDebugShapes();
     TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new();
     IRuntimeRenderPipelineHost? CreateDefaultRenderPipeline();
     IRuntimeRendererHost CreateRenderer(IRuntimeRenderWindowHost window, RuntimeGraphicsApiKind apiKind);
@@ -537,7 +546,39 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RenderDebugLine(Vector3 start, Vector3 end, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugSphere(Vector3 center, float radius, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color)
+        {
+        }
+
         public void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugQuad(Vector3 center, Rotator rotation, Vector2 extents, bool solid, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugPoint(Vector3 position, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugText(Vector3 position, string text, ColorF4 color)
+        {
+        }
+
+        public void RenderDebugShapes()
         {
         }
 

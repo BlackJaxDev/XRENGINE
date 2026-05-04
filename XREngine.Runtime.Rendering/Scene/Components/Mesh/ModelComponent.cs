@@ -156,6 +156,12 @@ namespace XREngine.Components.Scene.Mesh
             BuildMeshBVHs(renderableMeshes);
 
             ModelChanged?.Invoke();
+            ModelRenderDiagnostics.LogComponentPublished(
+                this,
+                "ModelChanged",
+                modelMeshCount,
+                RenderedObjects.Length,
+                start);
             WarnIfSlowModelPublish(
                 "ModelChanged",
                 start,
@@ -183,6 +189,12 @@ namespace XREngine.Components.Scene.Mesh
                 _pendingRuntimeMeshRebuild = false;
                 OnModelChanged();
             }
+        }
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            ModelRenderDiagnostics.LogComponentActivated(this);
         }
 
         private void BuildMeshBVHs()
@@ -270,6 +282,12 @@ namespace XREngine.Components.Scene.Mesh
 
             _batchedRenderableAdds.Clear();
             ModelChanged?.Invoke();
+            ModelRenderDiagnostics.LogComponentPublished(
+                this,
+                "CompleteModelMeshAddRange",
+                batchedCount,
+                RenderedObjects.Length,
+                start);
             WarnIfSlowModelPublish(
                 "CompleteModelMeshAddRange",
                 start,

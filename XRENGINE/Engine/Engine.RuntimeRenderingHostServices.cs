@@ -7,6 +7,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Transforms.Rotations;
 using XREngine.Diagnostics;
 using XREngine.Components;
 using XREngine.Input;
@@ -292,8 +293,32 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RenderDebugRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color)
         => Engine.Rendering.Debug.RenderRect2D(rectangle, solid, color);
 
+    public void RenderDebugLine(Vector3 start, Vector3 end, ColorF4 color)
+        => Engine.Rendering.Debug.RenderLine(start, end, color);
+
+    public void RenderDebugSphere(Vector3 center, float radius, bool solid, ColorF4 color)
+        => Engine.Rendering.Debug.RenderSphere(center, radius, solid, color);
+
+    public void RenderDebugCone(Vector3 center, Vector3 up, float radius, float height, bool solid, ColorF4 color)
+        => Engine.Rendering.Debug.RenderCone(center, up, radius, height, solid, color);
+
+    public void RenderDebugAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color)
+        => Engine.Rendering.Debug.RenderAABB(halfExtents, center, solid, color);
+
     public void RenderDebugBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
         => Engine.Rendering.Debug.RenderBox(halfExtents, center, transform, solid, color);
+
+    public void RenderDebugQuad(Vector3 center, Rotator rotation, Vector2 extents, bool solid, ColorF4 color)
+        => Engine.Rendering.Debug.RenderQuad(center, rotation, extents, solid, color);
+
+    public void RenderDebugPoint(Vector3 position, ColorF4 color)
+        => Engine.Rendering.Debug.RenderPoint(position, color);
+
+    public void RenderDebugText(Vector3 position, string text, ColorF4 color)
+        => Engine.Rendering.Debug.RenderText(position, text, color);
+
+    public void RenderDebugShapes()
+        => Engine.Rendering.Debug.RenderShapes();
 
     public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
         => Engine.Assets?.Load<TAsset>(filePath);
