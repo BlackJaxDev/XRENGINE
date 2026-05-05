@@ -18,9 +18,14 @@ public partial class OpenGLRenderer
     private delegate void GlMaxShaderCompilerThreadsDelegate(uint count);
 
     private GlMaxShaderCompilerThreadsDelegate? _glMaxShaderCompilerThreadsKhr;
+    private ArbParallelShaderCompile? _arbParallelShaderCompile;
+    private uint _configuredParallelShaderCompilerThreadCount;
     private bool _parallelShaderCompileSupported;
     private bool _parallelShaderCompileProbePassed;
     private string _parallelShaderCompileExtensionName = string.Empty;
+
+    [ThreadStatic]
+    private static bool _suppressDriverParallelShaderCompile;
 
     private static bool WantsSharedContextProgramCompileLinkQueue
     {
@@ -58,6 +63,9 @@ public partial class OpenGLRenderer
     {
         get
         {
+            if (_suppressDriverParallelShaderCompile)
+                return false;
+
             if (!_parallelShaderCompileSupported)
                 return false;
 
@@ -102,11 +110,12 @@ public partial class OpenGLRenderer
         }
 
         LoadKhrParallelShaderCompileDelegate();
-        ArbParallelShaderCompile? arbParallelShaderCompile =
+        _arbParallelShaderCompile =
             hasArb && api.TryGetExtension<ArbParallelShaderCompile>(out var arbExt) ? arbExt : null;
 
         uint requestedThreads = ResolveParallelShaderCompilerThreadCount();
-        bool threadCountSet = TrySetMaxShaderCompilerThreads(requestedThreads, arbParallelShaderCompile);
+        _configuredParallelShaderCompilerThreadCount = requestedThreads;
+        bool threadCountSet = TrySetMaxShaderCompilerThreads(requestedThreads, _arbParallelShaderCompile);
         int reportedThreads = TryGetMaxShaderCompilerThreads(api);
 
         bool shouldRunProbe = ShouldRunParallelShaderCompileProbe();
@@ -213,6 +222,47 @@ public partial class OpenGLRenderer
         {
             return -1;
         }
+    }
+
+    /// <summary>
+    /// Temporarily disables driver parallel shader compilation by setting
+    /// <c>glMaxShaderCompilerThreadsKHR(0)</c>. Use around link operations on
+    /// programs that are known to wedge the driver's parallel-link worker
+    /// (notably single-stage separable programs on NVIDIA). Returns true if
+    /// parallel compile was active and was successfully disabled; the caller
+    /// must pair a successful call with <see cref="RestoreParallelShaderCompile"/>.
+    /// While disabled, <see cref="UseDriverParallelShaderCompile"/> reports
+    /// false on the calling thread so dependent code paths take their
+    /// synchronous branches.
+    /// </summary>
+    internal bool TryDisableParallelShaderCompileForHazardousLink()
+    {
+        if (!_parallelShaderCompileSupported)
+            return false;
+
+        if (_configuredParallelShaderCompilerThreadCount == 0)
+            return false;
+
+        if (!TrySetMaxShaderCompilerThreads(0, _arbParallelShaderCompile))
+            return false;
+
+        _suppressDriverParallelShaderCompile = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Restores the driver parallel shader compiler thread count previously
+    /// configured at startup. Pair with a successful
+    /// <see cref="TryDisableParallelShaderCompileForHazardousLink"/>.
+    /// </summary>
+    internal void RestoreParallelShaderCompile()
+    {
+        _suppressDriverParallelShaderCompile = false;
+
+        if (!_parallelShaderCompileSupported)
+            return;
+
+        TrySetMaxShaderCompilerThreads(_configuredParallelShaderCompilerThreadCount, _arbParallelShaderCompile);
     }
 
     private bool ProbeParallelShaderCompile(GL api, int timeoutMilliseconds)
