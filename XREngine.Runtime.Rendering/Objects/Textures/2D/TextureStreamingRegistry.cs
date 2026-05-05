@@ -65,10 +65,12 @@ internal sealed class TextureStreamingRegistry
                 continue;
             }
 
-            if (!Monitor.TryEnter(record.Sync))
-                continue;
-
-            try
+            // Use the record's dedicated VisibilityLock here (not Sync) so per-frame
+            // visibility tagging never collides with import/transition work that holds
+            // Sync.  Previously this used Monitor.TryEnter(record.Sync) and silently
+            // dropped the visibility update on contention, which let textures fall past
+            // the demotion edge and never re-promote even though they were on screen.
+            lock (record.VisibilityLock)
             {
                 if (record.LastVisibleFrameId != frameId)
                 {
@@ -110,10 +112,6 @@ internal sealed class TextureStreamingRegistry
                         priorityScore);
                 }
             }
-            finally
-            {
-                Monitor.Exit(record.Sync);
-            }
         }
     }
 
@@ -131,17 +129,10 @@ internal sealed class TextureStreamingRegistry
                 continue;
             }
 
-            if (!Monitor.TryEnter(record.Sync))
-                continue;
-
-            try
+            lock (record.VisibilityLock)
             {
                 record.LastBoundFrameId = frameId;
                 record.LastBoundMaterialTextureCount = materialTextureCount;
-            }
-            finally
-            {
-                Monitor.Exit(record.Sync);
             }
         }
     }
@@ -188,6 +179,30 @@ internal sealed class TextureStreamingRegistry
                     continue;
 
                 ITextureResidencyBackend backend = record.Backend ?? resolveBackend(record.SourceWidth, record.SourceHeight, record.Format);
+
+                // Read visibility fields under VisibilityLock so we never see a torn
+                // half-update from a concurrent RecordUsage.  The lock is independent
+                // from Sync so we can safely nest it here.
+                long lastVisibleFrameId;
+                long lastBoundFrameId;
+                int lastBoundMaterialTextureCount;
+                float minVisibleDistance;
+                float maxProjectedPixelSpan;
+                float maxScreenCoverage;
+                float uvDensityHint;
+                SparseTextureStreamingPageSelection visiblePageSelection;
+                lock (record.VisibilityLock)
+                {
+                    lastVisibleFrameId = record.LastVisibleFrameId;
+                    lastBoundFrameId = record.LastBoundFrameId;
+                    lastBoundMaterialTextureCount = record.LastBoundMaterialTextureCount;
+                    minVisibleDistance = record.MinVisibleDistance;
+                    maxProjectedPixelSpan = record.MaxProjectedPixelSpan;
+                    maxScreenCoverage = record.MaxScreenCoverage;
+                    uvDensityHint = record.UvDensityHint;
+                    visiblePageSelection = record.VisiblePageSelection;
+                }
+
                 snapshots.Add(new ImportedTextureStreamingSnapshot(
                     record,
                     backend,
@@ -207,14 +222,14 @@ internal sealed class TextureStreamingRegistry
                     texture.SparseTextureStreamingEnabled
                         ? texture.SparseTextureStreamingResidentPageSelection
                         : SparseTextureStreamingPageSelection.Full,
-                    record.LastVisibleFrameId,
-                    record.LastBoundFrameId,
-                    record.LastBoundMaterialTextureCount,
-                    record.MinVisibleDistance,
-                    record.MaxProjectedPixelSpan,
-                    record.MaxScreenCoverage,
-                    record.UvDensityHint,
-                    record.VisiblePageSelection,
+                    lastVisibleFrameId,
+                    lastBoundFrameId,
+                    lastBoundMaterialTextureCount,
+                    minVisibleDistance,
+                    maxProjectedPixelSpan,
+                    maxScreenCoverage,
+                    uvDensityHint,
+                    visiblePageSelection,
                     record.PreviewReady,
                     record.LastTransitionFrameId,
                     record.PendingTransitionQueuedTimestamp,

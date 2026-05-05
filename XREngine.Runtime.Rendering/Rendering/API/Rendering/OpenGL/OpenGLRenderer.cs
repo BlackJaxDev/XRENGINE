@@ -415,11 +415,19 @@ namespace XREngine.Rendering.OpenGL
                     VersionAtLeast(4, 1) ||
                     HasExtension("GL_ARB_viewport_array") ||
                     HasExtension("GL_NV_viewport_array");
+                Engine.Rendering.State.SupportsOpenGLViewportScissorArray =
+                    Engine.Rendering.State.SupportsOpenGLViewportArray;
                 Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering =
                     VersionAtLeast(4, 5) ||
                     HasExtension("GL_ARB_shader_viewport_layer_array") ||
                     HasExtension("GL_AMD_vertex_shader_layer") ||
                     HasExtension("GL_NV_viewport_array2");
+                Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex =
+                    Engine.Rendering.State.SupportsOpenGLViewportArray &&
+                    Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering;
+                Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex =
+                    Engine.Rendering.State.SupportsOpenGLViewportArray &&
+                    Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering;
                 try
                 {
                     Engine.Rendering.State.MaxOpenGLViewports = Math.Max(1, api.GetInteger(GLEnum.MaxViewports));
@@ -1194,6 +1202,55 @@ namespace XREngine.Rendering.OpenGL
 
         public override void CropRenderArea(BoundingRectangle region)
             => Api.Scissor(region.X, region.Y, (uint)region.Width, (uint)region.Height);
+
+        public override bool SetIndexedViewportScissors(
+            ReadOnlySpan<BoundingRectangle> viewports,
+            ReadOnlySpan<BoundingRectangle> scissors)
+        {
+            int count = Math.Min(viewports.Length, scissors.Length);
+            if (count <= 0 ||
+                !Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                count > Engine.Rendering.State.MaxOpenGLViewports)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                BoundingRectangle viewport = viewports[i];
+                BoundingRectangle scissor = scissors[i];
+                Api.ViewportIndexed(
+                    (uint)i,
+                    viewport.X,
+                    viewport.Y,
+                    viewport.Width,
+                    viewport.Height);
+                Api.ScissorIndexed(
+                    (uint)i,
+                    scissor.X,
+                    scissor.Y,
+                    (uint)scissor.Width,
+                    (uint)scissor.Height);
+            }
+
+            return true;
+        }
+
+        public override void ClearIndexedViewportScissors(int count)
+        {
+            if (count <= 1)
+                return;
+
+            BoundingRectangle region = Engine.Rendering.State.RenderArea;
+            if (region.Width <= 0 || region.Height <= 0)
+                region = new BoundingRectangle(0, 0, Window.Size.X, Window.Size.Y);
+
+            for (int i = 1; i < Math.Min(count, Engine.Rendering.State.MaxOpenGLViewports); i++)
+            {
+                Api.ViewportIndexed((uint)i, region.X, region.Y, region.Width, region.Height);
+                Api.ScissorIndexed((uint)i, region.X, region.Y, (uint)region.Width, (uint)region.Height);
+            }
+        }
 
         public override void SetCroppingEnabled(bool enabled)
         {

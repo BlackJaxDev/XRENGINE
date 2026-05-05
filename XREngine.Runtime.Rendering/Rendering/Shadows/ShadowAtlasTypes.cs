@@ -81,6 +81,23 @@ public enum SkipReason
     ResourceCreationFailed = 20,
 }
 
+[Flags]
+public enum ShadowDirtyReason
+{
+    None = 0,
+    FirstSubmission = 1 << 0,
+    ContentChanged = 1 << 1,
+    LightOrSettingsChanged = 1 << 2,
+    ProjectionOrCameraFitChanged = 1 << 3,
+    EncodingChanged = 1 << 4,
+    CasterOrMaterialChanged = 1 << 5,
+    AllocationMissing = 1 << 6,
+    AllocationChanged = 1 << 7,
+    NeverRendered = 1 << 8,
+    ReuseDisabled = 1 << 9,
+    DynamicLight = 1 << 10,
+}
+
 public readonly record struct ShadowRequestKey(
     Guid LightId,
     ShadowRequestDomain Domain,
@@ -124,6 +141,7 @@ public readonly record struct ShadowMapRequest(
     float Priority,
     ulong ContentHash,
     bool IsDirty,
+    ShadowDirtyReason DirtyReason,
     bool CanReusePreviousFrame,
     bool EditorPinned,
     StereoVisibility StereoVis);
@@ -144,6 +162,34 @@ public readonly record struct ShadowAtlasAllocation(
     bool IsStaticCacheBacked,
     ShadowFallbackMode ActiveFallback,
     SkipReason SkipReason);
+
+public readonly record struct ShadowAtlasGroupedAllocationMember(
+    int CascadeIndex,
+    int RecordIndex,
+    BoundingRectangle PixelRect,
+    BoundingRectangle InnerPixelRect,
+    int ViewportScissorIndex,
+    Vector4 UvScaleBias);
+
+public readonly record struct ShadowAtlasGroupedDirectionalCascadeAllocation(
+    Guid LightId,
+    ShadowRequestDomain Domain,
+    EShadowMapEncoding Encoding,
+    EShadowAtlasKind AtlasKind,
+    int AtlasId,
+    int PageIndex,
+    int CascadeCount,
+    ShadowAtlasGroupedAllocationMember[] Members);
+
+public readonly record struct ShadowAtlasGroupedPointFaceAllocation(
+    Guid LightId,
+    ShadowRequestDomain Domain,
+    EShadowMapEncoding Encoding,
+    EShadowAtlasKind AtlasKind,
+    int AtlasId,
+    int PageIndex,
+    int FaceCount,
+    ShadowAtlasGroupedAllocationMember[] Members);
 
 public readonly record struct ShadowAtlasPageDescriptor(
     EShadowAtlasKind AtlasKind,
@@ -175,6 +221,7 @@ public readonly record struct ShadowRequestDiagnostic(
     uint MaxAllocatedResolution,
     float HighestPriority,
     SkipReason LastSkipReason,
+    ShadowDirtyReason LastDirtyReason,
     ShadowFallbackMode ActiveFallback,
     int ShadowRecordIndex,
     int AtlasPageIndex,

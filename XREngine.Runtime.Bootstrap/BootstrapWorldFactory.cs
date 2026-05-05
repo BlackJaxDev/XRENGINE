@@ -115,7 +115,28 @@ public static class BootstrapWorldFactory
         if (settings.DeferredDecal)
             AddDeferredDecal(rootNode);
 
-        BootstrapModelBuilder.ImportModels(desktopDir, rootNode, characterPawnModelParentNode ?? rootNode);
+        Action? restoreRuntimeShadowSettings = null;
+        if (settings.UseStartupShadowThrottlingForModelImports)
+        {
+            var renderSettings = Engine.Rendering.Settings;
+            int previousMaxShadowTilesRenderedPerFrame = renderSettings.MaxShadowTilesRenderedPerFrame;
+            float previousMaxShadowRenderMilliseconds = renderSettings.MaxShadowRenderMilliseconds;
+
+            renderSettings.MaxShadowTilesRenderedPerFrame = settings.StartupMaxShadowTilesRenderedPerFrame;
+            renderSettings.MaxShadowRenderMilliseconds = settings.StartupMaxShadowRenderMilliseconds;
+            Debug.Out(
+                $"[BootstrapWorldFactory] Applying temporary startup shadow-throttle while model imports load: " +
+                $"tiles={settings.StartupMaxShadowTilesRenderedPerFrame}, maxMs={settings.StartupMaxShadowRenderMilliseconds}");
+
+            restoreRuntimeShadowSettings = () =>
+            {
+                renderSettings.MaxShadowTilesRenderedPerFrame = previousMaxShadowTilesRenderedPerFrame;
+                renderSettings.MaxShadowRenderMilliseconds = previousMaxShadowRenderMilliseconds;
+                Debug.Out("[BootstrapWorldFactory] Restored shadow atlas settings after startup model imports completed.");
+            };
+        }
+
+        BootstrapModelBuilder.ImportModels(desktopDir, rootNode, characterPawnModelParentNode ?? rootNode, restoreRuntimeShadowSettings);
 
         return CreateBootstrapWorld("Default World", scene);
     }

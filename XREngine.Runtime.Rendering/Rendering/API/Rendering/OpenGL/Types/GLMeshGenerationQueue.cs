@@ -48,6 +48,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly Stopwatch _logTimer = Stopwatch.StartNew();
             private const double LogIntervalMs = 2000.0; // Log at most every 2 seconds during steady state
             private const int RemainingChangeThreshold = 20; // Log immediately if remaining changes by this much
+            private const double SlowRendererPrepareLogThresholdMs = 50.0;
 
             /// <summary>
             /// Maximum number of generation attempts per renderer before giving up.
@@ -359,13 +360,23 @@ namespace XREngine.Rendering.OpenGL
                 if (renderer.Data is null)
                     return QueueProcessResult.NoWork;
 
+                long processStart = Stopwatch.GetTimestamp();
+                double generateMs = 0.0;
+                double prepareMs = 0.0;
+
                 try
                 {
                     if (!renderer.IsGenerated)
+                    {
+                        long generateStart = Stopwatch.GetTimestamp();
                         renderer.Generate();
+                        generateMs = ElapsedMilliseconds(generateStart);
+                    }
 
                     if (!renderer.IsGenerated)
                     {
+                        double totalMs = ElapsedMilliseconds(processStart);
+                        LogSlowRendererPreparation(renderer, QueueProcessResult.Failed, totalMs, generateMs, prepareMs);
                         int failures = _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
                         if (failures >= MaxRetries)
                             Debug.OpenGLWarning($"[GLMeshGenerationQueue] Giving up on mesh renderer after {failures} failed generation attempts: {renderer.GetDescribingName()}");
@@ -373,16 +384,22 @@ namespace XREngine.Rendering.OpenGL
                         return QueueProcessResult.Failed;
                     }
 
-                    if (renderer.TryPrepareForRendering())
+                    long prepareStart = Stopwatch.GetTimestamp();
+                    bool prepared = renderer.TryPrepareForRendering();
+                    prepareMs = ElapsedMilliseconds(prepareStart);
+                    if (prepared)
                     {
+                        LogSlowRendererPreparation(renderer, QueueProcessResult.Completed, ElapsedMilliseconds(processStart), generateMs, prepareMs);
                         _failureCount.TryRemove(renderer, out _);
                         return QueueProcessResult.Completed;
                     }
 
+                    LogSlowRendererPreparation(renderer, QueueProcessResult.Pending, ElapsedMilliseconds(processStart), generateMs, prepareMs);
                     return QueueProcessResult.Pending;
                 }
                 catch (Exception ex)
                 {
+                    LogSlowRendererPreparation(renderer, QueueProcessResult.Pending, ElapsedMilliseconds(processStart), generateMs, prepareMs);
                     int failures = _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
                     Debug.OpenGLException(ex, $"GLMeshGenerationQueue: Failed to prepare mesh renderer (attempt {failures}/{MaxRetries})");
                     if (failures >= MaxRetries)
@@ -394,6 +411,32 @@ namespace XREngine.Rendering.OpenGL
                     return QueueProcessResult.Pending;
                 }
             }
+
+            private static void LogSlowRendererPreparation(
+                GLMeshRenderer renderer,
+                QueueProcessResult result,
+                double totalMs,
+                double generateMs,
+                double prepareMs)
+            {
+                if (totalMs < SlowRendererPrepareLogThresholdMs &&
+                    generateMs < SlowRendererPrepareLogThresholdMs &&
+                    prepareMs < SlowRendererPrepareLogThresholdMs)
+                {
+                    return;
+                }
+
+                Debug.OpenGLWarning(
+                    $"[GLMeshGenerationQueue] Slow renderer prep: result={result}, totalMs={totalMs:F2}, " +
+                    $"generateMs={generateMs:F2}, tryPrepareMs={prepareMs:F2}, pending={renderer.Renderer.MeshGenerationQueue.PendingCount}, " +
+                    $"priority={renderer.MeshRenderer.GenerationPriority}, generated={renderer.IsGenerated}, prepared={renderer.IsPreparedForRendering}, " +
+                    $"shadowPass={Engine.Rendering.State.IsShadowPass}, directionalAtlasGrouped={Engine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass}, " +
+                    $"pointAtlasGrouped={Engine.Rendering.State.IsPointLightAtlasGroupedShadowPass}, renderer='{renderer.GetDescribingName()}', " +
+                    $"mesh='{renderer.Mesh?.Name ?? "<null>"}', material='{renderer.MeshRenderer.Material?.Name ?? "<null>"}'.");
+            }
+
+            private static double ElapsedMilliseconds(long startTimestamp)
+                => (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
         }
 
         private GLMeshGenerationQueue? _meshGenerationQueue;

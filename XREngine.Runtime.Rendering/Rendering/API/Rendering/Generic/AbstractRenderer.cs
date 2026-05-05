@@ -119,6 +119,11 @@ namespace XREngine.Rendering
         public abstract void CropRenderArea(BoundingRectangle region);
         public abstract void SetRenderArea(BoundingRectangle region);
         public abstract void SetCroppingEnabled(bool enabled);
+        public virtual bool SetIndexedViewportScissors(
+            ReadOnlySpan<BoundingRectangle> viewports,
+            ReadOnlySpan<BoundingRectangle> scissors)
+            => false;
+        public virtual void ClearIndexedViewportScissors(int count) { }
         #endregion
 
         #region ImGui

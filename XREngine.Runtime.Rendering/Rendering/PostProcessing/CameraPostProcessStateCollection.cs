@@ -180,7 +180,7 @@ public sealed class PostProcessStageState : IDisposable
     private Dictionary<string, PropertyPathAccessor> _backingProperties = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _backingSync = new();
     private IXRNotifyPropertyChanged? _backingNotifier;
-    private bool _suppressBackingCallbacks;
+    private string? _suppressedBackingPropertyName;
 
     public string StageKey { get; private set; } = string.Empty;
 
@@ -313,9 +313,15 @@ public sealed class PostProcessStageState : IDisposable
             if (parameter is null || !_values.TryGetValue(parameter, out var raw) || !TryCoerce(raw, property.ValueType, out var coerced))
                 continue;
 
-            _suppressBackingCallbacks = true;
-            property.TrySetValue(backing, coerced);
-            _suppressBackingCallbacks = false;
+            _suppressedBackingPropertyName = parameter;
+            try
+            {
+                property.TrySetValue(backing, coerced);
+            }
+            finally
+            {
+                _suppressedBackingPropertyName = null;
+            }
         }
     }
 
@@ -334,16 +340,22 @@ public sealed class PostProcessStageState : IDisposable
         if (!TryCoerce(value, property.ValueType, out var coerced))
             return;
 
-        _suppressBackingCallbacks = true;
-        property.TrySetValue(backing, coerced);
-        _suppressBackingCallbacks = false;
+        _suppressedBackingPropertyName = parameterName;
+        try
+        {
+            property.TrySetValue(backing, coerced);
+        }
+        finally
+        {
+            _suppressedBackingPropertyName = null;
+        }
     }
 
     private void OnBackingPropertyChanged(object? sender, IXRPropertyChangedEventArgs args)
     {
-        if (_suppressBackingCallbacks)
-            return;
         if (string.IsNullOrWhiteSpace(args.PropertyName))
+            return;
+        if (string.Equals(args.PropertyName, _suppressedBackingPropertyName, StringComparison.OrdinalIgnoreCase))
             return;
         if (!_values.ContainsKey(args.PropertyName))
             return;

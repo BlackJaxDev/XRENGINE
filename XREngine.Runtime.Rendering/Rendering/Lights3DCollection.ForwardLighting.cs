@@ -365,6 +365,13 @@ namespace XREngine.Scene
             }
         }
 
+        private static bool IsShadowAtlasAllocationSampleable(in ShadowAtlasAllocation allocation, int layerCount)
+            => allocation.IsResident &&
+               allocation.LastRenderedFrame != 0u &&
+               allocation.ActiveFallback is ShadowFallbackMode.None or ShadowFallbackMode.StaleTile &&
+               allocation.PageIndex >= 0 &&
+               allocation.PageIndex < layerCount;
+
         private static ForwardSpotLightGpu CreateForwardSpotLightGpu(SpotLightComponent light)
         {
             Matrix4x4 lightView = light.ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
@@ -937,11 +944,7 @@ namespace XREngine.Scene
                         ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
                             ? allocation.ActiveFallback
                             : ShadowFallbackMode.Lit;
-                        bool atlasResident = allocation.IsResident &&
-                            allocation.LastRenderedFrame != 0u &&
-                            allocation.ActiveFallback == ShadowFallbackMode.None &&
-                            allocation.PageIndex >= 0 &&
-                            allocation.PageIndex < pointAtlasLayerCount;
+                        bool atlasResident = IsShadowAtlasAllocationSampleable(allocation, pointAtlasLayerCount);
                         uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
                         float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
                         float resolutionScale = light.GetShadowAtlasResolutionScale(sampleResolution);
@@ -993,11 +996,7 @@ namespace XREngine.Scene
                     ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
                         ? allocation.ActiveFallback
                         : ShadowFallbackMode.Lit;
-                    atlasResident = allocation.IsResident &&
-                        allocation.LastRenderedFrame != 0u &&
-                        allocation.ActiveFallback == ShadowFallbackMode.None &&
-                        allocation.PageIndex >= 0 &&
-                        allocation.PageIndex < spotAtlasLayerCount;
+                    atlasResident = IsShadowAtlasAllocationSampleable(allocation, spotAtlasLayerCount);
                     float atlasNearPlane = light.ShadowCamera?.NearZ ?? 0.1f;
                     float atlasFarPlane = light.ShadowCamera?.FarZ ?? MathF.Max(atlasNearPlane + 0.001f, light.Distance);
                     uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
@@ -1009,7 +1008,7 @@ namespace XREngine.Scene
                     atlasParams1 = new Vector4(atlasNearPlane, atlasFarPlane, texelSize, resolutionScale);
                 }
 
-                if ((!useLightSpotAtlas || !atlasResident) && spotShadowSlot < maxForwardShadowedSpotLights)
+                if (!useLightSpotAtlas && spotShadowSlot < maxForwardShadowedSpotLights)
                 {
                     XRTexture? shadowTexture = FindShadowMapTexture(light);
                     if (shadowTexture is XRTexture2D shadowMap)

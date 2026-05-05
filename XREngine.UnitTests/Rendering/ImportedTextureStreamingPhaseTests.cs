@@ -126,6 +126,83 @@ public sealed class ImportedTextureStreamingPhaseTests
     }
 
     [Test]
+    public void DetermineDesiredResidentSize_WhenRecentlyBoundButVisibilityMissed_PreservesResidentSize()
+    {
+        // Texture was bound to a draw last frame but its visibility tag was lost
+        // (e.g. due to lock contention or a capture/probe pass overlap). The policy
+        // must NOT slam the resident size back to the preview floor — it should
+        // hold the existing resident size and step it one bucket upward.
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 4096u,
+                SourceHeight: 4096u,
+                ResidentMaxDimension: 1024u,
+                PreviewReady: true,
+                LastVisibleFrameId: 12L,
+                MinVisibleDistance: 500.0f,
+                MaxProjectedPixelSpan: 0.0f,
+                MaxScreenCoverage: 0.0f,
+                UvDensityHint: 1.0f,
+                SamplerName: "diffuseTexture",
+                LastBoundFrameId: 59L),
+            frameId: 60L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBeGreaterThanOrEqualTo(1024u);
+    }
+
+    [Test]
+    public void DetermineDesiredResidentSize_WhenRecentlyBoundAndUnderSource_StepsOneBucketUp()
+    {
+        // A texture sitting at the preview floor that is being bound every frame but
+        // never gets a visibility tag should ramp upward one bucket per Evaluate cycle.
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 4096u,
+                SourceHeight: 4096u,
+                ResidentMaxDimension: 64u,
+                PreviewReady: true,
+                LastVisibleFrameId: long.MinValue,
+                MinVisibleDistance: float.PositiveInfinity,
+                MaxProjectedPixelSpan: 0.0f,
+                MaxScreenCoverage: 0.0f,
+                UvDensityHint: 1.0f,
+                SamplerName: "diffuseTexture",
+                LastBoundFrameId: 100L),
+            frameId: 100L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBe(128u);
+    }
+
+    [Test]
+    public void DetermineDesiredResidentSize_WhenBoundLongAgo_FallsThroughToPreviewFloor()
+    {
+        // A LastBoundFrameId older than the recently-bound window must NOT preserve
+        // the resident size — that's the path that lets unused textures relinquish VRAM.
+        uint desired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                SourceWidth: 4096u,
+                SourceHeight: 4096u,
+                ResidentMaxDimension: 1024u,
+                PreviewReady: true,
+                LastVisibleFrameId: long.MinValue,
+                MinVisibleDistance: float.PositiveInfinity,
+                MaxProjectedPixelSpan: 0.0f,
+                MaxScreenCoverage: 0.0f,
+                UvDensityHint: 1.0f,
+                SamplerName: "diffuseTexture",
+                LastBoundFrameId: 10L),
+            frameId: 200L,
+            allowPromotions: true,
+            previewMaxDimension: 64u);
+
+        desired.ShouldBe(64u);
+    }
+
+    [Test]
     public void FitResidentSizeToBudget_DemotesUntilResidentBytesFit()
     {
         long justUnder512Budget = XRTexture2D.EstimateResidentBytes(1024u, 1024u, 512u) - 1L;

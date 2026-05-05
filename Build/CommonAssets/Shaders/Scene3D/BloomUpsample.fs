@@ -13,7 +13,7 @@ uniform sampler2D SourceTexture;
 
 uniform int SourceLOD;    // Mip level to read from (lower-res, being upsampled)
 uniform float Radius;     // Scale factor for the tent filter kernel
-uniform float Scatter = 0.7; // Energy attenuation per upsample level (0=tight, 1=wide)
+uniform float Scatter = 0.919; // Energy attenuation per upsample level (0=tight, 1=wide)
 
 void main()
 {

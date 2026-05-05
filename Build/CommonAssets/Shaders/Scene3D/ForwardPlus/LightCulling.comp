@@ -8,8 +8,9 @@ struct LocalLight {
 	vec4 positionWS;      // xyz = world position, w = 1
 	vec4 directionWS;     // xyz = world direction (spot), w = exponent
 	vec4 color_type;      // rgb = light color, a = type (0=point, 1=spot)
-	vec4 params;          // x = radius, y = brightness, z = diffuseIntensity, w = unused
+	vec4 params;          // x = radius, y = brightness, z = diffuseIntensity, w = legacy source index
 	vec4 spotAngles;      // x = innerCutoff, y = outerCutoff, z,w unused
+	ivec4 indices;        // x = source light index, y = shadow record index, z = casts shadows
 };
 
 // SSBOs

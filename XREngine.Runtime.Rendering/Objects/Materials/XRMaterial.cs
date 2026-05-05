@@ -19,6 +19,8 @@ namespace XREngine.Rendering
         None = 0,
         InstancedLayered = 1,
         GeometryShader = 2,
+        AtlasInstancedLayered = 3,
+        AtlasGeometryShader = 4,
     }
 
     /// <summary>
@@ -29,6 +31,8 @@ namespace XREngine.Rendering
         None = 0,
         InstancedLayered = 1,
         GeometryShader = 2,
+        AtlasInstancedLayered = 3,
+        AtlasGeometryShader = 4,
     }
 
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRMaterialInspector")]
@@ -51,6 +55,14 @@ namespace XREngine.Rendering
         [YamlIgnore]
         private bool _pointShadowCasterGeometryVariantResolved;
         [YamlIgnore]
+        private XRMaterial? _pointShadowCasterAtlasVariant;
+        [YamlIgnore]
+        private bool _pointShadowCasterAtlasVariantResolved;
+        [YamlIgnore]
+        private XRMaterial? _pointShadowCasterAtlasGeometryVariant;
+        [YamlIgnore]
+        private bool _pointShadowCasterAtlasGeometryVariantResolved;
+        [YamlIgnore]
         private XRMaterial? _directionalCascadeInstancedShadowCasterVariant;
         [YamlIgnore]
         private bool _directionalCascadeInstancedShadowCasterVariantResolved;
@@ -58,6 +70,14 @@ namespace XREngine.Rendering
         private XRMaterial? _directionalCascadeGeometryShadowCasterVariant;
         [YamlIgnore]
         private bool _directionalCascadeGeometryShadowCasterVariantResolved;
+        [YamlIgnore]
+        private XRMaterial? _directionalCascadeAtlasInstancedShadowCasterVariant;
+        [YamlIgnore]
+        private bool _directionalCascadeAtlasInstancedShadowCasterVariantResolved;
+        [YamlIgnore]
+        private XRMaterial? _directionalCascadeAtlasGeometryShadowCasterVariant;
+        [YamlIgnore]
+        private bool _directionalCascadeAtlasGeometryShadowCasterVariantResolved;
         [YamlIgnore]
         private XRMaterial? _shadowBindingSourceMaterial;
         [YamlIgnore]
@@ -588,21 +608,49 @@ namespace XREngine.Rendering
         }
 
         public XRMaterial? GetPointShadowCasterVariant(bool useGeometryShader)
+            => GetPointShadowCasterVariant(
+                useGeometryShader
+                    ? EPointShadowMaterialKind.GeometryShader
+                    : EPointShadowMaterialKind.InstancedLayered);
+
+        public XRMaterial? GetPointShadowCasterVariant(EPointShadowMaterialKind kind)
         {
-            if (useGeometryShader)
+            if (kind == EPointShadowMaterialKind.AtlasGeometryShader)
+            {
+                if (!_pointShadowCasterAtlasGeometryVariantResolved)
+                {
+                    _pointShadowCasterAtlasGeometryVariant = ShadowCasterVariantFactory.CreatePointLightMaterialVariant(this, kind);
+                    _pointShadowCasterAtlasGeometryVariantResolved = true;
+                }
+
+                return _pointShadowCasterAtlasGeometryVariant;
+            }
+
+            if (kind == EPointShadowMaterialKind.GeometryShader)
             {
                 if (!_pointShadowCasterGeometryVariantResolved)
                 {
-                    _pointShadowCasterGeometryVariant = ShadowCasterVariantFactory.CreatePointLightMaterialVariant(this, useGeometryShader: true);
+                    _pointShadowCasterGeometryVariant = ShadowCasterVariantFactory.CreatePointLightMaterialVariant(this, kind);
                     _pointShadowCasterGeometryVariantResolved = true;
                 }
 
                 return _pointShadowCasterGeometryVariant;
             }
 
+            if (kind == EPointShadowMaterialKind.AtlasInstancedLayered)
+            {
+                if (!_pointShadowCasterAtlasVariantResolved)
+                {
+                    _pointShadowCasterAtlasVariant = ShadowCasterVariantFactory.CreatePointLightMaterialVariant(this, kind);
+                    _pointShadowCasterAtlasVariantResolved = true;
+                }
+
+                return _pointShadowCasterAtlasVariant;
+            }
+
             if (!_pointShadowCasterVariantResolved)
             {
-                _pointShadowCasterVariant = ShadowCasterVariantFactory.CreatePointLightMaterialVariant(this, useGeometryShader: false);
+                _pointShadowCasterVariant = ShadowCasterVariantFactory.CreatePointLightMaterialVariant(this, kind);
                 _pointShadowCasterVariantResolved = true;
             }
 
@@ -610,25 +658,51 @@ namespace XREngine.Rendering
         }
 
         public XRMaterial? GetDirectionalCascadeShadowCasterVariant(bool useGeometryShader)
+            => GetDirectionalCascadeShadowCasterVariant(
+                useGeometryShader
+                    ? EDirectionalCascadeShadowMaterialKind.GeometryShader
+                    : EDirectionalCascadeShadowMaterialKind.InstancedLayered);
+
+        public XRMaterial? GetDirectionalCascadeShadowCasterVariant(EDirectionalCascadeShadowMaterialKind kind)
         {
-            if (useGeometryShader)
+            switch (kind)
             {
-                if (!_directionalCascadeGeometryShadowCasterVariantResolved)
-                {
-                    _directionalCascadeGeometryShadowCasterVariant = ShadowCasterVariantFactory.CreateDirectionalCascadeMaterialVariant(this, useGeometryShader: true);
-                    _directionalCascadeGeometryShadowCasterVariantResolved = true;
-                }
+                case EDirectionalCascadeShadowMaterialKind.GeometryShader:
+                    if (!_directionalCascadeGeometryShadowCasterVariantResolved)
+                    {
+                        _directionalCascadeGeometryShadowCasterVariant = ShadowCasterVariantFactory.CreateDirectionalCascadeMaterialVariant(this, kind);
+                        _directionalCascadeGeometryShadowCasterVariantResolved = true;
+                    }
 
-                return _directionalCascadeGeometryShadowCasterVariant;
+                    return _directionalCascadeGeometryShadowCasterVariant;
+
+                case EDirectionalCascadeShadowMaterialKind.AtlasGeometryShader:
+                    if (!_directionalCascadeAtlasGeometryShadowCasterVariantResolved)
+                    {
+                        _directionalCascadeAtlasGeometryShadowCasterVariant = ShadowCasterVariantFactory.CreateDirectionalCascadeMaterialVariant(this, kind);
+                        _directionalCascadeAtlasGeometryShadowCasterVariantResolved = true;
+                    }
+
+                    return _directionalCascadeAtlasGeometryShadowCasterVariant;
+
+                case EDirectionalCascadeShadowMaterialKind.AtlasInstancedLayered:
+                    if (!_directionalCascadeAtlasInstancedShadowCasterVariantResolved)
+                    {
+                        _directionalCascadeAtlasInstancedShadowCasterVariant = ShadowCasterVariantFactory.CreateDirectionalCascadeMaterialVariant(this, kind);
+                        _directionalCascadeAtlasInstancedShadowCasterVariantResolved = true;
+                    }
+
+                    return _directionalCascadeAtlasInstancedShadowCasterVariant;
+
+                default:
+                    if (!_directionalCascadeInstancedShadowCasterVariantResolved)
+                    {
+                        _directionalCascadeInstancedShadowCasterVariant = ShadowCasterVariantFactory.CreateDirectionalCascadeMaterialVariant(this, EDirectionalCascadeShadowMaterialKind.InstancedLayered);
+                        _directionalCascadeInstancedShadowCasterVariantResolved = true;
+                    }
+
+                    return _directionalCascadeInstancedShadowCasterVariant;
             }
-
-            if (!_directionalCascadeInstancedShadowCasterVariantResolved)
-            {
-                _directionalCascadeInstancedShadowCasterVariant = ShadowCasterVariantFactory.CreateDirectionalCascadeMaterialVariant(this, useGeometryShader: false);
-                _directionalCascadeInstancedShadowCasterVariantResolved = true;
-            }
-
-            return _directionalCascadeInstancedShadowCasterVariant;
         }
 
         public void InvalidateDepthNormalPrePassVariant()
@@ -649,12 +723,24 @@ namespace XREngine.Rendering
             _pointShadowCasterGeometryVariant?.Destroy();
             _pointShadowCasterGeometryVariant = null;
             _pointShadowCasterGeometryVariantResolved = false;
+            _pointShadowCasterAtlasVariant?.Destroy();
+            _pointShadowCasterAtlasVariant = null;
+            _pointShadowCasterAtlasVariantResolved = false;
+            _pointShadowCasterAtlasGeometryVariant?.Destroy();
+            _pointShadowCasterAtlasGeometryVariant = null;
+            _pointShadowCasterAtlasGeometryVariantResolved = false;
             _directionalCascadeInstancedShadowCasterVariant?.Destroy();
             _directionalCascadeInstancedShadowCasterVariant = null;
             _directionalCascadeInstancedShadowCasterVariantResolved = false;
             _directionalCascadeGeometryShadowCasterVariant?.Destroy();
             _directionalCascadeGeometryShadowCasterVariant = null;
             _directionalCascadeGeometryShadowCasterVariantResolved = false;
+            _directionalCascadeAtlasInstancedShadowCasterVariant?.Destroy();
+            _directionalCascadeAtlasInstancedShadowCasterVariant = null;
+            _directionalCascadeAtlasInstancedShadowCasterVariantResolved = false;
+            _directionalCascadeAtlasGeometryShadowCasterVariant?.Destroy();
+            _directionalCascadeAtlasGeometryShadowCasterVariant = null;
+            _directionalCascadeAtlasGeometryShadowCasterVariantResolved = false;
         }
 
         private static bool IsManagedTransparencyRenderPass(int renderPass)
@@ -825,11 +911,11 @@ namespace XREngine.Rendering
             if (GetEffectiveTransparencyMode() != ETransparencyMode.Opaque)
                 return false;
 
-            if (Parameter<ShaderFloat>("AlphaCutoff") is not null)
+            if (RenderOptions?.BlendModeAllDrawBuffers?.Enabled == ERenderParamUsage.Enabled ||
+                RenderOptions?.AlphaToCoverage == ERenderParamUsage.Enabled)
+            {
                 return false;
-
-            if (InferTransparencyMode() != ETransparencyMode.Opaque)
-                return false;
+            }
 
             if (HasSettingUniformsHandlers)
                 return false;

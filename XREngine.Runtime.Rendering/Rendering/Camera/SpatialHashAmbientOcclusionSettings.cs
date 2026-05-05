@@ -4,18 +4,31 @@ namespace XREngine.Rendering
 {
     public sealed class SpatialHashAmbientOcclusionSettings : AmbientOcclusionModeSettings
     {
-        private float _samplesPerPixel = 3.0f;
-        private float _distanceIntensity = 1.0f;
-        private float _thickness = 0.5f;
-        private int _samples = 64;
-        private float _cellSize = 0.07f;
-        private int _steps = 8;
-        private float _jitterScale = 0.35f;
-        private bool _temporalReuseEnabled = true;
-        private float _temporalBlendFactor = 0.9f;
-        private float _temporalClamp = 0.2f;
-        private float _temporalDepthRejectThreshold = 0.01f;
-        private float _temporalMotionRejectionScale = 0.2f;
+        public const float DefaultSamplesPerPixel = 3.06f;
+        public const float DefaultDistanceIntensity = 1.0f;
+        public const float DefaultThickness = 1.917f;
+        public const int DefaultSamples = 64;
+        public const float DefaultCellSize = 0.141f;
+        public const int DefaultSteps = 6;
+        public const float DefaultJitterScale = 1.0f;
+        public const bool DefaultTemporalReuseEnabled = true;
+        public const float DefaultTemporalBlendFactor = 0.789f;
+        public const float DefaultTemporalClamp = 0.499f;
+        public const float DefaultTemporalDepthRejectThreshold = 0.01f;
+        public const float DefaultTemporalMotionRejectionScale = 0.2f;
+
+        private float _samplesPerPixel = DefaultSamplesPerPixel;
+        private float _distanceIntensity = DefaultDistanceIntensity;
+        private float _thickness = DefaultThickness;
+        private int _samples = DefaultSamples;
+        private float _cellSize = DefaultCellSize;
+        private int _steps = DefaultSteps;
+        private float _jitterScale = DefaultJitterScale;
+        private bool _temporalReuseEnabled = DefaultTemporalReuseEnabled;
+        private float _temporalBlendFactor = DefaultTemporalBlendFactor;
+        private float _temporalClamp = DefaultTemporalClamp;
+        private float _temporalDepthRejectThreshold = DefaultTemporalDepthRejectThreshold;
+        private float _temporalMotionRejectionScale = DefaultTemporalMotionRejectionScale;
 
         public SpatialHashAmbientOcclusionSettings(AmbientOcclusionSettings owner)
             : base(owner, nameof(AmbientOcclusionSettings.SpatialHash))
@@ -102,20 +115,20 @@ namespace XREngine.Rendering
 
         public override void ApplyUniforms(XRRenderProgram program)
         {
-            program.Uniform("Radius", PositiveOr(Owner.Radius, 0.9f));
-            program.Uniform("Power", PositiveOr(Owner.Power, 1.2f));
-            program.Uniform("KernelSize", PositiveOr(Samples, 64));
-            program.Uniform("RayStepCount", PositiveOr(Steps, 6));
-            program.Uniform("Bias", PositiveOr(Owner.Bias, 0.03f));
-            program.Uniform("CellSize", PositiveOr(CellSize, 0.75f));
-            program.Uniform("MaxRayDistance", PositiveOr(Owner.Radius, AmbientOcclusionSettings.DefaultRadius));
-            program.Uniform("Thickness", PositiveOr(Thickness, 0.1f));
-            program.Uniform("DistanceFade", PositiveOr(DistanceIntensity, 1.0f));
+            program.Uniform("Radius", PositiveOr(Owner.Radius, AmbientOcclusionSettings.SpatialHashDefaultRadius));
+            program.Uniform("Power", PositiveOr(Owner.Power, AmbientOcclusionSettings.SpatialHashDefaultPower));
+            program.Uniform("KernelSize", PositiveOr(Samples, DefaultSamples));
+            program.Uniform("RayStepCount", PositiveOr(Steps, DefaultSteps));
+            program.Uniform("Bias", PositiveOr(Owner.Bias, AmbientOcclusionSettings.SpatialHashDefaultBias));
+            program.Uniform("CellSize", PositiveOr(CellSize, DefaultCellSize));
+            program.Uniform("MaxRayDistance", PositiveOr(Owner.Radius, AmbientOcclusionSettings.SpatialHashDefaultRadius));
+            program.Uniform("Thickness", PositiveOr(Thickness, DefaultThickness));
+            program.Uniform("DistanceFade", PositiveOr(DistanceIntensity, DefaultDistanceIntensity));
             program.Uniform("TemporalReuseEnabled", TemporalReuseEnabled);
             program.Uniform("TemporalBlendFactor", Math.Clamp(TemporalBlendFactor, 0.0f, 0.99f));
-            program.Uniform("TemporalClamp", PositiveOr(TemporalClamp, 0.2f));
-            program.Uniform("TemporalDepthRejectThreshold", PositiveOr(TemporalDepthRejectThreshold, 0.01f));
-            program.Uniform("TemporalMotionRejectionScale", PositiveOr(TemporalMotionRejectionScale, 0.2f));
+            program.Uniform("TemporalClamp", PositiveOr(TemporalClamp, DefaultTemporalClamp));
+            program.Uniform("TemporalDepthRejectThreshold", PositiveOr(TemporalDepthRejectThreshold, DefaultTemporalDepthRejectThreshold));
+            program.Uniform("TemporalMotionRejectionScale", PositiveOr(TemporalMotionRejectionScale, DefaultTemporalMotionRejectionScale));
         }
     }
 }

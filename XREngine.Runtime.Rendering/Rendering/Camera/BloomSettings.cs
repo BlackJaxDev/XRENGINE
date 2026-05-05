@@ -5,19 +5,19 @@ namespace XREngine.Rendering
     public class BloomSettings : PostProcessSettings
     {
         private bool _enabled = true;
-        private float _intensity = 1.0f;
-        private float _threshold = 0.8f;
+        private float _intensity = 0.530f;
+        private float _threshold = 0.138f;
         private float _softKnee = 0.5f;
-        private float _radius = 1.0f;
-        private float _scatter = 0.75f;
-        private float _strength = 0.15f;
+        private float _radius = 1.495f;
+        private float _scatter = 0.919f;
+        private float _strength = 0.5805f;
         private int _startMip = 1;
-        private int _endMip = 1;
+        private int _endMip = 4;
         private float _lod0Weight = 0.0f;
         private float _lod1Weight = 1.0f;
-        private float _lod2Weight = 0.0f;
-        private float _lod3Weight = 0.0f;
-        private float _lod4Weight = 0.0f;
+        private float _lod2Weight = 0.649f;
+        private float _lod3Weight = 0.397f;
+        private float _lod4Weight = 0.102f;
         private bool _debugBloomOnly = false;
 
         public BloomSettings()

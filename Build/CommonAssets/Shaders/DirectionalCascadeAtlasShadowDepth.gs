@@ -20,9 +20,9 @@ layout (location = 20) out vec3 FragPosLocal;
 void main()
 {
     int layerCount = clamp(CascadeLayerCount, 0, 8);
-    for (int layer = 0; layer < layerCount; ++layer)
+    for (int cascadeIndex = 0; cascadeIndex < layerCount; ++cascadeIndex)
     {
-        gl_Layer = layer;
+        gl_ViewportIndex = cascadeIndex;
         for (int i = 0; i < 3; ++i)
         {
             FragPos = InFragPos[i];
@@ -30,7 +30,7 @@ void main()
             FragUV0 = InFragUV0[i];
             FragColor0 = InFragColor0[i];
             FragPosLocal = InFragPosLocal[i];
-            gl_Position = CascadeViewProjectionMatrices[layer] * vec4(FragPos, 1.0);
+            gl_Position = CascadeViewProjectionMatrices[cascadeIndex] * vec4(FragPos, 1.0);
             EmitVertex();
         }
         EndPrimitive();

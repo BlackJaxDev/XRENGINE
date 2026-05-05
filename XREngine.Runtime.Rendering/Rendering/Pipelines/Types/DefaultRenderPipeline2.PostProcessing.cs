@@ -425,7 +425,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Intensity),
             PostProcessParameterKind.Float,
-            1.0f,
+            0.530f,
             displayName: "Intensity",
             min: 0.0f,
             max: 5.0f,
@@ -435,7 +435,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Threshold),
             PostProcessParameterKind.Float,
-            0.8f,
+            0.138f,
             displayName: "Threshold",
             min: 0.0f,
             max: 5.0f,
@@ -455,7 +455,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Radius),
             PostProcessParameterKind.Float,
-            1.0f,
+            1.495f,
             displayName: "Blur Radius",
             min: 0.1f,
             max: 8.0f,
@@ -465,7 +465,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Scatter),
             PostProcessParameterKind.Float,
-            0.75f,
+            0.919f,
             displayName: "Scatter",
             min: 0.0f,
             max: 1.0f,
@@ -475,7 +475,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Strength),
             PostProcessParameterKind.Float,
-            0.15f,
+            0.5805f,
             displayName: "Bloom Strength",
             min: 0.0f,
             max: 1.0f,
@@ -495,7 +495,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.EndMip),
             PostProcessParameterKind.Int,
-            1,
+            4,
             displayName: "End Mip",
             min: 0,
             max: 4,
@@ -525,7 +525,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod2Weight),
             PostProcessParameterKind.Float,
-            0.0f,
+            0.649f,
             displayName: "LOD2 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -535,7 +535,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod3Weight),
             PostProcessParameterKind.Float,
-            0.0f,
+            0.397f,
             displayName: "LOD3 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -545,7 +545,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             nameof(BloomSettings.Lod4Weight),
             PostProcessParameterKind.Float,
-            0.0f,
+            0.102f,
             displayName: "LOD4 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -701,7 +701,7 @@ public partial class DefaultRenderPipeline2
         bool IsPrototypeObscurance(object o)
             => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance;
 
-        bool IsSpatialHash(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.SpatialHashExperimental;
+        bool IsSpatialHash(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion;
 
         bool UsesRadius(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsVXAO(o) || IsMVAO(o) || IsSpatialHash(o);
         bool UsesPower(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsVXAO(o) || IsMVAO(o) || IsSpatialHash(o);
@@ -1058,7 +1058,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.SamplesPerPixel)),
             PostProcessParameterKind.Float,
-            8.0f,
+            SpatialHashAmbientOcclusionSettings.DefaultSamplesPerPixel,
             displayName: "Feature Size (px)",
             min: 1.0f,
             max: 20.0f,
@@ -1068,7 +1068,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.CellSize)),
             PostProcessParameterKind.Float,
-            0.01f,
+            SpatialHashAmbientOcclusionSettings.DefaultCellSize,
             displayName: "Min Cell Size",
             min: 0.01f,
             max: 1.0f,
@@ -1078,7 +1078,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.Steps)),
             PostProcessParameterKind.Int,
-            8,
+            SpatialHashAmbientOcclusionSettings.DefaultSteps,
             displayName: "Ray Steps",
             min: 1.0f,
             max: 32.0f,
@@ -1088,7 +1088,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.Thickness)),
             PostProcessParameterKind.Float,
-            0.5f,
+            SpatialHashAmbientOcclusionSettings.DefaultThickness,
             displayName: "Thickness",
             min: 0.01f,
             max: 2.0f,
@@ -1098,7 +1098,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.JitterScale)),
             PostProcessParameterKind.Float,
-            1.0f,
+            SpatialHashAmbientOcclusionSettings.DefaultJitterScale,
             displayName: "Jitter Scale",
             min: 0.0f,
             max: 1.0f,
@@ -1108,14 +1108,14 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalReuseEnabled)),
             PostProcessParameterKind.Bool,
-            true,
+            SpatialHashAmbientOcclusionSettings.DefaultTemporalReuseEnabled,
             displayName: "Temporal Reuse",
             visibilityCondition: IsSpatialHash);
 
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalBlendFactor)),
             PostProcessParameterKind.Float,
-            0.9f,
+            SpatialHashAmbientOcclusionSettings.DefaultTemporalBlendFactor,
             displayName: "Temporal Blend",
             min: 0.0f,
             max: 0.99f,
@@ -1125,7 +1125,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalClamp)),
             PostProcessParameterKind.Float,
-            0.2f,
+            SpatialHashAmbientOcclusionSettings.DefaultTemporalClamp,
             displayName: "Temporal Clamp",
             min: 0.001f,
             max: 1.0f,
@@ -1135,7 +1135,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalDepthRejectThreshold)),
             PostProcessParameterKind.Float,
-            0.01f,
+            SpatialHashAmbientOcclusionSettings.DefaultTemporalDepthRejectThreshold,
             displayName: "Temporal Depth Reject",
             min: 0.0001f,
             max: 0.1f,
@@ -1145,7 +1145,7 @@ public partial class DefaultRenderPipeline2
         stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalMotionRejectionScale)),
             PostProcessParameterKind.Float,
-            0.2f,
+            SpatialHashAmbientOcclusionSettings.DefaultTemporalMotionRejectionScale,
             displayName: "Temporal Motion Reject",
             min: 0.0001f,
             max: 2.0f,
@@ -1553,7 +1553,7 @@ public partial class DefaultRenderPipeline2
             new("HBAO+", (int)AmbientOcclusionSettings.EType.HorizonBasedPlus),
             new("GTAO", (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion),
             new("VXAO / Voxel AO (Planned)", (int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion),
-            new("Spatial Hash AO (Experimental)", (int)AmbientOcclusionSettings.EType.SpatialHashExperimental),
+            new("Spatial Hash AO", (int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion),
         ];
 
     private static MotionBlurSettings? GetMotionBlurSettings()
@@ -1608,8 +1608,8 @@ public partial class DefaultRenderPipeline2
             return;
         }
 
-        program.Uniform("BloomIntensity", 1.0f);
-        program.Uniform("BloomThreshold", 1.0f);
+        program.Uniform("BloomIntensity", 0.530f);
+        program.Uniform("BloomThreshold", 0.138f);
         program.Uniform("SoftKnee", 0.5f);
         program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
     }

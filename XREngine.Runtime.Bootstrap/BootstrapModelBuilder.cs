@@ -9,19 +9,34 @@ namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapModelBuilder
 {
-    public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
+    public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode, Action? onAllImportsComplete = null)
     {
+        void DispatchAllImportsComplete()
+        {
+            if (onAllImportsComplete is null)
+                return;
+
+            _ = Engine.InvokeOnAppThread(
+                onAllImportsComplete,
+                "BootstrapModelBuilder: All model imports completed",
+                executeNowIfAlreadyAppThread: true);
+        }
+
         if (!RuntimeBootstrapState.Settings.HasAnyModelsToImport)
+        {
+            DispatchAllImportsComplete();
             return;
+        }
 
         var importBridge = BootstrapModelImportBridge.Current;
         if (importBridge is null)
         {
             Debug.LogWarning("[BootstrapModelBuilder] Model import requested, but no bootstrap model-import bridge is registered.");
+            DispatchAllImportsComplete();
             return;
         }
 
-        importBridge.ImportModels(desktopDir, rootNode, characterParentNode);
+        importBridge.ImportModels(desktopDir, rootNode, characterParentNode, onAllImportsComplete);
     }
 
     public static SkyboxComponent? AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)

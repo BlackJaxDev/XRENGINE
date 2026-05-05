@@ -52,6 +52,10 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public bool DirectionalCascadeInstancedLayeredShadowPass { get; private set; }
         /// <summary>
+        /// If true, the current directional cascade pass writes atlas viewport indices instead of texture-array layers.
+        /// </summary>
+        public bool DirectionalCascadeAtlasGroupedShadowPass { get; private set; }
+        /// <summary>
         /// Number of active directional cascade layers addressed by the current layered shadow pass.
         /// </summary>
         public int DirectionalCascadeShadowLayerCount { get; private set; }
@@ -65,10 +69,15 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public bool PointLightInstancedLayeredShadowPass { get; private set; }
         /// <summary>
+        /// If true, the current point-light pass writes atlas viewport indices instead of cubemap layers.
+        /// </summary>
+        public bool PointLightAtlasGroupedShadowPass { get; private set; }
+        /// <summary>
         /// Number of active cubemap face layers addressed by the current point-light layered shadow pass.
         /// </summary>
         public int PointLightShadowFaceCount { get; private set; }
         private readonly Matrix4x4[] _pointLightShadowFaceMatrices = new Matrix4x4[6];
+        private readonly int[] _pointLightShadowFaceIndices = new int[6];
         /// <summary>
         /// If set, this material will be used to render all objects in the scene.
         /// Typically used for shadow passes.
@@ -155,9 +164,11 @@ public sealed partial class XRRenderPipelineInstance
             StereoPass = false;
             DirectionalCascadeLayeredShadowPass = false;
             DirectionalCascadeInstancedLayeredShadowPass = false;
+            DirectionalCascadeAtlasGroupedShadowPass = false;
             DirectionalCascadeShadowLayerCount = 0;
             PointLightLayeredShadowPass = false;
             PointLightInstancedLayeredShadowPass = false;
+            PointLightAtlasGroupedShadowPass = false;
             PointLightShadowFaceCount = 0;
             GlobalMaterialOverride = null;
             ScreenSpaceUserInterface = null;
@@ -165,11 +176,15 @@ public sealed partial class XRRenderPipelineInstance
         }
 
         private int _directionalCascadeLayeredShadowPassDepth;
-        public StateObject PushDirectionalCascadeLayeredShadowPass(bool instancedLayered, ReadOnlySpan<Matrix4x4> cascadeMatrices)
+        public StateObject PushDirectionalCascadeLayeredShadowPass(
+            bool instancedLayered,
+            ReadOnlySpan<Matrix4x4> cascadeMatrices,
+            bool atlasGrouped = false)
         {
             _directionalCascadeLayeredShadowPassDepth++;
             DirectionalCascadeLayeredShadowPass = true;
             DirectionalCascadeInstancedLayeredShadowPass = instancedLayered;
+            DirectionalCascadeAtlasGroupedShadowPass = atlasGrouped;
             DirectionalCascadeShadowLayerCount = Math.Clamp(cascadeMatrices.Length, 0, _directionalCascadeShadowMatrices.Length);
             for (int i = 0; i < DirectionalCascadeShadowLayerCount; i++)
                 _directionalCascadeShadowMatrices[i] = cascadeMatrices[i];
@@ -197,19 +212,28 @@ public sealed partial class XRRenderPipelineInstance
             _directionalCascadeLayeredShadowPassDepth = 0;
             DirectionalCascadeLayeredShadowPass = false;
             DirectionalCascadeInstancedLayeredShadowPass = false;
+            DirectionalCascadeAtlasGroupedShadowPass = false;
             DirectionalCascadeShadowLayerCount = 0;
             Array.Clear(_directionalCascadeShadowMatrices);
         }
 
         private int _pointLightLayeredShadowPassDepth;
-        public StateObject PushPointLightLayeredShadowPass(bool instancedLayered, ReadOnlySpan<Matrix4x4> faceMatrices)
+        public StateObject PushPointLightLayeredShadowPass(
+            bool instancedLayered,
+            ReadOnlySpan<Matrix4x4> faceMatrices,
+            ReadOnlySpan<int> faceIndices = default,
+            bool atlasGrouped = false)
         {
             _pointLightLayeredShadowPassDepth++;
             PointLightLayeredShadowPass = true;
             PointLightInstancedLayeredShadowPass = instancedLayered;
+            PointLightAtlasGroupedShadowPass = atlasGrouped;
             PointLightShadowFaceCount = Math.Clamp(faceMatrices.Length, 0, _pointLightShadowFaceMatrices.Length);
             for (int i = 0; i < PointLightShadowFaceCount; i++)
+            {
                 _pointLightShadowFaceMatrices[i] = faceMatrices[i];
+                _pointLightShadowFaceIndices[i] = i < faceIndices.Length ? faceIndices[i] : i;
+            }
             return StateObject.New(PopPointLightLayeredShadowPass);
         }
 
@@ -225,6 +249,18 @@ public sealed partial class XRRenderPipelineInstance
             return false;
         }
 
+        public bool TryGetPointLightShadowFaceIndex(int index, out int faceIndex)
+        {
+            if ((uint)index < (uint)PointLightShadowFaceCount)
+            {
+                faceIndex = _pointLightShadowFaceIndices[index];
+                return true;
+            }
+
+            faceIndex = index;
+            return false;
+        }
+
         private void PopPointLightLayeredShadowPass()
         {
             _pointLightLayeredShadowPassDepth--;
@@ -234,8 +270,10 @@ public sealed partial class XRRenderPipelineInstance
             _pointLightLayeredShadowPassDepth = 0;
             PointLightLayeredShadowPass = false;
             PointLightInstancedLayeredShadowPass = false;
+            PointLightAtlasGroupedShadowPass = false;
             PointLightShadowFaceCount = 0;
             Array.Clear(_pointLightShadowFaceMatrices);
+            Array.Clear(_pointLightShadowFaceIndices);
         }
 
         public XRCamera? RenderingCamera
@@ -296,6 +334,43 @@ public sealed partial class XRRenderPipelineInstance
                 AbstractRenderer.Current?.CropRenderArea(_cropRegionStack.Peek());
             else
                 AbstractRenderer.Current?.SetCroppingEnabled(false);
+        }
+
+        private readonly Stack<int> _indexedViewportScissorCounts = new();
+        public StateObject PushIndexedViewportScissors(ReadOnlySpan<BoundingRectangle> viewports, ReadOnlySpan<BoundingRectangle> scissors)
+        {
+            int count = Math.Min(viewports.Length, scissors.Length);
+            if (count <= 0 || AbstractRenderer.Current?.SetIndexedViewportScissors(viewports[..count], scissors[..count]) != true)
+            {
+                _indexedViewportScissorCounts.Push(0);
+                return StateObject.New(PopIndexedViewportScissors);
+            }
+
+            _indexedViewportScissorCounts.Push(count);
+            return StateObject.New(PopIndexedViewportScissors);
+        }
+
+        private void PopIndexedViewportScissors()
+        {
+            if (_indexedViewportScissorCounts.Count <= 0)
+                return;
+
+            int count = _indexedViewportScissorCounts.Pop();
+            if (count > 0)
+                AbstractRenderer.Current?.ClearIndexedViewportScissors(count);
+
+            if (_renderRegionStack.TryPeek(out BoundingRectangle renderArea))
+                AbstractRenderer.Current?.SetRenderArea(renderArea);
+
+            if (_cropRegionStack.TryPeek(out BoundingRectangle cropArea))
+            {
+                AbstractRenderer.Current?.SetCroppingEnabled(true);
+                AbstractRenderer.Current?.CropRenderArea(cropArea);
+            }
+            else
+            {
+                AbstractRenderer.Current?.SetCroppingEnabled(false);
+            }
         }
 
         /// <summary>

@@ -434,8 +434,8 @@ namespace XREngine.Scene
                     EShadowProjectionType.SpotPrimary,
                     faceOrCascadeIndex: 0,
                     camera,
-                    priority: 2000.0f + EstimateSpotPriority(light),
-                    fallback: ShadowFallbackMode.Legacy);
+                    priority: 4000.0f + EstimateSpotPriority(light),
+                    fallback: ShadowFallbackMode.StaleTile);
             }
         }
 
@@ -465,7 +465,7 @@ namespace XREngine.Scene
                         faceIndex,
                         faceCamera,
                         priority: basePriority + faceRelevance * 750.0f - faceIndex * 0.01f,
-                        fallback: ShadowFallbackMode.ContactOnly,
+                        fallback: ShadowFallbackMode.StaleTile,
                         desiredResolutionOverride: desiredResolution);
                 }
             }
@@ -491,10 +491,15 @@ namespace XREngine.Scene
             ulong contentHash = BuildShadowContentHash(light, projectionType, faceOrCascadeIndex, encoding, view, projection, projNear, projFar);
             bool canReusePreviousFrame = light.Type != ELightType.Dynamic;
             bool hasPrevious = ShadowAtlas.PublishedFrameData.TryGetAllocation(key, out ShadowAtlasAllocation previous);
-            bool isDirty = !hasPrevious ||
-                previous.ContentVersion != contentHash ||
-                !canReusePreviousFrame ||
-                !previous.IsResident;
+            ShadowDirtyReason dirtyReason = ResolveShadowDirtyReason(
+                light,
+                projectionType,
+                encoding,
+                contentHash,
+                canReusePreviousFrame,
+                hasPrevious,
+                previous);
+            bool isDirty = dirtyReason != ShadowDirtyReason.None;
             float refreshPriority = priority + EstimateRefreshPriorityBonus(hasPrevious, previous);
 
             ShadowMapRequest request = new(
@@ -514,6 +519,7 @@ namespace XREngine.Scene
                 refreshPriority,
                 contentHash,
                 isDirty,
+                dirtyReason,
                 canReusePreviousFrame,
                 EditorPinned: false,
                 StereoVis: Engine.VRState.IsInVR ? StereoVisibility.BothEyes : StereoVisibility.Mono);
@@ -521,6 +527,55 @@ namespace XREngine.Scene
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
             ShadowAtlas.Submit(request);
         }
+
+        private static ShadowDirtyReason ResolveShadowDirtyReason(
+            LightComponent light,
+            EShadowProjectionType projectionType,
+            EShadowMapEncoding encoding,
+            ulong contentHash,
+            bool canReusePreviousFrame,
+            bool hasPrevious,
+            in ShadowAtlasAllocation previous)
+        {
+            ShadowDirtyReason reason = ShadowDirtyReason.None;
+
+            if (!hasPrevious)
+                reason |= ShadowDirtyReason.FirstSubmission;
+            else
+            {
+                if (!previous.IsResident)
+                    reason |= ShadowDirtyReason.AllocationMissing;
+                if (previous.LastRenderedFrame == 0u)
+                    reason |= ShadowDirtyReason.NeverRendered;
+                if (previous.ContentVersion != contentHash)
+                {
+                    reason |= ShadowDirtyReason.ContentChanged;
+                    reason |= projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary
+                        ? ShadowDirtyReason.ProjectionOrCameraFitChanged
+                        : ShadowDirtyReason.LightOrSettingsChanged;
+                }
+                if (previous.AtlasId != (((int)ResolveAtlasKind(projectionType) << 8) | (int)encoding))
+                    reason |= ShadowDirtyReason.EncodingChanged | ShadowDirtyReason.AllocationChanged;
+            }
+
+            if (!canReusePreviousFrame)
+            {
+                reason |= ShadowDirtyReason.ReuseDisabled;
+                if (light.Type == ELightType.Dynamic)
+                    reason |= ShadowDirtyReason.DynamicLight;
+            }
+
+            return reason;
+        }
+
+        private static EShadowAtlasKind ResolveAtlasKind(EShadowProjectionType projectionType)
+            => projectionType switch
+            {
+                EShadowProjectionType.DirectionalPrimary or EShadowProjectionType.DirectionalCascade => EShadowAtlasKind.Directional,
+                EShadowProjectionType.PointFace => EShadowAtlasKind.Point,
+                EShadowProjectionType.SpotPrimary => EShadowAtlasKind.Spot,
+                _ => EShadowAtlasKind.Directional,
+            };
 
         private float EstimateRefreshPriorityBonus(bool hasPrevious, in ShadowAtlasAllocation previous)
         {
@@ -550,12 +605,7 @@ namespace XREngine.Scene
             if (!light.UsesSpotShadowAtlasForCurrentEncoding)
                 return true;
 
-            if (!TryGetSpotShadowAtlasAllocation(light, out ShadowAtlasAllocation allocation, out _))
-                return true;
-
-            return !allocation.IsResident ||
-                allocation.LastRenderedFrame == 0u ||
-                allocation.ActiveFallback == ShadowFallbackMode.Legacy;
+            return false;
         }
 
         private bool ShouldRenderLegacyDirectionalShadowMap(DirectionalLightComponent light, out bool renderCascades)
@@ -721,6 +771,9 @@ namespace XREngine.Scene
             SkipReason lastSkip = allocation.SkipReason != SkipReason.None
                 ? allocation.SkipReason
                 : previous.LastSkipReason;
+            ShadowDirtyReason lastDirtyReason = request.DirtyReason != ShadowDirtyReason.None
+                ? request.DirtyReason
+                : previous.LastDirtyReason;
             ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
                 ? allocation.ActiveFallback
                 : previous.ActiveFallback;
@@ -774,6 +827,7 @@ namespace XREngine.Scene
                 maxAllocated,
                 highestPriority,
                 lastSkip,
+                lastDirtyReason,
                 fallback,
                 shadowRecordIndex,
                 allocation.PageIndex,
@@ -833,12 +887,13 @@ namespace XREngine.Scene
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][AtlasSubmit] frame={0} light='{1}' projection={2} cascadeOrFace={3} dirty={4} contentChanged={5} canReuse={6} fallback={7} desired={8} min={9} near={10:F3} far={11:F3} priority={12:F1} previousResident={13} previousRenderedFrame={14} previousFallback={15} previousPage={16} previousRect={17}",
+            "[DirectionalShadowAudit][AtlasSubmit] frame={0} light='{1}' projection={2} cascadeOrFace={3} dirty={4} dirtyReason={5} contentChanged={6} canReuse={7} fallback={8} desired={9} min={10} near={11:F3} far={12:F3} priority={13:F1} previousResident={14} previousRenderedFrame={15} previousFallback={16} previousPage={17} previousRect={18}",
                 Engine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 request.ProjectionType,
                 request.FaceOrCascadeIndex,
                 request.IsDirty,
+                request.DirtyReason,
                 contentChanged,
                 request.CanReusePreviousFrame,
                 request.Fallback,

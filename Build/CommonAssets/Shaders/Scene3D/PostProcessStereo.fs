@@ -19,10 +19,10 @@ uniform bool UseGpuAutoExposure;
 uniform float ChromaticAberrationIntensity;
 
 // Bloom combine controls
-uniform float BloomStrength = 0.15;
+uniform float BloomStrength = 0.5805;
 uniform int BloomStartMip = 1;
-uniform int BloomEndMip = 1;
-uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);
+uniform int BloomEndMip = 4;
+uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102);
 uniform bool DebugBloomOnly = false;
 
 // Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini, 4=BrownConrady

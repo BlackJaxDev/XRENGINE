@@ -1057,53 +1057,63 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         ImGui.TextDisabled($"Render Pass: {DescribeRenderPass(effectiveMaterial.RenderPass)}");
 
         var parameters = effectiveMaterial.Parameters;
-        if (parameters is not null && parameters.Length > 0)
+        int parameterCount = parameters?.Length ?? 0;
+        if (ImGui.TreeNodeEx($"Uniform Parameters ({parameterCount})##MaterialParamsHeader_{submeshIndex}_{lodIndex}", ImGuiTreeNodeFlags.SpanAvailWidth))
         {
-            if (ImGui.BeginTable($"MaterialParams_{submeshIndex}_{lodIndex}", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+            if (parameters is not null && parameters.Length > 0)
             {
-                ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch, 0.45f);
-                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.55f);
-                ImGui.TableHeadersRow();
-
-                for (int i = 0; i < parameters.Length; i++)
+                if (ImGui.BeginTable($"MaterialParams_{submeshIndex}_{lodIndex}", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
                 {
-                    ShaderVar param = parameters[i];
-                    string name = param.Name ?? $"Param{i}";
+                    ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch, 0.45f);
+                    ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.55f);
+                    ImGui.TableHeadersRow();
 
-                    ImGui.TableNextRow();
-                    ImGui.TableSetColumnIndex(0);
-                    ImGui.TextUnformatted(name);
+                    for (int i = 0; i < parameters.Length; i++)
+                    {
+                        ShaderVar param = parameters[i];
+                        string name = param.Name ?? $"Param{i}";
 
-                    ImGui.TableSetColumnIndex(1);
-                    ImGui.PushID($"MatParam_{submeshIndex}_{lodIndex}_{i}");
-                    DrawShaderParameterControl(renderer, param);
-                    ImGui.PopID();
+                        ImGui.TableNextRow();
+                        ImGui.TableSetColumnIndex(0);
+                        ImGui.TextUnformatted(name);
+
+                        ImGui.TableSetColumnIndex(1);
+                        ImGui.PushID($"MatParam_{submeshIndex}_{lodIndex}_{i}");
+                        DrawShaderParameterControl(renderer, param);
+                        ImGui.PopID();
+                    }
+
+                    ImGui.EndTable();
                 }
-
-                ImGui.EndTable();
             }
-        }
-        else
-        {
-            ImGui.TextDisabled("No uniform parameters.");
-        }
-
-        ImGui.SeparatorText("Textures");
-
-        if (runtimeMaterial is not null && !ReferenceEquals(runtimeMaterial, assetMaterial))
-        {
-            ImGui.TextDisabled("Runtime Overrides:");
-            DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}_Runtime", runtimeMaterial);
-            if (assetMaterial is not null)
+            else
             {
-                ImGui.Spacing();
-                ImGui.TextDisabled("Asset Textures:");
-                DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}_Asset", assetMaterial);
+                ImGui.TextDisabled("No uniform parameters.");
             }
+
+            ImGui.TreePop();
         }
-        else
+
+        int textureCount = effectiveMaterial.Textures?.Count ?? 0;
+        if (ImGui.TreeNodeEx($"Textures ({textureCount})##MaterialTexturesHeader_{submeshIndex}_{lodIndex}", ImGuiTreeNodeFlags.SpanAvailWidth))
         {
-            DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}", effectiveMaterial);
+            if (runtimeMaterial is not null && !ReferenceEquals(runtimeMaterial, assetMaterial))
+            {
+                ImGui.TextDisabled("Runtime Overrides:");
+                DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}_Runtime", runtimeMaterial);
+                if (assetMaterial is not null)
+                {
+                    ImGui.Spacing();
+                    ImGui.TextDisabled("Asset Textures:");
+                    DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}_Asset", assetMaterial);
+                }
+            }
+            else
+            {
+                DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}", effectiveMaterial);
+            }
+
+            ImGui.TreePop();
         }
     }
 

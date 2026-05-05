@@ -47,8 +47,8 @@ public static class BootstrapEditorHookRegistration
 
     private sealed class EditorBootstrapModelImportBridge : IBootstrapModelImportBridge
     {
-        public void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
-            => EditorUnitTests.Models.ImportModels(desktopDir, rootNode, characterParentNode);
+        public void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode, Action? onAllImportsComplete = null)
+            => EditorUnitTests.Models.ImportModels(desktopDir, rootNode, characterParentNode, onAllImportsComplete);
     }
 
     private sealed class EditorBootstrapInputBridge : IBootstrapInputBridge

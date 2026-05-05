@@ -188,7 +188,7 @@ public static partial class EditorUnitTests
             Debug.Meshes($"[StaticModel] Enabled auto-generated CoACD colliders for {colliderCount} imported model components under '{rootNode.Name}'.");
         }
 
-        public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
+        public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode, Action? onAllModelsImported = null)
         {
             if (Toggles.CreateUnitBox)
             {
@@ -206,14 +206,33 @@ public static partial class EditorUnitTests
                 }]);
             }
 
+            int allModelImportCompletionQueued = 0;
+            void DispatchAllModelsImported()
+            {
+                if (onAllModelsImported is null)
+                    return;
+
+                if (Interlocked.CompareExchange(ref allModelImportCompletionQueued, 1, 0) != 0)
+                    return;
+
+                _ = Engine.InvokeOnAppThread(
+                    onAllModelsImported,
+                    "UnitTestingWorld: All model imports completed",
+                    executeNowIfAlreadyAppThread: true);
+            }
+
             if (!Toggles.HasAnyModelsToImport)
+            {
+                DispatchAllModelsImported();
                 return;
+            }
 
             SceneNode? importedStaticModelsRootNode = null;
             object importedStaticRootsLock = new();
             var importedStaticRoots = new List<SceneNode>();
             string[] textureLoadDirSearchPaths = ResolveTextureLoadDirSearchPaths();
             var modelsToSchedule = new List<Settings.ModelImportSettings>();
+            int pendingModelImports = 0;
 
             int pendingStaticImports = 0;
             foreach (var m in Toggles.ModelsToImport)
@@ -222,12 +241,16 @@ public static partial class EditorUnitTests
                     continue;
 
                 modelsToSchedule.Add(m);
+                pendingModelImports++;
                 if (m.Kind is UnitTestModelImportKind.Static)
                     pendingStaticImports++;
             }
 
             if (modelsToSchedule.Count == 0)
+            {
+                DispatchAllModelsImported();
                 return;
+            }
 
             int staticImportCompletionQueued = 0;
             void CompleteStaticImportSlot()
@@ -241,6 +264,14 @@ public static partial class EditorUnitTests
                 QueueLightProbeSpawnerModelBoundsWiring(rootNode, importedStaticRootsLock, importedStaticRoots);
             }
 
+            void CompleteAllModelImportSlot()
+            {
+                if (Interlocked.Decrement(ref pendingModelImports) != 0)
+                    return;
+
+                DispatchAllModelsImported();
+            }
+
             void ScheduleModelImport(Settings.ModelImportSettings model)
             {
                 string resolvedPath = ResolveModelPath(desktopDir, model.Path);
@@ -249,6 +280,7 @@ public static partial class EditorUnitTests
                     Debug.MeshesWarning($"[UnitTestingWorld] Model file not found at '{resolvedPath}' (raw='{model.Path}')");
                     if (model.Kind is UnitTestModelImportKind.Static)
                         CompleteStaticImportSlot();
+                    CompleteAllModelImportSlot();
                     return;
                 }
 
@@ -271,10 +303,19 @@ public static partial class EditorUnitTests
                                         characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
 
                                     OnFinishedImportingAvatar(importedNode, characterParentNode);
+                                    CompleteAllModelImportSlot();
                                 }, $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
                             },
-                            onError: ex => Debug.MeshesException(ex, $"[AnimatedModel] Failed to import animated model: {resolvedPath}"),
-                            onCanceled: () => Debug.MeshesWarning($"[AnimatedModel] Import was canceled: {resolvedPath}"),
+                            onError: ex =>
+                            {
+                                Debug.MeshesException(ex, $"[AnimatedModel] Failed to import animated model: {resolvedPath}");
+                                CompleteAllModelImportSlot();
+                            },
+                            onCanceled: () =>
+                            {
+                                Debug.MeshesWarning($"[AnimatedModel] Import was canceled: {resolvedPath}");
+                                CompleteAllModelImportSlot();
+                            },
                             onProgress: progress => Debug.Meshes($"[AnimatedModel] Progress ({Path.GetFileName(resolvedPath)}): {progress:P0}"),
                             cancellationToken: default,
                             parent: null,
@@ -293,9 +334,6 @@ public static partial class EditorUnitTests
                         importedStaticModelsRootNode ??= new SceneNode(rootNode) { Name = "Static Model Root", Layer = DefaultLayers.StaticIndex };
                         ModelImporter.DelMakeMaterialAction makeMaterialAction = ResolveMakeMaterialAction(model);
                         ModelImportOptions? importOptions = CreateImportOptions(model, textureLoadDirSearchPaths);
-
-                        // Capture the root node ref for the closure below.
-                        SceneNode staticRoot = importedStaticModelsRootNode;
 
                         _ = ModelImporter.ScheduleImportJob(
                             resolvedPath,
@@ -316,17 +354,20 @@ public static partial class EditorUnitTests
                                     }
 
                                     CompleteStaticImportSlot();
+                                    CompleteAllModelImportSlot();
                                 }, $"UnitTestingWorld: Finish static model import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
                             },
                             onError: ex =>
                             {
                                 Debug.MeshesException(ex, $"[StaticModel] Failed to import static model: {resolvedPath}");
                                 CompleteStaticImportSlot();
+                                CompleteAllModelImportSlot();
                             },
                             onCanceled: () =>
                             {
                                 Debug.MeshesWarning($"[StaticModel] Import was canceled: {resolvedPath}");
                                 CompleteStaticImportSlot();
+                                CompleteAllModelImportSlot();
                             },
                             onProgress: progress => Debug.Meshes($"[StaticModel] Progress ({Path.GetFileName(resolvedPath)}): {progress:P0}"),
                             cancellationToken: default,

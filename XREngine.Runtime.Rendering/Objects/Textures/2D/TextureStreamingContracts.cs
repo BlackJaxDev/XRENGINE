@@ -44,7 +44,8 @@ internal readonly record struct ImportedTextureStreamingPolicyInput(
     float MaxProjectedPixelSpan,
     float MaxScreenCoverage,
     float UvDensityHint,
-    string? SamplerName);
+    string? SamplerName,
+    long LastBoundFrameId = long.MinValue);
 
 internal readonly record struct ImportedTextureStreamingBudgetInput(
     uint SourceWidth,

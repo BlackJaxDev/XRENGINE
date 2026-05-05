@@ -339,6 +339,19 @@
       "type": "boolean",
       "description": "Adds test animations to the character pawn."
     },
+    "UseStartupShadowThrottlingForModelImports": {
+      "type": "boolean",
+      "description": "Throttles shadow atlas work while startup model imports are in progress."
+    },
+    "StartupMaxShadowTilesRenderedPerFrame": {
+      "type": "integer",
+      "description": "Shadow atlas tile budget per frame while startup model imports are active."
+    },
+    "StartupMaxShadowRenderMilliseconds": {
+      "type": "number",
+      "description": "Shadow atlas render-time budget in milliseconds while startup model imports are active.",
+      "minimum": 0
+    },
     "AllowShaderPipelines": {
       "type": "boolean",
       "description": "Indicates if the engine should use shader pipelines to mix and match shader stages. This will break debug shape rendering, and seems to render slower than making combined programs."
@@ -792,7 +805,7 @@
         },
         "EdgeFade": {
           "type": "number",
-          "description": "Local-space distance over which density fades to zero near the volumetric fog bounds. Existing volume noise erodes this fade band when NoiseAmount is above zero."
+          "description": "Generated from EdgeFade on VolumetricFogVolumeInitSettings."
         },
         "Anisotropy": {
           "type": "number",

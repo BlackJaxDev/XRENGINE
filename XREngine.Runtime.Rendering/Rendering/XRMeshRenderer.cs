@@ -196,9 +196,13 @@ namespace XREngine.Rendering
 
             BaseVersion ver;
             if (!useMeshDeform && Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
-                return GetDirectionalCascadeInstancedVersion();
+                return Engine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass
+                    ? GetDirectionalCascadeAtlasInstancedVersion()
+                    : GetDirectionalCascadeInstancedVersion();
             if (!useMeshDeform && Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
-                return GetPointLightInstancedVersion();
+                return Engine.Rendering.State.IsPointLightAtlasGroupedShadowPass
+                    ? GetPointLightAtlasInstancedVersion()
+                    : GetPointLightInstancedVersion();
 
             bool preferNV = Engine.Rendering.Settings.PreferNVStereo;
             bool hasNvMaterialVertexShader = MaterialHasMatchingVertexShader(HasNVStereoViewRendering);
@@ -272,6 +276,8 @@ namespace XREngine.Rendering
         public BaseVersion GetMeshDeformNVStereoVersion() => GetOrCreateVersion(5);
         public BaseVersion GetDirectionalCascadeInstancedVersion() => GetOrCreateVersion(6);
         public BaseVersion GetPointLightInstancedVersion() => GetOrCreateVersion(7);
+        public BaseVersion GetDirectionalCascadeAtlasInstancedVersion() => GetOrCreateVersion(8);
+        public BaseVersion GetPointLightAtlasInstancedVersion() => GetOrCreateVersion(9);
 
         private static bool HasNVStereoViewRendering(XRShader x)
             => x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
@@ -325,6 +331,8 @@ namespace XREngine.Rendering
                 5 => new MeshDeformVersion(this, HasNVStereoViewRendering, false) { UseNVStereo = true },
                 6 => new Version<DirectionalCascadeInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
                 7 => new Version<PointLightInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
+                8 => new Version<DirectionalCascadeAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
+                9 => new Version<PointLightAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
                 _ => throw new ArgumentOutOfRangeException(nameof(versionKey), versionKey, "Unknown mesh renderer shader version."),
             };
 

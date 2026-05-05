@@ -40,11 +40,12 @@ public sealed class AmbientOcclusionModeSelectionTests
             "HBAO+",
             "GTAO",
             "VXAO / Voxel AO (Planned)",
-            "Spatial Hash AO (Experimental)",
+            "Spatial Hash AO",
         ]);
 
         labels.ShouldNotContain("HBAO (Deferred)");
         labels.ShouldNotContain("GTAO (Experimental)");
+        labels.ShouldNotContain("Spatial Hash AO (Experimental)");
         labels.ShouldNotContain("Multi-View AO (Custom)");
         labels.ShouldNotContain("Multi-Radius AO (Prototype)");
     }

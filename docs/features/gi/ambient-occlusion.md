@@ -18,7 +18,7 @@ The engine currently exposes seven user-facing ambient occlusion modes. Historic
 | `VoxelAmbientOcclusion` | Planned VXAO family slot; currently the only neutral no-op AO mode | ⭐ | ⭐ |
 | `MultiScaleVolumetricObscurance` | MSVO multi-scale obscurance path | ⭐⭐⭐ | ⭐⭐ |
 | `MultiViewAmbientOcclusion` | MVAO multi-view AO path | ⭐⭐⭐ | ⭐⭐⭐ |
-| `SpatialHashExperimental` | Ray-marched AO with spatial hashing reuse | ⭐⭐ | ⭐⭐⭐ |
+| `SpatialHashAmbientOcclusion` | Ray-marched AO with spatial hashing reuse | ⭐⭐ | ⭐⭐⭐ |
 
 ## Configuration
 
@@ -156,21 +156,25 @@ aoSettings.MultiViewSpread = 0.5f; // View separation
 
 Best for VR/stereo rendering where multiple views are already available.
 
-## Spatial Hash AO (Experimental)
+## Spatial Hash AO
 
 Ray-marched AO using spatial hashing for acceleration:
 
 ```csharp
-aoSettings.Type = AmbientOcclusionSettings.EType.SpatialHashExperimental;
+aoSettings.Type = AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion;
 
 // Spatial hash settings
-aoSettings.Radius = 1.5f;                  // Maximum ray distance
-aoSettings.SpatialHashCellSize = 0.07f;    // Grid cell size (smin)
-aoSettings.SpatialHashSteps = 8;           // Ray march steps
-aoSettings.SpatialHashJitterScale = 0.35f; // Sample jittering
+aoSettings.Radius = 0.511f;                       // Maximum ray distance
+aoSettings.Power = 1.609f;                        // Contrast
+aoSettings.Bias = 0.0203f;                        // Self-occlusion bias
+aoSettings.SpatialHash.SamplesPerPixel = 3.06f;   // Feature size in pixels
+aoSettings.SpatialHashCellSize = 0.141f;          // Minimum grid cell size
+aoSettings.SpatialHashSteps = 6;                  // Ray march steps
+aoSettings.Thickness = 1.917f;                    // Occluder thickness
+aoSettings.SpatialHashJitterScale = 1.0f;         // Sample jittering
+aoSettings.SpatialHashTemporalBlendFactor = 0.789f;
+aoSettings.SpatialHashTemporalClamp = 0.499f;
 ```
-
-Experimental path. Quality and stability still need validation before it should be treated as a production default.
 
 ## Denoising
 

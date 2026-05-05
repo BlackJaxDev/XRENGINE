@@ -129,20 +129,22 @@ namespace XREngine.Rendering.OpenGL
                 XRMaterial? shadowSourceMaterial,
                 uint instances)
             {
+                EDirectionalCascadeShadowMaterialKind overrideKind = globalMaterialOverride.DirectionalCascadeShadowMaterialKind;
                 bool instancedLayeredOverride =
-                    globalMaterialOverride.DirectionalCascadeShadowMaterialKind == EDirectionalCascadeShadowMaterialKind.InstancedLayered &&
+                    IsDirectionalCascadeInstancedMaterialKind(overrideKind) &&
                     Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass;
 
                 if (instancedLayeredOverride && CanUseDirectionalCascadeInstancedMaterial(shadowSourceMaterial, instances))
                     return globalMaterialOverride;
 
-                if (globalMaterialOverride.DirectionalCascadeShadowMaterialKind == EDirectionalCascadeShadowMaterialKind.GeometryShader &&
+                if (IsDirectionalCascadeGeometryMaterialKind(overrideKind) &&
                     shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true)
                 {
                     return globalMaterialOverride;
                 }
 
-                XRMaterial? directionalVariant = shadowSourceMaterial?.GetDirectionalCascadeShadowCasterVariant(useGeometryShader: true);
+                XRMaterial? directionalVariant = shadowSourceMaterial?.GetDirectionalCascadeShadowCasterVariant(
+                    GetDirectionalCascadeGeometryFallbackKind(overrideKind));
                 if (directionalVariant is not null)
                 {
                     directionalVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
@@ -157,8 +159,9 @@ namespace XREngine.Rendering.OpenGL
                 XRMaterial? shadowSourceMaterial,
                 uint instances)
             {
+                EPointShadowMaterialKind overrideKind = globalMaterialOverride.PointShadowMaterialKind;
                 bool instancedLayeredOverride =
-                    globalMaterialOverride.PointShadowMaterialKind == EPointShadowMaterialKind.InstancedLayered &&
+                    IsPointLightInstancedMaterialKind(overrideKind) &&
                     Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass;
 
                 if (instancedLayeredOverride && CanUsePointLightInstancedMaterial(shadowSourceMaterial, instances))
@@ -166,7 +169,7 @@ namespace XREngine.Rendering.OpenGL
                     if (shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false)
                         return globalMaterialOverride;
 
-                    XRMaterial? instancedVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(useGeometryShader: false);
+                    XRMaterial? instancedVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(overrideKind);
                     if (instancedVariant is not null)
                     {
                         instancedVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
@@ -174,13 +177,13 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                if (globalMaterialOverride.PointShadowMaterialKind == EPointShadowMaterialKind.GeometryShader &&
+                if (IsPointLightGeometryMaterialKind(overrideKind) &&
                     shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true)
                 {
                     return globalMaterialOverride;
                 }
 
-                XRMaterial? geometryVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(useGeometryShader: true);
+                XRMaterial? geometryVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(GetPointLightGeometryFallbackKind(overrideKind));
                 if (geometryVariant is not null)
                 {
                     geometryVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
@@ -201,6 +204,18 @@ namespace XREngine.Rendering.OpenGL
                 return shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false;
             }
 
+            private static bool IsDirectionalCascadeInstancedMaterialKind(EDirectionalCascadeShadowMaterialKind kind)
+                => kind is EDirectionalCascadeShadowMaterialKind.InstancedLayered or EDirectionalCascadeShadowMaterialKind.AtlasInstancedLayered;
+
+            private static bool IsDirectionalCascadeGeometryMaterialKind(EDirectionalCascadeShadowMaterialKind kind)
+                => kind is EDirectionalCascadeShadowMaterialKind.GeometryShader or EDirectionalCascadeShadowMaterialKind.AtlasGeometryShader;
+
+            private static EDirectionalCascadeShadowMaterialKind GetDirectionalCascadeGeometryFallbackKind(EDirectionalCascadeShadowMaterialKind kind)
+                => kind == EDirectionalCascadeShadowMaterialKind.AtlasInstancedLayered ||
+                   kind == EDirectionalCascadeShadowMaterialKind.AtlasGeometryShader
+                    ? EDirectionalCascadeShadowMaterialKind.AtlasGeometryShader
+                    : EDirectionalCascadeShadowMaterialKind.GeometryShader;
+
             private bool CanUsePointLightInstancedMaterial(XRMaterial? shadowSourceMaterial, uint instances)
             {
                 if (instances != 1u)
@@ -211,6 +226,17 @@ namespace XREngine.Rendering.OpenGL
 
                 return shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false;
             }
+
+            private static bool IsPointLightInstancedMaterialKind(EPointShadowMaterialKind kind)
+                => kind is EPointShadowMaterialKind.InstancedLayered or EPointShadowMaterialKind.AtlasInstancedLayered;
+
+            private static bool IsPointLightGeometryMaterialKind(EPointShadowMaterialKind kind)
+                => kind is EPointShadowMaterialKind.GeometryShader or EPointShadowMaterialKind.AtlasGeometryShader;
+
+            private static EPointShadowMaterialKind GetPointLightGeometryFallbackKind(EPointShadowMaterialKind kind)
+                => kind is EPointShadowMaterialKind.AtlasInstancedLayered or EPointShadowMaterialKind.AtlasGeometryShader
+                    ? EPointShadowMaterialKind.AtlasGeometryShader
+                    : EPointShadowMaterialKind.GeometryShader;
 
             private GLMaterial GetOrCreateShadowMaterial(XRMaterial shadowMaterial)
             {
@@ -446,7 +472,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static uint ResolveDirectionalCascadeLayeredInstanceCount(XRMaterial material, uint instances)
             {
-                if (material.DirectionalCascadeShadowMaterialKind != EDirectionalCascadeShadowMaterialKind.InstancedLayered ||
+                if (!IsDirectionalCascadeInstancedMaterialKind(material.DirectionalCascadeShadowMaterialKind) ||
                     !Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
                 {
                     return instances;
@@ -462,7 +488,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static uint ResolvePointLightLayeredInstanceCount(XRMaterial material, uint instances)
             {
-                if (material.PointShadowMaterialKind != EPointShadowMaterialKind.InstancedLayered ||
+                if (!IsPointLightInstancedMaterialKind(material.PointShadowMaterialKind) ||
                     !Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
                 {
                     return instances;
@@ -552,7 +578,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static void SetDirectionalCascadeLayeredVertexUniforms(GLRenderProgram vertexProgram, XRMaterial material)
             {
-                if (material.DirectionalCascadeShadowMaterialKind != EDirectionalCascadeShadowMaterialKind.InstancedLayered ||
+                if (!IsDirectionalCascadeInstancedMaterialKind(material.DirectionalCascadeShadowMaterialKind) ||
                     !Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
                 {
                     return;
@@ -576,12 +602,14 @@ namespace XREngine.Rendering.OpenGL
                 {
                     if (state.TryGetPointLightShadowFaceMatrix(i, out Matrix4x4 matrix))
                         vertexProgram.Uniform(s_pointLightViewProjectionMatrixUniformNames[i], matrix);
+                    if (state.TryGetPointLightShadowFaceIndex(i, out int faceIndex))
+                        vertexProgram.Uniform($"PointShadowFaceIndices[{i}]", faceIndex);
                 }
             }
 
             private static void SetPointLightLayeredVertexUniforms(GLRenderProgram vertexProgram, XRMaterial material)
             {
-                if (material.PointShadowMaterialKind != EPointShadowMaterialKind.InstancedLayered ||
+                if (!IsPointLightInstancedMaterialKind(material.PointShadowMaterialKind) ||
                     !Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
                 {
                     return;

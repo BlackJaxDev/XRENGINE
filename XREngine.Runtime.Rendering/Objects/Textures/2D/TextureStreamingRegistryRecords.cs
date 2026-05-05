@@ -5,7 +5,25 @@ namespace XREngine.Rendering;
 
 internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
 {
+    /// <summary>
+    /// Guards transition state, format, source, backend, pending-upload bookkeeping,
+    /// and any other fields that mutate during streaming work. Held briefly by snapshot
+    /// collection and may be held longer during transition queueing/finalization.
+    /// </summary>
     public readonly object Sync = new();
+
+    /// <summary>
+    /// Guards the per-frame visibility / material-binding observation fields
+    /// (<see cref="LastVisibleFrameId"/>, <see cref="MinVisibleDistance"/>,
+    /// <see cref="MaxProjectedPixelSpan"/>, <see cref="MaxScreenCoverage"/>,
+    /// <see cref="UvDensityHint"/>, <see cref="VisiblePageSelection"/>,
+    /// <see cref="LastBoundFrameId"/>, <see cref="LastBoundMaterialTextureCount"/>).
+    /// Kept independent from <see cref="Sync"/> so per-frame CollectVisible /
+    /// material-binding observations never block on (or get dropped because of)
+    /// transition / import work that holds <see cref="Sync"/>.
+    /// </summary>
+    public readonly object VisibilityLock = new();
+
     public readonly WeakReference<XRTexture2D> Texture = new(texture);
     public string? FilePath = texture.FilePath;
     public ITextureStreamingSource? Source;

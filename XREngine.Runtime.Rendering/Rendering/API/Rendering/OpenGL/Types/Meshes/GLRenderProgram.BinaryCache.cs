@@ -179,6 +179,9 @@ namespace XREngine.Rendering.OpenGL
                 if (!Engine.Rendering.Settings.AllowBinaryProgramCaching)
                     return;
 
+                if (ShouldBypassBinaryCacheForLiveUberVariant())
+                    return;
+
                 Api.GetProgram(bindingId, GLEnum.ProgramBinaryLength, out int len);
                 if (len <= 0)
                     {
