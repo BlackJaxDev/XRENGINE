@@ -136,6 +136,39 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
+    public void SolveAllocations_PublishesGroupedDirectionalCascadeRecord()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1);
+        DirectionalLightComponent light = CreateDirectionalLight(2048u);
+        ShadowMapRequest[] requests =
+        [
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 0, 1024u, 128u, 10000.0f, 1u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 1, 1024u, 128u, 9900.0f, 2u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 2, 1024u, 128u, 9800.0f, 3u),
+        ];
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, requests);
+
+        frameData.DirectionalCascadeGroupCount.ShouldBe(1);
+        frameData.TryGetDirectionalCascadeGroup(light.ID, out ShadowAtlasGroupedDirectionalCascadeAllocation group).ShouldBeTrue();
+        group.AtlasKind.ShouldBe(EShadowAtlasKind.Directional);
+        group.PageIndex.ShouldBe(0);
+        group.CascadeCount.ShouldBe(3);
+        group.Members.Length.ShouldBe(3);
+
+        for (int i = 0; i < group.CascadeCount; i++)
+        {
+            ShadowAtlasGroupedAllocationMember member = group.Members[i];
+            member.CascadeIndex.ShouldBe(i);
+            member.ViewportScissorIndex.ShouldBe(i);
+            member.RecordIndex.ShouldBeGreaterThanOrEqualTo(0);
+            member.InnerPixelRect.Width.ShouldBeGreaterThan(0);
+            member.InnerPixelRect.Height.ShouldBeGreaterThan(0);
+            frameData.GetAllocation(member.RecordIndex).Key.ShouldBe(requests[i].Key);
+        }
+    }
+
+    [Test]
     public void SolveAllocations_UsesSeparateAtlasPagesPerLightFamily()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
@@ -360,9 +393,10 @@ public sealed class ShadowAtlasManagerPhaseTests
             priority,
             contentHash,
             IsDirty: true,
+            DirtyReason: ShadowDirtyReason.ContentChanged,
             CanReusePreviousFrame: true,
             EditorPinned: false,
-            StereoVisibility.Mono);
+            StereoVis: StereoVisibility.Mono);
     }
 
     private static Dictionary<ShadowRequestKey, AllocationSignature> CaptureLayout(ShadowAtlasFrameData frameData)

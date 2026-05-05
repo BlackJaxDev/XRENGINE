@@ -43,6 +43,9 @@ public unsafe partial class VulkanRenderer
         Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering = false;
         Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering = false;
         Engine.Rendering.State.SupportsOpenGLViewportArray = false;
+        Engine.Rendering.State.SupportsOpenGLViewportScissorArray = false;
+        Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex = false;
+        Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex = false;
         Engine.Rendering.State.MaxOpenGLViewports = 1;
         Engine.Rendering.State.VulkanDeviceName = Silk.NET.Core.Native.SilkMarshal.PtrToString((nint)properties.DeviceName);
         Engine.Rendering.State.VulkanVendorId = properties.VendorID;

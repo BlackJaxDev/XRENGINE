@@ -365,7 +365,8 @@ namespace XREngine.Rendering.OpenGL
                     using (Engine.Profiler.Start("GLRenderProgram.Link.CalcHash"))
                         hash = CalcShaderSourceHash();
 
-                    if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                    bool bypassBinaryCache = ShouldBypassBinaryCacheForLiveUberVariant();
+                    if (!bypassBinaryCache && Engine.Rendering.Settings.AllowBinaryProgramCaching)
                     {
                         using (Engine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup"))
                             isCached = BinaryCache?.TryGetValue(hash, out binProg) ?? false;
@@ -814,6 +815,9 @@ namespace XREngine.Rendering.OpenGL
                 return false;
             }
 
+            private bool ShouldBypassBinaryCacheForLiveUberVariant()
+                => Renderer.UseDriverParallelShaderCompile && TryResolveUberVariantHash(out _);
+
             private static bool TryResolveUberVariantHash(IEnumerable<GLProgramCompileLinkQueue.ShaderInput> inputs, out ulong variantHash)
             {
                 foreach (GLProgramCompileLinkQueue.ShaderInput input in inputs)
@@ -1035,7 +1039,7 @@ namespace XREngine.Rendering.OpenGL
                 if (_linkDataPrepared)
                 {
                     Hash = _preparedHash;
-                    isCached = _preparedIsCached;
+                    isCached = _preparedIsCached && !ShouldBypassBinaryCacheForLiveUberVariant();
                     binProg = _preparedBinProg;
                     _linkDataPrepared = false;
                     _hashComputed = true;
@@ -1053,7 +1057,8 @@ namespace XREngine.Rendering.OpenGL
                         }
                         _hashComputed = true;
                     }
-                    if (Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                    bool bypassBinaryCache = ShouldBypassBinaryCacheForLiveUberVariant();
+                    if (!bypassBinaryCache && Engine.Rendering.Settings.AllowBinaryProgramCaching)
                     {
                         using (Engine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup"))
                             isCached = BinaryCache?.TryGetValue(Hash, out binProg) ?? false;

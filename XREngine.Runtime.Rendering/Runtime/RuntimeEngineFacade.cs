@@ -436,9 +436,11 @@ internal static partial class Engine
             public static bool IsStereoPass => RenderingPipelineState?.StereoPass ?? false;
             public static bool IsDirectionalCascadeLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false;
             public static bool IsDirectionalCascadeInstancedLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeInstancedLayeredShadowPass ?? false;
+            public static bool IsDirectionalCascadeAtlasGroupedShadowPass => RenderingPipelineState?.DirectionalCascadeAtlasGroupedShadowPass ?? false;
             public static int DirectionalCascadeShadowLayerCount => RenderingPipelineState?.DirectionalCascadeShadowLayerCount ?? 0;
             public static bool IsPointLightLayeredShadowPass => RenderingPipelineState?.PointLightLayeredShadowPass ?? false;
             public static bool IsPointLightInstancedLayeredShadowPass => RenderingPipelineState?.PointLightInstancedLayeredShadowPass ?? false;
+            public static bool IsPointLightAtlasGroupedShadowPass => RenderingPipelineState?.PointLightAtlasGroupedShadowPass ?? false;
             public static int PointLightShadowFaceCount => RenderingPipelineState?.PointLightShadowFaceCount ?? 0;
             public static bool IsSceneCapturePass
             {
@@ -461,6 +463,9 @@ internal static partial class Engine
             public static bool SupportsOpenGLGeometryShaderLayeredRendering { get; internal set; }
             public static bool SupportsOpenGLVertexShaderLayeredRendering { get; internal set; }
             public static bool SupportsOpenGLViewportArray { get; internal set; }
+            public static bool SupportsOpenGLViewportScissorArray { get; internal set; }
+            public static bool SupportsOpenGLVertexShaderViewportIndex { get; internal set; }
+            public static bool SupportsOpenGLGeometryShaderViewportIndex { get; internal set; }
             public static int MaxOpenGLViewports { get; internal set; } = 1;
             public static bool HasVulkanMultiView { get; internal set; }
             public static bool HasAnyMultiViewExtension => HasOvrMultiViewExtension || HasVulkanMultiView;

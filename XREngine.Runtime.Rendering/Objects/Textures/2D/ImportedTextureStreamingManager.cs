@@ -837,7 +837,8 @@ internal sealed class ImportedTextureStreamingManager
                     policyProjectedPixelSpan,
                     policyScreenCoverage,
                     snapshot.UvDensityHint,
-                    snapshot.SamplerName),
+                    snapshot.SamplerName,
+                    snapshot.LastBoundFrameId),
                 frameId,
                 allowPromotions,
                 snapshot.Backend.PreviewMaxDimension);

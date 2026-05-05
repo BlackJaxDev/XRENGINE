@@ -153,45 +153,50 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
-    public void BloomCombine_DefaultsUseAccumulatedMip1_InsteadOfIntermediateMips()
+    public void BloomCombine_DefaultsUseTunedMipBlend()
     {
         string bloomSettingsSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/BloomSettings.cs").Replace("\r\n", "\n");
         bloomSettingsSource.ShouldContain("private bool _enabled = true;");
+        bloomSettingsSource.ShouldContain("private float _intensity = 0.530f;");
+        bloomSettingsSource.ShouldContain("private float _threshold = 0.138f;");
+        bloomSettingsSource.ShouldContain("private float _radius = 1.495f;");
+        bloomSettingsSource.ShouldContain("private float _scatter = 0.919f;");
+        bloomSettingsSource.ShouldContain("private float _strength = 0.5805f;");
         bloomSettingsSource.ShouldContain("private int _startMip = 1;");
-        bloomSettingsSource.ShouldContain("private int _endMip = 1;");
+        bloomSettingsSource.ShouldContain("private int _endMip = 4;");
         bloomSettingsSource.ShouldContain("private float _lod1Weight = 1.0f;");
-        bloomSettingsSource.ShouldContain("private float _lod2Weight = 0.0f;");
-        bloomSettingsSource.ShouldContain("private float _lod3Weight = 0.0f;");
-        bloomSettingsSource.ShouldContain("private float _lod4Weight = 0.0f;");
+        bloomSettingsSource.ShouldContain("private float _lod2Weight = 0.649f;");
+        bloomSettingsSource.ShouldContain("private float _lod3Weight = 0.397f;");
+        bloomSettingsSource.ShouldContain("private float _lod4Weight = 0.102f;");
         bloomSettingsSource.ShouldNotContain("usesLegacySingleMipProfile");
 
         string pipelinePostProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
     pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Enabled),\n            PostProcessParameterKind.Bool,\n            true,");
         pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.StartMip),\n            PostProcessParameterKind.Int,\n            1,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            1,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            4,");
         pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod1Weight),\n            PostProcessParameterKind.Float,\n            1.0f,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod2Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod3Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod2Weight),\n            PostProcessParameterKind.Float,\n            0.649f,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod3Weight),\n            PostProcessParameterKind.Float,\n            0.397f,");
+        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.102f,");
 
         string pipeline2PostProcessSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
     pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Enabled),\n            PostProcessParameterKind.Bool,\n            true,");
         pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.StartMip),\n            PostProcessParameterKind.Int,\n            1,");
-        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            1,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            4,");
         pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod1Weight),\n            PostProcessParameterKind.Float,\n            1.0f,");
-        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod2Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
-        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod3Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
-        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.0f,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod2Weight),\n            PostProcessParameterKind.Float,\n            0.649f,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod3Weight),\n            PostProcessParameterKind.Float,\n            0.397f,");
+        pipeline2PostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.102f,");
 
         string postProcessShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcess.fs").Replace("\r\n", "\n");
         postProcessShader.ShouldContain("uniform int BloomStartMip = 1;");
-        postProcessShader.ShouldContain("uniform int BloomEndMip = 1;");
-        postProcessShader.ShouldContain("uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);");
+        postProcessShader.ShouldContain("uniform int BloomEndMip = 4;");
+        postProcessShader.ShouldContain("uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102);");
 
         string postProcessStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcessStereo.fs").Replace("\r\n", "\n");
         postProcessStereoShader.ShouldContain("uniform int BloomStartMip = 1;");
-        postProcessStereoShader.ShouldContain("uniform int BloomEndMip = 1;");
-        postProcessStereoShader.ShouldContain("uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);");
+        postProcessStereoShader.ShouldContain("uniform int BloomEndMip = 4;");
+        postProcessStereoShader.ShouldContain("uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102);");
     }
 
     [Test]

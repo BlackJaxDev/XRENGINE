@@ -627,6 +627,8 @@ internal static class LightComponentEditorShared
         ImGui.TextDisabled($"Max requested: {diagnostic.MaxRequestedResolution} px");
         ImGui.TextDisabled($"Max allocated: {diagnostic.MaxAllocatedResolution} px");
         ImGui.TextDisabled($"Priority: {diagnostic.HighestPriority:F2}");
+        if (diagnostic.LastDirtyReason != ShadowDirtyReason.None)
+            ImGui.TextDisabled($"Dirty: {diagnostic.LastDirtyReason}");
         if (diagnostic.ShadowRecordIndex >= 0)
             ImGui.TextDisabled($"Record: {diagnostic.ShadowRecordIndex}");
         if (diagnostic.AtlasPageIndex >= 0)
@@ -640,6 +642,10 @@ internal static class LightComponentEditorShared
         ImGui.TextDisabled($"Fallback: {diagnostic.ActiveFallback}");
         if (diagnostic.LastSkipReason != SkipReason.None)
             ImGui.TextDisabled($"Last skip: {diagnostic.LastSkipReason}");
+        if (ImGui.SmallButton("Repack Shadow Atlas"))
+            light.WorldAs<IRuntimeRenderWorld>()?.Lights.ShadowAtlas.RequestRepack();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Requests a one-shot atlas compaction on the next shadow-atlas solve.");
     }
 
     private static void DrawLightmapBakeControls(LightComponent light)

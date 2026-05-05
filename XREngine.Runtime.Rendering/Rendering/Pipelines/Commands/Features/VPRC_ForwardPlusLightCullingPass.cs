@@ -46,8 +46,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             public Vector4 PositionWS;
             public Vector4 DirectionWS_Exponent;
             public Vector4 Color_Type;
-            public Vector4 Params;      // x=radius, y=brightness, z=diffuseIntensity, w=unused
+            public Vector4 Params;      // x=radius, y=brightness, z=diffuseIntensity, w=legacy source index
             public Vector4 SpotAngles;  // x=innerCutoff, y=outerCutoff
+            public IVector4 Indices;    // x=source index, y=shadow record index, z=casts shadows, w=reserved
         }
 
         private void EnsureComputeProgram()
@@ -199,6 +200,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 if (!p.IsActiveInHierarchy)
                     continue;
 
+                int shadowRecordIndex = -1;
+                if (Engine.Rendering.Settings.UsePointShadowAtlas)
+                    lights.TryGetPointShadowAtlasFaceAllocation(p, 0, out _, out shadowRecordIndex);
+
                 result.Add(new ForwardPlusLocalLight
                 {
                     PositionWS = new Vector4(p.Transform.RenderTranslation, 1.0f),
@@ -206,6 +211,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     Color_Type = new Vector4(p.Color, 0.0f),
                     Params = new Vector4(p.Radius, p.Brightness, p.DiffuseIntensity, pointIndex),
                     SpotAngles = Vector4.Zero,
+                    Indices = new IVector4(pointIndex, shadowRecordIndex, p.CastsShadows ? 1 : 0, 0),
                 });
             }
 
@@ -215,6 +221,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 if (!s.IsActiveInHierarchy)
                     continue;
 
+                int shadowRecordIndex = -1;
+                if (Engine.Rendering.Settings.UseSpotShadowAtlas && s.UsesSpotShadowAtlasForCurrentEncoding)
+                    lights.TryGetSpotShadowAtlasAllocation(s, out _, out shadowRecordIndex);
+
                 result.Add(new ForwardPlusLocalLight
                 {
                     PositionWS = new Vector4(s.Transform.RenderTranslation, 1.0f),
@@ -222,6 +232,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     Color_Type = new Vector4(s.Color, 1.0f),
                     Params = new Vector4(s.Distance, s.Brightness, s.DiffuseIntensity, spotIndex),
                     SpotAngles = new Vector4(s.InnerCutoff, s.OuterCutoff, 0.0f, 0.0f),
+                    Indices = new IVector4(spotIndex, shadowRecordIndex, s.CastsShadows ? 1 : 0, 0),
                 });
             }
 

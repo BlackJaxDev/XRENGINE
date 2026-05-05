@@ -1454,7 +1454,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     [(int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion] = CreateVXAOPassCommands(),
                     [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateMVAOPassCommands(),
                     [(int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance] = CreateMSVOPassCommands(),
-                    [(int)AmbientOcclusionSettings.EType.SpatialHashExperimental] = CreateSpatialHashAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOPassCommands(),
                 };
                 aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
             }
@@ -1470,7 +1470,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     [(int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion] = CreateVXAOPassCommands(),
                     [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateSSAOPassCommands(),
                     [(int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance] = CreateSSAOPassCommands(),
-                    [(int)AmbientOcclusionSettings.EType.SpatialHashExperimental] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSSAOPassCommands(),
                 };
                 aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
             }
@@ -2959,7 +2959,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             AmbientOcclusionSettings.EType.VoxelAmbientOcclusion => (int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion,
             AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
             AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance => (int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance,
-            AmbientOcclusionSettings.EType.SpatialHashExperimental => (int)AmbientOcclusionSettings.EType.SpatialHashExperimental,
+            AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion => (int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion,
             _ => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
         };
 

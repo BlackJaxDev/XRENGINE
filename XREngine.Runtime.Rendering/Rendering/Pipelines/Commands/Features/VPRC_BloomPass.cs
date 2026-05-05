@@ -456,9 +456,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             // SourceLOD is set dynamically via material ShaderInt; do not override here.
             // Apply threshold on the first downsample level to extract only bright areas.
             program.Uniform("UseThreshold", firstLevel);
-            program.Uniform("BloomThreshold", 1.0f);
+            program.Uniform("BloomThreshold", 0.138f);
             program.Uniform("BloomSoftKnee", 0.5f);
-            program.Uniform("BloomIntensity", 1.0f);
+            program.Uniform("BloomIntensity", 0.530f);
             program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
             program.Uniform("UseKarisAverage", firstLevel);
         }

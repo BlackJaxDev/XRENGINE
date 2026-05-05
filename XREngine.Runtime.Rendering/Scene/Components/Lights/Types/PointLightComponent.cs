@@ -31,13 +31,15 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRMaterial? _shadowAtlasMaterial;
         private XRMaterial? _pointGeometryShadowMaterial;
         private XRMaterial? _pointInstancedShadowMaterial;
+        private XRMaterial? _pointAtlasGeometryShadowMaterial;
+        private XRMaterial? _pointAtlasInstancedShadowMaterial;
         private const float PointShadowNearPlaneDistanceDefault = 0.1f;
         private readonly PositionOnlyTransform _shadowCameraParentTransform = new();
         private float _shadowNearPlaneDistance = PointShadowNearPlaneDistanceDefault;
         private readonly PointShadowAtlasFaceSlot[] _atlasFaceSlots = new PointShadowAtlasFaceSlot[ShadowFaceCount];
-        private EPointShadowRenderMode _shadowRenderMode = EPointShadowRenderMode.Sequential;
-        private EPointShadowRenderMode _effectiveShadowRenderMode = EPointShadowRenderMode.Sequential;
-        private PointShadowRenderFallbackReason _shadowRenderFallbackReason = PointShadowRenderFallbackReason.SequentialRequested;
+        private EPointShadowRenderMode _shadowRenderMode = EPointShadowRenderMode.InstancedLayered;
+        private EPointShadowRenderMode _effectiveShadowRenderMode = EPointShadowRenderMode.InstancedLayered;
+        private PointShadowRenderFallbackReason _shadowRenderFallbackReason = PointShadowRenderFallbackReason.None;
 
         private static readonly Vector3[] ShadowFaceForwardVectors =
         [
@@ -75,6 +77,10 @@ namespace XREngine.Components.Capture.Lights.Types
             UnsupportedGeometryShader = 5,
             UnsupportedVertexStageLayerWrites = 6,
             UnsupportedViewportArray = 7,
+            MissingGroupedAtlasAllocation = 8,
+            UnsupportedViewportScissorArray = 9,
+            UnsupportedVertexStageViewportIndexWrites = 10,
+            UnsupportedGeometryStageViewportIndexWrites = 11,
         }
 
         private readonly struct PointShadowRenderPlan
@@ -229,12 +235,18 @@ namespace XREngine.Components.Capture.Lights.Types
 
             PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
             PublishShadowRenderPlan(plan);
-            if (plan.IsLayered)
+            bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedFaceCollection();
+            if (plan.IsLayered || prepareAtlasGroupedCommands)
             {
-                // Layered passes render all six cubemap faces from one draw list.
+                // Layered and grouped-atlas passes render all selected faces from one draw list.
                 _viewports[0].CollectVisible(
                     collectMirrors: false,
                     collectionVolumeOverride: _influenceVolume);
+                if (prepareAtlasGroupedCommands && !plan.IsLayered)
+                {
+                    for (int i = 1; i < ShadowFaceCount; i++)
+                        _viewports[i].CollectVisible(collectMirrors: false);
+                }
             }
             else
             {
@@ -253,7 +265,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
             PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
             PublishShadowRenderPlan(plan);
-            if (plan.IsLayered)
+            bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedFaceCollection();
+            if (plan.IsLayered && !prepareAtlasGroupedCommands)
             {
                 _viewports[0].SwapBuffers();
             }
@@ -323,6 +336,58 @@ namespace XREngine.Components.Capture.Lights.Types
                 EPointShadowRenderMode.InstancedLayered => CreateInstancedShadowRenderPlan(requestedMode),
                 EPointShadowRenderMode.GeometryShader => CreateGeometryShadowRenderPlan(requestedMode),
                 _ => CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.SequentialRequested),
+            };
+        }
+
+        private PointShadowRenderPlan CreatePointAtlasShadowRenderPlan(int faceCount, bool hasGroupedAtlasAllocation)
+        {
+            EPointShadowRenderMode requestedMode = _shadowRenderMode;
+            if (faceCount <= 0)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.MissingGroupedAtlasAllocation);
+
+            if (requestedMode == EPointShadowRenderMode.Sequential)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.SequentialRequested);
+
+            if (!hasGroupedAtlasAllocation)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.MissingGroupedAtlasAllocation);
+
+            if (!Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                faceCount > Engine.Rendering.State.MaxOpenGLViewports)
+            {
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedViewportScissorArray);
+            }
+
+            return requestedMode switch
+            {
+                EPointShadowRenderMode.InstancedLayered => CreateAtlasInstancedShadowRenderPlan(requestedMode),
+                EPointShadowRenderMode.GeometryShader => CreateAtlasGeometryShadowRenderPlan(requestedMode),
+                _ => CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.SequentialRequested),
+            };
+        }
+
+        private static PointShadowRenderPlan CreateAtlasInstancedShadowRenderPlan(EPointShadowRenderMode requestedMode)
+        {
+            if (!Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedVertexStageViewportIndexWrites);
+
+            return new PointShadowRenderPlan
+            {
+                RequestedMode = requestedMode,
+                SelectedMode = EPointShadowRenderMode.InstancedLayered,
+                FallbackReason = PointShadowRenderFallbackReason.None,
+            };
+        }
+
+        private static PointShadowRenderPlan CreateAtlasGeometryShadowRenderPlan(EPointShadowRenderMode requestedMode)
+        {
+            if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedGeometryStageViewportIndexWrites);
+
+            return new PointShadowRenderPlan
+            {
+                RequestedMode = requestedMode,
+                SelectedMode = EPointShadowRenderMode.GeometryShader,
+                FallbackReason = PointShadowRenderFallbackReason.None,
             };
         }
 
@@ -422,6 +487,24 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private bool ShouldProcessShadowViewports()
             => CastsShadows && (ShadowMap is not null || Engine.Rendering.Settings.UsePointShadowAtlas);
+
+        private bool ShouldPrepareAtlasGroupedFaceCollection()
+        {
+            if (!Engine.Rendering.Settings.UsePointShadowAtlas ||
+                _shadowRenderMode == EPointShadowRenderMode.Sequential ||
+                !Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                ShadowFaceCount > Engine.Rendering.State.MaxOpenGLViewports)
+            {
+                return false;
+            }
+
+            return _shadowRenderMode switch
+            {
+                EPointShadowRenderMode.InstancedLayered => Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex,
+                EPointShadowRenderMode.GeometryShader => Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
+                _ => false,
+            };
+        }
 
         /// <summary>
         /// The distance beyond which this light has no visible effect.
@@ -561,6 +644,12 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRMaterial PointInstancedShadowMaterial
             => _pointInstancedShadowMaterial ??= CreatePointInstancedShadowMaterial();
 
+        private XRMaterial PointAtlasGeometryShadowMaterial
+            => _pointAtlasGeometryShadowMaterial ??= CreatePointAtlasGeometryShadowMaterial();
+
+        private XRMaterial PointAtlasInstancedShadowMaterial
+            => _pointAtlasInstancedShadowMaterial ??= CreatePointAtlasInstancedShadowMaterial();
+
         private XRMaterial CreateShadowAtlasMaterial()
         {
             XRMaterial mat = new(XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment));
@@ -588,6 +677,28 @@ namespace XREngine.Components.Capture.Lights.Types
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.PointShadowMaterialKind = EPointShadowMaterialKind.InstancedLayered;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
+            return mat;
+        }
+
+        private XRMaterial CreatePointAtlasGeometryShadowMaterial()
+        {
+            XRMaterial mat = new(
+                XRShader.EngineShader("PointLightAtlasShadowDepth.gs", EShaderType.Geometry),
+                XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment));
+            mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.PointShadowMaterialKind = EPointShadowMaterialKind.AtlasGeometryShader;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
+            return mat;
+        }
+
+        private XRMaterial CreatePointAtlasInstancedShadowMaterial()
+        {
+            XRMaterial mat = new(XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment));
+            mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.PointShadowMaterialKind = EPointShadowMaterialKind.AtlasInstancedLayered;
             mat.SettingShadowUniforms += SetShadowMapUniforms;
             return mat;
         }
@@ -636,6 +747,97 @@ namespace XREngine.Components.Capture.Lights.Types
                 using var renderArea = state.PushRenderArea(renderRect);
                 using var cropArea = state.PushCropArea(renderRect);
                 viewport.Render(atlasFbo, null, null, true, ShadowAtlasMaterial);
+            }
+            finally
+            {
+                shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
+            }
+
+            return true;
+        }
+
+        internal bool RenderGroupedShadowAtlasFaceTiles(
+            in ShadowAtlasGroupedPointFaceAllocation group,
+            XRFrameBuffer atlasFbo,
+            bool collectVisibleNow)
+        {
+            if (!CastsShadows ||
+                World is null ||
+                group.FaceCount <= 1 ||
+                group.Members is null ||
+                group.Members.Length < group.FaceCount ||
+                atlasFbo.Width <= 0 ||
+                atlasFbo.Height <= 0)
+            {
+                return false;
+            }
+
+            EnsureShadowResources();
+            SyncShadowCaptureTransforms();
+
+            int groupedCount = Math.Min(group.FaceCount, ShadowFaceCount);
+            PointShadowRenderPlan plan = CreatePointAtlasShadowRenderPlan(groupedCount, hasGroupedAtlasAllocation: true);
+            PublishShadowRenderPlan(plan);
+            if (!plan.IsLayered)
+            {
+                LogShadowRenderModeFallbackIfNeeded(plan);
+                return false;
+            }
+
+            XRViewport viewport = _viewports[0];
+            if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
+                return false;
+
+            if (collectVisibleNow)
+            {
+                CollectVisibleItems();
+                SwapBuffers();
+            }
+
+            Span<Matrix4x4> publishedMatrices = stackalloc Matrix4x4[ShadowFaceCount];
+            int publishedMatrixCount = CopyShadowFaceMatrices(publishedMatrices);
+            Span<Matrix4x4> groupedMatrices = stackalloc Matrix4x4[ShadowFaceCount];
+            Span<int> faceIndices = stackalloc int[ShadowFaceCount];
+            Span<BoundingRectangle> indexedRects = stackalloc BoundingRectangle[ShadowFaceCount];
+
+            for (int i = 0; i < groupedCount; i++)
+            {
+                ShadowAtlasGroupedAllocationMember member = group.Members[i];
+                int faceIndex = member.CascadeIndex;
+                if ((uint)member.ViewportScissorIndex >= (uint)groupedCount ||
+                    (uint)faceIndex >= (uint)publishedMatrixCount ||
+                    member.InnerPixelRect.Width <= 0 ||
+                    member.InnerPixelRect.Height <= 0)
+                {
+                    return false;
+                }
+
+                groupedMatrices[member.ViewportScissorIndex] = publishedMatrices[faceIndex];
+                faceIndices[member.ViewportScissorIndex] = faceIndex;
+                indexedRects[member.ViewportScissorIndex] = member.InnerPixelRect;
+            }
+
+            bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
+            shadowPipeline.PreserveExistingRenderArea = true;
+            try
+            {
+                int pageWidth = checked((int)atlasFbo.Width);
+                int pageHeight = checked((int)atlasFbo.Height);
+                BoundingRectangle pageRect = new(0, 0, pageWidth, pageHeight);
+                var state = viewport.RenderPipelineInstance.RenderState;
+                using var renderArea = state.PushRenderArea(pageRect);
+                using var cropArea = state.PushCropArea(pageRect);
+                using var indexedState = state.PushIndexedViewportScissors(indexedRects[..groupedCount], indexedRects[..groupedCount]);
+                using var pointShadowPass = state.PushPointLightLayeredShadowPass(
+                    plan.IsInstancedLayered,
+                    groupedMatrices[..groupedCount],
+                    faceIndices[..groupedCount],
+                    atlasGrouped: true);
+
+                XRMaterial groupedMaterial = plan.IsInstancedLayered
+                    ? PointAtlasInstancedShadowMaterial
+                    : PointAtlasGeometryShadowMaterial;
+                viewport.Render(atlasFbo, null, null, true, groupedMaterial);
             }
             finally
             {
@@ -748,6 +950,26 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             program.Uniform("FarPlaneDist", _influenceVolume.Radius);
             program.Uniform("LightPos", Transform.RenderTranslation);
+            var state = Engine.Rendering.State.RenderingPipelineState;
+            if (state?.PointLightLayeredShadowPass == true && state.PointLightShadowFaceCount > 0)
+            {
+                int layeredFaceCount = Math.Min(ShadowFaceCount, state.PointLightShadowFaceCount);
+                program.Uniform("PointShadowFaceCount", layeredFaceCount);
+                for (int i = 0; i < layeredFaceCount; ++i)
+                {
+                    if (state.TryGetPointLightShadowFaceMatrix(i, out Matrix4x4 vp))
+                    {
+                        program.Uniform($"ViewProjectionMatrices[{i}]", vp);
+                        program.Uniform($"PointShadowViewProjectionMatrices[{i}]", vp);
+                    }
+
+                    if (state.TryGetPointLightShadowFaceIndex(i, out int faceIndex))
+                        program.Uniform($"PointShadowFaceIndices[{i}]", faceIndex);
+                }
+
+                return;
+            }
+
             int faceCount = Math.Min(ShadowFaceCount, _shadowCameras.Length);
             program.Uniform("PointShadowFaceCount", faceCount);
             for (int i = 0; i < faceCount; ++i)
@@ -757,6 +979,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
                 program.Uniform($"ViewProjectionMatrices[{i}]", vp);
                 program.Uniform($"PointShadowViewProjectionMatrices[{i}]", vp);
+                program.Uniform($"PointShadowFaceIndices[{i}]", i);
             }
         }
 

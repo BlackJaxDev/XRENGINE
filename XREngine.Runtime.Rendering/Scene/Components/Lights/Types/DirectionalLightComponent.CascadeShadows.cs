@@ -92,12 +92,23 @@ namespace XREngine.Components.Lights
             UnsupportedGeometryShader = 6,
             UnsupportedVertexStageLayerWrites = 7,
             UnsupportedViewportArray = 8,
+            MissingGroupedAtlasAllocation = 9,
+            UnsupportedViewportScissorArray = 10,
+            UnsupportedVertexStageViewportIndexWrites = 11,
+            UnsupportedGeometryStageViewportIndexWrites = 12,
+        }
+
+        private enum DirectionalCascadeShadowBackend
+        {
+            LegacyTextureArray = 0,
+            AtlasPage = 1,
         }
 
         private readonly struct DirectionalCascadeShadowRenderPlan
         {
             public required EDirectionalCascadeShadowRenderMode RequestedMode { get; init; }
             public required EDirectionalCascadeShadowRenderMode SelectedMode { get; init; }
+            public required DirectionalCascadeShadowBackend Backend { get; init; }
             public required int ActiveCascadeCount { get; init; }
             public required XRFrameBuffer? LayeredFrameBuffer { get; init; }
             public required XRTexture2DArray? CascadeTextureArray { get; init; }
@@ -105,6 +116,7 @@ namespace XREngine.Components.Lights
 
             public bool IsLayered => SelectedMode is EDirectionalCascadeShadowRenderMode.GeometryShader or EDirectionalCascadeShadowRenderMode.InstancedLayered;
             public bool IsInstancedLayered => SelectedMode == EDirectionalCascadeShadowRenderMode.InstancedLayered;
+            public bool IsAtlasPage => Backend == DirectionalCascadeShadowBackend.AtlasPage;
         }
 
         /// <summary>
@@ -164,7 +176,7 @@ namespace XREngine.Components.Lights
         private float[] _cascadePercentages = [0.1f, 0.2f, 0.3f, 0.4f];
         private CascadeShadowBiasOverride[] _cascadeBiasOverrides = CreateDefaultCascadeBiasOverrides(4);
         private float _cascadeOverlapPercent = 0.1f;
-        private EDirectionalCascadeShadowRenderMode _cascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.Sequential;
+        private EDirectionalCascadeShadowRenderMode _cascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.InstancedLayered;
         private bool _debugCascadeColors;
         private readonly object _cascadeDataLock = new();
         private readonly List<CascadedShadowAabb> _cascadeAabbs = new(4);
@@ -184,8 +196,11 @@ namespace XREngine.Components.Lights
         private XRMaterial? _shadowAtlasMaterial;
         private XRMaterial? _cascadeGeometryShadowMaterial;
         private XRMaterial? _cascadeInstancedShadowMaterial;
-        private EDirectionalCascadeShadowRenderMode _effectiveCascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.Sequential;
-        private DirectionalCascadeShadowFallbackReason _cascadeShadowRenderFallbackReason = DirectionalCascadeShadowFallbackReason.SequentialRequested;
+        private XRMaterial? _cascadeAtlasGeometryShadowMaterial;
+        private XRMaterial? _cascadeAtlasInstancedShadowMaterial;
+        private EDirectionalCascadeShadowRenderMode _effectiveCascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.InstancedLayered;
+        private DirectionalCascadeShadowBackend _effectiveCascadeShadowBackend = DirectionalCascadeShadowBackend.LegacyTextureArray;
+        private DirectionalCascadeShadowFallbackReason _cascadeShadowRenderFallbackReason = DirectionalCascadeShadowFallbackReason.None;
 
         private static string[] CreateCascadeViewProjectionMatrixUniformNames()
         {
@@ -244,6 +259,14 @@ namespace XREngine.Components.Lights
         [DisplayName("Effective Cascade Render Mode")]
         [Description("Resolved cascade render path after backend capability checks and fallback handling.")]
         public EDirectionalCascadeShadowRenderMode EffectiveCascadeShadowRenderMode => _effectiveCascadeShadowRenderMode;
+
+        /// <summary>
+        /// Most recent cascade backend selected for shadow rendering.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Effective Cascade Backend")]
+        [Description("Resolved cascade backend after atlas/legacy routing and capability checks.")]
+        public string EffectiveCascadeShadowRenderBackend => _effectiveCascadeShadowBackend.ToString();
 
         /// <summary>
         /// Most recent fallback reason for the legacy cascaded texture-array shadow path.
@@ -798,7 +821,7 @@ namespace XREngine.Components.Lights
                slot.IsResident &&
                slot.LastRenderedFrame != 0u &&
                slot.PageIndex >= 0 &&
-               slot.Fallback == ShadowFallbackMode.None;
+               slot.Fallback is ShadowFallbackMode.None or ShadowFallbackMode.StaleTile;
 
         /// <summary>
         /// Copies cascade atlas metadata into caller-provided buffers for GPU light records.
@@ -1421,65 +1444,145 @@ namespace XREngine.Components.Lights
         }
 
         private DirectionalCascadeShadowRenderPlan CreateCascadeShadowRenderPlan(int cascadeCount)
+            => CreateCascadeShadowRenderPlan(
+                cascadeCount,
+                Engine.Rendering.Settings.UseDirectionalShadowAtlas
+                    ? DirectionalCascadeShadowBackend.AtlasPage
+                    : DirectionalCascadeShadowBackend.LegacyTextureArray,
+                hasGroupedAtlasAllocation: false);
+
+        private DirectionalCascadeShadowRenderPlan CreateLegacyCascadeShadowRenderPlan(int cascadeCount)
+            => CreateCascadeShadowRenderPlan(
+                cascadeCount,
+                DirectionalCascadeShadowBackend.LegacyTextureArray,
+                hasGroupedAtlasAllocation: false);
+
+        private DirectionalCascadeShadowRenderPlan CreateAtlasCascadeShadowRenderPlan(
+            int cascadeCount,
+            bool hasGroupedAtlasAllocation)
+            => CreateCascadeShadowRenderPlan(
+                cascadeCount,
+                DirectionalCascadeShadowBackend.AtlasPage,
+                hasGroupedAtlasAllocation);
+
+        private DirectionalCascadeShadowRenderPlan CreateCascadeShadowRenderPlan(
+            int cascadeCount,
+            DirectionalCascadeShadowBackend backend,
+            bool hasGroupedAtlasAllocation)
         {
             EDirectionalCascadeShadowRenderMode requestedMode = _cascadeShadowRenderMode;
             if (cascadeCount <= 0)
-                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.NoActiveCascades);
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.NoActiveCascades);
+
+            if (backend == DirectionalCascadeShadowBackend.AtlasPage)
+                return CreateAtlasPageCascadeShadowRenderPlan(requestedMode, cascadeCount, hasGroupedAtlasAllocation);
 
             if (_cascadeShadowMapTexture is null)
-                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingCascadeTextureArray);
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingCascadeTextureArray);
 
             if (requestedMode == EDirectionalCascadeShadowRenderMode.Sequential)
-                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.SequentialRequested);
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.SequentialRequested);
 
             if (_cascadeLayeredShadowFrameBuffer is null)
-                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingLayeredFramebuffer);
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingLayeredFramebuffer);
 
             if (!Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers)
-                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedLayeredFramebuffer);
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedLayeredFramebuffer);
 
             EDirectionalCascadeShadowRenderMode selectedMode = requestedMode == EDirectionalCascadeShadowRenderMode.Auto
-                ? SelectAutomaticCascadeShadowRenderMode(cascadeCount)
+                ? SelectAutomaticCascadeShadowRenderMode(cascadeCount, backend)
                 : requestedMode;
 
             return selectedMode switch
             {
-                EDirectionalCascadeShadowRenderMode.InstancedLayered => CreateInstancedCascadeShadowRenderPlan(requestedMode, cascadeCount),
-                EDirectionalCascadeShadowRenderMode.GeometryShader => CreateGeometryCascadeShadowRenderPlan(requestedMode, cascadeCount),
-                _ => CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageLayerWrites),
+                EDirectionalCascadeShadowRenderMode.InstancedLayered => CreateInstancedCascadeShadowRenderPlan(requestedMode, backend, cascadeCount),
+                EDirectionalCascadeShadowRenderMode.GeometryShader => CreateGeometryCascadeShadowRenderPlan(requestedMode, backend, cascadeCount),
+                _ => CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageLayerWrites),
             };
         }
 
-        private DirectionalCascadeShadowRenderPlan CreateInstancedCascadeShadowRenderPlan(EDirectionalCascadeShadowRenderMode requestedMode, int cascadeCount)
+        private DirectionalCascadeShadowRenderPlan CreateAtlasPageCascadeShadowRenderPlan(
+            EDirectionalCascadeShadowRenderMode requestedMode,
+            int cascadeCount,
+            bool hasGroupedAtlasAllocation)
         {
-            if (!Engine.Rendering.State.SupportsOpenGLViewportArray)
-                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedViewportArray);
+            if (requestedMode == EDirectionalCascadeShadowRenderMode.Sequential)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.SequentialRequested);
 
-            if (!Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
-                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageLayerWrites);
+            if (!hasGroupedAtlasAllocation)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingGroupedAtlasAllocation);
+
+            if (!Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                cascadeCount > Engine.Rendering.State.MaxOpenGLViewports)
+            {
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedViewportScissorArray);
+            }
+
+            EDirectionalCascadeShadowRenderMode selectedMode = requestedMode == EDirectionalCascadeShadowRenderMode.Auto
+                ? SelectAutomaticCascadeShadowRenderMode(cascadeCount, DirectionalCascadeShadowBackend.AtlasPage)
+                : requestedMode;
+
+            return selectedMode switch
+            {
+                EDirectionalCascadeShadowRenderMode.InstancedLayered => CreateInstancedCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount),
+                EDirectionalCascadeShadowRenderMode.GeometryShader => CreateGeometryCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount),
+                _ => CreateSequentialCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageViewportIndexWrites),
+            };
+        }
+
+        private DirectionalCascadeShadowRenderPlan CreateInstancedCascadeShadowRenderPlan(
+            EDirectionalCascadeShadowRenderMode requestedMode,
+            DirectionalCascadeShadowBackend backend,
+            int cascadeCount)
+        {
+            if (backend == DirectionalCascadeShadowBackend.AtlasPage)
+            {
+                if (!Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
+                    return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageViewportIndexWrites);
+            }
+            else
+            {
+                if (!Engine.Rendering.State.SupportsOpenGLViewportArray)
+                    return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedViewportArray);
+
+                if (!Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
+                    return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageLayerWrites);
+            }
 
             return new DirectionalCascadeShadowRenderPlan
             {
                 RequestedMode = requestedMode,
                 SelectedMode = EDirectionalCascadeShadowRenderMode.InstancedLayered,
+                Backend = backend,
                 ActiveCascadeCount = cascadeCount,
-                LayeredFrameBuffer = _cascadeLayeredShadowFrameBuffer,
+                LayeredFrameBuffer = backend == DirectionalCascadeShadowBackend.LegacyTextureArray ? _cascadeLayeredShadowFrameBuffer : null,
                 CascadeTextureArray = _cascadeShadowMapTexture,
                 FallbackReason = DirectionalCascadeShadowFallbackReason.None,
             };
         }
 
-        private DirectionalCascadeShadowRenderPlan CreateGeometryCascadeShadowRenderPlan(EDirectionalCascadeShadowRenderMode requestedMode, int cascadeCount)
+        private DirectionalCascadeShadowRenderPlan CreateGeometryCascadeShadowRenderPlan(
+            EDirectionalCascadeShadowRenderMode requestedMode,
+            DirectionalCascadeShadowBackend backend,
+            int cascadeCount)
         {
-            if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
-                return CreateSequentialCascadeShadowRenderPlan(requestedMode, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedGeometryShader);
+            if (backend == DirectionalCascadeShadowBackend.AtlasPage)
+            {
+                if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
+                    return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedGeometryStageViewportIndexWrites);
+            }
+            else if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
+            {
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedGeometryShader);
+            }
 
             return new DirectionalCascadeShadowRenderPlan
             {
                 RequestedMode = requestedMode,
                 SelectedMode = EDirectionalCascadeShadowRenderMode.GeometryShader,
+                Backend = backend,
                 ActiveCascadeCount = cascadeCount,
-                LayeredFrameBuffer = _cascadeLayeredShadowFrameBuffer,
+                LayeredFrameBuffer = backend == DirectionalCascadeShadowBackend.LegacyTextureArray ? _cascadeLayeredShadowFrameBuffer : null,
                 CascadeTextureArray = _cascadeShadowMapTexture,
                 FallbackReason = DirectionalCascadeShadowFallbackReason.None,
             };
@@ -1487,20 +1590,43 @@ namespace XREngine.Components.Lights
 
         private DirectionalCascadeShadowRenderPlan CreateSequentialCascadeShadowRenderPlan(
             EDirectionalCascadeShadowRenderMode requestedMode,
+            DirectionalCascadeShadowBackend backend,
             int cascadeCount,
             DirectionalCascadeShadowFallbackReason fallbackReason)
             => new()
             {
                 RequestedMode = requestedMode,
                 SelectedMode = EDirectionalCascadeShadowRenderMode.Sequential,
+                Backend = backend,
                 ActiveCascadeCount = cascadeCount,
                 LayeredFrameBuffer = null,
                 CascadeTextureArray = _cascadeShadowMapTexture,
                 FallbackReason = fallbackReason,
             };
 
-        private EDirectionalCascadeShadowRenderMode SelectAutomaticCascadeShadowRenderMode(int cascadeCount)
+        private EDirectionalCascadeShadowRenderMode SelectAutomaticCascadeShadowRenderMode(
+            int cascadeCount,
+            DirectionalCascadeShadowBackend backend)
         {
+            if (backend == DirectionalCascadeShadowBackend.AtlasPage)
+            {
+                if (Engine.Rendering.State.SupportsOpenGLViewportScissorArray &&
+                    cascadeCount <= Engine.Rendering.State.MaxOpenGLViewports &&
+                    Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
+                {
+                    return EDirectionalCascadeShadowRenderMode.InstancedLayered;
+                }
+
+                if (Engine.Rendering.State.SupportsOpenGLViewportScissorArray &&
+                    cascadeCount <= Engine.Rendering.State.MaxOpenGLViewports &&
+                    Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
+                {
+                    return EDirectionalCascadeShadowRenderMode.GeometryShader;
+                }
+
+                return EDirectionalCascadeShadowRenderMode.Sequential;
+            }
+
             if (Engine.Rendering.State.SupportsOpenGLViewportArray &&
                 Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
             {
@@ -1517,6 +1643,8 @@ namespace XREngine.Components.Lights
         {
             if (_effectiveCascadeShadowRenderMode != plan.SelectedMode)
                 _effectiveCascadeShadowRenderMode = plan.SelectedMode;
+            if (_effectiveCascadeShadowBackend != plan.Backend)
+                _effectiveCascadeShadowBackend = plan.Backend;
             if (_cascadeShadowRenderFallbackReason != plan.FallbackReason)
                 _cascadeShadowRenderFallbackReason = plan.FallbackReason;
         }
@@ -1533,10 +1661,16 @@ namespace XREngine.Components.Lights
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
             DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
             PublishCascadeShadowRenderPlan(plan);
-            if (plan.IsLayered)
+            bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount);
+            if (plan.IsLayered || prepareAtlasGroupedCommands)
             {
                 XRViewport viewport = cascadeShadowViewports[0];
                 viewport.CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeUnionCullVolume(cascadeCount));
+                if (prepareAtlasGroupedCommands && !plan.IsLayered)
+                {
+                    for (int i = 1; i < cascadeCount; i++)
+                        cascadeShadowViewports[i].CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeCullVolume(i));
+                }
             }
             else
             {
@@ -1556,9 +1690,10 @@ namespace XREngine.Components.Lights
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
-            DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
+            DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(cascadeCount);
             PublishCascadeShadowRenderPlan(plan);
-            if (plan.IsLayered)
+            bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount);
+            if (plan.IsLayered && !prepareAtlasGroupedCommands)
             {
                 cascadeShadowViewports[0].SwapBuffers();
             }
@@ -1570,6 +1705,27 @@ namespace XREngine.Components.Lights
             }
 
             lightmapBaker?.ProcessDynamicCachedAutoBake(this);
+        }
+
+        private bool ShouldPrepareAtlasGroupedCascadeCollection(int cascadeCount)
+        {
+            if (!Engine.Rendering.Settings.UseDirectionalShadowAtlas ||
+                cascadeCount <= 1 ||
+                _cascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential ||
+                !Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                cascadeCount > Engine.Rendering.State.MaxOpenGLViewports)
+            {
+                return false;
+            }
+
+            return _cascadeShadowRenderMode switch
+            {
+                EDirectionalCascadeShadowRenderMode.InstancedLayered => Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex,
+                EDirectionalCascadeShadowRenderMode.GeometryShader => Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
+                EDirectionalCascadeShadowRenderMode.Auto => Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex ||
+                    Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
+                _ => false,
+            };
         }
 
         private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();
@@ -1590,6 +1746,12 @@ namespace XREngine.Components.Lights
         private XRMaterial CascadeInstancedShadowMaterial
             => _cascadeInstancedShadowMaterial ??= CreateCascadeInstancedShadowMaterial();
 
+        private XRMaterial CascadeAtlasGeometryShadowMaterial
+            => _cascadeAtlasGeometryShadowMaterial ??= CreateCascadeAtlasGeometryShadowMaterial();
+
+        private XRMaterial CascadeAtlasInstancedShadowMaterial
+            => _cascadeAtlasInstancedShadowMaterial ??= CreateCascadeAtlasInstancedShadowMaterial();
+
         private XRMaterial CreateCascadeGeometryShadowMaterial()
         {
             XRMaterial mat = new(
@@ -1608,6 +1770,28 @@ namespace XREngine.Components.Lights
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.InstancedLayered;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
+            return mat;
+        }
+
+        private XRMaterial CreateCascadeAtlasGeometryShadowMaterial()
+        {
+            XRMaterial mat = new(
+                XRShader.EngineShader("DirectionalCascadeAtlasShadowDepth.gs", EShaderType.Geometry),
+                new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+            mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.AtlasGeometryShader;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
+            return mat;
+        }
+
+        private XRMaterial CreateCascadeAtlasInstancedShadowMaterial()
+        {
+            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+            mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.AtlasInstancedLayered;
             mat.SettingShadowUniforms += SetShadowMapUniforms;
             return mat;
         }
@@ -1654,6 +1838,100 @@ namespace XREngine.Components.Lights
             }
 
             LogDirectionalAtlasTileRender("cascade", cascadeIndex, renderRect, collectVisibleNow, viewport.Camera);
+            return true;
+        }
+
+        /// <summary>
+        /// Renders all grouped directional cascades into one atlas page using indexed viewport/scissor state.
+        /// </summary>
+        internal bool RenderGroupedCascadeShadowAtlasTiles(
+            in ShadowAtlasGroupedDirectionalCascadeAllocation group,
+            XRFrameBuffer atlasFbo,
+            bool collectVisibleNow)
+        {
+            if (!CastsShadows ||
+                !EnableCascadedShadows ||
+                World is null ||
+                group.CascadeCount <= 1 ||
+                group.Members is null ||
+                group.Members.Length < group.CascadeCount ||
+                atlasFbo.Width <= 0 ||
+                atlasFbo.Height <= 0)
+            {
+                return false;
+            }
+
+            XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
+            int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
+            if (cascadeCount <= 0)
+                return false;
+
+            DirectionalCascadeShadowRenderPlan plan = CreateAtlasCascadeShadowRenderPlan(cascadeCount, hasGroupedAtlasAllocation: true);
+            PublishCascadeShadowRenderPlan(plan);
+            if (!plan.IsLayered)
+            {
+                LogCascadeRenderModeFallbackIfNeeded(plan);
+                return false;
+            }
+
+            XRViewport viewport = cascadeShadowViewports[0];
+            if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
+                return false;
+
+            if (collectVisibleNow)
+            {
+                CollectVisibleItems();
+                SwapBuffers();
+            }
+
+            Span<Matrix4x4> publishedMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
+            int publishedMatrixCount = CopyPublishedCascadeMatrices(publishedMatrices);
+            Span<Matrix4x4> groupedMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
+            Span<BoundingRectangle> indexedRects = stackalloc BoundingRectangle[MaxCascadeRenderCount];
+
+            int groupedCount = Math.Min(group.CascadeCount, MaxCascadeRenderCount);
+            for (int i = 0; i < groupedCount; i++)
+            {
+                ShadowAtlasGroupedAllocationMember member = group.Members[i];
+                if ((uint)member.ViewportScissorIndex >= (uint)groupedCount ||
+                    (uint)member.CascadeIndex >= (uint)publishedMatrixCount ||
+                    member.InnerPixelRect.Width <= 0 ||
+                    member.InnerPixelRect.Height <= 0)
+                {
+                    return false;
+                }
+
+                groupedMatrices[member.ViewportScissorIndex] = publishedMatrices[member.CascadeIndex];
+                indexedRects[member.ViewportScissorIndex] = member.InnerPixelRect;
+            }
+
+            bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
+            shadowPipeline.PreserveExistingRenderArea = true;
+            try
+            {
+                int pageWidth = checked((int)atlasFbo.Width);
+                int pageHeight = checked((int)atlasFbo.Height);
+                BoundingRectangle pageRect = new(0, 0, pageWidth, pageHeight);
+                var state = viewport.RenderPipelineInstance.RenderState;
+                using var renderArea = state.PushRenderArea(pageRect);
+                using var cropArea = state.PushCropArea(pageRect);
+                using var indexedState = state.PushIndexedViewportScissors(indexedRects[..groupedCount], indexedRects[..groupedCount]);
+                using var directionalCascadePass = state.PushDirectionalCascadeLayeredShadowPass(
+                    plan.IsInstancedLayered,
+                    groupedMatrices[..groupedCount],
+                    atlasGrouped: true);
+
+                XRMaterial groupedMaterial = plan.IsInstancedLayered
+                    ? CascadeAtlasInstancedShadowMaterial
+                    : CascadeAtlasGeometryShadowMaterial;
+                viewport.Render(atlasFbo, null, null, true, groupedMaterial);
+            }
+            finally
+            {
+                shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
+            }
+
+            LogDirectionalAtlasGroupedRender(group, collectVisibleNow, viewport.Camera);
             return true;
         }
 
@@ -1896,6 +2174,32 @@ namespace XREngine.Components.Lights
                 collectVisibleNow,
                 camera?.GetHashCode().ToString() ?? "<null>",
                 projection == "cascade" ? GetCascadeSplit(cascadeIndex) : 0.0f);
+        }
+
+        private void LogDirectionalAtlasGroupedRender(
+            in ShadowAtlasGroupedDirectionalCascadeAllocation group,
+            bool collectVisibleNow,
+            XRCamera? camera)
+        {
+            if (!Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.AtlasGroupedRender.{GetHashCode()}",
+                TimeSpan.FromSeconds(1.0)))
+            {
+                return;
+            }
+
+            Debug.Lighting(
+                EOutputVerbosity.Normal,
+                false,
+                "[DirectionalShadowAudit][AtlasGroupedRender] frame={0} light='{1}' cascades={2} page={3} mode={4} backend={5} collectVisibleNow={6} camera={7}",
+                Engine.Rendering.State.RenderFrameId,
+                SceneNode?.Name ?? Name ?? GetType().Name,
+                group.CascadeCount,
+                group.PageIndex,
+                _effectiveCascadeShadowRenderMode,
+                _effectiveCascadeShadowBackend,
+                collectVisibleNow,
+                camera?.GetHashCode().ToString() ?? "<null>");
         }
 
         private void LogLegacyDirectionalShadowRender(bool renderCascades, bool hasShadowMap, bool hasShadowMaterial, int cascadeCount)

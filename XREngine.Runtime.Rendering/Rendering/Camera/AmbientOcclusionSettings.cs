@@ -8,12 +8,18 @@ namespace XREngine.Rendering
         public const float DefaultRadius = 4.052f;
         public const float DefaultPower = 2.503f;
         public const float DefaultBias = 0.1054f;
+        public const float SpatialHashDefaultRadius = 0.511f;
+        public const float SpatialHashDefaultPower = 1.609f;
+        public const float SpatialHashDefaultBias = 0.0203f;
 
         private bool _enabled = true;
         private EType _type = EType.GroundTruthAmbientOcclusion;
         private float _radius = DefaultRadius;
         private float _power = DefaultPower;
         private float _bias = DefaultBias;
+        private float _spatialHashRadius = SpatialHashDefaultRadius;
+        private float _spatialHashPower = SpatialHashDefaultPower;
+        private float _spatialHashBias = SpatialHashDefaultBias;
 
         public enum EType
         {
@@ -23,14 +29,15 @@ namespace XREngine.Rendering
             MultiScaleVolumetricObscurance,
             HorizonBased,
             HorizonBasedPlus,
-            SpatialHashExperimental,
+            SpatialHashAmbientOcclusion,
             GroundTruthAmbientOcclusion,
             VoxelAmbientOcclusion,
 
             ScreenSpaceLegacy = ScreenSpace,
             MultiViewCustom = MultiViewAmbientOcclusion,
             MultiRadiusObscurancePrototype = MultiScaleVolumetricObscurance,
-            SpatialHashRaytraced = SpatialHashExperimental,
+            SpatialHashExperimental = SpatialHashAmbientOcclusion,
+            SpatialHashRaytraced = SpatialHashAmbientOcclusion,
             VXAO = VoxelAmbientOcclusion,
         }
 
@@ -49,6 +56,9 @@ namespace XREngine.Rendering
             _radius = DefaultRadius;
             _power = DefaultPower;
             _bias = DefaultBias;
+            _spatialHashRadius = SpatialHashDefaultRadius;
+            _spatialHashPower = SpatialHashDefaultPower;
+            _spatialHashBias = SpatialHashDefaultBias;
         }
 
         public bool Enabled
@@ -60,25 +70,59 @@ namespace XREngine.Rendering
         public EType Type
         {
             get => _type;
-            set => SetField(ref _type, NormalizeType(value));
+            set
+            {
+                EType normalizedType = NormalizeType(value);
+                if (_type == normalizedType)
+                    return;
+
+                float previousRadius = Radius;
+                float previousPower = Power;
+                float previousBias = Bias;
+
+                if (!SetField(ref _type, normalizedType))
+                    return;
+
+                NotifySharedModeValueChanged(nameof(Radius), previousRadius, Radius);
+                NotifySharedModeValueChanged(nameof(Power), previousPower, Power);
+                NotifySharedModeValueChanged(nameof(Bias), previousBias, Bias);
+            }
         }
 
         public float Radius
         {
-            get => _radius;
-            set => SetField(ref _radius, value);
+            get => UsesSpatialHashSharedControls(_type) ? _spatialHashRadius : _radius;
+            set
+            {
+                if (UsesSpatialHashSharedControls(_type))
+                    SetField(ref _spatialHashRadius, value);
+                else
+                    SetField(ref _radius, value);
+            }
         }
 
         public float Power
         {
-            get => _power;
-            set => SetField(ref _power, value);
+            get => UsesSpatialHashSharedControls(_type) ? _spatialHashPower : _power;
+            set
+            {
+                if (UsesSpatialHashSharedControls(_type))
+                    SetField(ref _spatialHashPower, value);
+                else
+                    SetField(ref _power, value);
+            }
         }
 
         public float Bias
         {
-            get => _bias;
-            set => SetField(ref _bias, value);
+            get => UsesSpatialHashSharedControls(_type) ? _spatialHashBias : _bias;
+            set
+            {
+                if (UsesSpatialHashSharedControls(_type))
+                    SetField(ref _spatialHashBias, value);
+                else
+                    SetField(ref _bias, value);
+            }
         }
 
         public ScreenSpaceAmbientOcclusionSettings ScreenSpace { get; }
@@ -97,6 +141,15 @@ namespace XREngine.Rendering
                 EType.HorizonBased => EType.HorizonBasedPlus,
                 _ => type,
             };
+
+        private static bool UsesSpatialHashSharedControls(EType type)
+            => NormalizeType(type) == EType.SpatialHashAmbientOcclusion;
+
+        private void NotifySharedModeValueChanged(string propertyName, float previousValue, float currentValue)
+        {
+            if (previousValue != currentValue)
+                OnPropertyChanged(propertyName, previousValue, currentValue);
+        }
 
         internal bool SetNestedField<T>(ref T field, T value, string propertyPath, string? compatibilityPropertyName = null)
         {
@@ -147,7 +200,7 @@ namespace XREngine.Rendering
                 case EType.MultiScaleVolumetricObscurance:
                     Prototype.ApplyUniforms(program);
                     break;
-                case EType.SpatialHashExperimental:
+                case EType.SpatialHashAmbientOcclusion:
                     SpatialHash.ApplyUniforms(program);
                     break;
                 default:

@@ -77,6 +77,19 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     {
         public string AdvancedFilter = string.Empty;
         public bool ShowDisabledUberFeatures;
+        public ulong ParameterLookupBindingLayoutVersion;
+        public Dictionary<string, ShaderVar> ParameterLookup = new(StringComparer.Ordinal);
+        public long SamplerDefinitionsShaderStateRevision = long.MinValue;
+        public List<SamplerEntry> SamplerDefinitions = [];
+        public ShaderUiManifest? UberManifest;
+        public ShaderUiProperty[] UberVisibleProperties = [];
+        public string[] UberCategoryNames = [];
+        public readonly List<ShaderUiProperty> FilteredUberProperties = [];
+        public readonly List<ShaderUiProperty> CategoryUberProperties = [];
+        public long UberInitializedShaderStateRevision = long.MinValue;
+        public long UberInitializedStateRevision = long.MinValue;
+        public long FallbackUberHashShaderStateRevision = long.MinValue;
+        public ulong FallbackUberSourceHash;
     }
 
     private enum MaterialPreviewSurface
@@ -123,7 +136,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         {
             case 0:
                 DrawMaterialPreviewSection(material);
-                DrawPromotedSamplerPanel(material);
+                DrawPromotedSamplerPanel(material, uiState);
                 DrawUberInspector(material);
                 if (ImGui.CollapsingHeader("Raw Asset Fields"))
                     DrawDefaultInspector(material, visitedObjects);
@@ -149,9 +162,9 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Hide uniforms and samplers that are automatically driven by the engine.");
 
-                DrawUniforms(material, uiState.AdvancedFilter);
-                DrawUniformBlocks(material, uiState.AdvancedFilter);
-                DrawSamplerList(material, uiState.AdvancedFilter);
+                DrawUniforms(material, uiState, uiState.AdvancedFilter);
+                DrawUniformBlocks(material, uiState, uiState.AdvancedFilter);
+                DrawSamplerList(material, uiState, uiState.AdvancedFilter);
                 break;
         }
     }
@@ -349,9 +362,9 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             Engine.EditorPreferences.MaterialPreviewSurfaceIndex = (int)surface;
     }
 
-    private static void DrawPromotedSamplerPanel(XRMaterial material)
+    private static void DrawPromotedSamplerPanel(XRMaterial material, MaterialInspectorUiState uiState)
     {
-        List<SamplerBindingEntry> promotedBindings = GetPromotedSamplerBindings(material);
+        List<SamplerBindingEntry> promotedBindings = GetPromotedSamplerBindings(material, uiState);
         if (promotedBindings.Count == 0)
             return;
 
@@ -395,8 +408,11 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     }
 
     private static List<SamplerBindingEntry> GetPromotedSamplerBindings(XRMaterial material)
+        => GetPromotedSamplerBindings(material, MaterialUiStates.GetValue(material, static _ => new MaterialInspectorUiState()));
+
+    private static List<SamplerBindingEntry> GetPromotedSamplerBindings(XRMaterial material, MaterialInspectorUiState uiState)
     {
-        List<SamplerBindingEntry> allBindings = ResolveSamplerBindings(material, CollectSamplerDefinitions(material));
+        List<SamplerBindingEntry> allBindings = ResolveSamplerBindings(material, GetSamplerDefinitions(material, uiState));
         List<SamplerBindingEntry> promoted = [];
 
         foreach (SamplerBindingEntry binding in allBindings)
@@ -551,7 +567,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         EditorImGuiUI.DrawRuntimeObjectInspector("Render Option Settings", material.RenderOptions, visitedObjects, defaultOpen: true);
     }
 
-    private static void DrawUniforms(XRMaterial material, string? filter)
+    private static void DrawUniforms(XRMaterial material, MaterialInspectorUiState uiState, string? filter)
     {
         if (!ImGui.CollapsingHeader("Uniforms", ImGuiTreeNodeFlags.DefaultOpen))
             return;
@@ -559,7 +575,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         ImGui.TextDisabled("Edit local material values directly. Use Copy Anim Path to drive a parameter from an owning scene object.");
         ImGui.Separator();
 
-        var parameterLookup = BuildParameterLookup(material);
+        var parameterLookup = GetParameterLookup(material, uiState);
         bool anyUniforms = false;
 
         for (int shaderIndex = 0; shaderIndex < material.Shaders.Count; shaderIndex++)
@@ -593,7 +609,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             ImGui.TextDisabled("No uniform declarations found in assigned shaders.");
     }
 
-    private static void DrawUniformBlocks(XRMaterial material, string? filter)
+    private static void DrawUniformBlocks(XRMaterial material, MaterialInspectorUiState uiState, string? filter)
     {
         if (!ImGui.CollapsingHeader("Uniform Blocks", ImGuiTreeNodeFlags.DefaultOpen))
             return;
@@ -601,7 +617,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         ImGui.TextDisabled("Create local parameters for block members when you need explicit overrides or animation targets.");
         ImGui.Separator();
 
-        var parameterLookup = BuildParameterLookup(material);
+        var parameterLookup = GetParameterLookup(material, uiState);
         bool anyBlocks = false;
 
         for (int shaderIndex = 0; shaderIndex < material.Shaders.Count; shaderIndex++)
@@ -653,7 +669,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             ImGui.TextDisabled("No uniform blocks found in assigned shaders.");
     }
 
-    private static void DrawSamplerList(XRMaterial material, string? filter)
+    private static void DrawSamplerList(XRMaterial material, MaterialInspectorUiState uiState, string? filter)
     {
         if (!ImGui.CollapsingHeader("Texture Samplers", ImGuiTreeNodeFlags.DefaultOpen))
             return;
@@ -661,9 +677,13 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         ImGui.TextDisabled("Click a texture field to inspect it inline. Replacing a texture also updates its sampler binding name to match the shader slot.");
         ImGui.Separator();
 
-        List<SamplerEntry> samplers = CollectSamplerDefinitions(material)
-            .Where(sampler => MatchesMaterialAdvancedFilter(filter, sampler.Name, sampler.TypeLabel))
-            .ToList();
+        List<SamplerEntry> samplers = [];
+        foreach (SamplerEntry sampler in GetSamplerDefinitions(material, uiState))
+        {
+            if (MatchesMaterialAdvancedFilter(filter, sampler.Name, sampler.TypeLabel))
+                samplers.Add(sampler);
+        }
+
         var samplerBindings = ResolveSamplerBindings(material, samplers);
         if (samplers.Count == 0)
         {
@@ -747,6 +767,26 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         }
 
         return lookup;
+    }
+
+    private static Dictionary<string, ShaderVar> GetParameterLookup(XRMaterial material, MaterialInspectorUiState uiState)
+    {
+        if (uiState.ParameterLookupBindingLayoutVersion == material.BindingLayoutVersion)
+            return uiState.ParameterLookup;
+
+        uiState.ParameterLookup = BuildParameterLookup(material);
+        uiState.ParameterLookupBindingLayoutVersion = material.BindingLayoutVersion;
+        return uiState.ParameterLookup;
+    }
+
+    private static List<SamplerEntry> GetSamplerDefinitions(XRMaterial material, MaterialInspectorUiState uiState)
+    {
+        if (uiState.SamplerDefinitionsShaderStateRevision == material.ShaderStateRevision)
+            return uiState.SamplerDefinitions;
+
+        uiState.SamplerDefinitions = CollectSamplerDefinitions(material);
+        uiState.SamplerDefinitionsShaderStateRevision = material.ShaderStateRevision;
+        return uiState.SamplerDefinitions;
     }
 
     private static void DrawUniformTable(IReadOnlyList<UniformEntry> uniforms, Dictionary<string, ShaderVar> parameters, XRMaterial material)
@@ -1057,12 +1097,12 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
     private static void DrawShaderParameterContextMenu(XRMaterial material, ShaderVar param)
     {
+        if (!ImGui.BeginPopupContextItem($"ShaderParamContext_{param.GetHashCode()}"))
+            return;
+
         bool canCopy = TrySerializeShaderParameterValue(param, out string serializedValue);
         string? clipboardText = GetClipboardTextSafe();
         bool canPaste = CanApplyShaderParameterClipboard(param, clipboardText);
-
-        if (!ImGui.BeginPopupContextItem($"ShaderParamContext_{param.GetHashCode()}"))
-            return;
 
         if (ImGui.MenuItem("Copy Value", null, false, canCopy) && canCopy)
             ImGui.SetClipboardText(serializedValue);

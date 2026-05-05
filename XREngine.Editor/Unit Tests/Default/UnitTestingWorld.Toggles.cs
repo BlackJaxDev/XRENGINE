@@ -274,6 +274,10 @@ public static partial class EditorUnitTests
         [JsonIgnore]
         public bool HasStaticModelsToImport => ModelsToImport?.Any(m => (m?.Enabled ?? false) && m.Kind == UnitTestModelImportKind.Static) ?? false;
 
+        public bool UseStartupShadowThrottlingForModelImports = true; //Disables live model import load spikes by throttling shadow atlas work until all startup model imports finish.
+        public int StartupMaxShadowTilesRenderedPerFrame { get; set; } = 1; //Shadow tiles rendered per frame while startup model imports are active.
+        public float StartupMaxShadowRenderMilliseconds { get; set; } = 0.5f; //Shadow atlas millisecond budget while startup model imports are active.
+
         /// <summary>
         /// Indicates if the engine should use shader pipelines to mix and match shader stages.
         /// This will break debug shape rendering, and seems to render slower than making combined programs.

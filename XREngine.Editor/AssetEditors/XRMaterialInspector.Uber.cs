@@ -18,6 +18,8 @@ public sealed partial class XRMaterialInspector
     private static readonly Vector4 UberFeatureCompilingColor = new(0.33f, 0.67f, 0.89f, 1.0f);
     private static readonly Vector4 UberFeatureUnavailableColor = new(0.56f, 0.56f, 0.56f, 1.0f);
     private static readonly ConditionalWeakTable<XRMaterial, PendingUberFeatureResolution> PendingUberFeatureResolutions = new();
+    private static readonly ConditionalWeakTable<ShaderUiProperty, UberPropertyUiHints> UberPropertyHints = new();
+    private static readonly HashSet<string> EmptyUnavailableUberFeatureIds = new(StringComparer.Ordinal);
 
     private static void DrawUberInspector(XRMaterial material)
     {
@@ -27,36 +29,36 @@ public sealed partial class XRMaterialInspector
             manifest is null)
             return;
 
-        material.EnsureUberStateInitialized();
-
         XRShader uberFragmentShader = fragmentShader!;
         ShaderUiManifest uberManifest = manifest!;
         MaterialInspectorUiState uiState = MaterialUiStates.GetValue(material, static _ => new MaterialInspectorUiState());
+        EnsureUberStateInitializedForInspector(material, uiState);
 
         if (!ImGui.CollapsingHeader("Uber Shader", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        var visibleProperties = uberManifest.Properties
-            .Where(static x => IsAuthorableUberProperty(x))
-            .ToArray();
-
         var featureLookup = uberManifest.FeatureLookup;
-        HashSet<string> unavailableFeatureIds = ResolveUnavailableUberFeatureIds(activeFragmentShader, uberManifest);
-        var categoryNames = visibleProperties
-            .Select(x => ResolveCategoryName(x, featureLookup))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        EnsureUberManifestUiCache(uberManifest, featureLookup, uiState);
+        ShaderUiProperty[] visibleProperties = uiState.UberVisibleProperties;
+        string[] categoryNames = uiState.UberCategoryNames;
 
-        var parameterLookup = BuildParameterLookup(material);
-        var samplerLookup = ResolveSamplerBindings(material, CollectSamplerDefinitions(material))
+        IReadOnlySet<string> unavailableFeatureIds = ResolveUnavailableUberFeatureIds(activeFragmentShader, uberManifest);
+        var parameterLookup = GetParameterLookup(material, uiState);
+        var samplerLookup = ResolveSamplerBindings(material, GetSamplerDefinitions(material, uiState))
             .Where(static x => x.EngineBinding is null)
             .ToDictionary(static x => x.Sampler.Name, StringComparer.Ordinal);
 
-        int enabledFeatureCount = uberManifest.Features.Count(x => material.IsUberFeatureEnabled(x.Id, x.DefaultEnabled));
+        int enabledFeatureCount = 0;
+        foreach (ShaderUiFeature feature in uberManifest.Features)
+        {
+            if (material.IsUberFeatureEnabled(feature.Id, feature.DefaultEnabled))
+                enabledFeatureCount++;
+        }
+
         ulong requestedVariantHash = material.RequestedUberVariant.VariantHash;
         ulong activeVariantHash = material.ActiveUberVariant.VariantHash;
         if (requestedVariantHash == 0)
-            requestedVariantHash = ComputeStableSourceHash(uberFragmentShader.Source?.Text ?? string.Empty);
+            requestedVariantHash = GetCachedFallbackUberSourceHash(material, uberFragmentShader, uiState);
 
         UberShaderVariantTelemetry.Snapshot telemetrySnapshot = UberShaderVariantTelemetry.GetSnapshot();
 
@@ -96,21 +98,29 @@ public sealed partial class XRMaterialInspector
         if (ImGui.Checkbox("Show Disabled Modules", ref showDisabled))
             uiState.ShowDisabledUberFeatures = showDisabled;
 
-        ShaderUiProperty[] filteredProperties = visibleProperties
-            .Where(property => ShouldDisplayUberProperty(material, featureLookup, property, uiState.ShowDisabledUberFeatures))
-            .ToArray();
+        List<ShaderUiProperty> filteredProperties = uiState.FilteredUberProperties;
+        filteredProperties.Clear();
+        foreach (ShaderUiProperty property in visibleProperties)
+        {
+            if (ShouldDisplayUberProperty(material, featureLookup, property, uiState.ShowDisabledUberFeatures))
+                filteredProperties.Add(property);
+        }
 
         foreach (ShaderUiFeature feature in uberManifest.Features)
             DrawPendingUberFeatureResolution(material, feature, ref toolbarVariantChanged);
 
+        List<ShaderUiProperty> categoryProperties = uiState.CategoryUberProperties;
         foreach (string rawCategory in categoryNames)
         {
             string category = rawCategory!;
-            var categoryProperties = filteredProperties
-                .Where(x => string.Equals(ResolveCategoryName(x, featureLookup), category, StringComparison.Ordinal))
-                .ToArray();
+            categoryProperties.Clear();
+            foreach (ShaderUiProperty property in filteredProperties)
+            {
+                if (string.Equals(ResolveCategoryName(property, featureLookup), category, StringComparison.Ordinal))
+                    categoryProperties.Add(property);
+            }
 
-            if (categoryProperties.Length == 0)
+            if (categoryProperties.Count == 0)
                 continue;
 
             if (!ImGui.TreeNodeEx($"{category}##UberCategory_{category}", ImGuiTreeNodeFlags.DefaultOpen))
@@ -154,6 +164,48 @@ public sealed partial class XRMaterialInspector
 
         manifest = resolvedManifest;
         return resolvedManifest.Properties.Count > 0;
+    }
+
+    private static void EnsureUberStateInitializedForInspector(XRMaterial material, MaterialInspectorUiState uiState)
+    {
+        long shaderRevision = material.ShaderStateRevision;
+        long uberRevision = material.UberStateRevision;
+        if (uiState.UberInitializedShaderStateRevision == shaderRevision &&
+            uiState.UberInitializedStateRevision == uberRevision)
+        {
+            return;
+        }
+
+        material.EnsureUberStateInitialized();
+        uiState.UberInitializedShaderStateRevision = material.ShaderStateRevision;
+        uiState.UberInitializedStateRevision = material.UberStateRevision;
+    }
+
+    private static void EnsureUberManifestUiCache(
+        ShaderUiManifest manifest,
+        IReadOnlyDictionary<string, ShaderUiFeature> featureLookup,
+        MaterialInspectorUiState uiState)
+    {
+        if (ReferenceEquals(uiState.UberManifest, manifest))
+            return;
+
+        List<ShaderUiProperty> visibleProperties = [];
+        List<string> categoryNames = [];
+        HashSet<string> categoryLookup = new(StringComparer.Ordinal);
+        foreach (ShaderUiProperty property in manifest.Properties)
+        {
+            if (!IsAuthorableUberProperty(property))
+                continue;
+
+            visibleProperties.Add(property);
+            string category = ResolveCategoryName(property, featureLookup);
+            if (categoryLookup.Add(category))
+                categoryNames.Add(category);
+        }
+
+        uiState.UberManifest = manifest;
+        uiState.UberVisibleProperties = [.. visibleProperties];
+        uiState.UberCategoryNames = [.. categoryNames];
     }
 
     private static void DrawUberCategoryProperties(
@@ -208,7 +260,16 @@ public sealed partial class XRMaterialInspector
         {
             bool enabled = material.IsUberFeatureEnabled(feature.Id, feature.DefaultEnabled);
             bool available = !unavailableFeatureIds.Contains(feature.Id);
-            int animatedPropertyCount = properties.Count(x => !x.IsSampler && material.GetUberPropertyMode(x.Name, x.DefaultMode, x.IsSampler) == EShaderUiPropertyMode.Animated);
+            int animatedPropertyCount = 0;
+            foreach (ShaderUiProperty property in properties)
+            {
+                if (!property.IsSampler &&
+                    material.GetUberPropertyMode(property.Name, property.DefaultMode, property.IsSampler) == EShaderUiPropertyMode.Animated)
+                {
+                    animatedPropertyCount++;
+                }
+            }
+
             bool featureAuthored = material.UberAuthoredState.GetFeature(feature.Id)?.ExplicitlyAuthored == true;
             ImGui.PushID(feature.Id);
             if (!available)
@@ -566,9 +627,11 @@ public sealed partial class XRMaterialInspector
 
     private static bool TryDrawUberRangeControl(XRMaterial material, ShaderVar parameter, ShaderUiProperty property)
     {
-        if (!TryParseShaderUiRange(property.Range, out ShaderUiNumericRange range))
+        UberPropertyUiHints hints = GetUberPropertyHints(property);
+        if (!hints.HasRange)
             return false;
 
+        ShaderUiNumericRange range = hints.Range;
         switch (parameter)
         {
             case ShaderFloat shaderFloat:
@@ -674,7 +737,7 @@ public sealed partial class XRMaterialInspector
 
     private static bool TryDrawUberEnumControl(XRMaterial material, ShaderVar parameter, ShaderUiProperty property)
     {
-        ShaderUiEnumOption[] options = ParseShaderUiEnumOptions(property.EnumOptions);
+        ShaderUiEnumOption[] options = GetUberPropertyHints(property).EnumOptions;
         if (options.Length == 0)
             return false;
 
@@ -857,6 +920,14 @@ public sealed partial class XRMaterialInspector
         return true;
     }
 
+    private static UberPropertyUiHints GetUberPropertyHints(ShaderUiProperty property)
+        => UberPropertyHints.GetValue(property, static key =>
+        {
+            ShaderUiEnumOption[] enumOptions = ParseShaderUiEnumOptions(key.EnumOptions);
+            bool hasRange = TryParseShaderUiRange(key.Range, out ShaderUiNumericRange range);
+            return new UberPropertyUiHints(enumOptions, hasRange, range);
+        });
+
     private static void DrawUberVariantStatus(XRMaterial material)
     {
         UberMaterialVariantStatus status = material.UberVariantStatus;
@@ -941,8 +1012,8 @@ public sealed partial class XRMaterialInspector
     private static string FormatTiming(double milliseconds)
         => milliseconds > 0.0 ? $"{milliseconds:0.##} ms" : "n/a";
 
-    private static HashSet<string> ResolveUnavailableUberFeatureIds(XRShader activeFragmentShader, ShaderUiManifest manifest)
-        => [];
+    private static IReadOnlySet<string> ResolveUnavailableUberFeatureIds(XRShader activeFragmentShader, ShaderUiManifest manifest)
+        => EmptyUnavailableUberFeatureIds;
 
     private static void DrawUberBulkActions(XRMaterial material, ShaderUiManifest manifest, IReadOnlyList<ShaderUiProperty> visibleProperties)
     {
@@ -989,6 +1060,17 @@ public sealed partial class XRMaterialInspector
         }
 
         return hash;
+    }
+
+    private static ulong GetCachedFallbackUberSourceHash(XRMaterial material, XRShader shader, MaterialInspectorUiState uiState)
+    {
+        long shaderRevision = material.ShaderStateRevision;
+        if (uiState.FallbackUberHashShaderStateRevision == shaderRevision)
+            return uiState.FallbackUberSourceHash;
+
+        uiState.FallbackUberSourceHash = ComputeStableSourceHash(shader.Source?.Text ?? string.Empty);
+        uiState.FallbackUberHashShaderStateRevision = shaderRevision;
+        return uiState.FallbackUberSourceHash;
     }
 
     private readonly struct ImGuiDisabledScope : IDisposable
@@ -1069,6 +1151,20 @@ public sealed partial class XRMaterialInspector
 
     private readonly record struct ShaderUiEnumOption(double Value, string Label);
     private readonly record struct ShaderUiNumericRange(double Min, double Max);
+
+    private sealed class UberPropertyUiHints
+    {
+        public UberPropertyUiHints(ShaderUiEnumOption[] enumOptions, bool hasRange, ShaderUiNumericRange range)
+        {
+            EnumOptions = enumOptions;
+            HasRange = hasRange;
+            Range = range;
+        }
+
+        public ShaderUiEnumOption[] EnumOptions { get; }
+        public bool HasRange { get; }
+        public ShaderUiNumericRange Range { get; }
+    }
 
     private sealed record PendingUberFeatureResolution(string FeatureId, string[] MissingDependencies, string[] ActiveConflicts);
 }

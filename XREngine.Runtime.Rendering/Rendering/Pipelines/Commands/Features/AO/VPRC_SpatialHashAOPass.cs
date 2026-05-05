@@ -244,20 +244,20 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             return new SpatialHashRuntimeSettings
             {
-                Radius = settings?.Radius > 0.0f ? settings.Radius : AmbientOcclusionSettings.DefaultRadius,
-                Power = settings?.Power > 0.0f ? settings.Power : 1.0f,
-                Steps = settings?.SpatialHashSteps > 0 ? settings.SpatialHashSteps : 8,
-                Bias = settings?.Bias > 0.0f ? settings.Bias : 0.01f,
-                CellSizeMin = settings?.SpatialHashCellSize > 0.0f ? settings.SpatialHashCellSize : 0.07f,
-                Thickness = settings?.Thickness > 0.0f ? settings.Thickness : 0.5f,
-                SamplesPerPixel = Math.Max(settings?.SamplesPerPixel ?? 3.0f, 1.0f),
-                JitterScale = settings?.SpatialHashJitterScale >= 0.0f ? settings.SpatialHashJitterScale : 0.35f,
+                Radius = settings?.Radius > 0.0f ? settings.Radius : AmbientOcclusionSettings.SpatialHashDefaultRadius,
+                Power = settings?.Power > 0.0f ? settings.Power : AmbientOcclusionSettings.SpatialHashDefaultPower,
+                Steps = settings?.SpatialHashSteps > 0 ? settings.SpatialHashSteps : SpatialHashAmbientOcclusionSettings.DefaultSteps,
+                Bias = settings?.Bias > 0.0f ? settings.Bias : AmbientOcclusionSettings.SpatialHashDefaultBias,
+                CellSizeMin = settings?.SpatialHashCellSize > 0.0f ? settings.SpatialHashCellSize : SpatialHashAmbientOcclusionSettings.DefaultCellSize,
+                Thickness = settings?.Thickness > 0.0f ? settings.Thickness : SpatialHashAmbientOcclusionSettings.DefaultThickness,
+                SamplesPerPixel = Math.Max(settings?.SamplesPerPixel ?? SpatialHashAmbientOcclusionSettings.DefaultSamplesPerPixel, 1.0f),
+                JitterScale = settings?.SpatialHashJitterScale >= 0.0f ? settings.SpatialHashJitterScale : SpatialHashAmbientOcclusionSettings.DefaultJitterScale,
                 MaxSamplesPerCell = (uint)Math.Clamp(settings?.Samples > 0 ? settings.Samples : DefaultSamples, 1, 4096),
-                TemporalReuseEnabled = settings?.SpatialHashTemporalReuseEnabled ?? true,
-                TemporalBlendFactor = Math.Clamp(settings?.SpatialHashTemporalBlendFactor ?? 0.9f, 0.0f, 0.99f),
-                TemporalClamp = Math.Max(settings?.SpatialHashTemporalClamp ?? 0.2f, 0.001f),
-                TemporalDepthRejectThreshold = Math.Max(settings?.SpatialHashTemporalDepthRejectThreshold ?? 0.01f, 0.0001f),
-                TemporalMotionRejectionScale = Math.Max(settings?.SpatialHashTemporalMotionRejectionScale ?? 0.2f, 0.0001f)
+                TemporalReuseEnabled = settings?.SpatialHashTemporalReuseEnabled ?? SpatialHashAmbientOcclusionSettings.DefaultTemporalReuseEnabled,
+                TemporalBlendFactor = Math.Clamp(settings?.SpatialHashTemporalBlendFactor ?? SpatialHashAmbientOcclusionSettings.DefaultTemporalBlendFactor, 0.0f, 0.99f),
+                TemporalClamp = Math.Max(settings?.SpatialHashTemporalClamp ?? SpatialHashAmbientOcclusionSettings.DefaultTemporalClamp, 0.001f),
+                TemporalDepthRejectThreshold = Math.Max(settings?.SpatialHashTemporalDepthRejectThreshold ?? SpatialHashAmbientOcclusionSettings.DefaultTemporalDepthRejectThreshold, 0.0001f),
+                TemporalMotionRejectionScale = Math.Max(settings?.SpatialHashTemporalMotionRejectionScale ?? SpatialHashAmbientOcclusionSettings.DefaultTemporalMotionRejectionScale, 0.0001f)
             };
         }
 

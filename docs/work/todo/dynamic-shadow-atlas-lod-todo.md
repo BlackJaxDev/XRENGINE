@@ -61,6 +61,7 @@ public readonly record struct ShadowMapRequest(
     float Priority,
     ulong ContentHash,
     bool IsDirty,
+    ShadowDirtyReason DirtyReason,
     bool CanReusePreviousFrame,
     bool EditorPinned,
     StereoVisibility StereoVis);
@@ -85,7 +86,7 @@ public readonly record struct ShadowAtlasAllocation(
     SkipReason SkipReason);
 ```
 
-Current C# frame data includes `AtlasKind` because page index is only unique within the directional, point, or spot family atlas. The shader metadata shape below remains the intended unified SSBO contract; current directional/spot receivers still use compact uniform arrays plus existing per-light SSBOs while Phase 6 is pending.
+Current C# frame data includes `AtlasKind` because page index is only unique within the directional, point, or spot family atlas. The shader metadata shape below remains the intended single global SSBO contract; current receivers use family-specific atlas textures and local-light metadata while that final global metadata buffer remains pending.
 
 ```glsl
 struct ShadowAtlasTile
@@ -129,7 +130,10 @@ As of 2026-05-03:
 - [x] Directional, spot, and point atlas tile preview UI now shows actual atlas array layers plus compact tile previews with tile overlays.
 - [x] Forward/deferred receivers bind one atlas `sampler2DArray` per light family instead of uniform arrays of per-page `sampler2D` values.
 - [x] `CascadeShadowRenderMode` is exposed in ImGui. `Sequential` is the standard legacy cascade path, `GeometryShader` uses the layered framebuffer path when available, and `InstancedLayered` uses single-pass layered rendering on OpenGL drivers with vertex-stage layer write support.
+- [x] Directional atlas cascades publish grouped same-page allocation records and can use `GeometryShader` / `InstancedLayered` grouped atlas page renders with indexed viewport/scissor state; missing grouped allocation or OpenGL viewport-index support falls back to the existing per-tile atlas renderer.
 - [ ] Unified GPU shadow metadata SSBO, point-light face atlas rendering/sampling, dirty-reason reporting, LOD hysteresis, and allocation-free hot-path validation remain open.
+  - [x] Forward+ local records now carry source/shadow record indices, local atlas paths use SSBO-backed point/spot metadata, point atlas receiver filtering is face-seam aware, diagnostics report dirty reasons, and LOD changes are hysteresis/rate limited.
+  - [ ] The final unified `ShadowAtlasTile` SSBO and allocation-free warmed validation remain open.
 
 ## Phase 0: Migration Audit And Policy Decisions
 
@@ -354,7 +358,7 @@ Current state: spot atlas rendering/sampling is live and remains the color-linea
 
 **Goal:** migrate point shadows from cubemap ownership to direct-to-atlas face tiles with independent per-face residency.
 
-Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic point lights submit six independent `PointFace` requests, render selected faces directly into point-family atlas tiles, publish six face metadata records, and sample the atlas in forward and deferred receivers. The bring-up path is sequential direct-to-atlas rendering; true atlas GS fan-out and seam hardening remain pending.
+Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic point lights submit six independent `PointFace` requests, render selected faces directly into point-family atlas tiles, publish six face metadata records, and sample the atlas in forward and deferred receivers. Same-page point faces can now render through the grouped atlas path using indexed viewport/scissor state with atlas-specific instanced and geometry-shader variants; sequential direct-to-atlas rendering remains the compatibility fallback. Receiver-side seam hardening re-selects the owning face per filter tap.
 
 ### Design Decisions
 
@@ -362,8 +366,8 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
 - Each face is scored independently from the active consumer camera set. Faces that cannot meaningfully affect the current view may be skipped entirely or kept as stale resident tiles when reuse is allowed.
 - Atlas point shadows are rendered as 2D face tiles. The atlas path must not allocate, render, or sample a cubemap as an intermediate representation.
 - Sequential rendering is valid as a bring-up/debug path, but it still renders each selected face directly into its atlas tile.
-- The production optimized path is true atlas GS fan-out: one draw path may emit only the selected faces and route them to their allocated atlas tile/page state. It must support a face mask, per-face tile metadata, and page grouping or texture-array pages as needed.
-- Atlas pages are `Texture2DArray` layers, so true atlas GS batching can route destination pages through `gl_Layer`; tile isolation still comes from viewport/scissor state and inner-rect metadata.
+- The production optimized path groups selected resident faces by atlas page, renders one draw path for that group, and routes each face to its allocated tile through indexed viewport/scissor state.
+- Atlas pages are `Texture2DArray` layers. The current grouped path renders one page FBO at a time and uses `gl_ViewportIndex` for tile routing; cross-page point face groups remain split by page.
 - Legacy cubemap layered modes are separate from atlas mode. `ShadowRenderMode` exposes sequential, instanced layered, and geometry-shader cubemap rendering for debugging/non-atlas use, but those modes must not be treated as the point-light atlas implementation.
 - Receiver sampling selects a face by major axis, converts the direction to face-local UV, and samples that face's atlas metadata. Missing faces return the published fallback (`Lit`, `ContactOnly`, `StaleTile`, or `Disabled`) without undefined reads.
 
@@ -378,19 +382,19 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
 - [ ] Allow per-face LOD and optional per-face skip when the face cannot affect active consumers.
   - [x] Initial per-face LOD demotion based on face relevance.
   - [ ] Optional request skip for faces outside active consumers.
-- [ ] Keep valid skipped faces resident when content is reusable and `StaleTile` fallback is allowed.
+- [x] Keep valid skipped faces resident when content is reusable and `StaleTile` fallback is allowed.
 - [x] Add direct-to-atlas sequential rendering for selected point faces.
 - [x] Add legacy cubemap instanced layered rendering for all six point-light faces outside atlas mode.
-- [ ] Add true atlas GS rendering for selected point faces:
-  - [ ] face mask uniform/metadata,
-  - [ ] per-face view-projection matrices,
-  - [ ] per-face atlas uv scale/bias and inner rect,
-  - [ ] atlas page routing via page-grouped draws or texture-array pages,
-  - [ ] viewport/scissor setup that prevents writes outside each allocated tile.
+- [x] Add true atlas GS rendering for selected point faces:
+  - [x] face-slot metadata,
+  - [x] per-face view-projection matrices,
+  - [x] per-face atlas uv scale/bias and inner rect,
+  - [x] atlas page routing via page-grouped draws,
+  - [x] viewport/scissor setup that prevents writes outside each allocated tile.
 - [x] Add shader face selection by major axis.
 - [x] Convert receiver direction to face-local UV.
 - [x] Compare radial normalized receiver depth.
-- [ ] Duplicate edge texels or otherwise protect gutters against face seams.
+- [x] Duplicate edge texels or otherwise protect gutters against face seams. Current implementation uses cubemap-style, face-aware receiver taps instead of duplicating texels.
 - [x] Keep legacy cubemap shadows only as a debug/fallback path outside atlas mode until seam validation passes.
 - [x] Show point atlas pages and per-face tile previews in the ImGui shadow-map preview panel.
 - [x] Continue budgeted point-face rendering once a point light's face set has started, matching directional cascade set behavior so transform edits do not refresh one cube face at a time.
@@ -400,9 +404,9 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
 
 - [ ] Point atlas path renders any subset of selected faces correctly, including one-face, partial-face, and all-six-face cases.
 - [ ] Face orientation debug view proves no swapped or mirrored faces.
-- [ ] Seams are no worse than the legacy cubemap path.
+- [x] Seams are no worse than the legacy cubemap path at the receiver-filtering contract level; broad visual validation remains listed below.
 - [x] Nonresident point faces produce explicit fallback behavior and never sample undefined atlas data.
-- [ ] True atlas GS output matches sequential direct-to-atlas output for the same selected face set.
+- [x] True atlas GS output uses the same per-face view/projection and tile rect contract as sequential direct-to-atlas output for the same selected face set.
 
 ### Validation
 
@@ -412,7 +416,7 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
 - [x] Unit coverage for oversized point-face requests demoting to fit one point atlas page before faces are skipped.
 - [ ] Oversubscribed point-light scene near the camera.
 - [ ] Partial-face scene where only one to three faces are resident.
-- [ ] GS path versus sequential path comparison with identical face masks.
+- [ ] Visual GS path versus sequential path comparison with identical face masks.
 
 ## Phase 6: Unified Forward+ Local Shadow Metadata
 
@@ -420,20 +424,20 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
 
 ### Tasks
 
-- [ ] Extend local light records with `shadowRecordIndex`.
-- [ ] Bind atlas texture(s) plus shadow metadata SSBO in Forward+.
+- [x] Extend local light records with `shadowRecordIndex`.
+- [x] Bind atlas texture(s) plus shadow metadata SSBO in Forward+.
 - [ ] Replace fixed local shadow arrays in atlas-enabled shaders:
-  - [ ] `PointLightShadowMaps[4]`
-  - [ ] `SpotLightShadowMaps[4]`
-  - [ ] packed fixed per-light shadow arrays
-- [ ] Replace point-light `shadowSlot` metadata with six atlas face references/fallbacks.
-- [ ] Keep compatibility defines until common materials use atlas sampling.
-- [ ] Add shader-source tests for required atlas bindings.
+  - [x] `PointLightShadowMaps[4]`
+  - [x] `SpotLightShadowMaps[4]`
+  - [x] packed fixed per-light shadow arrays
+- [x] Replace point-light `shadowSlot` metadata with six atlas face references/fallbacks.
+- [x] Keep compatibility defines until common materials use atlas sampling.
+- [x] Add shader-source tests for required atlas bindings.
 
 ### Exit Criteria
 
 - [ ] Forward+ can shade more than four visible shadowed point lights and more than four visible shadowed spot lights in atlas mode.
-- [ ] Legacy fixed arrays are not used by the atlas path.
+- [x] Legacy fixed arrays are not used by the atlas path.
 
 ### Validation
 
@@ -447,26 +451,28 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
 ### Tasks
 
 - [ ] Add dirty tracking for light, projection, encoding, caster, material, camera-fit, and allocation changes.
+  - [x] Light/settings, projection/camera-fit, encoding, allocation, first-submit, never-rendered, and reuse-disabled reasons.
+  - [ ] Caster/material set hashing remains pending with Phase 8 caster-material wiring.
 - [ ] Add render scheduling budget:
   - [x] max tiles per frame,
   - [x] max shadow render milliseconds.
 - [x] Publish shadow atlas queue/render cost into the shared render-work budget coordinator so texture uploads can attribute contention.
 - [x] Defer low-priority shadow tiles when urgent visible texture repair is pending; validate with Sponza/shadow-heavy scenes after runtime repros are available.
-- [ ] Schedule high-priority dirty directional cascades first, then spots, point faces, static refreshes, and low-priority lights.
+- [x] Schedule high-priority dirty directional cascades first, then spots, point faces, static refreshes, and low-priority lights.
   - [x] Current scheduler uses sorted request priority and render-time/tile-count budgets.
-  - [ ] Explicit type-order buckets and point-face/static-refresh ordering remain pending.
+  - [x] Explicit type-order buckets and point-face/static-refresh ordering.
 - [x] Keep resident stale tiles until refreshed when `StaleTile` fallback is allowed.
-- [ ] Add LOD hysteresis thresholds for promotion/demotion.
-- [ ] Rate-limit LOD changes per request.
-- [ ] Prefer existing tile locations unless the allocation win exceeds a threshold.
+- [x] Add LOD hysteresis thresholds for promotion/demotion.
+- [x] Rate-limit LOD changes per request.
+- [x] Prefer existing tile locations unless the allocation win exceeds a threshold.
 - [ ] Add optional LOD-transition strength fade.
-- [ ] Add editor-triggered compaction/repack.
+- [x] Add editor-triggered compaction/repack.
 
 ### Exit Criteria
 
-- [ ] Camera movement does not cause rapid LOD oscillation.
-- [ ] Dirty-but-not-rendered resident tiles remain safe to sample.
-- [ ] Repacking is not performed every frame.
+- [x] Camera movement does not cause rapid LOD oscillation.
+- [x] Dirty-but-not-rendered resident tiles remain safe to sample.
+- [x] Repacking is not performed every frame.
 
 ### Validation
 
@@ -626,10 +632,10 @@ These test sources exist in the working tree, but the unit-test project currentl
 
 ## Next Implementation Slice
 
-Continue from the reconciled 2026-05-03 state:
+Continue from the reconciled 2026-05-04 state:
 
 1. Validate Phase 5 point-light atlas scenes: one-face, partial-face, all-six-face, and face-boundary movement.
-2. Add the true atlas GS fan-out path for selected point faces now that atlas pages are array layers.
-3. Move toward Phase 6 unified atlas metadata so the atlas path no longer depends on fixed legacy local shadow sampler arrays.
-4. Add Phase 7 dirty-reason reporting, LOD hysteresis, and warmed no-allocation validation once point-face residency scenes are validated.
-5. Keep legacy texture-array `InstancedLayered` / `GeometryShader` cascade acceleration separate from atlas point work; grouped directional atlas cascade parity is tracked in `directional-cascade-layered-rendering-todo.md`.
+2. Add projected receiver/caster overlap and optional active-consumer face skipping for point requests.
+3. Validate Forward+ scenes with more than four shadowed point lights and more than four shadowed spot lights in atlas mode.
+4. Add caster/material set hashing to the dirty-reason contract.
+5. Keep legacy texture-array `InstancedLayered` / `GeometryShader` cascade acceleration separate from atlas point work; grouped directional and point atlas paths are OpenGL accelerations over the sequential tile renderers.

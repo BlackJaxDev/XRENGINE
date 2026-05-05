@@ -92,6 +92,26 @@ internal static class TextureResidencyPolicy
             ? long.MaxValue
             : Math.Max(0L, frameId - input.LastVisibleFrameId);
 
+        // If the texture was bound to a draw within the recently-bound window we treat
+        // it as still "live" — visibility tagging may legitimately have been skipped
+        // (capture/probe pass overlap, lock contention, etc.). Hold the current
+        // resident size and allow a single-step upward step if the source is larger.
+        // This prevents a single missed CollectVisible cycle from slamming the
+        // texture all the way back to the preview floor when nothing about its
+        // on-screen footprint has actually changed.
+        bool recentlyBound = IsRecentlyBound(input.LastBoundFrameId, frameId);
+        if (recentlyBound)
+        {
+            uint preserved = Math.Max(normalPolicyFloor, input.ResidentMaxDimension);
+            if (sourceMaxDimension != 0 && preserved < sourceMaxDimension)
+            {
+                uint promoted = GetNextHigherResidentCandidate(sourceMaxDimension, preserved, normalPolicyFloor);
+                if (promoted > preserved)
+                    preserved = promoted;
+            }
+            return preserved;
+        }
+
         if (framesSinceVisible <= 4)
             return Math.Max(normalPolicyFloor, input.ResidentMaxDimension);
 
@@ -252,9 +272,12 @@ internal static class TextureResidencyPolicy
                     : TextureUploadPriorityClass.Background;
 
     internal static bool IsRecentlyBound(ImportedTextureStreamingSnapshot snapshot, long frameId)
-        => snapshot.LastBoundFrameId != long.MinValue
-            && frameId >= snapshot.LastBoundFrameId
-            && frameId - snapshot.LastBoundFrameId <= RecentlyBoundFallbackFrames;
+        => IsRecentlyBound(snapshot.LastBoundFrameId, frameId);
+
+    internal static bool IsRecentlyBound(long lastBoundFrameId, long frameId)
+        => lastBoundFrameId != long.MinValue
+            && frameId >= lastBoundFrameId
+            && frameId - lastBoundFrameId <= RecentlyBoundFallbackFrames;
 
     internal static string ResolveTransitionReason(
         ImportedTextureStreamingSnapshot snapshot,
@@ -363,5 +386,21 @@ internal static class TextureResidencyPolicy
         }
 
         return minimumResidentSize;
+    }
+
+    private static uint GetNextHigherResidentCandidate(uint sourceMaxDimension, uint currentResidentSize, uint minimumResidentSize)
+    {
+        for (int index = 0; index < ResidentCandidates.Length; index++)
+        {
+            uint candidate = ResidentCandidates[index];
+            if (candidate <= currentResidentSize)
+                continue;
+            if (sourceMaxDimension != 0 && candidate > sourceMaxDimension)
+                return sourceMaxDimension > currentResidentSize ? sourceMaxDimension : currentResidentSize;
+
+            return Math.Max(candidate, minimumResidentSize);
+        }
+
+        return sourceMaxDimension > currentResidentSize ? sourceMaxDimension : currentResidentSize;
     }
 }

@@ -1,327 +1,209 @@
 # AGENTS.md
 
-Operating guide for human and AI contributors working in this repository.
+Concise operating guide for human and AI contributors in this repository.
 
-## 1) Purpose and Current Product Stage
+## Product Posture
 
-XRENGINE is a **Windows-first C# XR engine + editor** and is **not yet shipped**.
+XRENGINE is a Windows-first C# XR engine and editor. It has not shipped v1, so there is no backward-compatibility obligation yet.
 
-Implications:
-- **No backward-compatibility obligation exists until v1 ships.** Breaking API changes, renames, and layout restructures are acceptable when they produce a cleaner v1.
-- The goal is to ship the best possible default codebase as version 1. Prefer getting it right now over preserving legacy patterns.
-- Favor clear, maintainable, high-performance architecture over quick hacks.
+- Prefer clean v1 architecture over preserving legacy patterns.
+- Breaking API changes, renames, and layout restructures are acceptable when they make the codebase better.
+- Optimize for clear, maintainable, high-performance engine code.
 
-## 2) Default Working Agreement (Owner Preferences)
+## Default Working Agreement
 
-These are repository-default expectations unless a task explicitly says otherwise:
+- Favor root-cause fixes and coherent subsystem cleanup over tiny patches when the task justifies it.
+- Run targeted tests or the narrowest useful build/run validation.
+- Update docs when user-facing behavior, launch flags, env vars, tasks, setup, or workflows change.
+- Fix easy unrelated validation issues when nearby; report larger unrelated failures.
+- When asked to commit, use simple imperative commit messages.
+- If this file conflicts with an explicit user request, follow the user request and note the deviation.
 
-- **Change style:** Prefer clean architecture improvements, not only micro-patches.
-- **Scope:** Allow broader subsystem sweeps when they materially improve correctness/maintainability.
-- **Testing bar:** Run targeted tests closest to your changes.
-- **Risk posture:** Balanced risk controls.
-- **Risky operations:** Propose first and wait for approval before submodule bumps, dependency upgrades, schema/data migrations, or other high-blast-radius changes.
-- **Docs policy:** Always update docs when user-facing behavior, launch flags, environment variables, tasks, or workflows change.
-- **Unrelated issues during validation:** Opportunistically fix easy ones; report anything larger.
-- **Commit style (when committing is requested):** simple imperative commit messages.
+## Platform And Constraints
 
-## 3) Environment and Platform Constraints
+- Primary platform: Windows 10/11.
+- SDK/tooling: .NET 10 SDK.
+- Rendering: OpenGL 4.6 is primary; Vulkan and DX12 are WIP.
+- XR: OpenXR and SteamVR/OpenVR paths exist; OpenVR is currently the tested path.
+- Submodules live under `Build/Submodules`.
 
-- Primary platform: **Windows 10/11**.
-- Runtime/tooling: **.NET 10 SDK**.
-- Rendering baseline: OpenGL 4.6 path is primary; Vulkan/DX12 remain WIP.
-- XR paths exist for OpenXR and SteamVR/OpenVR; OpenVR is currently tested path.
-- Repo uses git submodules under `Build/Submodules`.
-
-## 4) Repository Map (High Value Areas)
+## Repository Map
 
 - `XREngine/` - core runtime, scene graph, rendering, XR systems.
 - `XREngine.Editor/` - desktop editor and unit-testing world bootstrap.
 - `XREngine.Server/` - dedicated server executable.
 - `XREngine.VRClient/` - standalone VR client executable.
-- `XREngine.UnitTests/` - test project for engine/editor subsystems.
-- `Assets/UnitTestingWorldSettings.jsonc` - generated local startup world toggles file used by unit-testing world flows.
-- `Build/Logs/` - per-run log root when file logging is enabled; each session gets its own subdirectory.
-- `.vscode/tasks.json` and `.vscode/launch.json` - source of truth for local run/debug task orchestration.
-- `ExecTool.bat` - interactive launcher for all `Tools/` scripts (see §6).
+- `XREngine.UnitTests/` - engine/editor tests.
+- `Assets/UnitTestingWorldSettings.jsonc` - generated local unit-testing world settings.
+- `Build/Logs/` - per-run logs and profiler traces when file logging is enabled.
+- `.vscode/tasks.json` / `.vscode/launch.json` - canonical local run/debug orchestration.
+- `ExecTool.bat` - interactive launcher for scripts under `Tools/`.
 - `docs/` - architecture, API guides, rendering notes, backlog/design docs.
-- `docs/architecture/rendering/default-render-pipeline-notes.md` - known issues and invariants for DefaultRenderPipeline (texture storage, FBO lifecycle, bloom, auto-exposure, MSAA, etc.).
-- `docs/features/mcp-server.md` - full MCP server documentation (see §15).
+- `docs/architecture/rendering/default-render-pipeline-notes.md` - DefaultRenderPipeline invariants and known issues.
+- `docs/features/mcp-server.md` - MCP server documentation.
 
-### Editor UI Paths
+## Editor UI
 
-The editor ships with **two UI pipelines**:
+The editor has two UI paths:
 
-- **ImGui editor** — The current day-to-day interface. Fast to iterate on, fully functional, and the recommended path for development and testing right now.
-- **Native UI editor** — The intended production-quality editor UI, built on the native scene-node pipeline with multithreaded layouting. It is under rigorous active development and **not yet dependable** for regular use. Expect missing features, layout instability, and breaking changes.
+- ImGui editor: current day-to-day interface; use this by default.
+- Native UI editor: intended production UI, but still unstable and actively changing.
 
-When working on editor tooling or features, default to the ImGui path unless the task explicitly targets the native UI pipeline.
+Default to ImGui unless the task explicitly targets native UI.
 
-## 5) First 10 Minutes in a Task
+## Starting A Task
 
-1. Read the user request fully.
-2. Identify target subsystem(s) and nearest tests.
-3. Check existing docs and task/launch configs before changing workflows.
-4. Decide whether the request permits a subsystem sweep.
-5. If risky operation is involved, stop and request approval with a concrete plan.
+1. Read the request fully.
+2. Identify the subsystem, run mode, and nearest tests.
+3. Check existing docs, tasks, and launch configs before changing workflows.
+4. Decide whether a broader subsystem cleanup is warranted.
+5. Stop for approval before risky operations.
 
-## 6) Build, Run, and Debug Workflows
+## Build, Run, Debug
 
-### Build
+Build:
 
-- Full solution:
-  - `dotnet restore`
-  - `dotnet build XRENGINE.slnx`
-- Editor only:
-  - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
-
-### Primary run modes
-
-- Editor CLI:
-  - `dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj`
-  - add `--unit-testing` or `XRE_WORLD_MODE=UnitTesting` to boot the Unit Testing World instead of the default world
-- Common VS Code tasks (preferred for local orchestration):
-  - `Build-Editor`, `Build-Server`, `Build-VRClient`
-  - `Start-Editor-NoDebug`, `Start-Server-NoDebug`
-  - `Start-Client-NoDebug`, `Start-Client2-NoDebug`, `Start-2Clients-NoDebug`
-  - `Start-DedicatedServer-NoDebug`
-  - Pose sync tasks:
-    - `Start-PoseServer-NoDebug`
-    - `Start-PoseSourceClient-NoDebug`
-    - `Start-PoseReceiverClient-NoDebug`
-    - `Start-LocalPoseSync-NoDebug`
-  - `Generate-UnitTestingWorldSettings` regenerates the JSONC settings files and schema from `UnitTestingWorld.Toggles`
-
-### Logs and Diagnostics
-
-- When file logging is enabled, per-run engine logs are written under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`.
-- Profiler traces in that same run directory include `profiler-main-thread-invokes.log`, `profiler-fps-drops.log`, and `profiler-render-stalls.log`.
-- Math Intersections benchmark runs also write `math-intersections-benchmarks.log` into the same session directory.
-
-### ExecTool (interactive script launcher)
-
-The repository root contains `ExecTool.bat`, which provides an interactive numbered menu for every script under `Tools/`.
-
-```bash
-ExecTool              # interactive menu
-ExecTool 16           # run tool #16 directly (Find-BuildWarnings)
-ExecTool --bootstrap  # full project setup (submodules, deps, generated settings, build, launch)
-ExecTool --list       # print all tools and exit
-ExecTool --help       # show usage
+```powershell
+dotnet restore
+dotnet build XRENGINE.slnx
+dotnet build .\XREngine.Editor\XREngine.Editor.csproj
 ```
 
-Tools are grouped into categories: **Setup**, **Build**, **Editor**, **Repo**, **Docs**, **Reports**, and **Deps** (dependency installers). Each entry shows a one-line description and the script path.
+Editor CLI:
 
-The **Setup** category contains a **Bootstrap** entry (also available as `ExecTool --bootstrap`) that performs full first-time project setup: initializes all git submodules, downloads every dependency, builds submodules, generates the Unit Testing World settings, builds the DocFX site, then launches the DocFX server and editor in separate windows.
+```powershell
+dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
+dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
+```
 
-Each category that supports it (Repo, Docs, Reports, Deps) also has an **Execute ALL** entry that runs every tool in that category sequentially.
+`XRE_WORLD_MODE=UnitTesting` also boots the Unit Testing World.
 
-### Debug profiles
+Preferred VS Code tasks:
 
-Use `.vscode/launch.json` profiles as canonical local debug setup, including:
-- `Editor (Default World)`
-- `Editor (Unit Testing World)`
-- `Debug Client (Server & other client run separately)`
-- `Debug Server (Clients runs separately)` / `Debug Server (Server only)`
-- `Debug VRClient (Editor runs separately)`
-- Profiler configurations
+- Build: `Build-Editor`, `Build-Server`, `Build-VRClient`.
+- Run: `Start-Editor-NoDebug`, `Start-Server-NoDebug`, `Start-Client-NoDebug`, `Start-Client2-NoDebug`, `Start-2Clients-NoDebug`, `Start-DedicatedServer-NoDebug`.
+- Pose sync: `Start-PoseServer-NoDebug`, `Start-PoseSourceClient-NoDebug`, `Start-PoseReceiverClient-NoDebug`, `Start-LocalPoseSync-NoDebug`.
+- Settings generation: `Generate-UnitTestingWorldSettings`.
 
-### Unit Testing World Settings
+Use `.vscode/launch.json` as the source of truth for debug profiles, including default/unit-testing editor, client/server, VRClient, and profiler configurations.
 
-- The canonical settings file is the generated local `Assets/UnitTestingWorldSettings.jsonc`; the server mirror lives at `XREngine.Server/Assets/UnitTestingWorldSettings.jsonc`.
-- The file is loaded relative to the process working directory, so the VS Code launch configs intentionally set `cwd` to the workspace root for the editor flows.
-- The JSONC files are mapped to `.vscode/schemas/unit-testing-world-settings.schema.json`, so editors get hover docs, enum completion, and import-flag snippets while editing.
-- The root JSONC is ignored by Git for per-workstation tuning. `ExecTool --bootstrap` creates it on first setup.
-- Edit the JSONC directly for day-to-day tuning. If the settings type changes, regenerate the schema and both JSONC outputs with `Tools/Generate-UnitTestingWorldSettings.ps1` or the `Generate-UnitTestingWorldSettings` task.
-- `Editor (Unit Testing World)` and the `Start-Pose*` tasks are the normal entry points for unit-test-world validation.
-- The pose/networking test world is driven by `XRE_UNIT_TEST_WORLD_KIND=NetworkingPose` plus the role env vars used by the pose tasks (`server`, `sender`, `receiver`).
-- `Assets/UnitTestingWorldSettings.jsonc` controls the selected unit-test world and its toggles, including render API, import lists, physics, lighting, and related startup behavior.
+## ExecTool
 
-## 7) Testing and Validation Policy
+`ExecTool.bat` provides a numbered menu for scripts under `Tools/`.
 
-Default validation sequence:
-1. Run the most targeted tests for changed subsystem.
-2. If no tests exist, perform narrow build + run-path validation that exercises the changed flow.
-3. If unrelated failures appear:
-   - Fix easy nearby issues opportunistically.
-   - Report larger unrelated failures without blocking handoff.
+```powershell
+ExecTool
+ExecTool 16
+ExecTool --bootstrap
+ExecTool --list
+ExecTool --help
+```
 
-Useful predefined tasks include:
-- `Test-SurfelGi`
-- `Test-VulkanPhase3-Regression`
+Tool categories include Setup, Build, Editor, Repo, Docs, Reports, and Deps. `ExecTool --bootstrap` initializes submodules, downloads dependencies, builds submodules, generates Unit Testing World settings, builds DocFX, then launches DocFX and the editor.
 
-When adding new tests:
-- Place tests in `XREngine.UnitTests/` using nearby naming patterns.
-- Keep tests deterministic and focused on behavior, not implementation details.
+## Logs And Unit Testing World
 
-## 8) Architecture and Refactor Guidance
+- Logs and profiler traces are written under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`.
+- Common profiler logs: `profiler-main-thread-invokes.log`, `profiler-fps-drops.log`, `profiler-render-stalls.log`.
+- Math Intersections benchmarks also write `math-intersections-benchmarks.log`.
+- Root settings: `Assets/UnitTestingWorldSettings.jsonc`.
+- Server mirror: `XREngine.Server/Assets/UnitTestingWorldSettings.jsonc`.
+- The root JSONC is ignored by Git and generated by bootstrap/settings tasks.
+- JSONC schema: `.vscode/schemas/unit-testing-world-settings.schema.json`.
+- Regenerate settings/schema with `Tools/Generate-UnitTestingWorldSettings.ps1` or `Generate-UnitTestingWorldSettings` after settings type changes.
+- Pose/networking tests use `XRE_UNIT_TEST_WORLD_KIND=NetworkingPose` plus role env vars: `server`, `sender`, `receiver`.
 
-Because this product is pre-ship and no backward compatibility is owed, architecture can and should improve as we touch code.
+## Testing Policy
 
-Preferred approach:
-- Solve root causes, not only symptoms.
-- Permit broader subsystem cleanup when directly related to the task's correctness or maintainability.
-- Breaking changes to internal/public APIs are fine if they produce a cleaner v1.
-- Actively reduce per-frame allocations when refactoring hot paths (see §11 Hot-Path Allocation Discipline).
-- Avoid speculative rewrites with weak payoff.
+1. Run the most targeted tests for the changed subsystem.
+2. If no test exists, run a narrow build or run-path validation.
+3. Fix easy unrelated failures only when low-risk; otherwise report them.
 
-Avoid:
-- Unbounded cross-repo churn unrelated to task goals.
-- New abstractions without immediate use.
-- Silent behavior changes without docs updates.
+Useful tasks include `Test-SurfelGi` and `Test-VulkanPhase3-Regression`.
 
-## 9) Risk Management Rules
+New tests belong in `XREngine.UnitTests/`, should follow nearby naming patterns, and should be deterministic.
 
-### Must request approval first
+## Architecture And Code Rules
 
-- Upgrading or replacing major dependencies/submodules.
-- Data format/storage migrations.
-- Large changes to build/release/deployment scripts.
-- Changes that could break existing editor/server/client launch flows.
-
-### License compliance (mandatory)
-
-Every NuGet package or submodule pulled into the repository **must** have a license that permits both open-source and commercial use (e.g., MIT, Apache-2.0, BSD, Zlib, Unlicense). Copyleft licenses (GPL, AGPL) are acceptable only for the engine's own code or when the linking model keeps them isolated (e.g., LGPL via dynamic linking).
-
-When any dependency is added, upgraded, or replaced:
-1. Run the dependency-inventory generator to refresh the license audit:
-   ```powershell
-   pwsh Tools/Generate-Dependencies.ps1
-   ```
-2. Review the updated `docs/DEPENDENCIES.md` and `docs/licenses/` output for any `(unknown)` or newly flagged license.
-3. If a license is incompatible or unknown, do **not** merge — escalate for owner review.
-4. Include the refreshed `docs/DEPENDENCIES.md` and any new `docs/licenses/` files in the same commit.
-
-### Can proceed without extra approval
-
-- Localized code fixes/refactors in scoped subsystem.
-- Targeted tests and small test additions.
-- Docs updates that reflect behavior/task/flag changes.
-
-## 10) Docs and Communication Requirements
-
-Update docs in the same change when modifying user-visible behavior, including:
-- CLI flags and env vars (e.g., networking/pose/test-world variables).
-- Debug or task orchestration in `.vscode/tasks.json` or `.vscode/launch.json`.
-- New prerequisites, native dependency handling, or setup steps.
-
-Likely doc touchpoints:
-- `README.md` for top-level workflows.
-- `docs/README.md` index links.
-- Relevant architecture/API/work docs under `docs/`.
-
-### Design-To-Todo Workflow
-
-When generating a todo document from a design document:
-- Start the todo document with a first task to create a dedicated branch for that todo list.
-- End the todo document with a final task to merge that branch back into `main` after the todo list is complete and validated.
-
-## 11) Coding Conventions for Agents
-
-- Follow existing style and naming in touched files.
+- Follow existing style in touched files.
 - Prefer explicit, readable code over cleverness.
-- Keep diffs coherent (group related edits, avoid drive-by formatting).
-- Add comments only when they clarify non-obvious reasoning.
-- No legacy API preservation is required pre-ship; improve APIs freely when it yields a better v1.
+- Keep diffs coherent and avoid drive-by formatting.
+- Add comments only for non-obvious reasoning.
+- Since v1 has not shipped, improve APIs when it produces a cleaner design.
+- Avoid speculative rewrites, unrelated cross-repo churn, and silent behavior changes without docs.
 
-### XRBase Field Mutation Rule
+### XRBase Mutation
 
-- For any class deriving from `XRBase` (directly or indirectly), do **not** set backing fields directly from property setters or similar mutation paths.
-- Use `SetField(...)` for state changes so the engine's change-notification/invalidation pipeline remains correct and consistent.
-- When touching existing code that assigns fields directly in `XRBase`-derived types, prefer refactoring to `SetField(...)` as part of the change.
+For any type deriving from `XRBase`, do not assign backing fields directly from property setters or similar mutation paths. Use `SetField(...)` so change notification and invalidation remain correct. When touching existing direct assignments, prefer converting them.
 
-### Warnings Policy
+### Warnings
 
-- Keep compiler warnings to a minimum. New code must not introduce warnings.
-- When touching a file that already has warnings, fix them if the fix is low-risk.
-- Treat `#pragma warning disable` as a last resort; prefer resolving the root cause.
+- New code must not introduce compiler warnings.
+- Fix low-risk warnings in touched files.
+- Use `#pragma warning disable` only as a last resort.
 
-### Hot-Path Allocation Discipline
+### Hot-Path Allocations
 
-This is a game engine. **Heap allocations in per-frame hot paths are treated as bugs** unless proven harmless by profiling.
+Heap allocations in per-frame hot paths are bugs unless profiling proves otherwise.
 
-Hot paths include (but are not limited to):
-- **Render** – draw call submission, command buffer recording, material/shader bind.
-- **Swap** – buffer swap, frame presentation.
-- **Collect Visible** – frustum culling, octree/BVH traversal, visibility determination.
-- **Fixed Update** – physics step, fixed-rate simulation ticks.
-- **Update** – per-frame game logic, transform propagation, animation tick.
+Hot paths include render submission, swap/present, visible collection, fixed update, and per-frame update.
 
-When reviewing or writing code in these paths:
-- **Flag / refactor** any `new` object allocations, LINQ queries, `foreach` over non-struct enumerators, closures/lambdas that capture, `string` concatenation, or boxing.
-- **Prefer:** `Span<T>`, `stackalloc`, object pooling / rent-return patterns, pre-allocated lists/arrays, `ref struct`, `unsafe` pointer arithmetic where appropriate, and cached delegates.
-- **Suggest** allocation-reducing improvements proactively when touching nearby code, even if not explicitly requested.
-- When an allocation is unavoidable (e.g., first-time init, rare path), add a brief comment explaining why it's acceptable.
+Flag or refactor `new`, LINQ, captured closures, boxing, string concatenation, and `foreach` over non-struct enumerators in these paths. Prefer `Span<T>`, `stackalloc`, pooling, preallocated collections, `ref struct`, cached delegates, and appropriate unsafe code. If an allocation is unavoidable, add a short reason.
 
-## 12) PR / Commit Expectations
+## Risk And Dependencies
 
-When asked to prepare commits:
-- Use simple imperative subject lines.
-  - Good: `Refactor asset import fallback for deterministic extension selection`
-  - Good: `Update networking pose task docs for client role flags`
+Ask for approval before:
 
-Suggested PR summary structure:
-- What changed
-- Why
-- Validation performed (targeted tests/build)
-- Risks and follow-ups
+- Submodule bumps.
+- Dependency upgrades/replacements.
+- Data format or storage migrations.
+- Large build/release/deployment script changes.
+- Changes likely to break editor/server/client launch flows.
 
-## 13) Native Dependencies and External Tooling Notes
+Dependency license rule: every NuGet package or submodule must permit open-source and commercial use. GPL/AGPL are acceptable only for engine-owned code or isolated linking models; LGPL must remain dynamically linked or otherwise isolated.
 
-Be aware of repository-managed native/tooling dependencies:
-- CoACD build/fetch scripts under `Tools/Dependencies/`.
-- MagicPhysX native interop binary expectations.
-- Rive native DLL workflow via submodules/build scripts.
-- Optional YouTube URL extraction via `yt-dlp` (`Install-YtDlp` task).
-- Optional nvCOMP/CUDA native binaries via `Tools/Dependencies/Get-NvComp.ps1` (`Install-NvComp` task).
-- Optional NVIDIA SDK binaries under `ThirdParty/NVIDIA/SDK/win-x64/`.
+After adding, upgrading, or replacing a dependency:
 
-Do not silently change these supply paths; treat as risky operations requiring proposal/approval when impact is non-trivial.
-
-After any change to NuGet packages or submodules, run:
 ```powershell
 pwsh Tools/Generate-Dependencies.ps1
 ```
-and commit the refreshed `docs/DEPENDENCIES.md` + `docs/licenses/` output. See §9 *License compliance* for the full policy.
 
-## 14) Ready-to-Use Task Template for Agents
+Then review and include updated `docs/DEPENDENCIES.md` and `docs/licenses/`. Do not merge unknown or incompatible licenses; escalate for owner review.
 
-Before coding:
-- Confirm subsystem and expected run mode (Editor/Server/VRClient/Pose).
-- Confirm if broader subsystem sweep is desired (default: yes when useful).
+Repository-managed native/tooling dependencies include CoACD scripts, MagicPhysX interop binaries, Rive native DLL submodule flow, optional `yt-dlp`, optional nvCOMP/CUDA binaries, and optional NVIDIA SDK binaries under `ThirdParty/NVIDIA/SDK/win-x64/`. Do not silently change these supply paths.
 
-During coding:
-- Keep a small, explicit checklist.
-- Make coherent edits with root-cause intent.
+## Docs And Work Items
 
-Before handoff:
-- Run targeted tests/build for touched area.
-- Include any opportunistic unrelated fixes you made (if small).
-- Call out any larger unrelated failures.
-- Update docs for any user-facing workflow/flag/task changes.
+Update docs with behavior/workflow changes. Likely touchpoints are `README.md`, `docs/README.md`, and relevant docs under `docs/`.
 
-## 15) MCP Server (AI / External Tool Integration)
+When generating a todo from a design doc:
 
-The editor embeds an **MCP (Model Context Protocol) server** that exposes scene hierarchy, component, transform, asset, and editor-state operations over HTTP JSON-RPC 2.0. This lets AI assistants (e.g., GitHub Copilot, Claude) and custom tooling interact with a running editor instance.
+- First task: create a dedicated branch for the todo list.
+- Final task: merge that branch back into `main` after completion and validation.
 
-Full documentation: `docs/features/mcp-server.md`.
+## PR Expectations
 
-### Enabling / disabling the server
+When preparing a PR, include:
 
-The MCP server can be toggled **at any time** while the editor is running — it is not limited to startup.
+- What changed.
+- Why.
+- Validation performed.
+- Risks and follow-ups.
 
-**Option A — Editor Preferences (recommended for runtime toggling):**
-Open the **Global Editor Preferences** panel in the ImGui editor and look for the **MCP Server** category. Flip `McpServerEnabled` to `true`. Changes take effect immediately; the server starts (or stops) without restarting the editor. You can also change `McpServerPort` on the fly — the server will restart on the new port.
+## MCP Server
 
-**Option B — Command-line flags (set-and-persist):**
-```bash
-XREngine.Editor.exe --mcp                   # enable on default port 5467
-XREngine.Editor.exe --mcp --mcp-port 8080   # enable on custom port
+The editor embeds an HTTP JSON-RPC 2.0 MCP server for scene, component, transform, asset, and editor-state operations. Full docs: `docs/features/mcp-server.md`.
+
+Enable it at runtime in ImGui Global Editor Preferences under MCP Server, or launch with:
+
+```powershell
+XREngine.Editor.exe --mcp
+XREngine.Editor.exe --mcp --mcp-port 8080
 ```
-Command-line flags write to the same preferences, so the server stays enabled on subsequent launches unless the preference is toggled back off.
 
-### Connecting VS Code / Copilot
+CLI flags persist to preferences. Default port is `5467`.
 
-Add the server to `.vscode/mcp.json` (workspace-scoped) or VS Code user settings:
+VS Code/Copilot workspace config:
 
 ```json
 {
@@ -334,29 +216,10 @@ Add the server to `.vscode/mcp.json` (workspace-scoped) or VS Code user settings
 }
 ```
 
-Once the editor's MCP server is running, the tools (e.g., `list_worlds`, `list_scene_nodes`, `create_scene_node`, `capture_viewport_screenshot`) appear in the Copilot Chat tools panel.
+Key settings: `McpServerEnabled`, `McpServerPort`, `McpServerRequireAuth`, `McpServerReadOnly`, `McpServerAllowedTools`, `McpServerDeniedTools`, and `McpServerRateLimitEnabled`.
 
-### Key settings reference
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `McpServerEnabled` | `false` | Enable/disable at runtime |
-| `McpServerPort` | `5467` | HTTP port |
-| `McpServerRequireAuth` | `false` | Require `Authorization: Bearer` header |
-| `McpServerReadOnly` | `false` | Block mutating tools |
-| `McpServerAllowedTools` / `McpServerDeniedTools` | `""` | Per-tool allow/deny lists |
-| `McpServerRateLimitEnabled` | `false` | Per-client rate limiting |
-
-See `docs/features/mcp-server.md` for the full settings table, protocol details, available commands, and instructions for adding new tools.
-
-### Regenerating MCP docs
-
-After adding or renaming MCP tools, regenerate the tool table in the docs:
+After adding or renaming MCP tools, regenerate docs:
 
 ```powershell
 pwsh Tools/Reports/generate_mcp_docs.ps1
 ```
-
----
-
-If this file conflicts with an explicit task request, follow the explicit request and note the deviation in your summary.

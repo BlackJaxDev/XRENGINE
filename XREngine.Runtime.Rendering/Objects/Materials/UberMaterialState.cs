@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering;
@@ -60,15 +59,14 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         Properties = [];
     }
 
-    [SetsRequiredMembers]
     public UberMaterialAuthoredState(UberMaterialFeatureState[] features, UberMaterialPropertyState[] properties)
     {
         Features = features ?? [];
         Properties = properties ?? [];
     }
 
-    public required UberMaterialFeatureState[] Features { get; init; }
-    public required UberMaterialPropertyState[] Properties { get; init; }
+    public UberMaterialFeatureState[] Features { get; init; } = [];
+    public UberMaterialPropertyState[] Properties { get; init; } = [];
 
     public UberMaterialFeatureState? GetFeature(string featureId)
         => Array.Find(Features, x => string.Equals(x.Id, featureId, StringComparison.Ordinal));

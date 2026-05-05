@@ -238,6 +238,10 @@ public class UnitTestingWorldSettings
     [JsonIgnore]
     public bool HasStaticModelsToImport => ModelsToImport?.Any(m => (m?.Enabled ?? false) && m.Kind == UnitTestModelImportKind.Static) ?? false;
 
+    public bool UseStartupShadowThrottlingForModelImports = true;
+    public int StartupMaxShadowTilesRenderedPerFrame { get; set; } = 1;
+    public float StartupMaxShadowRenderMilliseconds { get; set; } = 0.5f;
+
     public bool AllowShaderPipelines = false;
     public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy { get; set; } = EOpenGLShaderLinkStrategy.Auto;
     public bool AllowBinaryProgramCaching { get; set; } = true;

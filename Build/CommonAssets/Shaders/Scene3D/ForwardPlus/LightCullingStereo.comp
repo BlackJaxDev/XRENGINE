@@ -8,6 +8,7 @@ struct LocalLight {
 	vec4 color_type;
 	vec4 params;
 	vec4 spotAngles;
+	ivec4 indices;
 };
 
 layout(std430, binding = 20) readonly buffer ForwardPlusLocalLightsBuffer {

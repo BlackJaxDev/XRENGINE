@@ -384,7 +384,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 if (useSpotAtlas)
                 {
                     atlasBound = TryBindSpotAtlasShadow(materialProgram, spotLight, out atlasFallback);
-                    useLegacyShadowMap = !atlasBound && hasShadowMap;
+                    useLegacyShadowMap = false;
                 }
                 else
                 {
@@ -445,9 +445,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 : ShadowFallbackMode.Lit;
 
             XRTexture2DArray? atlasTexture = null;
-            bool resident = allocation.IsResident &&
-                allocation.LastRenderedFrame != 0u &&
-                allocation.ActiveFallback == ShadowFallbackMode.None &&
+            bool resident = IsShadowAtlasAllocationSampleable(allocation) &&
                 lights.ShadowAtlas.TryGetPageTexture(allocation.AtlasKind, EShadowMapEncoding.Depth, allocation.PageIndex, out atlasTexture);
 
             float nearPlane = spotLight.ShadowCamera?.NearZ ?? 0.1f;
@@ -498,10 +496,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
                         ? allocation.ActiveFallback
                         : ShadowFallbackMode.Lit;
-                    bool resident = allocation.IsResident &&
-                        allocation.LastRenderedFrame != 0u &&
-                        allocation.ActiveFallback == ShadowFallbackMode.None &&
-                        allocation.PageIndex >= 0 &&
+                    bool resident = IsShadowAtlasAllocationSampleable(allocation) &&
                         allocation.PageIndex < atlasLayerCount;
                     uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
                     float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
@@ -542,6 +537,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             materialProgram.Uniform("PointShadowAtlasUvScaleBias", _pointShadowAtlasUvScaleBias);
             materialProgram.Uniform("PointShadowAtlasDepthParams", _pointShadowAtlasDepthParams);
         }
+
+        private static bool IsShadowAtlasAllocationSampleable(in ShadowAtlasAllocation allocation)
+            => allocation.IsResident &&
+               allocation.LastRenderedFrame != 0u &&
+               allocation.ActiveFallback is ShadowFallbackMode.None or ShadowFallbackMode.StaleTile &&
+               allocation.PageIndex >= 0;
 
         private static void ClearPointAtlasUniformData(ShadowFallbackMode fallbackMode)
         {

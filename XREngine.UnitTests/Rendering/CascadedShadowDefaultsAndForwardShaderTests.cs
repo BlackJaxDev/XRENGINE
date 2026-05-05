@@ -228,6 +228,8 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("layout(std430, binding = 28) readonly buffer ForwardSpotShadowMetadataBuffer");
         source.ShouldContain("ForwardPointShadowData PointLightShadows[];");
         source.ShouldContain("ForwardSpotShadowData SpotLightShadows[];");
+        source.ShouldContain("ivec4 Indices;");
+        source.ShouldContain("int sourceIndex = light.Indices.x >= 0 ? light.Indices.x : int(light.Params.w + 0.5);");
         source.ShouldContain("lightIndex >= PointLightShadows.length()");
         source.ShouldContain("lightIndex >= SpotLightShadows.length()");
         source.ShouldContain("ivec4 shadowI0 = shadowData.Packed0;");
@@ -235,6 +237,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("vec4 shadowF4 = shadowData.Params4;");
         source.ShouldContain("vec4 shadowF5 = shadowData.Params5;");
         source.ShouldContain("XRENGINE_SampleForwardContactShadowScreenSpace(");
+        source.ShouldContain("bool atlasPath = (fallbackMode > 0 && fallbackMode != XRENGINE_SHADOW_FALLBACK_LEGACY)");
         source.ShouldNotContain("uniform int PointLightShadowSlots[");
         source.ShouldNotContain("uniform int SpotLightShadowSlots[");
         source.ShouldNotContain("XRENGINE_MAX_FORWARD_LOCAL_LIGHTS");
@@ -478,6 +481,21 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
+    public void DirectionalCascadeRenderMode_DefaultsToInstancedLayeredPath()
+    {
+        var light = new DirectionalLightComponent();
+
+        light.CascadeShadowRenderMode.ShouldBe(EDirectionalCascadeShadowRenderMode.InstancedLayered);
+        light.EffectiveCascadeShadowRenderMode.ShouldBe(EDirectionalCascadeShadowRenderMode.InstancedLayered);
+        light.CascadeShadowRenderFallbackReason.ShouldBe("None");
+
+        string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
+        cascadeSource.ShouldContain("_cascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.InstancedLayered");
+        cascadeSource.ShouldContain("CreateLegacyCascadeShadowRenderPlan");
+        cascadeSource.ShouldContain("CreateSequentialCascadeShadowRenderPlan");
+    }
+
+    [Test]
     public void DirectionalCascadeLayeredModes_AreExposedInRuntimeAndDocs()
     {
         string enumSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "EDirectionalCascadeShadowRenderMode.cs"));
@@ -501,7 +519,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string renderNotes = LoadRepoSource(Path.Combine("docs", "architecture", "rendering", "default-render-pipeline-notes.md"));
         renderNotes.ShouldContain("CascadeShadowRenderMode");
         renderNotes.ShouldContain("Auto");
-        renderNotes.ShouldContain("Directional atlas tiles render independently");
+        renderNotes.ShouldContain("grouped atlas cascade");
     }
 
     [Test]
@@ -519,6 +537,56 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
+    public void DirectionalCascadeAtlasGroupedShader_UsesViewportIndexNotTextureArrayLayer()
+    {
+        string source = LoadShaderSource("DirectionalCascadeAtlasShadowDepth.gs");
+
+        source.ShouldContain("layout (triangle_strip, max_vertices=24) out;");
+        source.ShouldContain("uniform int CascadeLayerCount;");
+        source.ShouldContain("uniform mat4 CascadeViewProjectionMatrices[8];");
+        source.ShouldContain("for (int cascadeIndex = 0; cascadeIndex < layerCount; ++cascadeIndex)");
+        source.ShouldContain("gl_ViewportIndex = cascadeIndex;");
+        source.ShouldContain("CascadeViewProjectionMatrices[cascadeIndex] * vec4(InFragPos[i], 1.0)");
+        source.ShouldNotContain("gl_Layer");
+    }
+
+    [Test]
+    public void DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndSequentialFallback()
+    {
+        string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
+        cascadeSource.ShouldContain("DirectionalCascadeShadowBackend");
+        cascadeSource.ShouldContain("AtlasPage");
+        cascadeSource.ShouldContain("CreateAtlasCascadeShadowRenderPlan(");
+        cascadeSource.ShouldContain("MissingGroupedAtlasAllocation");
+        cascadeSource.ShouldContain("UnsupportedViewportScissorArray");
+        cascadeSource.ShouldContain("UnsupportedVertexStageViewportIndexWrites");
+        cascadeSource.ShouldContain("UnsupportedGeometryStageViewportIndexWrites");
+        cascadeSource.ShouldContain("RenderGroupedCascadeShadowAtlasTiles(");
+        cascadeSource.ShouldContain("PushIndexedViewportScissors");
+        cascadeSource.ShouldContain("CascadeAtlasGeometryShadowMaterial");
+        cascadeSource.ShouldContain("CascadeAtlasInstancedShadowMaterial");
+        cascadeSource.ShouldContain("RenderCascadeShadowAtlasTile(");
+        cascadeSource.ShouldContain("EffectiveCascadeShadowRenderBackend");
+
+        string atlasManagerSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasManager.cs"));
+        atlasManagerSource.ShouldContain("BuildDirectionalCascadeGroups");
+        atlasManagerSource.ShouldContain("ShadowAtlasGroupedDirectionalCascadeAllocation");
+        atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroup");
+        atlasManagerSource.ShouldContain("RenderGroupedCascadeShadowAtlasTiles(group, page.FrameBuffer");
+
+        string frameDataSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasFrameData.cs"));
+        frameDataSource.ShouldContain("DirectionalCascadeGroups");
+        frameDataSource.ShouldContain("TryGetDirectionalCascadeGroup");
+
+        string rendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "OpenGLRenderer.cs"));
+        rendererSource.ShouldContain("SupportsOpenGLViewportScissorArray");
+        rendererSource.ShouldContain("SupportsOpenGLVertexShaderViewportIndex");
+        rendererSource.ShouldContain("SupportsOpenGLGeometryShaderViewportIndex");
+        rendererSource.ShouldContain("ViewportIndexed");
+        rendererSource.ShouldContain("ScissorIndexed");
+    }
+
+    [Test]
     public void DirectionalCascadeInstancedPath_UsesVertexLayerContractAndMaterialFallbacks()
     {
         string generatorSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shaders", "Generator", "DefaultVertexShaderGenerator.cs"));
@@ -531,10 +599,14 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         generatorSource.ShouldContain("vec3 xreCascadeWorldPos");
         generatorSource.ShouldContain("CascadeViewProjectionMatrices[xreCascadeLayer] * vec4(xreCascadeWorldPos");
         generatorSource.ShouldContain("gl_Layer = xreCascadeLayer;");
+        generatorSource.ShouldContain("DirectionalCascadeAtlasInstancedVertexShaderGenerator");
+        generatorSource.ShouldContain("UseDirectionalCascadeAtlasInstancedLayering");
+        generatorSource.ShouldContain("gl_ViewportIndex = xreCascadeLayer;");
 
         string meshRendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
         meshRendererSource.ShouldContain("ResolveDirectionalCascadeShadowMaterial(");
-        meshRendererSource.ShouldContain("GetDirectionalCascadeShadowCasterVariant(useGeometryShader: true)");
+        meshRendererSource.ShouldContain("GetDirectionalCascadeShadowCasterVariant(");
+        meshRendererSource.ShouldContain("GetDirectionalCascadeGeometryFallbackKind");
         meshRendererSource.ShouldContain("CanUseDirectionalCascadeInstancedMaterial");
         meshRendererSource.ShouldContain("instances != 1u");
         meshRendererSource.ShouldContain("MeshRenderer.MeshDeformEnabled");
@@ -546,6 +618,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string factorySource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Shaders", "ShadowCasterVariantFactory.cs"));
         factorySource.ShouldContain("CreateDirectionalCascadeMaterialVariant");
         factorySource.ShouldContain("DirectionalCascadeShadowDepth.gs");
+        factorySource.ShouldContain("DirectionalCascadeAtlasShadowDepth.gs");
         factorySource.ShouldContain("ShadowBindingSourceMaterial = sourceMaterial");
         factorySource.ShouldContain("DirectionalCascadeShadowMaterialKind");
     }
@@ -567,19 +640,29 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         pointSource.ShouldContain("PushPointLightLayeredShadowPass(plan.IsInstancedLayered");
         pointSource.ShouldContain("PointInstancedShadowMaterial");
         pointSource.ShouldContain("PointGeometryShadowMaterial");
+        pointSource.ShouldContain("PointAtlasInstancedShadowMaterial");
+        pointSource.ShouldContain("PointAtlasGeometryShadowMaterial");
+        pointSource.ShouldContain("CreatePointAtlasShadowRenderPlan");
+        pointSource.ShouldContain("RenderGroupedShadowAtlasFaceTiles");
+        pointSource.ShouldContain("PushIndexedViewportScissors");
         pointSource.ShouldContain("RenderSequentialShadowFaces()");
 
         string generatorSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shaders", "Generator", "DefaultVertexShaderGenerator.cs"));
         generatorSource.ShouldContain("PointLightInstancedVertexShaderGenerator");
+        generatorSource.ShouldContain("PointLightAtlasInstancedVertexShaderGenerator");
         generatorSource.ShouldContain("UsePointLightInstancedLayering");
+        generatorSource.ShouldContain("UsePointLightAtlasInstancedLayering");
         generatorSource.ShouldContain("uniform int PointShadowFaceCount;");
         generatorSource.ShouldContain("uniform mat4 PointShadowViewProjectionMatrices[6];");
         generatorSource.ShouldContain("int xrePointShadowFace = gl_InstanceID % xrePointShadowFaceCount;");
         generatorSource.ShouldContain("PointShadowViewProjectionMatrices[xrePointShadowFace] * vec4(xrePointShadowWorldPos");
+        generatorSource.ShouldContain("gl_ViewportIndex = xrePointShadowFace;");
         generatorSource.ShouldContain("gl_Layer = xrePointShadowFace;");
 
         string meshRendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
         meshRendererSource.ShouldContain("ResolvePointLightShadowMaterial(");
+        meshRendererSource.ShouldContain("IsPointLightInstancedMaterialKind");
+        meshRendererSource.ShouldContain("EPointShadowMaterialKind.AtlasInstancedLayered");
         meshRendererSource.ShouldContain("CanUsePointLightInstancedMaterial");
         meshRendererSource.ShouldContain("instances != 1u");
         meshRendererSource.ShouldContain("MeshRenderer.MeshDeformEnabled");
@@ -589,13 +672,23 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
 
         string xrMeshRendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "XRMeshRenderer.cs"));
         xrMeshRendererSource.ShouldContain("IsPointLightInstancedLayeredShadowPass");
+        xrMeshRendererSource.ShouldContain("IsPointLightAtlasGroupedShadowPass");
         xrMeshRendererSource.ShouldContain("GetPointLightInstancedVersion()");
+        xrMeshRendererSource.ShouldContain("GetPointLightAtlasInstancedVersion()");
         xrMeshRendererSource.ShouldContain("PointLightInstancedVertexShaderGenerator");
+        xrMeshRendererSource.ShouldContain("PointLightAtlasInstancedVertexShaderGenerator");
 
         string factorySource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Shaders", "ShadowCasterVariantFactory.cs"));
         factorySource.ShouldContain("PointShadowMaterialKind");
         factorySource.ShouldContain("EPointShadowMaterialKind.GeometryShader");
         factorySource.ShouldContain("EPointShadowMaterialKind.InstancedLayered");
+        factorySource.ShouldContain("EPointShadowMaterialKind.AtlasGeometryShader");
+        factorySource.ShouldContain("PointLightAtlasShadowDepth.gs");
+
+        string atlasGeometryShader = LoadShaderSource("PointLightAtlasShadowDepth.gs");
+        atlasGeometryShader.ShouldContain("gl_ViewportIndex = faceSlot;");
+        atlasGeometryShader.ShouldContain("PointShadowViewProjectionMatrices[faceSlot]");
+        atlasGeometryShader.ShouldNotContain("gl_Layer");
 
         string editorSource = LoadRepoSource(Path.Combine("XREngine.Editor", "ComponentEditors", "PointLightComponentEditor.cs"));
         editorSource.ShouldContain("Shadow Render Mode");
@@ -604,6 +697,40 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string renderNotes = LoadRepoSource(Path.Combine("docs", "architecture", "rendering", "default-render-pipeline-notes.md"));
         renderNotes.ShouldContain("Point lights expose `ShadowRenderMode`");
         renderNotes.ShouldContain("InstancedLayered` renders all six faces");
+    }
+
+    [Test]
+    public void PointShadowAtlasSampling_IsFaceSeamAware()
+    {
+        string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
+        forwardSource.ShouldContain("XRENGINE_ReadPointAtlasDepthForDirection");
+        forwardSource.ShouldContain("XRENGINE_SamplePointAtlasCubeFiltered");
+        forwardSource.ShouldContain("XRENGINE_SelectPointShadowAtlasFace(sampleDirection, localUv)");
+        forwardSource.ShouldContain("XRENGINE_BuildOrthonormalBasis(baseDir, tangent, bitangent)");
+        forwardSource.ShouldContain("return XRENGINE_SamplePointAtlasCubePCF");
+        forwardSource.ShouldNotContain("XRENGINE_SamplePointAtlasPage(\r\n        atlasI0.y");
+
+        string deferredSource = LoadShaderSource("Scene3D/DeferredLightingPoint.fs");
+        deferredSource.ShouldContain("ReadPointAtlasDepthForDirection");
+        deferredSource.ShouldContain("SamplePointAtlasCubeFiltered");
+        deferredSource.ShouldContain("SelectPointShadowAtlasFace(sampleDirection, localUv)");
+        deferredSource.ShouldContain("XRENGINE_BuildOrthonormalBasis(baseDir, tangent, bitangent)");
+        deferredSource.ShouldContain("return SamplePointAtlasCubePCF");
+    }
+
+    [Test]
+    public void PointLightRenderMode_DefaultsToInstancedLayeredPath()
+    {
+        var light = new PointLightComponent();
+
+        light.ShadowRenderMode.ShouldBe(EPointShadowRenderMode.InstancedLayered);
+        light.EffectiveShadowRenderMode.ShouldBe(EPointShadowRenderMode.InstancedLayered);
+        light.ShadowRenderFallbackReason.ShouldBe("None");
+
+        string pointSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
+        pointSource.ShouldContain("_shadowRenderMode = EPointShadowRenderMode.InstancedLayered");
+        pointSource.ShouldContain("CreateInstancedShadowRenderPlan");
+        pointSource.ShouldContain("CreateSequentialShadowRenderPlan");
     }
 
     [Test]
@@ -698,11 +825,23 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         atlasManagerSource.ShouldContain("ShouldContinueBudgetedLightSet");
         atlasManagerSource.ShouldContain("candidateRequest.ProjectionType == EShadowProjectionType.DirectionalCascade");
         atlasManagerSource.ShouldContain("candidateRequest.ProjectionType == EShadowProjectionType.PointFace");
+        atlasManagerSource.ShouldContain("BuildPointFaceGroups");
+        atlasManagerSource.ShouldContain("TryRenderPointFaceGroup");
+        atlasManagerSource.ShouldContain("ShadowAtlasGroupedPointFaceAllocation");
         atlasManagerSource.ShouldContain("if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))");
         atlasManagerSource.ShouldContain("ShadowAtlas.RenderBudget.Deferred");
         atlasManagerSource.ShouldContain("ShadowAtlas.RenderScheduledTiles.Slow");
         atlasManagerSource.ShouldContain("ContentVersion = request.ContentHash");
         atlasManagerSource.ShouldContain("SkipReason = SkipReason.None");
+        atlasManagerSource.ShouldContain("LodChangeCooldownFrames");
+        atlasManagerSource.ShouldContain("ApplyLodHysteresis");
+        atlasManagerSource.ShouldContain("RequestRepack()");
+        atlasManagerSource.ShouldContain("activeFallback = ShadowFallbackMode.StaleTile");
+
+        string shadowTypesSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasTypes.cs"));
+        shadowTypesSource.ShouldContain("public enum ShadowDirtyReason");
+        shadowTypesSource.ShouldContain("ShadowDirtyReason DirtyReason");
+        shadowTypesSource.ShouldContain("ShadowDirtyReason LastDirtyReason");
     }
 
     [Test]

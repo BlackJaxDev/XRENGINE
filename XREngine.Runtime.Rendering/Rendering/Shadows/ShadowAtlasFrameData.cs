@@ -6,16 +6,20 @@ namespace XREngine.Rendering.Shadows;
 public sealed class ShadowAtlasFrameData
 {
     private ShadowAtlasAllocation[] _allocations = [];
+    private ShadowAtlasGroupedDirectionalCascadeAllocation[] _directionalCascadeGroups = [];
     private ShadowAtlasPageDescriptor[] _pages = [];
     private int _allocationCount;
+    private int _directionalCascadeGroupCount;
     private int _pageCount;
 
     public ulong FrameId { get; private set; }
     public ulong Generation { get; private set; }
     public ShadowAtlasMetrics Metrics { get; private set; }
     public int AllocationCount => _allocationCount;
+    public int DirectionalCascadeGroupCount => _directionalCascadeGroupCount;
     public int PageCount => _pageCount;
     public ReadOnlySpan<ShadowAtlasAllocation> Allocations => _allocations.AsSpan(0, _allocationCount);
+    public ReadOnlySpan<ShadowAtlasGroupedDirectionalCascadeAllocation> DirectionalCascadeGroups => _directionalCascadeGroups.AsSpan(0, _directionalCascadeGroupCount);
     public ReadOnlySpan<ShadowAtlasPageDescriptor> Pages => _pages.AsSpan(0, _pageCount);
 
     public ShadowAtlasAllocation GetAllocation(int index)
@@ -32,6 +36,14 @@ public sealed class ShadowAtlasFrameData
             throw new ArgumentOutOfRangeException(nameof(index));
 
         return _pages[index];
+    }
+
+    public ShadowAtlasGroupedDirectionalCascadeAllocation GetDirectionalCascadeGroup(int index)
+    {
+        if ((uint)index >= (uint)_directionalCascadeGroupCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        return _directionalCascadeGroups[index];
     }
 
     public bool TryGetAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
@@ -68,14 +80,32 @@ public sealed class ShadowAtlasFrameData
         return false;
     }
 
+    public bool TryGetDirectionalCascadeGroup(Guid lightId, out ShadowAtlasGroupedDirectionalCascadeAllocation group)
+    {
+        for (int i = 0; i < _directionalCascadeGroupCount; i++)
+        {
+            ShadowAtlasGroupedDirectionalCascadeAllocation candidate = _directionalCascadeGroups[i];
+            if (candidate.LightId == lightId)
+            {
+                group = candidate;
+                return true;
+            }
+        }
+
+        group = default;
+        return false;
+    }
+
     internal void SetData(
         ulong frameId,
         ulong generation,
         IReadOnlyList<ShadowAtlasAllocation> allocations,
+        IReadOnlyList<ShadowAtlasGroupedDirectionalCascadeAllocation> directionalCascadeGroups,
         IReadOnlyList<ShadowAtlasPageDescriptor> pages,
         ShadowAtlasMetrics metrics)
     {
         EnsureAllocationCapacity(allocations.Count);
+        EnsureDirectionalCascadeGroupCapacity(directionalCascadeGroups.Count);
         EnsurePageCapacity(pages.Count);
 
         for (int i = 0; i < allocations.Count; i++)
@@ -83,12 +113,18 @@ public sealed class ShadowAtlasFrameData
         for (int i = allocations.Count; i < _allocationCount; i++)
             _allocations[i] = default;
 
+        for (int i = 0; i < directionalCascadeGroups.Count; i++)
+            _directionalCascadeGroups[i] = directionalCascadeGroups[i];
+        for (int i = directionalCascadeGroups.Count; i < _directionalCascadeGroupCount; i++)
+            _directionalCascadeGroups[i] = default;
+
         for (int i = 0; i < pages.Count; i++)
             _pages[i] = pages[i];
         for (int i = pages.Count; i < _pageCount; i++)
             _pages[i] = default;
 
         _allocationCount = allocations.Count;
+        _directionalCascadeGroupCount = directionalCascadeGroups.Count;
         _pageCount = pages.Count;
         FrameId = frameId;
         Generation = generation;
@@ -105,6 +141,18 @@ public sealed class ShadowAtlasFrameData
             next *= 2;
 
         Array.Resize(ref _allocations, next);
+    }
+
+    private void EnsureDirectionalCascadeGroupCapacity(int count)
+    {
+        if (_directionalCascadeGroups.Length >= count)
+            return;
+
+        int next = Math.Max(4, _directionalCascadeGroups.Length);
+        while (next < count)
+            next *= 2;
+
+        Array.Resize(ref _directionalCascadeGroups, next);
     }
 
     private void EnsurePageCapacity(int count)

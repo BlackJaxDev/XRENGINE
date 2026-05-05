@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -8,6 +9,8 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLMeshRenderer
         {
+            private const double SlowTryPrepareLogThresholdMs = 50.0;
+
             /// <summary>
             /// Rebuild shader programs and attribute bindings when material or settings change.
             /// </summary>
@@ -127,7 +130,12 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private void PrepareUberVariantForCurrentMaterial()
-                => MeshRenderer.Material?.EnsureUberVariantPreparedForRendering();
+            {
+                if (Engine.Rendering.State.IsShadowPass)
+                    return;
+
+                MeshRenderer.Material?.EnsureUberVariantPreparedForRendering();
+            }
 
             private void CaptureMaterialShaderState()
             {
@@ -146,43 +154,171 @@ namespace XREngine.Rendering.OpenGL
             public bool TryPrepareForRendering()
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.TryPrepareForRendering");
+                long methodStart = Stopwatch.GetTimestamp();
+                double generateMs = 0.0;
+                double ensureRenderSettingsMs = 0.0;
+                double ensureMaterialStateMs = 0.0;
+                double genProgramsAndBuffersMs = 0.0;
+                double materialLookupMs = 0.0;
+                double getProgramsMs = 0.0;
+                double configureDrawTopologyMs = 0.0;
+                double bindBuffersMs = 0.0;
+                double dynamicRenderDataMs = 0.0;
 
                 if (Data is null)
                     return false;
 
                 if (!IsGenerated)
                 {
+                    long generateStart = Stopwatch.GetTimestamp();
                     Generate();
+                    generateMs = ElapsedMilliseconds(generateStart);
                     if (!IsGenerated)
+                    {
+                        LogSlowTryPrepare(
+                            "GenerateFailed",
+                            ElapsedMilliseconds(methodStart),
+                            generateMs,
+                            ensureRenderSettingsMs,
+                            ensureMaterialStateMs,
+                            genProgramsAndBuffersMs,
+                            materialLookupMs,
+                            getProgramsMs,
+                            configureDrawTopologyMs,
+                            bindBuffersMs,
+                            dynamicRenderDataMs);
                         return false;
+                    }
                 }
 
+                long stageStart = Stopwatch.GetTimestamp();
                 EnsureProgramsMatchRenderSettings();
+                ensureRenderSettingsMs = ElapsedMilliseconds(stageStart);
+                stageStart = Stopwatch.GetTimestamp();
                 EnsureProgramsMatchMaterialShaderState();
+                ensureMaterialStateMs = ElapsedMilliseconds(stageStart);
 
                 if (_combinedProgram is null && _separatedVertexProgram is null)
+                {
+                    stageStart = Stopwatch.GetTimestamp();
                     GenProgramsAndBuffers();
+                    genProgramsAndBuffersMs = ElapsedMilliseconds(stageStart);
+                }
 
+                stageStart = Stopwatch.GetTimestamp();
                 GLMaterial? material = Material;
+                materialLookupMs = ElapsedMilliseconds(stageStart);
                 if (material is null)
+                {
+                    LogSlowTryPrepare(
+                        "MaterialMissing",
+                        ElapsedMilliseconds(methodStart),
+                        generateMs,
+                        ensureRenderSettingsMs,
+                        ensureMaterialStateMs,
+                        genProgramsAndBuffersMs,
+                        materialLookupMs,
+                        getProgramsMs,
+                        configureDrawTopologyMs,
+                        bindBuffersMs,
+                        dynamicRenderDataMs);
                     return false;
+                }
 
+                stageStart = Stopwatch.GetTimestamp();
                 if (!GetPrograms(material, out var vertexProgram, out var materialProgram))
+                {
+                    getProgramsMs = ElapsedMilliseconds(stageStart);
+                    LogSlowTryPrepare(
+                        "ProgramsPending",
+                        ElapsedMilliseconds(methodStart),
+                        generateMs,
+                        ensureRenderSettingsMs,
+                        ensureMaterialStateMs,
+                        genProgramsAndBuffersMs,
+                        materialLookupMs,
+                        getProgramsMs,
+                        configureDrawTopologyMs,
+                        bindBuffersMs,
+                        dynamicRenderDataMs);
                     return false;
+                }
+                getProgramsMs = ElapsedMilliseconds(stageStart);
 
+                stageStart = Stopwatch.GetTimestamp();
                 ConfigureDrawTopology(vertexProgram!, materialProgram);
+                configureDrawTopologyMs = ElapsedMilliseconds(stageStart);
 
                 if (BuffersBound && VertexArrayBindingsStale())
                     BuffersBound = false;
 
                 if (!BuffersBound)
+                {
+                    stageStart = Stopwatch.GetTimestamp();
                     BindBuffers(vertexProgram!);
+                    bindBuffersMs = ElapsedMilliseconds(stageStart);
+                }
 
                 if (BuffersBound)
+                {
+                    stageStart = Stopwatch.GetTimestamp();
                     PrepareDynamicRenderData();
+                    dynamicRenderDataMs = ElapsedMilliseconds(stageStart);
+                }
 
-                return BuffersBound && AreBuffersReadyForRendering();
+                bool ready = BuffersBound && AreBuffersReadyForRendering();
+                LogSlowTryPrepare(
+                    ready ? "Ready" : "BuffersPending",
+                    ElapsedMilliseconds(methodStart),
+                    generateMs,
+                    ensureRenderSettingsMs,
+                    ensureMaterialStateMs,
+                    genProgramsAndBuffersMs,
+                    materialLookupMs,
+                    getProgramsMs,
+                    configureDrawTopologyMs,
+                    bindBuffersMs,
+                    dynamicRenderDataMs);
+                return ready;
             }
+
+            private void LogSlowTryPrepare(
+                string result,
+                double totalMs,
+                double generateMs,
+                double ensureRenderSettingsMs,
+                double ensureMaterialStateMs,
+                double genProgramsAndBuffersMs,
+                double materialLookupMs,
+                double getProgramsMs,
+                double configureDrawTopologyMs,
+                double bindBuffersMs,
+                double dynamicRenderDataMs)
+            {
+                if (totalMs < SlowTryPrepareLogThresholdMs &&
+                    generateMs < SlowTryPrepareLogThresholdMs &&
+                    genProgramsAndBuffersMs < SlowTryPrepareLogThresholdMs &&
+                    materialLookupMs < SlowTryPrepareLogThresholdMs &&
+                    getProgramsMs < SlowTryPrepareLogThresholdMs &&
+                    bindBuffersMs < SlowTryPrepareLogThresholdMs)
+                {
+                    return;
+                }
+
+                Debug.OpenGLWarning(
+                    $"[GLMeshRenderer] Slow TryPrepareForRendering: result={result}, totalMs={totalMs:F2}, " +
+                    $"generateMs={generateMs:F2}, ensureSettingsMs={ensureRenderSettingsMs:F2}, ensureMaterialMs={ensureMaterialStateMs:F2}, " +
+                    $"genProgramsAndBuffersMs={genProgramsAndBuffersMs:F2}, materialLookupMs={materialLookupMs:F2}, getProgramsMs={getProgramsMs:F2}, " +
+                    $"configureDrawTopologyMs={configureDrawTopologyMs:F2}, bindBuffersMs={bindBuffersMs:F2}, " +
+                    $"dynamicRenderDataMs={dynamicRenderDataMs:F2}, generated={IsGenerated}, buffersBound={BuffersBound}, " +
+                    $"buffersReady={AreBuffersReadyForRendering()}, shadowPass={Engine.Rendering.State.IsShadowPass}, " +
+                    $"directionalAtlasGrouped={Engine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass}, " +
+                    $"pointAtlasGrouped={Engine.Rendering.State.IsPointLightAtlasGroupedShadowPass}, renderer='{GetDescribingName()}', " +
+                    $"mesh='{Mesh?.Name ?? "<null>"}', material='{MeshRenderer.Material?.Name ?? "<null>"}'.");
+            }
+
+            private static double ElapsedMilliseconds(long startTimestamp)
+                => (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
 
             /// <summary>
             /// Get the appropriate vertex/material programs based on engine settings.

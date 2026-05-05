@@ -8,7 +8,7 @@ uniform sampler2DArray SourceTexture;
 
 uniform int SourceLOD;
 uniform float Radius;
-uniform float Scatter = 0.7; // Energy attenuation per upsample level (0=tight, 1=wide)
+uniform float Scatter = 0.919; // Energy attenuation per upsample level (0=tight, 1=wide)
 
 void main()
 {

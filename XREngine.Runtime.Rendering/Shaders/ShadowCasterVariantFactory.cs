@@ -55,13 +55,25 @@ public static class ShadowCasterVariantFactory
     }
 
     public static XRMaterial? CreatePointLightMaterialVariant(XRMaterial sourceMaterial, bool useGeometryShader)
+        => CreatePointLightMaterialVariant(
+            sourceMaterial,
+            useGeometryShader
+                ? EPointShadowMaterialKind.GeometryShader
+                : EPointShadowMaterialKind.InstancedLayered);
+
+    public static XRMaterial? CreatePointLightMaterialVariant(XRMaterial sourceMaterial, EPointShadowMaterialKind kind)
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
         List<XRShader> shaders = [];
-        if (useGeometryShader)
+        if (kind == EPointShadowMaterialKind.GeometryShader)
         {
             shaders.Add(XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry));
+            shaders.Add(new XRShader(EShaderType.Fragment, PointShadowDepthFragmentShader));
+        }
+        else if (kind == EPointShadowMaterialKind.AtlasGeometryShader)
+        {
+            shaders.Add(XRShader.EngineShader("PointLightAtlasShadowDepth.gs", EShaderType.Geometry));
             shaders.Add(new XRShader(EShaderType.Fragment, PointShadowDepthFragmentShader));
         }
         else
@@ -88,21 +100,30 @@ public static class ShadowCasterVariantFactory
             TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             ShadowBindingSourceMaterial = sourceMaterial,
-            PointShadowMaterialKind = useGeometryShader
-                ? EPointShadowMaterialKind.GeometryShader
-                : EPointShadowMaterialKind.InstancedLayered,
+            PointShadowMaterialKind = kind,
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };
         return variant;
     }
 
     public static XRMaterial CreateDirectionalCascadeMaterialVariant(XRMaterial sourceMaterial, bool useGeometryShader)
+        => CreateDirectionalCascadeMaterialVariant(
+            sourceMaterial,
+            useGeometryShader
+                ? EDirectionalCascadeShadowMaterialKind.GeometryShader
+                : EDirectionalCascadeShadowMaterialKind.InstancedLayered);
+
+    public static XRMaterial CreateDirectionalCascadeMaterialVariant(
+        XRMaterial sourceMaterial,
+        EDirectionalCascadeShadowMaterialKind kind)
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
         List<XRShader> shaders = [];
-        if (useGeometryShader)
+        if (kind == EDirectionalCascadeShadowMaterialKind.GeometryShader)
             shaders.Add(XRShader.EngineShader("DirectionalCascadeShadowDepth.gs", EShaderType.Geometry));
+        else if (kind == EDirectionalCascadeShadowMaterialKind.AtlasGeometryShader)
+            shaders.Add(XRShader.EngineShader("DirectionalCascadeAtlasShadowDepth.gs", EShaderType.Geometry));
 
         XRShader fragmentShader = CreateDirectionalCascadeFragmentShader(sourceMaterial);
         shaders.Add(fragmentShader);
@@ -118,9 +139,7 @@ public static class ShadowCasterVariantFactory
             TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             ShadowBindingSourceMaterial = sourceMaterial,
-            DirectionalCascadeShadowMaterialKind = useGeometryShader
-                ? EDirectionalCascadeShadowMaterialKind.GeometryShader
-                : EDirectionalCascadeShadowMaterialKind.InstancedLayered,
+            DirectionalCascadeShadowMaterialKind = kind,
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };
         return variant;

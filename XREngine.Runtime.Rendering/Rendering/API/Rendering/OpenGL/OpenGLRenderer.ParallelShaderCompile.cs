@@ -47,7 +47,7 @@ public partial class OpenGLRenderer
 
             return Engine.Rendering.Settings.OpenGLShaderLinkStrategy switch
             {
-                EOpenGLShaderLinkStrategy.Auto => ProgramCompileLinkQueue is { IsAvailable: true },
+                EOpenGLShaderLinkStrategy.Auto => !_parallelShaderCompileProbePassed && ProgramCompileLinkQueue is { IsAvailable: true },
                 EOpenGLShaderLinkStrategy.SharedContext => true,
                 _ => false,
             };
@@ -73,7 +73,7 @@ public partial class OpenGLRenderer
                 EOpenGLShaderLinkStrategy.DriverParallel =>
                     !Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled ||
                     _parallelShaderCompileProbePassed,
-                EOpenGLShaderLinkStrategy.Auto => _parallelShaderCompileProbePassed && !UseSharedContextProgramCompileLinkQueue,
+                EOpenGLShaderLinkStrategy.Auto => _parallelShaderCompileProbePassed,
                 _ => false,
             };
         }

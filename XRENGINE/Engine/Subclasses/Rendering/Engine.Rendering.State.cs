@@ -237,6 +237,10 @@ namespace XREngine
                 /// </summary>
                 public static bool IsDirectionalCascadeInstancedLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeInstancedLayeredShadowPass ?? false;
                 /// <summary>
+                /// If true, the current directional cascade shadow pass targets grouped atlas viewports.
+                /// </summary>
+                public static bool IsDirectionalCascadeAtlasGroupedShadowPass => RenderingPipelineState?.DirectionalCascadeAtlasGroupedShadowPass ?? false;
+                /// <summary>
                 /// Number of active cascade layers in the current directional cascade layered shadow pass.
                 /// </summary>
                 public static int DirectionalCascadeShadowLayerCount => RenderingPipelineState?.DirectionalCascadeShadowLayerCount ?? 0;
@@ -248,6 +252,10 @@ namespace XREngine
                 /// If true, the current point-light shadow pass uses draw instancing as the cubemap-face dimension.
                 /// </summary>
                 public static bool IsPointLightInstancedLayeredShadowPass => RenderingPipelineState?.PointLightInstancedLayeredShadowPass ?? false;
+                /// <summary>
+                /// If true, the current point-light shadow pass targets grouped atlas viewports.
+                /// </summary>
+                public static bool IsPointLightAtlasGroupedShadowPass => RenderingPipelineState?.PointLightAtlasGroupedShadowPass ?? false;
                 /// <summary>
                 /// Number of active point-light cubemap faces in the current layered shadow pass.
                 /// </summary>
@@ -273,6 +281,18 @@ namespace XREngine
                 /// If true, the active OpenGL context exposes viewport-array layered rendering features.
                 /// </summary>
                 public static bool SupportsOpenGLViewportArray { get; internal set; }
+                /// <summary>
+                /// If true, the active OpenGL context exposes indexed viewport and scissor state for grouped atlas rendering.
+                /// </summary>
+                public static bool SupportsOpenGLViewportScissorArray { get; internal set; }
+                /// <summary>
+                /// If true, the active OpenGL context supports writing gl_ViewportIndex from the vertex stage.
+                /// </summary>
+                public static bool SupportsOpenGLVertexShaderViewportIndex { get; internal set; }
+                /// <summary>
+                /// If true, the active OpenGL context supports writing gl_ViewportIndex from geometry shaders.
+                /// </summary>
+                public static bool SupportsOpenGLGeometryShaderViewportIndex { get; internal set; }
                 /// <summary>
                 /// Maximum OpenGL viewports reported by GL_MAX_VIEWPORTS. Defaults to 1 when unavailable.
                 /// </summary>
