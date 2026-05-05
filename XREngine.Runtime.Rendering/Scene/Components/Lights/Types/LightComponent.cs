@@ -375,7 +375,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         [Category("Shadow Filtering")]
         [DisplayName("Moment Blur Radius Texels")]
-        [Description("Optional separable moment blur radius in texels. Zero disables moment blur.")]
+        [Description("Approximate moment prefilter radius in texels. Standalone mipmapped spot moment maps convert this to an explicit mip-level contribution; separable blur passes are planned separately.")]
         public int ShadowMomentBlurRadiusTexels
         {
             get => _shadowMomentBlurRadiusTexels;
@@ -384,7 +384,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         [Category("Shadow Filtering")]
         [DisplayName("Moment Blur Passes")]
-        [Description("Number of separable blur pass pairs for moment maps.")]
+        [Description("Reserved for separable moment blur pass pairs. The current standalone spot path uses mipmapped prefiltering.")]
         public int ShadowMomentBlurPasses
         {
             get => _shadowMomentBlurPasses;
@@ -392,8 +392,8 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         [Category("Shadow Filtering")]
-        [DisplayName("Moment Mip Bias")]
-        [Description("Mip bias applied when sampling mipmapped moment maps.")]
+        [DisplayName("Moment Mip Level")]
+        [Description("Additional explicit mip level used when sampling standalone mipmapped moment maps. Higher values select wider prefiltered mips.")]
         public float ShadowMomentMipBias
         {
             get => _shadowMomentMipBias;
@@ -402,7 +402,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         [Category("Shadow Filtering")]
         [DisplayName("Moment Use Mipmaps")]
-        [Description("Enables mipmapped sampling for moment maps once the resource path has safe gutters.")]
+        [Description("Enables explicit mipmapped sampling for standalone moment maps. Spot moment maps regenerate mips after each shadow render; atlas moment mips remain disabled until gutters are implemented.")]
         public bool ShadowMomentUseMipmaps
         {
             get => _shadowMomentUseMipmaps;

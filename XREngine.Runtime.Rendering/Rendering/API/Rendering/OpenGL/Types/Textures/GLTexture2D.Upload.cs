@@ -45,7 +45,7 @@ public partial class GLTexture2D
 
     /// <summary>
     /// Clears the invalidation flag and the NeedsFullPush flag on all mipmaps
-    /// so that the next Bind() → VerifySettings() cycle does NOT call PushData().
+    /// so that the next Bind() Ã¢â€ â€™ VerifySettings() cycle does NOT call PushData().
     /// Call this after performing a raw GL upload (e.g. PBO-based video streaming)
     /// to prevent the engine from overwriting the texture with stale/null CPU data.
     /// </summary>
@@ -146,13 +146,13 @@ public partial class GLTexture2D
                     return;
                 }
 
-                // Large texture — defer per-mip uploads to a render-thread coroutine
+                // Large texture Ã¢â‚¬â€ defer per-mip uploads to a render-thread coroutine
                 // so the current frame completes without a multi-hundred-ms stall.
                 // Storage is already allocated above (fast); the texture will appear
                 // black/transparent until the coroutine finishes uploading all mips.
                 ScheduleProgressiveMipUpload(glTarget, internalFormatForce, allowPostPushCallback);
                 Unbind();
-                // IsPushing stays true — VerifySettings will skip re-entry until the coroutine clears it.
+                // IsPushing stays true Ã¢â‚¬â€ VerifySettings will skip re-entry until the coroutine clears it.
                 return;
             }
 
@@ -230,7 +230,7 @@ public partial class GLTexture2D
         int smallestResidentMip = mipCount - 1;
 
         // Upload the smallest mip synchronously so the texture is never fully black
-        // for an entire frame while the coroutine queues. A 1–4 px mip is negligible.
+        // for an entire frame while the coroutine queues. A 1Ã¢â‚¬â€œ4 px mip is negligible.
         PushMipmap(glTarget, smallestResidentMip + mipLevelOffset, Mipmaps[smallestResidentMip], internalFormatForce);
         if (!IsMultisampleTarget)
         {
@@ -249,19 +249,71 @@ public partial class GLTexture2D
             ? BindingId.ToString()
             : Data.Name;
         string progressiveUploadLabel = $"GLTexture2D.ProgressiveMipUpload[{textureName}]";
+        TextureUploadScheduler uploadScheduler = TextureUploadScheduler.Instance;
+        long estimatedBytes = 0L;
+        for (int i = 0; i < Mipmaps.Length; i++)
+            estimatedBytes += Mipmaps[i].Mipmap.Data?.Length ?? 0L;
+
+        TextureUploadWorkItem workItem = new(
+            new WeakReference<XRTexture2D>(Data),
+            TextureUploadKind.Promotion,
+            TextureUploadSourceKind.CpuPointer,
+            FirstMipLevel: 0,
+            MipLevelCount: mipCount,
+            EstimatedBytes: estimatedBytes,
+            CapturedStorageGeneration: scheduledStorageGeneration,
+            TextureUploadPriorityClass.Background,
+            TextureRuntimeDiagnostics.StartTiming());
+        if (!uploadScheduler.TryRegister(Data, workItem))
+        {
+            uploadScheduler.ForceRemove(Data);
+            _ = uploadScheduler.TryRegister(Data, workItem);
+        }
+
+        bool schedulerSlotAcquired = false;
+        bool schedulerQueueWaitRecorded = false;
+
+        void CleanupSchedulerRegistration()
+        {
+            if (schedulerSlotAcquired)
+            {
+                schedulerSlotAcquired = false;
+                uploadScheduler.ReleaseUploadSlot();
+            }
+
+            _ = uploadScheduler.TryRemove(Data, workItem);
+        }
 
         Engine.AddRenderThreadCoroutine(() =>
         {
             using var sample = Engine.Profiler.Start(progressiveUploadLabel);
+            if (!schedulerQueueWaitRecorded)
+            {
+                schedulerQueueWaitRecorded = true;
+                uploadScheduler.RecordQueueWait(workItem, Data);
+            }
+
+            if (!schedulerSlotAcquired)
+            {
+                if (uploadScheduler.HasHigherPriorityUpload(Data, workItem))
+                    return false;
+
+                if (!uploadScheduler.TryAcquireUploadSlot())
+                    return false;
+
+                schedulerSlotAcquired = true;
+            }
+
             if (!IsGenerated)
             {
                 ClearProgressiveVisibleMipRange();
-                // Texture was destroyed before the coroutine finished — fire the
+                // Texture was destroyed before the coroutine finished Ã¢â‚¬â€ fire the
                 // post-push callback so the streaming manager can clear the pending
                 // transition rather than waiting for the stuck-transition timeout.
                 IsPushing = false;
                 if (allowPostPushCallback)
                     OnPostPushData();
+                CleanupSchedulerRegistration();
                 return true;
             }
 
@@ -284,6 +336,7 @@ public partial class GLTexture2D
                 IsPushing = false;
                 Invalidate();
                 Unbind();
+                CleanupSchedulerRegistration();
                 return true;
             }
 
@@ -301,7 +354,7 @@ public partial class GLTexture2D
             Bind();
             Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
-            // Bind() → SetParameters → SetParametersInternal overwrites GL_TEXTURE_BASE_LEVEL
+            // Bind() Ã¢â€ â€™ SetParameters Ã¢â€ â€™ SetParametersInternal overwrites GL_TEXTURE_BASE_LEVEL
             // with Data.LargestMipmapLevel (often 0) before high-res mips are uploaded.
             // Re-enforce the clamped range so GL only samples fully-uploaded mips.
             if (nextMip >= 0 && !IsMultisampleTarget)
@@ -318,6 +371,15 @@ public partial class GLTexture2D
                 // Clamp sampling to fully uploaded mips until the current mip is complete.
                 // The persistent visible-range override keeps partial scanline uploads
                 // invisible even if this texture is rebound later in the same frame.
+                long nextMipBytes = Mipmaps[nextMip].Mipmap.Data?.Length ?? 0L;
+                if (uploadScheduler.WouldExceedFrameByteBudget(nextMipBytes)
+                    || !RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
+                {
+                    return false;
+                }
+
+                uploadScheduler.RegisterBytesForCurrentFrame(nextMipBytes);
+                long uploadStart = TextureRuntimeDiagnostics.StartTiming();
                 if (!TryPushProgressiveMipChunk(glTarget, nextMip + mipLevelOffset, Mipmaps[nextMip], internalFormatForce, ref nextMipRow))
                 {
                     PushMipmap(glTarget, nextMip + mipLevelOffset, Mipmaps[nextMip], internalFormatForce);
@@ -329,15 +391,20 @@ public partial class GLTexture2D
                     nextMip--;
                 }
 
+                double uploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart);
+                Data.RecordTextureUploadDuration(uploadMilliseconds);
+                TextureRuntimeDiagnostics.RecordUploadDuration(uploadMilliseconds);
+                RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, uploadMilliseconds);
                 Unbind();
-                return false; // Continue — more mips to upload.
+                return false; // Continue; more mips to upload.
             }
 
-            // All mips uploaded — finalize.
+            // All mips uploaded; finalize.
             ClearProgressiveVisibleMipRange();
             FinalizePushData(allowPostPushCallback);
             IsPushing = false;
             Unbind();
+            CleanupSchedulerRegistration();
             return true; // Done.
         }, progressiveUploadLabel);
     }

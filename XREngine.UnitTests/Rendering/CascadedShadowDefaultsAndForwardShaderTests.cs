@@ -551,6 +551,62 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
+    public void PointLightLayeredModes_AreExposedAndUseVertexLayerContract()
+    {
+        string enumSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "EPointShadowRenderMode.cs"));
+        enumSource.ShouldContain("Sequential = 0");
+        enumSource.ShouldContain("InstancedLayered = 1");
+        enumSource.ShouldContain("GeometryShader = 2");
+        enumSource.ShouldNotContain("Auto");
+
+        string pointSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
+        pointSource.ShouldContain("public EPointShadowRenderMode ShadowRenderMode");
+        pointSource.ShouldContain("public EPointShadowRenderMode EffectiveShadowRenderMode");
+        pointSource.ShouldContain("public string ShadowRenderFallbackReason");
+        pointSource.ShouldContain("CreatePointShadowRenderPlan(");
+        pointSource.ShouldContain("PushPointLightLayeredShadowPass(plan.IsInstancedLayered");
+        pointSource.ShouldContain("PointInstancedShadowMaterial");
+        pointSource.ShouldContain("PointGeometryShadowMaterial");
+        pointSource.ShouldContain("RenderSequentialShadowFaces()");
+
+        string generatorSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shaders", "Generator", "DefaultVertexShaderGenerator.cs"));
+        generatorSource.ShouldContain("PointLightInstancedVertexShaderGenerator");
+        generatorSource.ShouldContain("UsePointLightInstancedLayering");
+        generatorSource.ShouldContain("uniform int PointShadowFaceCount;");
+        generatorSource.ShouldContain("uniform mat4 PointShadowViewProjectionMatrices[6];");
+        generatorSource.ShouldContain("int xrePointShadowFace = gl_InstanceID % xrePointShadowFaceCount;");
+        generatorSource.ShouldContain("PointShadowViewProjectionMatrices[xrePointShadowFace] * vec4(xrePointShadowWorldPos");
+        generatorSource.ShouldContain("gl_Layer = xrePointShadowFace;");
+
+        string meshRendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
+        meshRendererSource.ShouldContain("ResolvePointLightShadowMaterial(");
+        meshRendererSource.ShouldContain("CanUsePointLightInstancedMaterial");
+        meshRendererSource.ShouldContain("instances != 1u");
+        meshRendererSource.ShouldContain("MeshRenderer.MeshDeformEnabled");
+        meshRendererSource.ShouldContain("ResolvePointLightLayeredInstanceCount");
+        meshRendererSource.ShouldContain("PointLightShadowFaceCount");
+        meshRendererSource.ShouldContain("SetPointLightLayeredVertexUniforms");
+
+        string xrMeshRendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "XRMeshRenderer.cs"));
+        xrMeshRendererSource.ShouldContain("IsPointLightInstancedLayeredShadowPass");
+        xrMeshRendererSource.ShouldContain("GetPointLightInstancedVersion()");
+        xrMeshRendererSource.ShouldContain("PointLightInstancedVertexShaderGenerator");
+
+        string factorySource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Shaders", "ShadowCasterVariantFactory.cs"));
+        factorySource.ShouldContain("PointShadowMaterialKind");
+        factorySource.ShouldContain("EPointShadowMaterialKind.GeometryShader");
+        factorySource.ShouldContain("EPointShadowMaterialKind.InstancedLayered");
+
+        string editorSource = LoadRepoSource(Path.Combine("XREngine.Editor", "ComponentEditors", "PointLightComponentEditor.cs"));
+        editorSource.ShouldContain("Shadow Render Mode");
+        editorSource.ShouldContain("Sequential\\0Instanced / Layered\\0Geometry Shader\\0");
+
+        string renderNotes = LoadRepoSource(Path.Combine("docs", "architecture", "rendering", "default-render-pipeline-notes.md"));
+        renderNotes.ShouldContain("Point lights expose `ShadowRenderMode`");
+        renderNotes.ShouldContain("InstancedLayered` renders all six faces");
+    }
+
+    [Test]
     public void DirectionalPrimaryShadowAtlas_IsSubmittedRenderedBoundAndPreviewed()
     {
         string lightSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));

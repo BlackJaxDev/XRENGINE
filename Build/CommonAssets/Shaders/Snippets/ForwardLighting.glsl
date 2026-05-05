@@ -206,7 +206,7 @@ struct ForwardSpotShadowData
     vec4 Params1;  // filter radius, blocker radius, min penumbra, max penumbra
     vec4 Params2;  // source radius, contact distance, contact thickness, fade start
     vec4 Params3;  // fade end, normal offset, jitter, reserved
-    ivec4 Packed2; // encoding, use moment mipmaps, reserved, reserved
+    ivec4 Packed2; // encoding, use moment mipmaps, moment blur radius texels, moment blur passes
     vec4 Params4;  // moment min variance, bleed reduction, positive exponent, negative exponent
     vec4 Params5;  // shadow near, shadow far, moment mip bias, reserved
     ivec4 AtlasPacked0; // enabled, page, fallback, record index
@@ -1497,18 +1497,19 @@ float XRENGINE_SampleSpotShadowMoment2DSlot(
     float lightBleedReduction,
     float positiveExponent,
     float negativeExponent,
-    float mipBias)
+    float mipLevel,
+    bool useMipmaps)
 {
     switch (shadowSlot)
     {
     case 0:
-        return XRENGINE_SampleShadowMoment2D(SpotLightShadowMaps[0], uv, receiverDepth, encoding, minVariance, lightBleedReduction, positiveExponent, negativeExponent, mipBias);
+        return XRENGINE_SampleShadowMoment2D(SpotLightShadowMaps[0], uv, receiverDepth, encoding, minVariance, lightBleedReduction, positiveExponent, negativeExponent, mipLevel, useMipmaps);
     case 1:
-        return XRENGINE_SampleShadowMoment2D(SpotLightShadowMaps[1], uv, receiverDepth, encoding, minVariance, lightBleedReduction, positiveExponent, negativeExponent, mipBias);
+        return XRENGINE_SampleShadowMoment2D(SpotLightShadowMaps[1], uv, receiverDepth, encoding, minVariance, lightBleedReduction, positiveExponent, negativeExponent, mipLevel, useMipmaps);
     case 2:
-        return XRENGINE_SampleShadowMoment2D(SpotLightShadowMaps[2], uv, receiverDepth, encoding, minVariance, lightBleedReduction, positiveExponent, negativeExponent, mipBias);
+        return XRENGINE_SampleShadowMoment2D(SpotLightShadowMaps[2], uv, receiverDepth, encoding, minVariance, lightBleedReduction, positiveExponent, negativeExponent, mipLevel, useMipmaps);
     case 3:
-        return XRENGINE_SampleShadowMoment2D(SpotLightShadowMaps[3], uv, receiverDepth, encoding, minVariance, lightBleedReduction, positiveExponent, negativeExponent, mipBias);
+        return XRENGINE_SampleShadowMoment2D(SpotLightShadowMaps[3], uv, receiverDepth, encoding, minVariance, lightBleedReduction, positiveExponent, negativeExponent, mipLevel, useMipmaps);
     default:
         return 1.0;
     }
@@ -1549,18 +1550,20 @@ float XRENGINE_EstimateSpotShadowMomentMargin2DSlot(
     float receiverDepth,
     int encoding,
     float positiveExponent,
-    float negativeExponent)
+    float negativeExponent,
+    float mipLevel,
+    bool useMipmaps)
 {
     switch (shadowSlot)
     {
     case 0:
-        return XRENGINE_EstimateShadowMomentMargin(SpotLightShadowMaps[0], uv, receiverDepth, encoding, positiveExponent, negativeExponent);
+        return XRENGINE_EstimateShadowMomentMargin(SpotLightShadowMaps[0], uv, receiverDepth, encoding, positiveExponent, negativeExponent, mipLevel, useMipmaps);
     case 1:
-        return XRENGINE_EstimateShadowMomentMargin(SpotLightShadowMaps[1], uv, receiverDepth, encoding, positiveExponent, negativeExponent);
+        return XRENGINE_EstimateShadowMomentMargin(SpotLightShadowMaps[1], uv, receiverDepth, encoding, positiveExponent, negativeExponent, mipLevel, useMipmaps);
     case 2:
-        return XRENGINE_EstimateShadowMomentMargin(SpotLightShadowMaps[2], uv, receiverDepth, encoding, positiveExponent, negativeExponent);
+        return XRENGINE_EstimateShadowMomentMargin(SpotLightShadowMaps[2], uv, receiverDepth, encoding, positiveExponent, negativeExponent, mipLevel, useMipmaps);
     case 3:
-        return XRENGINE_EstimateShadowMomentMargin(SpotLightShadowMaps[3], uv, receiverDepth, encoding, positiveExponent, negativeExponent);
+        return XRENGINE_EstimateShadowMomentMargin(SpotLightShadowMaps[3], uv, receiverDepth, encoding, positiveExponent, negativeExponent, mipLevel, useMipmaps);
     default:
         return 1.0;
     }
@@ -2149,6 +2152,11 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
     {
         float receiverDepth = XRENGINE_LinearizeShadowDepth01(fragCoord.z, shadowF5.x, shadowF5.y);
         float momentReceiverDepth = clamp(receiverDepth - min(bias, 0.01), 0.0, 1.0);
+        bool useMomentMipmaps = shadowI2.y != 0;
+        float momentMipLevel = XRENGINE_ResolveShadowMomentMipLevel(
+            shadowF5.z,
+            float(shadowI2.z),
+            useMomentMipmaps);
         shadow = XRENGINE_SampleSpotShadowMoment2DSlot(
             shadowSlot,
             fragCoord.xy,
@@ -2158,7 +2166,8 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
             shadowF4.y,
             shadowF4.z,
             shadowF4.w,
-            shadowF5.z) * contact;
+            momentMipLevel,
+            useMomentMipmaps) * contact;
     }
     else
     {
@@ -2186,7 +2195,9 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
                 clamp(XRENGINE_LinearizeShadowDepth01(fragCoord.z, shadowF5.x, shadowF5.y) - min(bias, 0.01), 0.0, 1.0),
                 encoding,
                 shadowF4.z,
-                shadowF4.w)
+                shadowF4.w,
+                XRENGINE_ResolveShadowMomentMipLevel(shadowF5.z, float(shadowI2.z), shadowI2.y != 0),
+                shadowI2.y != 0)
             : XRENGINE_ReadSpotShadowCenterDepthForSlot(shadowSlot, fragCoord.xy) - (fragCoord.z - bias);
         XRENGINE_TrySetForwardShadowDebug(debugMode, shadow, margin);
     }

@@ -11,7 +11,7 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_RejectsStaleResidentDataBeforeApplyingToLiveTexture()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string source = ReadTextureStreamingSources();
 
         source.ShouldContain("Func<bool>? shouldAcceptResult = null");
         source.ShouldContain("bool IsCurrentTransition()");
@@ -36,7 +36,7 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_UsesFullSparsePageCoverageUntilPageTrackingIsMaterialAware()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string source = ReadTextureStreamingSources();
 
         source.ShouldContain("private static readonly bool EnablePartialSparsePageResidency = false;");
         source.ShouldContain("material UV transforms, wrapping, filtering, or rapid camera movement");
@@ -61,7 +61,7 @@ public sealed class ImportedTextureStreamingContractTests
     public void ImportedTextureStreaming_PrefersFreshCachedTextureAssetAuthority()
     {
         string assetManagerSource = ReadWorkspaceFile("XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs");
-        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string streamingSource = ReadTextureStreamingSources();
 
         assetManagerSource.ShouldContain("XRTexture2D.IsTextureStreamingAssetUsable(cachePath)");
         assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheHit\"");
@@ -73,9 +73,9 @@ public sealed class ImportedTextureStreamingContractTests
         assetManagerSource.ShouldNotContain("ShouldSuppressTextureStreamingCacheWarmup");
         assetManagerSource.ShouldNotContain("cache warmup suppressed during active imported-model scope");
 
-        managerSource.ShouldContain("if (XRTexture2D.HasAssetExtensionInternal(authorityPath))");
-        managerSource.ShouldContain("return new AssetTextureStreamingSource(authorityPath, originalSourcePath);");
-        managerSource.ShouldContain("return new ThirdPartyTextureStreamingSource(authorityPath);");
+        streamingSource.ShouldContain("if (XRTexture2D.HasAssetExtensionInternal(authorityPath))");
+        streamingSource.ShouldContain("return new AssetTextureStreamingSource(authorityPath, originalSourcePath);");
+        streamingSource.ShouldContain("return new ThirdPartyTextureStreamingSource(authorityPath);");
     }
 
     [Test]
@@ -107,7 +107,7 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_LogsCookedCacheReadAndReusesCanceledResidentData()
     {
-        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string managerSource = ReadTextureStreamingSources();
         string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/TextureRuntimeDiagnostics.cs");
 
         managerSource.ShouldContain("TextureRuntimeDiagnostics.LogCacheRead(");
@@ -128,7 +128,7 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_AllowsVisiblePreviewReadyRepromotionAfterDemotion()
     {
-        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string managerSource = ReadTextureStreamingSources();
 
         managerSource.ShouldContain("if (snapshot.LastVisibleFrameId == frameId && !snapshot.PreviewReady)");
         managerSource.ShouldContain("bool isPromotion = assignedResidentSize > currentResidentSize");
@@ -140,7 +140,7 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_PrioritizesVisibleLargeScreenTransitions()
     {
-        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string managerSource = ReadTextureStreamingSources();
 
         managerSource.ShouldContain("internal sealed class PriorityAsyncSemaphore");
         managerSource.ShouldContain("await DecodeGate.WaitAsync(priority, cancellationToken)");
@@ -153,7 +153,8 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_ProgressiveUploadsYieldToVisibleWork()
     {
-        string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.cs");
+        string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/TextureUploadScheduler.cs");
         string importedStreamingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.ImportedStreaming.cs");
 
         textureSource.ShouldContain("ConcurrentDictionary<XRTexture2D, TextureUploadWorkItem>");
@@ -168,7 +169,7 @@ public sealed class ImportedTextureStreamingContractTests
     {
         string sparseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.cs");
         string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.ImportedStreaming.cs");
-        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string managerSource = ReadTextureStreamingSources();
 
         sparseSource.ShouldContain("Demotion still has to populate the target mip range");
         sparseSource.ShouldContain("UploadSparseResidentMipmaps(request, support, desiredPageSelection, numSparseLevels);");
@@ -199,6 +200,19 @@ public sealed class ImportedTextureStreamingContractTests
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
         return File.ReadAllText(path);
+    }
+
+    private static string ReadTextureStreamingSources()
+    {
+        return string.Concat(
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureStreamingContracts.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureStreamingSources.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureResidencyPolicy.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureStreamingRegistry.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureTransitionQueue.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Textures/OpenGLTextureResidencyBackends.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/PriorityAsyncSemaphore.cs"));
     }
 
     private static string ResolveRepoRoot()

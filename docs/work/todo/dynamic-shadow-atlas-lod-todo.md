@@ -364,7 +364,7 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
 - Sequential rendering is valid as a bring-up/debug path, but it still renders each selected face directly into its atlas tile.
 - The production optimized path is true atlas GS fan-out: one draw path may emit only the selected faces and route them to their allocated atlas tile/page state. It must support a face mask, per-face tile metadata, and page grouping or texture-array pages as needed.
 - Atlas pages are `Texture2DArray` layers, so true atlas GS batching can route destination pages through `gl_Layer`; tile isolation still comes from viewport/scissor state and inner-rect metadata.
-- A legacy cubemap GS face-mask optimization is separate from atlas mode. It may remain useful for the debug/fallback cubemap path, but it must not be treated as the point-light atlas implementation.
+- Legacy cubemap layered modes are separate from atlas mode. `ShadowRenderMode` exposes sequential, instanced layered, and geometry-shader cubemap rendering for debugging/non-atlas use, but those modes must not be treated as the point-light atlas implementation.
 - Receiver sampling selects a face by major axis, converts the direction to face-local UV, and samples that face's atlas metadata. Missing faces return the published fallback (`Lit`, `ContactOnly`, `StaleTile`, or `Disabled`) without undefined reads.
 
 ### Tasks
@@ -380,6 +380,7 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
   - [ ] Optional request skip for faces outside active consumers.
 - [ ] Keep valid skipped faces resident when content is reusable and `StaleTile` fallback is allowed.
 - [x] Add direct-to-atlas sequential rendering for selected point faces.
+- [x] Add legacy cubemap instanced layered rendering for all six point-light faces outside atlas mode.
 - [ ] Add true atlas GS rendering for selected point faces:
   - [ ] face mask uniform/metadata,
   - [ ] per-face view-projection matrices,

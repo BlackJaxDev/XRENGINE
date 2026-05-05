@@ -46,6 +46,21 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
     }
 
     [Test]
+    public void SpotLight_MomentMipmapsUseMipmapFilterAndAutoGeneration()
+    {
+        SpotLightComponent light = new()
+        {
+            ShadowMapEncoding = EShadowMapEncoding.Variance2,
+            ShadowMomentUseMipmaps = true,
+        };
+
+        XRTexture2D shadowMap = FindShadowMapTexture<XRTexture2D>(light.GetShadowMapMaterial(64u, 64u));
+
+        shadowMap.MinFilter.ShouldBe(ETexMinFilter.LinearMipmapLinear);
+        shadowMap.AutoGenerateMipmaps.ShouldBeTrue();
+    }
+
+    [Test]
     public void SpotLight_DepthShadowMaterialPreservesLegacyDepthWriter()
     {
         SpotLightComponent light = new();
@@ -72,6 +87,8 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         source.ShouldContain("void XRENGINE_WriteShadowCasterDepth");
         source.ShouldContain("float XRENGINE_ChebyshevUpperBound");
         source.ShouldContain("float XRENGINE_SampleShadowMoment2D");
+        source.ShouldContain("float XRENGINE_ResolveShadowMomentMipLevel");
+        source.ShouldContain("textureLod(shadowMap, uv");
     }
 
     [Test]
@@ -82,9 +99,12 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
 
         deferredSpot.ShouldContain("ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH");
         deferredSpot.ShouldContain("XRENGINE_SampleShadowMoment2D(");
+        deferredSpot.ShouldContain("ShadowMomentDepthParams.w != 0.0f");
+        deferredSpot.ShouldContain("ShadowMomentFilterParams.x");
         deferredSpot.ShouldContain("* contact");
         forwardLighting.ShouldContain("ivec4 shadowI2 = shadowData.Packed2");
         forwardLighting.ShouldContain("vec4 shadowF4 = shadowData.Params4");
+        forwardLighting.ShouldContain("shadowI2.y != 0");
         forwardLighting.ShouldContain("XRENGINE_SampleShadowMoment2D(");
     }
 

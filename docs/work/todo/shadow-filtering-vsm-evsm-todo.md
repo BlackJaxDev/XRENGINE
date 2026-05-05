@@ -227,6 +227,9 @@ Validation note: `Build-Editor` succeeds. Focused `dotnet test` discovery is blo
 - [x] Update `DeferredLightingSpot.fs`.
 - [x] Update `ForwardLighting.glsl` spot path.
 - [x] Apply contact shadow multiplication after map visibility.
+- [x] Route VSM/EVSM spot lights through the standalone moment map while the spot atlas remains depth-only.
+- [x] Regenerate standalone spot moment-map mip levels after each shadow render when mipmaps are enabled.
+- [x] Sample spot moment mips with explicit LOD so mip filtering is not driven by the main camera's screen-space derivatives.
 - [ ] Add per-resource separable blur for non-atlas moment spot maps.
 - [ ] Implement moment debug viewer for `sampler2D` resources:
   - [ ] `M1`
@@ -353,8 +356,8 @@ Validation note: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj /propert
 - [ ] Keep Phase 2 per-resource blur for non-atlas resources until atlas blur is ready.
 - [ ] Add tile-aware separable blur once atlas tile rects are available.
 - [ ] Clamp blur samples to tile inner rects.
-- [ ] Add optional mip generation only where gutters are valid.
-- [ ] Add `ShadowMomentMipBias` support in receiver sampling.
+- [x] Add optional mip generation for standalone spot moment maps; atlas mip generation stays disabled until gutters are valid.
+- [x] Add `ShadowMomentMipBias` support in standalone spot receiver sampling as an explicit mip-level offset.
 - [ ] Expose blur and mip controls in editor.
 - [ ] Add optional MSAA shadow rasterization for non-atlas resources first.
 - [ ] Add single-sample moment resolve from MSAA depth source.

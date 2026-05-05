@@ -1,0 +1,236 @@
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
+using XREngine.Data.Rendering;
+
+namespace XREngine.Rendering;
+
+/// <summary>
+/// Tracks imported streaming textures and produces immutable frame snapshots for policy.
+/// Thread-safety: registration and snapshot collection are free-threaded; per-record mutation
+/// is protected by <see cref="ImportedTextureStreamingRecord.Sync"/>.
+/// </summary>
+internal sealed class TextureStreamingRegistry
+{
+    private readonly ConditionalWeakTable<XRTexture2D, ImportedTextureStreamingRecord> _recordsByTexture = new();
+    private readonly ConcurrentQueue<WeakReference<ImportedTextureStreamingRecord>> _recordRefs = new();
+
+    public bool IsEmpty => _recordRefs.IsEmpty;
+    public int RecordReferenceCount => _recordRefs.Count;
+
+    public ImportedTextureStreamingRecord GetOrCreateRecord(
+        XRTexture2D texture,
+        string? filePath,
+        Func<ESizedInternalFormat, ITextureResidencyBackend> resolvePreviewBackend)
+    {
+        ImportedTextureStreamingRecord record = _recordsByTexture.GetValue(texture, target =>
+        {
+            ImportedTextureStreamingRecord created = new(target);
+            _recordRefs.Enqueue(new WeakReference<ImportedTextureStreamingRecord>(created));
+            return created;
+        });
+
+        if (!string.IsNullOrWhiteSpace(filePath))
+        {
+            lock (record.Sync)
+            {
+                record.Format = texture.SizedInternalFormat;
+                if (!string.Equals(record.FilePath, filePath, StringComparison.OrdinalIgnoreCase) || record.Source is null)
+                {
+                    record.FilePath = filePath;
+                    record.Source = TextureStreamingSourceFactory.Create(filePath);
+                }
+
+                record.Backend ??= resolvePreviewBackend(record.Format);
+            }
+        }
+
+        return record;
+    }
+
+    public void RecordUsage(XRMaterial? material, ImportedTextureStreamingUsage usage, long frameId)
+    {
+        if (material?.Textures is not { Count: > 0 } || frameId <= 0)
+            return;
+
+        float distance = usage.ClampedDistance;
+        float projectedPixelSpan = usage.ClampedProjectedPixelSpan;
+        float screenCoverage = usage.ClampedScreenCoverage;
+        float uvDensityHint = usage.NormalizedUvDensityHint;
+        SparseTextureStreamingPageSelection pageSelection = usage.NormalizedPageSelection;
+        for (int textureIndex = 0; textureIndex < material.Textures.Count; textureIndex++)
+        {
+            if (material.Textures[textureIndex] is not XRTexture2D texture
+                || !_recordsByTexture.TryGetValue(texture, out ImportedTextureStreamingRecord? record))
+            {
+                continue;
+            }
+
+            if (!Monitor.TryEnter(record.Sync))
+                continue;
+
+            try
+            {
+                if (record.LastVisibleFrameId != frameId)
+                {
+                    record.LastVisibleFrameId = frameId;
+                    record.MinVisibleDistance = distance;
+                    record.MaxProjectedPixelSpan = projectedPixelSpan;
+                    record.MaxScreenCoverage = screenCoverage;
+                    record.UvDensityHint = uvDensityHint;
+                    record.VisiblePageSelection = pageSelection;
+                }
+                else
+                {
+                    if (distance < record.MinVisibleDistance)
+                        record.MinVisibleDistance = distance;
+
+                    if (projectedPixelSpan > record.MaxProjectedPixelSpan)
+                        record.MaxProjectedPixelSpan = projectedPixelSpan;
+
+                    if (screenCoverage > record.MaxScreenCoverage)
+                        record.MaxScreenCoverage = screenCoverage;
+
+                    if (uvDensityHint > record.UvDensityHint)
+                        record.UvDensityHint = uvDensityHint;
+
+                    record.VisiblePageSelection = record.VisiblePageSelection.Union(pageSelection);
+                }
+
+                if (TextureRuntimeDiagnostics.IsVerboseEnabled)
+                {
+                    float priorityScore = (projectedPixelSpan + screenCoverage * 1024.0f)
+                        * TextureResidencyPolicy.ResolveTextureRoleMultiplier(texture.SamplerName)
+                        * uvDensityHint;
+                    TextureRuntimeDiagnostics.LogVisibilityRecorded(
+                        frameId,
+                        texture.Name,
+                        record.FilePath,
+                        projectedPixelSpan,
+                        screenCoverage,
+                        priorityScore);
+                }
+            }
+            finally
+            {
+                Monitor.Exit(record.Sync);
+            }
+        }
+    }
+
+    public void RecordMaterialBinding(XRMaterialBase? material, long frameId)
+    {
+        if (material?.Textures is not { Count: > 0 } || IsEmpty || frameId <= 0)
+            return;
+
+        int materialTextureCount = material.Textures.Count;
+        for (int textureIndex = 0; textureIndex < materialTextureCount; textureIndex++)
+        {
+            if (material.Textures[textureIndex] is not XRTexture2D texture
+                || !_recordsByTexture.TryGetValue(texture, out ImportedTextureStreamingRecord? record))
+            {
+                continue;
+            }
+
+            if (!Monitor.TryEnter(record.Sync))
+                continue;
+
+            try
+            {
+                record.LastBoundFrameId = frameId;
+                record.LastBoundMaterialTextureCount = materialTextureCount;
+            }
+            finally
+            {
+                Monitor.Exit(record.Sync);
+            }
+        }
+    }
+
+    public WeakReference<ImportedTextureStreamingRecord>[] GetRecordReferencesSnapshot()
+        => _recordRefs.ToArray();
+
+    public void CompactRecordRefs()
+    {
+        int count = _recordRefs.Count;
+        List<WeakReference<ImportedTextureStreamingRecord>> live = new(count);
+        while (_recordRefs.TryDequeue(out WeakReference<ImportedTextureStreamingRecord>? refEntry))
+        {
+            if (refEntry.TryGetTarget(out ImportedTextureStreamingRecord? record)
+                && record.Texture.TryGetTarget(out _))
+            {
+                live.Add(refEntry);
+            }
+        }
+
+        foreach (WeakReference<ImportedTextureStreamingRecord> refEntry in live)
+            _recordRefs.Enqueue(refEntry);
+    }
+
+    public List<ImportedTextureStreamingSnapshot> CollectSnapshots(
+        Func<uint, uint, ESizedInternalFormat, ITextureResidencyBackend> resolveBackend)
+    {
+        List<ImportedTextureStreamingSnapshot> snapshots = [];
+        WeakReference<ImportedTextureStreamingRecord>[] refs = _recordRefs.ToArray();
+        for (int i = 0; i < refs.Length; i++)
+        {
+            if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
+                || !record.Texture.TryGetTarget(out XRTexture2D? texture))
+            {
+                continue;
+            }
+
+            if (!Monitor.TryEnter(record.Sync))
+                continue;
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(record.FilePath) || record.Source is null)
+                    continue;
+
+                ITextureResidencyBackend backend = record.Backend ?? resolveBackend(record.SourceWidth, record.SourceHeight, record.Format);
+                snapshots.Add(new ImportedTextureStreamingSnapshot(
+                    record,
+                    backend,
+                    texture.Name,
+                    record.FilePath,
+                    texture.SamplerName,
+                    TextureResidencyPolicy.ResolveFairnessGroupKey(record.FilePath),
+                    record.Format,
+                    record.SourceWidth,
+                    record.SourceHeight,
+                    record.ResidentMaxDimension,
+                    record.PendingMaxDimension,
+                    record.SparseNumLevels,
+                    texture.SparseTextureStreamingEnabled
+                        ? texture.SparseTextureStreamingCommittedBytes
+                        : backend.EstimateCommittedBytes(record.SourceWidth, record.SourceHeight, record.ResidentMaxDimension, record.Format, record.SparseNumLevels),
+                    texture.SparseTextureStreamingEnabled
+                        ? texture.SparseTextureStreamingResidentPageSelection
+                        : SparseTextureStreamingPageSelection.Full,
+                    record.LastVisibleFrameId,
+                    record.LastBoundFrameId,
+                    record.LastBoundMaterialTextureCount,
+                    record.MinVisibleDistance,
+                    record.MaxProjectedPixelSpan,
+                    record.MaxScreenCoverage,
+                    record.UvDensityHint,
+                    record.VisiblePageSelection,
+                    record.PreviewReady,
+                    record.LastTransitionFrameId,
+                    record.PendingTransitionQueuedTimestamp,
+                    record.LastTransitionQueueWaitMilliseconds,
+                    record.LastTransitionExecutionMilliseconds,
+                    record.LastPressureDemotionFrameId,
+                    texture.TextureUploadValidationFailureCount,
+                    texture.LastTextureQueueWaitMilliseconds,
+                    texture.LastTextureUploadDurationMilliseconds));
+            }
+            finally
+            {
+                Monitor.Exit(record.Sync);
+            }
+        }
+
+        return snapshots;
+    }
+}

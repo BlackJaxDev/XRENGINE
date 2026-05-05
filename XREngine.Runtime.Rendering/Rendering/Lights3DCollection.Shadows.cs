@@ -92,7 +92,7 @@ namespace XREngine.Scene
         private static bool UsesShadowAtlasCollectionPath(LightComponent light)
             => light switch
             {
-                SpotLightComponent => Engine.Rendering.Settings.UseSpotShadowAtlas,
+                SpotLightComponent spot => spot.UsesSpotShadowAtlasForCurrentEncoding,
                 DirectionalLightComponent => Engine.Rendering.Settings.UseDirectionalShadowAtlas,
                 PointLightComponent => Engine.Rendering.Settings.UsePointShadowAtlas,
                 _ => false,
@@ -256,7 +256,7 @@ namespace XREngine.Scene
                 for (int i = 0; i < DynamicSpotLights.Count; i++)
                 {
                     SpotLightComponent light = DynamicSpotLights[i];
-                    if (!Engine.Rendering.Settings.UseSpotShadowAtlas || ShouldRenderLegacySpotShadowMap(light))
+                    if (!light.UsesSpotShadowAtlasForCurrentEncoding || ShouldRenderLegacySpotShadowMap(light))
                         light.RenderShadowMap(collectVisibleNow);
                 }
                 for (int i = 0; i < DynamicPointLights.Count; i++)
@@ -422,8 +422,12 @@ namespace XREngine.Scene
             for (int i = 0; i < count; i++)
             {
                 SpotLightComponent light = DynamicSpotLights[i];
-                if (!ShouldSubmitShadowAtlasRequest(light) || light.ShadowCamera is not XRCamera camera)
+                if (!light.UsesSpotShadowAtlasForCurrentEncoding ||
+                    !ShouldSubmitShadowAtlasRequest(light) ||
+                    light.ShadowCamera is not XRCamera camera)
+                {
                     continue;
+                }
 
                 SubmitShadowAtlasRequest(
                     light,
@@ -542,6 +546,9 @@ namespace XREngine.Scene
         {
             if (light.ShadowMap is null)
                 return false;
+
+            if (!light.UsesSpotShadowAtlasForCurrentEncoding)
+                return true;
 
             if (!TryGetSpotShadowAtlasAllocation(light, out ShadowAtlasAllocation allocation, out _))
                 return true;
@@ -946,7 +953,7 @@ namespace XREngine.Scene
             out ShadowAtlasAllocation allocation,
             out int shadowRecordIndex)
         {
-            if (Engine.Rendering.Settings.UseSpotShadowAtlas &&
+            if (light.UsesSpotShadowAtlasForCurrentEncoding &&
                 TryGetSpotShadowAtlasAllocation(light, out allocation, out shadowRecordIndex) &&
                 allocation.IsResident &&
                 allocation.LastRenderedFrame != 0u &&

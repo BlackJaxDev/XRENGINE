@@ -437,6 +437,9 @@ internal static partial class Engine
             public static bool IsDirectionalCascadeLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false;
             public static bool IsDirectionalCascadeInstancedLayeredShadowPass => RenderingPipelineState?.DirectionalCascadeInstancedLayeredShadowPass ?? false;
             public static int DirectionalCascadeShadowLayerCount => RenderingPipelineState?.DirectionalCascadeShadowLayerCount ?? 0;
+            public static bool IsPointLightLayeredShadowPass => RenderingPipelineState?.PointLightLayeredShadowPass ?? false;
+            public static bool IsPointLightInstancedLayeredShadowPass => RenderingPipelineState?.PointLightInstancedLayeredShadowPass ?? false;
+            public static int PointLightShadowFaceCount => RenderingPipelineState?.PointLightShadowFaceCount ?? 0;
             public static bool IsSceneCapturePass
             {
                 get => StateData.IsSceneCapturePass;

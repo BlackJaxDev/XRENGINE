@@ -9,6 +9,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Status | Meaning |
 |---|---|
 | Active | Current implementation or validation work lives here. |
+| Implemented + validation | Main implementation is complete; scene, performance, or integration validation remains. |
 | Stable doc | The canonical write-up now lives under `docs/features` or another stable docs area. |
 | Closed | The original work item is finished and has been collapsed into a final closeout note or removed. |
 | Generated | Report output should be regenerated on demand, not maintained as durable documentation. |
@@ -29,8 +30,8 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/gpu-rendering.md](todo/gpu-rendering.md) | Broad GPU-driven rendering work remains active. |
 | Advanced flat mirrors | Active | [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md) | Planar reflection design covering CPU/GPU dispatch, forward/deferred integration, stencil masking, reflection targets, recursion, and VR. |
-| Shadow filtering and atlas allocation | Active | [todo/directional-cascade-layered-rendering-todo.md](todo/directional-cascade-layered-rendering-todo.md), [todo/shadow-atlas-region-organization-todo.md](todo/shadow-atlas-region-organization-todo.md), [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | VSM/EVSM filtering, dynamic atlas LOD allocation, region organization performance, and post-v1 advanced shadow follow-ups for directional, spot, and point lights. Directional cascade layered rendering is implemented for the legacy texture-array path; grouped atlas cascade rendering is now tracked as the next parity phase. |
-| Texture management runtime | Active | [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md), [todo/texture-streaming-cooked-cache-todo.md](todo/texture-streaming-cooked-cache-todo.md), [todo/texture-streaming-consolidation-todo.md](todo/texture-streaming-consolidation-todo.md), [design/texture-management-runtime-design.md](design/texture-management-runtime-design.md) | Phased implementation tracker plus focused cooked-cache and consolidation follow-ups for runtime texture residency, upload scheduling, GL storage safety, VRAM telemetry, and dedicated texture logging. |
+| Shadow filtering and atlas allocation | Active | [todo/directional-cascade-layered-rendering-todo.md](todo/directional-cascade-layered-rendering-todo.md), [todo/local-shadow-frustum-culling-todo.md](todo/local-shadow-frustum-culling-todo.md), [todo/shadow-atlas-region-organization-todo.md](todo/shadow-atlas-region-organization-todo.md), [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | VSM/EVSM filtering, dynamic atlas LOD allocation, local shadow frustum culling, region organization performance, and post-v1 advanced shadow follow-ups for directional, spot, and point lights. Directional cascade layered rendering is implemented for the legacy texture-array path; grouped atlas cascade rendering is now tracked as the next parity phase. |
+| Texture management runtime | Implemented + validation | [todo/texturing/texture-streaming-consolidation-todo.md](todo/texturing/texture-streaming-consolidation-todo.md), [todo/texturing/texture-management-runtime-todo.md](todo/texturing/texture-management-runtime-todo.md), [todo/texturing/texture-streaming-cooked-cache-todo.md](todo/texturing/texture-streaming-cooked-cache-todo.md), [design/texturing/texture-management-runtime-design.md](design/texturing/texture-management-runtime-design.md) | Consolidated runtime texture residency, upload scheduling, GL storage safety, VRAM telemetry, cooked-cache manifest reads, and dedicated texture logging. Editor scene validation remains. |
 | OpenVR VRClient GPU handoff | Active | [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
 | GPU-driven animation | Active | [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/gpu-driven-animation.md). |
 | GPU skinning buffer compression | Active | [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md) | XRMesh and XRMeshRenderer influence/palette compression plan for direct and compute skinning. |
@@ -62,6 +63,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md)
 - [todo/gpu-rendering.md](todo/gpu-rendering.md)
 - [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md)
+- [todo/local-shadow-frustum-culling-todo.md](todo/local-shadow-frustum-culling-todo.md)
 - [todo/octahedral-billboard-capture-todo.md](todo/octahedral-billboard-capture-todo.md)
 - [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md)
 - [todo/physics-finalization.md](todo/physics-finalization.md)
@@ -69,9 +71,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
 - [todo/shadow-atlas-region-organization-todo.md](todo/shadow-atlas-region-organization-todo.md)
 - [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md)
-- [todo/texture-management-runtime-todo.md](todo/texture-management-runtime-todo.md)
-- [todo/texture-streaming-cooked-cache-todo.md](todo/texture-streaming-cooked-cache-todo.md)
-- [todo/texture-streaming-consolidation-todo.md](todo/texture-streaming-consolidation-todo.md)
+- [todo/texturing/texture-streaming-consolidation-todo.md](todo/texturing/texture-streaming-consolidation-todo.md)
 - [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md)
 - [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
 - [todo/vulkan.md](todo/vulkan.md)
@@ -105,7 +105,8 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/source-backed-csharp-script-components.md](design/source-backed-csharp-script-components.md)
 - [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md)
 - [design/transparency-and-oit-implementation-plan.md](design/transparency-and-oit-implementation-plan.md)
-- [design/texture-management-runtime-design.md](design/texture-management-runtime-design.md)
+- [design/texturing/texture-management-runtime-design.md](design/texturing/texture-management-runtime-design.md)
+- [design/texturing/sparse-texture-streaming-plan.md](design/texturing/sparse-texture-streaming-plan.md)
 - [design/vxao-implementation-plan.md](design/vxao-implementation-plan.md)
 - [design/zero-readback-gpu-driven-rendering-plan.md](design/zero-readback-gpu-driven-rendering-plan.md)
 

@@ -377,7 +377,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             else if (_currentLightComponent is SpotLightComponent)
             {
                 SpotLightComponent spotLight = (SpotLightComponent)_currentLightComponent;
-                bool useSpotAtlas = Engine.Rendering.Settings.UseSpotShadowAtlas;
+                bool useSpotAtlas = spotLight.UsesSpotShadowAtlasForCurrentEncoding;
                 bool atlasBound = false;
                 ShadowFallbackMode atlasFallback = ShadowFallbackMode.Lit;
                 bool useLegacyShadowMap = !useSpotAtlas && hasShadowMap;
@@ -405,6 +405,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                     farPlane,
                     spotLight.ShadowMomentMipBias,
                     spotLight.ShadowMomentUseMipmaps ? 1.0f : 0.0f));
+                materialProgram.Uniform("ShadowMomentFilterParams", new Vector4(
+                    spotLight.ShadowMomentBlurRadiusTexels,
+                    spotLight.ShadowMomentBlurPasses,
+                    spotLight.ShadowMomentUseMipmaps ? 1.0f : 0.0f,
+                    0.0f));
 
                 materialProgram.Uniform("LightHasShadowMap", atlasBound || useLegacyShadowMap);
                 materialProgram.Uniform("SpotShadowAtlasFallbackMode", (int)atlasFallback);

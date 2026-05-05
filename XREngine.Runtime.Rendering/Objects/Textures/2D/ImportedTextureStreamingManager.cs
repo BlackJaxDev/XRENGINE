@@ -9,1375 +9,6 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
-internal readonly record struct TextureStreamingResidentData(
-    Mipmap2D[] Mipmaps,
-    uint SourceWidth,
-    uint SourceHeight,
-    uint ResidentMaxDimension);
-
-public readonly record struct ImportedTextureStreamingUsage(
-    float DistanceFromCamera,
-    float ProjectedPixelSpan = 0.0f,
-    float ScreenCoverage = 0.0f,
-    float UvDensityHint = 1.0f,
-    SparseTextureStreamingPageSelection PageSelection = default)
-{
-    public float ClampedDistance => MathF.Max(0.0f, DistanceFromCamera);
-    public float ClampedProjectedPixelSpan
-        => float.IsFinite(ProjectedPixelSpan)
-            ? MathF.Max(0.0f, ProjectedPixelSpan)
-            : 0.0f;
-
-    public float ClampedScreenCoverage
-        => float.IsFinite(ScreenCoverage)
-            ? Math.Clamp(ScreenCoverage, 0.0f, 1.0f)
-            : 0.0f;
-    public float NormalizedUvDensityHint
-        => float.IsFinite(UvDensityHint)
-            ? Math.Clamp(UvDensityHint, 0.5f, 2.0f)
-            : 1.0f;
-
-    public SparseTextureStreamingPageSelection NormalizedPageSelection => PageSelection.Normalize();
-}
-
-internal readonly record struct ImportedTextureStreamingPolicyInput(
-    uint SourceWidth,
-    uint SourceHeight,
-    uint ResidentMaxDimension,
-    bool PreviewReady,
-    long LastVisibleFrameId,
-    float MinVisibleDistance,
-    float MaxProjectedPixelSpan,
-    float MaxScreenCoverage,
-    float UvDensityHint,
-    string? SamplerName);
-
-internal readonly record struct ImportedTextureStreamingBudgetInput(
-    uint SourceWidth,
-    uint SourceHeight,
-    uint ResidentMaxDimension,
-    uint PreviewMaxDimension,
-    SparseTextureStreamingPageSelection PageSelection);
-
-public readonly record struct ImportedTextureStreamingTelemetry(
-    string BackendName,
-    int ActiveImportScopes,
-    int TrackedTextureCount,
-    int PendingTransitionCount,
-    int ActiveDecodeCount,
-    int QueuedDecodeCount,
-    int ActiveGpuUploadCount,
-    int QueuedTransitionsThisFrame,
-    int QueuedPromotionTransitionsThisFrame,
-    int QueuedDemotionTransitionsThisFrame,
-    long LastFrameId,
-    long CurrentManagedBytes,
-    long AvailableManagedBytes,
-    long AssignedManagedBytes,
-    long UploadBytesScheduledThisFrame,
-    bool PromotionsBlocked);
-
-public readonly record struct ImportedTextureStreamingTextureTelemetry(
-    string? TextureName,
-    string? FilePath,
-    string? SamplerName,
-    uint SourceWidth,
-    uint SourceHeight,
-    uint ResidentMaxDimension,
-    uint DesiredResidentMaxDimension,
-    uint PendingResidentMaxDimension,
-    long LastVisibleFrameId,
-    float MinVisibleDistance,
-    float MaxProjectedPixelSpan,
-    float MaxScreenCoverage,
-    float UvDensityHint,
-    float CurrentPageCoverage,
-    float DesiredPageCoverage,
-    bool PreviewReady,
-    long CurrentCommittedBytes,
-    long DesiredCommittedBytes,
-    bool HasPendingTransition,
-    bool IsVisible,
-    bool IsSlow,
-    bool WasPressureDemoted,
-    bool HasValidationFailure,
-    int ValidationFailureCount,
-    double OldestQueueWaitMilliseconds,
-    double LastUploadMilliseconds,
-    float PriorityScore,
-    string BackendName);
-
-internal interface ITextureStreamingSource
-{
-    string SourcePath { get; }
-    TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken);
-}
-
-internal interface ITextureResidencyBackend
-{
-    string Name { get; }
-    uint PreviewMaxDimension { get; }
-    int ActiveDecodeCount { get; }
-    int QueuedDecodeCount { get; }
-    int ActiveGpuUploadCount { get; }
-    long UploadBytesScheduledThisFrame { get; }
-    long EstimateCommittedBytes(uint sourceWidth, uint sourceHeight, uint residentMaxDimension, ESizedInternalFormat format = ESizedInternalFormat.Rgba8, int sparseNumLevels = 0, SparseTextureStreamingPageSelection pageSelection = default);
-    uint GetNextLowerResidentSize(uint sourceMaxDimension, uint currentResidentSize);
-    EnumeratorJob SchedulePreviewLoad(
-        ITextureStreamingSource source,
-        XRTexture2D target,
-        Action<TextureStreamingResidentData>? onPrepared = null,
-        Action<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? onDeferred = null,
-        Action<XRTexture2D>? onFinished = null,
-        Action<Exception>? onError = null,
-        Action? onCanceled = null,
-        Action<float>? onProgress = null,
-        Func<bool>? shouldAcceptResult = null,
-        CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low);
-    EnumeratorJob ScheduleResidentLoad(
-        ITextureStreamingSource source,
-        XRTexture2D target,
-        uint maxResidentDimension,
-        bool includeMipChain,
-        SparseTextureStreamingPageSelection pageSelection,
-        Action<TextureStreamingResidentData>? onPrepared = null,
-        Action<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? onDeferred = null,
-        Action<XRTexture2D>? onFinished = null,
-        Action<Exception>? onError = null,
-        Action? onCanceled = null,
-        Func<bool>? shouldAcceptResult = null,
-        CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low);
-}
-
-internal static class TextureStreamingSourceFactory
-{
-    internal static ITextureStreamingSource Create(string filePath)
-    {
-        string authorityPath = XRTexture2D.ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
-
-        if (XRTexture2D.HasAssetExtensionInternal(authorityPath))
-            return new AssetTextureStreamingSource(authorityPath, originalSourcePath);
-
-        return new ThirdPartyTextureStreamingSource(authorityPath);
-    }
-}
-
-internal sealed class AssetTextureStreamingSource(string assetPath, string? fallbackSourcePath = null) : ITextureStreamingSource
-{
-    private readonly ThirdPartyTextureStreamingSource? _fallbackSource = string.IsNullOrWhiteSpace(fallbackSourcePath)
-        ? null
-        : new ThirdPartyTextureStreamingSource(Path.GetFullPath(fallbackSourcePath));
-    private int _preferFallback;
-
-    public string SourcePath => assetPath;
-
-    public TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken)
-    {
-        if (Volatile.Read(ref _preferFallback) != 0 && _fallbackSource is not null)
-            return _fallbackSource.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
-
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            long totalStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            long readStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            byte[] assetBytes = RuntimeRenderingHostServices.Current.ReadAllBytes(assetPath);
-            double cacheReadMilliseconds = XRTexture2D.CompleteImportedTextureTiming(readStartTimestamp);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            long parseStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(assetBytes, maxResidentDimension, includeMipChain, out TextureStreamingResidentData residentData))
-            {
-                double cacheParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
-                TextureRuntimeDiagnostics.LogCacheRead(
-                    RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
-                    _fallbackSource?.SourcePath ?? assetPath,
-                    assetPath,
-                    residentData.SourceWidth,
-                    residentData.SourceHeight,
-                    maxResidentDimension,
-                    residentData.ResidentMaxDimension,
-                    includeMipChain,
-                    residentData.Mipmaps.Length,
-                    cacheReadMilliseconds,
-                    cacheParseMilliseconds,
-                    XRTexture2D.CompleteImportedTextureTiming(totalStartTimestamp),
-                    usedCookedPayload: true);
-                return residentData;
-            }
-
-            double failedPayloadParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            XRTexture2D? scratch = RuntimeRenderingHostServices.Current.LoadAsset<XRTexture2D>(assetPath);
-            if (scratch is not null)
-            {
-                TextureStreamingResidentData loadedResidentData = XRTexture2D.BuildResidentDataFromLoadedTexture(
-                    scratch,
-                    maxResidentDimension,
-                    includeMipChain,
-                    cancellationToken);
-                TextureRuntimeDiagnostics.LogCacheRead(
-                    RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
-                    _fallbackSource?.SourcePath ?? assetPath,
-                    assetPath,
-                    loadedResidentData.SourceWidth,
-                    loadedResidentData.SourceHeight,
-                    maxResidentDimension,
-                    loadedResidentData.ResidentMaxDimension,
-                    includeMipChain,
-                    loadedResidentData.Mipmaps.Length,
-                    cacheReadMilliseconds,
-                    failedPayloadParseMilliseconds,
-                    XRTexture2D.CompleteImportedTextureTiming(totalStartTimestamp),
-                    usedCookedPayload: false);
-                return loadedResidentData;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex) when (_fallbackSource is not null)
-        {
-            return LoadFallbackResidentData(maxResidentDimension, includeMipChain, cancellationToken, ex);
-        }
-
-        if (_fallbackSource is not null)
-            return LoadFallbackResidentData(maxResidentDimension, includeMipChain, cancellationToken, failure: null);
-
-        throw new FileNotFoundException($"Failed to load texture asset '{assetPath}'.", assetPath);
-    }
-
-    private TextureStreamingResidentData LoadFallbackResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken, Exception? failure)
-    {
-        if (_fallbackSource is null)
-            throw failure ?? new FileNotFoundException($"Failed to load texture asset '{assetPath}'.", assetPath);
-
-        if (Interlocked.Exchange(ref _preferFallback, 1) == 0)
-        {
-            string reason = failure is null
-                ? "the cached texture asset was unreadable"
-                : $"{failure.GetType().Name}: {failure.Message}";
-            Debug.TexturesWarning(
-                $"Falling back to source texture '{_fallbackSource.SourcePath}' because cache asset '{assetPath}' could not be used ({reason}).");
-        }
-
-        return _fallbackSource.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
-    }
-}
-
-internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITextureStreamingSource
-{
-    public string SourcePath => sourcePath;
-
-    public TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
-        {
-            using MagickImage filler = (MagickImage)XRTexture2D.FillerImage.Clone();
-            return XRTexture2D.BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain, cancellationToken: cancellationToken);
-        }
-
-        long decodeStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-        using MagickImage sourceImage = new(sourcePath);
-        double decodeMilliseconds = XRTexture2D.CompleteImportedTextureTiming(decodeStartTimestamp);
-        cancellationToken.ThrowIfCancellationRequested();
-        return XRTexture2D.BuildResidentDataFromImage(
-            sourceImage,
-            maxResidentDimension,
-            includeMipChain,
-            sourcePath,
-            decodeMilliseconds,
-            cancellationToken);
-    }
-}
-
-internal static class TextureStreamingResidentDataReuseCache
-{
-    private const int MaxEntries = 24;
-    private const long MaxEntryBytes = 64L * 1024L * 1024L;
-    private const long MaxTotalBytes = 256L * 1024L * 1024L;
-    private const double EntryLifetimeMilliseconds = 15_000.0;
-
-    private readonly record struct CacheKey(
-        string AuthorityPath,
-        long LastWriteUtcTicks,
-        long Length,
-        uint MaxResidentDimension,
-        bool IncludeMipChain);
-
-    private sealed record CacheEntry(TextureStreamingResidentData Data, long CreatedTimestamp, long Bytes);
-
-    private static readonly ConcurrentDictionary<CacheKey, CacheEntry> Entries = new();
-    private static long s_totalBytes;
-
-    public static bool TryGet(
-        ITextureStreamingSource source,
-        uint maxResidentDimension,
-        bool includeMipChain,
-        out TextureStreamingResidentData residentData)
-    {
-        residentData = default;
-        if (!TryCreateKey(source, maxResidentDimension, includeMipChain, out CacheKey key))
-            return false;
-
-        if (!Entries.TryGetValue(key, out CacheEntry? entry))
-            return false;
-
-        if (TextureRuntimeDiagnostics.ElapsedMilliseconds(entry.CreatedTimestamp) > EntryLifetimeMilliseconds)
-        {
-            Remove(key);
-            return false;
-        }
-
-        residentData = CloneResidentData(entry.Data);
-        return true;
-    }
-
-    public static void Store(
-        ITextureStreamingSource source,
-        uint maxResidentDimension,
-        bool includeMipChain,
-        TextureStreamingResidentData residentData)
-    {
-        if (!TryCreateKey(source, maxResidentDimension, includeMipChain, out CacheKey key))
-            return;
-
-        long bytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
-        if (bytes <= 0 || bytes > MaxEntryBytes)
-            return;
-
-        CacheEntry entry = new(CloneResidentData(residentData), TextureRuntimeDiagnostics.StartTiming(), bytes);
-        Entries.AddOrUpdate(
-            key,
-            addValueFactory: _ =>
-            {
-                Interlocked.Add(ref s_totalBytes, bytes);
-                return entry;
-            },
-            updateValueFactory: (_, previous) =>
-            {
-                Interlocked.Add(ref s_totalBytes, bytes - previous.Bytes);
-                return entry;
-            });
-
-        PruneIfNeeded();
-    }
-
-    private static bool TryCreateKey(
-        ITextureStreamingSource source,
-        uint maxResidentDimension,
-        bool includeMipChain,
-        out CacheKey key)
-    {
-        key = default;
-        if (string.IsNullOrWhiteSpace(source.SourcePath))
-            return false;
-
-        string authorityPath = Path.GetFullPath(source.SourcePath);
-        long lastWriteUtcTicks = 0L;
-        long length = 0L;
-        try
-        {
-            FileInfo info = new(authorityPath);
-            if (info.Exists)
-            {
-                lastWriteUtcTicks = info.LastWriteTimeUtc.Ticks;
-                length = info.Length;
-            }
-        }
-        catch
-        {
-            return false;
-        }
-
-        key = new CacheKey(
-            authorityPath,
-            lastWriteUtcTicks,
-            length,
-            maxResidentDimension,
-            includeMipChain);
-        return true;
-    }
-
-    private static TextureStreamingResidentData CloneResidentData(TextureStreamingResidentData residentData)
-    {
-        Mipmap2D[] sourceMipmaps = residentData.Mipmaps;
-        Mipmap2D[] mipmaps = new Mipmap2D[sourceMipmaps.Length];
-        for (int i = 0; i < sourceMipmaps.Length; i++)
-            mipmaps[i] = sourceMipmaps[i].Clone(cloneImage: true);
-
-        return new TextureStreamingResidentData(
-            mipmaps,
-            residentData.SourceWidth,
-            residentData.SourceHeight,
-            residentData.ResidentMaxDimension);
-    }
-
-    private static void PruneIfNeeded()
-    {
-        long totalBytes = Interlocked.Read(ref s_totalBytes);
-        if (Entries.Count <= MaxEntries && totalBytes <= MaxTotalBytes)
-            return;
-
-        foreach (KeyValuePair<CacheKey, CacheEntry> pair in Entries)
-        {
-            if (TextureRuntimeDiagnostics.ElapsedMilliseconds(pair.Value.CreatedTimestamp) > EntryLifetimeMilliseconds)
-                Remove(pair.Key);
-        }
-
-        while (Entries.Count > MaxEntries || Interlocked.Read(ref s_totalBytes) > MaxTotalBytes)
-        {
-            CacheKey oldestKey = default;
-            CacheEntry? oldestEntry = null;
-            foreach (KeyValuePair<CacheKey, CacheEntry> pair in Entries)
-            {
-                if (oldestEntry is null || pair.Value.CreatedTimestamp < oldestEntry.CreatedTimestamp)
-                {
-                    oldestKey = pair.Key;
-                    oldestEntry = pair.Value;
-                }
-            }
-
-            if (oldestEntry is null)
-                return;
-
-            Remove(oldestKey);
-        }
-    }
-
-    private static void Remove(CacheKey key)
-    {
-        if (Entries.TryRemove(key, out CacheEntry? removed))
-            Interlocked.Add(ref s_totalBytes, -removed.Bytes);
-    }
-}
-
-internal sealed class PriorityAsyncSemaphore
-{
-    private sealed class Waiter(JobPriority priority, CancellationToken cancellationToken)
-    {
-        private int _canceled;
-
-        public readonly JobPriority Priority = priority;
-        public readonly TaskCompletionSource Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public CancellationTokenRegistration CancellationRegistration;
-
-        public bool IsCanceled => Volatile.Read(ref _canceled) != 0;
-
-        public void Cancel()
-        {
-            if (Interlocked.Exchange(ref _canceled, 1) == 0)
-                Completion.TrySetCanceled(cancellationToken);
-        }
-
-        public bool TryGrant()
-        {
-            if (IsCanceled)
-                return false;
-
-            CancellationRegistration.Dispose();
-            return Completion.TrySetResult();
-        }
-    }
-
-    private readonly Queue<Waiter>[] _queues;
-    private readonly object _sync = new();
-    private int _availableCount;
-
-    public PriorityAsyncSemaphore(int initialCount)
-    {
-        if (initialCount <= 0)
-            throw new ArgumentOutOfRangeException(nameof(initialCount), "Initial count must be positive.");
-
-        _availableCount = initialCount;
-        _queues = new Queue<Waiter>[(int)JobPriority.Highest + 1];
-        for (int i = 0; i < _queues.Length; i++)
-            _queues[i] = new Queue<Waiter>();
-    }
-
-    public Task WaitAsync(JobPriority priority, CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-            return Task.FromCanceled(cancellationToken);
-
-        lock (_sync)
-        {
-            if (_availableCount > 0 && !HasWaiters())
-            {
-                _availableCount--;
-                return Task.CompletedTask;
-            }
-
-            Waiter waiter = new(NormalizePriority(priority), cancellationToken);
-            waiter.CancellationRegistration = cancellationToken.Register(static state => ((Waiter)state!).Cancel(), waiter);
-            _queues[(int)waiter.Priority].Enqueue(waiter);
-            return waiter.Completion.Task;
-        }
-    }
-
-    public void Release()
-    {
-        lock (_sync)
-        {
-            while (TryDequeueNextWaiter(out Waiter? waiter))
-            {
-                if (waiter is null)
-                    continue;
-
-                if (waiter.TryGrant())
-                    return;
-
-                waiter.CancellationRegistration.Dispose();
-            }
-
-            _availableCount++;
-        }
-    }
-
-    private bool HasWaiters()
-    {
-        for (int i = _queues.Length - 1; i >= 0; i--)
-        {
-            if (_queues[i].Count > 0)
-                return true;
-        }
-
-        return false;
-    }
-
-    private bool TryDequeueNextWaiter(out Waiter? waiter)
-    {
-        for (int i = _queues.Length - 1; i >= 0; i--)
-        {
-            Queue<Waiter> queue = _queues[i];
-            while (queue.Count > 0)
-            {
-                Waiter candidate = queue.Dequeue();
-                if (candidate.IsCanceled)
-                {
-                    candidate.CancellationRegistration.Dispose();
-                    continue;
-                }
-
-                waiter = candidate;
-                return true;
-            }
-        }
-
-        waiter = null;
-        return false;
-    }
-
-    private static JobPriority NormalizePriority(JobPriority priority)
-        => priority < JobPriority.Lowest
-            ? JobPriority.Lowest
-            : priority > JobPriority.Highest
-                ? JobPriority.Highest
-                : priority;
-}
-
-internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
-{
-    private const int MaxConcurrentStreamingDecodes = 2;
-    private const int MaxRenderThreadApplyResidentDataPerFrame = 1;
-
-    private static readonly uint[] ResidentCandidates =
-    [
-        1u,
-        2u,
-        4u,
-        8u,
-        16u,
-        32u,
-        64u,
-        128u,
-        256u,
-        512u,
-        1024u,
-        2048u,
-        4096u,
-        8192u,
-    ];
-
-    private static readonly PriorityAsyncSemaphore DecodeGate = new(MaxConcurrentStreamingDecodes);
-
-    private static int s_activeDecodeCount;
-    private static int s_queuedDecodeCount;
-    private static long s_uploadBytesFrameTicks = -1;
-    private static long s_uploadBytesScheduledThisFrame;
-    private static long s_applyResidentDataFrameTicks = -1;
-    private static int s_applyResidentDataCountThisFrame;
-
-    public string Name => nameof(GLTieredTextureResidencyBackend);
-    public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
-    public int ActiveDecodeCount => Volatile.Read(ref s_activeDecodeCount);
-    public int QueuedDecodeCount => Volatile.Read(ref s_queuedDecodeCount);
-    public int ActiveGpuUploadCount => XRTexture2D.QueuedProgressiveUploadCount;
-    public long UploadBytesScheduledThisFrame => GetUploadBytesScheduledThisFrame();
-
-    public long EstimateCommittedBytes(uint sourceWidth, uint sourceHeight, uint residentMaxDimension, ESizedInternalFormat format = ESizedInternalFormat.Rgba8, int sparseNumLevels = 0, SparseTextureStreamingPageSelection pageSelection = default)
-        => XRTexture2D.EstimateResidentBytes(sourceWidth, sourceHeight, residentMaxDimension, format);
-
-    public uint GetNextLowerResidentSize(uint sourceMaxDimension, uint currentResidentSize)
-    {
-        uint minimumResidentSize = XRTexture2D.GetMinimumResidentSize(sourceMaxDimension);
-        if (currentResidentSize <= minimumResidentSize)
-            return minimumResidentSize;
-
-        for (int index = ResidentCandidates.Length - 1; index >= 0; index--)
-        {
-            uint candidate = ResidentCandidates[index];
-            if (candidate >= currentResidentSize)
-                continue;
-            if (sourceMaxDimension != 0 && candidate > sourceMaxDimension)
-                continue;
-
-            return Math.Max(candidate, minimumResidentSize);
-        }
-
-        return minimumResidentSize;
-    }
-
-    public EnumeratorJob SchedulePreviewLoad(
-        ITextureStreamingSource source,
-        XRTexture2D target,
-        Action<TextureStreamingResidentData>? onPrepared = null,
-        Action<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? onDeferred = null,
-        Action<XRTexture2D>? onFinished = null,
-        Action<Exception>? onError = null,
-        Action? onCanceled = null,
-        Action<float>? onProgress = null,
-        Func<bool>? shouldAcceptResult = null,
-        CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low)
-        => ScheduleResidentLoad(
-            source,
-            target,
-            PreviewMaxDimension,
-            includeMipChain: false,
-            SparseTextureStreamingPageSelection.Full,
-            onPrepared,
-            onDeferred,
-            onFinished,
-            onError,
-            onCanceled,
-            shouldAcceptResult,
-            cancellationToken,
-            priority,
-            onProgress);
-
-    public EnumeratorJob ScheduleResidentLoad(
-        ITextureStreamingSource source,
-        XRTexture2D target,
-        uint maxResidentDimension,
-        bool includeMipChain,
-        SparseTextureStreamingPageSelection pageSelection,
-        Action<TextureStreamingResidentData>? onPrepared = null,
-        Action<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? onDeferred = null,
-        Action<XRTexture2D>? onFinished = null,
-        Action<Exception>? onError = null,
-        Action? onCanceled = null,
-        Func<bool>? shouldAcceptResult = null,
-        CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low)
-        => ScheduleResidentLoad(
-            source,
-            target,
-            maxResidentDimension,
-            includeMipChain,
-            pageSelection,
-            onPrepared,
-            onDeferred,
-            onFinished,
-            onError,
-            onCanceled,
-            shouldAcceptResult,
-            cancellationToken,
-            priority,
-            onProgress: null);
-
-    private static EnumeratorJob ScheduleResidentLoad(
-        ITextureStreamingSource source,
-        XRTexture2D target,
-        uint maxResidentDimension,
-        bool includeMipChain,
-        SparseTextureStreamingPageSelection pageSelection,
-        Action<TextureStreamingResidentData>? onPrepared,
-        Action<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? onDeferred,
-        Action<XRTexture2D>? onFinished,
-        Action<Exception>? onError,
-        Action? onCanceled,
-        Func<bool>? shouldAcceptResult,
-        CancellationToken cancellationToken,
-        JobPriority priority,
-        Action<float>? onProgress)
-    {
-        Interlocked.Increment(ref s_queuedDecodeCount);
-
-        void ReportCanceled(string phase)
-        {
-            TextureRuntimeDiagnostics.LogTransitionCanceled(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
-                target.Name,
-                source.SourcePath,
-                maxResidentDimension,
-                nameof(GLTieredTextureResidencyBackend),
-                phase);
-            onCanceled?.Invoke();
-        }
-
-        Task loadTask = Task.Run(async () =>
-        {
-            bool decodeActivated = false;
-            string cancellationPhase = "before decode/cache read";
-            try
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    ReportCanceled(cancellationPhase);
-                    return;
-                }
-
-                await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
-                Interlocked.Decrement(ref s_queuedDecodeCount);
-                Interlocked.Increment(ref s_activeDecodeCount);
-                decodeActivated = true;
-
-                TextureStreamingResidentData residentData;
-                try
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    cancellationPhase = "during decode/cache read";
-                    if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData))
-                    {
-                        TextureRuntimeDiagnostics.LogResidentDataReused(
-                            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
-                            source.SourcePath,
-                            maxResidentDimension,
-                            includeMipChain,
-                            residentData.ResidentMaxDimension,
-                            residentData.Mipmaps.Length,
-                            nameof(GLTieredTextureResidencyBackend));
-                    }
-                    else
-                    {
-                        residentData = source.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
-                        TextureStreamingResidentDataReuseCache.Store(source, maxResidentDimension, includeMipChain, residentData);
-                    }
-                }
-                finally
-                {
-                    if (decodeActivated)
-                    {
-                        Interlocked.Decrement(ref s_activeDecodeCount);
-                        DecodeGate.Release();
-                    }
-                }
-
-                void ApplyResidentDataOnRenderThreadCore()
-                {
-                    if (cancellationToken.IsCancellationRequested
-                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
-                    {
-                        ReportCanceled(cancellationPhase);
-                        return;
-                    }
-
-                    cancellationPhase = "after CPU prep";
-                    onPrepared?.Invoke(residentData);
-
-                    if (cancellationToken.IsCancellationRequested
-                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
-                    {
-                        ReportCanceled(cancellationPhase);
-                        return;
-                    }
-
-                    cancellationPhase = "during upload";
-                    XRTexture2D.ApplyResidentData(target, residentData, includeMipChain);
-                    onProgress?.Invoke(0.5f);
-
-                    if (cancellationToken.IsCancellationRequested
-                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
-                    {
-                        ReportCanceled(cancellationPhase);
-                        return;
-                    }
-
-                    long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
-                    RecordUploadBytes(uploadBytes);
-                    XRTexture2D.ScheduleGpuUploadInternal(target, cancellationToken, () =>
-                    {
-                        if (cancellationToken.IsCancellationRequested
-                            || (shouldAcceptResult is not null && !shouldAcceptResult()))
-                        {
-                            ReportCanceled("during finalization");
-                            return;
-                        }
-
-                        onProgress?.Invoke(1.0f);
-                        onFinished?.Invoke(target);
-                    }, ImportedTextureStreamingManager.ResolveUploadPriorityClass(priority));
-                }
-
-                bool ApplyResidentDataOnRenderThreadBudgeted()
-                {
-                    if (!TryEnterRenderThreadApplyBudget())
-                        return false;
-
-                    ApplyResidentDataOnRenderThreadCore();
-                    return true;
-                }
-
-                if (RuntimeRenderingHostServices.Current.IsRenderThread && TryEnterRenderThreadApplyBudget())
-                    ApplyResidentDataOnRenderThreadCore();
-                else
-                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
-                        ApplyResidentDataOnRenderThreadBudgeted,
-                        $"TextureStreaming.ApplyResidentData[{target.Name}]");
-            }
-            catch (OperationCanceledException)
-            {
-                ReportCanceled(cancellationPhase);
-            }
-            catch (Exception ex)
-            {
-                onError?.Invoke(ex);
-            }
-            finally
-            {
-                if (!decodeActivated)
-                {
-                    int remaining = Interlocked.Decrement(ref s_queuedDecodeCount);
-                    if (remaining < 0)
-                        Interlocked.Exchange(ref s_queuedDecodeCount, 0);
-                }
-            }
-        });
-
-        IEnumerable Routine()
-        {
-            yield return loadTask;
-        }
-
-        return RuntimeRenderingHostServices.Current.ScheduleEnumeratorJob(
-            Routine,
-            priority,
-            cancellationToken: CancellationToken.None);
-    }
-
-    private static bool TryEnterRenderThreadApplyBudget()
-    {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-        long previousFrame = Interlocked.Exchange(ref s_applyResidentDataFrameTicks, currentFrame);
-        if (previousFrame != currentFrame)
-            Interlocked.Exchange(ref s_applyResidentDataCountThisFrame, 0);
-
-        while (true)
-        {
-            int currentCount = Volatile.Read(ref s_applyResidentDataCountThisFrame);
-            if (currentCount >= MaxRenderThreadApplyResidentDataPerFrame)
-                return false;
-
-            if (Interlocked.CompareExchange(ref s_applyResidentDataCountThisFrame, currentCount + 1, currentCount) == currentCount)
-                return true;
-        }
-    }
-
-    private static void RecordUploadBytes(long bytes)
-    {
-        if (bytes <= 0)
-            return;
-
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-        long previousFrame = Interlocked.Exchange(ref s_uploadBytesFrameTicks, currentFrame);
-        if (previousFrame != currentFrame)
-            Interlocked.Exchange(ref s_uploadBytesScheduledThisFrame, 0L);
-
-        _ = Interlocked.Add(ref s_uploadBytesScheduledThisFrame, bytes);
-    }
-
-    private static long GetUploadBytesScheduledThisFrame()
-    {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-        long previousFrame = Volatile.Read(ref s_uploadBytesFrameTicks);
-        if (previousFrame != currentFrame)
-            return 0L;
-
-        return Volatile.Read(ref s_uploadBytesScheduledThisFrame);
-    }
-}
-
-internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
-{
-    private const int MaxConcurrentStreamingDecodes = 2;
-    private const int MaxQueuedDecodeBacklog = 8;
-    private const int MaxSharedUploadsInFlight = 1;
-    private const int MaxSparseTransitionSchedulesPerFrame = 1;
-    private static readonly uint[] ResidentCandidates =
-    [
-        1u,
-        2u,
-        4u,
-        8u,
-        16u,
-        32u,
-        64u,
-        128u,
-        256u,
-        512u,
-        1024u,
-        2048u,
-        4096u,
-        8192u,
-    ];
-
-    private static readonly PriorityAsyncSemaphore DecodeGate = new(MaxConcurrentStreamingDecodes);
-
-    private static int s_activeDecodeCount;
-    private static int s_queuedDecodeCount;
-    private static int s_inFlightUploadCount;
-    private static long s_uploadBytesFrameTicks = -1;
-    private static long s_uploadBytesScheduledThisFrame;
-    private static long s_sparseTransitionScheduleFrameTicks = -1;
-    private static int s_sparseTransitionScheduleCountThisFrame;
-
-    public string Name => nameof(GLSparseTextureResidencyBackend);
-    public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
-    public int ActiveDecodeCount => Volatile.Read(ref s_activeDecodeCount);
-    public int QueuedDecodeCount => Volatile.Read(ref s_queuedDecodeCount);
-    public int ActiveGpuUploadCount => Volatile.Read(ref s_inFlightUploadCount);
-    public long UploadBytesScheduledThisFrame => GetUploadBytesScheduledThisFrame();
-
-    public long EstimateCommittedBytes(uint sourceWidth, uint sourceHeight, uint residentMaxDimension, ESizedInternalFormat format = ESizedInternalFormat.Rgba8, int sparseNumLevels = 0, SparseTextureStreamingPageSelection pageSelection = default)
-    {
-        if (residentMaxDimension == 0)
-            return 0L;
-
-        int logicalMipCount = XRTexture2D.GetLogicalMipCount(sourceWidth, sourceHeight);
-        if (logicalMipCount <= 0)
-            return 0L;
-
-        int requestedBaseMipLevel = XRTexture2D.ResolveResidentBaseMipLevel(sourceWidth, sourceHeight, residentMaxDimension);
-        SparseTextureStreamingSupport support = RuntimeRenderingHostServices.Current.GetSparseTextureStreamingSupport(format);
-        return XRTexture2D.EstimateSparsePageSelectionBytes(
-            sourceWidth,
-            sourceHeight,
-            requestedBaseMipLevel,
-            logicalMipCount,
-            sparseNumLevels,
-            support,
-            pageSelection,
-            format);
-    }
-
-    public uint GetNextLowerResidentSize(uint sourceMaxDimension, uint currentResidentSize)
-    {
-        uint minimumResidentSize = XRTexture2D.GetMinimumResidentSize(sourceMaxDimension);
-        if (currentResidentSize <= minimumResidentSize)
-            return minimumResidentSize;
-
-        for (int index = ResidentCandidates.Length - 1; index >= 0; index--)
-        {
-            uint candidate = ResidentCandidates[index];
-            if (candidate >= currentResidentSize)
-                continue;
-            if (sourceMaxDimension != 0 && candidate > sourceMaxDimension)
-                continue;
-
-            return Math.Max(candidate, minimumResidentSize);
-        }
-
-        return minimumResidentSize;
-    }
-
-    public EnumeratorJob SchedulePreviewLoad(
-        ITextureStreamingSource source,
-        XRTexture2D target,
-        Action<TextureStreamingResidentData>? onPrepared = null,
-        Action<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? onDeferred = null,
-        Action<XRTexture2D>? onFinished = null,
-        Action<Exception>? onError = null,
-        Action? onCanceled = null,
-        Action<float>? onProgress = null,
-        Func<bool>? shouldAcceptResult = null,
-        CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low)
-        => ScheduleResidentLoad(
-            source,
-            target,
-            PreviewMaxDimension,
-            includeMipChain: true,
-            SparseTextureStreamingPageSelection.Full,
-            onPrepared,
-            onDeferred,
-            onFinished,
-            onError,
-            onCanceled,
-            shouldAcceptResult,
-            cancellationToken,
-            priority,
-            onProgress);
-
-    public EnumeratorJob ScheduleResidentLoad(
-        ITextureStreamingSource source,
-        XRTexture2D target,
-        uint maxResidentDimension,
-        bool includeMipChain,
-        SparseTextureStreamingPageSelection pageSelection,
-        Action<TextureStreamingResidentData>? onPrepared = null,
-        Action<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? onDeferred = null,
-        Action<XRTexture2D>? onFinished = null,
-        Action<Exception>? onError = null,
-        Action? onCanceled = null,
-        Func<bool>? shouldAcceptResult = null,
-        CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low)
-        => ScheduleResidentLoad(
-            source,
-            target,
-            maxResidentDimension,
-            includeMipChain: true,
-            pageSelection,
-            onPrepared,
-            onDeferred,
-            onFinished,
-            onError,
-            onCanceled,
-            shouldAcceptResult,
-            cancellationToken,
-            priority,
-            onProgress: null);
-
-    private static EnumeratorJob ScheduleResidentLoad(
-        ITextureStreamingSource source,
-        XRTexture2D target,
-        uint maxResidentDimension,
-        bool includeMipChain,
-        SparseTextureStreamingPageSelection pageSelection,
-        Action<TextureStreamingResidentData>? onPrepared,
-        Action<SparseTextureStreamingTransitionRequest, SparseTextureStreamingTransitionResult>? onDeferred,
-        Action<XRTexture2D>? onFinished,
-        Action<Exception>? onError,
-        Action? onCanceled,
-        Func<bool>? shouldAcceptResult,
-        CancellationToken cancellationToken,
-        JobPriority priority,
-        Action<float>? onProgress)
-    {
-        Interlocked.Increment(ref s_queuedDecodeCount);
-
-        void ReportCanceled(string phase)
-        {
-            TextureRuntimeDiagnostics.LogTransitionCanceled(
-                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
-                target.Name,
-                source.SourcePath,
-                maxResidentDimension,
-                nameof(GLSparseTextureResidencyBackend),
-                phase);
-            onCanceled?.Invoke();
-        }
-
-        Task loadTask = Task.Run(async () =>
-        {
-            bool decodeActivated = false;
-            string cancellationPhase = "before decode/cache read";
-            try
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    ReportCanceled(cancellationPhase);
-                    return;
-                }
-
-                if (Volatile.Read(ref s_queuedDecodeCount) > MaxQueuedDecodeBacklog)
-                {
-                    ReportCanceled("decode backlog limit");
-                    return;
-                }
-
-                await DecodeGate.WaitAsync(priority, cancellationToken).ConfigureAwait(false);
-                Interlocked.Decrement(ref s_queuedDecodeCount);
-                Interlocked.Increment(ref s_activeDecodeCount);
-                decodeActivated = true;
-
-                TextureStreamingResidentData residentData;
-                try
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    cancellationPhase = "during decode/cache read";
-                    const bool cacheIncludeMipChain = true;
-                    if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, cacheIncludeMipChain, out residentData))
-                    {
-                        TextureRuntimeDiagnostics.LogResidentDataReused(
-                            RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
-                            source.SourcePath,
-                            maxResidentDimension,
-                            cacheIncludeMipChain,
-                            residentData.ResidentMaxDimension,
-                            residentData.Mipmaps.Length,
-                            nameof(GLSparseTextureResidencyBackend));
-                    }
-                    else
-                    {
-                        residentData = source.LoadResidentData(maxResidentDimension, includeMipChain: true, cancellationToken);
-                        TextureStreamingResidentDataReuseCache.Store(source, maxResidentDimension, cacheIncludeMipChain, residentData);
-                    }
-                }
-                finally
-                {
-                    if (decodeActivated)
-                    {
-                        Interlocked.Decrement(ref s_activeDecodeCount);
-                        DecodeGate.Release();
-                    }
-                }
-
-                void ContinueOnRenderThreadCore()
-                {
-                    if (cancellationToken.IsCancellationRequested
-                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
-                    {
-                        ReportCanceled(cancellationPhase);
-                        return;
-                    }
-
-                    cancellationPhase = "after CPU prep";
-                    onPrepared?.Invoke(residentData);
-                    onProgress?.Invoke(0.5f);
-
-                    if (cancellationToken.IsCancellationRequested
-                        || (shouldAcceptResult is not null && !shouldAcceptResult()))
-                    {
-                        ReportCanceled(cancellationPhase);
-                        return;
-                    }
-
-                    cancellationPhase = "during upload";
-                    long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
-
-                    SparseTextureStreamingTransitionRequest transitionRequest = BuildSparseTransitionRequest(residentData, pageSelection);
-
-                    void CompleteSparseTransition(SparseTextureStreamingTransitionResult transitionResult)
-                    {
-                        if (cancellationToken.IsCancellationRequested
-                            || (shouldAcceptResult is not null && !shouldAcceptResult()))
-                        {
-                            ReportCanceled("during finalization");
-                            return;
-                        }
-
-                        if (transitionResult.ExposureDeferred)
-                        {
-                            onDeferred?.Invoke(transitionRequest, transitionResult);
-                            return;
-                        }
-
-                        if (!transitionResult.Applied || !transitionResult.UsedSparseResidency)
-                        {
-                            target.ClearSparseTextureStreamingState();
-                            XRTexture2D.ApplyResidentData(target, residentData, includeMipChain: true);
-                            XRTexture2D.ScheduleGpuUploadInternal(target, cancellationToken, () =>
-                            {
-                                if (cancellationToken.IsCancellationRequested
-                                    || (shouldAcceptResult is not null && !shouldAcceptResult()))
-                                {
-                                    ReportCanceled("during finalization");
-                                    return;
-                                }
-
-                                onProgress?.Invoke(1.0f);
-                                onFinished?.Invoke(target);
-                            }, ImportedTextureStreamingManager.ResolveUploadPriorityClass(priority));
-                            return;
-                        }
-
-                        onProgress?.Invoke(1.0f);
-                        onFinished?.Invoke(target);
-                    }
-
-                    // A promotion (requesting a finer mip than what is currently resident) can use
-                    // the async upload path only when the OpenGL wrapper already has a complete,
-                    // published sparse state. Initial loads and storage recreates fall back to the
-                    // synchronous render-thread path so sampling never sees an uncommitted sparse
-                    // texture while the shared-context upload is in flight.
-                    bool allowAsyncUpload = transitionRequest.RequestedBaseMipLevel < target.SparseTextureStreamingResidentBaseMipLevel && TryEnterSharedUpload();
-                    if (allowAsyncUpload)
-                    {
-                        RecordUploadBytes(uploadBytes);
-                        bool asyncScheduled = RuntimeRenderingHostServices.Current.TryScheduleSparseTextureStreamingTransitionAsync(
-                            target,
-                            transitionRequest,
-                            cancellationToken,
-                            transitionResult =>
-                            {
-                                ExitSharedUpload();
-                                if (RuntimeRenderingHostServices.Current.IsRenderThread)
-                                    CompleteSparseTransition(transitionResult);
-                                else
-                                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
-                                        () => CompleteSparseTransition(transitionResult),
-                                        $"TextureStreaming.CompleteSparseTransition[{target.Name}]");
-                            },
-                            ex =>
-                            {
-                                ExitSharedUpload();
-                                onError?.Invoke(ex);
-                            });
-                        if (asyncScheduled)
-                            return;
-
-                        ExitSharedUpload();
-                    }
-
-                    // Sync render-thread path: increment s_inFlightUploadCount so that
-                    // anyGpuUploadActive is true while this thread is blocked, preventing
-                    // the stuck-transition detector from firing prematurely.
-                    Interlocked.Increment(ref s_inFlightUploadCount);
-                    try
-                    {
-                        RecordUploadBytes(uploadBytes);
-                        SparseTextureStreamingTransitionResult transitionResult = target.ApplySparseTextureStreamingTransition(transitionRequest);
-                        CompleteSparseTransition(transitionResult);
-                    }
-                    finally
-                    {
-                        ExitSharedUpload();
-                    }
-                }
-
-                bool ContinueOnRenderThreadBudgeted()
-                {
-                    if (!TryEnterSparseTransitionScheduleBudget())
-                        return false;
-
-                    ContinueOnRenderThreadCore();
-                    return true;
-                }
-
-                if (RuntimeRenderingHostServices.Current.IsRenderThread && TryEnterSparseTransitionScheduleBudget())
-                    ContinueOnRenderThreadCore();
-                else
-                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
-                        ContinueOnRenderThreadBudgeted,
-                        $"TextureStreaming.ScheduleSparseTransition[{target.Name}]");
-            }
-            catch (OperationCanceledException)
-            {
-                ReportCanceled(cancellationPhase);
-            }
-            catch (Exception ex)
-            {
-                onError?.Invoke(ex);
-            }
-            finally
-            {
-                if (!decodeActivated)
-                {
-                    int remaining = Interlocked.Decrement(ref s_queuedDecodeCount);
-                    if (remaining < 0)
-                        Interlocked.Exchange(ref s_queuedDecodeCount, 0);
-                }
-            }
-        });
-
-        IEnumerable Routine()
-        {
-            yield return loadTask;
-        }
-
-        return RuntimeRenderingHostServices.Current.ScheduleEnumeratorJob(
-            Routine,
-            priority,
-            cancellationToken: CancellationToken.None);
-    }
-
-    private static SparseTextureStreamingTransitionRequest BuildSparseTransitionRequest(TextureStreamingResidentData residentData, SparseTextureStreamingPageSelection pageSelection)
-    {
-        int requestedBaseMipLevel = XRTexture2D.ResolveResidentBaseMipLevel(
-            residentData.SourceWidth,
-            residentData.SourceHeight,
-            residentData.ResidentMaxDimension);
-        int logicalMipCount = XRTexture2D.GetLogicalMipCount(residentData.SourceWidth, residentData.SourceHeight);
-
-        return new SparseTextureStreamingTransitionRequest(
-            residentData.SourceWidth,
-            residentData.SourceHeight,
-            ESizedInternalFormat.Rgba8,
-            logicalMipCount,
-            requestedBaseMipLevel,
-            residentData.Mipmaps,
-            pageSelection.Normalize());
-    }
-
-    private static bool TryEnterSharedUpload()
-    {
-        while (true)
-        {
-            int current = Volatile.Read(ref s_inFlightUploadCount);
-            if (current >= MaxSharedUploadsInFlight)
-                return false;
-
-            if (Interlocked.CompareExchange(ref s_inFlightUploadCount, current + 1, current) == current)
-                return true;
-        }
-    }
-
-    private static bool TryEnterSparseTransitionScheduleBudget()
-    {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-        long previousFrame = Interlocked.Exchange(ref s_sparseTransitionScheduleFrameTicks, currentFrame);
-        if (previousFrame != currentFrame)
-            Interlocked.Exchange(ref s_sparseTransitionScheduleCountThisFrame, 0);
-
-        while (true)
-        {
-            int currentCount = Volatile.Read(ref s_sparseTransitionScheduleCountThisFrame);
-            if (currentCount >= MaxSparseTransitionSchedulesPerFrame)
-                return false;
-
-            if (Interlocked.CompareExchange(ref s_sparseTransitionScheduleCountThisFrame, currentCount + 1, currentCount) == currentCount)
-                return true;
-        }
-    }
-
-    private static void ExitSharedUpload()
-    {
-        int remaining = Interlocked.Decrement(ref s_inFlightUploadCount);
-        if (remaining < 0)
-            Interlocked.Exchange(ref s_inFlightUploadCount, 0);
-    }
-
-    private static void RecordUploadBytes(long bytes)
-    {
-        if (bytes <= 0)
-            return;
-
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-        long previousFrame = Interlocked.Exchange(ref s_uploadBytesFrameTicks, currentFrame);
-        if (previousFrame != currentFrame)
-            Interlocked.Exchange(ref s_uploadBytesScheduledThisFrame, 0L);
-
-        _ = Interlocked.Add(ref s_uploadBytesScheduledThisFrame, bytes);
-    }
-
-    private static long GetUploadBytesScheduledThisFrame()
-    {
-        long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-        long previousFrame = Volatile.Read(ref s_uploadBytesFrameTicks);
-        if (previousFrame != currentFrame)
-            return 0L;
-
-        return Volatile.Read(ref s_uploadBytesScheduledThisFrame);
-    }
-}
-
 internal sealed class ImportedTextureStreamingManager
 {
     private const int MaxResidentTransitionsPerFrame = 2;
@@ -1399,7 +30,6 @@ internal sealed class ImportedTextureStreamingManager
     private const int RecordRefCompactionIntervalFrames = 600;
     private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
-    private static readonly bool EnablePartialSparsePageResidency = false;
 
     /// <summary>
     /// If a pending transition has been stuck for this many frames with no active
@@ -1408,31 +38,12 @@ internal sealed class ImportedTextureStreamingManager
     /// </summary>
     private const int StuckPendingTransitionFrameThreshold = 300;
 
-    private static readonly uint[] PolicyResidentCandidates =
-    [
-        1u,
-        2u,
-        4u,
-        8u,
-        16u,
-        32u,
-        64u,
-        128u,
-        256u,
-        512u,
-        1024u,
-        2048u,
-        4096u,
-        8192u,
-    ];
-
-    private static readonly ConditionalWeakTable<XRTexture2D, ImportedTextureStreamingRecord> s_recordsByTexture = new();
-    private static readonly ConcurrentQueue<WeakReference<ImportedTextureStreamingRecord>> s_recordRefs = new();
-
     public static ImportedTextureStreamingManager Instance { get; } = new();
 
     private readonly ITextureResidencyBackend _tieredBackend = new GLTieredTextureResidencyBackend();
     private readonly ITextureResidencyBackend _sparseBackend = new GLSparseTextureResidencyBackend();
+    private readonly TextureStreamingRegistry _registry = new();
+    private readonly TextureTransitionQueue _transitionQueue = new();
 
     private int _callbacksSubscribed;
     private int _activeImportedModelImports;
@@ -1469,89 +80,6 @@ internal sealed class ImportedTextureStreamingManager
                 Interlocked.Exchange(ref _owner._activeImportedModelImports, 0);
         }
     }
-
-    private sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
-    {
-        public readonly object Sync = new();
-        public readonly WeakReference<XRTexture2D> Texture = new(texture);
-        public string? FilePath = texture.FilePath;
-        public ITextureStreamingSource? Source;
-        public ITextureResidencyBackend? Backend;
-        public ESizedInternalFormat Format = texture.SizedInternalFormat;
-        public uint SourceWidth;
-        public uint SourceHeight;
-        public uint ResidentMaxDimension;
-        public uint DesiredMaxDimension;
-        public uint PendingMaxDimension;
-        public int SparseNumLevels;
-        public long LastVisibleFrameId = long.MinValue;
-        public float MinVisibleDistance = float.PositiveInfinity;
-        public float MaxProjectedPixelSpan;
-        public float MaxScreenCoverage;
-        public float UvDensityHint = 1.0f;
-        public SparseTextureStreamingPageSelection VisiblePageSelection = SparseTextureStreamingPageSelection.Full;
-        public long LastBoundFrameId = long.MinValue;
-        public int LastBoundMaterialTextureCount;
-        public bool PreviewReady;
-        public CancellationTokenSource? PendingLoadCts;
-        public SparseTextureStreamingPageSelection PendingPageSelection = SparseTextureStreamingPageSelection.Full;
-        public SparseTextureStreamingTransitionRequest PendingSparseTransitionRequest;
-        public SparseTextureStreamingTransitionResult? PendingSparseTransitionResult;
-        public long LastTransitionFrameId = long.MinValue;
-        public long PendingTransitionQueuedTimestamp;
-        public double LastTransitionQueueWaitMilliseconds;
-        public double LastTransitionExecutionMilliseconds;
-        public long PromotionCooldownUntilFrameId = long.MinValue;
-        public long DemotionCooldownUntilFrameId = long.MinValue;
-        public long PinUntilFrameId = long.MinValue;
-        public long LastPressureDemotionFrameId = long.MinValue;
-        public bool PendingTransitionWasPressureDemotion;
-        public uint PendingTransitionPreviousResidentSize;
-        public long PendingTransitionPreviousCommittedBytes;
-        public long PendingTransitionTargetCommittedBytes;
-        public string PendingTransitionBackendName = string.Empty;
-        public string PendingTransitionReason = string.Empty;
-        public JobPriority PendingTransitionPriority = JobPriority.Low;
-        public TextureUploadPriorityClass PendingTransitionUploadPriorityClass = TextureUploadPriorityClass.Background;
-        public float BaseLodBias;
-        public float CurrentStreamingLodBias;
-        public float PromotionFadeStartBias;
-        public long PromotionFadeStartFrameId = long.MinValue;
-        public long PromotionFadeEndFrameId = long.MinValue;
-    }
-
-    private readonly record struct ImportedTextureStreamingSnapshot(
-        ImportedTextureStreamingRecord Record,
-        ITextureResidencyBackend Backend,
-        string? TextureName,
-        string? FilePath,
-        string? SamplerName,
-        string FairnessGroupKey,
-        ESizedInternalFormat Format,
-        uint SourceWidth,
-        uint SourceHeight,
-        uint ResidentMaxDimension,
-        uint PendingMaxDimension,
-        int SparseNumLevels,
-        long CurrentCommittedBytes,
-        SparseTextureStreamingPageSelection CurrentPageSelection,
-        long LastVisibleFrameId,
-        long LastBoundFrameId,
-        int LastBoundMaterialTextureCount,
-        float MinVisibleDistance,
-        float MaxProjectedPixelSpan,
-        float MaxScreenCoverage,
-        float UvDensityHint,
-        SparseTextureStreamingPageSelection VisiblePageSelection,
-        bool PreviewReady,
-        long LastTransitionFrameId,
-        long PendingTransitionQueuedTimestamp,
-        double LastTransitionQueueWaitMilliseconds,
-        double LastTransitionExecutionMilliseconds,
-        long LastPressureDemotionFrameId,
-        int ValidationFailureCount,
-        double LastTextureQueueWaitMilliseconds,
-        double LastTextureUploadMilliseconds);
 
     public IDisposable EnterScope()
     {
@@ -1671,109 +199,12 @@ internal sealed class ImportedTextureStreamingManager
 
     public void RecordUsage(XRMaterial? material, ImportedTextureStreamingUsage usage)
     {
-        if (material?.Textures is not { Count: > 0 })
-            return;
-
-        long frameId = Volatile.Read(ref _collectFrameId);
-        if (frameId <= 0)
-            return;
-
-        float distance = usage.ClampedDistance;
-        float projectedPixelSpan = usage.ClampedProjectedPixelSpan;
-        float screenCoverage = usage.ClampedScreenCoverage;
-        float uvDensityHint = usage.NormalizedUvDensityHint;
-        SparseTextureStreamingPageSelection pageSelection = usage.NormalizedPageSelection;
-        for (int textureIndex = 0; textureIndex < material.Textures.Count; textureIndex++)
-        {
-            if (material.Textures[textureIndex] is not XRTexture2D texture
-                || !s_recordsByTexture.TryGetValue(texture, out ImportedTextureStreamingRecord? record))
-            {
-                continue;
-            }
-
-            if (!Monitor.TryEnter(record.Sync))
-                continue;
-
-            try
-            {
-                if (record.LastVisibleFrameId != frameId)
-                {
-                    record.LastVisibleFrameId = frameId;
-                    record.MinVisibleDistance = distance;
-                    record.MaxProjectedPixelSpan = projectedPixelSpan;
-                    record.MaxScreenCoverage = screenCoverage;
-                    record.UvDensityHint = uvDensityHint;
-                    record.VisiblePageSelection = pageSelection;
-                }
-                else
-                {
-                    if (distance < record.MinVisibleDistance)
-                        record.MinVisibleDistance = distance;
-
-                    if (projectedPixelSpan > record.MaxProjectedPixelSpan)
-                        record.MaxProjectedPixelSpan = projectedPixelSpan;
-
-                    if (screenCoverage > record.MaxScreenCoverage)
-                        record.MaxScreenCoverage = screenCoverage;
-
-                    if (uvDensityHint > record.UvDensityHint)
-                        record.UvDensityHint = uvDensityHint;
-
-                    record.VisiblePageSelection = record.VisiblePageSelection.Union(pageSelection);
-                }
-
-                if (TextureRuntimeDiagnostics.IsVerboseEnabled)
-                {
-                    float priorityScore = (projectedPixelSpan + screenCoverage * 1024.0f)
-                        * ResolveTextureRoleMultiplier(texture.SamplerName)
-                        * uvDensityHint;
-                    TextureRuntimeDiagnostics.LogVisibilityRecorded(
-                        frameId,
-                        texture.Name,
-                        record.FilePath,
-                        projectedPixelSpan,
-                        screenCoverage,
-                        priorityScore);
-                }
-            }
-            finally
-            {
-                Monitor.Exit(record.Sync);
-            }
-        }
+        _registry.RecordUsage(material, usage, Volatile.Read(ref _collectFrameId));
     }
 
     public void RecordMaterialBinding(XRMaterialBase? material)
     {
-        if (material?.Textures is not { Count: > 0 } || s_recordRefs.IsEmpty)
-            return;
-
-        long frameId = Volatile.Read(ref _collectFrameId);
-        if (frameId <= 0)
-            return;
-
-        int materialTextureCount = material.Textures.Count;
-        for (int textureIndex = 0; textureIndex < materialTextureCount; textureIndex++)
-        {
-            if (material.Textures[textureIndex] is not XRTexture2D texture
-                || !s_recordsByTexture.TryGetValue(texture, out ImportedTextureStreamingRecord? record))
-            {
-                continue;
-            }
-
-            if (!Monitor.TryEnter(record.Sync))
-                continue;
-
-            try
-            {
-                record.LastBoundFrameId = frameId;
-                record.LastBoundMaterialTextureCount = materialTextureCount;
-            }
-            finally
-            {
-                Monitor.Exit(record.Sync);
-            }
-        }
+        _registry.RecordMaterialBinding(material, Volatile.Read(ref _collectFrameId));
     }
 
     public ImportedTextureStreamingTelemetry GetTelemetry()
@@ -1897,75 +328,13 @@ internal sealed class ImportedTextureStreamingManager
         long frameId,
         bool allowPromotions,
         uint previewMaxDimension)
-    {
-        uint sourceMaxDimension = Math.Max(input.SourceWidth, input.SourceHeight);
-        uint minimumResidentSize = XRTexture2D.GetMinimumResidentSize(sourceMaxDimension);
-        uint previewResidentSize = sourceMaxDimension == 0
-            ? previewMaxDimension
-            : Math.Min(sourceMaxDimension, previewMaxDimension);
-        uint normalPolicyFloor = Math.Max(minimumResidentSize, previewResidentSize);
-        if (sourceMaxDimension != 0 && sourceMaxDimension <= minimumResidentSize)
-            return sourceMaxDimension;
-
-        if (!input.PreviewReady || sourceMaxDimension == 0)
-            return previewResidentSize;
-
-        if (!allowPromotions)
-            return previewResidentSize;
-
-        if (input.LastVisibleFrameId == frameId)
-        {
-            float roleMultiplier = ResolveTextureRoleMultiplier(input.SamplerName);
-            float uvDensityHint = NormalizeUvDensityHint(input.UvDensityHint);
-            float projectedPixelSpan = float.IsFinite(input.MaxProjectedPixelSpan)
-                ? MathF.Max(0.0f, input.MaxProjectedPixelSpan)
-                : 0.0f;
-            float screenCoverage = float.IsFinite(input.MaxScreenCoverage)
-                ? Math.Clamp(input.MaxScreenCoverage, 0.0f, 1.0f)
-                : 0.0f;
-            float targetPixelSpan = projectedPixelSpan * roleMultiplier * uvDensityHint;
-
-            if (screenCoverage >= 0.95f)
-                return sourceMaxDimension;
-
-            uint visibleTarget = QuantizeResidentSize(sourceMaxDimension, normalPolicyFloor, targetPixelSpan);
-            if (input.ResidentMaxDimension > visibleTarget)
-            {
-                uint nextLowerResidentSize = GetNextLowerResidentCandidate(sourceMaxDimension, input.ResidentMaxDimension, normalPolicyFloor);
-                visibleTarget = Math.Max(visibleTarget, nextLowerResidentSize);
-            }
-
-            return Math.Max(normalPolicyFloor, visibleTarget);
-        }
-
-        long framesSinceVisible = input.LastVisibleFrameId < 0
-            ? long.MaxValue
-            : Math.Max(0L, frameId - input.LastVisibleFrameId);
-
-        if (framesSinceVisible <= 4)
-            return Math.Max(normalPolicyFloor, input.ResidentMaxDimension);
-
-        if (framesSinceVisible <= 12)
-            return GetNextLowerResidentCandidate(sourceMaxDimension, input.ResidentMaxDimension, normalPolicyFloor);
-
-        return normalPolicyFloor;
-    }
+        => TextureResidencyPolicy.DetermineDesiredResidentSize(input, frameId, allowPromotions, previewMaxDimension);
 
     internal static float CalculatePromotionFadeBias(uint sourceWidth, uint sourceHeight, uint previousResidentSize, uint nextResidentSize)
-    {
-        if (previousResidentSize == 0 || nextResidentSize == 0 || nextResidentSize <= previousResidentSize)
-            return 0.0f;
-
-        int previousBaseMipLevel = XRTexture2D.ResolveResidentBaseMipLevel(sourceWidth, sourceHeight, previousResidentSize);
-        int nextBaseMipLevel = XRTexture2D.ResolveResidentBaseMipLevel(sourceWidth, sourceHeight, nextResidentSize);
-        return Math.Max(0, previousBaseMipLevel - nextBaseMipLevel);
-    }
+        => TextureResidencyPolicy.CalculatePromotionFadeBias(sourceWidth, sourceHeight, previousResidentSize, nextResidentSize);
 
     internal static float SmoothPromotionFadeProgress(float t)
-    {
-        t = Math.Clamp(t, 0.0f, 1.0f);
-        return t * t * (3.0f - (2.0f * t));
-    }
+        => TextureResidencyPolicy.SmoothPromotionFadeProgress(t);
 
     internal uint FitResidentSizeToBudget(
         ImportedTextureStreamingBudgetInput input,
@@ -1976,109 +345,23 @@ internal sealed class ImportedTextureStreamingManager
         int sparseNumLevels = 0)
     {
         backend ??= _tieredBackend;
-        uint sourceMaxDimension = Math.Max(input.SourceWidth, input.SourceHeight);
-        uint minimumResidentSize = XRTexture2D.GetMinimumResidentSize(sourceMaxDimension);
-        uint candidate = Math.Max(minimumResidentSize, desiredResidentSize);
-
-        if (availableManagedBytes == long.MaxValue)
-            return candidate;
-
-        while (candidate > minimumResidentSize)
-        {
-            long requiredBytes = backend.EstimateCommittedBytes(input.SourceWidth, input.SourceHeight, candidate, format, sparseNumLevels, input.PageSelection);
-            if (requiredBytes <= availableManagedBytes)
-                return candidate;
-
-            candidate = backend.GetNextLowerResidentSize(sourceMaxDimension, candidate);
-        }
-
-        return minimumResidentSize;
+        return TextureResidencyPolicy.FitResidentSizeToBudget(input, desiredResidentSize, availableManagedBytes, backend, format, sparseNumLevels);
     }
 
     private static float NormalizeUvDensityHint(float value)
-        => float.IsFinite(value)
-            ? Math.Clamp(value, 0.5f, 2.0f)
-            : 1.0f;
+        => TextureResidencyPolicy.NormalizeUvDensityHint(value);
 
     private static uint QuantizeResidentSize(uint sourceMaxDimension, uint minimumResidentSize, float targetPixelSpan)
-    {
-        if (!float.IsFinite(targetPixelSpan) || targetPixelSpan <= minimumResidentSize)
-            return minimumResidentSize;
-
-        uint clampedTarget = (uint)Math.Clamp(MathF.Ceiling(targetPixelSpan), minimumResidentSize, sourceMaxDimension);
-        for (int i = 0; i < PolicyResidentCandidates.Length; i++)
-        {
-            uint candidate = PolicyResidentCandidates[i];
-            if (candidate < clampedTarget)
-                continue;
-
-            return Math.Min(sourceMaxDimension, Math.Max(minimumResidentSize, candidate));
-        }
-
-        return sourceMaxDimension;
-    }
+        => throw new NotSupportedException("Use TextureResidencyPolicy for resident-size quantization.");
 
     private static uint GetNextLowerResidentCandidate(uint sourceMaxDimension, uint currentResidentSize, uint minimumResidentSize)
-    {
-        if (currentResidentSize <= minimumResidentSize)
-            return minimumResidentSize;
-
-        for (int index = PolicyResidentCandidates.Length - 1; index >= 0; index--)
-        {
-            uint candidate = PolicyResidentCandidates[index];
-            if (candidate >= currentResidentSize)
-                continue;
-            if (sourceMaxDimension != 0 && candidate > sourceMaxDimension)
-                continue;
-
-            return Math.Max(candidate, minimumResidentSize);
-        }
-
-        return minimumResidentSize;
-    }
+        => throw new NotSupportedException("Use TextureResidencyPolicy for resident-size demotion candidates.");
 
     private static float ResolveTextureRoleMultiplier(string? samplerName)
-    {
-        if (string.IsNullOrWhiteSpace(samplerName))
-            return 1.0f;
-
-        string normalized = samplerName.Trim().ToLowerInvariant();
-        if (normalized.Contains("normal") || normalized.Contains("bump") || normalized.Contains("height") || normalized.Contains("parallax"))
-            return 0.85f;
-
-        if (normalized.Contains("rough") || normalized.Contains("metal") || normalized.Contains("occlusion") || normalized.Contains("ao") || normalized.Contains("orm") || normalized.Contains("specular"))
-            return 0.65f;
-
-        if (normalized.Contains("alpha") || normalized.Contains("mask") || normalized.Contains("opacity") || normalized.Contains("emissive"))
-            return 0.95f;
-
-        return 1.0f;
-    }
+        => TextureResidencyPolicy.ResolveTextureRoleMultiplier(samplerName);
 
     private static SparseTextureStreamingPageSelection DetermineDesiredPageSelection(ImportedTextureStreamingSnapshot snapshot, uint residentSize, long frameId)
-    {
-        if (snapshot.Backend is not GLSparseTextureResidencyBackend)
-            return SparseTextureStreamingPageSelection.Full;
-
-        // Conservative for now: partial sparse page residency can expose black holes
-        // when material UV transforms, wrapping, filtering, or rapid camera movement
-        // sample outside the last recorded mesh UV rectangle. Keep sparse mip-level
-        // residency, but fully commit the resident sparse mips until page tracking is
-        // driven by the actual material sampling domain.
-        if (!EnablePartialSparsePageResidency)
-            return SparseTextureStreamingPageSelection.Full;
-
-        uint sourceMaxDimension = Math.Max(snapshot.SourceWidth, snapshot.SourceHeight);
-        uint previewResidentSize = XRTexture2D.GetPreviewResidentSize(sourceMaxDimension);
-        if (residentSize <= previewResidentSize
-            || snapshot.LastVisibleFrameId != frameId
-            || sourceMaxDimension < 2048u)
-        {
-            return SparseTextureStreamingPageSelection.Full;
-        }
-
-        return snapshot.VisiblePageSelection.Normalize(PageSelectionFullCoverageThreshold);
-    }
+        => TextureResidencyPolicy.DetermineDesiredPageSelection(snapshot, residentSize, frameId);
 
     private ITextureResidencyBackend ResolvePreviewBackendCandidate(ESizedInternalFormat format)
         => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL
@@ -2159,7 +442,7 @@ internal sealed class ImportedTextureStreamingManager
         }
 
         int completedFinalizations = 0;
-        WeakReference<ImportedTextureStreamingRecord>[] refs = s_recordRefs.ToArray();
+        WeakReference<ImportedTextureStreamingRecord>[] refs = _registry.GetRecordReferencesSnapshot();
         for (int i = 0; i < refs.Length; i++)
         {
             if (completedFinalizations >= MaxSparseFinalizationsPerFrame)
@@ -2260,35 +543,11 @@ internal sealed class ImportedTextureStreamingManager
     }
 
     private ImportedTextureStreamingRecord GetOrCreateRecord(XRTexture2D texture, string? filePath = null)
-    {
-        ImportedTextureStreamingRecord record = s_recordsByTexture.GetValue(texture, static target =>
-        {
-            ImportedTextureStreamingRecord created = new(target);
-            s_recordRefs.Enqueue(new WeakReference<ImportedTextureStreamingRecord>(created));
-            return created;
-        });
-
-        if (!string.IsNullOrWhiteSpace(filePath))
-        {
-            lock (record.Sync)
-            {
-                record.Format = texture.SizedInternalFormat;
-                if (!string.Equals(record.FilePath, filePath, StringComparison.OrdinalIgnoreCase) || record.Source is null)
-                {
-                    record.FilePath = filePath;
-                    record.Source = TextureStreamingSourceFactory.Create(filePath);
-                }
-
-                record.Backend ??= ResolvePreviewBackendCandidate(record.Format);
-            }
-        }
-
-        return record;
-    }
+        => _registry.GetOrCreateRecord(texture, filePath, ResolvePreviewBackendCandidate);
 
     private void UpdatePromotionFades(long frameId)
     {
-        WeakReference<ImportedTextureStreamingRecord>[] refs = s_recordRefs.ToArray();
+        WeakReference<ImportedTextureStreamingRecord>[] refs = _registry.GetRecordReferencesSnapshot();
         for (int i = 0; i < refs.Length; i++)
         {
             if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
@@ -2340,22 +599,7 @@ internal sealed class ImportedTextureStreamingManager
     {
         _lastCompactionFrameId = frameId;
 
-        // Drain the entire queue, discard dead entries, and re-enqueue live ones.
-        // Items enqueued by GetOrCreateRecord() during this pass land after the last
-        // TryDequeue and are preserved automatically.
-        int count = s_recordRefs.Count;
-        List<WeakReference<ImportedTextureStreamingRecord>> live = new(count);
-        while (s_recordRefs.TryDequeue(out WeakReference<ImportedTextureStreamingRecord>? refEntry))
-        {
-            if (refEntry.TryGetTarget(out ImportedTextureStreamingRecord? record)
-                && record.Texture.TryGetTarget(out _))
-            {
-                live.Add(refEntry);
-            }
-        }
-
-        foreach (WeakReference<ImportedTextureStreamingRecord> refEntry in live)
-            s_recordRefs.Enqueue(refEntry);
+        _registry.CompactRecordRefs();
     }
 
     private void Evaluate(long frameId)
@@ -2372,7 +616,7 @@ internal sealed class ImportedTextureStreamingManager
             // Log once when first called with no snapshots, to confirm Evaluate is running
             if (frameId <= 10 && frameId % 5 == 0)
                 Debug.Textures(
-                    $"[TextureStreaming] frame={frameId} Evaluate called but 0 snapshots (recordRefs={s_recordRefs.Count})");
+                    $"[TextureStreaming] frame={frameId} Evaluate called but 0 snapshots (recordRefs={_registry.RecordReferenceCount})");
             return;
         }
 
@@ -2406,25 +650,13 @@ internal sealed class ImportedTextureStreamingManager
                 if (framesSincePending < StuckPendingTransitionFrameThreshold)
                     continue;
 
-                CancellationTokenSource? pendingLoadCts;
-                lock (snapshot.Record.Sync)
-                {
-                    if (snapshot.Record.PendingMaxDimension == 0)
-                        continue;
+                Debug.TexturesWarning(
+                    $"[TextureStreaming] Clearing stuck pending transition for '{snapshot.Record.FilePath}' "
+                    + $"(pending={snapshot.Record.PendingMaxDimension}, resident={snapshot.Record.ResidentMaxDimension}, "
+                    + $"staleFrames={framesSincePending})");
 
-                    Debug.TexturesWarning(
-                        $"[TextureStreaming] Clearing stuck pending transition for '{snapshot.Record.FilePath}' "
-                        + $"(pending={snapshot.Record.PendingMaxDimension}, resident={snapshot.Record.ResidentMaxDimension}, "
-                        + $"staleFrames={framesSincePending})");
-
-                    pendingLoadCts = snapshot.Record.PendingLoadCts;
-                    snapshot.Record.PendingLoadCts = null;
-                    snapshot.Record.PendingMaxDimension = 0;
-                    snapshot.Record.PendingPageSelection = SparseTextureStreamingPageSelection.Full;
-                    snapshot.Record.PendingSparseTransitionRequest = default;
-                    snapshot.Record.PendingSparseTransitionResult = null;
-                    snapshot.Record.LastTransitionFrameId = frameId;
-                }
+                if (!_transitionQueue.TryForceClearStuckTransition(snapshot.Record, frameId, out CancellationTokenSource? pendingLoadCts))
+                    continue;
 
                 CancelPendingLoad(pendingLoadCts);
             }
@@ -2766,131 +998,19 @@ internal sealed class ImportedTextureStreamingManager
     }
 
     private List<ImportedTextureStreamingSnapshot> CollectSnapshots()
-    {
-        List<ImportedTextureStreamingSnapshot> snapshots = [];
-        WeakReference<ImportedTextureStreamingRecord>[] refs = s_recordRefs.ToArray();
-        for (int i = 0; i < refs.Length; i++)
-        {
-            if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
-                || !record.Texture.TryGetTarget(out XRTexture2D? texture))
-            {
-                continue;
-            }
-
-            if (!Monitor.TryEnter(record.Sync))
-                continue;
-
-            try
-            {
-                if (string.IsNullOrWhiteSpace(record.FilePath) || record.Source is null)
-                    continue;
-
-                snapshots.Add(new ImportedTextureStreamingSnapshot(
-                    record,
-                    record.Backend ?? Instance.ResolveBackendForTexture(record.SourceWidth, record.SourceHeight, record.Format),
-                    texture.Name,
-                    record.FilePath,
-                    texture.SamplerName,
-                    ResolveFairnessGroupKey(record.FilePath),
-                    record.Format,
-                    record.SourceWidth,
-                    record.SourceHeight,
-                    record.ResidentMaxDimension,
-                    record.PendingMaxDimension,
-                    record.SparseNumLevels,
-                    texture.SparseTextureStreamingEnabled
-                        ? texture.SparseTextureStreamingCommittedBytes
-                        : (record.Backend ?? Instance.ResolveBackendForTexture(record.SourceWidth, record.SourceHeight, record.Format)).EstimateCommittedBytes(record.SourceWidth, record.SourceHeight, record.ResidentMaxDimension, record.Format, record.SparseNumLevels),
-                    texture.SparseTextureStreamingEnabled
-                        ? texture.SparseTextureStreamingResidentPageSelection
-                        : SparseTextureStreamingPageSelection.Full,
-                    record.LastVisibleFrameId,
-                    record.LastBoundFrameId,
-                    record.LastBoundMaterialTextureCount,
-                    record.MinVisibleDistance,
-                    record.MaxProjectedPixelSpan,
-                    record.MaxScreenCoverage,
-                    record.UvDensityHint,
-                    record.VisiblePageSelection,
-                    record.PreviewReady,
-                    record.LastTransitionFrameId,
-                    record.PendingTransitionQueuedTimestamp,
-                    record.LastTransitionQueueWaitMilliseconds,
-                    record.LastTransitionExecutionMilliseconds,
-                    record.LastPressureDemotionFrameId,
-                    texture.TextureUploadValidationFailureCount,
-                    texture.LastTextureQueueWaitMilliseconds,
-                    texture.LastTextureUploadDurationMilliseconds));
-            }
-            finally
-            {
-                Monitor.Exit(record.Sync);
-            }
-        }
-
-        return snapshots;
-    }
+        => _registry.CollectSnapshots(ResolveBackendForTexture);
 
     private static int ComparePriority(
         ImportedTextureStreamingSnapshot left,
         ImportedTextureStreamingSnapshot right,
         long frameId)
-    {
-        bool leftVisible = left.LastVisibleFrameId == frameId;
-        bool rightVisible = right.LastVisibleFrameId == frameId;
-        if (leftVisible != rightVisible)
-            return leftVisible ? -1 : 1;
-
-        bool leftRecentlyBound = IsRecentlyBound(left, frameId);
-        bool rightRecentlyBound = IsRecentlyBound(right, frameId);
-        if (leftRecentlyBound != rightRecentlyBound)
-            return leftRecentlyBound ? -1 : 1;
-
-        if (leftVisible && rightVisible)
-        {
-            int priorityCompare = CalculatePriorityScore(right).CompareTo(CalculatePriorityScore(left));
-            if (priorityCompare != 0)
-                return priorityCompare;
-
-            int distanceCompare = left.MinVisibleDistance.CompareTo(right.MinVisibleDistance);
-            if (distanceCompare != 0)
-                return distanceCompare;
-        }
-
-        int recencyCompare = right.LastVisibleFrameId.CompareTo(left.LastVisibleFrameId);
-        if (recencyCompare != 0)
-            return recencyCompare;
-
-        int bindingRecencyCompare = right.LastBoundFrameId.CompareTo(left.LastBoundFrameId);
-        if (bindingRecencyCompare != 0)
-            return bindingRecencyCompare;
-
-        return right.ResidentMaxDimension.CompareTo(left.ResidentMaxDimension);
-    }
+        => TextureResidencyPolicy.ComparePriority(left, right, frameId);
 
     private static float CalculatePriorityScore(ImportedTextureStreamingSnapshot snapshot)
-    {
-        float projectedPixelSpan = snapshot.MaxProjectedPixelSpan;
-        float screenCoverage = snapshot.MaxScreenCoverage;
-        if (snapshot.LastBoundMaterialTextureCount > 1)
-        {
-            projectedPixelSpan = Math.Max(projectedPixelSpan, BoundMaterialFallbackProjectedPixelSpan);
-            screenCoverage = Math.Max(screenCoverage, BoundMaterialFallbackScreenCoverage);
-        }
-
-        return (projectedPixelSpan + screenCoverage * 1024.0f)
-            * ResolveTextureRoleMultiplier(snapshot.SamplerName)
-            * NormalizeUvDensityHint(snapshot.UvDensityHint);
-    }
+        => TextureResidencyPolicy.CalculatePriorityScore(snapshot);
 
     internal static TextureUploadPriorityClass ResolveUploadPriorityClass(JobPriority priority)
-        => priority >= JobPriority.Highest
-            ? TextureUploadPriorityClass.VisibleNow
-            : priority >= JobPriority.High
-                ? TextureUploadPriorityClass.NearVisible
-                : priority <= JobPriority.Lowest
-                    ? TextureUploadPriorityClass.Demotion
-                    : TextureUploadPriorityClass.Background;
+        => TextureResidencyPolicy.ResolveUploadPriorityClass(priority);
 
     private static JobPriority ResolveTransitionJobPriority(
         ImportedTextureStreamingSnapshot snapshot,
@@ -2900,36 +1020,10 @@ internal sealed class ImportedTextureStreamingManager
         long currentCommittedBytes,
         long targetCommittedBytes,
         bool pressureDemotion)
-    {
-        if (pressureDemotion)
-            return JobPriority.Low;
-
-        bool isPromotion = targetResidentSize > currentResidentSize || targetCommittedBytes > currentCommittedBytes;
-        bool visibleThisFrame = snapshot.LastVisibleFrameId == frameId;
-        bool recentlyBound = IsRecentlyBound(snapshot, frameId);
-        if (visibleThisFrame)
-        {
-            if (isPromotion
-                && (snapshot.MaxProjectedPixelSpan >= UrgentVisibleProjectedPixelSpan
-                    || snapshot.MaxScreenCoverage >= UrgentVisibleScreenCoverage
-                    || targetResidentSize > snapshot.Backend.PreviewMaxDimension))
-            {
-                return JobPriority.Highest;
-            }
-
-            return JobPriority.High;
-        }
-
-        if (isPromotion && recentlyBound)
-            return JobPriority.High;
-
-        return isPromotion ? JobPriority.Normal : JobPriority.Low;
-    }
+        => TextureResidencyPolicy.ResolveTransitionJobPriority(snapshot, frameId, targetResidentSize, currentResidentSize, currentCommittedBytes, targetCommittedBytes, pressureDemotion);
 
     private static bool IsRecentlyBound(ImportedTextureStreamingSnapshot snapshot, long frameId)
-        => snapshot.LastBoundFrameId != long.MinValue
-            && frameId >= snapshot.LastBoundFrameId
-            && frameId - snapshot.LastBoundFrameId <= RecentlyBoundFallbackFrames;
+        => TextureResidencyPolicy.IsRecentlyBound(snapshot, frameId);
 
     private static string ResolveTransitionReason(
         ImportedTextureStreamingSnapshot snapshot,
@@ -2937,54 +1031,13 @@ internal sealed class ImportedTextureStreamingManager
         bool isPromotion,
         bool pressureDemotion,
         bool importsActive)
-    {
-        if (pressureDemotion)
-            return "vram pressure demotion";
-
-        if (isPromotion && snapshot.LastVisibleFrameId == frameId)
-            return importsActive ? "visible import-era promotion" : "visible quality promotion";
-
-        if (isPromotion && IsRecentlyBound(snapshot, frameId))
-            return importsActive ? "bound import-era promotion" : "recent material binding promotion";
-
-        if (isPromotion)
-            return "recent visibility promotion";
-
-        return importsActive ? "import-era demotion skipped" : "visibility grace demotion";
-    }
+        => TextureResidencyPolicy.ResolveTransitionReason(snapshot, frameId, isPromotion, pressureDemotion, importsActive);
 
     private static string ResolveFairnessGroupKey(string? filePath)
-    {
-        if (string.IsNullOrWhiteSpace(filePath))
-            return string.Empty;
-
-        string? directory = Path.GetDirectoryName(filePath);
-        return string.IsNullOrWhiteSpace(directory)
-            ? Path.GetFileNameWithoutExtension(filePath) ?? string.Empty
-            : directory;
-    }
+        => TextureResidencyPolicy.ResolveFairnessGroupKey(filePath);
 
     private static void CancelPendingLoad(CancellationTokenSource? cts)
-    {
-        if (cts is null)
-            return;
-
-        try
-        {
-            cts.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-
-        try
-        {
-            cts.Dispose();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-    }
+        => TextureTransitionQueue.CancelPendingLoad(cts);
 
     private bool QueueResidentTransition(
         ImportedTextureStreamingSnapshot snapshot,
@@ -3049,24 +1102,17 @@ internal sealed class ImportedTextureStreamingManager
         ITextureStreamingSource? source;
         ITextureResidencyBackend backend;
         CancellationTokenSource cts = new();
-        CancellationTokenSource? previousPendingLoadCts;
+        CancellationTokenSource? previousPendingLoadCts = null;
         bool includeMipChain;
         uint previousResidentSize;
         JobPriority transitionPriority = JobPriority.Low;
         TextureUploadPriorityClass uploadPriorityClass = TextureUploadPriorityClass.Background;
-        if (!Monitor.TryEnter(record.Sync))
-        {
-            cts.Dispose();
-            return false;
-        }
-
-        try
+        lock (record.Sync)
         {
             filePath = record.FilePath;
             source = record.Source;
             backend = record.Backend ?? ResolveBackendForTexture(record.SourceWidth, record.SourceHeight, record.Format);
             includeMipChain = normalizedTarget > minimumResidentSize;
-            previousPendingLoadCts = record.PendingLoadCts;
             previousResidentSize = record.PendingMaxDimension != 0
                 ? record.PendingMaxDimension
                 : record.ResidentMaxDimension;
@@ -3079,7 +1125,7 @@ internal sealed class ImportedTextureStreamingManager
                 targetCommittedBytes,
                 pressureDemotion);
             uploadPriorityClass = ResolveUploadPriorityClass(transitionPriority);
-            if (previousPendingLoadCts is not null)
+            if (record.PendingLoadCts is not null)
             {
                 TextureRuntimeDiagnostics.LogTransitionCoalesced(
                     frameId,
@@ -3089,26 +1135,26 @@ internal sealed class ImportedTextureStreamingManager
                     backend.Name,
                     "superseded pending transition");
             }
-
-            record.PendingLoadCts = cts;
-            record.PendingMaxDimension = normalizedTarget;
-            record.PendingPageSelection = normalizedPageSelection;
-            record.PendingTransitionQueuedTimestamp = TextureRuntimeDiagnostics.StartTiming();
-            record.PendingTransitionWasPressureDemotion = pressureDemotion;
-            record.PendingTransitionPreviousResidentSize = previousResidentSize;
-            record.PendingTransitionPreviousCommittedBytes = currentCommittedBytes;
-            record.PendingTransitionTargetCommittedBytes = targetCommittedBytes;
-            record.PendingTransitionBackendName = backend.Name;
-            record.PendingTransitionReason = reason;
-            record.PendingTransitionPriority = transitionPriority;
-            record.PendingTransitionUploadPriorityClass = uploadPriorityClass;
-            record.PendingSparseTransitionRequest = default;
-            record.PendingSparseTransitionResult = null;
-            record.LastTransitionFrameId = frameId;
         }
-        finally
+
+        if (!_transitionQueue.TryBeginTransition(
+                record,
+                cts,
+                normalizedTarget,
+                normalizedPageSelection,
+                frameId,
+                pressureDemotion,
+                previousResidentSize,
+                currentCommittedBytes,
+                targetCommittedBytes,
+                backend.Name,
+                reason,
+                transitionPriority,
+                uploadPriorityClass,
+                out previousPendingLoadCts))
         {
-            Monitor.Exit(record.Sync);
+            cts.Dispose();
+            return false;
         }
 
         CancelPendingLoad(previousPendingLoadCts);
@@ -3308,20 +1354,7 @@ internal sealed class ImportedTextureStreamingManager
             if (texture is not null)
                 record.SparseNumLevels = sparseNumLevels;
 
-            record.PendingMaxDimension = 0;
-            record.PendingLoadCts = null;
-            record.PendingPageSelection = SparseTextureStreamingPageSelection.Full;
-            record.PendingSparseTransitionRequest = default;
-            record.PendingSparseTransitionResult = null;
-            record.PendingTransitionQueuedTimestamp = 0L;
-            record.PendingTransitionWasPressureDemotion = false;
-            record.PendingTransitionPreviousResidentSize = 0;
-            record.PendingTransitionPreviousCommittedBytes = 0L;
-            record.PendingTransitionTargetCommittedBytes = 0L;
-            record.PendingTransitionBackendName = string.Empty;
-            record.PendingTransitionReason = string.Empty;
-            record.PendingTransitionPriority = JobPriority.Low;
-            record.PendingTransitionUploadPriorityClass = TextureUploadPriorityClass.Background;
+            TextureTransitionQueue.ClearPendingStateAfterLock(record);
             record.LastTransitionFrameId = frameId;
         }
 

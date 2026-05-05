@@ -1,8 +1,10 @@
 # Texture Management Runtime TODO
 
-> Status: **active phased TODO**
+> Status: **implemented; superseded for ongoing architecture by [Texture Streaming Consolidation TODO](texture-streaming-consolidation-todo.md)**
 > Scope: runtime texture residency, OpenGL upload safety, texture upload scheduling, VRAM telemetry, dedicated texture logs, and editor diagnostics.
-> Source design: [Texture Management Runtime Design](../design/texture-management-runtime-design.md)
+> Source design: [Texture Management Runtime Design](../../design/texturing/texture-management-runtime-design.md)
+
+The runtime texture-management implementation has been folded into the consolidation pass on `texture-management-runtime`. This file is kept as the historical phase tracker and validation ledger; new architectural follow-up should start from the consolidation TODO and texturing design docs.
 
 ## Target Outcome
 

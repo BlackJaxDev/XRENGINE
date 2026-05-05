@@ -1,7 +1,7 @@
 # Texture Management Runtime Design
 
 Last Updated: 2026-05-04
-Status: design
+Status: implemented design; service boundaries refreshed after texture streaming consolidation
 Scope: runtime texture residency, upload scheduling, diagnostics, and render-thread safety for imported and engine-owned textures.
 
 Related docs:
@@ -108,15 +108,35 @@ Any texture operation that can block the driver must be scheduled through a budg
 
 ## 6. Target Runtime Architecture
 
+### 6.0 Consolidated Service Boundary
+
+The post-consolidation runtime uses explicit services instead of letting `ImportedTextureStreamingManager`, `XRTexture2D`, and `GLTexture2D` share all policy and queueing state:
+
+- `ImportedTextureStreamingManager` coordinates each frame: collect snapshots, ask policy for desired residency, enqueue transitions, finalize sparse exposure, publish telemetry, and dump summaries.
+- `TextureStreamingRegistry` owns weak texture tracking, per-record locks, main-view usage recording, recent material binding recording, compaction, and immutable snapshot creation.
+- `TextureResidencyPolicy` owns pure deterministic decisions: desired resident size, budget fitting, sparse page selection, role multipliers, transition priority, fairness groups, transition reason text, and promotion-fade math.
+- `TextureTransitionQueue` owns pending transition replacement, cancellation, stale-transition repair, lifecycle timestamps, and pending-state reset.
+- `TextureUploadScheduler` owns progressive upload queue state, duplicate coalescing, priority ordering, active-slot limits, frame byte budgets, and queue-wait telemetry.
+- `TextureResidencyState` centralizes mutable sparse/dense residency fields on `XRTexture2D`; public property setters still use `SetField(...)` so change notification and invalidation remain intact.
+- `GLTieredTextureResidencyBackend` and `GLSparseTextureResidencyBackend` are OpenGL implementations of `ITextureResidencyBackend`. Their interface surface remains renderer-neutral and exposes only policy-relevant fields such as resident size, committed bytes, upload counts, and `SupportsSparseResidency`.
+
+Threading contract:
+
+- Registry registration and snapshot creation are free-threaded; mutable record fields are protected by `ImportedTextureStreamingRecord.Sync`.
+- Policy methods are stateless and free-threaded.
+- Transition-queue methods lock the target record unless the method name explicitly states that the caller already holds the record lock.
+- Upload-scheduler queue and slot state are free-threaded, while concrete upload primitives remain backend/render-thread owned.
+- OpenGL backends keep GL calls on the render thread or shared-context path already managed by `RuntimeRenderingHostServices`.
+
 ### 6.1 Texture Streaming Manager
 
-`ImportedTextureStreamingManager` remains the policy owner for imported assets. Its target responsibilities:
+`ImportedTextureStreamingManager` remains the frame-level coordinator for imported assets. Its target responsibilities:
 
-- Track all imported textures and their source assets.
-- Record per-frame usage from main visible passes.
-- Decide target resident mip or page coverage.
-- Sort promotions and demotions by priority.
-- Apply hysteresis, cooldowns, and memory pressure rules.
+- Track all imported textures and their source assets through `TextureStreamingRegistry`.
+- Record per-frame usage from main visible passes through registry snapshots.
+- Decide target resident mip or page coverage through `TextureResidencyPolicy`.
+- Sort promotions and demotions by priority through policy comparers.
+- Apply hysteresis, cooldowns, and memory pressure rules through record state plus policy decisions.
 - Emit texture telemetry snapshots.
 
 It should not directly encode OpenGL upload mechanics. It should produce transition intents.
@@ -140,7 +160,7 @@ Backends must expose:
 
 ### 6.3 Upload Scheduler
 
-Texture uploads need their own scheduler instead of piggybacking on generic render-thread jobs.
+Texture uploads now use `TextureUploadScheduler` instead of keeping queue/priority state in each texture or GL object.
 
 Scheduler inputs:
 
