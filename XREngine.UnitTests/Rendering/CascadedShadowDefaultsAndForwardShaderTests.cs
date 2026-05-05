@@ -460,12 +460,42 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "ShadowRenderPipeline.cs"));
 
         int depthWriteIndex = source.IndexOf("c.Add<VPRC_DepthWrite>().Allow = true;", System.StringComparison.Ordinal);
-        int bindIndex = source.IndexOf("using (c.AddUsing<VPRC_BindOutputFBO>())", System.StringComparison.Ordinal);
-        int clearIndex = source.IndexOf("c.Add<VPRC_ClearByBoundFBO>();", System.StringComparison.Ordinal);
+        int bindIndex = source.IndexOf("using (c.AddUsing<VPRC_BindOutputFBO>(t => t.SetOptions(write: true, clearColor: false, clearDepth: false, clearStencil: false)))", System.StringComparison.Ordinal);
+        int clearIndex = source.IndexOf("c.Add<VPRC_ClearShadowOutputFBO>();", System.StringComparison.Ordinal);
 
         depthWriteIndex.ShouldBeGreaterThanOrEqualTo(0);
         bindIndex.ShouldBeGreaterThan(depthWriteIndex);
         clearIndex.ShouldBeGreaterThan(bindIndex);
+        source.ShouldContain("renderer?.SetIndexedViewportScissors(regions.AsSpan(0, count), regions.AsSpan(0, count));");
+        source.ShouldNotContain("c.Add<VPRC_ClearByBoundFBO>();");
+    }
+
+    [Test]
+    public void GroupedShadowAtlasPasses_ClearEachIndexedTileBeforeDrawing()
+    {
+        string shadowPipelineSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "ShadowRenderPipeline.cs"));
+        shadowPipelineSource.ShouldContain("internal BoundingRectangle[]? IndexedClearRegions");
+        shadowPipelineSource.ShouldContain("internal int IndexedClearRegionCount");
+        shadowPipelineSource.ShouldContain("renderer?.SetRenderArea(region);");
+        shadowPipelineSource.ShouldContain("renderer?.CropRenderArea(region);");
+        shadowPipelineSource.ShouldContain("Engine.Rendering.State.ClearByBoundFBO();");
+        shadowPipelineSource.ShouldContain("renderer?.SetIndexedViewportScissors(regions.AsSpan(0, count), regions.AsSpan(0, count));");
+
+        string pointSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
+        pointSource.ShouldContain("private readonly BoundingRectangle[] _groupedAtlasClearRects = new BoundingRectangle[ShadowFaceCount];");
+        pointSource.ShouldContain("_groupedAtlasClearRects[member.ViewportScissorIndex] = member.InnerPixelRect;");
+        pointSource.ShouldContain("shadowPipeline.IndexedClearRegions = _groupedAtlasClearRects;");
+        pointSource.ShouldContain("shadowPipeline.IndexedClearRegionCount = groupedCount;");
+        pointSource.ShouldContain("shadowPipeline.IndexedClearRegions = previousIndexedClearRegions;");
+        pointSource.ShouldContain("shadowPipeline.IndexedClearRegionCount = previousIndexedClearRegionCount;");
+
+        string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
+        cascadeSource.ShouldContain("private readonly BoundingRectangle[] _groupedAtlasClearRects = new BoundingRectangle[MaxCascadeRenderCount];");
+        cascadeSource.ShouldContain("_groupedAtlasClearRects[member.ViewportScissorIndex] = member.InnerPixelRect;");
+        cascadeSource.ShouldContain("shadowPipeline.IndexedClearRegions = _groupedAtlasClearRects;");
+        cascadeSource.ShouldContain("shadowPipeline.IndexedClearRegionCount = groupedCount;");
+        cascadeSource.ShouldContain("shadowPipeline.IndexedClearRegions = previousIndexedClearRegions;");
+        cascadeSource.ShouldContain("shadowPipeline.IndexedClearRegionCount = previousIndexedClearRegionCount;");
     }
 
     [Test]
@@ -533,7 +563,10 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("int layerCount = clamp(CascadeLayerCount, 0, 8);");
         source.ShouldContain("for (int layer = 0; layer < layerCount; ++layer)");
         source.ShouldContain("gl_Layer = layer;");
-        source.ShouldContain("CascadeViewProjectionMatrices[layer] * vec4(InFragPos[i], 1.0)");
+        source.ShouldContain("layout (location = 22) in float InFragViewIndex[];");
+        source.ShouldContain("layout (location = 22) out float FragViewIndex;");
+        source.ShouldContain("FragViewIndex = InFragViewIndex[i];");
+        source.ShouldContain("CascadeViewProjectionMatrices[layer] * vec4(FragPos, 1.0)");
     }
 
     [Test]
@@ -546,7 +579,10 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("uniform mat4 CascadeViewProjectionMatrices[8];");
         source.ShouldContain("for (int cascadeIndex = 0; cascadeIndex < layerCount; ++cascadeIndex)");
         source.ShouldContain("gl_ViewportIndex = cascadeIndex;");
-        source.ShouldContain("CascadeViewProjectionMatrices[cascadeIndex] * vec4(InFragPos[i], 1.0)");
+        source.ShouldContain("layout (location = 22) in float InFragViewIndex[];");
+        source.ShouldContain("layout (location = 22) out float FragViewIndex;");
+        source.ShouldContain("FragViewIndex = InFragViewIndex[i];");
+        source.ShouldContain("CascadeViewProjectionMatrices[cascadeIndex] * vec4(FragPos, 1.0)");
         source.ShouldNotContain("gl_Layer");
     }
 

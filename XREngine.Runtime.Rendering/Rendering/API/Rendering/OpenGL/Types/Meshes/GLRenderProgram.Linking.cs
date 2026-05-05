@@ -344,7 +344,9 @@ namespace XREngine.Rendering.OpenGL
             private string? _linkRequestStackTrace;
             private long _asyncPendingStartTimestamp;
             private long _lastAsyncPendingWarningTimestamp;
+            private bool _asyncLinkStatusProbeAttempted;
             private const double AsyncShaderSlowWarningSeconds = 2.0;
+            private const double AsyncShaderBlockingLinkProbeSeconds = 5.0;
 
             /// <summary>
             /// Pre-computes the shader source hash and binary cache lookup.
@@ -527,12 +529,14 @@ namespace XREngine.Rendering.OpenGL
             {
                 _asyncPendingStartTimestamp = Stopwatch.GetTimestamp();
                 _lastAsyncPendingWarningTimestamp = 0;
+                _asyncLinkStatusProbeAttempted = false;
             }
 
             private void ResetAsyncPendingDiagnostics()
             {
                 _asyncPendingStartTimestamp = 0;
                 _lastAsyncPendingWarningTimestamp = 0;
+                _asyncLinkStatusProbeAttempted = false;
             }
 
             private void ReportSlowAsyncPending(string phase)
@@ -702,6 +706,9 @@ namespace XREngine.Rendering.OpenGL
                         Api.GetProgram(linkedProgramId, (GLEnum)GLShader.GL_COMPLETION_STATUS_ARB, out int complete);
                         if (complete == 0)
                         {
+                            if (TryCompleteStuckAsyncLinkWithBlockingStatus(linkedProgramId))
+                                return IsLinked;
+
                             ReportSlowAsyncPending("link");
                             return false; // Still linking - retry next frame
                         }
@@ -717,30 +724,82 @@ namespace XREngine.Rendering.OpenGL
                         else
                         {
                             Api.GetProgramInfoLog(linkedProgramId, out linkError);
-                            PrintLinkDebug(linkedProgramId);
-                            Failed.TryAdd(Hash, 0);
                         }
 
-                        CompleteUberBackendTracking(linked, linkError);
-
-                        IsLinked = linked;
-                        InFlightCompilations.TryRemove(Hash, out _);
-
-                        // Detach and destroy shader objects
-                        if (_asyncAttachedShaderIds is not null)
-                        {
-                            DetachShaders(linkedProgramId, _asyncAttachedShaderIds);
-                            _asyncAttachedShaderIds = null;
-                        }
-                        _asyncLinkedProgramId = 0;
-                        _shaderCache.ForEach(x => x.Value.Destroy());
-                        _asyncLinkPhase = EAsyncLinkPhase.Idle;
-                        UnregisterPendingAsyncProgram();
-                        return IsLinked;
+                        return CompleteAsyncLink(linkedProgramId, linked, linkError, "Async link failed");
                     }
                     default:
                         return false;
                 }
+            }
+
+            private bool TryCompleteStuckAsyncLinkWithBlockingStatus(uint linkedProgramId)
+            {
+                if (_asyncLinkStatusProbeAttempted)
+                    return false;
+
+                long now = Stopwatch.GetTimestamp();
+                if (_asyncPendingStartTimestamp == 0)
+                    _asyncPendingStartTimestamp = now;
+
+                double elapsedSeconds = StopwatchTicksToSeconds(now - _asyncPendingStartTimestamp);
+                if (elapsedSeconds < AsyncShaderBlockingLinkProbeSeconds)
+                    return false;
+
+                _asyncLinkStatusProbeAttempted = true;
+                Debug.OpenGLWarning(
+                    $"[ShaderAsync] Program '{Data.Name ?? "<unnamed>"}' hash={Hash} still reports COMPLETION_STATUS=false " +
+                    $"after {elapsedSeconds:F2}s; probing GL_LINK_STATUS once. This diagnostic query may block.");
+
+                long queryStart = Stopwatch.GetTimestamp();
+                Api.GetProgram(linkedProgramId, GLEnum.LinkStatus, out int status);
+                double queryMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - queryStart);
+                bool linked = status != 0;
+                string? linkError = null;
+                if (!linked)
+                    Api.GetProgramInfoLog(linkedProgramId, out linkError);
+
+                Debug.OpenGLWarning(
+                    $"[ShaderAsync] Blocking GL_LINK_STATUS probe completed for program '{Data.Name ?? "<unnamed>"}' " +
+                    $"hash={Hash}: linked={linked}, queryMs={queryMilliseconds:F2}.");
+
+                if (linked)
+                {
+                    CacheActiveUniforms();
+                    CacheBinary(linkedProgramId);
+                }
+
+                CompleteAsyncLink(linkedProgramId, linked, linkError, "Async link status probe failed");
+                return true;
+            }
+
+            private bool CompleteAsyncLink(uint linkedProgramId, bool linked, string? linkError, string? failureKind)
+            {
+                if (!linked)
+                {
+                    if (string.IsNullOrWhiteSpace(linkError))
+                        Api.GetProgramInfoLog(linkedProgramId, out linkError);
+
+                    PrintLinkDebug(linkedProgramId, linkError, failureKind);
+                    Failed.TryAdd(Hash, 0);
+                }
+
+                CompleteUberBackendTracking(linked, linkError);
+
+                IsLinked = linked;
+                InFlightCompilations.TryRemove(Hash, out _);
+
+                if (_asyncAttachedShaderIds is not null)
+                {
+                    DetachShaders(linkedProgramId, _asyncAttachedShaderIds);
+                    _asyncAttachedShaderIds = null;
+                }
+
+                _asyncLinkedProgramId = 0;
+                _shaderCache.ForEach(x => x.Value.Destroy());
+                _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                UnregisterPendingAsyncProgram();
+                return IsLinked;
             }
 
             /// <summary>

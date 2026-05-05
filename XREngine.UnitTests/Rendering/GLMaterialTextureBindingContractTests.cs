@@ -32,6 +32,24 @@ public sealed class GLMaterialTextureBindingContractTests
     }
 
     [Test]
+    public void GLMaterial_SeparableProgramCacheTracksMaterialShaderPipelineProgram()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
+
+        source.ShouldContain("private XRRenderProgram? _separableProgramData;");
+        source.ShouldContain("XRRenderProgram? shaderPipelineProgram = Data.ShaderPipelineProgram;");
+        source.ShouldContain("if (!ReferenceEquals(_separableProgramData, shaderPipelineProgram))");
+        source.ShouldContain("_separableProgramData = shaderPipelineProgram;");
+        source.ShouldContain("InvalidateProgramBindingCaches();");
+        source.ShouldContain("_separableProgram = null;");
+        source.ShouldContain("_lastUniformProgram = null;");
+        source.ShouldContain("_shadowBindingSourceMaterial = null;");
+        source.ShouldContain("_shadowBindingProgram = null;");
+        source.ShouldContain("_shadowBindingPlan = null;");
+        source.ShouldNotContain("=> _separableProgram ??= Renderer.GenericToAPI<GLRenderProgram>(Data.ShaderPipelineProgram);");
+    }
+
+    [Test]
     public void FallbackSamplerBinding_PreservesExistingLayoutBoundSamplerAssignments()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.UniformBinding.cs");

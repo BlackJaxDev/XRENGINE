@@ -706,7 +706,8 @@ namespace XREngine.Rendering.UI
             var tfm = BoundableTransform;
             var world = RenderCommand2D.WorldMatrix;
             var atlas = Font?.Atlas;
-            Debug.Out(
+            Debug.Log(
+                ELogCategory.UI,
                 "[FpsTextDiag] UITextComponent.{0} #{1} node='{2}' instances2D={3} instances3D={4} dataChanged={5} pushFull={6} glyphs={7} alloc={8} renderPass={9} actual=({10:F1},{11:F1}) bottomLeft=({12:F1},{13:F1}) worldT=({14:F1},{15:F1},{16:F1}) atlas=({17}x{18}, mips={19}, min={20}, autoMip={21}, largest={22}, smallest={23})",
                 hook,
                 _fpsTextRenderHookDiagCount,
@@ -744,7 +745,7 @@ namespace XREngine.Rendering.UI
             if (_resizeGlyphDiagCount < 10)
             {
                 _resizeGlyphDiagCount++;
-                Debug.Rendering($"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
+                Debug.Log(ELogCategory.UI, $"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
             }
             RenderCommand3D.Instances = count;
             RenderCommand2D.Instances = count;
@@ -868,7 +869,8 @@ namespace XREngine.Rendering.UI
                 var firstTransform = glyphsCopy.Length > 0 ? glyphsCopy[0].transform : Vector4.Zero;
                 var firstUvs = glyphsCopy.Length > 0 ? glyphsCopy[0].uvs : Vector4.Zero;
                 var lastTransform = glyphsCopy.Length > 0 ? glyphsCopy[^1].transform : Vector4.Zero;
-                Debug.Out(
+                Debug.Log(
+                    ELogCategory.UI,
                     "[FpsTextDiag] UITextComponent.WriteData #{0} node='{1}' glyphs={2} firstTfm=({3:F2},{4:F2},{5:F2},{6:F2}) firstUv=({7:F5},{8:F5},{9:F5},{10:F5}) lastTfm=({11:F2},{12:F2},{13:F2},{14:F2}) color=({15:F2},{16:F2},{17:F2},{18:F2})",
                     _fpsTextWriteDiagCount,
                     SceneNode?.Name ?? "<null>",

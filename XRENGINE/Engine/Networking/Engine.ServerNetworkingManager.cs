@@ -34,7 +34,7 @@ namespace XREngine
                 int udpMulticastPort,
                 int udpReceivePort)
             {
-                Debug.Out($"Starting server at udp(receive/send:{udpReceivePort}; multicast fallback:{udpMulticastGroupIP}:{udpMulticastPort})");
+                Debug.Log(ELogCategory.Networking, $"Starting server at udp(receive/send:{udpReceivePort}; multicast fallback:{udpMulticastGroupIP}:{udpMulticastPort})");
                 MulticastEndPoint = new IPEndPoint(udpMulticastGroupIP, udpMulticastPort);
                 StartUdpReceiver(udpReceivePort);
             }

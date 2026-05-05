@@ -930,22 +930,22 @@ internal class Program
         if (TryGetIntEnv("XRE_UDP_CLIENT_RECEIVE_PORT", out int udpClientReceivePort))
         {
             settings.UdpClientRecievePort = udpClientReceivePort;
-            EngineDebug.Out($"UDP client receive port overridden to {udpClientReceivePort} via XRE_UDP_CLIENT_RECEIVE_PORT.");
+            EngineDebug.Log(ELogCategory.Networking, $"UDP client receive port overridden to {udpClientReceivePort} via XRE_UDP_CLIENT_RECEIVE_PORT.");
         }
         if (TryGetIntEnv("XRE_UDP_SERVER_SEND_PORT", out int udpServerSendPort))
         {
             settings.UdpServerSendPort = udpServerSendPort;
-            EngineDebug.Out($"UDP server send port overridden to {udpServerSendPort} via XRE_UDP_SERVER_SEND_PORT.");
+            EngineDebug.Log(ELogCategory.Networking, $"UDP server send port overridden to {udpServerSendPort} via XRE_UDP_SERVER_SEND_PORT.");
         }
         if (TryGetIntEnv("XRE_UDP_SERVER_BIND_PORT", out int udpServerBindPort))
         {
             settings.UdpServerBindPort = udpServerBindPort;
-            EngineDebug.Out($"UDP server bind port overridden to {udpServerBindPort} via XRE_UDP_SERVER_BIND_PORT.");
+            EngineDebug.Log(ELogCategory.Networking, $"UDP server bind port overridden to {udpServerBindPort} via XRE_UDP_SERVER_BIND_PORT.");
         }
         if (TryGetIntEnv("XRE_UDP_MULTICAST_PORT", out int udpMulticastPort))
         {
             settings.UdpMulticastPort = udpMulticastPort;
-            EngineDebug.Out($"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
+            EngineDebug.Log(ELogCategory.Networking, $"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
         }
 
         if (unitTestSettings.VRPawn && (!unitTestSettings.EmulatedVRPawn || unitTestSettings.PreviewVRStereoViews))

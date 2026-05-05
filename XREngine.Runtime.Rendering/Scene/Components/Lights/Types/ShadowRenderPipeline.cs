@@ -1,4 +1,5 @@
 ﻿using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -16,6 +17,16 @@ namespace XREngine.Components.Lights
         /// Keeps an atlas tile render area intact instead of replacing it with the full output FBO area.
         /// </summary>
         internal bool PreserveExistingRenderArea { get; set; }
+
+        /// <summary>
+        /// Atlas tile rectangles that must each be cleared before a grouped indexed viewport/scissor draw.
+        /// </summary>
+        internal BoundingRectangle[]? IndexedClearRegions { get; set; }
+
+        /// <summary>
+        /// Number of valid entries in <see cref="IndexedClearRegions"/>.
+        /// </summary>
+        internal int IndexedClearRegionCount { get; set; }
 
         /// <summary>
         /// Clear color used by shadow targets that encode depth or moments in color attachments.
@@ -41,9 +52,9 @@ namespace XREngine.Components.Lights
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = true;
 
-                using (c.AddUsing<VPRC_BindOutputFBO>())
+                using (c.AddUsing<VPRC_BindOutputFBO>(t => t.SetOptions(write: true, clearColor: false, clearDepth: false, clearStencil: false)))
                 {
-                    c.Add<VPRC_ClearByBoundFBO>();
+                    c.Add<VPRC_ClearShadowOutputFBO>();
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
@@ -111,6 +122,39 @@ namespace XREngine.Components.Lights
             Engine.Rendering.State.ClearColor(clearColor);
             Engine.Rendering.State.ClearDepth(1.0f);
             Engine.Rendering.State.ClearStencil(0);
+        }
+    }
+
+    [RenderPipelineScriptCommand]
+    internal sealed class VPRC_ClearShadowOutputFBO : ViewportRenderCommand
+    {
+        protected override void Execute()
+        {
+            if (ActivePipelineInstance.Pipeline is not ShadowRenderPipeline shadowPipeline ||
+                shadowPipeline.IndexedClearRegions is not { } regions ||
+                shadowPipeline.IndexedClearRegionCount <= 0)
+            {
+                Engine.Rendering.State.ClearByBoundFBO();
+                return;
+            }
+
+            int count = Math.Min(shadowPipeline.IndexedClearRegionCount, regions.Length);
+            var renderer = AbstractRenderer.Current;
+            for (int i = 0; i < count; i++)
+            {
+                BoundingRectangle region = regions[i];
+                if (region.Width <= 0 || region.Height <= 0)
+                    continue;
+
+                renderer?.SetRenderArea(region);
+                renderer?.SetCroppingEnabled(true);
+                renderer?.CropRenderArea(region);
+                Engine.Rendering.State.ClearByBoundFBO();
+            }
+
+            // Clearing uses scissor box 0, so the loop above temporarily overwrites viewport/scissor index 0.
+            // Restore the indexed tile state before the grouped draw commands run.
+            renderer?.SetIndexedViewportScissors(regions.AsSpan(0, count), regions.AsSpan(0, count));
         }
     }
 

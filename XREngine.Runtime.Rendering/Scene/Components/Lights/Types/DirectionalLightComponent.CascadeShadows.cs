@@ -191,6 +191,7 @@ namespace XREngine.Components.Lights
         private Transform[] _cascadeShadowTransforms = [];
         private XRCamera[] _cascadeShadowCameras = [];
         private readonly DirectionalCascadeAtlasSlot[] _cascadeAtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
+        private readonly BoundingRectangle[] _groupedAtlasClearRects = new BoundingRectangle[MaxCascadeRenderCount];
         private DirectionalCascadeAtlasSlot _primaryAtlasSlot;
         private readonly Frustum[] _cascadeSourceFrusta = new Frustum[3];
         private XRMaterial? _shadowAtlasMaterial;
@@ -1903,10 +1904,15 @@ namespace XREngine.Components.Lights
 
                 groupedMatrices[member.ViewportScissorIndex] = publishedMatrices[member.CascadeIndex];
                 indexedRects[member.ViewportScissorIndex] = member.InnerPixelRect;
+                _groupedAtlasClearRects[member.ViewportScissorIndex] = member.InnerPixelRect;
             }
 
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
+            BoundingRectangle[]? previousIndexedClearRegions = shadowPipeline.IndexedClearRegions;
+            int previousIndexedClearRegionCount = shadowPipeline.IndexedClearRegionCount;
             shadowPipeline.PreserveExistingRenderArea = true;
+            shadowPipeline.IndexedClearRegions = _groupedAtlasClearRects;
+            shadowPipeline.IndexedClearRegionCount = groupedCount;
             try
             {
                 int pageWidth = checked((int)atlasFbo.Width);
@@ -1929,6 +1935,8 @@ namespace XREngine.Components.Lights
             finally
             {
                 shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
+                shadowPipeline.IndexedClearRegions = previousIndexedClearRegions;
+                shadowPipeline.IndexedClearRegionCount = previousIndexedClearRegionCount;
             }
 
             LogDirectionalAtlasGroupedRender(group, collectVisibleNow, viewport.Camera);

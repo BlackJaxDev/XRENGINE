@@ -141,6 +141,7 @@ public partial class OpenGLRenderer
 
         return Engine.Rendering.Settings.OpenGLShaderLinkStrategy switch
         {
+            EOpenGLShaderLinkStrategy.Auto => true,
             EOpenGLShaderLinkStrategy.DriverParallel => true,
             _ => false,
         };

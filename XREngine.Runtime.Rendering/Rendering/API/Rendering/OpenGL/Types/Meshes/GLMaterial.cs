@@ -27,9 +27,22 @@ namespace XREngine.Rendering.OpenGL
                 public int[] TextureIndices { get; } = textureIndices;
             }
 
+            private XRRenderProgram? _separableProgramData;
             private GLRenderProgram? _separableProgram;
             public GLRenderProgram? SeparableProgram
-                => _separableProgram ??= Renderer.GenericToAPI<GLRenderProgram>(Data.ShaderPipelineProgram);
+            {
+                get
+                {
+                    XRRenderProgram? shaderPipelineProgram = Data.ShaderPipelineProgram;
+                    if (!ReferenceEquals(_separableProgramData, shaderPipelineProgram))
+                    {
+                        _separableProgramData = shaderPipelineProgram;
+                        InvalidateProgramBindingCaches();
+                    }
+
+                    return _separableProgram ??= Renderer.GenericToAPI<GLRenderProgram>(shaderPipelineProgram);
+                }
+            }
 
             protected override void LinkData()
             {
@@ -49,6 +62,20 @@ namespace XREngine.Rendering.OpenGL
                 
                 Data.Textures.PostAnythingAdded -= TextureAdded;
                 Data.Textures.PostAnythingRemoved -= TextureRemoved;
+                _separableProgramData = null;
+                InvalidateProgramBindingCaches();
+            }
+
+            private void InvalidateProgramBindingCaches()
+            {
+                _separableProgram = null;
+                _lastUniformProgram = null;
+                _lastUniformProgramBindingId = uint.MaxValue;
+                _shadowBindingSourceMaterial = null;
+                _shadowBindingProgram = null;
+                _shadowBindingProgramBindingId = uint.MaxValue;
+                _shadowBindingSourceLayoutVersion = ulong.MaxValue;
+                _shadowBindingPlan = null;
             }
 
             private void TextureRemoved(XRTexture? tex)

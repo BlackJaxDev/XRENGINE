@@ -52,6 +52,8 @@ namespace XREngine.Components.Capture.Lights
         #region Constants
 
         private const uint OctahedralResolutionMultiplier = 2u;
+        private const int MaxIblGenerationRetryAttempts = 60;
+        private static readonly TimeSpan IblGenerationRetryInterval = TimeSpan.FromMilliseconds(50.0);
         private const string FullscreenCubeVertexShaderSource =
             """
             #version 450
@@ -274,6 +276,7 @@ namespace XREngine.Components.Capture.Lights
         private readonly RenderCommandMethod3D _debugInfluenceCommand;
         private readonly GameTimer _realtimeCaptureTimer;
         private readonly GameTimer _startupCaptureTimer;
+        private readonly GameTimer _iblRetryTimer;
 
         private bool _parallaxCorrectionEnabled = false;
         private Vector3 _proxyBoxCenterOffset = Vector3.Zero;
@@ -325,6 +328,8 @@ namespace XREngine.Components.Capture.Lights
         private bool _previewSphereDirty = true;
         private XRTexture2D? _environmentTextureEquirect;
         private bool _useCubemapConvolution;
+        private bool _releaseTransientEnvironmentTexturesOnIblRetrySuccess;
+        private int _iblRetryAttempts;
 
         private IRuntimeRenderWorld? _registeredWorld;
 
@@ -336,6 +341,7 @@ namespace XREngine.Components.Capture.Lights
         {
             _realtimeCaptureTimer = new GameTimer(this);
             _startupCaptureTimer = new GameTimer(this);
+            _iblRetryTimer = new GameTimer(this);
             _debugAxesCommand = new RenderCommandMethod3D(EDefaultRenderPass.OnTopForward, RenderCameraOrientationDebug)
             {
                 Enabled = false,

@@ -146,7 +146,8 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 var meshRenderer = Data?.Parent;
-                Debug.Out(
+                Debug.Log(
+                    ELogCategory.UI,
                     "[FpsTextDiag] GLMeshRenderer.{0} #{1}: instances={2} generated={3} prepared={4} buffersBound={5} buffersReady={6} vao={7} triCount={8} triReady={9} triGenerated={10} triId={11} material='{12}' mesh='{13}' detail='{14}' buffers=[{15}]",
                     phase,
                     s_batchedTextDrawDiagCount,
@@ -229,7 +230,8 @@ namespace XREngine.Rendering.OpenGL
                 query.EndQuery();
                 long samples = query.GetQueryObject(EGetQueryObject.QueryResult);
                 s_batchedTextSamplesDiagCount++;
-                Debug.Out(
+                Debug.Log(
+                    ELogCategory.UI,
                     "[FpsTextDiag] GLMeshRenderer.TextSamplesPassed #{0}: instances={1} triangles={2} samples={3} state={4} ssbos=[{5}]",
                     s_batchedTextSamplesDiagCount,
                     instances,
