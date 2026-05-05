@@ -216,7 +216,8 @@ public sealed class UIBatchCollector : IDisposable
             OnPreRender();
             if (_kind == EBatchMarkerKind.Text && s_textMarkerDiagCount++ < 40)
             {
-                Debug.Out(
+                Debug.Log(
+                    ELogCategory.UI,
                     "[FpsTextDiag] UIBatchMarker.Render #{0}: pass={1} kind={2} group={3} renderKind={4} renderGroup={5} zIndex={6}",
                     s_textMarkerDiagCount,
                     _renderPass,
@@ -426,7 +427,8 @@ public sealed class UIBatchCollector : IDisposable
         if (s_textAddDiagCount++ < 40)
         {
             var firstGlyph = glyphs.Length > 0 ? glyphs[0] : default;
-            Debug.Out(
+            Debug.Log(
+                ELogCategory.UI,
                 "[FpsTextDiag] UIBatchCollector.AddTextQuad #{0}: pass={1} z={2} group={3} entries={4} totalGlyphs={5} glyphs={6} atlasType={7} range={8:F2} middle={9:F2} bias={10:F2} debugMode={11} color=({12:F2},{13:F2},{14:F2},{15:F2}) worldT=({16:F1},{17:F1},{18:F1}) bounds=({19:F1},{20:F1},{21:F1},{22:F1}) firstTfm=({23:F2},{24:F2},{25:F2},{26:F2}) firstUv=({27:F5},{28:F5},{29:F5},{30:F5}) atlas=({31}x{32})",
                 s_textAddDiagCount,
                 renderPass,
@@ -943,7 +945,8 @@ public sealed class UIBatchCollector : IDisposable
             var firstEntry = batchData.Entries[0];
             var firstGlyph = firstEntry.GlyphCount > 0 ? firstEntry.Glyphs[0] : default;
             string projectedGlyph = GetProjectedGlyphSummary(in firstEntry.WorldMatrix, in firstGlyph.transform);
-            Debug.Out(
+            Debug.Log(
+                ELogCategory.UI,
                 "[FpsTextDiag] UIBatchCollector.RenderTextGroup #{0}: pass={1} group={2} entries={3} totalGlyphs={4} atlasType={5} range={6:F2} middle={7:F2} bias={8:F2} debugMode={9} glyphCap={10} textCap={11} material={12} mesh={13} color=({14:F2},{15:F2},{16:F2},{17:F2}) worldT=({18:F1},{19:F1},{20:F1}) bounds=({21:F1},{22:F1},{23:F1},{24:F1}) firstTfm=({25:F2},{26:F2},{27:F2},{28:F2}) firstUv=({29:F5},{30:F5},{31:F5},{32:F5}) projected={33}",
                 s_textRenderDiagCount,
                 renderPass,
@@ -989,7 +992,8 @@ public sealed class UIBatchCollector : IDisposable
         {
             if (s_textPrepareDiagCount++ < 40)
             {
-                Debug.Out(
+                Debug.Log(
+                    ELogCategory.UI,
                     "[FpsTextDiag] UIBatchCollector.RenderTextGroup prepare pending #{0}: pass={1} group={2} totalGlyphs={3} debugMode={4}",
                     s_textPrepareDiagCount,
                     renderPass,
@@ -1065,7 +1069,8 @@ public sealed class UIBatchCollector : IDisposable
 
         if (s_textUploadDiagCount++ < 40)
         {
-            Debug.Out(
+            Debug.Log(
+                ELogCategory.UI,
                 "[FpsTextDiag] UIBatchCollector.FinalizeAndUploadTextData #{0}: entries={1} totalGlyphs={2} resized={3} needsPush={4} glyphCap={5} textCap={6} atlas=({7}x{8})",
                 s_textUploadDiagCount,
                 batchData.Entries.Count,

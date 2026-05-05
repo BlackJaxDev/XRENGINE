@@ -37,6 +37,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private readonly PositionOnlyTransform _shadowCameraParentTransform = new();
         private float _shadowNearPlaneDistance = PointShadowNearPlaneDistanceDefault;
         private readonly PointShadowAtlasFaceSlot[] _atlasFaceSlots = new PointShadowAtlasFaceSlot[ShadowFaceCount];
+        private readonly BoundingRectangle[] _groupedAtlasClearRects = new BoundingRectangle[ShadowFaceCount];
         private EPointShadowRenderMode _shadowRenderMode = EPointShadowRenderMode.InstancedLayered;
         private EPointShadowRenderMode _effectiveShadowRenderMode = EPointShadowRenderMode.InstancedLayered;
         private PointShadowRenderFallbackReason _shadowRenderFallbackReason = PointShadowRenderFallbackReason.None;
@@ -815,10 +816,15 @@ namespace XREngine.Components.Capture.Lights.Types
                 groupedMatrices[member.ViewportScissorIndex] = publishedMatrices[faceIndex];
                 faceIndices[member.ViewportScissorIndex] = faceIndex;
                 indexedRects[member.ViewportScissorIndex] = member.InnerPixelRect;
+                _groupedAtlasClearRects[member.ViewportScissorIndex] = member.InnerPixelRect;
             }
 
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
+            BoundingRectangle[]? previousIndexedClearRegions = shadowPipeline.IndexedClearRegions;
+            int previousIndexedClearRegionCount = shadowPipeline.IndexedClearRegionCount;
             shadowPipeline.PreserveExistingRenderArea = true;
+            shadowPipeline.IndexedClearRegions = _groupedAtlasClearRects;
+            shadowPipeline.IndexedClearRegionCount = groupedCount;
             try
             {
                 int pageWidth = checked((int)atlasFbo.Width);
@@ -842,6 +848,8 @@ namespace XREngine.Components.Capture.Lights.Types
             finally
             {
                 shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
+                shadowPipeline.IndexedClearRegions = previousIndexedClearRegions;
+                shadowPipeline.IndexedClearRegionCount = previousIndexedClearRegionCount;
             }
 
             return true;

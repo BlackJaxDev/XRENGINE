@@ -89,7 +89,7 @@ namespace XREngine
                 int udpSendPort,
                 int udpClientReceivePort)
             {
-                Debug.Out($"Starting client with udp(receive:{udpClientReceivePort}) sending to server at ({serverIP}:{udpSendPort})");
+                Debug.Log(ELogCategory.Networking, $"Starting client with udp(receive:{udpClientReceivePort}) sending to server at ({serverIP}:{udpSendPort})");
                 StartUdpSender(serverIP, udpSendPort, udpClientReceivePort);
                 EnsureClientTick();
                 SendJoinRequest();

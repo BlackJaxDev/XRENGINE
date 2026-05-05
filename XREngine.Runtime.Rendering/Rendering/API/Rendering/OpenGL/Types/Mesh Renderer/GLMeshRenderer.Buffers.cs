@@ -215,7 +215,8 @@ namespace XREngine.Rendering.OpenGL
 
                 if (IsBatchedTextDiagnosticMesh() && s_batchedTextSsboBindDiagCount++ < 40)
                 {
-                    Debug.Out(
+                    Debug.Log(
+                        ELogCategory.UI,
                         "[FpsTextDiag] GLMeshRenderer.BindSSBOs #{0}: program='{1}' ssbos=[{2}]",
                         s_batchedTextSsboBindDiagCount,
                         program.Data?.Name ?? program.BindingId.ToString(),

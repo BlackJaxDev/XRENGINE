@@ -50,7 +50,7 @@ public static partial class EditorUnitTests
             if (_tickFpsDiagCount < 5)
             {
                 _tickFpsDiagCount++;
-                XREngine.Debug.Rendering($"[FpsTextDiag] TickFPS fired #{_tickFpsDiagCount} on '{t.SceneNode?.Name}' textLen={t.Text?.Length ?? -1} instances2D={t.RenderCommand2D.Instances} mesh={(t.Mesh is not null)} disableBatching={t.DisableBatching} parentCanvasActive={(t.BoundableTransform.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false)}");
+                XREngine.Debug.Log(ELogCategory.UI, $"[FpsTextDiag] TickFPS fired #{_tickFpsDiagCount} on '{t.SceneNode?.Name}' textLen={t.Text?.Length ?? -1} instances2D={t.RenderCommand2D.Instances} mesh={(t.Mesh is not null)} disableBatching={t.DisableBatching} parentCanvasActive={(t.BoundableTransform.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false)}");
             }
             // Only sample once per actual render frame to avoid duplicate stale samples
             long renderTimestampTicks = Engine.Time.Timer.Render.LastTimestampTicks;
@@ -211,7 +211,8 @@ public static partial class EditorUnitTests
 
                 var world = text.RenderCommand2D.WorldMatrix;
                 var atlas = text.Font?.Atlas;
-                Debug.Out(
+                Debug.Log(
+                    ELogCategory.UI,
                     "[FpsTextDiag] RenderCommand2D.PreRender #{0} instances={1} renderPass={2} zIndex={3} renderEnabled={4} mesh={5} material={6} actual=({7:F1},{8:F1}) bottomLeft=({9:F1},{10:F1}) worldT=({11:F1},{12:F1},{13:F1}) worldScale=({14:F2},{15:F2}) textLen={16} atlas=({17}x{18}, mips={19}, min={20}, autoMip={21})",
                     preRenderDiagCount,
                     text.RenderCommand2D.Instances,
@@ -241,7 +242,8 @@ public static partial class EditorUnitTests
                 if (postRenderDiagCount++ >= 20)
                     return;
 
-                Debug.Out(
+                Debug.Log(
+                    ELogCategory.UI,
                     "[FpsTextDiag] RenderCommand2D.PostRender #{0} instances={1} renderPass={2}",
                     postRenderDiagCount,
                     text.RenderCommand2D.Instances,

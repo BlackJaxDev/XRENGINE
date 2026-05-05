@@ -1,5 +1,6 @@
 using System.IO;
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -299,6 +300,8 @@ namespace XREngine.Components.Capture.Lights
 
         private void DestroyIblResources()
         {
+            CancelPendingIblGenerationRetry();
+
             if (_irradianceFBO is not null)
                 _irradianceFBO.SettingUniforms -= BindIrradianceSourceSampler;
             if (_prefilterFBO is not null)
@@ -460,7 +463,11 @@ namespace XREngine.Components.Capture.Lights
             program.Sampler("Texture0", sourceTexture, 0);
         }
 
-        private bool CompleteIblGenerationAttempt(bool releaseTransientEnvironmentTexturesOnSuccess)
+        private bool CompleteIblGenerationAttempt(
+            bool releaseTransientEnvironmentTexturesOnSuccess,
+            bool scheduleRetryOnFailure = true,
+            bool incrementCaptureVersionOnFailure = true,
+            bool logFailure = true)
         {
             IblTexturesValid = false;
 
@@ -472,6 +479,7 @@ namespace XREngine.Components.Capture.Lights
             IblTexturesValid = success;
             if (success)
             {
+                CancelPendingIblGenerationRetry();
                 if (releaseTransientEnvironmentTexturesOnSuccess)
                     ReleaseTransientEnvironmentTexturesAfterIblGeneration();
             }
@@ -479,14 +487,98 @@ namespace XREngine.Components.Capture.Lights
             {
                 _previewSphereDirty = true;
                 CachePreviewSphere();
-                Debug.LogWarning(
-                    $"[LightProbe] IBL generation failed for '{SceneNode?.Name ?? GetType().Name}'. " +
-                    $"irradiance={irradianceGenerated}, prefilter={prefilterGenerated}. " +
-                    "Keeping captured environment textures and excluding this probe from GI until a valid IBL pass completes.");
+                bool retryScheduled = scheduleRetryOnFailure
+                    && IsActiveInHierarchy
+                    && HasIblGenerationRetryResources()
+                    && ScheduleIblGenerationRetry(releaseTransientEnvironmentTexturesOnSuccess);
+
+                if (retryScheduled)
+                {
+                    Debug.Lighting(
+                        $"[LightProbe] IBL generation deferred for '{SceneNode?.Name ?? GetType().Name}'. " +
+                        $"irradiance={irradianceGenerated}, prefilter={prefilterGenerated}. " +
+                        $"Retrying up to {MaxIblGenerationRetryAttempts} time(s) while captured environment textures are retained.");
+                }
+                else if (logFailure)
+                {
+                    Debug.LogWarning(
+                        $"[LightProbe] IBL generation failed for '{SceneNode?.Name ?? GetType().Name}'. " +
+                        $"irradiance={irradianceGenerated}, prefilter={prefilterGenerated}. " +
+                        "Keeping captured environment textures and excluding this probe from GI until a valid IBL pass completes.");
+                }
             }
 
-            CaptureVersion++;
+            if (success || incrementCaptureVersionOnFailure)
+                CaptureVersion++;
             return success;
+        }
+
+        private bool HasIblGenerationRetryResources()
+        {
+            if (_irradianceFBO is null || IrradianceTexture is null ||
+                _prefilterFBO is null || PrefilterTexture is null ||
+                _irradianceSourceTexture is null || _prefilterSourceTexture is null)
+            {
+                return false;
+            }
+
+            return !_useCubemapConvolution ||
+                (_irradianceCubeFBO is not null && _irradianceTextureCubemap is not null &&
+                 _prefilterCubeFBO is not null && _prefilterTextureCubemap is not null);
+        }
+
+        private bool ScheduleIblGenerationRetry(bool releaseTransientEnvironmentTexturesOnSuccess)
+        {
+            _releaseTransientEnvironmentTexturesOnIblRetrySuccess |= releaseTransientEnvironmentTexturesOnSuccess;
+
+            if (_iblRetryTimer.IsRunning)
+                return false;
+
+            _iblRetryAttempts = 0;
+            _iblRetryTimer.StartMultiFire(
+                RetryPendingIblGeneration,
+                IblGenerationRetryInterval,
+                MaxIblGenerationRetryAttempts,
+                IblGenerationRetryInterval,
+                ETickGroup.Late,
+                (int)ETickOrder.Scene);
+            return true;
+        }
+
+        private void CancelPendingIblGenerationRetry()
+        {
+            _iblRetryTimer.Cancel();
+            _iblRetryAttempts = 0;
+            _releaseTransientEnvironmentTexturesOnIblRetrySuccess = false;
+        }
+
+        private void RetryPendingIblGeneration()
+        {
+            if (!IsActiveInHierarchy || !HasIblGenerationRetryResources())
+            {
+                CancelPendingIblGenerationRetry();
+                return;
+            }
+
+            _iblRetryAttempts++;
+            bool finalAttempt = _iblRetryAttempts >= MaxIblGenerationRetryAttempts;
+            Engine.Rendering.State.IsLightProbePass = true;
+
+            try
+            {
+                bool success = CompleteIblGenerationAttempt(
+                    _releaseTransientEnvironmentTexturesOnIblRetrySuccess,
+                    scheduleRetryOnFailure: false,
+                    incrementCaptureVersionOnFailure: false,
+                    logFailure: finalAttempt);
+
+                if (success || finalAttempt)
+                    CancelPendingIblGenerationRetry();
+            }
+            finally
+            {
+                Engine.Rendering.State.IsLightProbePass = false;
+            }
         }
 
         private static bool RunFullscreenProbePass(XRQuadFrameBuffer fbo, int width, int height)

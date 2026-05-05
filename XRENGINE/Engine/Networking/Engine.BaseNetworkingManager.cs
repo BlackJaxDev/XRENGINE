@@ -215,7 +215,7 @@ namespace XREngine
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"[Net] ConsumeQueues exception: {ex}");
+                    Debug.Log(ELogCategory.Networking, $"[Net] ConsumeQueues exception: {ex}");
                 }
             }
 
@@ -242,7 +242,7 @@ namespace XREngine
                     ? $" Suppressed {suppressed} repeat UDP reset(s) since the previous log."
                     : string.Empty;
 
-                Debug.Out($"[Net] UDP receive reset by remote host ({ex.SocketErrorCode}/{ex.ErrorCode}).{repeatText}");
+                Debug.Log(ELogCategory.Networking, $"[Net] UDP receive reset by remote host ({ex.SocketErrorCode}/{ex.ErrorCode}).{repeatText}");
             }
 
             /// <summary>

@@ -35,7 +35,11 @@ uniform mat4 LeftEyeProjMatrix;
 uniform mat4 RightEyeProjMatrix;
 uniform mat4 LeftEyeViewProjectionMatrix;
 uniform mat4 RightEyeViewProjectionMatrix;
+
+#if !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+#define XRENGINE_FORWARD_HAS_FRAGMENT_VIEW_INDEX 1
 layout(location = 22) in float FragViewIndex;
+#endif
 
 #ifndef XRENGINE_DEPTH_MODE_UNIFORM
 #define XRENGINE_DEPTH_MODE_UNIFORM
@@ -355,10 +359,14 @@ vec3 XRENGINE_SampleOctaArrayLod(sampler2DArray tex, vec3 dir, float layer, floa
 
 int XRENGINE_GetForwardViewIndex()
 {
+#if defined(XRENGINE_FORWARD_HAS_FRAGMENT_VIEW_INDEX)
     if (ForwardPlusEyeCount <= 1)
         return 0;
 
     return int(clamp(round(FragViewIndex), 0.0, float(ForwardPlusEyeCount - 1)));
+#else
+    return 0;
+#endif
 }
 
 mat4 XRENGINE_GetForwardViewMatrix()
@@ -496,10 +504,10 @@ vec3 XRENGINE_ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
     vec3 rayOrigLS = invRot * (worldPos - proxyCenter);
     vec3 rayDirLS = normalize(invRot * dirWS);
 
-    vec3 safeDir = vec3(
-        abs(rayDirLS.x) < 1e-6 ? (rayDirLS.x >= 0.0 ? 1e-6 : -1e-6) : rayDirLS.x,
-        abs(rayDirLS.y) < 1e-6 ? (rayDirLS.y >= 0.0 ? 1e-6 : -1e-6) : rayDirLS.y,
-        abs(rayDirLS.z) < 1e-6 ? (rayDirLS.z >= 0.0 ? 1e-6 : -1e-6) : rayDirLS.z);
+    // Avoid division by zero per-component without a long branch chain.
+    vec3 absDir = abs(rayDirLS);
+    vec3 signDir = mix(vec3(1.0), sign(rayDirLS), step(vec3(1e-6), absDir));
+    vec3 safeDir = signDir * max(absDir, vec3(1e-6));
     vec3 t1 = (halfExt - rayOrigLS) / safeDir;
     vec3 t2 = (-halfExt - rayOrigLS) / safeDir;
     vec3 tmax = max(t1, t2);
@@ -514,11 +522,21 @@ vec3 XRENGINE_ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
 
 bool XRENGINE_ComputeBarycentric(vec3 p, vec3 a, vec3 b, vec3 c, vec3 d, out vec4 bary)
 {
-    mat3 m = mat3(b - a, c - a, d - a);
+    // Solve for (u, v, w) in m * (u v w)^T = (p - a) using Cramer's rule.
+    // This avoids the full mat3 inverse (cofactor expansion) and is several
+    // times cheaper. m's columns are (b-a, c-a, d-a).
+    vec3 e1 = b - a;
+    vec3 e2 = c - a;
+    vec3 e3 = d - a;
     vec3 v = p - a;
-    vec3 uvw = inverse(m) * v;
-    float w = 1.0 - uvw.x - uvw.y - uvw.z;
-    bary = vec4(w, uvw);
+    vec3 e2xe3 = cross(e2, e3);
+    float det = dot(e1, e2xe3);
+    float invDet = 1.0 / (abs(det) > 1e-20 ? det : 1e-20);
+    float u = dot(v, e2xe3) * invDet;
+    float vCoord = dot(e1, cross(v, e3)) * invDet;
+    float wCoord = dot(e1, cross(e2, v)) * invDet;
+    float w0 = 1.0 - u - vCoord - wCoord;
+    bary = vec4(w0, u, vCoord, wCoord);
     return bary.x >= -0.0001 && bary.y >= -0.0001 && bary.z >= -0.0001 && bary.w >= -0.0001;
 }
 
@@ -686,10 +704,14 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     vec3 irradianceColor = vec3(0.0);
     vec3 prefilteredColor = vec3(0.0);
     float totalWeight = 0.0;
+    // Loop-invariant prefilter LOD bounds: hoisted out of the per-probe loop.
+    float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
+    float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
 
     for (int i = 0; i < 4; ++i)
     {
-        if (probeIndices[i] < 0)
+        int probeIndex = probeIndices[i];
+        if (probeIndex < 0)
             continue;
 
         // Barycentric tetra weights are already mathematically continuous.
@@ -698,18 +720,17 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
         // distance-weighted fallback path.
         float weight = isBarycentric
             ? probeWeights[i]
-            : probeWeights[i] * XRENGINE_ComputeInfluenceWeight(probeIndices[i], fragPos);
+            : probeWeights[i] * XRENGINE_ComputeInfluenceWeight(probeIndex, fragPos);
         if (weight <= 0.0)
             continue;
 
-        vec3 diffuseDir = XRENGINE_ApplyParallax(probeIndices[i], normal, fragPos);
-        vec3 specDir = XRENGINE_ApplyParallax(probeIndices[i], reflectionDir, fragPos);
-        float normalizationScale = max(ProbeParams[probeIndices[i]].ProxyHalfExtents.w, 0.0001);
-        float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
-        float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
+        vec3 diffuseDir = XRENGINE_ApplyParallax(probeIndex, normal, fragPos);
+        vec3 specDir = XRENGINE_ApplyParallax(probeIndex, reflectionDir, fragPos);
+        float normalizationScale = max(ProbeParams[probeIndex].ProxyHalfExtents.w, 0.0001);
+        float weightedScale = weight * normalizationScale;
 
-        irradianceColor += weight * normalizationScale * XRENGINE_SampleOctaArray(IrradianceArray, diffuseDir, probeIndices[i]);
-        prefilteredColor += weight * normalizationScale * XRENGINE_SampleOctaArrayLod(PrefilterArray, specDir, probeIndices[i], clampedLod);
+        irradianceColor += weightedScale * XRENGINE_SampleOctaArray(IrradianceArray, diffuseDir, probeIndex);
+        prefilteredColor += weightedScale * XRENGINE_SampleOctaArrayLod(PrefilterArray, specDir, probeIndex, clampedLod);
         totalWeight += weight;
     }
 
@@ -1888,6 +1909,8 @@ float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointL
     int debugMode = shadowI1.y;
     vec3 lightToFragBase = fragPos - light.Position;
     float receiverDist = length(lightToFragBase);
+    // Reuse the radial vector instead of recomputing normalize(light.Position - fragPos).
+    vec3 lightDirN = receiverDist > 1e-6 ? -lightToFragBase / receiverDist : vec3(0.0, 0.0, 1.0);
     vec2 faceUv;
     int faceIndex = XRENGINE_SelectPointShadowAtlasFace(lightToFragBase, faceUv);
     ivec4 atlasI0 = shadowData.AtlasPacked0[faceIndex];
@@ -1903,7 +1926,7 @@ float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointL
     vec3 offsetPosWS = fragPos + normal * normalOffset;
     vec3 fragToLight = offsetPosWS - light.Position;
     float lightDist = length(fragToLight);
-    float NoL = max(dot(normal, normalize(light.Position - fragPos)), 0.0);
+    float NoL = max(dot(normal, lightDirN), 0.0);
 
     if (lightDist >= farPlaneDist)
         return 1.0;
@@ -1936,7 +1959,7 @@ float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointL
         contact = XRENGINE_SampleForwardContactShadowScreenSpace(
             fragPos,
             normal,
-            normalize(light.Position - fragPos),
+            lightDirN,
             normalOffset,
             compareBias,
             shadowF2.w,
@@ -2024,7 +2047,8 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
 
     vec3 lightToFragBase = fragPos - light.Position;
     float receiverDist = length(lightToFragBase);
-    float NoL = max(dot(normal, normalize(light.Position - fragPos)), 0.0);
+    vec3 lightDirN = receiverDist > 1e-6 ? -lightToFragBase / receiverDist : vec3(0.0, 0.0, 1.0);
+    float NoL = max(dot(normal, lightDirN), 0.0);
     float faceSize = XRENGINE_GetPointShadowFaceSizeForSlot(shadowSlot);
     float normalOffset = receiverDist * (2.0 / faceSize) * XRENGINE_GetBiasParamNormalTexels(shadowF5);
     vec3 offsetPosWS = fragPos + normal * normalOffset;
@@ -2067,7 +2091,7 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
             ? XRENGINE_SampleForwardContactShadowScreenSpace(
                 fragPos,
                 normal,
-                normalize(light.Position - fragPos),
+                lightDirN,
                 normalOffset,
                 compareBias,
                 shadowF2.w,
