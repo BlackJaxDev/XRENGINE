@@ -36,6 +36,14 @@ Phases 5 and 6 now extend that baseline with runtime view-aware inputs and parti
 
 The remaining Phase 0 cleanup items are complete: the streaming state queue recompacts dead `WeakReference` entries, and resident-byte estimation is format-aware.
 
+Post-consolidation update, 2026-05-04:
+
+- `ImportedTextureStreamingManager` is now a frame-level facade over focused services: `TextureStreamingRegistry`, `TextureResidencyPolicy`, `TextureTransitionQueue`, `TextureUploadScheduler`, source loaders, and OpenGL residency backends.
+- `ImportedTextureStreamingRecord` and `ImportedTextureStreamingSnapshot` live outside the manager, so registry state can be tested without renderer or disk dependencies.
+- `XRTexture2D` keeps the stable material-facing identity and serialized property surface, while mutable sparse residency fields are centralized in `TextureResidencyState`.
+- OpenGL sparse and tiered residency backends live under the OpenGL texture backend folder and implement the neutral `ITextureResidencyBackend` surface. Policy depends on `SupportsSparseResidency`, committed-byte estimates, and neutral telemetry fields rather than GL handles or enums.
+- Cooked texture usability now reads a compact streamable manifest/header instead of hydrating resident mip blobs.
+
 The long-term target remains a stable full-size logical texture object whose mip residency changes over time under a streaming budget. In OpenGL terms, this means a sparse residency path when supported, with a robust fallback when it is not.
 
 This plan also separates two concerns that are easy to conflate:
@@ -142,11 +150,15 @@ What we actually want is:
   - GPU capability path
   - Upload queue state
 
-Runtime objects — implemented names in parentheses:
+Runtime objects - implemented names in parentheses:
 
-- `TextureStreamingManager` → `ImportedTextureStreamingManager` *(implemented)*
-- `TextureStreamingRecord` → inner `ImportedTextureStreamingRecord` on manager *(implemented)*
-- `TextureStreamingSource` → `ITextureStreamingSource` with `AssetTextureStreamingSource` and `ThirdPartyTextureStreamingSource` *(implemented)*
+- `TextureStreamingManager` -> `ImportedTextureStreamingManager` *(implemented)*
+- `TextureStreamingRecord` -> `ImportedTextureStreamingRecord` plus `ImportedTextureStreamingSnapshot` in `TextureStreamingRegistryRecords.cs` *(implemented)*
+- `TextureStreamingRegistry` -> weak texture records, usage, material binding, compaction, and snapshots *(implemented)*
+- `TextureResidencyPolicy` -> pure desired-residency, priority, fairness, and sparse-page-selection decisions *(implemented)*
+- `TextureTransitionQueue` -> pending transition replacement, stale repair, cancellation, and lifecycle state *(implemented)*
+- `TextureUploadScheduler` -> shared progressive upload priority/coalescing/frame-budget service *(implemented)*
+- `TextureStreamingSource` -> `ITextureStreamingSource` with `AssetTextureStreamingSource` and `ThirdPartyTextureStreamingSource` *(implemented)*
 - `ITextureResidencyBackend` *(implemented)*
 - `GLSparseTextureResidencyBackend` *(implemented)*
 - `GLTieredTextureResidencyBackend` *(implemented)*
@@ -344,7 +356,7 @@ Each `TextureStreamingRecord` is read by the policy stage and written by the CPU
 - The GPU commit stage acquires the lock only to write committed mip range and byte counts after a successful upload or demotion.
 - No field on `TextureStreamingRecord` is written without holding the record lock. Volatile reads of frame IDs and import scope counters are acceptable for fields that are only ever widened (never partially updated).
 
-This protocol is enforced in the current `ImportedTextureStreamingManager` implementation.
+This protocol is enforced by `TextureStreamingRegistry`, `TextureTransitionQueue`, and the current `ImportedTextureStreamingManager` coordinator.
 
 ## 7.9 GPU upload path
 
@@ -392,7 +404,7 @@ Editor tooling should eventually expose:
 
 ## 8.1 `TextureStreamingRecord`
 
-Stores runtime state for one logical texture. Implemented as inner class `ImportedTextureStreamingRecord` on `ImportedTextureStreamingManager`.
+Stores runtime state for one logical texture. Implemented as `ImportedTextureStreamingRecord` in `TextureStreamingRegistryRecords.cs` and owned by `TextureStreamingRegistry`.
 
 Fields present:
 

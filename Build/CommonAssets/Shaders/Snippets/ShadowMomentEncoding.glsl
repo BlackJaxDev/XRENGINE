@@ -132,6 +132,28 @@ float XRENGINE_ChebyshevUpperBound(vec2 moments, float receiverDepth, float minV
     return XRENGINE_ReduceLightBleeding(probability, lightBleedReduction);
 }
 
+float XRENGINE_ResolveShadowMomentMipLevel(float mipLevel, float blurRadiusTexels, bool useMipmaps)
+{
+    if (!useMipmaps)
+        return 0.0;
+
+    float radiusLod = blurRadiusTexels > 1.0
+        ? log2(blurRadiusTexels)
+        : 0.0;
+    return max(mipLevel + radiusLod, 0.0);
+}
+
+vec4 XRENGINE_FetchShadowMoments2D(
+    sampler2D shadowMap,
+    vec2 uv,
+    float mipLevel,
+    bool useMipmaps)
+{
+    return useMipmaps
+        ? textureLod(shadowMap, uv, max(mipLevel, 0.0))
+        : texture(shadowMap, uv);
+}
+
 float XRENGINE_SampleShadowMoment2D(
     sampler2D shadowMap,
     vec2 uv,
@@ -141,9 +163,10 @@ float XRENGINE_SampleShadowMoment2D(
     float lightBleedReduction,
     float positiveExponent,
     float negativeExponent,
-    float mipBias)
+    float mipLevel,
+    bool useMipmaps)
 {
-    vec4 moments = texture(shadowMap, uv, mipBias);
+    vec4 moments = XRENGINE_FetchShadowMoments2D(shadowMap, uv, mipLevel, useMipmaps);
     float clampedReceiver = clamp(receiverDepth, 0.0, 1.0);
 
     if (encoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
@@ -169,15 +192,41 @@ float XRENGINE_SampleShadowMoment2D(
     return (clampedReceiver <= moments.r) ? 1.0 : 0.0;
 }
 
+float XRENGINE_SampleShadowMoment2D(
+    sampler2D shadowMap,
+    vec2 uv,
+    float receiverDepth,
+    int encoding,
+    float minVariance,
+    float lightBleedReduction,
+    float positiveExponent,
+    float negativeExponent,
+    float mipLevel)
+{
+    return XRENGINE_SampleShadowMoment2D(
+        shadowMap,
+        uv,
+        receiverDepth,
+        encoding,
+        minVariance,
+        lightBleedReduction,
+        positiveExponent,
+        negativeExponent,
+        mipLevel,
+        false);
+}
+
 float XRENGINE_EstimateShadowMomentMargin(
     sampler2D shadowMap,
     vec2 uv,
     float receiverDepth,
     int encoding,
     float positiveExponent,
-    float negativeExponent)
+    float negativeExponent,
+    float mipLevel,
+    bool useMipmaps)
 {
-    vec4 moments = texture(shadowMap, uv);
+    vec4 moments = XRENGINE_FetchShadowMoments2D(shadowMap, uv, mipLevel, useMipmaps);
     if (encoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
         return moments.x - receiverDepth;
     if (encoding == XRENGINE_SHADOW_ENCODING_EVSM2)
@@ -190,6 +239,25 @@ float XRENGINE_EstimateShadowMomentMargin(
     }
 
     return moments.r - receiverDepth;
+}
+
+float XRENGINE_EstimateShadowMomentMargin(
+    sampler2D shadowMap,
+    vec2 uv,
+    float receiverDepth,
+    int encoding,
+    float positiveExponent,
+    float negativeExponent)
+{
+    return XRENGINE_EstimateShadowMomentMargin(
+        shadowMap,
+        uv,
+        receiverDepth,
+        encoding,
+        positiveExponent,
+        negativeExponent,
+        0.0,
+        false);
 }
 
 #endif

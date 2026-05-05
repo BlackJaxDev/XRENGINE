@@ -17,6 +17,10 @@ namespace XREngine.Rendering.Shaders.Generator
     {
         public override bool UseDirectionalCascadeInstancedLayering => true;
     }
+    public class PointLightInstancedVertexShaderGenerator(XRMesh mesh) : DefaultVertexShaderGenerator(mesh)
+    {
+        public override bool UsePointLightInstancedLayering => true;
+    }
     /// <summary>
     /// Generates a typical vertex shader for use with most models.
     /// </summary>
@@ -247,6 +251,7 @@ namespace XREngine.Rendering.Shaders.Generator
         public virtual bool UseOVRMultiView => false;
         public virtual bool UseNVStereo => false;
         public virtual bool UseDirectionalCascadeInstancedLayering => false;
+        public virtual bool UsePointLightInstancedLayering => false;
 
         private bool UseComputeSkinning => Engine.Rendering.Settings.CalculateSkinningInComputeShader && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
         private bool UseComputeBlendshapes => Mesh.BlendshapeCount > 0
@@ -334,7 +339,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line("#extension GL_NV_viewport_array2 : require");
                 Line("#extension GL_NV_stereo_view_rendering : require");
             }
-            else if (UseDirectionalCascadeInstancedLayering && !Engine.Rendering.State.IsVulkan)
+            else if ((UseDirectionalCascadeInstancedLayering || UsePointLightInstancedLayering) && !Engine.Rendering.State.IsVulkan)
             {
                 Line("#extension GL_ARB_shader_viewport_layer_array : require");
             }
@@ -358,6 +363,11 @@ namespace XREngine.Rendering.Shaders.Generator
             {
                 Line("uniform int CascadeLayerCount;");
                 Line("uniform mat4 CascadeViewProjectionMatrices[8];");
+            }
+            if (UsePointLightInstancedLayering)
+            {
+                Line("uniform int PointShadowFaceCount;");
+                Line("uniform mat4 PointShadowViewProjectionMatrices[6];");
             }
         }
 
@@ -794,6 +804,8 @@ namespace XREngine.Rendering.Shaders.Generator
                 Assign_GL_Position(finalPosName);
                 if (UseDirectionalCascadeInstancedLayering)
                     AssignDirectionalCascadeLayeredPosition(localInputPosName);
+                if (UsePointLightInstancedLayering)
+                    AssignPointLightLayeredPosition(localInputPosName);
             }
         }
 
@@ -925,6 +937,15 @@ namespace XREngine.Rendering.Shaders.Generator
             Line($"vec3 xreCascadeWorldPos = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
             Line("gl_Position = CascadeViewProjectionMatrices[xreCascadeLayer] * vec4(xreCascadeWorldPos, 1.0f);");
             Line("gl_Layer = xreCascadeLayer;");
+        }
+
+        private void AssignPointLightLayeredPosition(string localInputPositionName)
+        {
+            Line("int xrePointShadowFaceCount = clamp(PointShadowFaceCount, 1, 6);");
+            Line("int xrePointShadowFace = gl_InstanceID % xrePointShadowFaceCount;");
+            Line($"vec3 xrePointShadowWorldPos = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
+            Line("gl_Position = PointShadowViewProjectionMatrices[xrePointShadowFace] * vec4(xrePointShadowWorldPos, 1.0f);");
+            Line("gl_Layer = xrePointShadowFace;");
         }
 
         /// <summary>

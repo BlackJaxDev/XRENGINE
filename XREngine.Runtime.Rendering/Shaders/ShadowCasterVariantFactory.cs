@@ -88,6 +88,9 @@ public static class ShadowCasterVariantFactory
             TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             ShadowBindingSourceMaterial = sourceMaterial,
+            PointShadowMaterialKind = useGeometryShader
+                ? EPointShadowMaterialKind.GeometryShader
+                : EPointShadowMaterialKind.InstancedLayered,
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };
         return variant;

@@ -61,10 +61,16 @@ public sealed class PointLightComponentEditor : IXRComponentEditor
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Keep this as large as possible without clipping nearby shadow casters to improve cubemap precision.");
 
-        bool gs = light.UseGeometryShader;
-        if (ImGui.Checkbox("Use Geometry Shader", ref gs))
-            light.UseGeometryShader = gs;
+        int renderMode = (int)light.ShadowRenderMode;
+        if (ImGui.Combo("Shadow Render Mode", ref renderMode, "Sequential\0Instanced / Layered\0Geometry Shader\0"))
+            light.ShadowRenderMode = (EPointShadowRenderMode)Math.Clamp(
+                renderMode,
+                (int)EPointShadowRenderMode.Sequential,
+                (int)EPointShadowRenderMode.GeometryShader);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Render all 6 cubemap faces in one draw call via geometry shader.\nDisable for 6-pass fallback (useful for debugging or driver compat).");
+            ImGui.SetTooltip("Sequential renders one cubemap face at a time.\nInstanced / Layered renders all 6 faces in one layered pass on supported OpenGL drivers.\nGeometry Shader renders all 6 faces through the cubemap fan-out shader.");
+
+        ImGui.TextDisabled($"Effective: {light.EffectiveShadowRenderMode}");
+        ImGui.TextDisabled($"Fallback: {light.ShadowRenderFallbackReason}");
     }
 }

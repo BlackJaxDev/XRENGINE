@@ -68,6 +68,7 @@ uniform float ContactShadowNormalOffset = 0.036f;
 uniform float ContactShadowJitterStrength = 1.0f;
 uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // min variance, light bleed reduction, positive exponent, negative exponent
 uniform vec4 ShadowMomentDepthParams = vec4(0.1f, 1.0f, 0.0f, 0.0f); // near, far, mip bias, use mipmaps
+uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // blur radius texels, blur passes, use mipmaps, reserved
 // Debug: 0=normal, 1=shadow-only (white=lit), 2=margin heatmap (green=lit, red=shadow)
 uniform int ShadowDebugMode = 0;
 
@@ -450,6 +451,11 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 				ShadowMomentDepthParams.x,
 				ShadowMomentDepthParams.y);
 			float momentReceiverDepth = clamp(receiverDepth - min(bias, 0.01f), 0.0f, 1.0f);
+			bool useMomentMipmaps = ShadowMomentDepthParams.w != 0.0f;
+			float momentMipLevel = XRENGINE_ResolveShadowMomentMipLevel(
+				ShadowMomentDepthParams.z,
+				ShadowMomentFilterParams.x,
+				useMomentMipmaps);
 			lit = XRENGINE_SampleShadowMoment2D(
 				ShadowMap,
 				fragCoord.xy,
@@ -459,7 +465,8 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 				ShadowMomentParams0.y,
 				ShadowMomentParams0.z,
 				ShadowMomentParams0.w,
-				ShadowMomentDepthParams.z) * contact;
+				momentMipLevel,
+				useMomentMipmaps) * contact;
 
 			if (ShadowDebugMode != 0)
 			{
@@ -469,7 +476,9 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 					momentReceiverDepth,
 					ShadowMapEncoding,
 					ShadowMomentParams0.z,
-					ShadowMomentParams0.w);
+					ShadowMomentParams0.w,
+					momentMipLevel,
+					useMomentMipmaps);
 			}
 		}
 		else

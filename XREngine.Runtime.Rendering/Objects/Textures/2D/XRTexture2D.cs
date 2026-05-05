@@ -33,22 +33,10 @@ namespace XREngine.Rendering
     [MemoryPackable]
     public partial class XRTexture2D : XRTexture, IFrameBufferAttachement, ICookedBinarySerializable
     {
-        private const int MaxConcurrentProgressiveOpenGlUploads = 1;
-        private const long ProgressiveOpenGlUploadBytesPerFrame = 4L * 1024L * 1024L;
-        private const long CaptureDeferralBacklogBytesPerFrame = 24L * 1024L * 1024L;
-
-        private static readonly ConcurrentDictionary<XRTexture2D, TextureUploadWorkItem> _progressiveUploads = [];
-        private static int _activeProgressiveUploadCount;
-        private static long _progressiveUploadBytesScheduledThisFrame;
-        private static long _progressiveUploadBytesFrameTicks = -1;
-        private static long _progressiveUploadTelemetryFrameTicks = -1;
-
-        public static int ActiveProgressiveUploadCount => Volatile.Read(ref _activeProgressiveUploadCount);
-        public static int QueuedProgressiveUploadCount => _progressiveUploads.Count;
-        public static long ProgressiveUploadBytesScheduledThisFrame => GetProgressiveUploadBytesScheduledThisFrame();
-        public static bool HasLargeProgressiveUploadBacklog
-            => ActiveProgressiveUploadCount >= MaxConcurrentProgressiveOpenGlUploads
-                && ProgressiveUploadBytesScheduledThisFrame >= CaptureDeferralBacklogBytesPerFrame;
+        public static int ActiveProgressiveUploadCount => TextureUploadScheduler.Instance.ActiveUploadCount;
+        public static int QueuedProgressiveUploadCount => TextureUploadScheduler.Instance.QueuedUploadCount;
+        public static long ProgressiveUploadBytesScheduledThisFrame => TextureUploadScheduler.Instance.BytesScheduledThisFrame;
+        public static bool HasLargeProgressiveUploadBacklog => TextureUploadScheduler.Instance.HasLargeBacklog;
 
         public static void AppendRenderWorkBudgetProfilerSummary(StringBuilder builder)
             => RenderWorkBudgetCoordinator.AppendProfilerSummary(builder);
@@ -476,7 +464,8 @@ namespace XREngine.Rendering
             // detects the supersede on its next tick and cleans up.
             int uploadToken = Interlocked.Increment(ref texture._progressiveUploadToken);
 
-            if (!_progressiveUploads.TryAdd(texture, workItem))
+            TextureUploadScheduler scheduler = TextureUploadScheduler.Instance;
+            if (!scheduler.TryRegister(texture, workItem))
             {
                 // An existing progressive upload is still registered for this texture.
                 // It will detect the token mismatch on its next coroutine tick and clean up.
@@ -516,9 +505,9 @@ namespace XREngine.Rendering
                         }
 
                         // Force-evict the stale entry (the old coroutine should have cleaned up by now).
-                        _progressiveUploads.TryRemove(texture, out _);
+                        scheduler.ForceRemove(texture);
 
-                        if (!_progressiveUploads.TryAdd(texture, workItem))
+                        if (!scheduler.TryRegister(texture, workItem))
                         {
                             // Still can't register — another upload is active. Let the caller know
                             // so ClearPendingTransition runs and the next Evaluate cycle re-queues.
@@ -551,44 +540,10 @@ namespace XREngine.Rendering
         }
 
         private static bool HasHigherPriorityProgressiveUpload(XRTexture2D currentTexture, TextureUploadWorkItem current)
-        {
-            foreach (KeyValuePair<XRTexture2D, TextureUploadWorkItem> pair in _progressiveUploads)
-            {
-                if (ReferenceEquals(pair.Key, currentTexture))
-                    continue;
-
-                if (!pair.Key.RuntimeManagedProgressiveUploadActive)
-                    continue;
-
-                if (IsProgressiveUploadHigherPriority(pair.Value, current))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static bool IsProgressiveUploadHigherPriority(TextureUploadWorkItem candidate, TextureUploadWorkItem current)
-        {
-            int candidateRank = GetProgressiveUploadPriorityRank(candidate.PriorityClass);
-            int currentRank = GetProgressiveUploadPriorityRank(current.PriorityClass);
-            if (candidateRank != currentRank)
-                return candidateRank > currentRank;
-
-            return candidate.QueueTimestamp < current.QueueTimestamp;
-        }
-
-        private static int GetProgressiveUploadPriorityRank(TextureUploadPriorityClass priorityClass)
-            => priorityClass switch
-            {
-                TextureUploadPriorityClass.VisibleNow => 3,
-                TextureUploadPriorityClass.NearVisible => 2,
-                TextureUploadPriorityClass.Background => 1,
-                _ => 0,
-            };
+            => TextureUploadScheduler.Instance.HasHigherPriorityUpload(currentTexture, current);
 
         private static bool TryRemoveProgressiveUpload(XRTexture2D texture, TextureUploadWorkItem workItem)
-            => ((ICollection<KeyValuePair<XRTexture2D, TextureUploadWorkItem>>)_progressiveUploads).Remove(
-                new KeyValuePair<XRTexture2D, TextureUploadWorkItem>(texture, workItem));
+            => TextureUploadScheduler.Instance.TryRemove(texture, workItem);
 
         private static void StartProgressiveCoroutine(XRTexture2D texture, int uploadToken, TextureUploadWorkItem workItem, CancellationToken cancellationToken, Action? onCompleted)
         {
@@ -602,7 +557,7 @@ namespace XREngine.Rendering
                     return;
 
                 slotAcquired = false;
-                Interlocked.Decrement(ref _activeProgressiveUploadCount);
+                TextureUploadScheduler.Instance.ReleaseUploadSlot();
             }
 
             void CleanupProgressiveUpload(bool releaseRuntimeOwnership = true)
@@ -678,10 +633,8 @@ namespace XREngine.Rendering
                         if (HasHigherPriorityProgressiveUpload(texture, workItem))
                             return false;
 
-                        int active = Interlocked.Increment(ref _activeProgressiveUploadCount);
-                        if (active > MaxConcurrentProgressiveOpenGlUploads)
+                        if (!TextureUploadScheduler.Instance.TryAcquireUploadSlot())
                         {
-                            Interlocked.Decrement(ref _activeProgressiveUploadCount);
                             if (!waitLogged)
                             {
                                 waitLogged = true;
@@ -692,10 +645,8 @@ namespace XREngine.Rendering
                         }
 
                         slotAcquired = true;
-                        double queueWaitMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(workItem.QueueTimestamp);
-                        texture.RecordTextureQueueWait(queueWaitMilliseconds);
-                        TextureRuntimeDiagnostics.RecordQueueWait(queueWaitMilliseconds);
-                        RenderWorkBudgetCoordinator.RecordTextureQueue(QueuedProgressiveUploadCount, queueWaitMilliseconds);
+                        TextureUploadScheduler.Instance.RecordQueueWait(workItem, texture);
+                        double queueWaitMilliseconds = texture.LastTextureQueueWaitMilliseconds;
                         if (queueWaitMilliseconds >= RuntimeRenderingHostServices.Current.TextureSlowQueueWaitMilliseconds)
                         {
                             TextureRuntimeDiagnostics.LogTransitionApplied(
@@ -727,7 +678,7 @@ namespace XREngine.Rendering
                         if (!RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
                             return false;
 
-                        RegisterProgressiveUploadBytesForCurrentFrame(lockMipBytes);
+                        TextureUploadScheduler.Instance.RegisterBytesForCurrentFrame(lockMipBytes);
                         long seedUploadStart = TextureRuntimeDiagnostics.StartTiming();
                         bool lockMipCompleted = texture.PushMipLevel(lockMipLevel);
                         double seedUploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(seedUploadStart);
@@ -793,10 +744,7 @@ namespace XREngine.Rendering
                     }
 
                     long nextMipBytes = mipmaps[nextMipToUpload].Data?.Length ?? 0;
-                    long scheduledBytes = GetProgressiveUploadBytesScheduledThisFrame();
-                    if (nextMipBytes > 0
-                        && scheduledBytes > 0
-                        && scheduledBytes + nextMipBytes > ProgressiveOpenGlUploadBytesPerFrame)
+                    if (TextureUploadScheduler.Instance.WouldExceedFrameByteBudget(nextMipBytes))
                     {
                         if (!budgetWaitLogged)
                         {
@@ -811,7 +759,7 @@ namespace XREngine.Rendering
                     if (!RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
                         return false;
 
-                    RegisterProgressiveUploadBytesForCurrentFrame(nextMipBytes);
+                    TextureUploadScheduler.Instance.RegisterBytesForCurrentFrame(nextMipBytes);
 
                     long uploadStart = TextureRuntimeDiagnostics.StartTiming();
                     bool mipCompleted = texture.PushMipLevel(nextMipToUpload);
@@ -840,33 +788,6 @@ namespace XREngine.Rendering
                 }
             }
             RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(UploadProgressive);
-        }
-
-        private static long GetProgressiveUploadBytesScheduledThisFrame()
-        {
-            long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-            if (Volatile.Read(ref _progressiveUploadBytesFrameTicks) != currentFrame)
-                return 0L;
-
-            return Interlocked.Read(ref _progressiveUploadBytesScheduledThisFrame);
-        }
-
-        private static void RegisterProgressiveUploadBytesForCurrentFrame(long bytes)
-        {
-            if (bytes <= 0)
-                return;
-
-            long currentFrame = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-            long previousFrame = Interlocked.Exchange(ref _progressiveUploadBytesFrameTicks, currentFrame);
-            if (previousFrame != currentFrame)
-                Interlocked.Exchange(ref _progressiveUploadBytesScheduledThisFrame, 0L);
-
-            long total = Interlocked.Add(ref _progressiveUploadBytesScheduledThisFrame, bytes);
-            if (Interlocked.Exchange(ref _progressiveUploadTelemetryFrameTicks, currentFrame) != currentFrame)
-            {
-                //RuntimeRenderingHostServices.Current.LogOutput(
-                //    $"[UploadMipmaps] Telemetry: active={ActiveProgressiveUploadCount}, queued={QueuedProgressiveUploadCount}, bytesScheduledThisFrame={total}");
-            }
         }
 
         private static bool HasAssetExtension(string filePath)

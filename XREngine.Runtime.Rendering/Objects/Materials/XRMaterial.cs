@@ -21,6 +21,16 @@ namespace XREngine.Rendering
         GeometryShader = 2,
     }
 
+    /// <summary>
+    /// Identifies engine-created point shadow variants that need layered draw handling.
+    /// </summary>
+    public enum EPointShadowMaterialKind
+    {
+        None = 0,
+        InstancedLayered = 1,
+        GeometryShader = 2,
+    }
+
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRMaterialInspector")]
     public partial class XRMaterial : XRMaterialBase
     {
@@ -54,6 +64,8 @@ namespace XREngine.Rendering
         private XRMaterial? _shadowUniformSourceMaterial;
         [YamlIgnore]
         private EDirectionalCascadeShadowMaterialKind _directionalCascadeShadowMaterialKind;
+        [YamlIgnore]
+        private EPointShadowMaterialKind _pointShadowMaterialKind;
 
         private UberMaterialAuthoredState _uberAuthoredState = UberMaterialAuthoredState.Empty;
         [YamlIgnore]
@@ -565,6 +577,14 @@ namespace XREngine.Rendering
         {
             get => _directionalCascadeShadowMaterialKind;
             internal set => SetField(ref _directionalCascadeShadowMaterialKind, value);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public EPointShadowMaterialKind PointShadowMaterialKind
+        {
+            get => _pointShadowMaterialKind;
+            internal set => SetField(ref _pointShadowMaterialKind, value);
         }
 
         public XRMaterial? GetPointShadowCasterVariant(bool useGeometryShader)

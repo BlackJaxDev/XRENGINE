@@ -57,6 +57,19 @@ public sealed partial class XRRenderPipelineInstance
         public int DirectionalCascadeShadowLayerCount { get; private set; }
         private readonly Matrix4x4[] _directionalCascadeShadowMatrices = new Matrix4x4[8];
         /// <summary>
+        /// If true, the current shadow pass targets a layered point-light cubemap framebuffer.
+        /// </summary>
+        public bool PointLightLayeredShadowPass { get; private set; }
+        /// <summary>
+        /// If true, mesh draw instancing supplies the point cubemap face layer.
+        /// </summary>
+        public bool PointLightInstancedLayeredShadowPass { get; private set; }
+        /// <summary>
+        /// Number of active cubemap face layers addressed by the current point-light layered shadow pass.
+        /// </summary>
+        public int PointLightShadowFaceCount { get; private set; }
+        private readonly Matrix4x4[] _pointLightShadowFaceMatrices = new Matrix4x4[6];
+        /// <summary>
         /// If set, this material will be used to render all objects in the scene.
         /// Typically used for shadow passes.
         /// </summary>
@@ -143,6 +156,9 @@ public sealed partial class XRRenderPipelineInstance
             DirectionalCascadeLayeredShadowPass = false;
             DirectionalCascadeInstancedLayeredShadowPass = false;
             DirectionalCascadeShadowLayerCount = 0;
+            PointLightLayeredShadowPass = false;
+            PointLightInstancedLayeredShadowPass = false;
+            PointLightShadowFaceCount = 0;
             GlobalMaterialOverride = null;
             ScreenSpaceUserInterface = null;
             MeshRenderCommands = null;
@@ -183,6 +199,43 @@ public sealed partial class XRRenderPipelineInstance
             DirectionalCascadeInstancedLayeredShadowPass = false;
             DirectionalCascadeShadowLayerCount = 0;
             Array.Clear(_directionalCascadeShadowMatrices);
+        }
+
+        private int _pointLightLayeredShadowPassDepth;
+        public StateObject PushPointLightLayeredShadowPass(bool instancedLayered, ReadOnlySpan<Matrix4x4> faceMatrices)
+        {
+            _pointLightLayeredShadowPassDepth++;
+            PointLightLayeredShadowPass = true;
+            PointLightInstancedLayeredShadowPass = instancedLayered;
+            PointLightShadowFaceCount = Math.Clamp(faceMatrices.Length, 0, _pointLightShadowFaceMatrices.Length);
+            for (int i = 0; i < PointLightShadowFaceCount; i++)
+                _pointLightShadowFaceMatrices[i] = faceMatrices[i];
+            return StateObject.New(PopPointLightLayeredShadowPass);
+        }
+
+        public bool TryGetPointLightShadowFaceMatrix(int index, out Matrix4x4 matrix)
+        {
+            if ((uint)index < (uint)PointLightShadowFaceCount)
+            {
+                matrix = _pointLightShadowFaceMatrices[index];
+                return true;
+            }
+
+            matrix = Matrix4x4.Identity;
+            return false;
+        }
+
+        private void PopPointLightLayeredShadowPass()
+        {
+            _pointLightLayeredShadowPassDepth--;
+            if (_pointLightLayeredShadowPassDepth > 0)
+                return;
+
+            _pointLightLayeredShadowPassDepth = 0;
+            PointLightLayeredShadowPass = false;
+            PointLightInstancedLayeredShadowPass = false;
+            PointLightShadowFaceCount = 0;
+            Array.Clear(_pointLightShadowFaceMatrices);
         }
 
         public XRCamera? RenderingCamera

@@ -127,7 +127,7 @@ internal static class LightComponentEditorShared
     {
         ImGui.SeparatorText("Runtime Shadow Path");
 
-        if (light is SpotLightComponent)
+        if (light is SpotLightComponent spotLight)
         {
             bool useSpotAtlas = Engine.Rendering.Settings.UseSpotShadowAtlas;
             if (ImGui.Checkbox("Use Spot Shadow Atlas", ref useSpotAtlas))
@@ -135,11 +135,17 @@ internal static class LightComponentEditorShared
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Global renderer setting. When enabled, dynamic spot lights render and sample through the dynamic shadow atlas.");
 
-            if (useSpotAtlas)
+            bool spotAtlasActive = spotLight.UsesSpotShadowAtlasForCurrentEncoding;
+            if (spotAtlasActive)
             {
                 ImGui.TextColored(AtlasActiveTextColor, "Active: spot shadow atlas");
                 ImGui.TextDisabled("Resolution controls request atlas tile size; actual size can be demoted by budget.");
                 ImGui.TextDisabled("Storage Format is ignored while atlas sampling is active; spot atlas pages use R16F depth.");
+            }
+            else if (useSpotAtlas && spotLight.ShadowMapEncoding != EShadowMapEncoding.Depth)
+            {
+                ImGui.TextColored(AtlasDiagnosticTextColor, "Active: legacy spot moment shadow map");
+                ImGui.TextDisabled("Spot VSM/EVSM uses the standalone map until moment atlas pages are implemented.");
             }
             else
             {
@@ -196,7 +202,7 @@ internal static class LightComponentEditorShared
     }
 
     private static bool IsSpotShadowAtlasActive(LightComponent light)
-        => light is SpotLightComponent && Engine.Rendering.Settings.UseSpotShadowAtlas;
+        => light is SpotLightComponent spot && spot.UsesSpotShadowAtlasForCurrentEncoding;
 
     private static bool IsPointShadowAtlasActive(LightComponent light)
         => light is PointLightComponent && Engine.Rendering.Settings.UsePointShadowAtlas;
@@ -442,20 +448,28 @@ internal static class LightComponentEditorShared
         int blurRadius = light.ShadowMomentBlurRadiusTexels;
         if (ImGui.InputInt("Blur Radius Texels", ref blurRadius))
             light.ShadowMomentBlurRadiusTexels = blurRadius;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("For standalone mipmapped spot moment maps, contributes log2(radius) to the explicit moment mip level. Separable blur passes are still planned.");
 
         int blurPasses = light.ShadowMomentBlurPasses;
         if (ImGui.InputInt("Blur Passes", ref blurPasses))
             light.ShadowMomentBlurPasses = blurPasses;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Reserved for the planned separable moment blur pass; mipmapped spot maps currently use Blur Radius Texels and Mip Level.");
 
         bool useMipmaps = light.ShadowMomentUseMipmaps;
         if (ImGui.Checkbox("Use Mipmaps", ref useMipmaps))
             light.ShadowMomentUseMipmaps = useMipmaps;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Regenerates standalone spot moment-map mip levels after the shadow render and samples them with explicit LOD.");
 
         float mipBias = light.ShadowMomentMipBias;
         if (!useMipmaps)
             ImGui.BeginDisabled();
-        if (ImGui.DragFloat("Mip Bias", ref mipBias, 0.05f, -16.0f, 16.0f, "%.2f") && useMipmaps)
+        if (ImGui.DragFloat("Mip Level", ref mipBias, 0.05f, -16.0f, 16.0f, "%.2f") && useMipmaps)
             light.ShadowMomentMipBias = mipBias;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Additional explicit mip level for standalone moment-map sampling. Higher values use wider prefiltered mips.");
         if (!useMipmaps)
             ImGui.EndDisabled();
 

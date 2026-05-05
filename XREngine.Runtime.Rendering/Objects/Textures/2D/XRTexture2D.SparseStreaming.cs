@@ -8,110 +8,82 @@ public partial class XRTexture2D
 {
     [YamlIgnore]
     [MemoryPackIgnore]
-    private bool _sparseTextureStreamingEnabled;
+    private readonly TextureResidencyState _residencyState = new();
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public bool SparseTextureStreamingEnabled
     {
-        get => _sparseTextureStreamingEnabled;
-        set => SetField(ref _sparseTextureStreamingEnabled, value);
+        get => _residencyState.SparseEnabled;
+        set => SetField(ref _residencyState.SparseEnabled, value);
     }
-
-    [YamlIgnore]
-    [MemoryPackIgnore]
-    private uint _sparseTextureStreamingLogicalWidth;
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public uint SparseTextureStreamingLogicalWidth
     {
-        get => _sparseTextureStreamingLogicalWidth;
-        set => SetField(ref _sparseTextureStreamingLogicalWidth, value);
+        get => _residencyState.LogicalWidth;
+        set => SetField(ref _residencyState.LogicalWidth, value);
     }
-
-    [YamlIgnore]
-    [MemoryPackIgnore]
-    private uint _sparseTextureStreamingLogicalHeight;
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public uint SparseTextureStreamingLogicalHeight
     {
-        get => _sparseTextureStreamingLogicalHeight;
-        set => SetField(ref _sparseTextureStreamingLogicalHeight, value);
+        get => _residencyState.LogicalHeight;
+        set => SetField(ref _residencyState.LogicalHeight, value);
     }
-
-    [YamlIgnore]
-    [MemoryPackIgnore]
-    private int _sparseTextureStreamingLogicalMipCount;
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public int SparseTextureStreamingLogicalMipCount
     {
-        get => _sparseTextureStreamingLogicalMipCount;
-        set => SetField(ref _sparseTextureStreamingLogicalMipCount, value);
+        get => _residencyState.LogicalMipCount;
+        set => SetField(ref _residencyState.LogicalMipCount, value);
     }
-
-    [YamlIgnore]
-    [MemoryPackIgnore]
-    private int _sparseTextureStreamingResidentBaseMipLevel = int.MaxValue;
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public int SparseTextureStreamingResidentBaseMipLevel
     {
-        get => _sparseTextureStreamingResidentBaseMipLevel;
-        set => SetField(ref _sparseTextureStreamingResidentBaseMipLevel, value);
+        get => _residencyState.ResidentBaseMipLevel;
+        set => SetField(ref _residencyState.ResidentBaseMipLevel, value);
     }
-
-    [YamlIgnore]
-    [MemoryPackIgnore]
-    private int _sparseTextureStreamingCommittedBaseMipLevel = int.MaxValue;
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public int SparseTextureStreamingCommittedBaseMipLevel
     {
-        get => _sparseTextureStreamingCommittedBaseMipLevel;
-        set => SetField(ref _sparseTextureStreamingCommittedBaseMipLevel, value);
+        get => _residencyState.CommittedBaseMipLevel;
+        set => SetField(ref _residencyState.CommittedBaseMipLevel, value);
     }
-
-    [YamlIgnore]
-    [MemoryPackIgnore]
-    private int _sparseTextureStreamingNumSparseLevels;
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public int SparseTextureStreamingNumSparseLevels
     {
-        get => _sparseTextureStreamingNumSparseLevels;
-        set => SetField(ref _sparseTextureStreamingNumSparseLevels, value);
+        get => _residencyState.SparseLevelCount;
+        set => SetField(ref _residencyState.SparseLevelCount, value);
     }
-
-    [YamlIgnore]
-    [MemoryPackIgnore]
-    private long _sparseTextureStreamingCommittedBytes;
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public long SparseTextureStreamingCommittedBytes
     {
-        get => _sparseTextureStreamingCommittedBytes;
-        set => SetField(ref _sparseTextureStreamingCommittedBytes, value);
+        get => _residencyState.CommittedBytes;
+        set => SetField(ref _residencyState.CommittedBytes, value);
     }
-
-    [YamlIgnore]
-    [MemoryPackIgnore]
-    private SparseTextureStreamingPageSelection _sparseTextureStreamingResidentPageSelection = SparseTextureStreamingPageSelection.Full;
 
     [YamlIgnore]
     [MemoryPackIgnore]
     public SparseTextureStreamingPageSelection SparseTextureStreamingResidentPageSelection
     {
-        get => _sparseTextureStreamingResidentPageSelection;
-        set => SetField(ref _sparseTextureStreamingResidentPageSelection, value.Normalize());
+        get => _residencyState.ResidentPageSelection;
+        set
+        {
+            SparseTextureStreamingPageSelection normalized = value.Normalize();
+            SetField(ref _residencyState.ResidentPageSelection, normalized);
+        }
     }
 
     [field: MemoryPackIgnore]

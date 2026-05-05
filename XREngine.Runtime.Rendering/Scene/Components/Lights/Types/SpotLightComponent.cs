@@ -184,8 +184,21 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public override bool SupportsLightRadiusContactHardening => true;
 
+        [Browsable(false)]
+        public bool UsesSpotShadowAtlasForCurrentEncoding
+        {
+            get
+            {
+                if (!Engine.Rendering.Settings.UseSpotShadowAtlas)
+                    return false;
+
+                ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
+                return selection.Encoding == EShadowMapEncoding.Depth;
+            }
+        }
+
         protected override bool UsesAtlasShadowViewport
-            => Engine.Rendering.Settings.UseSpotShadowAtlas;
+            => UsesSpotShadowAtlasForCurrentEncoding;
 
         protected override float ContactHardeningLightRadius
             => CalculateOuterConeRadius(Distance, OuterCutoffAngleDegrees);
@@ -312,6 +325,36 @@ namespace XREngine.Components.Capture.Lights.Types
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
 
             return mat;
+        }
+
+        public override void RenderShadowMap(bool collectVisibleNow = false)
+        {
+            base.RenderShadowMap(collectVisibleNow);
+            GenerateMomentShadowMipmapsIfNeeded();
+        }
+
+        private void GenerateMomentShadowMipmapsIfNeeded()
+        {
+            if (!CastsShadows ||
+                !ShadowMomentUseMipmaps ||
+                ShadowMapEncoding == EShadowMapEncoding.Depth ||
+                ShadowMap?.Material?.Textures is not { } textures)
+            {
+                return;
+            }
+
+            ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
+            if (selection.Encoding == EShadowMapEncoding.Depth)
+                return;
+
+            for (int i = 0; i < textures.Count; i++)
+            {
+                if (textures[i] is XRTexture2D texture && texture.SamplerName == "ShadowMap")
+                {
+                    texture.GenerateMipmapsGPU();
+                    return;
+                }
+            }
         }
 
         protected override ColorF4 GetShadowMapClearColor()

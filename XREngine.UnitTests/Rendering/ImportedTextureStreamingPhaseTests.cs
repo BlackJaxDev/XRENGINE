@@ -1,5 +1,6 @@
 using ImageMagick;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -332,6 +333,188 @@ public sealed class ImportedTextureStreamingPhaseTests
         {
             if (Directory.Exists(tempDirectory))
                 Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void TextureStreamingManifest_ReadsStreamableHeaderWithoutResidentMipHydration()
+    {
+        using MagickImage source = new(MagickColors.CadetBlue, 16, 8);
+        byte[] payload = XRTexture2D.CreateTextureStreamingPayload("manifest-test.png", source);
+
+        XRTexture2D.TryReadTextureStreamingManifestFromTextureStreamingPayload(
+            payload,
+            out TextureStreamingSourceManifest manifest).ShouldBeTrue();
+
+        manifest.SourceWidth.ShouldBe(16u);
+        manifest.SourceHeight.ShouldBe(8u);
+        manifest.LogicalMipCount.ShouldBeGreaterThan(1);
+        manifest.Mips.Length.ShouldBe(manifest.LogicalMipCount);
+        manifest.PreviewMipIndex.ShouldBeInRange(0, manifest.Mips.Length - 1);
+        manifest.Mips[0].LengthBytes.ShouldBeGreaterThan(0);
+    }
+
+    [Test]
+    public void TextureUploadScheduler_OrdersVisibleRepairsAheadOfBackgroundUploads()
+    {
+        TextureUploadScheduler scheduler = new();
+        XRTexture2D backgroundTexture = new() { RuntimeManagedProgressiveUploadActive = true };
+        XRTexture2D visibleTexture = new() { RuntimeManagedProgressiveUploadActive = true };
+        TextureUploadWorkItem background = new(
+            new WeakReference<XRTexture2D>(backgroundTexture),
+            TextureUploadKind.Promotion,
+            TextureUploadSourceKind.CpuPointer,
+            FirstMipLevel: 0,
+            MipLevelCount: 1,
+            EstimatedBytes: 4,
+            CapturedStorageGeneration: 1,
+            TextureUploadPriorityClass.Background,
+            QueueTimestamp: TextureRuntimeDiagnostics.StartTiming());
+        TextureUploadWorkItem visible = background with
+        {
+            Texture = new WeakReference<XRTexture2D>(visibleTexture),
+            PriorityClass = TextureUploadPriorityClass.VisibleNow
+        };
+
+        scheduler.TryRegister(visibleTexture, visible).ShouldBeTrue();
+        scheduler.HasHigherPriorityUpload(backgroundTexture, background).ShouldBeTrue();
+    }
+
+    [Test]
+    public void TextureUploadScheduler_CoalescesDuplicateTextureWork()
+    {
+        TextureUploadScheduler scheduler = new();
+        XRTexture2D texture = new();
+        TextureUploadWorkItem workItem = new(
+            new WeakReference<XRTexture2D>(texture),
+            TextureUploadKind.Promotion,
+            TextureUploadSourceKind.CpuPointer,
+            FirstMipLevel: 0,
+            MipLevelCount: 1,
+            EstimatedBytes: 4,
+            CapturedStorageGeneration: 1,
+            TextureUploadPriorityClass.Background,
+            QueueTimestamp: TextureRuntimeDiagnostics.StartTiming());
+
+        scheduler.TryRegister(texture, workItem).ShouldBeTrue();
+        scheduler.TryRegister(texture, workItem).ShouldBeFalse();
+        scheduler.QueuedUploadCount.ShouldBe(1);
+
+        scheduler.TryRemove(texture, workItem).ShouldBeTrue();
+        scheduler.QueuedUploadCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void TextureStreamingRegistry_RecordsUsageAndBindingInSnapshots()
+    {
+        TextureStreamingRegistry registry = new();
+        XRTexture2D texture = new()
+        {
+            Name = "RegistryTexture",
+            FilePath = Path.Combine(Path.GetTempPath(), "registry-texture.png"),
+            SamplerName = "normalTexture",
+        };
+
+        ImportedTextureStreamingRecord record = registry.GetOrCreateRecord(
+            texture,
+            texture.FilePath,
+            _ => new GLTieredTextureResidencyBackend());
+        lock (record.Sync)
+        {
+            record.SourceWidth = 1024u;
+            record.SourceHeight = 512u;
+            record.ResidentMaxDimension = 64u;
+            record.PreviewReady = true;
+        }
+
+        XRMaterial material = new([texture]);
+        ImportedTextureStreamingUsage usage = new(
+            DistanceFromCamera: 10.0f,
+            ProjectedPixelSpan: 900.0f,
+            ScreenCoverage: 0.25f,
+            UvDensityHint: 1.5f,
+            PageSelection: SparseTextureStreamingPageSelection.Partial(0.1f, 0.2f, 0.6f, 0.8f));
+
+        registry.RecordUsage(material, usage, frameId: 42L);
+        registry.RecordMaterialBinding(material, frameId: 42L);
+
+        List<ImportedTextureStreamingSnapshot> snapshots = registry.CollectSnapshots(
+            (_, _, _) => new GLTieredTextureResidencyBackend());
+
+        snapshots.Count.ShouldBe(1);
+        ImportedTextureStreamingSnapshot snapshot = snapshots[0];
+        snapshot.TextureName.ShouldBe("RegistryTexture");
+        snapshot.FilePath.ShouldBe(texture.FilePath);
+        snapshot.SourceWidth.ShouldBe(1024u);
+        snapshot.SourceHeight.ShouldBe(512u);
+        snapshot.LastVisibleFrameId.ShouldBe(42L);
+        snapshot.LastBoundFrameId.ShouldBe(42L);
+        snapshot.LastBoundMaterialTextureCount.ShouldBe(1);
+        snapshot.MinVisibleDistance.ShouldBe(10.0f);
+        snapshot.MaxProjectedPixelSpan.ShouldBe(900.0f);
+        snapshot.MaxScreenCoverage.ShouldBe(0.25f);
+        snapshot.UvDensityHint.ShouldBe(1.5f);
+        snapshot.VisiblePageSelection.IsPartial.ShouldBeTrue();
+    }
+
+    [Test]
+    public void TextureTransitionQueue_ReplacesAndClearsPendingTransitionState()
+    {
+        TextureTransitionQueue queue = new();
+        ImportedTextureStreamingRecord record = new(new XRTexture2D());
+        using CancellationTokenSource firstCts = new();
+        using CancellationTokenSource secondCts = new();
+
+        queue.TryBeginTransition(
+            record,
+            firstCts,
+            pendingMaxDimension: 128u,
+            SparseTextureStreamingPageSelection.Full,
+            frameId: 10L,
+            pressureDemotion: false,
+            previousResidentSize: 64u,
+            previousCommittedBytes: 128L,
+            targetCommittedBytes: 512L,
+            backendName: "first",
+            reason: "first promotion",
+            JobPriority.Normal,
+            TextureUploadPriorityClass.Background,
+            out CancellationTokenSource? previousCts).ShouldBeTrue();
+        previousCts.ShouldBeNull();
+
+        queue.TryBeginTransition(
+            record,
+            secondCts,
+            pendingMaxDimension: 256u,
+            SparseTextureStreamingPageSelection.Full,
+            frameId: 11L,
+            pressureDemotion: false,
+            previousResidentSize: 128u,
+            previousCommittedBytes: 512L,
+            targetCommittedBytes: 2048L,
+            backendName: "second",
+            reason: "second promotion",
+            JobPriority.High,
+            TextureUploadPriorityClass.NearVisible,
+            out previousCts).ShouldBeTrue();
+
+        previousCts.ShouldBe(firstCts);
+        lock (record.Sync)
+        {
+            record.PendingLoadCts.ShouldBe(secondCts);
+            record.PendingMaxDimension.ShouldBe(256u);
+            record.LastTransitionFrameId.ShouldBe(11L);
+            record.PendingTransitionBackendName.ShouldBe("second");
+            record.PendingTransitionPriority.ShouldBe(JobPriority.High);
+            record.PendingTransitionUploadPriorityClass.ShouldBe(TextureUploadPriorityClass.NearVisible);
+
+            TextureTransitionQueue.ClearPendingStateAfterLock(record);
+
+            record.PendingLoadCts.ShouldBeNull();
+            record.PendingMaxDimension.ShouldBe(0u);
+            record.PendingTransitionBackendName.ShouldBeEmpty();
+            record.PendingTransitionPriority.ShouldBe(JobPriority.Low);
+            record.PendingTransitionUploadPriorityClass.ShouldBe(TextureUploadPriorityClass.Background);
         }
     }
 

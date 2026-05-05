@@ -240,6 +240,18 @@ namespace XREngine
                 /// Number of active cascade layers in the current directional cascade layered shadow pass.
                 /// </summary>
                 public static int DirectionalCascadeShadowLayerCount => RenderingPipelineState?.DirectionalCascadeShadowLayerCount ?? 0;
+                /// <summary>
+                /// If true, the current shadow pass renders point-light cubemap faces into a layered framebuffer.
+                /// </summary>
+                public static bool IsPointLightLayeredShadowPass => RenderingPipelineState?.PointLightLayeredShadowPass ?? false;
+                /// <summary>
+                /// If true, the current point-light shadow pass uses draw instancing as the cubemap-face dimension.
+                /// </summary>
+                public static bool IsPointLightInstancedLayeredShadowPass => RenderingPipelineState?.PointLightInstancedLayeredShadowPass ?? false;
+                /// <summary>
+                /// Number of active point-light cubemap faces in the current layered shadow pass.
+                /// </summary>
+                public static int PointLightShadowFaceCount => RenderingPipelineState?.PointLightShadowFaceCount ?? 0;
 
                 /// <summary>
                 /// If true, OpenGL multiview shader support is available (GL_OVR_multiview2 or GL_EXT_multiview).

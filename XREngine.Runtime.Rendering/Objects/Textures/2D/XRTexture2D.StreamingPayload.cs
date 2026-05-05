@@ -344,6 +344,64 @@ public partial class XRTexture2D
         }
     }
 
+    internal static bool TryReadTextureStreamingManifestFromTextureAssetFileBytes(
+        ReadOnlySpan<byte> assetFileBytes,
+        out TextureStreamingSourceManifest manifest)
+    {
+        manifest = default;
+        if (assetFileBytes.IsEmpty)
+            return false;
+
+        if (TryReadTextureStreamingManifestFromTextureStreamingPayload(assetFileBytes, out manifest))
+            return true;
+
+        string assetYaml;
+        try
+        {
+            assetYaml = Encoding.UTF8.GetString(assetFileBytes);
+        }
+        catch
+        {
+            return false;
+        }
+
+        return TryExtractTextureStreamingPayloadFromYamlAsset(assetYaml, out byte[]? payload)
+            && TryReadTextureStreamingManifestFromTextureStreamingPayload(payload, out manifest);
+    }
+
+    internal static bool TryReadTextureStreamingManifestFromTextureStreamingPayload(
+        ReadOnlySpan<byte> payload,
+        out TextureStreamingSourceManifest manifest)
+    {
+        manifest = default;
+        if (payload.IsEmpty || payload[0] > (byte)RuntimeCookedBinaryTypeMarker.CustomObject)
+            return false;
+
+        try
+        {
+            unsafe
+            {
+                fixed (byte* ptr = payload)
+                {
+                    using CookedBinaryReader reader = new(ptr, payload.Length);
+                    if (!TryEnterTexturePayloadBody(reader))
+                        return false;
+
+                    XRTexture2D scratch = new();
+                    scratch.ReadTextureAssetBase(reader);
+                    scratch.ReadTextureStreamingSettings(reader);
+                    scratch.GrabPass = ReadGrabPass(reader, scratch);
+                    return TryReadStreamableMipManifest(reader, scratch.SizedInternalFormat, scratch.SamplerName, out manifest);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is EndOfStreamException or InvalidCastException or InvalidOperationException or NotSupportedException or FormatException)
+        {
+            manifest = default;
+            return false;
+        }
+    }
+
     internal static bool IsTextureStreamingAssetUsable(string assetPath)
     {
         if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
@@ -363,21 +421,22 @@ public partial class XRTexture2D
             return false;
         }
 
-        if (!TryReadResidentDataFromTextureAssetFileBytes(
-            assetBytes,
-            ImportedPreviewMaxDimensionInternal,
-            includeMipChain: true,
-            out TextureStreamingResidentData residentData))
+        if (!TryReadTextureStreamingManifestFromTextureAssetFileBytes(assetBytes, out TextureStreamingSourceManifest manifest))
         {
             return false;
         }
 
-        uint sourceMaxDimension = Math.Max(residentData.SourceWidth, residentData.SourceHeight);
+        uint sourceMaxDimension = Math.Max(manifest.SourceWidth, manifest.SourceHeight);
         uint expectedResidentMaxDimension = GetPreviewResidentSize(sourceMaxDimension);
-        if (residentData.ResidentMaxDimension > expectedResidentMaxDimension)
+        if (manifest.PreviewMipIndex < 0 || manifest.PreviewMipIndex >= manifest.Mips.Length)
             return false;
 
-        return sourceMaxDimension <= expectedResidentMaxDimension || residentData.Mipmaps.Length > 1;
+        TextureSourceMipLayout previewMip = manifest.Mips[manifest.PreviewMipIndex];
+        uint previewResidentMaxDimension = Math.Max(previewMip.Width, previewMip.Height);
+        if (previewResidentMaxDimension > expectedResidentMaxDimension)
+            return false;
+
+        return sourceMaxDimension <= expectedResidentMaxDimension || manifest.Mips.Length > 1;
     }
 
     private static bool TryExtractTextureStreamingPayloadFromYamlAsset(string assetYaml, out byte[]? payload)
@@ -672,6 +731,69 @@ public partial class XRTexture2D
         StreamableMipmapDescriptor lastDescriptor = descriptors[^1];
         reader.Position = sectionStart + lastDescriptor.DataOffset + lastDescriptor.DataLength;
         return mipmaps;
+    }
+
+    private static bool TryReadStreamableMipManifest(
+        CookedBinaryReader reader,
+        ESizedInternalFormat sizedInternalFormat,
+        string? samplerName,
+        out TextureStreamingSourceManifest manifest)
+    {
+        manifest = default;
+        long sectionStart = reader.Position;
+        if (reader.Remaining < sizeof(int) * 4)
+            return false;
+
+        int magic = reader.ReadInt32();
+        if (magic != StreamableMipSectionMagic)
+            return false;
+
+        int version = reader.ReadInt32();
+        if (version != StreamableMipSectionVersion)
+            return false;
+
+        int mipCount = reader.ReadInt32();
+        int previewBaseMipIndex = reader.ReadInt32();
+        if (mipCount <= 0)
+            return false;
+
+        TextureSourceMipLayout[] mips = new TextureSourceMipLayout[mipCount];
+        uint sourceWidth = 0u;
+        uint sourceHeight = 0u;
+        for (int i = 0; i < mipCount; i++)
+        {
+            uint width = reader.ReadUInt32();
+            uint height = reader.ReadUInt32();
+            _ = (EPixelInternalFormat)reader.ReadInt32();
+            _ = (EPixelFormat)reader.ReadInt32();
+            _ = (EPixelType)reader.ReadInt32();
+            long dataOffset = reader.ReadInt64();
+            int dataLength = reader.ReadInt32();
+            if (i == 0)
+            {
+                sourceWidth = width;
+                sourceHeight = height;
+            }
+
+            mips[i] = new TextureSourceMipLayout(
+                i,
+                sectionStart + dataOffset,
+                dataLength,
+                width,
+                height);
+        }
+
+        manifest = new TextureStreamingSourceManifest(
+            sourceWidth,
+            sourceHeight,
+            mipCount,
+            sizedInternalFormat,
+            mips,
+            Math.Clamp(previewBaseMipIndex, 0, mipCount - 1),
+            $"streamable-v{version}",
+            ColorSpace: null,
+            TextureRole: samplerName);
+        return true;
     }
 
     [RequiresUnreferencedCode("Calls XREngine.Core.Files.RuntimeCookedBinaryReader.ReadValue<T>()")]

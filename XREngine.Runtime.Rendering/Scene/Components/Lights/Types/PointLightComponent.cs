@@ -27,13 +27,17 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRViewport[] _viewports = [];
         private XRCamera[] _shadowCameras = [];
 
-        private bool _useGeometryShader = true;
         private XRFrameBuffer? _perFaceFbo;
         private XRMaterial? _shadowAtlasMaterial;
+        private XRMaterial? _pointGeometryShadowMaterial;
+        private XRMaterial? _pointInstancedShadowMaterial;
         private const float PointShadowNearPlaneDistanceDefault = 0.1f;
         private readonly PositionOnlyTransform _shadowCameraParentTransform = new();
         private float _shadowNearPlaneDistance = PointShadowNearPlaneDistanceDefault;
         private readonly PointShadowAtlasFaceSlot[] _atlasFaceSlots = new PointShadowAtlasFaceSlot[ShadowFaceCount];
+        private EPointShadowRenderMode _shadowRenderMode = EPointShadowRenderMode.Sequential;
+        private EPointShadowRenderMode _effectiveShadowRenderMode = EPointShadowRenderMode.Sequential;
+        private PointShadowRenderFallbackReason _shadowRenderFallbackReason = PointShadowRenderFallbackReason.SequentialRequested;
 
         private static readonly Vector3[] ShadowFaceForwardVectors =
         [
@@ -61,23 +65,55 @@ namespace XREngine.Components.Capture.Lights.Types
             BoundingRectangle InnerPixelRect,
             ulong LastRenderedFrame);
 
+        private enum PointShadowRenderFallbackReason
+        {
+            None = 0,
+            SequentialRequested = 1,
+            AtlasUsesSequentialTiles = 2,
+            MissingShadowMap = 3,
+            UnsupportedLayeredFramebuffer = 4,
+            UnsupportedGeometryShader = 5,
+            UnsupportedVertexStageLayerWrites = 6,
+            UnsupportedViewportArray = 7,
+        }
+
+        private readonly struct PointShadowRenderPlan
+        {
+            public required EPointShadowRenderMode RequestedMode { get; init; }
+            public required EPointShadowRenderMode SelectedMode { get; init; }
+            public required PointShadowRenderFallbackReason FallbackReason { get; init; }
+
+            public bool IsLayered => SelectedMode is EPointShadowRenderMode.GeometryShader or EPointShadowRenderMode.InstancedLayered;
+            public bool IsInstancedLayered => SelectedMode == EPointShadowRenderMode.InstancedLayered;
+        }
+
         /// <summary>
-        /// When enabled, renders all 6 cubemap shadow faces in a single draw call
-        /// using a geometry shader. When disabled, renders each face separately in
-        /// 6 passes (compatible with GPUs/drivers that lack geometry shader support).
+        /// Selects the render strategy for the legacy cubemap shadow path.
         /// </summary>
         [Category("Shadows")]
-        [DisplayName("Use Geometry Shader")]
-        [Description("Render all 6 cubemap faces in one draw call via geometry shader. Disable for 6-pass fallback.")]
-        public bool UseGeometryShader
+        [DisplayName("Point Shadow Render Mode")]
+        [Description("Controls whether cubemap faces render as sequential passes, an instanced/layered path, or a geometry-shader layered pass.")]
+        public EPointShadowRenderMode ShadowRenderMode
         {
-            get => _useGeometryShader;
-            set
-            {
-                if (SetField(ref _useGeometryShader, value))
-                    RecreateShadowMapMaterial();
-            }
+            get => _shadowRenderMode;
+            set => SetField(ref _shadowRenderMode, value);
         }
+
+        /// <summary>
+        /// Most recent render mode selected for the legacy point-light cubemap shadow path.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Effective Point Shadow Render Mode")]
+        [Description("Resolved point shadow render path after backend capability checks and fallback handling.")]
+        public EPointShadowRenderMode EffectiveShadowRenderMode => _effectiveShadowRenderMode;
+
+        /// <summary>
+        /// Most recent fallback reason for the legacy point-light cubemap shadow path.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Point Shadow Render Fallback")]
+        [Description("Reason the requested point shadow render mode could not be used in the most recent shadow pass.")]
+        public string ShadowRenderFallbackReason => _shadowRenderFallbackReason.ToString();
 
         [Category("Shadows")]
         [DisplayName("Shadow Near Plane")]
@@ -183,17 +219,6 @@ namespace XREngine.Components.Capture.Lights.Types
                 .Wait();
         }
 
-        private void RecreateShadowMapMaterial()
-        {
-            if (ShadowMap is null)
-                return;
-
-            uint res = _viewports.Length > 0 ? (uint)_viewports[0].Width : ShadowMapResolutionWidth;
-            if (res == 0)
-                res = 1024u;
-            SetShadowMapResolution(res, res);
-        }
-
         public override void CollectVisibleItems()
         {
             if (!ShouldProcessShadowViewports())
@@ -202,21 +227,23 @@ namespace XREngine.Components.Capture.Lights.Types
             EnsureShadowResources();
             SyncShadowCaptureTransforms();
 
-            if (_useGeometryShader && !Engine.Rendering.Settings.UsePointShadowAtlas)
+            PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
+            PublishShadowRenderPlan(plan);
+            if (plan.IsLayered)
             {
-                // GS renders all 6 cubemap faces per draw call. One viewport
-                // with the influence sphere captures objects visible from any face.
+                // Layered passes render all six cubemap faces from one draw list.
                 _viewports[0].CollectVisible(
                     collectMirrors: false,
                     collectionVolumeOverride: _influenceVolume);
             }
             else
             {
-                // Without GS each viewport renders one face with its own camera frustum.
-                for (int i = 0; i < 6; i++)
+                LogShadowRenderModeFallbackIfNeeded(plan);
+                for (int i = 0; i < ShadowFaceCount; i++)
                     _viewports[i].CollectVisible(collectMirrors: false);
             }
         }
+
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
         {
             if (!ShouldProcessShadowViewports())
@@ -224,17 +251,21 @@ namespace XREngine.Components.Capture.Lights.Types
 
             EnsureShadowResources();
 
-            if (_useGeometryShader && !Engine.Rendering.Settings.UsePointShadowAtlas)
+            PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
+            PublishShadowRenderPlan(plan);
+            if (plan.IsLayered)
             {
                 _viewports[0].SwapBuffers();
             }
             else
             {
-                for (int i = 0; i < 6; i++)
+                LogShadowRenderModeFallbackIfNeeded(plan);
+                for (int i = 0; i < ShadowFaceCount; i++)
                     _viewports[i].SwapBuffers();
             }
             lightmapBaker?.ProcessDynamicCachedAutoBake(this);
         }
+
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
             if (!CastsShadows || Engine.Rendering.Settings.UsePointShadowAtlas)
@@ -253,26 +284,140 @@ namespace XREngine.Components.Capture.Lights.Types
                 SwapBuffers();
             }
 
-            if (_useGeometryShader)
+            PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
+            PublishShadowRenderPlan(plan);
+            if (plan.IsLayered)
             {
-                // Single draw: the GS writes to all 6 cubemap layers via gl_Layer.
-                _viewports[0].Render(ShadowMap, null, null, true, ShadowMap!.Material);
+                Span<Matrix4x4> faceMatrices = stackalloc Matrix4x4[ShadowFaceCount];
+                int faceCount = CopyShadowFaceMatrices(faceMatrices);
+                XRMaterial layeredMaterial = plan.IsInstancedLayered
+                    ? PointInstancedShadowMaterial
+                    : PointGeometryShadowMaterial;
+                using var pointShadowPass = _viewports[0].RenderPipelineInstance.RenderState
+                    .PushPointLightLayeredShadowPass(plan.IsInstancedLayered, faceMatrices[..faceCount]);
+                _viewports[0].Render(ShadowMap, null, null, true, layeredMaterial);
+                return;
             }
-            else
+
+            LogShadowRenderModeFallbackIfNeeded(plan);
+            RenderSequentialShadowFaces();
+        }
+
+        private PointShadowRenderPlan CreatePointShadowRenderPlan()
+        {
+            EPointShadowRenderMode requestedMode = _shadowRenderMode;
+            if (Engine.Rendering.Settings.UsePointShadowAtlas)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.AtlasUsesSequentialTiles);
+
+            if (ShadowMap is null)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.MissingShadowMap);
+
+            if (requestedMode == EPointShadowRenderMode.Sequential)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.SequentialRequested);
+
+            if (!Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedLayeredFramebuffer);
+
+            return requestedMode switch
             {
-                // 6-pass fallback: render each face individually.
-                _perFaceFbo ??= new XRFrameBuffer();
-                var mat = ShadowMap.Material!;
-                var depthCube = (IFrameBufferAttachement)mat.Textures[0]!;
-                var shadowCube = (IFrameBufferAttachement)mat.Textures[1]!;
-                for (int i = 0; i < 6; i++)
-                {
-                    _perFaceFbo.SetRenderTargets(
-                        (depthCube, EFrameBufferAttachment.DepthAttachment, 0, i),
-                        (shadowCube, EFrameBufferAttachment.ColorAttachment0, 0, i));
-                    _viewports[i].Render(_perFaceFbo, null, null, true, mat);
-                }
+                EPointShadowRenderMode.InstancedLayered => CreateInstancedShadowRenderPlan(requestedMode),
+                EPointShadowRenderMode.GeometryShader => CreateGeometryShadowRenderPlan(requestedMode),
+                _ => CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.SequentialRequested),
+            };
+        }
+
+        private static PointShadowRenderPlan CreateInstancedShadowRenderPlan(EPointShadowRenderMode requestedMode)
+        {
+            if (!Engine.Rendering.State.SupportsOpenGLViewportArray)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedViewportArray);
+
+            if (!Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedVertexStageLayerWrites);
+
+            return new PointShadowRenderPlan
+            {
+                RequestedMode = requestedMode,
+                SelectedMode = EPointShadowRenderMode.InstancedLayered,
+                FallbackReason = PointShadowRenderFallbackReason.None,
+            };
+        }
+
+        private static PointShadowRenderPlan CreateGeometryShadowRenderPlan(EPointShadowRenderMode requestedMode)
+        {
+            if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedGeometryShader);
+
+            return new PointShadowRenderPlan
+            {
+                RequestedMode = requestedMode,
+                SelectedMode = EPointShadowRenderMode.GeometryShader,
+                FallbackReason = PointShadowRenderFallbackReason.None,
+            };
+        }
+
+        private static PointShadowRenderPlan CreateSequentialShadowRenderPlan(
+            EPointShadowRenderMode requestedMode,
+            PointShadowRenderFallbackReason fallbackReason)
+            => new()
+            {
+                RequestedMode = requestedMode,
+                SelectedMode = EPointShadowRenderMode.Sequential,
+                FallbackReason = fallbackReason,
+            };
+
+        private void PublishShadowRenderPlan(in PointShadowRenderPlan plan)
+        {
+            if (_effectiveShadowRenderMode != plan.SelectedMode)
+                _effectiveShadowRenderMode = plan.SelectedMode;
+            if (_shadowRenderFallbackReason != plan.FallbackReason)
+                _shadowRenderFallbackReason = plan.FallbackReason;
+        }
+
+        private int CopyShadowFaceMatrices(Span<Matrix4x4> matrices)
+        {
+            int count = Math.Min(ShadowFaceCount, Math.Min(_shadowCameras.Length, matrices.Length));
+            for (int i = 0; i < count; ++i)
+            {
+                XRCamera cam = _shadowCameras[i];
+                Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
+                matrices[i] = viewMatrix * cam.ProjectionMatrix;
             }
+
+            return count;
+        }
+
+        private void RenderSequentialShadowFaces()
+        {
+            _perFaceFbo ??= new XRFrameBuffer();
+            var mat = ShadowMap!.Material!;
+            var depthCube = (IFrameBufferAttachement)mat.Textures[0]!;
+            var shadowCube = (IFrameBufferAttachement)mat.Textures[1]!;
+            for (int i = 0; i < ShadowFaceCount; i++)
+            {
+                _perFaceFbo.SetRenderTargets(
+                    (depthCube, EFrameBufferAttachment.DepthAttachment, 0, i),
+                    (shadowCube, EFrameBufferAttachment.ColorAttachment0, 0, i));
+                _viewports[i].Render(_perFaceFbo, null, null, true, mat);
+            }
+        }
+
+        private void LogShadowRenderModeFallbackIfNeeded(in PointShadowRenderPlan plan)
+        {
+            if (plan.FallbackReason is PointShadowRenderFallbackReason.None
+                or PointShadowRenderFallbackReason.SequentialRequested
+                or PointShadowRenderFallbackReason.AtlasUsesSequentialTiles)
+            {
+                return;
+            }
+
+            Debug.LightingWarningEvery(
+                $"PointShadowRenderModeFallback.{GetHashCode()}",
+                TimeSpan.FromSeconds(2.0),
+                "[PointShadowAudit] Point shadow render mode fallback for '{0}': requested={1}, effective={2}, reason={3}.",
+                SceneNode?.Name ?? Name ?? GetType().Name,
+                plan.RequestedMode,
+                plan.SelectedMode,
+                plan.FallbackReason);
         }
 
         private bool ShouldProcessShadowViewports()
@@ -410,11 +555,39 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();
 
+        private XRMaterial PointGeometryShadowMaterial
+            => _pointGeometryShadowMaterial ??= CreatePointGeometryShadowMaterial();
+
+        private XRMaterial PointInstancedShadowMaterial
+            => _pointInstancedShadowMaterial ??= CreatePointInstancedShadowMaterial();
+
         private XRMaterial CreateShadowAtlasMaterial()
         {
             XRMaterial mat = new(XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment));
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
+            return mat;
+        }
+
+        private XRMaterial CreatePointGeometryShadowMaterial()
+        {
+            XRMaterial mat = new(
+                XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry),
+                XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment));
+            mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.PointShadowMaterialKind = EPointShadowMaterialKind.GeometryShader;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
+            return mat;
+        }
+
+        private XRMaterial CreatePointInstancedShadowMaterial()
+        {
+            XRMaterial mat = new(XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment));
+            mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.PointShadowMaterialKind = EPointShadowMaterialKind.InstancedLayered;
             mat.SettingShadowUniforms += SetShadowMapUniforms;
             return mat;
         }
@@ -575,18 +748,18 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             program.Uniform("FarPlaneDist", _influenceVolume.Radius);
             program.Uniform("LightPos", Transform.RenderTranslation);
-            if (_useGeometryShader)
+            int faceCount = Math.Min(ShadowFaceCount, _shadowCameras.Length);
+            program.Uniform("PointShadowFaceCount", faceCount);
+            for (int i = 0; i < faceCount; ++i)
             {
-                for (int i = 0; i < _shadowCameras.Length; ++i)
-                {
-                    XRCamera cam = _shadowCameras[i];
-                    // Precompute VP on CPU to avoid per-vertex inverse() in the geometry shader.
-                    Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
-                    Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
-                    program.Uniform($"ViewProjectionMatrices[{i}]", vp);
-                }
+                XRCamera cam = _shadowCameras[i];
+                Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
+                Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
+                program.Uniform($"ViewProjectionMatrices[{i}]", vp);
+                program.Uniform($"PointShadowViewProjectionMatrices[{i}]", vp);
             }
         }
+
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
         {
             uint cubeExtent = Math.Max(width, height);
@@ -619,19 +792,11 @@ namespace XREngine.Components.Capture.Lights.Types
             ];
 
             XRShader fragShader = XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment);
-            XRMaterial mat;
-            if (_useGeometryShader)
-            {
-                XRShader geomShader = XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry);
-                mat = new(refs, geomShader, fragShader);
-            }
-            else
-            {
-                mat = new(refs, fragShader);
-            }
+            XRMaterial mat = new(refs, fragShader);
 
             // No culling so a light inside geometry still shadows everything around it.
             mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
 
             return mat;
         }

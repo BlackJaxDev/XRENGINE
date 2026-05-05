@@ -981,12 +981,13 @@ namespace XREngine.Scene
             {
                 SpotLightComponent light = DynamicSpotLights[i];
                 int shadowSlot = -1;
+                bool useLightSpotAtlas = light.UsesSpotShadowAtlasForCurrentEncoding;
 
                 IVector4 atlasPacked0 = new(0, -1, (int)ShadowFallbackMode.Lit, -1);
                 Vector4 atlasParams0 = Vector4.Zero;
                 Vector4 atlasParams1 = Vector4.Zero;
                 bool atlasResident = false;
-                if (useSpotAtlas &&
+                if (useLightSpotAtlas &&
                     TryGetSpotShadowAtlasAllocation(light, out ShadowAtlasAllocation allocation, out int recordIndex))
                 {
                     ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
@@ -1008,7 +1009,7 @@ namespace XREngine.Scene
                     atlasParams1 = new Vector4(atlasNearPlane, atlasFarPlane, texelSize, resolutionScale);
                 }
 
-                if ((!useSpotAtlas || !atlasResident) && spotShadowSlot < maxForwardShadowedSpotLights)
+                if ((!useLightSpotAtlas || !atlasResident) && spotShadowSlot < maxForwardShadowedSpotLights)
                 {
                     XRTexture? shadowTexture = FindShadowMapTexture(light);
                     if (shadowTexture is XRTexture2D shadowMap)
@@ -1030,7 +1031,7 @@ namespace XREngine.Scene
                     Params1 = new Vector4(light.FilterRadius, light.BlockerSearchRadius, light.MinPenumbra, light.MaxPenumbra),
                     Params2 = new Vector4(light.EffectiveLightSourceRadius, light.ContactShadowDistance, light.ContactShadowThickness, light.ContactShadowFadeStart),
                     Params3 = new Vector4(light.ContactShadowFadeEnd, light.ContactShadowNormalOffset, light.ContactShadowJitterStrength, 0.0f),
-                    Packed2 = new IVector4((int)shadowFormat.Encoding, light.ShadowMomentUseMipmaps ? 1 : 0, 0, 0),
+                    Packed2 = new IVector4((int)shadowFormat.Encoding, light.ShadowMomentUseMipmaps ? 1 : 0, light.ShadowMomentBlurRadiusTexels, light.ShadowMomentBlurPasses),
                     Params4 = new Vector4(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, shadowFormat.PositiveExponent, shadowFormat.NegativeExponent),
                     Params5 = new Vector4(momentNearPlane, momentFarPlane, light.ShadowMomentMipBias, 0.0f),
                     AtlasPacked0 = atlasPacked0,

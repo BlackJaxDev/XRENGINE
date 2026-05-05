@@ -13,12 +13,21 @@ namespace XREngine.Rendering.OpenGL
         {
             private bool _inlineGenerateFallbackLogged;
             private static readonly string[] s_directionalCascadeViewProjectionMatrixUniformNames = CreateDirectionalCascadeViewProjectionMatrixUniformNames();
+            private static readonly string[] s_pointLightViewProjectionMatrixUniformNames = CreatePointLightViewProjectionMatrixUniformNames();
 
             private static string[] CreateDirectionalCascadeViewProjectionMatrixUniformNames()
             {
                 string[] names = new string[8];
                 for (int i = 0; i < names.Length; i++)
                     names[i] = $"CascadeViewProjectionMatrices[{i}]";
+                return names;
+            }
+
+            private static string[] CreatePointLightViewProjectionMatrixUniformNames()
+            {
+                string[] names = new string[6];
+                for (int i = 0; i < names.Length; i++)
+                    names[i] = $"PointShadowViewProjectionMatrices[{i}]";
                 return names;
             }
 
@@ -45,6 +54,16 @@ namespace XREngine.Rendering.OpenGL
                             shadowSourceMaterial,
                             instances);
                         return GetOrCreateShadowMaterial(directionalCascadeMaterial);
+                    }
+
+                    if (globalMaterialOverride is not null &&
+                        globalMaterialOverride.PointShadowMaterialKind != EPointShadowMaterialKind.None)
+                    {
+                        XRMaterial pointShadowMaterial = ResolvePointLightShadowMaterial(
+                            globalMaterialOverride,
+                            shadowSourceMaterial,
+                            instances);
+                        return GetOrCreateShadowMaterial(pointShadowMaterial);
                     }
 
                     if (pointLightShadowOverride
@@ -133,7 +152,56 @@ namespace XREngine.Rendering.OpenGL
                 return globalMaterialOverride;
             }
 
+            private XRMaterial ResolvePointLightShadowMaterial(
+                XRMaterial globalMaterialOverride,
+                XRMaterial? shadowSourceMaterial,
+                uint instances)
+            {
+                bool instancedLayeredOverride =
+                    globalMaterialOverride.PointShadowMaterialKind == EPointShadowMaterialKind.InstancedLayered &&
+                    Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass;
+
+                if (instancedLayeredOverride && CanUsePointLightInstancedMaterial(shadowSourceMaterial, instances))
+                {
+                    if (shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false)
+                        return globalMaterialOverride;
+
+                    XRMaterial? instancedVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(useGeometryShader: false);
+                    if (instancedVariant is not null)
+                    {
+                        instancedVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
+                        return instancedVariant;
+                    }
+                }
+
+                if (globalMaterialOverride.PointShadowMaterialKind == EPointShadowMaterialKind.GeometryShader &&
+                    shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true)
+                {
+                    return globalMaterialOverride;
+                }
+
+                XRMaterial? geometryVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(useGeometryShader: true);
+                if (geometryVariant is not null)
+                {
+                    geometryVariant.ShadowUniformSourceMaterial = globalMaterialOverride;
+                    return geometryVariant;
+                }
+
+                return globalMaterialOverride;
+            }
+
             private bool CanUseDirectionalCascadeInstancedMaterial(XRMaterial? shadowSourceMaterial, uint instances)
+            {
+                if (instances != 1u)
+                    return false;
+
+                if (MeshRenderer.MeshDeformEnabled)
+                    return false;
+
+                return shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false;
+            }
+
+            private bool CanUsePointLightInstancedMaterial(XRMaterial? shadowSourceMaterial, uint instances)
             {
                 if (instances != 1u)
                     return false;
@@ -177,6 +245,7 @@ namespace XREngine.Rendering.OpenGL
                 var renderState = Engine.Rendering.State.RenderingPipelineState;
                 return renderState?.ShadowPass == true
                     && (renderState.DirectionalCascadeLayeredShadowPass ||
+                    renderState.PointLightLayeredShadowPass ||
                     (renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
                     && globalMaterialOverride.GeometryShaders.Count > 0));
             }
@@ -296,7 +365,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 GLMaterial material = GetRenderMaterial(materialOverride, instances);
-                uint drawInstances = ResolveDirectionalCascadeLayeredInstanceCount(material.Data, instances);
+                uint drawInstances = ResolveLayeredShadowInstanceCount(material.Data, instances);
 
                 if (GetPrograms(material, out var vtx, out var mat))
                 {
@@ -338,6 +407,7 @@ namespace XREngine.Rendering.OpenGL
 
                     OnSettingUniforms(vtx!, mat!);
                     SetDirectionalCascadeLayeredVertexUniforms(vtx!, material.Data);
+                    SetPointLightLayeredVertexUniforms(vtx!, material.Data);
                     material.FinalizeUniformBindings(mat);
                     GLRenderProgram materialProgram = mat!;
                     Renderer.SetDrawDebugContext(
@@ -368,6 +438,12 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            private static uint ResolveLayeredShadowInstanceCount(XRMaterial material, uint instances)
+            {
+                uint directionalInstances = ResolveDirectionalCascadeLayeredInstanceCount(material, instances);
+                return ResolvePointLightLayeredInstanceCount(material, directionalInstances);
+            }
+
             private static uint ResolveDirectionalCascadeLayeredInstanceCount(XRMaterial material, uint instances)
             {
                 if (material.DirectionalCascadeShadowMaterialKind != EDirectionalCascadeShadowMaterialKind.InstancedLayered ||
@@ -381,6 +457,22 @@ namespace XREngine.Rendering.OpenGL
                     return instances;
 
                 ulong expanded = (ulong)instances * (ulong)layerCount;
+                return expanded > uint.MaxValue ? uint.MaxValue : (uint)expanded;
+            }
+
+            private static uint ResolvePointLightLayeredInstanceCount(XRMaterial material, uint instances)
+            {
+                if (material.PointShadowMaterialKind != EPointShadowMaterialKind.InstancedLayered ||
+                    !Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
+                {
+                    return instances;
+                }
+
+                int faceCount = Math.Clamp(Engine.Rendering.State.PointLightShadowFaceCount, 0, 6);
+                if (faceCount <= 1)
+                    return instances;
+
+                ulong expanded = (ulong)instances * (ulong)faceCount;
                 return expanded > uint.MaxValue ? uint.MaxValue : (uint)expanded;
             }
 
@@ -437,6 +529,7 @@ namespace XREngine.Rendering.OpenGL
                 vertexProgram.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
                 materialProgram?.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
                 SetDirectionalCascadeLayeredUniforms(vertexProgram);
+                SetPointLightLayeredUniforms(vertexProgram);
 
                 vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass || shadowGeometryPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
@@ -469,6 +562,32 @@ namespace XREngine.Rendering.OpenGL
                     material.OnSettingShadowUniforms(vertexProgram.Data);
                 else
                     SetDirectionalCascadeLayeredUniforms(vertexProgram);
+            }
+
+            private static void SetPointLightLayeredUniforms(GLRenderProgram vertexProgram)
+            {
+                var state = Engine.Rendering.State.RenderingPipelineState;
+                if (state?.PointLightInstancedLayeredShadowPass != true)
+                    return;
+
+                int faceCount = Math.Clamp(state.PointLightShadowFaceCount, 0, s_pointLightViewProjectionMatrixUniformNames.Length);
+                vertexProgram.Uniform("PointShadowFaceCount", faceCount);
+                for (int i = 0; i < faceCount; i++)
+                {
+                    if (state.TryGetPointLightShadowFaceMatrix(i, out Matrix4x4 matrix))
+                        vertexProgram.Uniform(s_pointLightViewProjectionMatrixUniformNames[i], matrix);
+                }
+            }
+
+            private static void SetPointLightLayeredVertexUniforms(GLRenderProgram vertexProgram, XRMaterial material)
+            {
+                if (material.PointShadowMaterialKind != EPointShadowMaterialKind.InstancedLayered ||
+                    !Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
+                {
+                    return;
+                }
+
+                SetPointLightLayeredUniforms(vertexProgram);
             }
 
             /// <summary>

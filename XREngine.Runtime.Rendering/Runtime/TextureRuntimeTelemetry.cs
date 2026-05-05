@@ -1,3 +1,5 @@
+using XREngine.Data.Rendering;
+
 namespace XREngine.Rendering;
 
 public enum TextureResidencyTransitionKind
@@ -49,6 +51,17 @@ public readonly record struct TextureCookedSourceMetadata(
     TextureSourceMipLayout[] Mips,
     TextureSourcePageLayout[] Pages,
     long EstimatedResidentBytes);
+
+internal readonly record struct TextureStreamingSourceManifest(
+    uint SourceWidth,
+    uint SourceHeight,
+    int LogicalMipCount,
+    ESizedInternalFormat SizedInternalFormat,
+    TextureSourceMipLayout[] Mips,
+    int PreviewMipIndex,
+    string SourceVersion,
+    string? ColorSpace,
+    string? TextureRole);
 
 public readonly record struct TextureSourceMipLayout(
     int MipLevel,

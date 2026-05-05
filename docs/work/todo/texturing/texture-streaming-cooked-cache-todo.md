@@ -1,8 +1,10 @@
 # Texture Streaming Cooked Cache TODO
 
-Status: implementation pass complete; cold/warm scene-run validation remains
+Status: implemented; superseded for ongoing architecture by [Texture Streaming Consolidation TODO](texture-streaming-consolidation-todo.md); cold/warm scene-run validation remains
 
-Source analysis: [Texture Streaming Run Analysis - 2026-05-01 18:06](../testing/texture-streaming-run-analysis-2026-05-01-180642.md)
+Source analysis: [Texture Streaming Run Analysis - 2026-05-01 18:06](../../testing/texture-streaming-run-analysis-2026-05-01-180642.md)
+
+The cooked-cache implementation is now part of the consolidated texture streaming service split. This file remains as the cache-specific phase history and scene-validation ledger.
 
 ## Goal
 
