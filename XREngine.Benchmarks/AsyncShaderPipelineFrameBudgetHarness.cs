@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
@@ -11,6 +12,7 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
     private const int FrameCount = 240;
     private const double EightMillisecondBudget = 8.3;
     private const double SixteenMillisecondBudget = 16.6;
+    private const double ThirtyThreeMillisecondBudget = 33.3;
 
     private const string ComplexFS = """
         #version 460 core
@@ -144,14 +146,23 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
         string report = BuildMarkdownReport();
         Directory.CreateDirectory(Path.GetDirectoryName(_outputPath)!);
         File.WriteAllText(_outputPath, report);
+        string jsonPath = Path.ChangeExtension(_outputPath, ".json");
+        File.WriteAllText(jsonPath, JsonSerializer.Serialize(_results, new JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine(report);
         Console.WriteLine($"Report written to {_outputPath}");
+        Console.WriteLine($"JSON written to {jsonPath}");
     }
 
     private ScenarioResult RunScenario(string name, Func<int, ScenarioState, bool> frameAction)
     {
         var state = new ScenarioState();
         var frameTimesMs = new double[FrameCount];
+        long compileCompletedStart = _compileQueue.CompletedCount;
+        long compileFailedStart = _compileQueue.FailedCount;
+        long compileBackpressureStart = _compileQueue.BackpressureCount;
+        long uploadCompletedStart = _uploadQueue.CompletedCount;
+        long uploadFailedStart = _uploadQueue.FailedCount;
+        long uploadBackpressureStart = _uploadQueue.BackpressureCount;
 
         for (int frameIndex = 0; frameIndex < FrameCount; frameIndex++)
         {
@@ -162,10 +173,24 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
 
             if (completed && state.CompletedFrame < 0)
                 state.CompletedFrame = frameIndex;
+
+            state.MaxCompileQueueDepth = Math.Max(state.MaxCompileQueueDepth, _compileQueue.InFlightCount);
+            state.MaxUploadQueueDepth = Math.Max(state.MaxUploadQueueDepth, _uploadQueue.InFlightCount);
         }
 
         DrainState(state);
-        return BuildScenarioResult(name, frameTimesMs, state.CompletedFrame);
+        return BuildScenarioResult(
+            name,
+            frameTimesMs,
+            state.CompletedFrame,
+            state.MaxCompileQueueDepth,
+            state.MaxUploadQueueDepth,
+            _compileQueue.CompletedCount - compileCompletedStart,
+            _compileQueue.FailedCount - compileFailedStart,
+            _compileQueue.BackpressureCount - compileBackpressureStart,
+            _uploadQueue.CompletedCount - uploadCompletedStart,
+            _uploadQueue.FailedCount - uploadFailedStart,
+            _uploadQueue.BackpressureCount - uploadBackpressureStart);
     }
 
     private bool DoIdleFrame(int frameIndex, ScenarioState state)
@@ -270,15 +295,52 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
         Thread.SpinWait(25_000);
     }
 
-    private ScenarioResult BuildScenarioResult(string name, double[] frameTimesMs, int completedFrame)
+    private ScenarioResult BuildScenarioResult(
+        string name,
+        double[] frameTimesMs,
+        int completedFrame,
+        int maxCompileQueueDepth,
+        int maxUploadQueueDepth,
+        long compileQueueCompleted,
+        long compileQueueFailed,
+        long compileQueueBackpressure,
+        long uploadQueueCompleted,
+        long uploadQueueFailed,
+        long uploadQueueBackpressure)
     {
         double[] ordered = [.. frameTimesMs.OrderBy(value => value)];
         double max = frameTimesMs.Max();
         double average = frameTimesMs.Average();
+        double p50 = Percentile(ordered, 0.50);
         double p95 = Percentile(ordered, 0.95);
+        double p99 = Percentile(ordered, 0.99);
+        double p999 = Percentile(ordered, 0.999);
         int over8 = frameTimesMs.Count(value => value > EightMillisecondBudget);
         int over16 = frameTimesMs.Count(value => value > SixteenMillisecondBudget);
-        return new ScenarioResult(name, average, p95, max, over8, over16, completedFrame);
+        int over33 = frameTimesMs.Count(value => value > ThirtyThreeMillisecondBudget);
+        return new ScenarioResult(
+            name,
+            GetGlString(StringName.Version),
+            GetGlString(StringName.Vendor),
+            GetGlString(StringName.Renderer),
+            average,
+            p50,
+            p95,
+            p99,
+            p999,
+            max,
+            over8,
+            over16,
+            over33,
+            completedFrame,
+            maxCompileQueueDepth,
+            maxUploadQueueDepth,
+            compileQueueCompleted,
+            compileQueueFailed,
+            compileQueueBackpressure,
+            uploadQueueCompleted,
+            uploadQueueFailed,
+            uploadQueueBackpressure);
     }
 
     private string BuildMarkdownReport()
@@ -287,14 +349,18 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
         builder.AppendLine("# Async Shader Pipeline Frame Budget Report");
         builder.AppendLine();
         builder.AppendLine($"Frames per scenario: {FrameCount}");
-        builder.AppendLine($"Frame budgets: >{EightMillisecondBudget:F1} ms and >{SixteenMillisecondBudget:F1} ms");
+        builder.AppendLine($"OpenGL: {GetGlString(StringName.Version)} / {GetGlString(StringName.Vendor)} / {GetGlString(StringName.Renderer)}");
+        builder.AppendLine($"Frame budgets: >{EightMillisecondBudget:F1} ms, >{SixteenMillisecondBudget:F1} ms, and >{ThirtyThreeMillisecondBudget:F1} ms");
         builder.AppendLine();
-        builder.AppendLine("| Scenario | Avg Frame ms | P95 ms | Max Frame ms | Frames > 8.3 ms | Frames > 16.6 ms | Completed Frame |");
-        builder.AppendLine("|---|---:|---:|---:|---:|---:|---:|");
+        builder.AppendLine("| Scenario | Avg ms | P50 ms | P95 ms | P99 ms | P99.9 ms | Max ms | >8.3 | >16.6 | >33.3 | Done Frame | Max Compile Q | Max Upload Q | Compile ok/fail/backpressure | Upload ok/fail/backpressure |");
+        builder.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
 
         foreach (ScenarioResult result in _results)
         {
-            builder.AppendLine($"| {result.Name} | {result.AverageFrameMs:F3} | {result.P95FrameMs:F3} | {result.MaxFrameMs:F3} | {result.FramesOverEightMs} | {result.FramesOverSixteenMs} | {result.CompletedFrame} |");
+            builder.AppendLine(
+                $"| {result.Name} | {result.AverageFrameMs:F3} | {result.P50FrameMs:F3} | {result.P95FrameMs:F3} | {result.P99FrameMs:F3} | {result.P999FrameMs:F3} | {result.MaxFrameMs:F3} | " +
+                $"{result.FramesOverEightMs} | {result.FramesOverSixteenMs} | {result.FramesOverThirtyThreeMs} | {result.CompletedFrame} | {result.MaxCompileQueueDepth} | {result.MaxUploadQueueDepth} | " +
+                $"{result.CompileQueueCompleted}/{result.CompileQueueFailed}/{result.CompileQueueBackpressure} | {result.UploadQueueCompleted}/{result.UploadQueueFailed}/{result.UploadQueueBackpressure} |");
         }
 
         return builder.ToString();
@@ -395,6 +461,19 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
         return Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "BenchmarkDotNet.Artifacts", "results", "AsyncShaderPipelineFrameBudget-report.md");
     }
 
+    private string GetGlString(StringName name)
+    {
+        try
+        {
+            byte* value = _gl.GetString(name);
+            return value is null ? string.Empty : new string((sbyte*)value);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
     private static double Percentile(double[] orderedValues, double percentile)
     {
         if (orderedValues.Length == 0)
@@ -414,14 +493,31 @@ public sealed unsafe class AsyncShaderPipelineFrameBudgetHarness : IDisposable
     {
         public List<uint> ProgramIds { get; } = [];
         public int CompletedFrame { get; set; } = -1;
+        public int MaxCompileQueueDepth { get; set; }
+        public int MaxUploadQueueDepth { get; set; }
     }
 
     private readonly record struct ScenarioResult(
         string Name,
+        string OpenGLVersion,
+        string Vendor,
+        string Renderer,
         double AverageFrameMs,
+        double P50FrameMs,
         double P95FrameMs,
+        double P99FrameMs,
+        double P999FrameMs,
         double MaxFrameMs,
         int FramesOverEightMs,
         int FramesOverSixteenMs,
-        int CompletedFrame);
+        int FramesOverThirtyThreeMs,
+        int CompletedFrame,
+        int MaxCompileQueueDepth,
+        int MaxUploadQueueDepth,
+        long CompileQueueCompleted,
+        long CompileQueueFailed,
+        long CompileQueueBackpressure,
+        long UploadQueueCompleted,
+        long UploadQueueFailed,
+        long UploadQueueBackpressure);
 }

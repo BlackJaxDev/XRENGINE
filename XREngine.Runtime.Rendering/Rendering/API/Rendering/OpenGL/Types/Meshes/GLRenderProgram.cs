@@ -22,6 +22,8 @@ namespace XREngine.Rendering.OpenGL
         public partial class GLRenderProgram(OpenGLRenderer renderer, XRRenderProgram data) : GLObject<XRRenderProgram>(renderer, data), IEnumerable<GLShader>
         {
             private bool _isLinked = false;
+            private uint _replacementProgramId;
+            private bool _replacementProgramPending;
             public bool IsLinked
             {
                 get => _isLinked;
@@ -227,6 +229,8 @@ namespace XREngine.Rendering.OpenGL
             private void Reset()
             {
                 IsLinked = false;
+                _replacementProgramId = 0;
+                _replacementProgramPending = false;
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
                 _asyncAttachedShaderIds = null;
                 _asyncLinkedProgramId = 0;
@@ -234,6 +238,9 @@ namespace XREngine.Rendering.OpenGL
                 _asyncCompileLinkPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
                 _linkRequestStackTrace = null;
+                _activeBuildBackend = null;
+                _activeBuildFingerprint = null;
+                _activeBuildQueueTimestamp = 0;
                 UnregisterPendingAsyncProgram();
                 _hashComputed = false;
                 InvalidatePreparedLinkData();
@@ -288,11 +295,14 @@ namespace XREngine.Rendering.OpenGL
             {
                 Reset();
 
+                return CreateConfiguredProgramHandle();
+            }
+
+            private uint CreateConfiguredProgramHandle()
+            {
                 uint handle = Api.CreateProgram();
-
-                    Api.ProgramParameter(handle, GLEnum.ProgramBinaryRetrievableHint, 1);
+                Api.ProgramParameter(handle, GLEnum.ProgramBinaryRetrievableHint, 1);
                 Api.ProgramParameter(handle, GLEnum.ProgramSeparable, Data.Separable ? 1 : 0);
-
                 return handle;
             }
 

@@ -41,10 +41,21 @@ namespace XREngine.Rendering
         public enum EShaderProgramBackendStage
         {
             None,
+            CacheLookup,
+            CacheHit,
+            CacheMiss,
+            BinaryUploadPending,
+            BinaryUploadReady,
+            BinaryUploadFailed,
+            SourceQueued,
+            QueueBackpressure,
+            DriverParallelPending,
+            SynchronousFallback,
             Compiling,
             Linking,
             Ready,
             Failed,
+            Abandoned,
         }
 
         public sealed record ShaderProgramVariantMetadata(
@@ -60,18 +71,50 @@ namespace XREngine.Rendering
             EShaderProgramBackendStage Stage,
             double CompileMilliseconds,
             double LinkMilliseconds,
-            string? FailureReason)
+            string? FailureReason,
+            string? Backend = null,
+            string? Detail = null,
+            string? Fingerprint = null)
         {
             public static ShaderProgramBackendStatus Empty { get; } = new(EShaderProgramBackendStage.None, 0.0, 0.0, null);
         }
 
+        public sealed record ShaderProgramBuildTelemetry(
+            string? ProgramName,
+            string? Fingerprint,
+            string? StageSet,
+            bool Separable,
+            string? Backend,
+            double QueueLatencyMilliseconds,
+            double CompileMilliseconds,
+            double LinkMilliseconds,
+            double BinaryLoadMilliseconds,
+            double ReflectionMilliseconds,
+            string? FailureReason)
+        {
+            public static ShaderProgramBuildTelemetry Empty { get; } = new(
+                null,
+                null,
+                null,
+                false,
+                null,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                null);
+        }
+
         public sealed record ShaderProgramMetadata(
             ShaderProgramVariantMetadata Variant,
-            ShaderProgramBackendStatus Backend)
+            ShaderProgramBackendStatus Backend,
+            ShaderProgramBuildTelemetry LastBuild)
         {
             public static ShaderProgramMetadata Empty { get; } = new(
                 ShaderProgramVariantMetadata.Empty,
-                ShaderProgramBackendStatus.Empty);
+                ShaderProgramBackendStatus.Empty,
+                ShaderProgramBuildTelemetry.Empty);
 
             public bool HasVariant => Variant.HasVariant;
         }
@@ -343,6 +386,9 @@ namespace XREngine.Rendering
 
         public void SetShaderBackendStatus(ShaderProgramBackendStatus status)
             => ShaderMetadata = ShaderMetadata with { Backend = status };
+
+        public void SetShaderBuildTelemetry(ShaderProgramBuildTelemetry telemetry)
+            => ShaderMetadata = ShaderMetadata with { LastBuild = telemetry ?? ShaderProgramBuildTelemetry.Empty };
 
         private void EnsureShaderInterfaceMetadata()
         {

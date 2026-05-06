@@ -979,11 +979,14 @@ namespace XREngine
 
                 /// <summary>
                 /// Selects how uncached OpenGL shader programs are compiled and linked.
-                /// Auto prefers the shared-context queue and falls back to synchronous linking.
-                /// Use DriverParallel to explicitly exercise GL_ARB/KHR_parallel_shader_compile.
+                /// Auto prefers driver-parallel compile/link after the startup probe passes,
+                /// then falls back to the shared-context source queue and finally synchronous
+                /// linking. Known hazard shapes bypass async source lanes. Synchronous only
+                /// controls source compile/link; binary cache uploads still obey
+                /// <see cref="AsyncProgramBinaryUpload"/>.
                 /// </summary>
                 [Category("Performance")]
-                [Description("Selects how uncached OpenGL shader programs are compiled and linked. Auto prefers the shared-context queue and falls back to synchronous linking; DriverParallel explicitly exercises GL_ARB/KHR_parallel_shader_compile.")]
+                [Description("Selects how uncached OpenGL shader programs are compiled and linked. Auto prefers driver-parallel after the startup probe, then shared-context, then synchronous. Synchronous only affects source compile/link; async binary upload has its own toggle.")]
                 public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy
                 {
                     get => _openGLShaderLinkStrategy;

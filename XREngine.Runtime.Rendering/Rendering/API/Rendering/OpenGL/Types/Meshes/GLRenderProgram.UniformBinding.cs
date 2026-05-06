@@ -120,8 +120,24 @@ namespace XREngine.Rendering.OpenGL
                 var updated = cachedProgram with { Uniforms = metadata };
                 _cachedProgram = updated;
                 if (BinaryCache is not null)
-                    BinaryCache[Hash] = updated;
+                    BinaryCache[cachedProgram.CacheKey] = updated;
                 WriteToBinaryShaderCache(updated);
+            }
+
+            private double RestoreRuntimeBindingStateAfterBinaryLoad()
+            {
+                long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                bool restoredMetadata;
+                using (Engine.Profiler.Start("GLRenderProgram.Link.RestoreCachedUniformMetadata"))
+                    restoredMetadata = TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms);
+                if (!restoredMetadata)
+                {
+                    using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
+                    CacheActiveUniforms();
+                    PromoteCurrentUniformMetadataToCachedProgram();
+                }
+
+                return (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
             }
 
             public void BeginBindingBatch()

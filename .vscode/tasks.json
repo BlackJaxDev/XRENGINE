@@ -347,6 +347,95 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "Benchmark-ShaderPipeline-Smoke",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"run",
+				"-c",
+				"Release",
+				"--project",
+				"${workspaceFolder}/XREngine.Benchmarks/XREngine.Benchmarks.csproj",
+				"--",
+				"--filter",
+				"*AsyncShaderPipelineBenchmarks*",
+				"--job",
+				"Short",
+				"--warmupCount",
+				"1",
+				"--iterationCount",
+				"1"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Benchmark-ShaderPipeline-FullMatrix",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"run",
+				"-c",
+				"Release",
+				"--project",
+				"${workspaceFolder}/XREngine.Benchmarks/XREngine.Benchmarks.csproj",
+				"--",
+				"--filter",
+				"*AsyncShaderPipeline*"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Benchmark-ShaderPipeline-FrameBudget",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"run",
+				"-c",
+				"Release",
+				"--project",
+				"${workspaceFolder}/XREngine.Benchmarks/XREngine.Benchmarks.csproj",
+				"--",
+				"--frame-budget"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Benchmark-ShaderPipeline-LocalStress",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"run",
+				"-c",
+				"Release",
+				"--project",
+				"${workspaceFolder}/XREngine.Benchmarks/XREngine.Benchmarks.csproj",
+				"--",
+				"--filter",
+				"*AsyncShaderPipelineBenchmarks*",
+				"--job",
+				"Medium",
+				"--iterationCount",
+				"15"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Build-Profiler",
 			"command": "dotnet",
 			"type": "shell",

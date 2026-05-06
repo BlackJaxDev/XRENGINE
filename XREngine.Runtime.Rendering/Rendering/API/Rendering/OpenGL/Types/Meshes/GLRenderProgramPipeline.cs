@@ -8,6 +8,7 @@ namespace XREngine.Rendering.OpenGL
         public class GLRenderProgramPipeline(OpenGLRenderer renderer, XRRenderProgramPipeline data) : GLObject<XRRenderProgramPipeline>(renderer, data)
         {
             private bool _validationLogged;
+            private bool _validatedSuccessfully;
 
             public override EGLObjectType Type => EGLObjectType.ProgramPipeline;
 
@@ -27,7 +28,10 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void Validate()
             {
-                if (_validationLogged)
+#if !(DEBUG || EDITOR)
+                return;
+#else
+                if (_validationLogged || _validatedSuccessfully)
                     return;
 
                 Api.ValidateProgramPipeline(BindingId);
@@ -37,7 +41,10 @@ namespace XREngine.Rendering.OpenGL
                 int status = 0;
                 Api.GetProgramPipeline(BindingId, (PipelineParameterName)0x8B83, out status);
                 if (status != 0)
+                {
+                    _validatedSuccessfully = true;
                     return; // valid
+                }
 
                 int logLength = 0;
                 Api.GetProgramPipeline(BindingId, (PipelineParameterName)0x8B84, out logLength);
@@ -56,6 +63,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Debug.OpenGLWarning($"[PipelineValidation] pipeline {BindingId} failed validation with no info log");
                 }
+#endif
             }
 
             public static UseProgramStageMask ToUseProgramStageMask(EProgramStageMask mask)

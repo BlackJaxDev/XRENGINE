@@ -94,7 +94,7 @@ private static void InitGL(GL api)
     Engine.Rendering.State.OpenGLExtensions = extensions;
 
     // 4. Load binary shader cache (from previous runs)
-    GLRenderProgram.ReadBinaryShaderCache(version);
+    GLRenderProgram.ReadBinaryShaderCache(api);
 
     // 5. Set default GL state
     api.Enable(EnableCap.Multisample);
@@ -186,6 +186,7 @@ Engine Timer fires RenderFrame
             └─ XRWindow.RenderCallback(delta)
                  ├─ Stats.BeginFrame()          // Reset per-frame counters
                  ├─ Renderer.ProcessPendingUploads()
+                 │    ├─ GLRenderProgram.PollPendingAsyncPrograms()
                  │    ├─ UploadQueue.ProcessUploads()
                  │    └─ MeshGenerationQueue.ProcessGeneration()
                  ├─ WorldInstance.GlobalPreRender()
@@ -330,6 +331,8 @@ To avoid stalling the render thread, buffer and mesh data uploads are spread acr
 public override void ProcessPendingUploads()
 {
     _frameCounter++;
+    GLRenderProgram.PollPendingAsyncPrograms(
+        Engine.Rendering.Settings.MaxAsyncShaderProgramsPerFrame);
     UploadQueue.ProcessUploads();            // GLUploadQueue — buffers, textures
     MeshGenerationQueue.ProcessGeneration(); // GLMeshGenerationQueue — procedural meshes
 }
@@ -341,6 +344,12 @@ The upload queue handles:
 - Texture data uploads (`glTexSubImage2D`, etc.)
 - Buffer data uploads (`glBufferSubData`, `glMapBuffer`)
 - Procedural mesh generation (CPU-side mesh building, then GPU upload)
+
+OpenGL shader program builds are pumped here as well. `PollPendingAsyncPrograms`
+advances cached binary uploads, shared-context source compile/link results,
+driver-parallel `GL_COMPLETION_STATUS` polling, queue-backpressure retries, and
+deferred old-program deletion. Synchronous fallback work is budgeted so shader
+warmup does not drain an unbounded backlog inside one frame.
 
 ---
 
@@ -370,9 +379,26 @@ ImGui rendering happens within the viewport render callback, managed by the base
 
 `GLRenderProgram` handles GLSL shader compilation and linking:
 
-- **Binary shader cache**: On first compilation, shader binaries are saved to disk. On subsequent runs, `ReadBinaryShaderCache(version)` loads pre-compiled binaries, skipping recompilation if the GL version matches.
-- **Hot reload**: Shaders can be recompiled at runtime when source files change.
-- **Uniform management**: Uniforms are queried via `glGetUniformLocation` and cached. The program tracks active uniforms, uniform blocks, and SSBOs.
+- **Backend selection**: `OpenGLShaderLinkBackendSelector` chooses between
+  binary cache load, driver-parallel source linking, shared-context source
+  linking, queue backpressure, and synchronous fallback.
+- **Binary shader cache**: Program binaries are stored under
+  `Build/Cache/OpenGL/ShaderPrograms/` with JSON metadata. Cache keys include
+  schema version, source hash, stage topology, separable mode, variant
+  metadata, cache policy, and the current OpenGL runtime fingerprint.
+- **Async workers**: Binary upload and source compile/link use separate
+  shared-context workers so a wedged source link cannot starve binary cache
+  uploads.
+- **Hot reload**: Relinks build into a replacement program handle and swap only
+  after the replacement is ready. The previous linked handle stays renderable
+  if the replacement is pending, failed, or abandoned.
+- **Uniform management**: Uniforms are queried via `glGetUniformLocation` and
+  cached. Binary-loaded programs restore cached uniform metadata or rebuild it
+  by reflecting active uniforms when needed.
+- **Telemetry**: `XRRenderProgram.ShaderProgramBackendStatus` and
+  `ShaderProgramBuildTelemetry` report cache lookup, selected backend, queue
+  waits, compile/link/binary-load/reflection timings, ready/failure state, and
+  failure reasons.
 
 ---
 

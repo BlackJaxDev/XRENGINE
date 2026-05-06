@@ -16,3 +16,17 @@ The secondary context is best suited for work that benefits from async execution
 - Preparing buffers for next-frame rendering such as indirect command compaction or GPU-driven culling data.
 
 When multiple adapters are not detected, enable `AllowSecondaryContextSharingFallback` to still spin the background context with shared resources so readbacks and compute passes avoid blocking the primary swap chain.
+
+## OpenGL shader workers
+
+The OpenGL shader pipeline also uses shared contexts, but those workers are
+owned by the renderer rather than by `Engine.Rendering.SecondaryContext`.
+Startup may create:
+
+- `XR Program Binary Upload` for cached `glProgramBinary` loads.
+- `XR Program Source Compile` for source compile/link work.
+- `XR GL Shared Uploads` for general shared-context upload work.
+
+The binary and source lanes are intentionally separate. A driver stall inside a
+source link can make the source worker unhealthy without starving binary cache
+uploads or unrelated shared upload work.

@@ -52,6 +52,18 @@ Renderer-specific compile and link timing is tracked separately from worker-thre
 
 For the GPU indirect combined-program path, the renderer now treats shader-set changes as a cache invalidation boundary and keeps the last linked combined program active until the replacement backend program reports linked for the current renderer. That hardens Uber variant swaps without collapsing back to shader-text mutation or forced synchronous relinking.
 
+OpenGL relinks now use the same clone-and-swap rule at the program-handle
+level. Changing a feature toggle or moving a property between `Static` and
+`Animated` can still force a new Uber fragment variant and linked program, but
+the active GL program is not destroyed in place. The replacement is built into
+a fresh handle, binary-loaded or source-linked through the selected backend,
+and adopted only after it is ready. If the replacement stalls, fails, or hits
+queue backpressure, the previous linked program remains visible.
+
+Backend telemetry on `ShaderProgramBackendStatus` reports whether that
+replacement is in cache lookup, cache hit/miss, binary upload, source queue,
+driver-parallel polling, synchronous fallback, ready, failed, or abandoned.
+
 Manifest parsing, annotation validation, request coalescing, source hashing, static-literal formatting, canonical-source recovery, and generated-source emission stay on the CPU-side worker or material-management path instead of draw-time code.
 
 ## Regression Coverage

@@ -464,7 +464,7 @@ namespace XREngine.Rendering.OpenGL
 
             Engine.Rendering.RefreshVulkanUpscaleBridgeCapabilitySnapshot(this);
 
-            GLRenderProgram.ReadBinaryShaderCache(version);
+            GLRenderProgram.ReadBinaryShaderCache(api);
 
             // Initialize async program binary upload via a shared GL context.
             InitAsyncProgramBinaryUpload();
@@ -808,10 +808,14 @@ namespace XREngine.Rendering.OpenGL
             _imguiFontValidationCountdown = 0;
             ResetImGuiFrameMarker();
 
-            // Clean up shared context and async queues
+            // Clean up shared contexts and async queues
             _programBinaryUploadQueue = null;
             _programCompileLinkQueue = null;
+            _programBinarySharedContext?.Dispose();
+            _programCompileLinkSharedContext?.Dispose();
             _sharedContext?.Dispose();
+            _programBinarySharedContext = null;
+            _programCompileLinkSharedContext = null;
             _sharedContext = null;
 
             CancelPendingFrontLuminanceReadback();
@@ -883,10 +887,14 @@ namespace XREngine.Rendering.OpenGL
         private const int OomCooldownDuration = 10;
 
         private GLSharedContext? _sharedContext;
+        private GLSharedContext? _programBinarySharedContext;
+        private GLSharedContext? _programCompileLinkSharedContext;
         private GLProgramBinaryUploadQueue? _programBinaryUploadQueue;
         private GLProgramCompileLinkQueue? _programCompileLinkQueue;
 
-        internal bool HasSharedContext => _sharedContext is { IsRunning: true };
+        internal bool HasSharedContext => _sharedContext is { IsRunning: true }
+                                       || _programBinarySharedContext is { IsRunning: true }
+                                       || _programCompileLinkSharedContext is { IsRunning: true };
 
         /// <summary>
         /// Gets the async program binary upload queue, or <c>null</c> if the shared context
@@ -902,7 +910,15 @@ namespace XREngine.Rendering.OpenGL
 
         internal bool TryEnqueueSharedContextJob(Action<GL> job)
         {
-            if (_sharedContext is not { IsRunning: true } sharedContext)
+            GLSharedContext? sharedContext = _sharedContext is { IsRunning: true }
+                ? _sharedContext
+                : _programBinarySharedContext is { IsRunning: true }
+                    ? _programBinarySharedContext
+                    : _programCompileLinkSharedContext is { IsRunning: true }
+                        ? _programCompileLinkSharedContext
+                        : null;
+
+            if (sharedContext is null)
                 return false;
 
             sharedContext.Enqueue(job);
@@ -924,30 +940,52 @@ namespace XREngine.Rendering.OpenGL
             if (!wantBinaryUpload && !wantCompileLink && !wantSparseTextureUploads)
                 return;
 
-            var sharedCtx = new GLSharedContext();
-            if (sharedCtx.Initialize(XRWindow))
+            if (wantBinaryUpload)
             {
-                _sharedContext = sharedCtx;
-
-                if (wantBinaryUpload)
+                var binaryContext = new GLSharedContext("XR Program Binary Upload");
+                if (binaryContext.Initialize(XRWindow))
                 {
-                    _programBinaryUploadQueue = new GLProgramBinaryUploadQueue(sharedCtx);
+                    _programBinarySharedContext = binaryContext;
+                    _programBinaryUploadQueue = new GLProgramBinaryUploadQueue(binaryContext);
                     Debug.OpenGL("[ShaderCache] Async program binary upload enabled via shared GL context.");
                 }
-
-                if (wantCompileLink)
+                else
                 {
-                    _programCompileLinkQueue = new GLProgramCompileLinkQueue(sharedCtx);
+                    Debug.OpenGLWarning("[ShaderCache] Failed to create binary-upload shared context. Cached program binaries will load on the render thread.");
+                    binaryContext.Dispose();
+                }
+            }
+
+            if (wantCompileLink)
+            {
+                var compileContext = new GLSharedContext("XR Program Source Compile");
+                if (compileContext.Initialize(XRWindow))
+                {
+                    _programCompileLinkSharedContext = compileContext;
+                    _programCompileLinkQueue = new GLProgramCompileLinkQueue(compileContext);
                     Debug.OpenGL("[ShaderCache] Async program compile+link enabled via shared GL context.");
                 }
-
-                if (wantSparseTextureUploads)
-                    Debug.OpenGL("Sparse texture streaming shared GL context enabled for async texture uploads.");
+                else
+                {
+                    Debug.OpenGLWarning("[ShaderCache] Failed to create compile/link shared context. Shader source links will fall back by strategy.");
+                    compileContext.Dispose();
+                }
             }
-            else
+
+            if (wantSparseTextureUploads)
             {
-                Debug.OpenGLWarning("[ShaderCache] Failed to create shared context. Shader operations will be synchronous.");
-                sharedCtx.Dispose();
+                var generalContext = new GLSharedContext("XR GL Shared Uploads");
+                if (generalContext.Initialize(XRWindow))
+                {
+                    _sharedContext = generalContext;
+                    if (wantSparseTextureUploads)
+                        Debug.OpenGL("Sparse texture streaming shared GL context enabled for async texture uploads.");
+                }
+                else
+                {
+                    Debug.OpenGLWarning("Failed to create sparse texture shared context. Sparse texture uploads will fall back to render-thread work.");
+                    generalContext.Dispose();
+                }
             }
         }
 

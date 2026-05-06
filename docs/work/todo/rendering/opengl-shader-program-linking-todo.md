@@ -1,7 +1,8 @@
 # OpenGL Shader Program Linking TODO
 
 Last Updated: 2026-05-06
-Status: Planning from design/code audit
+Status: Implemented on `todo/opengl-shader-program-linking`; final merge and
+GPU-driver matrix runs are pending owner/PR validation.
 
 Source design:
 [OpenGL Shader Program Linking Design](../../design/rendering/opengl-shader-program-linking-design.md)
@@ -18,9 +19,47 @@ This is a v1 cleanup area. Internal shader APIs, cache formats, backend
 selection helpers, and render-backend plumbing may change when the result is
 clearer and easier to validate.
 
-## Audit Snapshot
+## Implementation Record
 
-The current implementation already contains several pieces from the design:
+Implemented in this branch:
+
+- Backend-selection helper and CPU tests for `Auto`, `SharedContext`,
+  `DriverParallel`, `Synchronous`, binary upload, backpressure, hazards, and
+  cache-key fingerprint axes.
+- Structured OpenGL binary cache under `Build/Cache/OpenGL/ShaderPrograms/`
+  with schema/runtime fingerprints, JSON metadata, stale-entry cleanup, and
+  targeted deletion of failed entries.
+- Sync and async `glProgramBinary` validation through final `GL_LINK_STATUS`
+  before a program can be marked linked.
+- Runtime binding restoration after binary load through cached uniform
+  metadata or active-uniform reflection fallback.
+- Full backend status and last-build telemetry on `XRRenderProgram`.
+- Separate shared-context workers for binary upload, source compile/link, and
+  general shared uploads, with queue metrics and worker health signals.
+- Queue-level hazard rejection for single-stage and compute program shapes.
+- Clone-and-swap relink lifecycle so hot reload and Uber variant changes keep
+  the previous linked program visible until the replacement is ready.
+- Deferred old-program deletion and memoized debug/editor pipeline validation.
+- Benchmark artifact JSON, expanded frame-budget metrics, and VS Code tasks
+  for smoke/full/frame-budget/local-stress shader pipeline runs.
+
+Validation status:
+
+- `XREngine.Runtime.Rendering` builds successfully with no C# warnings or
+  errors from the targeted build; the output still includes existing NuGet
+  vulnerability advisory warnings from transitive projects.
+- Targeted test execution is blocked by unrelated current `XREngine.UnitTests`
+  project compile errors in `Audio2Face3DComponent` and duplicate `Engine`
+  type conflicts.
+- `XREngine.Benchmarks` build is blocked by an unrelated missing
+  `AnimationClipComponent` reference in `GltfPhase0BaselineHarness`.
+- Local GPU stress and benchmark runs still need to be run on target Windows
+  GL 4.6 driver machines before merging.
+
+## Original Audit Snapshot
+
+At planning time, the implementation already contained several pieces from the
+design:
 
 - `OpenGLRenderer.ConfigureParallelShaderCompile` probes
   `GL_ARB/KHR_parallel_shader_compile`, sets the driver compiler thread count,
@@ -39,7 +78,7 @@ The current implementation already contains several pieces from the design:
 - Program binaries are written to disk and uniform metadata is cached beside
   the binary.
 
-Important gaps compared with the design:
+Original gaps compared with the design:
 
 - Binary cache identity is still mostly `sourceHash-format-GLVersion`.
   Vendor, renderer, driver/build identity, shader stage topology, separable
@@ -71,17 +110,20 @@ Important gaps compared with the design:
   They do not yet compare all engine link strategies, larger shader/program
   batches, queue saturation, producer parallelism, driver-parallel completion
   polling, or `XRWindow.ProcessPendingUploads` stall attribution.
-- The feature doc
+- The feature doc formerly
   [OpenGL Program Linking Strategies](../../../features/opengl-program-linking.md)
-  currently disagrees with code and the design about hazard routing. The code
-  excludes hazards from the shared-context source queue; the feature doc says
-  hazards use that queue when available.
+  disagreed with code and the design about hazard routing. The code excludes
+  hazards from the shared-context source queue; the feature doc said hazards
+  used that queue when available.
 - Settings and enum comments still describe `Auto` as preferring the
   shared-context queue, while the current implementation uses driver-parallel
   when the startup probe passes and falls back to shared-context when it does
   not.
 
 ## Implementation Plan
+
+Original checklist is preserved for traceability. The implementation record
+above is the authoritative current status for this branch.
 
 ## Phase 0 - Branch, Baseline, And Contract Alignment
 

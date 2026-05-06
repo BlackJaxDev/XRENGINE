@@ -1,9 +1,12 @@
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
-using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using XREngine;
 using XREngine.Rendering.Shaders;
+using static XREngine.Rendering.XRRenderProgram;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -11,166 +14,244 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLRenderProgram
         {
-            private static ConcurrentDictionary<ulong, BinaryProgram>? BinaryCache = null;
+            internal const int BinaryCacheSchemaVersion = 2;
+            private const string BinaryCacheDirectoryName = "ShaderPrograms";
+            private const string BinaryCacheRootDirectoryName = "Build";
+            private const string BinaryCacheSubDirectoryName = "Cache";
+            private const string BinaryCacheApiDirectoryName = "OpenGL";
 
-            private static string GetShaderCacheDirectoryPath()
-                => Path.Combine(Environment.CurrentDirectory, "ShaderCache");
+            private static readonly JsonSerializerOptions BinaryCacheJsonOptions = new()
+            {
+                WriteIndented = true,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            };
+
+            private static ConcurrentDictionary<string, BinaryProgram>? BinaryCache = null;
+            private static ShaderBinaryRuntimeFingerprint RuntimeFingerprint = ShaderBinaryRuntimeFingerprint.Unknown;
+
+            internal static string GetShaderCacheDirectoryPath()
+            {
+                string root = ResolveRepositoryRoot(Environment.CurrentDirectory);
+                return Path.Combine(
+                    root,
+                    BinaryCacheRootDirectoryName,
+                    BinaryCacheSubDirectoryName,
+                    BinaryCacheApiDirectoryName,
+                    BinaryCacheDirectoryName);
+            }
+
+            private static string ResolveRepositoryRoot(string startDirectory)
+            {
+                var current = new DirectoryInfo(startDirectory);
+                while (current is not null)
+                {
+                    if (File.Exists(Path.Combine(current.FullName, "XRENGINE.slnx")))
+                        return current.FullName;
+
+                    current = current.Parent;
+                }
+
+                return startDirectory;
+            }
 
             private static string GetBinaryShaderCacheMetaPath(string binaryFilePath)
-                => $"{binaryFilePath}.meta";
+                => $"{binaryFilePath}.json";
 
-            private static UniformMetadataEntry[]? ReadUniformMetadataCache(string metaPath)
-            {
-                if (!File.Exists(metaPath))
-                    return null;
-
-                try
-                {
-                    var entries = new List<UniformMetadataEntry>();
-                    foreach (string line in File.ReadLines(metaPath))
-                    {
-                        if (string.IsNullOrWhiteSpace(line))
-                            continue;
-
-                        string[] parts = line.Split('\t');
-                        if (parts.Length != 3)
-                            continue;
-
-                        string name = parts[0];
-                        if (string.IsNullOrEmpty(name))
-                            continue;
-
-                        if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int typeValue))
-                            continue;
-                        if (!int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int size))
-                            continue;
-
-                        entries.Add(new UniformMetadataEntry(name, (GLEnum)typeValue, size));
-                    }
-
-                    return entries.Count == 0 ? null : [.. entries];
-                }
-                catch
-                {
-                    return null;
-                }
-            }
-
-            private static void WriteUniformMetadataCache(string metaPath, UniformMetadataEntry[] metadata)
-            {
-                if (metadata.Length == 0)
-                    return;
-
-                var sb = new StringBuilder(metadata.Length * 32);
-                foreach (var entry in metadata)
-                    sb.Append(entry.Name)
-                        .Append('\t')
-                        .Append(((int)entry.Type).ToString(CultureInfo.InvariantCulture))
-                        .Append('\t')
-                        .Append(entry.Size.ToString(CultureInfo.InvariantCulture))
-                        .AppendLine();
-
-                File.WriteAllText(metaPath, sb.ToString());
-            }
-
-            internal static void ReadBinaryShaderCache(string currentVer)
+            internal static void ReadBinaryShaderCache(GL api)
             {
                 if (BinaryCache is not null)
                     return;
 
+                RuntimeFingerprint = CreateRuntimeFingerprint(api);
                 BinaryCache = new();
 
                 string path = GetShaderCacheDirectoryPath();
                 if (!Directory.Exists(path))
                     return;
 
-                foreach (string filePath in Directory.EnumerateFiles(path, "*.bin"))
+                DeleteLegacyBinaryCacheFiles(path);
+
+                foreach (string metaPath in Directory.EnumerateFiles(path, "*.bin.json"))
                 {
-                    string name = Path.GetFileNameWithoutExtension(filePath);
-
-                    // Parse "hash-format-version" without allocating a string[] via Split.
-                    int firstDash = name.IndexOf('-');
-                    if (firstDash < 0)
+                    ShaderBinaryCacheMetadata? metadata = ReadMetadata(metaPath);
+                    if (metadata is null)
                     {
-                        Debug.OpenGLWarning($"Invalid binary shader cache file name, deleting: {name}");
-                        File.Delete(filePath);
-                        continue;
-                    }
-                    int secondDash = name.IndexOf('-', firstDash + 1);
-                    if (secondDash < 0)
-                    {
-                        Debug.OpenGLWarning($"Invalid binary shader cache file name, deleting: {name}");
-                        File.Delete(filePath);
+                        DeleteCacheFiles(metaPath);
                         continue;
                     }
 
-                    ReadOnlySpan<char> fileVer = name.AsSpan(secondDash + 1);
-                    if (!fileVer.Equals(currentVer.AsSpan(), StringComparison.OrdinalIgnoreCase))
+                    string? binaryPath = metadata.BinaryPath;
+                    if (string.IsNullOrWhiteSpace(binaryPath))
+                        binaryPath = metaPath[..^5];
+                    if (!Path.IsPathRooted(binaryPath))
+                        binaryPath = Path.Combine(path, binaryPath);
+
+                    if (!ValidateMetadata(metadata, binaryPath, out string failureReason))
                     {
-                        Debug.OpenGLWarning($"Binary shader cache file version mismatch, deleting: {name}");
-                        File.Delete(filePath);
+                        Debug.OpenGLWarning($"[ShaderCache] Deleting stale binary cache entry '{Path.GetFileName(binaryPath)}': {failureReason}.");
+                        DeleteCacheFiles(binaryPath);
                         continue;
                     }
 
                     try
                     {
-                        ReadOnlySpan<char> hashSpan = name.AsSpan(0, firstDash);
-                        if (ulong.TryParse(hashSpan, out ulong hash))
+                        byte[] binary = File.ReadAllBytes(binaryPath);
+                        if (binary.Length == 0)
                         {
-                            byte[] binary = File.ReadAllBytes(filePath);
-                            ReadOnlySpan<char> formatSpan = name.AsSpan(firstDash + 1, secondDash - firstDash - 1);
-                            GLEnum format = Enum.Parse<GLEnum>(formatSpan);
-                            UniformMetadataEntry[]? metadata = ReadUniformMetadataCache(GetBinaryShaderCacheMetaPath(filePath));
-                            BinaryProgram binaryProgram = new(binary, format, (uint)binary.Length, metadata);
-                            BinaryCache.TryAdd(hash, binaryProgram);
+                            DeleteCacheFiles(binaryPath);
+                            continue;
                         }
+
+                        UniformMetadataEntry[] uniforms = ConvertUniformMetadata(metadata.Uniforms);
+                        BinaryProgram binaryProgram = new(
+                            metadata.CacheKey,
+                            binary,
+                            (GLEnum)metadata.BinaryFormat,
+                            (uint)binary.Length,
+                            uniforms.Length == 0 ? null : uniforms,
+                            metadata,
+                            binaryPath);
+
+                        BinaryCache.TryAdd(metadata.CacheKey, binaryProgram);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.OpenGLWarning($"[ShaderCache] Failed to read binary cache entry '{Path.GetFileName(binaryPath)}': {ex.Message}. Deleting entry.");
+                        DeleteCacheFiles(binaryPath);
+                    }
+                }
+            }
+
+            private static void DeleteLegacyBinaryCacheFiles(string path)
+            {
+                foreach (string binaryPath in Directory.EnumerateFiles(path, "*.bin"))
+                {
+                    string metaPath = GetBinaryShaderCacheMetaPath(binaryPath);
+                    if (File.Exists(metaPath))
+                        continue;
+
+                    try
+                    {
+                        File.Delete(binaryPath);
+                        string legacyMetaPath = $"{binaryPath}.meta";
+                        if (File.Exists(legacyMetaPath))
+                            File.Delete(legacyMetaPath);
                     }
                     catch
                     {
-
                     }
                 }
             }
-            private void WriteToBinaryShaderCache(BinaryProgram binary)
+
+            private static ShaderBinaryCacheMetadata? ReadMetadata(string metaPath)
             {
-                string ver;
-                unsafe
+                try
                 {
-                    ver = new((sbyte*)Api.GetString(StringName.Version));
+                    return JsonSerializer.Deserialize<ShaderBinaryCacheMetadata>(
+                        File.ReadAllText(metaPath),
+                        BinaryCacheJsonOptions);
+                }
+                catch (Exception ex)
+                {
+                    Debug.OpenGLWarning($"[ShaderCache] Invalid binary cache metadata '{Path.GetFileName(metaPath)}': {ex.Message}.");
+                    return null;
+                }
+            }
+
+            private static bool ValidateMetadata(ShaderBinaryCacheMetadata metadata, string binaryPath, out string failureReason)
+            {
+                if (metadata.SchemaVersion != BinaryCacheSchemaVersion)
+                {
+                    failureReason = $"schema {metadata.SchemaVersion} != {BinaryCacheSchemaVersion}";
+                    return false;
                 }
 
-                string path = GetShaderCacheDirectoryPath();
-                if (!Directory.Exists(path))
-                    Directory.CreateDirectory(path);
-                path = Path.Combine(path, $"{Hash}-{binary.Format}-{ver}.bin");
-                File.WriteAllBytes(path, binary.Binary);
-                if (binary.Uniforms is { Length: > 0 })
-                    WriteUniformMetadataCache(GetBinaryShaderCacheMetaPath(path), binary.Uniforms);
+                if (string.IsNullOrWhiteSpace(metadata.CacheKey))
+                {
+                    failureReason = "missing cache key";
+                    return false;
+                }
+
+                if (!File.Exists(binaryPath))
+                {
+                    failureReason = "missing binary payload";
+                    return false;
+                }
+
+                if (!metadata.RuntimeFingerprint.Equals(RuntimeFingerprint))
+                {
+                    failureReason = "runtime fingerprint changed";
+                    return false;
+                }
+
+                failureReason = string.Empty;
+                return true;
             }
-            
-            public static void DeleteFromBinaryShaderCache(ulong hash, GLEnum format)
+
+            private void WriteToBinaryShaderCache(BinaryProgram binary)
             {
-                BinaryCache?.TryRemove(hash, out _);
-                //Delete any matching file (hash-format-*.bin pattern)
+                string path = GetShaderCacheDirectoryPath();
+                Directory.CreateDirectory(path);
+
+                ShaderBinaryCacheMetadata metadata = binary.Metadata with
+                {
+                    SchemaVersion = BinaryCacheSchemaVersion,
+                    RuntimeFingerprint = RuntimeFingerprint,
+                    BinaryFormat = (int)binary.Format,
+                    BinaryLength = binary.Length,
+                    Uniforms = ConvertUniformMetadata(binary.Uniforms),
+                };
+
+                string fileBase = $"{metadata.CacheKey}-{((int)binary.Format):X8}";
+                string binaryPath = Path.Combine(path, $"{fileBase}.bin");
+                metadata = metadata with
+                {
+                    BinaryPath = Path.GetFileName(binaryPath),
+                };
+
+                File.WriteAllBytes(binaryPath, binary.Binary);
+                File.WriteAllText(GetBinaryShaderCacheMetaPath(binaryPath), JsonSerializer.Serialize(metadata, BinaryCacheJsonOptions));
+            }
+
+            public static void DeleteFromBinaryShaderCache(string cacheKey, GLEnum? format = null)
+            {
+                if (string.IsNullOrWhiteSpace(cacheKey))
+                    return;
+
+                BinaryCache?.TryRemove(cacheKey, out _);
+
                 string path = GetShaderCacheDirectoryPath();
                 if (!Directory.Exists(path))
                     return;
-                    
-                // Search for files matching the hash-format pattern with any version
-                string pattern = $"{hash}-{format}-*.bin";
-                foreach (string filePath in Directory.EnumerateFiles(path, pattern))
+
+                string pattern = format.HasValue
+                    ? $"{cacheKey}-{((int)format.Value):X8}.bin"
+                    : $"{cacheKey}-*.bin";
+
+                foreach (string binaryPath in Directory.EnumerateFiles(path, pattern))
+                    DeleteCacheFiles(binaryPath);
+            }
+
+            private static void DeleteCacheFiles(string path)
+            {
+                string binaryPath = path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                    ? path[..^5]
+                    : path;
+                string metaPath = GetBinaryShaderCacheMetaPath(binaryPath);
+
+                try
                 {
-                    try
-                    {
-                        File.Delete(filePath);
-                        string metaPath = GetBinaryShaderCacheMetaPath(filePath);
-                        if (File.Exists(metaPath))
-                            File.Delete(metaPath);
-                    }
-                    catch
-                    {
-                        // Ignore deletion failures (file may be in use)
-                    }
+                    if (File.Exists(binaryPath))
+                        File.Delete(binaryPath);
+                    if (File.Exists(metaPath))
+                        File.Delete(metaPath);
+
+                    string legacyMetaPath = $"{binaryPath}.meta";
+                    if (File.Exists(legacyMetaPath))
+                        File.Delete(legacyMetaPath);
+                }
+                catch
+                {
                 }
             }
 
@@ -182,12 +263,16 @@ namespace XREngine.Rendering.OpenGL
                 if (ShouldBypassBinaryCacheForLiveUberVariant())
                     return;
 
+                string cacheKey = BuildBinaryCacheKey(Hash);
+                if (string.IsNullOrWhiteSpace(cacheKey))
+                    return;
+
                 Api.GetProgram(bindingId, GLEnum.ProgramBinaryLength, out int len);
                 if (len <= 0)
-                    {
-                        Debug.OpenGLWarning($"[ShaderCache] Program {bindingId} for hash {Hash} did not expose a retrievable program binary. Cache write skipped.");
+                {
+                    Debug.OpenGLWarning($"[ShaderCache] Program {bindingId} for key {cacheKey} did not expose a retrievable program binary. Cache write skipped.");
                     return;
-                    }
+                }
 
                 byte[] binary = new byte[len];
                 GLEnum format;
@@ -196,14 +281,99 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Api.GetProgramBinary(bindingId, (uint)len, &binaryLength, &format, ptr);
                 }
-                UniformMetadataEntry[] metadata = SnapshotUniformMetadata();
-                BinaryProgram bin = new(binary, format, binaryLength, metadata.Length == 0 ? null : metadata);
+
+                ShaderBinaryCacheMetadata metadata = CreateBinaryCacheMetadata(Hash, cacheKey, format, binaryLength);
+                UniformMetadataEntry[] uniforms = SnapshotUniformMetadata();
+                BinaryProgram bin = new(
+                    cacheKey,
+                    binary,
+                    format,
+                    binaryLength,
+                    uniforms.Length == 0 ? null : uniforms,
+                    metadata,
+                    null);
+
                 var binaryCache = BinaryCache;
                 if (binaryCache is null)
                     return;
 
-                binaryCache[Hash] = bin;
+                binaryCache[cacheKey] = bin;
                 WriteToBinaryShaderCache(bin);
+            }
+
+            private ShaderBinaryCacheMetadata CreateBinaryCacheMetadata(ulong sourceHash, string cacheKey, GLEnum format, uint length)
+            {
+                ShaderProgramVariantMetadata variant = Data.ShaderMetadata.Variant;
+                string stageTopology = GetShaderStageTopology();
+                return new ShaderBinaryCacheMetadata(
+                    BinaryCacheSchemaVersion,
+                    cacheKey,
+                    sourceHash,
+                    stageTopology,
+                    Data.Separable,
+                    variant.Kind,
+                    variant.VariantHash,
+                    variant.BinaryCachePolicy.ToString(),
+                    RuntimeFingerprint,
+                    (int)format,
+                    length,
+                    null,
+                    []);
+            }
+
+            private string BuildBinaryCacheKey(ulong sourceHash)
+            {
+                ShaderProgramVariantMetadata variant = Data.ShaderMetadata.Variant;
+                ShaderBinaryCacheKey key = new(
+                    BinaryCacheSchemaVersion,
+                    sourceHash,
+                    GetShaderStageTopology(),
+                    Data.Separable,
+                    variant.Kind,
+                    variant.VariantHash,
+                    variant.BinaryCachePolicy.ToString(),
+                    RuntimeFingerprint);
+
+                return ComputeBinaryCacheKeyHash(key);
+            }
+
+            internal static string ComputeBinaryCacheKeyHash(ShaderBinaryCacheKey key)
+            {
+                string stableText = string.Join(
+                    "\n",
+                    key.SchemaVersion,
+                    key.SourceHash,
+                    key.StageTopology,
+                    key.Separable ? "separable" : "monolithic",
+                    key.VariantKind ?? string.Empty,
+                    key.VariantHash,
+                    key.BinaryCachePolicy ?? string.Empty,
+                    key.RuntimeFingerprint.OpenGLVersion,
+                    key.RuntimeFingerprint.Vendor,
+                    key.RuntimeFingerprint.Renderer,
+                    key.RuntimeFingerprint.ShadingLanguageVersion);
+
+                return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(stableText))).ToLowerInvariant();
+            }
+
+            private string GetShaderStageTopology()
+            {
+                if (Data.Shaders.Count == 0)
+                    return string.Empty;
+
+                var builder = new StringBuilder(Data.Shaders.Count * 16);
+                for (int index = 0; index < Data.Shaders.Count; index++)
+                {
+                    if (index > 0)
+                        builder.Append('|');
+
+                    XRShader shader = Data.Shaders[index];
+                    builder.Append(index)
+                        .Append(':')
+                        .Append(shader.Type);
+                }
+
+                return builder.ToString();
             }
 
             /// <summary>
@@ -254,14 +424,20 @@ namespace XREngine.Rendering.OpenGL
             private ulong CalcShaderSourceHash()
             {
                 ulong hash = 17ul;
+                hash = AccumulateHash(hash, Data.Separable ? "separable" : "monolithic");
                 foreach (XRShader shaderData in Data.Shaders)
                 {
+                    hash = AccumulateHash(hash, shaderData.Type.ToString());
                     string resolved = _shaderCache.TryGetValue(shaderData, out GLShader? shader) && shader is not null
                         ? ResolveSourceForHash(shader)
                         : ResolveSourceForCompilation(shaderData);
                     hash = AccumulateHash(hash, resolved);
                 }
 
+                ShaderProgramVariantMetadata variant = Data.ShaderMetadata.Variant;
+                hash = AccumulateHash(hash, variant.Kind);
+                hash = AccumulateHash(hash, variant.VariantHash.ToString());
+                hash = AccumulateHash(hash, variant.BinaryCachePolicy.ToString());
                 return hash;
             }
 
@@ -283,20 +459,111 @@ namespace XREngine.Rendering.OpenGL
                         hash2 = ((hash2 << 5) + hash2) ^ str[i + 1];
                     }
 
-                    ulong value = hash1 + (hash2 * 1566083941ul);
-                    //Debug.Out(value.ToString());
-                    return value;
+                    return hash1 + (hash2 * 1566083941ul);
                 }
+            }
+
+            private static ShaderBinaryRuntimeFingerprint CreateRuntimeFingerprint(GL api)
+                => new(
+                    GetGLString(api, StringName.Version),
+                    GetGLString(api, StringName.Vendor),
+                    GetGLString(api, StringName.Renderer),
+                    GetGLString(api, StringName.ShadingLanguageVersion));
+
+            private static string GetGLString(GL api, StringName name)
+            {
+                try
+                {
+                    byte* value = api.GetString(name);
+                    return value is null ? string.Empty : new string((sbyte*)value);
+                }
+                catch
+                {
+                    return string.Empty;
+                }
+            }
+
+            private static UniformMetadataEntry[] ConvertUniformMetadata(ShaderBinaryUniformMetadata[]? metadata)
+            {
+                if (metadata is not { Length: > 0 })
+                    return [];
+
+                var uniforms = new UniformMetadataEntry[metadata.Length];
+                int count = 0;
+                foreach (ShaderBinaryUniformMetadata entry in metadata)
+                {
+                    if (string.IsNullOrWhiteSpace(entry.Name))
+                        continue;
+
+                    uniforms[count++] = new UniformMetadataEntry(entry.Name, (GLEnum)entry.Type, entry.Size);
+                }
+
+                if (count == uniforms.Length)
+                    return uniforms;
+
+                Array.Resize(ref uniforms, count);
+                return uniforms;
+            }
+
+            private static ShaderBinaryUniformMetadata[] ConvertUniformMetadata(UniformMetadataEntry[]? metadata)
+            {
+                if (metadata is not { Length: > 0 })
+                    return [];
+
+                var uniforms = new ShaderBinaryUniformMetadata[metadata.Length];
+                for (int i = 0; i < metadata.Length; i++)
+                    uniforms[i] = new ShaderBinaryUniformMetadata(metadata[i].Name, (int)metadata[i].Type, metadata[i].Size);
+                return uniforms;
             }
         }
     }
 
-    internal record struct BinaryProgram(byte[] Binary, GLEnum Format, uint Length, OpenGLRenderer.GLRenderProgram.UniformMetadataEntry[]? Uniforms = null)
+    internal readonly record struct ShaderBinaryRuntimeFingerprint(
+        string OpenGLVersion,
+        string Vendor,
+        string Renderer,
+        string ShadingLanguageVersion)
+    {
+        public static ShaderBinaryRuntimeFingerprint Unknown { get; } = new(string.Empty, string.Empty, string.Empty, string.Empty);
+    }
+
+    internal readonly record struct ShaderBinaryCacheKey(
+        int SchemaVersion,
+        ulong SourceHash,
+        string StageTopology,
+        bool Separable,
+        string? VariantKind,
+        ulong VariantHash,
+        string? BinaryCachePolicy,
+        ShaderBinaryRuntimeFingerprint RuntimeFingerprint);
+
+    internal sealed record ShaderBinaryUniformMetadata(string Name, int Type, int Size);
+
+    internal sealed record ShaderBinaryCacheMetadata(
+        int SchemaVersion,
+        string CacheKey,
+        ulong SourceHash,
+        string StageTopology,
+        bool Separable,
+        string? VariantKind,
+        ulong VariantHash,
+        string BinaryCachePolicy,
+        ShaderBinaryRuntimeFingerprint RuntimeFingerprint,
+        int BinaryFormat,
+        uint BinaryLength,
+        string? BinaryPath,
+        ShaderBinaryUniformMetadata[] Uniforms);
+
+    internal record struct BinaryProgram(
+        string CacheKey,
+        byte[] Binary,
+        GLEnum Format,
+        uint Length,
+        OpenGLRenderer.GLRenderProgram.UniformMetadataEntry[]? Uniforms,
+        ShaderBinaryCacheMetadata Metadata,
+        string? BinaryPath)
     {
         public static implicit operator (byte[] bin, GLEnum fmt, uint len)(BinaryProgram value)
             => (value.Binary, value.Format, value.Length);
-
-        public static implicit operator BinaryProgram((byte[] bin, GLEnum fmt, uint len) value)
-            => new(value.bin, value.fmt, value.len);
     }
 }
