@@ -701,8 +701,6 @@ namespace XREngine.Scene
             const int forwardShadowMapArrayUnit = directionalShadowMapArrayStartUnit;
             XRTexture? forwardShadowTex = null;
             XRTexture2DArray? forwardCascadeShadowTex = null;
-            Matrix4x4 primaryDirLightWorldToLightInvView = Matrix4x4.Identity;
-            Matrix4x4 primaryDirLightWorldToLightProj = Matrix4x4.Identity;
             bool useCascadedDirectionalShadows = false;
             bool useDirectionalShadowAtlas = false;
             bool directionalAtlasSampleable = false;
@@ -754,12 +752,6 @@ namespace XREngine.Scene
                     // 2D shadow map (non-cascaded / fallback path).
                     if (firstDirLight.ShadowMap?.Material?.Textures.Count > 0)
                         forwardShadowTex = firstDirLight.ShadowMap.Material.Textures[0];
-
-                    if (firstDirLight is OneViewLightComponent oneView && oneView.ShadowCamera is not null)
-                    {
-                        primaryDirLightWorldToLightInvView = oneView.ShadowCamera.Transform.RenderMatrix;
-                        primaryDirLightWorldToLightProj = oneView.ShadowCamera.ProjectionMatrix;
-                    }
 
                     // Cascaded shadow array — evaluated independently of the 2D map because
                     // in cascaded mode the 2D ShadowMap may never be populated but the
@@ -820,8 +812,6 @@ namespace XREngine.Scene
             // only count once a published slot is resident; otherwise the shader should
             // use the legacy fallback or stay lit instead of sampling dummy atlas pages.
             program.Uniform("UseCascadedDirectionalShadows", useCascadedDirectionalShadows);
-            program.Uniform("PrimaryDirLightWorldToLightInvViewMatrix", primaryDirLightWorldToLightInvView);
-            program.Uniform("PrimaryDirLightWorldToLightProjMatrix", primaryDirLightWorldToLightProj);
 
             // Diagnostic: log every transition of shadowEnabled / primary-dir-light state so we can
             // diff "CastsShadows=true" vs "CastsShadows=false" uniforms upstream of the uber shader.

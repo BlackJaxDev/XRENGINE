@@ -170,6 +170,14 @@ public sealed class GPUSoftbodyDispatcher
         EnsureInitialized();
         BuildCombinedBuffers();
 
+        // Gate on backend program link readiness. Binding a compute program
+        // whose link is still queued on the shared GL context can deadlock the
+        // render thread on NVIDIA (parallel-link worker hazard). Skip this
+        // frame's dispatch if any required program isn't yet linked; the
+        // first call to Link() kicks off async compilation.
+        if (!EnsureProgramsLinked())
+            return;
+
         (int maxSubsteps, int maxSolverIterations) = DetermineLoopCounts();
         LastDispatchedInstanceCount = _activeRequests.Count;
         LastDispatchedSubsteps = maxSubsteps;
@@ -271,6 +279,31 @@ public sealed class GPUSoftbodyDispatcher
         _applyClusterProgram = new XRRenderProgram(true, false, _applyClusterShader);
 
         _initialized = true;
+    }
+
+    private bool EnsureProgramsLinked()
+    {
+        bool allLinked = true;
+        EnsureLinkedOrKick(_integrateProgram, ref allLinked);
+        EnsureLinkedOrKick(_collideProgram, ref allLinked);
+        EnsureLinkedOrKick(_solveProgram, ref allLinked);
+        EnsureLinkedOrKick(_finalizeProgram, ref allLinked);
+        EnsureLinkedOrKick(_applyClusterProgram, ref allLinked);
+        return allLinked;
+
+        static void EnsureLinkedOrKick(XRRenderProgram? program, ref bool allLinked)
+        {
+            if (program is null)
+            {
+                allLinked = false;
+                return;
+            }
+            if (program.IsLinked)
+                return;
+            if (!program.LinkReady)
+                program.Link();
+            allLinked = false;
+        }
     }
 
     private void BuildCombinedBuffers()

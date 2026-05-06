@@ -406,6 +406,8 @@ namespace XREngine.Rendering
             UberMaterialVariantBindingState next = bindingState ?? UberMaterialVariantBindingState.Empty;
             if (!ActiveUberVariant.Equals(next))
                 ActiveUberVariant = next;
+
+            ApplyShaderProgramMetadata(ShaderPipelineProgram);
         }
 
         public void SetUberVariantStatus(UberMaterialVariantStatus? status)
@@ -851,6 +853,7 @@ namespace XREngine.Rendering
             ShaderPipelineProgram = RuntimeRenderingHostServices.Current.AllowShaderPipelines
                 ? new XRRenderProgram(true, true, Shaders.Where(x => x.Type != EShaderType.Vertex))
                 : null;
+            ApplyShaderProgramMetadata(ShaderPipelineProgram);
 
             SyncParametersToShaderUniforms();
             SyncRequiredEngineUniforms();
@@ -873,6 +876,7 @@ namespace XREngine.Rendering
                 return;
 
             ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders);
+            ApplyShaderProgramMetadata(ShaderPipelineProgram);
         }
 
         public ETransparencyMode GetEffectiveTransparencyMode()

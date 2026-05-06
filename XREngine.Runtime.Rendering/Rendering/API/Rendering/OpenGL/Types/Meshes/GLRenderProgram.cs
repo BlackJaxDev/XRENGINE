@@ -25,7 +25,11 @@ namespace XREngine.Rendering.OpenGL
             public bool IsLinked
             {
                 get => _isLinked;
-                private set => SetField(ref _isLinked, value);
+                private set
+                {
+                    if (SetField(ref _isLinked, value))
+                        Data.SetBackendLinked(value);
+                }
             }
 
             public override EGLObjectType Type => EGLObjectType.Program;

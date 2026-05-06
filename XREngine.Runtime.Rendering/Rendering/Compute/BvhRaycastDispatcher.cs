@@ -90,7 +90,21 @@ public sealed class BvhRaycastDispatcher
                 continue;
             }
 
-            Dispatch(request, glRenderer);
+            // Gate on backend program link readiness. Binding a program whose
+            // link is still queued on the shared GL context can deadlock the
+            // render thread on NVIDIA (parallel-link worker hazard). Re-queue
+            // the request and try again next frame; the first call to Link()
+            // kicks off async compilation.
+            XRRenderProgram program = ResolveProgram(request.Variant);
+            if (!program.IsLinked)
+            {
+                if (!program.LinkReady)
+                    program.Link();
+                _pendingRequests.Enqueue(request);
+                continue;
+            }
+
+            Dispatch(request, glRenderer, program);
         }
     }
 
@@ -196,12 +210,10 @@ public sealed class BvhRaycastDispatcher
         return true;
     }
 
-    private void Dispatch(BvhRaycastRequest request, OpenGLRenderer? glRenderer)
+    private void Dispatch(BvhRaycastRequest request, OpenGLRenderer? glRenderer, XRRenderProgram program)
     {
         if (request.HitBuffer is null || request.RayBuffer is null || request.NodeBuffer is null || request.TriangleBuffer is null)
             return;
-
-        XRRenderProgram program = ResolveProgram(request.Variant);
 
         EnsureReadbackMapping(request.HitBuffer);
 

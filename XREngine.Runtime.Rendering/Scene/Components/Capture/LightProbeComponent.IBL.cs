@@ -86,6 +86,12 @@ namespace XREngine.Components.Capture.Lights
 
         public void InitializeStatic()
         {
+            if (!Engine.IsRenderThread)
+            {
+                Engine.EnqueueMainThreadTask(InitializeStatic, "LightProbe.InitializeStatic");
+                return;
+            }
+
             if (EnvironmentTextureEquirect is null)
                 return;
 
@@ -554,6 +560,20 @@ namespace XREngine.Components.Capture.Lights
 
         private void RetryPendingIblGeneration()
         {
+            if (!Engine.IsRenderThread)
+            {
+                if (_iblRetryQueuedOnRenderThread)
+                    return;
+
+                _iblRetryQueuedOnRenderThread = true;
+                Engine.EnqueueMainThreadTask(() =>
+                {
+                    _iblRetryQueuedOnRenderThread = false;
+                    RetryPendingIblGeneration();
+                }, "LightProbe.RetryPendingIblGeneration");
+                return;
+            }
+
             if (!IsActiveInHierarchy || !HasIblGenerationRetryResources())
             {
                 CancelPendingIblGenerationRetry();

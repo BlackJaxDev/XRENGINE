@@ -336,7 +336,6 @@ public sealed class UberMaterialVariantTests
                 GeneratedSourceLength = 280,
             });
             UberShaderVariantTelemetry.RecordFailure();
-            UberShaderVariantTelemetry.RecordBackendSuccess(0xABCDuL, 4.0, 6.0);
 
             UberShaderVariantTelemetry.Snapshot snapshot = UberShaderVariantTelemetry.GetSnapshot();
 
@@ -347,8 +346,6 @@ public sealed class UberMaterialVariantTests
             snapshot.CacheHitRate.ShouldBe(0.5, 0.0001);
             snapshot.AveragePreparationMilliseconds.ShouldBe(20.0, 0.0001);
             snapshot.AverageAdoptionMilliseconds.ShouldBe(4.0, 0.0001);
-            snapshot.AverageCompileMilliseconds.ShouldBe(4.0, 0.0001);
-            snapshot.AverageLinkMilliseconds.ShouldBe(6.0, 0.0001);
             snapshot.AverageGeneratedSourceBytes.ShouldBe(200.0, 0.0001);
         }
         finally
@@ -606,34 +603,44 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
-    public void UberVariantTelemetry_BackendSnapshotTracksCompileLinkAndFailureStages()
+    public void XRRenderProgramShaderMetadata_TracksVariantCompileLinkAndFailureStages()
     {
-        UberShaderVariantTelemetry.ResetForTests();
+        XRRenderProgram program = new();
+        const ulong variantHash = 0x1234uL;
 
-        try
-        {
-            const ulong variantHash = 0x1234uL;
+        program.SetShaderVariantMetadata(new XRRenderProgram.ShaderProgramVariantMetadata(
+            "TestVariant",
+            variantHash,
+            XRRenderProgram.EShaderProgramBinaryCachePolicy.BypassWhenDriverParallelCompile));
 
-            UberShaderVariantTelemetry.RecordBackendCompileStarted(variantHash);
-            UberShaderVariantTelemetry.TryGetBackendSnapshot(variantHash, out UberShaderVariantTelemetry.BackendSnapshot compilingSnapshot).ShouldBeTrue();
-            compilingSnapshot.Stage.ShouldBe(UberShaderVariantTelemetry.BackendStage.Compiling);
+        program.ShaderMetadata.Variant.Kind.ShouldBe("TestVariant");
+        program.ShaderMetadata.Variant.VariantHash.ShouldBe(variantHash);
+        program.ShaderMetadata.Variant.BinaryCachePolicy.ShouldBe(XRRenderProgram.EShaderProgramBinaryCachePolicy.BypassWhenDriverParallelCompile);
 
-            UberShaderVariantTelemetry.RecordBackendLinkStarted(variantHash, 5.0);
-            UberShaderVariantTelemetry.TryGetBackendSnapshot(variantHash, out UberShaderVariantTelemetry.BackendSnapshot linkingSnapshot).ShouldBeTrue();
-            linkingSnapshot.Stage.ShouldBe(UberShaderVariantTelemetry.BackendStage.Linking);
-            linkingSnapshot.CompileMilliseconds.ShouldBe(5.0, 0.0001);
+        program.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+            XRRenderProgram.EShaderProgramBackendStage.Compiling,
+            0.0,
+            0.0,
+            null));
+        program.ShaderMetadata.Backend.Stage.ShouldBe(XRRenderProgram.EShaderProgramBackendStage.Compiling);
 
-            UberShaderVariantTelemetry.RecordBackendFailure(variantHash, "link failed", 5.0, 1.5);
-            UberShaderVariantTelemetry.TryGetBackendSnapshot(variantHash, out UberShaderVariantTelemetry.BackendSnapshot failedSnapshot).ShouldBeTrue();
-            failedSnapshot.Stage.ShouldBe(UberShaderVariantTelemetry.BackendStage.Failed);
-            failedSnapshot.CompileMilliseconds.ShouldBe(5.0, 0.0001);
-            failedSnapshot.LinkMilliseconds.ShouldBe(1.5, 0.0001);
-            failedSnapshot.FailureReason.ShouldBe("link failed");
-        }
-        finally
-        {
-            UberShaderVariantTelemetry.ResetForTests();
-        }
+        program.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+            XRRenderProgram.EShaderProgramBackendStage.Linking,
+            5.0,
+            0.0,
+            null));
+        program.ShaderMetadata.Backend.Stage.ShouldBe(XRRenderProgram.EShaderProgramBackendStage.Linking);
+        program.ShaderMetadata.Backend.CompileMilliseconds.ShouldBe(5.0, 0.0001);
+
+        program.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+            XRRenderProgram.EShaderProgramBackendStage.Failed,
+            5.0,
+            1.5,
+            "link failed"));
+        program.ShaderMetadata.Backend.Stage.ShouldBe(XRRenderProgram.EShaderProgramBackendStage.Failed);
+        program.ShaderMetadata.Backend.CompileMilliseconds.ShouldBe(5.0, 0.0001);
+        program.ShaderMetadata.Backend.LinkMilliseconds.ShouldBe(1.5, 0.0001);
+        program.ShaderMetadata.Backend.FailureReason.ShouldBe("link failed");
     }
 
     private static XRMaterial CreateUberMaterial(string fragmentSource, params ShaderVar[] parameters)

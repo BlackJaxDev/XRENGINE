@@ -62,8 +62,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("#pragma snippet \"ForwardLighting\"");
         source.ShouldContain("#pragma snippet \"AmbientOcclusionSampling\"");
         source.ShouldContain("XRENGINE_CalculateAmbientPbr");
-        normalizedSource.ShouldContain("XRENGINE_CalcDirLight(\n            i,\n            DirectionalLights[i],");
-        normalizedSource.ShouldNotContain("XRENGINE_CalcDirLight(\n            DirectionalLights[i],");
+        normalizedSource.ShouldContain("XRENGINE_CalcDirLightWithViewDir(\n            i,\n            DirectionalLights[i],");
+        normalizedSource.ShouldNotContain("XRENGINE_CalcDirLightWithViewDir(\n            DirectionalLights[i],");
         source.ShouldContain("calculateForwardPlusPointLightPbr");
         source.ShouldContain("calculatePointLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, PointLights[i])");
         source.ShouldContain("calculateSpotLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, SpotLights[i])");
@@ -73,7 +73,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("int getForwardPlusVisibleLightBaseIndex()");
         source.ShouldContain("ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;");
         source.ShouldContain("tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));");
-        source.ShouldContain("XRENGINE_GetForwardViewIndex() * (tileCountX * tileCountY)");
+        source.ShouldContain("XRENGINE_GetForwardResolvedViewIndex() * (tileCountX * tileCountY)");
         source.ShouldNotContain("ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;");
 
         uniforms.ShouldContain("uniform float RenderTime;");
@@ -387,6 +387,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         material.Parameter<ShaderFloat>("_PBRBRDF")?.Value.ShouldBe(0.0f);
         material.Parameter<ShaderFloat>("_SpecularStrength")?.Value.ShouldBe(1.0f);
         material.Parameter<ShaderFloat>("_MainVertexColoringEnabled")?.Value.ShouldBe(0.0f);
+        material.Parameter<ShaderInt>("NormalMapMode")?.Value.ShouldBe(0);
+        material.Parameter<ShaderFloat>("HeightMapScale")?.Value.ShouldBe(0.0f);
         material.Parameter<ShaderVector4>("_EmissionMap_ST")?.Value.ShouldBe(new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
         material.Parameter<ShaderVector4>("_MatcapMask_ST")?.Value.ShouldBe(new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
         material.Parameter<ShaderVector4>("_PBRMetallicMaps_ST")?.Value.ShouldBe(new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
@@ -417,11 +419,13 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
 
         source.ShouldContain("layout(location = 0) in vec3 FragPos;");
         source.ShouldContain("layout(location = 1) in vec3 FragNorm;");
+        source.ShouldContain("layout(location = 2) in vec3 FragTan;");
+        source.ShouldContain("layout(location = 3) in vec3 FragBinorm;");
         source.ShouldContain("layout(location = 4) in vec2 FragUV0;");
         source.ShouldContain("layout(location = 12) in vec4 FragColor0;");
         source.ShouldContain("layout(location = 20) in vec3 FragPosLocal;");
-        source.ShouldContain("mesh.viewDir = normalize(u_CameraPosition - FragPos);");
-        source.ShouldContain("mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);");
+        source.ShouldContain("mesh.viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - FragPos);");
+        source.ShouldContain("mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal, FragTan, FragBinorm, mesh.worldPos, mesh.uv[0]);");
     }
 
     [Test]
@@ -438,6 +442,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
 
             source.ShouldContain("layout(location = 0) out vec3 FragPos;");
             source.ShouldContain("layout(location = 1) out vec3 FragNorm;");
+            source.ShouldContain("layout(location = 2) out vec3 FragTan;");
+            source.ShouldContain("layout(location = 3) out vec3 FragBinorm;");
             source.ShouldContain("layout(location = 4) out vec2 FragUV0;");
             source.ShouldContain("layout(location = 12) out vec4 FragColor0;");
             source.ShouldContain("layout(location = 20) out vec3 FragPosLocal;");

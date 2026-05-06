@@ -31,6 +31,51 @@ namespace XREngine.Rendering
             string? ArrayLengthExpression,
             IReadOnlyList<EShaderType> DeclaredIn);
 
+        public enum EShaderProgramBinaryCachePolicy
+        {
+            Default,
+            Bypass,
+            BypassWhenDriverParallelCompile,
+        }
+
+        public enum EShaderProgramBackendStage
+        {
+            None,
+            Compiling,
+            Linking,
+            Ready,
+            Failed,
+        }
+
+        public sealed record ShaderProgramVariantMetadata(
+            string? Kind,
+            ulong VariantHash,
+            EShaderProgramBinaryCachePolicy BinaryCachePolicy = EShaderProgramBinaryCachePolicy.Default)
+        {
+            public static ShaderProgramVariantMetadata Empty { get; } = new(null, 0);
+            public bool HasVariant => VariantHash != 0;
+        }
+
+        public readonly record struct ShaderProgramBackendStatus(
+            EShaderProgramBackendStage Stage,
+            double CompileMilliseconds,
+            double LinkMilliseconds,
+            string? FailureReason)
+        {
+            public static ShaderProgramBackendStatus Empty { get; } = new(EShaderProgramBackendStage.None, 0.0, 0.0, null);
+        }
+
+        public sealed record ShaderProgramMetadata(
+            ShaderProgramVariantMetadata Variant,
+            ShaderProgramBackendStatus Backend)
+        {
+            public static ShaderProgramMetadata Empty { get; } = new(
+                ShaderProgramVariantMetadata.Empty,
+                ShaderProgramBackendStatus.Empty);
+
+            public bool HasVariant => Variant.HasVariant;
+        }
+
         private static readonly StringComparer UniformComparer = StringComparer.Ordinal;
 
         private static readonly Regex UniformStatementRegex = new(
@@ -113,10 +158,20 @@ namespace XREngine.Rendering
 
         private bool _shaderInterfaceDirty = true;
 
+        private ShaderProgramMetadata _shaderMetadata = ShaderProgramMetadata.Empty;
+
         [YamlIgnore]
         private readonly Dictionary<XRShader, ShaderSubscription> _shaderSourceSubscriptions = new();
 
         public event Action<XRRenderProgram>? ShaderInterfaceChanged;
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public ShaderProgramMetadata ShaderMetadata
+        {
+            get => _shaderMetadata;
+            set => SetField(ref _shaderMetadata, value ?? ShaderProgramMetadata.Empty);
+        }
 
         /// <summary>
         /// The shaders that make up the program.
@@ -279,6 +334,16 @@ namespace XREngine.Rendering
             EnsureShaderInterfaceMetadata();
         }
 
+        public void SetShaderVariantMetadata(ShaderProgramVariantMetadata? variant)
+            => ShaderMetadata = ShaderMetadata with
+            {
+                Variant = variant ?? ShaderProgramVariantMetadata.Empty,
+                Backend = ShaderProgramBackendStatus.Empty,
+            };
+
+        public void SetShaderBackendStatus(ShaderProgramBackendStatus status)
+            => ShaderMetadata = ShaderMetadata with { Backend = status };
+
         private void EnsureShaderInterfaceMetadata()
         {
             if (!_shaderInterfaceDirty)
@@ -306,6 +371,24 @@ namespace XREngine.Rendering
 
         [Browsable(false)]
         public bool LinkReady { get; private set; } = false;
+
+        /// <summary>
+        /// Set by the active rendering backend (OpenGL/Vulkan) when the program
+        /// has been successfully linked and is safe to dispatch/use.
+        /// Consumers (e.g. BVH or physics-chain compute dispatchers) should gate
+        /// dispatch on this to avoid binding programs whose link is still
+        /// queued on the shared GL context — binding an unlinked NVIDIA program
+        /// can cause an implicit wait that deadlocks the render thread.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        public bool IsLinked { get; private set; } = false;
+
+        /// <summary>
+        /// Backend hook to publish link state to the program-data layer.
+        /// </summary>
+        public void SetBackendLinked(bool linked)
+            => IsLinked = linked;
 
         private bool _separable = true;
         public bool Separable

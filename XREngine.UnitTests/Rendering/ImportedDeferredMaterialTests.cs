@@ -253,6 +253,34 @@ public sealed class ImportedDeferredMaterialTests
     }
 
     [Test]
+    public void MakeMaterialForwardPlusUberShader_HeightTexture_EnablesHeightNormalMode()
+    {
+        XRTexture2D albedo = new()
+        {
+            FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "height-mode-albedo.png"),
+        };
+
+        XRTexture2D height = new()
+        {
+            FilePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "height-mode-bump.png"),
+        };
+
+        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader(
+            [albedo, height],
+            [
+                CreateSlot(albedo.FilePath!, TextureType.Diffuse),
+                CreateSlot(height.FilePath!, TextureType.Height),
+            ],
+            "UberHeightNormalModeMaterial");
+
+        material.Textures.Count.ShouldBe(2);
+        material.Textures[1]!.SamplerName.ShouldBe("_BumpMap");
+        material.Parameter<ShaderFloat>("_BumpScale")?.Value.ShouldBe(1.0f);
+        material.Parameter<ShaderInt>("NormalMapMode")?.Value.ShouldBe(1);
+        material.Parameter<ShaderFloat>("HeightMapScale")?.Value.ShouldBe(1.0f);
+    }
+
+    [Test]
     public void MakeMaterialForwardPlusUberShader_UsesGeneratedVertexPipeline()
     {
         XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberGeneratedVertexMaterial");

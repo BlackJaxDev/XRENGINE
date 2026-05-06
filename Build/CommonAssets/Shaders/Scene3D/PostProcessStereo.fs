@@ -59,6 +59,12 @@ struct VignetteStruct
 };
 uniform VignetteStruct Vignette;
 
+// Tonemapping selector and shared tonemap operators
+#include "../Snippets/ToneMapping.glsl"
+
+uniform int TonemapType = XRENGINE_TONEMAP_MOBIUS;
+uniform float MobiusTransition = 0.6;
+
 vec3 RGBtoHSV(vec3 c)
 {
     vec4 K = vec4(0.0f, -1.0f / 3.0f, 2.0f / 3.0f, -1.0f);
@@ -319,7 +325,7 @@ void main()
     }
 
     // Tone mapping
-    vec3 ldrSceneColor = vec3(1.0) - exp(-hdrSceneColor * GetExposure());
+    vec3 ldrSceneColor = XRENGINE_ApplyToneMap(hdrSceneColor, TonemapType, GetExposure(), ColorGrade.Gamma, MobiusTransition);
 
     // Color grading (LDR)
     ldrSceneColor *= ColorGrade.Tint;
@@ -328,7 +334,7 @@ void main()
 
     ldrSceneColor = (ldrSceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
-    vec2 outline = GetStencilOutlineIntensity(uv, gl_ViewID_OVR);
+    vec2 outline = GetStencilOutlineIntensity(uv, int(gl_ViewID_OVR));
     float hoverOutline = outline.x;
     float selectionOutline = outline.y;
     float outlineWeight = max(hoverOutline, selectionOutline);

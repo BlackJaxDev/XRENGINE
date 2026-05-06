@@ -329,6 +329,7 @@ namespace XREngine.Components.Capture.Lights
         private XRTexture2D? _environmentTextureEquirect;
         private bool _useCubemapConvolution;
         private bool _releaseTransientEnvironmentTexturesOnIblRetrySuccess;
+        private bool _iblRetryQueuedOnRenderThread;
         private int _iblRetryAttempts;
 
         private IRuntimeRenderWorld? _registeredWorld;

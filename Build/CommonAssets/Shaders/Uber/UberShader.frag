@@ -84,12 +84,12 @@
 // ============================================
 // Fragment Inputs
 // ============================================
-// Locations must agree with the vertex stage's out contract. The gaps
-// (0,1,4,12,20) are intentional: other slots are reserved for optional
-// attributes (tangents, extra UVs, skin weights, ...) that this variant
-// doesn't consume.
+// Locations must agree with the vertex stage's out contract. The gaps are
+// intentional: other slots are reserved for optional attributes.
 layout(location = 0)  in vec3 FragPos;        // world-space position
 layout(location = 1)  in vec3 FragNorm;       // world-space geometric normal
+layout(location = 2)  in vec3 FragTan;        // world-space tangent
+layout(location = 3)  in vec3 FragBinorm;     // world-space bitangent
 layout(location = 4)  in vec2 FragUV0;        // primary texture coordinates
 layout(location = 12) in vec4 FragColor0;     // per-vertex RGBA color
 layout(location = 20) in vec3 FragPosLocal;   // object-space position
@@ -276,6 +276,23 @@ mat3 computeWorldTbn(vec3 normal, vec3 worldPos, vec2 uv)
     return mat3(tangent * invMax, bitangent * invMax, n);
 }
 
+mat3 computeImportedOrFallbackWorldTbn(vec3 normal, vec3 tangent, vec3 bitangent, vec3 worldPos, vec2 uv)
+{
+    vec3 n = normal;
+    if (dot(tangent, tangent) <= 1e-8 || dot(bitangent, bitangent) <= 1e-8)
+        return computeWorldTbn(n, worldPos, uv);
+
+    vec3 t = tangent - n * dot(n, tangent);
+    float tangentLengthSq = dot(t, t);
+    if (tangentLengthSq <= 1e-8)
+        return computeWorldTbn(n, worldPos, uv);
+
+    t *= inversesqrt(tangentLengthSq);
+    float handedness = dot(cross(n, t), bitangent) < 0.0 ? -1.0 : 1.0;
+    vec3 b = cross(n, t) * handedness;
+    return mat3(t, b, n);
+}
+
 // ============================================
 // UV Selection Helper
 // ============================================
@@ -303,6 +320,29 @@ vec2 getUV(int uvIndex, ToonMesh mesh) {
 // ============================================
 // Normal Mapping
 // ============================================
+vec3 heightMapToTangentNormal(vec2 uv, float scale)
+{
+    vec2 texelSize = 1.0 / vec2(textureSize(_BumpMap, 0));
+    float tl = texture(_BumpMap, uv + vec2(-texelSize.x, -texelSize.y)).r;
+    float t  = texture(_BumpMap, uv + vec2( 0.0,         -texelSize.y)).r;
+    float tr = texture(_BumpMap, uv + vec2( texelSize.x, -texelSize.y)).r;
+    float l  = texture(_BumpMap, uv + vec2(-texelSize.x,  0.0        )).r;
+    float r  = texture(_BumpMap, uv + vec2( texelSize.x,  0.0        )).r;
+    float bl = texture(_BumpMap, uv + vec2(-texelSize.x,  texelSize.y)).r;
+    float b  = texture(_BumpMap, uv + vec2( 0.0,          texelSize.y)).r;
+    float br = texture(_BumpMap, uv + vec2( texelSize.x,  texelSize.y)).r;
+
+    float slopeX = ((tl + 2.0 * l + bl) - (tr + 2.0 * r + br)) * 0.25;
+    float slopeY = ((tl + 2.0 * t + tr) - (bl + 2.0 * b + br)) * 0.25;
+    return normalize(vec3(vec2(slopeX, slopeY) * scale, 1.0));
+}
+
+bool looksLikeHeightMapSample(vec3 sampleColor)
+{
+    float delta = max(abs(sampleColor.r - sampleColor.g), max(abs(sampleColor.r - sampleColor.b), abs(sampleColor.g - sampleColor.b)));
+    return delta <= 0.02;
+}
+
 // Samples the bump/normal map, decodes it into a tangent-space vector, and
 // rotates it into world space via the fragment's TBN. When _BumpScale is
 // effectively zero we skip the work entirely and keep the vertex normal.
@@ -318,7 +358,12 @@ vec3 calculateNormal(ToonMesh mesh) {
     normalUV = panUV(normalUV, _BumpMapPan, u_Time);
 
     vec4 normalTex = texture(_BumpMap, normalUV);
-    vec3 tangentNormal = unpackNormal(normalTex, _BumpScale);
+    float heightScale = abs(HeightMapScale) > EPSILON ? HeightMapScale : 1.0;
+    vec3 tangentNormal = (NormalMapMode == 1 || looksLikeHeightMapSample(normalTex.rgb))
+        ? heightMapToTangentNormal(normalUV, heightScale * _BumpScale)
+        : unpackNormal(normalTex, _BumpScale);
+    tangentNormal.z = max(tangentNormal.z, 0.001);
+    tangentNormal = normalize(tangentNormal);
 
     // Rotate from tangent space to world space with the per-fragment TBN.
     vec3 worldNormal = normalize(mesh.TBN * tangentNormal);
@@ -555,7 +600,7 @@ vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseCo
     int startIndex = skipPrimaryDirectional ? 1 : 0;
 
     for (int i = startIndex; i < DirLightCount; ++i) {
-        totalLight += XRENGINE_CalcDirLight(
+        totalLight += XRENGINE_CalcDirLightWithViewDir(
             i,
             DirectionalLights[i],
             normal,
@@ -563,7 +608,8 @@ vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseCo
             baseColor,
             rms,
             pbr.F0,
-            i == 0);   // only the primary directional samples the sun shadow cascade
+            i == 0,    // only the primary directional samples the sun shadow cascade
+            mesh.viewDir);
     }
 
     return totalLight;
@@ -574,7 +620,7 @@ int getForwardPlusVisibleLightBaseIndex() {
     int tileCountY = ForwardPlusTileCountY;
     ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;
     tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));
-    int tileIndex = XRENGINE_GetForwardViewIndex() * (tileCountX * tileCountY) + tileCoord.y * tileCountX + tileCoord.x;
+    int tileIndex = XRENGINE_GetForwardResolvedViewIndex() * (tileCountX * tileCountY) + tileCoord.y * tileCountX + tileCoord.x;
     return tileIndex * ForwardPlusMaxLightsPerTile;
 }
 
@@ -586,7 +632,7 @@ vec3 calculatePointLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 
 
     float attenuation = XRENGINE_Attenuate(lightDistance, light.Radius) * light.Brightness;
     float shadow = XRENGINE_ReadShadowMapPoint(lightIndex, light, shadowNormal, mesh.worldPos);
-    return XRENGINE_CalculateDirectPbrLight(light.Base.Color, light.Base.DiffuseIntensity, lightVector / lightDistance, normal, mesh.worldPos, baseColor, rms, F0, attenuation) * shadow;
+    return XRENGINE_CalculateDirectPbrLightWithViewDir(light.Base.Color, light.Base.DiffuseIntensity, lightVector / lightDistance, normal, mesh.worldPos, baseColor, rms, F0, attenuation, mesh.viewDir) * shadow;
 }
 
 vec3 calculateSpotLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 baseColor, vec3 rms, vec3 F0, int lightIndex, SpotLight light) {
@@ -601,7 +647,7 @@ vec3 calculateSpotLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 b
     float spotAttn = pow(clampedCosine, light.Exponent);
     float distAttn = XRENGINE_Attenuate(lightDistance, light.Base.Radius) * light.Base.Brightness;
     float shadow = XRENGINE_ReadShadowMapSpot(lightIndex, light, shadowNormal, mesh.worldPos, lightDir);
-    return spotEffect * spotAttn * XRENGINE_CalculateDirectPbrLight(light.Base.Base.Color, light.Base.Base.DiffuseIntensity, lightDir, normal, mesh.worldPos, baseColor, rms, F0, distAttn) * shadow;
+    return spotEffect * spotAttn * XRENGINE_CalculateDirectPbrLightWithViewDir(light.Base.Base.Color, light.Base.Base.DiffuseIntensity, lightDir, normal, mesh.worldPos, baseColor, rms, F0, distAttn, mesh.viewDir) * shadow;
 }
 
 vec3 calculateForwardPlusPointLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 baseColor, vec3 rms, vec3 F0, ForwardPlusLocalLight light) {
@@ -615,7 +661,7 @@ vec3 calculateForwardPlusPointLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNo
     float shadow = (sourceIndex >= 0 && sourceIndex < PointLightCount)
         ? XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], shadowNormal, mesh.worldPos)
         : 1.0;
-    return XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, lightVector / lightDistance, normal, mesh.worldPos, baseColor, rms, F0, attenuation) * shadow;
+    return XRENGINE_CalcForwardPlusColorWithViewDir(light.Color_Type.xyz, light.Params.z, lightVector / lightDistance, normal, mesh.worldPos, baseColor, rms, F0, attenuation, mesh.viewDir) * shadow;
 }
 
 vec3 calculateForwardPlusSpotLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNormal, vec3 baseColor, vec3 rms, vec3 F0, ForwardPlusLocalLight light) {
@@ -635,7 +681,7 @@ vec3 calculateForwardPlusSpotLightPbr(ToonMesh mesh, vec3 normal, vec3 shadowNor
         ? XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], shadowNormal, mesh.worldPos, lightToPosN)
         : 1.0;
 
-    return spotEffect * spotAttn * XRENGINE_CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, lightToPosN, normal, mesh.worldPos, baseColor, rms, F0, distAttn) * shadow;
+    return spotEffect * spotAttn * XRENGINE_CalcForwardPlusColorWithViewDir(light.Color_Type.xyz, light.Params.z, lightToPosN, normal, mesh.worldPos, baseColor, rms, F0, distAttn, mesh.viewDir) * shadow;
 }
 
 // Point + spot lights. Two dispatch paths:
@@ -1319,9 +1365,12 @@ void main() {
     mesh.uv[3] = FragUV0;
     mesh.worldPos = FragPos;
     mesh.localPos = FragPosLocal;
+#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+    XRENGINE_BeginForwardLightingFragment(mesh.worldPos);
+#endif
     mesh.vertexNormal = normalize(FragNorm);
     mesh.vertexColor = FragColor0;
-    mesh.viewDir = normalize(u_CameraPosition - FragPos);
+    mesh.viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - FragPos);
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
 
     // Flip the interpolated normal when shading the back of a double-sided
@@ -1329,13 +1378,12 @@ void main() {
     mesh.vertexNormal *= mesh.isFrontFace;
     mesh.worldNormal = mesh.vertexNormal;
 
-    // TBN built from screen-space derivatives — works even when the mesh has
-    // no baked tangents. Skip when normal mapping is disabled (bump scale ~0)
-    // since the derivatives + cross products are pure waste in that case.
+    // Prefer the mesh's imported tangent frame. Derivative TBN is only a
+    // fallback for meshes that did not provide usable tangents.
     // Initialize to an identity-like frame so downstream helpers that touch
     // TBN directly (rare) still see a well-formed matrix.
     if (abs(_BumpScale) > EPSILON) {
-        mesh.TBN = computeWorldTbn(mesh.vertexNormal, mesh.worldPos, mesh.uv[0]);
+        mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal, FragTan, FragBinorm, mesh.worldPos, mesh.uv[0]);
     } else {
         vec3 n = mesh.vertexNormal;
         vec3 t = normalize(abs(n.z) < 0.999 ? cross(n, vec3(0.0, 0.0, 1.0)) : cross(n, vec3(0.0, 1.0, 0.0)));

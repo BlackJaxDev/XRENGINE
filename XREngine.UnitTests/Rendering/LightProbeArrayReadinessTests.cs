@@ -56,6 +56,21 @@ public sealed class LightProbeArrayReadinessTests
     }
 
     [Test]
+    public void LightProbeIblRetry_RunsGpuWorkOnRenderThread()
+    {
+        string iblSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/LightProbeComponent.IBL.cs");
+        string componentSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/LightProbeComponent.cs");
+        string captureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/SceneCaptureComponent.cs");
+
+        componentSource.ShouldContain("private bool _iblRetryQueuedOnRenderThread;");
+        iblSource.ShouldContain("if (!Engine.IsRenderThread)");
+        iblSource.ShouldContain("Engine.EnqueueMainThreadTask(() =>");
+        iblSource.ShouldContain("\"LightProbe.RetryPendingIblGeneration\"");
+        captureSource.ShouldContain("\"SceneCapture.SyncCaptureTextureWrites\"");
+        captureSource.ShouldContain("if (!Engine.IsRenderThread)");
+    }
+
+    [Test]
     public void DefaultPipelines_OnlyBuildProbeArraysFromUsableProbeTextures()
     {
         string pipeline1 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");

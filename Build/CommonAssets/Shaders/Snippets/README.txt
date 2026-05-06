@@ -50,7 +50,8 @@
 //   - NormalMapping.glsl       : TBN matrix and normal map unpacking
 //   - ShadowSampling.glsl      : PCF shadow sampling utilities
 //   - ToneMapping.glsl         : Various tone mapping operators (Linear, Gamma,
-//                                Clip, Reinhard, Hable, Mobius, ACES, Neutral, Filmic)
+//                                Clip, Reinhard, Hable, Mobius, ACES, Neutral,
+//                                Filmic, AgX, GT7)
 //
 // CREATING CUSTOM SNIPPETS:
 //   1. Create a .glsl or .snip file in this directory (or a subdirectory)

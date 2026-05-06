@@ -480,6 +480,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 
                 // Copy each source texture's data to its respective layer in the array
+                bool copiedEveryAllocatedMip = true;
                 for (int layer = 0; layer < Data.Textures.Length; ++layer)
                 {
                     var tex = Data.Textures[layer];
@@ -527,6 +528,10 @@ namespace XREngine.Rendering.OpenGL
                     // Copy all mip levels from the source 2D texture to this layer of the array
                     int numMips = Math.Max(1, tex.SmallestMipmapLevel + 1);
                     numMips = Math.Min(numMips, (int)targetLevels);
+                    int copiedMipCount = 0;
+                    if (tex.Mipmaps is null || tex.Mipmaps.Length < (int)targetLevels)
+                        copiedEveryAllocatedMip = false;
+
                     for (int mip = 0; mip < numMips; ++mip)
                     {
                         Api.GetTextureLevelParameter(srcId, mip, GLEnum.TextureWidth, out int sourceMipWidth);
@@ -545,7 +550,11 @@ namespace XREngine.Rendering.OpenGL
                             srcId, CopyImageSubDataTarget.Texture2D, mip, 0, 0, 0,
                             BindingId, CopyImageSubDataTarget.Texture2DArray, mip, 0, 0, layer,
                             mipWidth, mipHeight, 1);
+                        copiedMipCount++;
                     }
+
+                    if (copiedMipCount < (int)targetLevels)
+                        copiedEveryAllocatedMip = false;
                 }
 
                 int minLOD = -1000;
@@ -578,7 +587,7 @@ namespace XREngine.Rendering.OpenGL
 
                 ApplyMipRangeParameters();
 
-                if (Data.AutoGenerateMipmaps)
+                if (Data.AutoGenerateMipmaps || !copiedEveryAllocatedMip)
                     GenerateMipmaps();
 
                 if (allowPostPushCallback)

@@ -37,8 +37,6 @@ public static class EngineShaderBindingNames
         public const string UseProbeGrid = "UseProbeGrid";
         public const string ShadowMapEnabled = "ShadowMapEnabled";
         public const string UseCascadedDirectionalShadows = "UseCascadedDirectionalShadows";
-        public const string PrimaryDirLightWorldToLightInvViewMatrix = "PrimaryDirLightWorldToLightInvViewMatrix";
-        public const string PrimaryDirLightWorldToLightProjMatrix = "PrimaryDirLightWorldToLightProjMatrix";
         public const string ShadowBase = "ShadowBase";
         public const string ShadowMult = "ShadowMult";
         public const string ShadowBiasMin = "ShadowBiasMin";

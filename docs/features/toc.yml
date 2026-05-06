@@ -39,6 +39,9 @@
 - name: Vulkan Upscale Bridge
   href: vulkan-upscale-bridge.md
 
+- name: OpenGL Program Linking
+  href: opengl-program-linking.md
+
 - name: Tick-Based Animation Timing
   href: tick-based-animation-timing.md
 

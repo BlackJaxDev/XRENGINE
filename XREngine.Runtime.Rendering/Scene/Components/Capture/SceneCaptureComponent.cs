@@ -200,6 +200,17 @@ namespace XREngine.Components.Lights
         {
             if (AbstractRenderer.Current is OpenGLRenderer renderer)
             {
+                if (!Engine.IsRenderThread)
+                {
+                    Engine.EnqueueMainThreadTask(
+                        () => renderer.MemoryBarrier(
+                            EMemoryBarrierMask.Framebuffer |
+                            EMemoryBarrierMask.TextureFetch |
+                            EMemoryBarrierMask.TextureUpdate),
+                        "SceneCapture.SyncCaptureTextureWrites");
+                    return;
+                }
+
                 renderer.MemoryBarrier(
                     EMemoryBarrierMask.Framebuffer |
                     EMemoryBarrierMask.TextureFetch |
@@ -207,7 +218,15 @@ namespace XREngine.Components.Lights
                 return;
             }
 
-            AbstractRenderer.Current?.WaitForGpu();
+            if (Engine.IsRenderThread)
+            {
+                AbstractRenderer.Current?.WaitForGpu();
+                return;
+            }
+
+            Engine.EnqueueMainThreadTask(
+                () => AbstractRenderer.Current?.WaitForGpu(),
+                "SceneCapture.SyncCaptureTextureWrites");
         }
 
         protected virtual void InitializeForCapture()

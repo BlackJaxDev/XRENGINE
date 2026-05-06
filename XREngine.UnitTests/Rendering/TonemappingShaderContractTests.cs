@@ -31,6 +31,8 @@ public sealed class TonemappingShaderContractTests
     {
         ((int)ETonemappingType.Neutral).ShouldBe(7);
         ((int)ETonemappingType.Filmic).ShouldBe(8);
+        ((int)ETonemappingType.AgX).ShouldBe(9);
+        ((int)ETonemappingType.GT7).ShouldBe(10);
 
         string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcess.fs").Replace("\r\n", "\n");
         shaderSource.ShouldContain("#include \"../Snippets/ToneMapping.glsl\"");
@@ -42,16 +44,24 @@ public sealed class TonemappingShaderContractTests
     }
 
     [Test]
-    public void SharedTonemapSources_UseDistinctNeutralAndFilmicCurves_AndMobiusControl()
+    public void SharedTonemapSources_UseDistinctCurves_AndMobiusControl()
     {
         string snippetSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Snippets/ToneMapping.glsl").Replace("\r\n", "\n");
         snippetSource.ShouldContain("#define XRENGINE_TONEMAP_NEUTRAL  7");
         snippetSource.ShouldContain("#define XRENGINE_TONEMAP_FILMIC   8");
+        snippetSource.ShouldContain("#define XRENGINE_TONEMAP_AGX      9");
+        snippetSource.ShouldContain("#define XRENGINE_TONEMAP_GT7      10");
         snippetSource.ShouldContain("case XRENGINE_TONEMAP_NEUTRAL:  return XRENGINE_NeutralToneMap(hdr, exposure);");
         snippetSource.ShouldContain("case XRENGINE_TONEMAP_FILMIC:   return XRENGINE_FilmicToneMap(hdr, exposure);");
+        snippetSource.ShouldContain("case XRENGINE_TONEMAP_AGX:      return XRENGINE_AgXToneMap(hdr, exposure);");
+        snippetSource.ShouldContain("case XRENGINE_TONEMAP_GT7:      return XRENGINE_GT7ToneMap(hdr, exposure);");
         snippetSource.ShouldContain("return (x * (x + 0.0245786)) / (x * (0.983729 * x + 0.432951) + 0.238081);");
         snippetSource.ShouldContain("vec3 x = max(hdr * exposure - vec3(0.004), vec3(0.0));");
         snippetSource.ShouldContain("return (x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06);");
+        snippetSource.ShouldContain("vec3 XRENGINE_AgXToneMap(vec3 hdr, float exposure)");
+        snippetSource.ShouldContain("vec3 XRENGINE_GT7ToneMap(vec3 hdr, float exposure)");
+        snippetSource.ShouldContain("color = XRENGINE_AgXDefaultContrastApprox(color);");
+        snippetSource.ShouldContain("return XRENGINE_GT7ToneMap(hdr, exposure, P, a, m, l, c, b);");
         snippetSource.ShouldContain("vec3 XRENGINE_MobiusToneMap(vec3 hdr, float exposure, float transition)");
         snippetSource.ShouldContain("return XRENGINE_MobiusToneMap(hdr, exposure, mobiusTransition);");
 
@@ -61,7 +71,12 @@ public sealed class TonemappingShaderContractTests
         standaloneShaderSource.ShouldContain("uniform float MobiusTransition = 0.6;");
         standaloneShaderSource.ShouldContain("OutColor = vec4(XRENGINE_ApplyToneMap(color, TonemapType, Exposure, Gamma, MobiusTransition), src.a);");
 
-        string commandSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_Tonemap.cs").Replace("\r\n", "\n");
+        string stereoShaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcessStereo.fs").Replace("\r\n", "\n");
+        stereoShaderSource.ShouldContain("#include \"../Snippets/ToneMapping.glsl\"");
+        stereoShaderSource.ShouldContain("uniform int TonemapType = XRENGINE_TONEMAP_MOBIUS;");
+        stereoShaderSource.ShouldContain("vec3 ldrSceneColor = XRENGINE_ApplyToneMap(hdrSceneColor, TonemapType, GetExposure(), ColorGrade.Gamma, MobiusTransition);");
+
+        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_Tonemap.cs").Replace("\r\n", "\n");
         commandSource.ShouldContain("public ETonemappingType TonemapType { get; set; } = ETonemappingType.Mobius;");
         commandSource.ShouldContain("public float MobiusTransition { get; set; } = TonemappingSettings.DefaultMobiusTransition;");
         commandSource.ShouldContain("ShaderHelper.LoadEngineShader(\"Scene3D/TonemapStandalone.fs\", EShaderType.Fragment)");
@@ -71,12 +86,12 @@ public sealed class TonemappingShaderContractTests
     [Test]
     public void PipelineTonemappingStage_IsBacked_AndUsesTonemappingSettingsUniforms()
     {
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("DescribeTonemappingStage(builder.Stage(TonemappingStageKey, \"Tonemapping\").BackedBy<TonemappingSettings>());");
         pipelineSource.ShouldContain("visibilityCondition: IsMobius");
         pipelineSource.ShouldContain("(tonemapping ?? new TonemappingSettings()).SetUniforms(program);");
 
-        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("DescribeTonemappingStage(builder.Stage(TonemappingStageKey, \"Tonemapping\").BackedBy<TonemappingSettings>());");
         pipeline2Source.ShouldContain("visibilityCondition: IsMobius");
         pipeline2Source.ShouldContain("(tonemapping ?? new TonemappingSettings()).SetUniforms(program);");
@@ -89,7 +104,7 @@ public sealed class TonemappingShaderContractTests
         shaderSource.ShouldContain("sceneColor = ApplyHsvColorGrade(sceneColor);");
         shaderSource.ShouldNotContain("if (!OutputHDR && (ColorGrade.Hue != 1.0f || ColorGrade.Saturation != 1.0f || ColorGrade.Brightness != 1.0f))");
 
-        string commandSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_ColorGrading.cs").Replace("\r\n", "\n");
+        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ColorGrading.cs").Replace("\r\n", "\n");
         commandSource.ShouldContain("sceneColor = ApplyHsvColorGrade(sceneColor);");
         commandSource.ShouldNotContain("if (!OutputHDR && (ColorGrade.Hue != 1.0 || ColorGrade.Saturation != 1.0 || ColorGrade.Brightness != 1.0))");
     }
@@ -109,11 +124,11 @@ public sealed class TonemappingShaderContractTests
         stereoShaderSource.ShouldContain("uniform VignetteStruct Vignette;");
         stereoShaderSource.ShouldContain("ldrSceneColor = ApplyVignette(ldrSceneColor, uv);");
 
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("DescribeVignetteStage(builder.Stage(VignetteStageKey, \"Vignette\").BackedBy<VignetteSettings>());");
         pipelineSource.ShouldContain(".IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);");
 
-        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("DescribeVignetteStage(builder.Stage(VignetteStageKey, \"Vignette\").BackedBy<VignetteSettings>());");
         pipeline2Source.ShouldContain(".IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);");
     }
@@ -142,6 +157,8 @@ public sealed class TonemappingShaderContractTests
         rewrittenSource.ShouldNotBeNull();
         rewrittenSource.ShouldContain("XRENGINE_MobiusToneMap");
         rewrittenSource.ShouldContain("XRENGINE_FilmicToneMap");
+        rewrittenSource.ShouldContain("XRENGINE_AgXToneMap");
+        rewrittenSource.ShouldContain("XRENGINE_GT7ToneMap");
     }
 
     [Test]
@@ -168,6 +185,8 @@ public sealed class TonemappingShaderContractTests
         rewrittenSource.ShouldNotBeNull();
         rewrittenSource.ShouldContain("ApplyHsvColorGrade");
         rewrittenSource.ShouldContain("ApplyVignette");
+        rewrittenSource.ShouldContain("XRENGINE_AgXToneMap");
+        rewrittenSource.ShouldContain("XRENGINE_GT7ToneMap");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

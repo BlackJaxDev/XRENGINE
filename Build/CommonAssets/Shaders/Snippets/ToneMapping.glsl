@@ -1,7 +1,8 @@
 // Tone Mapping Utilities Snippet
 // Matches tonemapping operators from ETonemappingType enum:
 //   0 = Linear, 1 = Gamma, 2 = Clip, 3 = Reinhard, 4 = Hable,
-//   5 = Mobius, 6 = ACES, 7 = Neutral, 8 = Filmic
+//   5 = Mobius, 6 = ACES, 7 = Neutral, 8 = Filmic,
+//   9 = AgX, 10 = GT7
 
 // ============================================================================
 // Exposure Helpers
@@ -113,6 +114,91 @@ vec3 XRENGINE_FilmicToneMap(vec3 hdr, float exposure)
     return (x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06);
 }
 
+const mat3 XRENGINE_AGX_LINEAR_SRGB_TO_LINEAR_REC2020 = mat3(
+     0.6274, 0.0691, 0.0164,
+     0.3293, 0.9195, 0.0880,
+     0.0433, 0.0113, 0.8956);
+
+const mat3 XRENGINE_AGX_LINEAR_REC2020_TO_LINEAR_SRGB = mat3(
+     1.6605, -0.1246, -0.0182,
+    -0.5876,  1.1329, -0.1006,
+    -0.0728, -0.0083,  1.1187);
+
+const mat3 XRENGINE_AGX_INSET_MATRIX = mat3(
+    0.856627153315983,  0.137318972929847, 0.111898212999950,
+    0.095121240538159,  0.761241990602591, 0.076799418603190,
+    0.048251606145858,  0.101439036467562, 0.811302368396859);
+
+const mat3 XRENGINE_AGX_OUTSET_MATRIX = mat3(
+     1.127100581814437, -0.141329763498438, -0.141329763498438,
+    -0.110606643096603,  1.157823702216272, -0.110606643096603,
+    -0.016493938717835, -0.016493938717834,  1.251936406595041);
+
+const float XRENGINE_AGX_MIN_EV = -12.47393;
+const float XRENGINE_AGX_MAX_EV = 4.026069;
+
+vec3 XRENGINE_AgXDefaultContrastApprox(vec3 x)
+{
+    vec3 x2 = x * x;
+    vec3 x4 = x2 * x2;
+    return 15.5 * x4 * x2
+        - 40.14 * x4 * x
+        + 31.96 * x4
+        - 6.868 * x2 * x
+        + 0.4298 * x2
+        + 0.1191 * x
+        - 0.00232;
+}
+
+// AgX - Blender/Filament-style fitted display transform.
+vec3 XRENGINE_AgXToneMap(vec3 hdr, float exposure)
+{
+    vec3 color = max(hdr * exposure, vec3(0.0));
+    color = XRENGINE_AGX_LINEAR_SRGB_TO_LINEAR_REC2020 * color;
+    color = XRENGINE_AGX_INSET_MATRIX * color;
+    color = max(color, vec3(1.0e-10));
+    color = clamp(log2(color), vec3(XRENGINE_AGX_MIN_EV), vec3(XRENGINE_AGX_MAX_EV));
+    color = (color - vec3(XRENGINE_AGX_MIN_EV)) / (XRENGINE_AGX_MAX_EV - XRENGINE_AGX_MIN_EV);
+    color = clamp(color, 0.0, 1.0);
+    color = XRENGINE_AgXDefaultContrastApprox(color);
+    color = XRENGINE_AGX_OUTSET_MATRIX * color;
+    color = pow(max(color, vec3(0.0)), vec3(2.2));
+    color = XRENGINE_AGX_LINEAR_REC2020_TO_LINEAR_SRGB * color;
+    return clamp(color, 0.0, 1.0);
+}
+
+vec3 XRENGINE_GT7ToneMap(vec3 hdr, float exposure, float P, float a, float m, float l, float c, float b)
+{
+    vec3 x = max(hdr * exposure, vec3(0.0));
+    float l0 = ((P - m) * l) / a;
+    float S0 = m + l0;
+    float S1 = m + a * l0;
+    float C2 = (a * P) / max(P - S1, 1.0e-5);
+    float CP = -C2 / P;
+
+    vec3 w0 = vec3(1.0) - smoothstep(vec3(0.0), vec3(m), x);
+    vec3 w2 = step(vec3(m + l0), x);
+    vec3 w1 = vec3(1.0) - w0 - w2;
+
+    vec3 T = vec3(m) * pow(max(x / vec3(m), vec3(0.0)), vec3(c)) + vec3(b);
+    vec3 S = vec3(P) - (vec3(P - S1) * exp(vec3(CP) * (x - vec3(S0))));
+    vec3 L = vec3(m) + vec3(a) * (x - vec3(m));
+
+    return clamp(T * w0 + L * w1 + S * w2, vec3(0.0), vec3(P));
+}
+
+// GT7/GT - lightweight Uchimura curve: toe, linear midtones, and highlight shoulder.
+vec3 XRENGINE_GT7ToneMap(vec3 hdr, float exposure)
+{
+    const float P = 1.0;  // max display brightness
+    const float a = 1.0;  // contrast
+    const float m = 0.22; // linear section start
+    const float l = 0.4;  // linear section length
+    const float c = 1.33; // toe strength
+    const float b = 0.0;  // pedestal
+    return XRENGINE_GT7ToneMap(hdr, exposure, P, a, m, l, c, b);
+}
+
 // ============================================================================
 // Unified Tonemapping by Type Index
 // Matches ETonemappingType enum values
@@ -127,6 +213,8 @@ vec3 XRENGINE_FilmicToneMap(vec3 hdr, float exposure)
 #define XRENGINE_TONEMAP_ACES     6
 #define XRENGINE_TONEMAP_NEUTRAL  7
 #define XRENGINE_TONEMAP_FILMIC   8
+#define XRENGINE_TONEMAP_AGX      9
+#define XRENGINE_TONEMAP_GT7      10
 
 // Apply tonemapping by type index with exposure, gamma, and Mobius transition control
 vec3 XRENGINE_ApplyToneMap(vec3 hdr, int tonemapType, float exposure, float gamma, float mobiusTransition)
@@ -142,6 +230,8 @@ vec3 XRENGINE_ApplyToneMap(vec3 hdr, int tonemapType, float exposure, float gamm
         case XRENGINE_TONEMAP_ACES:     return XRENGINE_ACESToneMap(hdr, exposure);
         case XRENGINE_TONEMAP_NEUTRAL:  return XRENGINE_NeutralToneMap(hdr, exposure);
         case XRENGINE_TONEMAP_FILMIC:   return XRENGINE_FilmicToneMap(hdr, exposure);
+        case XRENGINE_TONEMAP_AGX:      return XRENGINE_AgXToneMap(hdr, exposure);
+        case XRENGINE_TONEMAP_GT7:      return XRENGINE_GT7ToneMap(hdr, exposure);
         default:                        return XRENGINE_ReinhardToneMapExposed(hdr, exposure);
     }
 }
