@@ -146,8 +146,6 @@ namespace XREngine.Rendering.Models.Materials
                 [EngineShaderBindingNames.Uniforms.UseProbeGrid] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ShadowMapEnabled] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.UseCascadedDirectionalShadows] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Uniforms.PrimaryDirLightWorldToLightInvViewMatrix] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Uniforms.PrimaryDirLightWorldToLightProjMatrix] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ShadowBase] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ShadowMult] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ShadowBiasMin] = EUniformRequirements.Lights,

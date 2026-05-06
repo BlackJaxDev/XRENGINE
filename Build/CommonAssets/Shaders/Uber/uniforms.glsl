@@ -94,6 +94,8 @@ uniform vec2 _BumpMapPan;
 uniform int _BumpMapUV;
 //@property(name="_BumpScale", display="Normal Strength", mode=static, range=[0,2])
 uniform float _BumpScale;
+uniform int NormalMapMode;
+uniform float HeightMapScale;
 
 // ============================================
 // Alpha / Transparency

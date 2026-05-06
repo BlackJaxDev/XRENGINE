@@ -74,7 +74,7 @@ public sealed partial class XRMaterialInspector
             ImGui.TextDisabled("Switch the material to the full Uber fragment to author those modules.");
         }
         DrawUberVariantStatus(material);
-        ImGui.TextDisabled($"Session: requests {telemetrySnapshot.RequestCount} | successes {telemetrySnapshot.SuccessCount} | failures {telemetrySnapshot.FailureCount} | cache {telemetrySnapshot.CacheHitRate:P0} | avg prepare {telemetrySnapshot.AveragePreparationMilliseconds:0.##} ms | avg adopt {telemetrySnapshot.AverageAdoptionMilliseconds:0.##} ms | avg compile {telemetrySnapshot.AverageCompileMilliseconds:0.##} ms | avg link {telemetrySnapshot.AverageLinkMilliseconds:0.##} ms");
+        ImGui.TextDisabled($"Session: requests {telemetrySnapshot.RequestCount} | successes {telemetrySnapshot.SuccessCount} | failures {telemetrySnapshot.FailureCount} | cache {telemetrySnapshot.CacheHitRate:P0} | avg prepare {telemetrySnapshot.AveragePreparationMilliseconds:0.##} ms | avg adopt {telemetrySnapshot.AverageAdoptionMilliseconds:0.##} ms");
         if (uberManifest.ValidationIssues.Count > 0)
         {
             ImGui.SameLine();
@@ -934,7 +934,7 @@ public sealed partial class XRMaterialInspector
         if (status.Stage == EUberMaterialVariantStage.None)
             return;
 
-        bool hasBackendSnapshot = TryGetUberBackendSnapshot(status, out UberShaderVariantTelemetry.BackendSnapshot backendSnapshot);
+        bool hasBackendStatus = TryGetShaderBackendStatus(material, status, out XRRenderProgram.ShaderProgramBackendStatus backendStatus);
         double compileMilliseconds = status.CompileMilliseconds;
         double linkMilliseconds = status.LinkMilliseconds;
         string? failureReason = status.FailureReason;
@@ -947,28 +947,28 @@ public sealed partial class XRMaterialInspector
             _ => UberFeatureRequestedColor,
         };
 
-        if (hasBackendSnapshot)
+        if (hasBackendStatus)
         {
-            if (compileMilliseconds <= 0.0 && backendSnapshot.CompileMilliseconds > 0.0)
-                compileMilliseconds = backendSnapshot.CompileMilliseconds;
+            if (compileMilliseconds <= 0.0 && backendStatus.CompileMilliseconds > 0.0)
+                compileMilliseconds = backendStatus.CompileMilliseconds;
 
-            if (linkMilliseconds <= 0.0 && backendSnapshot.LinkMilliseconds > 0.0)
-                linkMilliseconds = backendSnapshot.LinkMilliseconds;
+            if (linkMilliseconds <= 0.0 && backendStatus.LinkMilliseconds > 0.0)
+                linkMilliseconds = backendStatus.LinkMilliseconds;
 
-            if (string.IsNullOrWhiteSpace(failureReason) && !string.IsNullOrWhiteSpace(backendSnapshot.FailureReason))
-                failureReason = backendSnapshot.FailureReason;
+            if (string.IsNullOrWhiteSpace(failureReason) && !string.IsNullOrWhiteSpace(backendStatus.FailureReason))
+                failureReason = backendStatus.FailureReason;
 
-            switch (backendSnapshot.Stage)
+            switch (backendStatus.Stage)
             {
-                case UberShaderVariantTelemetry.BackendStage.Compiling:
+                case XRRenderProgram.EShaderProgramBackendStage.Compiling:
                     stageLabel = "Backend Compile";
                     stageColor = UberFeatureCompilingColor;
                     break;
-                case UberShaderVariantTelemetry.BackendStage.Linking:
+                case XRRenderProgram.EShaderProgramBackendStage.Linking:
                     stageLabel = "Backend Link";
                     stageColor = UberFeatureCompilingColor;
                     break;
-                case UberShaderVariantTelemetry.BackendStage.Failed:
+                case XRRenderProgram.EShaderProgramBackendStage.Failed:
                     stageLabel = "Backend Failed";
                     stageColor = UberFeatureDisabledColor;
                     break;
@@ -991,7 +991,7 @@ public sealed partial class XRMaterialInspector
         }
     }
 
-    private static bool TryGetUberBackendSnapshot(UberMaterialVariantStatus status, out UberShaderVariantTelemetry.BackendSnapshot snapshot)
+    private static bool TryGetShaderBackendStatus(XRMaterial material, UberMaterialVariantStatus status, out XRRenderProgram.ShaderProgramBackendStatus backendStatus)
     {
         ulong variantHash = status.RequestedVariantHash != 0 &&
             status.RequestedVariantHash != status.ActiveVariantHash
@@ -1000,7 +1000,15 @@ public sealed partial class XRMaterialInspector
                 ? status.ActiveVariantHash
                 : status.RequestedVariantHash;
 
-        return UberShaderVariantTelemetry.TryGetBackendSnapshot(variantHash, out snapshot);
+        XRRenderProgram.ShaderProgramMetadata metadata = material.ShaderPipelineProgram?.ShaderMetadata ?? XRRenderProgram.ShaderProgramMetadata.Empty;
+        if (variantHash == 0 || metadata.Variant.VariantHash != variantHash)
+        {
+            backendStatus = default;
+            return false;
+        }
+
+        backendStatus = metadata.Backend;
+        return backendStatus.Stage != XRRenderProgram.EShaderProgramBackendStage.None;
     }
 
     private static void DrawUberStatusBadge(string label, Vector4 color)

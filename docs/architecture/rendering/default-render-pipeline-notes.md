@@ -405,3 +405,13 @@ Preview paths that cannot provide their intended texture must bind an explicit r
 Texture uploads and shadow atlas tile rendering publish queue and budget counters through the shared render-work budget coordinator. Profiler FPS-drop and render-stall logs include those counters, and the shadow atlas can defer lower-priority tiles when urgent visible texture repair is pending. Startup boost is bounded by frame/time limits so it cannot turn into multi-second starvation.
 
 The ImGui Texture Streaming panel shows tracked textures with backend, committed bytes, priority, queue wait, last upload duration, visibility, pending state, pressure-demotion state, and validation-failure state. Use **Dump Summary** from that panel to force an immediate `Texture.VramSummary` event.
+
+---
+
+## 24. Tonemapping Operators
+
+**Rule:** Tonemapping options exposed by `TonemappingSettings.Tonemapping` must stay aligned with `Build/CommonAssets/Shaders/Snippets/ToneMapping.glsl`.
+
+The Default Render Pipeline tonemapping stage now exposes AgX and GT7 in addition to the earlier Linear, Gamma, Clip, Reinhard, Hable, Mobius, ACES, Neutral, and Filmic operators. `PostProcess.fs`, `PostProcessStereo.fs`, and `TonemapStandalone.fs` all route through the shared snippet, so new operators should be added there first and then covered by `TonemappingShaderContractTests`.
+
+`GT7` is the lightweight Uchimura/Gran Turismo per-channel curve intended for the engine's SDR post-process path. It is not the full GT7 physical HDR/display pipeline with target-display adaptation and perceptual gamut mapping.

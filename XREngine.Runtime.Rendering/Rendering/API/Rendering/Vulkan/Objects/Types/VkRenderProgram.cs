@@ -44,7 +44,18 @@ public unsafe partial class VulkanRenderer
 
         public override VkObjectType Type => VkObjectType.Program;
         public override bool IsGenerated => IsActive;
-        public bool IsLinked { get; private set; }
+        private bool _isLinked;
+        public bool IsLinked
+        {
+            get => _isLinked;
+            private set
+            {
+                if (_isLinked == value)
+                    return;
+                _isLinked = value;
+                Data.SetBackendLinked(value);
+            }
+        }
         public PipelineLayout PipelineLayout => _pipelineLayout;
         public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;

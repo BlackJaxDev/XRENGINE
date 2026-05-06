@@ -162,7 +162,6 @@ internal static partial class UberShaderVariantBuilder
 
         List<string> defines = [];
         defines.Add($"// {GeneratedVariantMarker}");
-        defines.Add($"// variant-hash: 0x{request.VariantHash:X16}");
 
         foreach (string macro in request.PipelineMacros.OrderBy(static x => x, StringComparer.Ordinal))
             defines.Add($"#define {macro} 1");

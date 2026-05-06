@@ -18,6 +18,7 @@ public partial class XRMaterial
 {
     private const int UberVariantDebounceMilliseconds = 40;
     private const int UberConstantPropertyEditDebounceMilliseconds = 180;
+    private const string ShaderProgramMaterialVariantKind = "MaterialVariant";
     private static readonly ConcurrentDictionary<string, XRTexture2D> UberDefaultSamplerTextures = new(StringComparer.Ordinal);
 
     [YamlIgnore]
@@ -57,6 +58,23 @@ public partial class XRMaterial
     {
         if (TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest) && fragmentShader is not null)
             EnsureUberStateInitialized(fragmentShader, manifest);
+    }
+
+    public void ApplyShaderProgramMetadata(XRRenderProgram? program)
+    {
+        if (program is null)
+            return;
+
+        if (ActiveUberVariant.IsEmpty || ActiveUberVariant.VariantHash == 0)
+        {
+            program.SetShaderVariantMetadata(null);
+            return;
+        }
+
+        program.SetShaderVariantMetadata(new XRRenderProgram.ShaderProgramVariantMetadata(
+            ShaderProgramMaterialVariantKind,
+            ActiveUberVariant.VariantHash,
+            XRRenderProgram.EShaderProgramBinaryCachePolicy.BypassWhenDriverParallelCompile));
     }
 
     public bool IsUberFeatureEnabled(string featureId, bool defaultEnabled)

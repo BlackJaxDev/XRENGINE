@@ -956,13 +956,33 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Programs known to hang NVIDIA's <c>GL_ARB_parallel_shader_compile</c>
-            /// link worker. Currently this covers single-stage separable programs
-            /// (typical for imported model materials whose vertex/fragment stages
-            /// are split into individual programs). For these we fall back to the
-            /// synchronous link path.
+            /// link worker. Covers:
+            ///  * Single-stage separable programs (imported model materials whose
+            ///    vertex/fragment stages are split into individual programs).
+            ///  * Compute programs (always single-stage; NVIDIA's parallel-link
+            ///    worker can leave the program waiting forever, and the first
+            ///    <c>glUseProgram</c>/<c>glDispatchCompute</c> implicitly waits for
+            ///    completion which deadlocks the render thread — observed during
+            ///    BVH/physics-chain dispatch in <c>GlobalPreRender</c>).
+            ///  * Any program with a single attached shader, which exhibits the
+            ///    same hazard regardless of the <c>Separable</c> flag.
+            /// For these we route through the shared-context queue (which can
+            /// safely block off-thread) or fall back to the synchronous link path.
             /// </summary>
             private bool IsKnownAsyncLinkHazard
-                => Data.Separable && _shaderCache.Count <= 1;
+            {
+                get
+                {
+                    if (_shaderCache.Count <= 1)
+                        return true;
+                    foreach (GLShader shader in _shaderCache.Values)
+                    {
+                        if (shader.Data.Type == EShaderType.Compute)
+                            return true;
+                    }
+                    return false;
+                }
+            }
 
             private static bool TryResolveUberVariantHash(IEnumerable<GLProgramCompileLinkQueue.ShaderInput> inputs, out ulong variantHash)
             {
@@ -1288,16 +1308,20 @@ namespace XREngine.Rendering.OpenGL
 
                     // Prefer the configured shared context compile+link queue. It can
                     // safely block without freezing the render thread.
-                    // For programs that are known parallel-link hazards (single-stage
-                    // separable on NVIDIA), also route through the shared-context queue
-                    // when it's available even if the strategy would otherwise use the
-                    // driver parallel-compile path -- the synchronous fallback link runs
-                    // on the render thread and can produce visible stalls during model
-                    // import, while the shared-context queue links off-thread.
+                    // Known parallel-link hazards (single-stage separable / compute
+                    // on NVIDIA) are deliberately NOT routed through the shared
+                    // queue: the worker thread's glGetProgram(LINK_STATUS) query
+                    // would block waiting on the parallel-link worker (which wedges
+                    // on those programs), starving every subsequent job. They use
+                    // the render-thread sync-link path below with
+                    // TryDisableParallelShaderCompileForHazardousLink, which links
+                    // them inline (typically milliseconds for single-shader / compute
+                    // programs) without hitting the wedge.
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
                     bool sharedQueueAvailable = compileQueue is not null && compileQueue.IsAvailable;
                     bool useSharedQueue = sharedQueueAvailable
-                        && (Renderer.UseSharedContextProgramCompileLinkQueue || IsKnownAsyncLinkHazard);
+                        && Renderer.UseSharedContextProgramCompileLinkQueue
+                        && !IsKnownAsyncLinkHazard;
                     if (useSharedQueue)
                     {
                         GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs ?? PrepareCompileInputs();

@@ -561,6 +561,24 @@ public sealed class GPUPhysicsChainDispatcher
 
         EnsureInitialized();
 
+        // Gate on backend program link readiness. Binding a compute program
+        // whose link is still queued on the shared GL context can deadlock the
+        // render thread on NVIDIA (parallel-link worker hazard observed in
+        // GlobalPreRender). The first call to Link() kicks off async
+        // compilation; we skip this frame's dispatch and try again next frame.
+        if (_mainPhysicsProgram is { IsLinked: false } mainPgm)
+        {
+            if (!mainPgm.LinkReady)
+                mainPgm.Link();
+            return;
+        }
+        if (_skipUpdateProgram is { IsLinked: false } skipPgm)
+        {
+            if (!skipPgm.LinkReady)
+                skipPgm.Link();
+            return;
+        }
+
         ProcessDispatchGroups(renderer);
 
         // Mark all requests as processed
@@ -1149,6 +1167,15 @@ public sealed class GPUPhysicsChainDispatcher
         EnsureGpuBonePaletteProgram();
         if (_gpuBonePaletteProgram is null)
         {
+            ClearBatchedGpuDrivenBonePaletteSources(requests);
+            return false;
+        }
+
+        // Gate on backend program link readiness (NVIDIA parallel-link hazard).
+        if (!_gpuBonePaletteProgram.IsLinked)
+        {
+            if (!_gpuBonePaletteProgram.LinkReady)
+                _gpuBonePaletteProgram.Link();
             ClearBatchedGpuDrivenBonePaletteSources(requests);
             return false;
         }

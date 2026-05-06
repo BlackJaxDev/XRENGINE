@@ -54,5 +54,17 @@ public enum ETonemappingType
     /// This favors a strong shoulder and differs intentionally from the Neutral option.
     /// Algorithm: let x = max(input * exposure - 0.004, 0); output = (x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06)
     /// </summary>
-    Filmic
+    Filmic,
+    /// <summary>
+    /// AgX tonemapping, which uses the Blender/Filament-style AgX display transform approximation.
+    /// This gives a softer filmic response and better hue preservation for saturated highlights.
+    /// Algorithm: transform to AgX log space, apply the fitted AgX contrast polynomial, then transform back to display-linear sRGB.
+    /// </summary>
+    AgX,
+    /// <summary>
+    /// GT7 tonemapping, using the lightweight Gran Turismo/Uchimura curve with toe, linear midtone, and shoulder regions.
+    /// This is a fast per-channel SDR approximation of the GT tone-mapping curve, not the full physical HDR display pipeline.
+    /// Algorithm: let x = input * exposure; blend toe, linear, and shoulder curve sections with the Uchimura weights.
+    /// </summary>
+    GT7
 }

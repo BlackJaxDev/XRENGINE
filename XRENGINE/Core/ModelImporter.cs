@@ -767,6 +767,13 @@ namespace XREngine
         private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _uberSamplerTextureCache = new();
         private static readonly ConcurrentDictionary<string, XRTexture2D> _uberDefaultSamplerTextureCache = new();
 
+        private static bool IsNormalLikeSampler(string samplerName)
+            => samplerName.Contains("Bump", StringComparison.OrdinalIgnoreCase)
+            || samplerName.Contains("Normal", StringComparison.OrdinalIgnoreCase);
+
+        private static MagickImage CreateUberPlaceholderImage(string samplerName)
+            => new(IsNormalLikeSampler(samplerName) ? XRTexture2D.NormalMapFillerImage : XRTexture2D.FillerImage);
+
         public static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
         {
             return _uberSamplerTextureCache.GetOrAdd((filePath, samplerName), static key =>
@@ -787,7 +794,7 @@ namespace XREngine
 
                 try
                 {
-                    tex.Mipmaps = [new Mipmap2D(new MagickImage(XRTexture2D.FillerImage))];
+                    tex.Mipmaps = [new Mipmap2D(CreateUberPlaceholderImage(key.samplerName))];
                 }
                 catch (Exception ex)
                 {
@@ -1283,7 +1290,7 @@ namespace XREngine
             return mat;
         }
 
-        public static ShaderVar[] CreateDefaultForwardPlusUberShaderParameters(float bumpScale = 0.0f)
+        public static ShaderVar[] CreateDefaultForwardPlusUberShaderParameters(float bumpScale = 0.0f, bool usesHeightMap = false)
         {
             Vector4 identitySt = new(1.0f, 1.0f, 0.0f, 0.0f);
 
@@ -1300,6 +1307,8 @@ namespace XREngine
                 new ShaderVector2(Vector2.Zero, "_BumpMapPan"),
                 new ShaderInt(0, "_BumpMapUV"),
                 new ShaderFloat(bumpScale, "_BumpScale"),
+                new ShaderInt(usesHeightMap ? ImportedSurfaceDetailHeightMapMode : ImportedSurfaceDetailNormalMapMode, "NormalMapMode"),
+                new ShaderFloat(usesHeightMap ? ImportedHeightMapScale : 0.0f, "HeightMapScale"),
 
                 new ShaderVector4(identitySt, "_AlphaMask_ST"),
                 new ShaderVector2(Vector2.Zero, "_AlphaMaskPan"),
@@ -1515,7 +1524,7 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out _);
+            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
             int alphaMaskIndex = ResolveTextureIndex(textures, TextureType.Opacity);
 
             XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
@@ -1548,7 +1557,7 @@ namespace XREngine
             mat.Shaders.Clear();
             mat.Shaders.Add(frag);
 
-            mat.Parameters = CreateDefaultForwardPlusUberShaderParameters(bumpScale);
+            mat.Parameters = CreateDefaultForwardPlusUberShaderParameters(bumpScale, usesHeightMap);
             if (alphaMask is not null)
                 mat.Parameter<ShaderInt>("_MainAlphaMaskMode")?.SetValue(2);
 
