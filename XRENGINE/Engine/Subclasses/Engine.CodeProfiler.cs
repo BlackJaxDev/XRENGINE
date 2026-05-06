@@ -5,6 +5,7 @@ using System.Text;
 using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Core;
+using XREngine.Data.Profiling;
 using XREngine.Rendering;
 using XREngine.Timers;
 
@@ -140,8 +141,12 @@ namespace XREngine
             private const int RenderThreadScopeStackCapacity = 256;
             private const string RenderDispatchScopeName = "EngineTimer.DispatchRender";
             private const string RenderStallLogFileName = "profiler-render-stalls.log";
+            private const string ConditionalLoopSpikeLogFileName = "profiler-conditional-loop-spikes.log";
+            private const string OneOffInvokeLogFileName = "profiler-one-off-invokes.log";
+            private const double SlowScopeLogCooldownSeconds = 1.0;
 
             private long SnapshotIntervalTicks => EngineTimer.SecondsToStopwatchTicks(SnapshotIntervalMs / 1000.0);
+            private static long SlowScopeLogCooldownTicks => EngineTimer.SecondsToStopwatchTicks(SlowScopeLogCooldownSeconds);
 
             private static int NormalizeProducerBufferCapacity(int value)
             {
@@ -178,7 +183,9 @@ namespace XREngine
             private readonly Dictionary<int, ThreadBuildState> _threadBuildStates = [];
             private readonly List<ProfilerThreadSnapshot> _threadSnapshotsBuffer = new(8);
             private readonly Dictionary<int, List<BuiltTimer>> _accumulatedRoots = [];
+            private readonly Dictionary<(string Name, ProfilerScopeKind ScopeKind), long> _lastSlowScopeLogTicks = [];
             private readonly string[] _renderThreadScopeNames = new string[RenderThreadScopeStackCapacity];
+            private readonly ProfilerScopeKind[] _renderThreadScopeKinds = new ProfilerScopeKind[RenderThreadScopeStackCapacity];
             private readonly long[] _renderThreadScopeStartTicks = new long[RenderThreadScopeStackCapacity];
             private long _lastSnapshotTicks = -1L;
             private float _lastFpsDropProcessedFrameTime = float.NegativeInfinity;
@@ -204,6 +211,7 @@ namespace XREngine
                 long StartTicks,
                 long ElapsedTicks,
                 string? MethodName,
+                ProfilerScopeKind ScopeKind,
                 bool IsAsyncRoot);
 
             internal sealed class ThreadProducerState(int threadId, ThreadProducerBuffer buffer)
@@ -306,11 +314,12 @@ namespace XREngine
                 }
             }
 
-            private sealed class AsyncPendingTimer(long startTicks, int threadId, string? methodName)
+            private sealed class AsyncPendingTimer(long startTicks, int threadId, string? methodName, ProfilerScopeKind scopeKind)
             {
                 public long StartTicks { get; } = startTicks;
                 public int ThreadId { get; } = threadId;
                 public string? MethodName { get; } = methodName;
+                public ProfilerScopeKind ScopeKind { get; } = scopeKind;
             }
 
             public readonly struct ProfilerScope : IDisposable
@@ -320,14 +329,16 @@ namespace XREngine
                 private readonly string? _methodName;
                 private readonly long _startTicks;
                 private readonly int _depth;
+                private readonly ProfilerScopeKind _scopeKind;
 
-                internal ProfilerScope(CodeProfiler profiler, ThreadProducerState state, long startTicks, int depth, string? methodName)
+                internal ProfilerScope(CodeProfiler profiler, ThreadProducerState state, long startTicks, int depth, string? methodName, ProfilerScopeKind scopeKind)
                 {
                     _profiler = profiler;
                     _state = state;
                     _methodName = methodName;
                     _startTicks = startTicks;
                     _depth = depth;
+                    _scopeKind = scopeKind;
                 }
 
                 [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -342,7 +353,7 @@ namespace XREngine
 
                     long endTicks = Time.Timer.TimeTicks();
                     if (_state.ThreadId == RenderThreadId)
-                        _profiler.RecordRenderThreadScopeExit(newDepth, endTicks, _methodName);
+                        _profiler.RecordRenderThreadScopeExit(newDepth, endTicks, _methodName, _scopeKind);
 
                     if (!_profiler._enableFrameLogging)
                         return;
@@ -357,6 +368,7 @@ namespace XREngine
                         _startTicks,
                         elapsedTicks,
                         _methodName,
+                        _scopeKind,
                         IsAsyncRoot: false);
 
                     if (!_state.Buffer.TryWrite(completedEvent))
@@ -369,6 +381,7 @@ namespace XREngine
                 public string Name = string.Empty;
                 public long ElapsedTicks;
                 public int Depth;
+                public ProfilerScopeKind ScopeKind;
                 public List<BuiltTimer> Children = new(4);
 
                 public void Reset()
@@ -376,6 +389,7 @@ namespace XREngine
                     Name = string.Empty;
                     ElapsedTicks = 0L;
                     Depth = 0;
+                    ScopeKind = ProfilerScopeKind.Unspecified;
                     Children.Clear();
                 }
             }
@@ -538,6 +552,7 @@ namespace XREngine
                 foreach (var roots in _accumulatedRoots.Values)
                     roots.Clear();
                 _threadFrameHistory.Clear();
+                _lastSlowScopeLogTicks.Clear();
                 _readySnapshot = null;
                 _readyHistorySnapshot = [];
                 Volatile.Write(ref _renderThreadScopeDepth, 0);
@@ -622,6 +637,8 @@ namespace XREngine
 
             private void ProcessCompletedScopeEvent(in CompletedScopeEvent completedEvent)
             {
+                LogSlowScopeByKind(completedEvent);
+
                 if (!_threadBuildStates.TryGetValue(completedEvent.ThreadId, out var state))
                 {
                     state = new ThreadBuildState();
@@ -632,6 +649,7 @@ namespace XREngine
                 built.Name = completedEvent.MethodName ?? string.Empty;
                 built.ElapsedTicks = completedEvent.ElapsedTicks;
                 built.Depth = completedEvent.Depth;
+                built.ScopeKind = completedEvent.ScopeKind;
 
                 while (state.PendingCompleted.Count > 0 && state.PendingCompleted.Peek().Depth > completedEvent.Depth)
                     state.ChildScratch.Add(state.PendingCompleted.Pop());
@@ -653,6 +671,52 @@ namespace XREngine
                 else
                 {
                     state.PendingCompleted.Push(built);
+                }
+            }
+
+            private void LogSlowScopeByKind(in CompletedScopeEvent completedEvent)
+            {
+                ProfilerScopeKind scopeKind = completedEvent.ScopeKind;
+                if (scopeKind is not (ProfilerScopeKind.ConditionalLoop or ProfilerScopeKind.OneOffInvoke))
+                    return;
+
+                float elapsedMs = TicksToMilliseconds(completedEvent.ElapsedTicks);
+                if (elapsedMs < _debugOutputMinElapsedMs)
+                    return;
+
+                string name = string.IsNullOrWhiteSpace(completedEvent.MethodName)
+                    ? "<unnamed>"
+                    : completedEvent.MethodName!;
+                long nowTicks = Time.Timer.TimeTicks();
+                var key = (name, scopeKind);
+                if (_lastSlowScopeLogTicks.TryGetValue(key, out long lastLogTicks)
+                    && nowTicks - lastLogTicks < SlowScopeLogCooldownTicks)
+                {
+                    return;
+                }
+
+                _lastSlowScopeLogTicks[key] = nowTicks;
+
+                try
+                {
+                    string fileName = scopeKind == ProfilerScopeKind.OneOffInvoke
+                        ? OneOffInvokeLogFileName
+                        : ConditionalLoopSpikeLogFileName;
+
+                    var builder = new StringBuilder(512);
+                    builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] Slow profiler scope");
+                    builder.Append("ScopeKind: ").Append(scopeKind).AppendLine();
+                    builder.Append("LoggingPolicy: ").Append(GetScopeLoggingPolicy(scopeKind)).AppendLine();
+                    builder.Append("ScopeName: ").Append(name).AppendLine();
+                    builder.Append("ThreadId: ").Append(completedEvent.ThreadId).AppendLine();
+                    builder.Append("Depth: ").Append(completedEvent.Depth).AppendLine();
+                    builder.Append("ElapsedMs: ").Append(elapsedMs.ToString("F3")).AppendLine();
+                    builder.Append("IsAsyncRoot: ").Append(completedEvent.IsAsyncRoot).AppendLine();
+                    Debug.WriteAuxiliaryLog(fileName, builder.ToString());
+                }
+                catch
+                {
+                    // Diagnostics must never break the profiler stats thread.
                 }
             }
 
@@ -838,7 +902,7 @@ namespace XREngine
                 rootStartTicks = _renderThreadScopeStartTicks[0];
                 int leafIndex = scopeDepth - 1;
                 leafStartTicks = _renderThreadScopeStartTicks[leafIndex];
-                leafScope = _renderThreadScopeNames[leafIndex] ?? RenderDispatchScopeName;
+                leafScope = FormatScopeLabel(_renderThreadScopeNames[leafIndex] ?? RenderDispatchScopeName, _renderThreadScopeKinds[leafIndex]);
 
                 var builder = new StringBuilder(scopeDepth * 32);
                 for (int i = 0; i < scopeDepth; i++)
@@ -849,7 +913,7 @@ namespace XREngine
 
                     if (builder.Length > 0)
                         builder.Append(" > ");
-                    builder.Append(name);
+                    AppendScopeLabel(builder, name, _renderThreadScopeKinds[i]);
                 }
 
                 scopePath = builder.Length == 0 ? RenderDispatchScopeName : builder.ToString();
@@ -989,7 +1053,7 @@ namespace XREngine
                         continue;
 
                     float dropFraction = Math.Clamp(deltaFps / comparisonFps, 0f, 1f);
-                    string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs);
+                    string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs, out ProfilerScopeKind hotPathScopeKind);
 
                     var builder = new StringBuilder(1024);
                     builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] FPS drop detected");
@@ -1007,18 +1071,22 @@ namespace XREngine
                     builder.Append("DeltaFps: ").Append(deltaFps.ToString("F2")).AppendLine();
                     builder.Append("DropPercent: ").Append((dropFraction * 100.0f).ToString("F1")).AppendLine();
                     builder.Append("HotPathMs: ").Append(hotPathMs.ToString("F3")).AppendLine();
+                    builder.Append("HotPathScopeKind: ").Append(hotPathScopeKind).AppendLine();
+                    builder.Append("HotPathLoggingPolicy: ").Append(GetScopeLoggingPolicy(hotPathScopeKind)).AppendLine();
                     builder.Append("HotPath: ").Append(hotPath).AppendLine();
 
                     if (hotPath.Contains("WaitForRender", StringComparison.Ordinal)
                         && TryGetLikelyBlockingThread(frame.Threads, thread.ThreadId, out var blockingThread))
                     {
-                        string blockingHotPath = GetHottestPath(blockingThread.RootNodes, out float blockingHotPathMs);
+                        string blockingHotPath = GetHottestPath(blockingThread.RootNodes, out float blockingHotPathMs, out ProfilerScopeKind blockingHotPathScopeKind);
                         builder.Append("LikelyBlockingThreadId: ").Append(blockingThread.ThreadId).AppendLine();
                         builder.Append("LikelyBlockingThreadTotalTimeMs: ").Append(blockingThread.TotalTimeMs.ToString("F3")).AppendLine();
                         builder.Append("LikelyBlockingHotPathMs: ").Append(blockingHotPathMs.ToString("F3")).AppendLine();
+                        builder.Append("LikelyBlockingHotPathScopeKind: ").Append(blockingHotPathScopeKind).AppendLine();
                         builder.Append("LikelyBlockingHotPath: ").Append(blockingHotPath).AppendLine();
                     }
 
+                    AppendRootScopeKindSummary(builder, thread.RootNodes);
                     AppendTopRootTimings(builder, thread.RootNodes, 5);
                     AppendTopFrameThreads(builder, frame.Threads, thread.ThreadId, 5);
                     AppendTopComponentTimings(builder, frame.ComponentTimings?.Components, 5);
@@ -1046,7 +1114,9 @@ namespace XREngine
                 for (int i = 0; i < count; i++)
                 {
                     ProfilerNodeSnapshot root = rankedRoots[i];
-                    builder.Append("  ").Append(i + 1).Append(". ").Append(root.Name).Append(" = ").Append(root.ElapsedMs.ToString("F3")).AppendLine(" ms");
+                    builder.Append("  ").Append(i + 1).Append(". ");
+                    AppendScopeLabel(builder, root.Name, root.ScopeKind);
+                    builder.Append(" = ").Append(root.ElapsedMs.ToString("F3")).AppendLine(" ms");
                 }
             }
 
@@ -1066,15 +1136,64 @@ namespace XREngine
                 for (int i = 0; i < count; i++)
                 {
                     ProfilerThreadSnapshot thread = rankedThreads[i];
-                    string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs);
+                    string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs, out ProfilerScopeKind hotPathScopeKind);
                     builder.Append("  ").Append(i + 1).Append(". Thread ").Append(thread.ThreadId);
                     if (thread.ThreadId == currentThreadId)
                         builder.Append(" (current)");
                     builder.Append(" total=").Append(thread.TotalTimeMs.ToString("F3"));
                     builder.Append(" ms hot=").Append(hotPathMs.ToString("F3")).Append(" ms ");
+                    builder.Append("kind=").Append(hotPathScopeKind).Append(" ");
                     builder.Append(hotPath).AppendLine();
                 }
             }
+
+            private static void AppendRootScopeKindSummary(StringBuilder builder, IReadOnlyList<ProfilerNodeSnapshot> roots)
+            {
+                if (roots.Count == 0)
+                    return;
+
+                Span<float> elapsedByKind = stackalloc float[4];
+                Span<int> countByKind = stackalloc int[4];
+                for (int i = 0; i < roots.Count; i++)
+                {
+                    ProfilerNodeSnapshot root = roots[i];
+                    int kindIndex = GetScopeKindSummaryIndex(root.ScopeKind);
+                    elapsedByKind[kindIndex] += root.ElapsedMs;
+                    countByKind[kindIndex]++;
+                }
+
+                builder.AppendLine("RootScopeKinds:");
+                AppendRootScopeKindSummaryLine(builder, ProfilerScopeKind.AlwaysOnHotPathLoop, elapsedByKind, countByKind);
+                AppendRootScopeKindSummaryLine(builder, ProfilerScopeKind.ConditionalLoop, elapsedByKind, countByKind);
+                AppendRootScopeKindSummaryLine(builder, ProfilerScopeKind.OneOffInvoke, elapsedByKind, countByKind);
+                AppendRootScopeKindSummaryLine(builder, ProfilerScopeKind.Unspecified, elapsedByKind, countByKind);
+            }
+
+            private static void AppendRootScopeKindSummaryLine(
+                StringBuilder builder,
+                ProfilerScopeKind scopeKind,
+                ReadOnlySpan<float> elapsedByKind,
+                ReadOnlySpan<int> countByKind)
+            {
+                int index = GetScopeKindSummaryIndex(scopeKind);
+                if (countByKind[index] == 0)
+                    return;
+
+                builder.Append("  ").Append(scopeKind)
+                    .Append(": roots=").Append(countByKind[index])
+                    .Append(" totalMs=").Append(elapsedByKind[index].ToString("F3"))
+                    .Append(" policy=").Append(GetScopeLoggingPolicy(scopeKind))
+                    .AppendLine();
+            }
+
+            private static int GetScopeKindSummaryIndex(ProfilerScopeKind scopeKind)
+                => scopeKind switch
+                {
+                    ProfilerScopeKind.AlwaysOnHotPathLoop => 1,
+                    ProfilerScopeKind.ConditionalLoop => 2,
+                    ProfilerScopeKind.OneOffInvoke => 3,
+                    _ => 0,
+                };
 
             private static bool TryGetLikelyBlockingThread(IReadOnlyList<ProfilerThreadSnapshot> threads, int currentThreadId, out ProfilerThreadSnapshot blockingThread)
             {
@@ -1217,9 +1336,34 @@ namespace XREngine
                     : window[middle];
             }
 
+            private static string GetScopeLoggingPolicy(ProfilerScopeKind scopeKind)
+                => scopeKind switch
+                {
+                    ProfilerScopeKind.AlwaysOnHotPathLoop => "aggregate in frame history; diagnose as recurring frame-budget cost",
+                    ProfilerScopeKind.ConditionalLoop => "aggregate and rate-limit slow-scope spike logs",
+                    ProfilerScopeKind.OneOffInvoke => "aggregate and log slow individual invokes",
+                    _ => "aggregate with unspecified recurrence",
+                };
+
+            private static string FormatScopeLabel(string name, ProfilerScopeKind scopeKind)
+                => scopeKind == ProfilerScopeKind.Unspecified
+                    ? name
+                    : string.Concat(name, " [", scopeKind.ToString(), "]");
+
+            private static void AppendScopeLabel(StringBuilder builder, string name, ProfilerScopeKind scopeKind)
+            {
+                builder.Append(name);
+                if (scopeKind != ProfilerScopeKind.Unspecified)
+                    builder.Append(" [").Append(scopeKind).Append(']');
+            }
+
             private static string GetHottestPath(IReadOnlyList<ProfilerNodeSnapshot> roots, out float pathMs)
+                => GetHottestPath(roots, out pathMs, out _);
+
+            private static string GetHottestPath(IReadOnlyList<ProfilerNodeSnapshot> roots, out float pathMs, out ProfilerScopeKind pathScopeKind)
             {
                 pathMs = 0f;
+                pathScopeKind = ProfilerScopeKind.Unspecified;
                 if (roots.Count == 0)
                     return "(no samples)";
 
@@ -1231,7 +1375,8 @@ namespace XREngine
                 }
 
                 pathMs = hottest.ElapsedMs;
-                var parts = new List<string>(8) { hottest.Name };
+                pathScopeKind = hottest.ScopeKind;
+                var parts = new List<string>(8) { FormatScopeLabel(hottest.Name, hottest.ScopeKind) };
                 ProfilerNodeSnapshot current = hottest;
                 while (current.Children.Count > 0)
                 {
@@ -1242,8 +1387,9 @@ namespace XREngine
                             best = current.Children[i];
                     }
 
-                    parts.Add(best.Name);
+                    parts.Add(FormatScopeLabel(best.Name, best.ScopeKind));
                     current = best;
+                    pathScopeKind = best.ScopeKind;
                 }
 
                 return string.Join(" > ", parts);
@@ -1258,7 +1404,7 @@ namespace XREngine
                 for (int i = 0; i < childCount; ++i)
                     childSnapshots[i] = BuildSnapshotFromBuilt(children[i]);
 
-                return new ProfilerNodeSnapshot(timer.Name, TicksToMilliseconds(timer.ElapsedTicks), childSnapshots);
+                return new ProfilerNodeSnapshot(timer.Name, TicksToMilliseconds(timer.ElapsedTicks), timer.ScopeKind, childSnapshots);
             }
 
             private static float TicksToMilliseconds(long ticks)
@@ -1311,10 +1457,14 @@ namespace XREngine
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public ProfilerScope Start(DelTimerCallback? callback, [CallerMemberName] string? methodName = null)
-                => Start(methodName);
+                => Start(methodName, ProfilerScopeKind.Unspecified);
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public ProfilerScope Start([CallerMemberName] string? methodName = null)
+            public ProfilerScope Start(DelTimerCallback? callback, ProfilerScopeKind scopeKind, [CallerMemberName] string? methodName = null)
+                => Start(methodName, scopeKind);
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ProfilerScope Start([CallerMemberName] string? methodName = null, ProfilerScopeKind scopeKind = ProfilerScopeKind.Unspecified)
             {
                 if (!_enableFrameLogging)
                     return default;
@@ -1324,11 +1474,11 @@ namespace XREngine
                 state.Depth = depth;
                 long startTicks = Time.Timer.TimeTicks();
                 if (state.ThreadId == RenderThreadId)
-                    RecordRenderThreadScopeEntry(depth, startTicks, methodName);
-                return new ProfilerScope(this, state, startTicks, depth, methodName);
+                    RecordRenderThreadScopeEntry(depth, startTicks, methodName, scopeKind);
+                return new ProfilerScope(this, state, startTicks, depth, methodName, scopeKind);
             }
 
-            private void RecordRenderThreadScopeEntry(int depth, long startTicks, string? methodName)
+            private void RecordRenderThreadScopeEntry(int depth, long startTicks, string? methodName, ProfilerScopeKind scopeKind)
             {
                 if (depth <= 0)
                     return;
@@ -1336,11 +1486,12 @@ namespace XREngine
                 int clampedDepth = Math.Min(depth, RenderThreadScopeStackCapacity);
                 int index = clampedDepth - 1;
                 _renderThreadScopeNames[index] = string.IsNullOrWhiteSpace(methodName) ? "<unnamed>" : methodName;
+                _renderThreadScopeKinds[index] = scopeKind;
                 _renderThreadScopeStartTicks[index] = startTicks;
                 Volatile.Write(ref _renderThreadScopeDepth, clampedDepth);
             }
 
-            private void RecordRenderThreadScopeExit(int depth, long endTicks, string? methodName)
+            private void RecordRenderThreadScopeExit(int depth, long endTicks, string? methodName, ProfilerScopeKind scopeKind)
             {
                 Volatile.Write(ref _renderThreadScopeDepth, Math.Max(0, Math.Min(depth, RenderThreadScopeStackCapacity)));
 
@@ -1348,7 +1499,10 @@ namespace XREngine
                     Volatile.Write(ref _lastCompletedRenderFrameTicks, endTicks);
             }
 
-            public Guid StartAsync(DelTimerCallback? callback = null, [CallerMemberName] string? methodName = null)
+            public Guid StartAsync(
+                DelTimerCallback? callback = null,
+                [CallerMemberName] string? methodName = null,
+                ProfilerScopeKind scopeKind = ProfilerScopeKind.Unspecified)
             {
                 Guid id = Guid.NewGuid();
                 if (!EnableFrameLogging)
@@ -1356,7 +1510,7 @@ namespace XREngine
 
                 var state = GetOrCreateThreadProducerState();
                 int correlationId = id.GetHashCode();
-                _pendingAsyncTimers[correlationId] = new AsyncPendingTimer(Time.Timer.TimeTicks(), state.ThreadId, methodName);
+                _pendingAsyncTimers[correlationId] = new AsyncPendingTimer(Time.Timer.TimeTicks(), state.ThreadId, methodName, scopeKind);
                 return id;
             }
 
@@ -1379,6 +1533,7 @@ namespace XREngine
                     pending.StartTicks,
                     elapsedTicks,
                     pending.MethodName,
+                    pending.ScopeKind,
                     IsAsyncRoot: true));
 
                 return TicksToMilliseconds(elapsedTicks);
@@ -1452,10 +1607,11 @@ namespace XREngine
                 }
             }
 
-            public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, IReadOnlyList<ProfilerNodeSnapshot> children)
+            public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
             {
                 public string Name { get; } = name;
                 public float ElapsedMs { get; } = elapsedMs;
+                public ProfilerScopeKind ScopeKind { get; } = scopeKind;
                 public IReadOnlyList<ProfilerNodeSnapshot> Children { get; } = children;
             }
 
@@ -1532,10 +1688,11 @@ namespace XREngine
                 public float TotalTimeMs { get; } = 0f;
             }
 
-            public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, IReadOnlyList<ProfilerNodeSnapshot> children)
+            public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
             {
                 public string Name { get; } = name;
                 public float ElapsedMs { get; } = elapsedMs;
+                public ProfilerScopeKind ScopeKind { get; } = scopeKind;
                 public IReadOnlyList<ProfilerNodeSnapshot> Children { get; } = children;
             }
 
@@ -1682,10 +1839,17 @@ namespace XREngine
                 => default;
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public ProfilerScope Start([CallerMemberName] string? methodName = null)
+            public ProfilerScope Start(DelTimerCallback? callback, ProfilerScopeKind scopeKind, [CallerMemberName] string? methodName = null)
                 => default;
 
-            public Guid StartAsync(DelTimerCallback? callback = null, [CallerMemberName] string? methodName = null)
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ProfilerScope Start([CallerMemberName] string? methodName = null, ProfilerScopeKind scopeKind = ProfilerScopeKind.Unspecified)
+                => default;
+
+            public Guid StartAsync(
+                DelTimerCallback? callback = null,
+                [CallerMemberName] string? methodName = null,
+                ProfilerScopeKind scopeKind = ProfilerScopeKind.Unspecified)
                 => Guid.Empty;
 
             public float StopAsync(Guid id, out string? methodName)

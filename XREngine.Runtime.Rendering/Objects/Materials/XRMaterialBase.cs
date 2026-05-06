@@ -5,6 +5,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using YamlDotNet.Serialization;
+using XREngine.Data.Transforms;
 
 namespace XREngine.Rendering
 {
@@ -180,88 +181,36 @@ namespace XREngine.Rendering
         }
 
         public void SetFloat(string name, float value)
-        {
-            var param = Parameter<ShaderFloat>(name);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderFloat>(name)?.Value = value;
         public void SetFloat(int index, float value)
-        {
-            var param = Parameter<ShaderFloat>(index);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderFloat>(index)?.Value = value;
         public void SetInt(string name, int value)
-        {
-            var param = Parameter<ShaderInt>(name);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderInt>(name)?.Value = value;
         public void SetInt(int index, int value)
-        {
-            var param = Parameter<ShaderInt>(index);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderInt>(index)?.Value = value;
         public void SetUInt(string name, uint value)
-        {
-            var param = Parameter<ShaderUInt>(name);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderUInt>(name)?.Value = value;
         public void SetUInt(int index, uint value)
-        {
-            var param = Parameter<ShaderUInt>(index);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderUInt>(index)?.Value = value;
         public void SetVector2(string name, Vector2 value)
-        {
-            var param = Parameter<ShaderVector2>(name);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderVector2>(name)?.Value = value;
         public void SetVector2(int index, Vector2 value)
-        {
-            var param = Parameter<ShaderVector2>(index);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderVector2>(index)?.Value = value;
         public void SetVector3(string name, Vector3 value)
-        {
-            var param = Parameter<ShaderVector3>(name);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderVector3>(name)?.Value = value;
         public void SetVector3(int index, Vector3 value)
-        {
-            var param = Parameter<ShaderVector3>(index);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderVector3>(index)?.Value = value;
         public void SetVector4(string name, Vector4 value)
-        {
-            var param = Parameter<ShaderVector4>(name);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderVector4>(name)?.Value = value;
         public void SetVector4(int index, Vector4 value)
-        {
-            var param = Parameter<ShaderVector4>(index);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderVector4>(index)?.Value = value;
         public void SetMatrix4(string name, Matrix4x4 value)
-        {
-            var param = Parameter<ShaderMat4>(name);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderMat4>(name)?.Value = value;
         public void SetMatrix4(int index, Matrix4x4 value)
-        {
-            var param = Parameter<ShaderMat4>(index);
-            if (param is not null)
-                param.Value = value;
-        }
+            => Parameter<ShaderMat4>(index)?.Value = value;
+        public void SetMatrixAffine(string name, AffineMatrix4x3 value)
+            => Parameter<ShaderMat4>(name)?.Value = value.ToMatrix4x4();
+        public void SetMatrixAffine(int index, AffineMatrix4x3 value)
+            => Parameter<ShaderMat4>(index)?.Value = value.ToMatrix4x4();
     }
 }

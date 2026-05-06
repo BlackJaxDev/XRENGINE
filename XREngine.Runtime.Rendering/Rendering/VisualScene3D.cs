@@ -6,6 +6,7 @@ using System.Numerics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
 using XREngine.Data.Geometry;
+using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
@@ -84,7 +85,7 @@ namespace XREngine.Scene
             IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
-            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems");
+            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
             IRuntimeCullingCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
             IVolume? collectionVolume = collectionVolumeOverride ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
@@ -92,7 +93,7 @@ namespace XREngine.Scene
         }
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors)
         {
-            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems");
+            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
             int visibleRenderables = 0;
             bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
             int commandsBefore = modelDiagActive ? commands.GetUpdatingCommandCount() : 0;
@@ -118,13 +119,13 @@ namespace XREngine.Scene
 
             if (IsGpuCulling)
             {
-                using var gpuSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu");
+                using var gpuSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive);
             }
             else
             {
                 int cpuCommandsBefore = commands.GetUpdatingCommandCount();
-                using var octreeSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree");
+                using var octreeSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
                 int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - cpuCommandsBefore);
                 Engine.Rendering.Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);

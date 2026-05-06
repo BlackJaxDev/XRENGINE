@@ -294,15 +294,32 @@ namespace XREngine.Rendering.OpenGL
             protected override uint CreateObject()
             {
                 Reset();
-
                 return CreateConfiguredProgramHandle();
             }
 
             private uint CreateConfiguredProgramHandle()
             {
-                uint handle = Api.CreateProgram();
-                Api.ProgramParameter(handle, GLEnum.ProgramBinaryRetrievableHint, 1);
-                Api.ProgramParameter(handle, GLEnum.ProgramSeparable, Data.Separable ? 1 : 0);
+                uint handle = 0;
+                MeasureRenderingProgramGlCall(
+                    "glCreateProgram",
+                    0,
+                    () => handle = Api.CreateProgram(),
+                    $"separable={Data.Separable}");
+                MeasureRenderingProgramGlCall(
+                    "glProgramParameteri(GL_PROGRAM_BINARY_RETRIEVABLE_HINT)",
+                    handle,
+                    () => Api.ProgramParameter(handle, GLEnum.ProgramBinaryRetrievableHint, 1),
+                    "value=1");
+                MeasureRenderingProgramGlCall(
+                    "glProgramParameteri(GL_PROGRAM_SEPARABLE)",
+                    handle,
+                    () => Api.ProgramParameter(handle, GLEnum.ProgramSeparable, Data.Separable ? 1 : 0),
+                    $"value={(Data.Separable ? 1 : 0)}");
+                LogRenderingProgramBuildEvent(
+                    "PROGRAM_HANDLE_CREATED",
+                    "HandleCreate",
+                    "configured source-link-capable program handle",
+                    programId: handle);
                 return handle;
             }
 

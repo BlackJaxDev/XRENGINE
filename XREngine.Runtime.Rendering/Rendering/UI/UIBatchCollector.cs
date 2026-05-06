@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Diagnostics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -32,6 +33,11 @@ public sealed class UIBatchCollector : IDisposable
     private static int s_textRenderDiagCount;
     private static int s_textUploadDiagCount;
     private static int s_textPrepareDiagCount;
+    private static long s_textPrepareTotalCalls;
+    private static long s_textPrepareFailureCount;
+    private static long s_textPrepareSummaryLastTicks;
+    private static readonly Dictionary<string, int> s_textPrepareReasonCounts = new();
+    private static readonly object s_textPrepareSummaryLock = new();
 
     #region Batch Entry Types
 
@@ -890,10 +896,11 @@ public sealed class UIBatchCollector : IDisposable
 
         EnsureMaterialQuadMesh();
         UploadMaterialQuadData(batch.Entries);
+        XRMeshRenderer materialQuadMesh = _matQuadMesh!;
 
-        var version = GetImmediateRenderVersion(_matQuadMesh!);
+        var version = GetImmediateRenderVersion(materialQuadMesh);
         version.Generate();
-        if (!_matQuadMesh.TryPrepareForRendering())
+        if (!materialQuadMesh.TryPrepareForRendering())
             return;
 
         Debug.UIEvery(
@@ -908,7 +915,7 @@ public sealed class UIBatchCollector : IDisposable
         DisableBatchCropping();
         try
         {
-            _matQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+            materialQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
         }
         finally
         {
@@ -930,7 +937,8 @@ public sealed class UIBatchCollector : IDisposable
         using var sample = Engine.Profiler.Start();
 
         var gpu = EnsureTextGPUResources(batchData.Atlas);
-        var material = gpu.Mesh!.Material;
+        XRMeshRenderer textMesh = gpu.Mesh!;
+        var material = textMesh.Material;
         if (material is not null && material.RenderPass != renderPass)
             material.RenderPass = renderPass;
 
@@ -988,31 +996,100 @@ public sealed class UIBatchCollector : IDisposable
 
         var version = GetImmediateRenderVersion(gpu.Mesh!);
         version.Generate();
-        if (!gpu.Mesh.TryPrepareForRendering())
+        s_textPrepareTotalCalls++;
+        bool prepared = textMesh.TryPrepareForRendering(out string prepareReason);
+        if (!prepared)
         {
+            s_textPrepareFailureCount++;
+            if (!s_textPrepareReasonCounts.TryGetValue(prepareReason, out int reasonCount))
+                reasonCount = 0;
+            s_textPrepareReasonCounts[prepareReason] = reasonCount + 1;
+
             if (s_textPrepareDiagCount++ < 40)
             {
+                string prepareDetail = textMesh.GetLastPrepareDetail();
                 Debug.Log(
                     ELogCategory.UI,
-                    "[FpsTextDiag] UIBatchCollector.RenderTextGroup prepare pending #{0}: pass={1} group={2} totalGlyphs={3} debugMode={4}",
+                    "[FpsTextDiag] UIBatchCollector.RenderTextGroup prepare pending #{0}: pass={1} group={2} totalGlyphs={3} debugMode={4} reason={5} ids[gpu={6:X8} mesh={7:X8} ver={8:X8}] detail={9}",
                     s_textPrepareDiagCount,
                     renderPass,
                     groupIndex,
                     batchData.TotalGlyphs,
-                    batchData.DebugMode);
+                    batchData.DebugMode,
+                    prepareReason,
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(gpu),
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(textMesh),
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(version),
+                    string.IsNullOrEmpty(prepareDetail) ? "<none>" : prepareDetail);
             }
 
+            MaybeLogTextPrepareSummary();
             return;
         }
+
+        MaybeLogTextPrepareSummary();
 
         DisableBatchCropping();
         try
         {
-            gpu.Mesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
+            textMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
         }
         finally
         {
             DisableBatchCropping();
+        }
+    }
+
+    private static void MaybeLogTextPrepareSummary()
+    {
+        // Emit a periodic summary so failure-vs-success ratios and reason breakdown are
+        // observable beyond the 40-line per-process cap on individual prepare-pending logs.
+        const long SummaryIntervalSeconds = 5;
+
+        long nowTicks = Stopwatch.GetTimestamp();
+        long ticksPerSecond = Stopwatch.Frequency;
+        long lastTicks = Interlocked.Read(ref s_textPrepareSummaryLastTicks);
+        if (lastTicks != 0 && (nowTicks - lastTicks) < SummaryIntervalSeconds * ticksPerSecond)
+            return;
+
+        lock (s_textPrepareSummaryLock)
+        {
+            // Re-check inside the lock.
+            lastTicks = s_textPrepareSummaryLastTicks;
+            if (lastTicks != 0 && (nowTicks - lastTicks) < SummaryIntervalSeconds * ticksPerSecond)
+                return;
+            s_textPrepareSummaryLastTicks = nowTicks;
+
+            long total = Interlocked.Read(ref s_textPrepareTotalCalls);
+            long fail = Interlocked.Read(ref s_textPrepareFailureCount);
+            long ok = total - fail;
+
+            string reasonsSummary;
+            if (s_textPrepareReasonCounts.Count == 0)
+            {
+                reasonsSummary = "<none>";
+            }
+            else
+            {
+                var sb = new System.Text.StringBuilder();
+                bool first = true;
+                foreach (var kvp in s_textPrepareReasonCounts)
+                {
+                    if (!first)
+                        sb.Append(", ");
+                    sb.Append(kvp.Key).Append('=').Append(kvp.Value);
+                    first = false;
+                }
+                reasonsSummary = sb.ToString();
+            }
+
+            Debug.Log(
+                ELogCategory.UI,
+                "[FpsTextDiag] UIBatchCollector text prepare summary: total={0} ok={1} fail={2} reasons=[{3}]",
+                total,
+                ok,
+                fail,
+                reasonsSummary);
         }
     }
 

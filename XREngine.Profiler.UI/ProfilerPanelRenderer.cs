@@ -1527,10 +1527,11 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 foreach (var rootNode in thread.RootNodes)
                 {
                     if (rootNode is null) continue;
-                    if (!_rootMethodCache.TryGetValue(rootNode.Name, out var agg))
+                    string rootKey = GetProfilerNodeAggregationKey(rootNode.Name, rootNode.ScopeKind);
+                    if (!_rootMethodCache.TryGetValue(rootKey, out var agg))
                     {
-                        agg = new ProfilerRootMethodAggregate { Name = rootNode.Name };
-                        _rootMethodCache[rootNode.Name] = agg;
+                        agg = new ProfilerRootMethodAggregate { Name = rootNode.Name, ScopeKind = rootNode.ScopeKind };
+                        _rootMethodCache[rootKey] = agg;
                     }
                     agg.RootNodes.Add(rootNode);
                     agg.ThreadIds.Add(thread.ThreadId);
@@ -2947,12 +2948,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (children.Length == 0 && (untracked < 0.1f || allCount == 0))
             flags |= ImGuiTreeNodeFlags.Leaf;
 
-        string key = $"Root_{rm.Name}";
+        string displayName = FormatProfilerNodeLabel(rm.Name, rm.ScopeKind);
+        string key = $"Root_{GetProfilerNodeAggregationKey(rm.Name, rm.ScopeKind)}";
         if (_nodeOpenCache.TryGetValue(key, out bool wasOpen) && wasOpen)
             flags |= ImGuiTreeNodeFlags.DefaultOpen;
 
         if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
-        string label = isStale ? $"{rm.Name} (aggregated) (inactive)##{key}" : $"{rm.Name} (aggregated)##{key}";
+        string label = isStale ? $"{displayName} (aggregated) (inactive)##{key}" : $"{displayName} (aggregated)##{key}";
         bool nodeOpen = ImGui.TreeNodeEx(label, flags);
         if (isStale) ImGui.PopStyleColor();
         if (ImGui.IsItemToggledOpen())
@@ -2994,14 +2996,15 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (children.Length == 0 && (untracked < 0.1f || allCount == 0))
             flags |= ImGuiTreeNodeFlags.Leaf;
 
-        string key = $"{node.Name}_{idSuffix}";
+        string displayName = FormatProfilerNodeLabel(node.Name, node.ScopeKind);
+        string key = $"{GetProfilerNodeAggregationKey(node.Name, node.ScopeKind)}_{idSuffix}";
         if (_nodeOpenCache.TryGetValue(key, out bool wasOpen) && wasOpen)
             flags |= ImGuiTreeNodeFlags.DefaultOpen;
 
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
         if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
-        string label = isStale ? $"{node.Name} (inactive)##{key}" : $"{node.Name}##{key}";
+        string label = isStale ? $"{displayName} (inactive)##{key}" : $"{displayName}##{key}";
         bool nodeOpen = ImGui.TreeNodeEx(label, flags);
         if (isStale) ImGui.PopStyleColor();
         if (ImGui.IsItemToggledOpen())
@@ -3040,10 +3043,11 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         foreach (var child in sourceChildren)
         {
             if (child is null) continue;
-            if (!target.TryGetValue(child.Name, out var agg))
+            string childKey = GetProfilerNodeAggregationKey(child.Name, child.ScopeKind);
+            if (!target.TryGetValue(childKey, out var agg))
             {
-                agg = new AggregatedChildNode { Name = child.Name };
-                target[child.Name] = agg;
+                agg = new AggregatedChildNode { Name = child.Name, ScopeKind = child.ScopeKind };
+                target[childKey] = agg;
             }
             agg.TotalElapsedMs += child.ElapsedMs;
             agg.CallCount++;
@@ -3179,7 +3183,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (hottest is null) return "(no samples)";
 
         pathMs = hottest.ElapsedMs;
-        var parts = new List<string>(8) { hottest.Name };
+        var parts = new List<string>(8) { FormatProfilerNodeLabel(hottest.Name, hottest.ScopeKind) };
         var current = hottest;
 
         while (current.Children is { Length: > 0 })
@@ -3191,7 +3195,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                     best = current.Children[i];
             }
             if (best is null) break;
-            parts.Add(best.Name);
+            parts.Add(FormatProfilerNodeLabel(best.Name, best.ScopeKind));
             current = best;
         }
 
@@ -3249,9 +3253,20 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     //  Inner data types
     // ═══════════════════════════════════════════════════════════════
 
+    private static string GetProfilerNodeAggregationKey(string name, ProfilerScopeKind scopeKind)
+        => scopeKind == ProfilerScopeKind.Unspecified
+            ? name
+            : string.Concat(name, "||", scopeKind.ToString());
+
+    private static string FormatProfilerNodeLabel(string name, ProfilerScopeKind scopeKind)
+        => scopeKind == ProfilerScopeKind.Unspecified
+            ? name
+            : string.Concat(name, " [", scopeKind.ToString(), "]");
+
     private sealed class AggregatedChildNode
     {
         public string Name { get; set; } = string.Empty;
+        public ProfilerScopeKind ScopeKind { get; set; }
         public float TotalElapsedMs { get; set; }
         public int CallCount { get; set; }
         public bool SeenThisUpdate { get; set; }
@@ -3268,6 +3283,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private sealed class ProfilerRootMethodAggregate
     {
         public string Name { get; set; } = string.Empty;
+        public ProfilerScopeKind ScopeKind { get; set; }
         public float TotalTimeMs { get; set; }
         public bool SeenThisUpdate { get; set; }
         public float AccumulatedMaxTotalTimeMs { get; set; }

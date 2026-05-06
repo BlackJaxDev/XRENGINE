@@ -1,9 +1,22 @@
 using XREngine.Extensions;
 using Silk.NET.OpenGL;
 using XREngine.Data.Rendering;
+using System.Collections.Concurrent;
+using System.Reflection;
 
 namespace XREngine.Rendering.OpenGL
 {
+    /// <summary>
+    /// Marks a property on a <see cref="OpenGLRenderer.GLObjectBase"/> subclass as
+    /// transient render state that does NOT require destroying and recreating the GL
+    /// object when it changes. Without this marker, every <c>SetField</c> on the GL
+    /// object will set <c>_invalidated = true</c>, causing the object (e.g. VAO and
+    /// shader programs) to be torn down and rebuilt on the next access. Use this for
+    /// per-frame bookkeeping flags such as bind state, ready caches, or counters.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
+    public sealed class TransientGLStateAttribute : Attribute { }
+
     public unsafe partial class OpenGLRenderer
     {
         /// <summary>
@@ -69,9 +82,38 @@ namespace XREngine.Rendering.OpenGL
 
             private bool _invalidated = true;
             private bool _hasSentInvalidationWarning = false;
+
+            // Per-type cache of property names that should NOT trigger GL invalidation,
+            // populated lazily via reflection from [TransientGLState] attributes.
+            private static readonly ConcurrentDictionary<Type, HashSet<string>> _transientPropertyCache = new();
+
+            private static HashSet<string> GetTransientPropertyNames(Type t)
+                => _transientPropertyCache.GetOrAdd(t, static type =>
+                {
+                    var set = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                    {
+                        if (prop.IsDefined(typeof(TransientGLStateAttribute), inherit: true))
+                            set.Add(prop.Name);
+                    }
+                    return set;
+                });
+
+            /// <summary>
+            /// Returns true if changes to <paramref name="propName"/> should NOT mark this
+            /// GL object as needing regeneration. By default, properties tagged with
+            /// <see cref="TransientGLStateAttribute"/> are treated as transient. Override
+            /// to add additional names (e.g. for properties on private partial members
+            /// where the attribute isn't visible).
+            /// </summary>
+            protected virtual bool IsTransientProperty(string? propName)
+                => propName is not null && GetTransientPropertyNames(GetType()).Contains(propName);
+
             protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
             {
                 base.OnPropertyChanged(propName, prev, field);
+                if (IsTransientProperty(propName))
+                    return;
                 _invalidated = true;
                 _hasSentInvalidationWarning = false;
             }

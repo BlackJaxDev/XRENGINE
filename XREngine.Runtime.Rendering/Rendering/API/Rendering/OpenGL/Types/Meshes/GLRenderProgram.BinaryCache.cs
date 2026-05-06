@@ -1,10 +1,12 @@
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using XREngine;
+using XREngine.Data.Profiling;
 using XREngine.Rendering.Shaders;
 using static XREngine.Rendering.XRRenderProgram;
 
@@ -267,10 +269,21 @@ namespace XREngine.Rendering.OpenGL
                 if (string.IsNullOrWhiteSpace(cacheKey))
                     return;
 
-                Api.GetProgram(bindingId, GLEnum.ProgramBinaryLength, out int len);
+                int len = 0;
+                MeasureRenderingProgramGlCall(
+                    "glGetProgramiv(GL_PROGRAM_BINARY_LENGTH)",
+                    bindingId,
+                    () => Api.GetProgram(bindingId, GLEnum.ProgramBinaryLength, out len),
+                    $"cacheKey={cacheKey}");
                 if (len <= 0)
                 {
                     Debug.OpenGLWarning($"[ShaderCache] Program {bindingId} for key {cacheKey} did not expose a retrievable program binary. Cache write skipped.");
+                    LogRenderingProgramBuildEvent(
+                        "BINARY_CACHE_WRITE_SKIPPED",
+                        _activeBuildBackend ?? "BinaryCache",
+                        "program binary length was zero",
+                        cacheKey,
+                        bindingId);
                     return;
                 }
 
@@ -279,8 +292,30 @@ namespace XREngine.Rendering.OpenGL
                 uint binaryLength;
                 fixed (byte* ptr = binary)
                 {
-                    Api.GetProgramBinary(bindingId, (uint)len, &binaryLength, &format, ptr);
+                    GLEnum capturedFormat = GLEnum.None;
+                    uint capturedLength = 0;
+                    long binaryReadStart = Stopwatch.GetTimestamp();
+                    Api.GetProgramBinary(bindingId, (uint)len, &capturedLength, &capturedFormat, ptr);
+                    if (ShouldLogRenderingShaderLinkVerbose())
+                    {
+                        double binaryReadMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - binaryReadStart);
+                        LogRenderingProgramGlCall(
+                            "glGetProgramBinary",
+                            bindingId,
+                            binaryReadMilliseconds,
+                            $"requestedBytes={len} cacheKey={cacheKey}");
+                    }
+                    binaryLength = capturedLength;
+                    format = capturedFormat;
                 }
+                LogRenderingProgramBuildEvent(
+                    "BINARY_CACHE_WRITE",
+                    _activeBuildBackend ?? "BinaryCache",
+                    "captured linked program binary",
+                    cacheKey,
+                    bindingId,
+                    binaryBytes: binaryLength,
+                    binaryFormat: format.ToString());
 
                 ShaderBinaryCacheMetadata metadata = CreateBinaryCacheMetadata(Hash, cacheKey, format, binaryLength);
                 UniformMetadataEntry[] uniforms = SnapshotUniformMetadata();
@@ -382,7 +417,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private string ResolveSourceForCompilation(XRShader shader)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForCompilation");
+                using var sample = Engine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForCompilation", ProfilerScopeKind.OneOffInvoke);
                 if (shader is null)
                     return string.Empty;
 
@@ -401,7 +436,7 @@ namespace XREngine.Rendering.OpenGL
 
             private string ResolveSourceForHash(GLShader shader)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForHash");
+                using var sample = Engine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForHash", ProfilerScopeKind.OneOffInvoke);
                 if (shader is null)
                     return string.Empty;
 

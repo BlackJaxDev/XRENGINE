@@ -56,4 +56,22 @@ public interface IRenderPreparationState
 {
     bool IsPreparedForRendering { get; }
     bool TryPrepareForRendering();
+
+    /// <summary>
+    /// Same as <see cref="TryPrepareForRendering"/> but also returns the most recent stage result
+    /// (e.g. "Ready", "ProgramsPending", "BuffersPending", "GenerateFailed", "MaterialMissing").
+    /// </summary>
+    bool TryPrepareForRendering(out string reason)
+    {
+        bool ok = TryPrepareForRendering();
+        reason = ok ? "Ready" : "Pending";
+        return ok;
+    }
+
+    /// <summary>
+    /// Optional supplemental detail describing the most recent prepare attempt
+    /// (e.g. variant counts, revision numbers, which program slots were null).
+    /// Empty when not implemented or no detail captured.
+    /// </summary>
+    string LastPrepareDetail => string.Empty;
 }

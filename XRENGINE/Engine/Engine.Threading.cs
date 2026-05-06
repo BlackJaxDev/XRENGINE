@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Core;
+using XREngine.Data.Profiling;
 
 namespace XREngine
 {
@@ -475,7 +476,7 @@ namespace XREngine
 
         private static void ProcessPendingMainThreadWork()
         {
-            using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch");
+            using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch", ProfilerScopeKind.ConditionalLoop);
             Jobs.ProcessMainThreadJobs(MaxRenderThreadJobsPerDispatch, RenderThreadJobBudgetMs);
         }
 
@@ -515,13 +516,13 @@ namespace XREngine
             if (IsDispatchingRenderFrame)
                 return;
 
-            using var scope = Engine.Profiler.Start("AppThreadJobs.Dispatch");
+            using var scope = Engine.Profiler.Start("AppThreadJobs.Dispatch", ProfilerScopeKind.ConditionalLoop);
             Jobs.ProcessAppThreadJobs(maxJobs);
         }
 
         private static void SwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("Engine.SwapBuffers");
+            using var sample = Engine.Profiler.Start("Engine.SwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
         }
 
         /// <summary>
@@ -529,7 +530,7 @@ namespace XREngine
         /// </summary>
         private static void Timer_PostUpdateFrame()
         {
-            using var scope = Profiler.Start("Engine.Timer_PostUpdateFrame");
+            using var scope = Profiler.Start("Engine.Timer_PostUpdateFrame", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
             XRObjectBase.ProcessPendingDestructions();
             Scene.Transforms.TransformBase.ProcessParentReassignments();

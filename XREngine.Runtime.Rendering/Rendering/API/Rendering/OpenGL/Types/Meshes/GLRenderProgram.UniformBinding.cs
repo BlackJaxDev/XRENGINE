@@ -2,6 +2,7 @@ using Silk.NET.OpenGL;
 using System.Collections.Generic;
 using System.Text;
 using XREngine;
+using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 
@@ -128,11 +129,11 @@ namespace XREngine.Rendering.OpenGL
             {
                 long start = System.Diagnostics.Stopwatch.GetTimestamp();
                 bool restoredMetadata;
-                using (Engine.Profiler.Start("GLRenderProgram.Link.RestoreCachedUniformMetadata"))
+                using (Engine.Profiler.Start("GLRenderProgram.Link.RestoreCachedUniformMetadata", ProfilerScopeKind.OneOffInvoke))
                     restoredMetadata = TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms);
                 if (!restoredMetadata)
                 {
-                    using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
+                    using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
                     CacheActiveUniforms();
                     PromoteCurrentUniformMetadataToCachedProgram();
                 }
@@ -452,7 +453,7 @@ namespace XREngine.Rendering.OpenGL
             private bool ValidateUniformType(int location, params GLEnum[] expectedTypes)
             {
                 /*
-                using var sample = Engine.Profiler.Start("GLRenderProgram.ValidateUniformType (by location)");
+                using var sample = Engine.Profiler.Start("GLRenderProgram.ValidateUniformType (by location)", ProfilerScopeKind.ConditionalLoop);
 
                 if (location < 0)
                     return false;
@@ -466,7 +467,7 @@ namespace XREngine.Rendering.OpenGL
             private bool ValidateUniformType(string name, int? location, params GLEnum[] expectedTypes)
             {
                 /*
-                using var sample = Engine.Profiler.Start("GLRenderProgram.ValidateUniformType (by name)");
+                using var sample = Engine.Profiler.Start("GLRenderProgram.ValidateUniformType (by name)", ProfilerScopeKind.ConditionalLoop);
 
                 if (!_uniformMetadata.TryGetValue(name, out var meta))
                     return true;

@@ -32,19 +32,20 @@ public sealed class ProfilerProtocolTests
                         {
                             Name = "Update",
                             ElapsedMs = 2.0f,
+                            ScopeKind = ProfilerScopeKind.AlwaysOnHotPathLoop,
                             Children =
                             [
-                                new ProfilerNodeData { Name = "Physics", ElapsedMs = 1.5f, Children = [] }
+                                new ProfilerNodeData { Name = "Physics", ElapsedMs = 1.5f, ScopeKind = ProfilerScopeKind.ConditionalLoop, Children = [] }
                             ]
                         },
-                        new ProfilerNodeData { Name = "Render", ElapsedMs = 1.5f, Children = [] }
+                        new ProfilerNodeData { Name = "Render", ElapsedMs = 1.5f, ScopeKind = ProfilerScopeKind.AlwaysOnHotPathLoop, Children = [] }
                     ]
                 },
                 new ProfilerThreadData
                 {
                     ThreadId = 7,
                     TotalTimeMs = 1.0f,
-                    RootNodes = [new ProfilerNodeData { Name = "Audio", ElapsedMs = 1.0f, Children = [] }]
+                    RootNodes = [new ProfilerNodeData { Name = "Audio", ElapsedMs = 1.0f, ScopeKind = ProfilerScopeKind.OneOffInvoke, Children = [] }]
                 }
             ],
             ThreadHistory = new Dictionary<int, float[]>
@@ -75,9 +76,12 @@ public sealed class ProfilerProtocolTests
         clone.Threads[0].TotalTimeMs.ShouldBe(3.5f);
         clone.Threads[0].RootNodes.Length.ShouldBe(2);
         clone.Threads[0].RootNodes[0].Name.ShouldBe("Update");
+        clone.Threads[0].RootNodes[0].ScopeKind.ShouldBe(ProfilerScopeKind.AlwaysOnHotPathLoop);
         clone.Threads[0].RootNodes[0].Children.Length.ShouldBe(1);
         clone.Threads[0].RootNodes[0].Children[0].Name.ShouldBe("Physics");
+        clone.Threads[0].RootNodes[0].Children[0].ScopeKind.ShouldBe(ProfilerScopeKind.ConditionalLoop);
         clone.Threads[1].ThreadId.ShouldBe(7);
+        clone.Threads[1].RootNodes[0].ScopeKind.ShouldBe(ProfilerScopeKind.OneOffInvoke);
         clone.ThreadHistory.Count.ShouldBe(2);
         clone.ThreadHistory[1].ShouldBe(new[] { 1.0f, 2.0f, 3.0f });
         clone.ComponentTimings.Length.ShouldBe(1);
@@ -547,7 +551,7 @@ public sealed class ProfilerProtocolTests
                 {
                     ThreadId = 5,
                     TotalTimeMs = 8.0f,
-                    RootNodes = [new ProfilerNodeData { Name = "Tick", ElapsedMs = 8.0f, Children = [] }]
+                    RootNodes = [new ProfilerNodeData { Name = "Tick", ElapsedMs = 8.0f, ScopeKind = ProfilerScopeKind.AlwaysOnHotPathLoop, Children = [] }]
                 }
             ],
             ThreadHistory = new Dictionary<int, float[]> { [5] = [8.0f] },
@@ -584,6 +588,7 @@ public sealed class ProfilerProtocolTests
         clone.ShouldNotBeNull();
         clone!.FrameTime.ShouldBe(99.9f);
         clone.Threads[0].RootNodes[0].Name.ShouldBe("Tick");
+        clone.Threads[0].RootNodes[0].ScopeKind.ShouldBe(ProfilerScopeKind.AlwaysOnHotPathLoop);
         clone.ComponentTimings[0].ComponentType.ShouldBe("HumanoidComponent");
     }
 

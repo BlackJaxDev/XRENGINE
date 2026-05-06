@@ -59,6 +59,7 @@ public static partial class Engine
             {
                 Name = n.Name,
                 ElapsedMs = n.ElapsedMs,
+                ScopeKind = n.ScopeKind,
                 Children = ConvertNodes(n.Children),
             };
         }

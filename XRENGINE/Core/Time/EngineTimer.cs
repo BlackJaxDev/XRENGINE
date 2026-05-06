@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using System;
 using XREngine.Data.Core;
+using XREngine.Data.Profiling;
 
 namespace XREngine.Timers
 {
@@ -262,23 +263,23 @@ namespace XREngine.Timers
                     allocStart = GC.GetAllocatedBytesForCurrentThread();
 #endif
 
-                using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread"))
+                using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
                     //Collects visible object and generates render commands for the game's current state
-                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible"))
+                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         DispatchCollectVisible();
                     }
 
                     //Wait for the render thread to swap update buffers with render buffers
-                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender"))
+                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         _renderDone.Wait(-1);
                     }
 
                     _renderDone.Reset();
 
-                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers"))
+                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         Engine.Jobs.ProcessCollectVisibleSwapJobs();
                         DispatchSwapBuffers();
@@ -424,7 +425,7 @@ namespace XREngine.Timers
                 if (dispatch)
                 {
                     //Debug.Out("Dispatching render.");
-                    using var sample = Engine.Profiler.Start("EngineTimer.DispatchRender");
+                    using var sample = Engine.Profiler.Start("EngineTimer.DispatchRender", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
 #if !XRE_PUBLISHED
                     long allocStart = 0;
@@ -470,7 +471,7 @@ namespace XREngine.Timers
         {
             try
             {
-                using var sample = Engine.Profiler.Start("EngineTimer.DispatchCollectVisible");
+                using var sample = Engine.Profiler.Start("EngineTimer.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - Collect.LastTimestampTicks, 0L, Stopwatch.Frequency);
@@ -490,13 +491,13 @@ namespace XREngine.Timers
 
         public void DispatchSwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("EngineTimer.DispatchSwapBuffers");
+            using var sample = Engine.Profiler.Start("EngineTimer.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
             SwapBuffers?.Invoke();
         }
 
         private void DispatchFixedUpdate()
         {
-            using var sample = Engine.Profiler.Start("EngineTimer.DispatchFixedUpdate");
+            using var sample = Engine.Profiler.Start("EngineTimer.DispatchFixedUpdate", ProfilerScopeKind.AlwaysOnHotPathLoop);
             FixedUpdate?.Invoke();
         }
 
@@ -521,7 +522,7 @@ namespace XREngine.Timers
                 //Raise UpdateFrame events until we catch up with the target update period
                 while (IsRunning && elapsedTicks > 0L && elapsedTicks + _updateTimeDiffTicks >= _targetUpdatePeriodTicks)
                 {
-                    using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration");
+                    using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
 #if !XRE_PUBLISHED
                     long allocStart = 0;
@@ -532,12 +533,12 @@ namespace XREngine.Timers
                     Update.DeltaTicks = elapsedTicks;
                     Update.LastTimestampTicks = timestampTicks;
 
-                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PreUpdate"))
+                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PreUpdate", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         PreUpdateFrame?.Invoke();
                     }
 
-                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.Update"))
+                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.Update", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
 #if !XRE_PUBLISHED
                         Engine.Profiler.BeginComponentTimingFrame(Time());
@@ -554,7 +555,7 @@ namespace XREngine.Timers
 #endif
                     }
 
-                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PostUpdate"))
+                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PostUpdate", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         PostUpdateFrame?.Invoke();
                     }
