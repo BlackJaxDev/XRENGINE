@@ -901,7 +901,7 @@ THIS IS NOT VALID GLSL;";
     }
 
     [Test]
-    public void CompileLink_SingleComputeShader_CompilesAndLinks()
+    public void CompileLink_SingleComputeShader_IsRejectedAsAsyncHazard()
     {
         const string computeSource = @"#version 460 core
 layout(local_size_x = 1) in;
@@ -924,16 +924,10 @@ void main() { }";
                 new(computeSource, ShaderType.ComputeShader),
             };
 
-            compileQueue.EnqueueCompileAndLink(program, inputs);
-
-            GLProgramCompileLinkQueue.CompileResult result = default;
-            SpinWait.SpinUntil(() => compileQueue.TryGetResult(program, out result),
-                TimeSpan.FromSeconds(15));
-
-            result.Status.ShouldBe(GLProgramCompileLinkQueue.CompileStatus.Success);
-
-            gl.GetProgram(program, GLEnum.LinkStatus, out int linkStatus);
-            linkStatus.ShouldNotBe(0);
+            compileQueue.TryEnqueueCompileAndLink(program, inputs, out string? rejectReason).ShouldBeFalse();
+            rejectReason.ShouldNotBeNullOrWhiteSpace();
+            rejectReason.ShouldContain("hazard");
+            compileQueue.InFlightCount.ShouldBe(0);
 
             gl.DeleteProgram(program);
             ctx.Dispose();

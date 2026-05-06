@@ -24,6 +24,10 @@ namespace XREngine.Rendering.OpenGL
             private readonly GLSharedContext _sharedContext = sharedContext;
             private readonly ConcurrentDictionary<uint, CompileResult> _completed = new();
             private int _inFlight;
+            private long _completedCount;
+            private long _failedCount;
+            private long _rejectedCount;
+            private long _backpressureCount;
 
             /// <summary>
             /// Compilation is heavier than binary upload; keep in-flight count lower
@@ -34,12 +38,20 @@ namespace XREngine.Rendering.OpenGL
             public bool IsAvailable => _sharedContext.IsRunning;
             public bool CanEnqueue => Volatile.Read(ref _inFlight) < MaxInFlight;
             public int InFlightCount => Volatile.Read(ref _inFlight);
+            public long CompletedCount => Interlocked.Read(ref _completedCount);
+            public long FailedCount => Interlocked.Read(ref _failedCount);
+            public long RejectedCount => Interlocked.Read(ref _rejectedCount);
+            public long BackpressureCount => Interlocked.Read(ref _backpressureCount);
+            public double OldestPendingAgeSeconds => _sharedContext.OldestPendingAgeSeconds;
+            public bool IsWorkerUnhealthy => _sharedContext.IsWorkerUnhealthy;
 
             public enum CompileStatus : byte
             {
                 Success,
                 CompileFailed,
                 LinkFailed,
+                RejectedHazard,
+                QueueFull,
             }
 
             public readonly record struct ShaderInput(string ResolvedSource, ShaderType Type);
@@ -58,6 +70,27 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void EnqueueCompileAndLink(uint programId, ShaderInput[] shaders)
             {
+                if (!TryEnqueueCompileAndLink(programId, shaders, out string? rejectReason))
+                    throw new InvalidOperationException(rejectReason ?? "Unable to enqueue OpenGL compile/link job.");
+            }
+
+            public bool TryEnqueueCompileAndLink(uint programId, ShaderInput[] shaders, out string? rejectReason)
+            {
+                if (ContainsKnownAsyncLinkHazard(shaders))
+                {
+                    rejectReason = "known async-link hazard";
+                    Interlocked.Increment(ref _rejectedCount);
+                    return false;
+                }
+
+                if (!CanEnqueue)
+                {
+                    rejectReason = "compile/link queue is at capacity";
+                    Interlocked.Increment(ref _backpressureCount);
+                    return false;
+                }
+
+                rejectReason = null;
                 Interlocked.Increment(ref _inFlight);
                 _sharedContext.Enqueue(gl =>
                 {
@@ -93,6 +126,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         double compileMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - compileStartTimestamp);
                         _completed[programId] = new CompileResult(CompileStatus.CompileFailed, errorLog, compileMilliseconds, 0.0);
+                        Interlocked.Increment(ref _failedCount);
                         return;
                     }
 
@@ -127,7 +161,12 @@ namespace XREngine.Rendering.OpenGL
                         linkError,
                         compileMillisecondsCompleted,
                         linkMilliseconds);
-                });
+                    if (linkStatus != 0)
+                        Interlocked.Increment(ref _completedCount);
+                    else
+                        Interlocked.Increment(ref _failedCount);
+                }, $"ProgramSourceCompile:{programId}");
+                return true;
             }
 
             /// <summary>
@@ -141,6 +180,20 @@ namespace XREngine.Rendering.OpenGL
                     Interlocked.Decrement(ref _inFlight);
                     return true;
                 }
+                return false;
+            }
+
+            public static bool ContainsKnownAsyncLinkHazard(ReadOnlySpan<ShaderInput> shaders)
+            {
+                if (shaders.Length <= 1)
+                    return true;
+
+                for (int i = 0; i < shaders.Length; i++)
+                {
+                    if (shaders[i].Type == ShaderType.ComputeShader)
+                        return true;
+                }
+
                 return false;
             }
 

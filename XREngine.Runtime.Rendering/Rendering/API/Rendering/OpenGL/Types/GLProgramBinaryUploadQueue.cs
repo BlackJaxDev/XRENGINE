@@ -1,5 +1,6 @@
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 
 namespace XREngine.Rendering.OpenGL
@@ -20,6 +21,9 @@ namespace XREngine.Rendering.OpenGL
             private readonly GLSharedContext _sharedContext = sharedContext;
             private readonly ConcurrentDictionary<uint, UploadResult> _completed = new();
             private int _inFlight;
+            private long _completedCount;
+            private long _failedCount;
+            private long _backpressureCount;
 
             /// <summary>
             /// Maximum number of program binary uploads that can be queued but not yet
@@ -38,10 +42,24 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>Number of uploads queued or completed but not yet consumed.</summary>
             public int InFlightCount => Volatile.Read(ref _inFlight);
+            public long CompletedCount => Interlocked.Read(ref _completedCount);
+            public long FailedCount => Interlocked.Read(ref _failedCount);
+            public long BackpressureCount => Interlocked.Read(ref _backpressureCount);
+            public double OldestPendingAgeSeconds => _sharedContext.OldestPendingAgeSeconds;
+            public bool IsWorkerUnhealthy => _sharedContext.IsWorkerUnhealthy;
+
+            public void RecordBackpressure()
+                => Interlocked.Increment(ref _backpressureCount);
 
             public enum UploadStatus : byte { Success, Failed }
 
-            public readonly record struct UploadResult(UploadStatus Status, GLEnum Format, ulong Hash);
+            public readonly record struct UploadResult(
+                UploadStatus Status,
+                GLEnum Format,
+                ulong Hash,
+                string CacheKey,
+                double LoadMilliseconds,
+                string? ErrorLog);
 
             /// <summary>
             /// Queues a program binary upload on the shared context thread.
@@ -51,25 +69,50 @@ namespace XREngine.Rendering.OpenGL
             /// Check <see cref="CanEnqueue"/> before calling to respect the in-flight limit.
             /// </summary>
             public void EnqueueUpload(uint programId, byte[] binary, GLEnum format, uint length, ulong hash)
+                => EnqueueUpload(programId, binary, format, length, hash, hash.ToString("X16"));
+
+            public void EnqueueUpload(uint programId, byte[] binary, GLEnum format, uint length, ulong hash, string cacheKey)
             {
                 Interlocked.Increment(ref _inFlight);
                 _sharedContext.Enqueue(gl =>
                 {
+                    long start = Stopwatch.GetTimestamp();
+                    GLEnum error;
+                    int linkStatus = 0;
+                    string? errorLog = null;
                     fixed (byte* ptr = binary)
                         gl.ProgramBinary(programId, format, ptr, length);
 
-                    var error = gl.GetError();
+                    error = gl.GetError();
+                    if (error == GLEnum.NoError)
+                    {
+                        gl.GetProgram(programId, GLEnum.LinkStatus, out linkStatus);
+                        if (linkStatus == 0)
+                            gl.GetProgramInfoLog(programId, out errorLog);
+                    }
+                    else
+                    {
+                        errorLog = error.ToString();
+                    }
 
                     // glFinish ensures the binary is fully uploaded and validated before
                     // signaling completion. This is the recommended synchronization for
                     // shared-context resource uploads.
                     gl.Finish();
 
+                    double loadMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - start);
                     _completed[programId] = new UploadResult(
-                        error == GLEnum.NoError ? UploadStatus.Success : UploadStatus.Failed,
+                        error == GLEnum.NoError && linkStatus != 0 ? UploadStatus.Success : UploadStatus.Failed,
                         format,
-                        hash);
-                });
+                        hash,
+                        cacheKey,
+                        loadMilliseconds,
+                        errorLog);
+                    if (error == GLEnum.NoError && linkStatus != 0)
+                        Interlocked.Increment(ref _completedCount);
+                    else
+                        Interlocked.Increment(ref _failedCount);
+                }, $"ProgramBinaryUpload:{cacheKey}");
             }
 
             /// <summary>
@@ -86,6 +129,9 @@ namespace XREngine.Rendering.OpenGL
                 }
                 return false;
             }
+
+            private static double StopwatchTicksToMilliseconds(long ticks)
+                => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
         }
     }
 }

@@ -3,6 +3,7 @@ using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using XREngine.Rendering;
 
@@ -16,16 +17,47 @@ namespace XREngine.Rendering.OpenGL
         /// (and other shared resources) are accessible from both the main render context
         /// and this background thread.
         /// </summary>
-        public sealed class GLSharedContext : IDisposable
+        public sealed class GLSharedContext(string threadName = "XR GL Shared Context") : IDisposable
         {
-            private readonly ConcurrentQueue<Action<GL>> _jobs = new();
+            private readonly ConcurrentQueue<SharedContextJob> _jobs = new();
             private readonly AutoResetEvent _signal = new(false);
             private CancellationTokenSource? _cts;
             private Thread? _thread;
             private IWindow? _window;
             private volatile bool _running;
+            private long _currentJobStartTimestamp;
+            private string? _currentJobName;
+            private long _oldestQueuedTimestamp;
+            private long _completedCount;
+            private long _failedCount;
+            private volatile bool _workerUnhealthy;
 
-            public bool IsRunning => _running;
+            private const double WorkerUnhealthySeconds = 30.0;
+
+            public bool IsRunning => _running && !IsWorkerUnhealthy;
+            public bool IsThreadAlive => _running;
+            public bool IsWorkerUnhealthy => _workerUnhealthy || CurrentJobElapsedSeconds >= WorkerUnhealthySeconds;
+            public int PendingCount => _jobs.Count;
+            public long CompletedCount => Interlocked.Read(ref _completedCount);
+            public long FailedCount => Interlocked.Read(ref _failedCount);
+            public string? CurrentJobName => _currentJobName;
+            public double OldestPendingAgeSeconds
+            {
+                get
+                {
+                    long timestamp = Interlocked.Read(ref _oldestQueuedTimestamp);
+                    return timestamp == 0 ? 0.0 : StopwatchTicksToSeconds(Stopwatch.GetTimestamp() - timestamp);
+                }
+            }
+
+            public double CurrentJobElapsedSeconds
+            {
+                get
+                {
+                    long timestamp = Interlocked.Read(ref _currentJobStartTimestamp);
+                    return timestamp == 0 ? 0.0 : StopwatchTicksToSeconds(Stopwatch.GetTimestamp() - timestamp);
+                }
+            }
 
             /// <summary>
             /// Creates the shared context and starts the background thread.
@@ -75,7 +107,7 @@ namespace XREngine.Rendering.OpenGL
                 _thread = new Thread(() => Run(sharedWindow, token))
                 {
                     IsBackground = true,
-                    Name = "XR Program Binary Loader",
+                    Name = threadName,
                 };
                 _thread.Start();
 
@@ -108,7 +140,7 @@ namespace XREngine.Rendering.OpenGL
                 _thread = new Thread(() => Run(preCreatedSharedWindow, token))
                 {
                     IsBackground = true,
-                    Name = "XR Program Binary Loader",
+                    Name = threadName,
                 };
                 _thread.Start();
 
@@ -128,8 +160,15 @@ namespace XREngine.Rendering.OpenGL
             /// The action receives the shared context's GL API instance.
             /// </summary>
             public void Enqueue(Action<GL> job)
+                => Enqueue(job, null);
+
+            public void Enqueue(Action<GL> job, string? name)
             {
-                _jobs.Enqueue(job);
+                long now = Stopwatch.GetTimestamp();
+                if (_jobs.IsEmpty)
+                    Interlocked.Exchange(ref _oldestQueuedTimestamp, now);
+
+                _jobs.Enqueue(new SharedContextJob(job, name, now));
                 _signal.Set();
             }
 
@@ -162,22 +201,38 @@ namespace XREngine.Rendering.OpenGL
                     {
                         if (!_jobs.TryDequeue(out var job))
                         {
+                            Interlocked.Exchange(ref _oldestQueuedTimestamp, 0);
                             _signal.WaitOne(TimeSpan.FromMilliseconds(5));
                             continue;
                         }
 
                         try
                         {
-                            job(gl);
+                            _currentJobName = job.Name;
+                            Interlocked.Exchange(ref _currentJobStartTimestamp, Stopwatch.GetTimestamp());
+                            job.Action(gl);
+                            Interlocked.Increment(ref _completedCount);
                         }
                         catch (Exception ex)
                         {
+                            Interlocked.Increment(ref _failedCount);
                             Debug.RenderingWarning($"[SharedContext] Job failed: {ex.Message}");
+                        }
+                        finally
+                        {
+                            _currentJobName = null;
+                            Interlocked.Exchange(ref _currentJobStartTimestamp, 0);
+
+                            if (_jobs.TryPeek(out var oldest))
+                                Interlocked.Exchange(ref _oldestQueuedTimestamp, oldest.EnqueuedTimestamp);
+                            else
+                                Interlocked.Exchange(ref _oldestQueuedTimestamp, 0);
                         }
                     }
                 }
                 catch (Exception ex)
                 {
+                    _workerUnhealthy = true;
                     Debug.RenderingWarning($"[SharedContext] Thread terminated: {ex.Message}\n{ex.StackTrace}");
                 }
                 finally
@@ -185,6 +240,11 @@ namespace XREngine.Rendering.OpenGL
                     _running = false;
                 }
             }
+
+            private static double StopwatchTicksToSeconds(long ticks)
+                => ticks <= 0L ? 0.0 : (double)ticks / Stopwatch.Frequency;
+
+            private readonly record struct SharedContextJob(Action<GL> Action, string? Name, long EnqueuedTimestamp);
         }
     }
 }
