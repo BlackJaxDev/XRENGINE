@@ -55,6 +55,7 @@ namespace XREngine.Rendering.OpenGL
             private static readonly RenderImDrawDataDelegate? RenderImDrawData = CreateRenderImDrawDataDelegate();
             private static readonly TranslateInputKeyDelegate? TranslateInputKey = CreateTranslateInputKeyDelegate();
             private static readonly List<IWindow> AbandonedShutdownWindows = [];
+            private static readonly List<IInputContext> AbandonedShutdownInputContexts = [];
 
             private readonly OpenGLRenderer _renderer;
             private readonly ImGuiController _controller;
@@ -1450,7 +1451,7 @@ namespace XREngine.Rendering.OpenGL
                     Window.Load -= OnLoad;
                     Window.FocusChanged -= OnFocusChanged;
                     Window.Closing -= OnClosing;
-                    DetachInput();
+                    DetachInputHandlers();
 
                     try
                     {
@@ -1475,9 +1476,12 @@ namespace XREngine.Rendering.OpenGL
                     try
                     {
                         (Window as IDisposable)?.Dispose();
+                        ReleaseInputContext();
                     }
                     catch
                     {
+                        AbandonInputContextForShutdown();
+                        AbandonedShutdownWindows.Add(Window);
                     }
 
                     if (_handle.IsAllocated)
@@ -1496,6 +1500,7 @@ namespace XREngine.Rendering.OpenGL
                     if (_handle.IsAllocated)
                         _handle.Free();
 
+                    AbandonInputContextForShutdown();
                     AbandonedShutdownWindows.Add(Window);
                 }
 
@@ -1535,7 +1540,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                private void DetachInput()
+                private void DetachInputHandlers()
                 {
                     if (_mouse is not null)
                     {
@@ -1553,15 +1558,22 @@ namespace XREngine.Rendering.OpenGL
                         keyboard.KeyChar -= OnKeyChar;
                     }
                     _keyboards.Clear();
+                }
 
-                    try
-                    {
-                        (_input as IDisposable)?.Dispose();
-                    }
-                    catch
-                    {
-                    }
+                private void ReleaseInputContext()
+                {
+                    // Silk.NET.Input.Glfw unregisters GLFW callbacks by calling glfwSet*Callback
+                    // during Dispose. Destroying a short-lived ImGui viewport already tears down
+                    // the native GLFW window, so avoid callback restoration on this crash-prone path.
+                    _input = null;
+                }
 
+                private void AbandonInputContextForShutdown()
+                {
+                    if (_input is null)
+                        return;
+
+                    AbandonedShutdownInputContexts.Add(_input);
                     _input = null;
                 }
 

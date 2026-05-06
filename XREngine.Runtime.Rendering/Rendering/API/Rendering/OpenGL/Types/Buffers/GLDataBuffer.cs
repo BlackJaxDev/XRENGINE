@@ -75,24 +75,47 @@ namespace XREngine.Rendering.OpenGL
                 if (Data.Resizable && !ShouldUseImmutableStorage())
                 {
                     // Use dynamic mutable allocation path.
+                    LogFirstUseAudit("Resizable");
                     PushData();
                 }
                 else if (_hasPendingUpload)
                 {
                     // GLUploadQueue generated the object and will allocate/upload it in budgeted chunks.
+                    LogFirstUseAudit("PendingQueued");
                 }
                 else if (Data.Length > AsyncUploadThreshold
                     && Renderer.UploadQueue.Enabled
                     && Data.TryGetAddress(out var sourceAddress)
                     && sourceAddress != VoidPtr.Zero)
                 {
+                    LogFirstUseAudit("Queued");
                     PushDataQueued();
                 }
                 else
                 {
+                    LogFirstUseAudit("ImmutableSync");
                     AllocateImmutable();
                     _lastPushedLength = Data.Length;
                 }
+            }
+
+            // Phase D audit: log buffer size and routing decision on first
+            // PostGenerated. One line per buffer; emit to log_opengl.txt so
+            // a cold-start grep can produce a route-by-size histogram and
+            // identify any meaningful number of <AsyncUploadThreshold
+            // buffers slipping into the synchronous ImmutableSync route.
+            private void LogFirstUseAudit(string route)
+            {
+                Debug.OpenGL(
+                    $"[BufferUploadAudit] route={route} " +
+                    $"sizeBytes={Data.Length} " +
+                    $"thresholdBytes={AsyncUploadThreshold} " +
+                    $"target={Data.Target} " +
+                    $"attribute='{Data.AttributeName ?? string.Empty}' " +
+                    $"resizable={Data.Resizable} " +
+                    $"immutableStorage={ShouldUseImmutableStorage()} " +
+                    $"queueEnabled={Renderer.UploadQueue.Enabled} " +
+                    $"name='{GetDescribingName()}'.");
             }
 
             private string RangeFlagsString() => Data.RangeFlags.ToString();

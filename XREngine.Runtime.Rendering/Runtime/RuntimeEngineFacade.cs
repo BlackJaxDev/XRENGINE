@@ -69,7 +69,7 @@ internal static partial class Engine
         => RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(action, name ?? "render-thread facade task");
 
     public static void EnqueueAppThreadTask(Action action, string? name = null)
-        => RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(action, name ?? "app-thread facade task");
+        => RuntimeRenderingHostServices.Current.EnqueueAppThreadTask(action, name ?? "app-thread facade task");
 
     public static bool InvokeOnMainThread(Action action, string? name = null, bool forceSynchronous = false, bool executeNowIfAlreadyMainThread = false)
     {
@@ -719,7 +719,7 @@ internal sealed class RuntimeRenderSettings
     public bool LightProbesCaptureDepth { get; set; } = true;
     public bool LogMaterialTextureBindings { get; set; }
     public bool LogMissingShaderSamplers { get; set; }
-    public int MaxAsyncShaderProgramsPerFrame { get; set; } = 4;
+    public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16;
     public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy { get; set; } = EOpenGLShaderLinkStrategy.Auto;
     public int OpenGLShaderCompilerThreadCount { get; set; } = -1;
     public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true;

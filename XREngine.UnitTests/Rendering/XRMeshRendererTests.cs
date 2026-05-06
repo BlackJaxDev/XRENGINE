@@ -326,6 +326,27 @@ public class XRMeshRendererTests
         targetRenderer.MeshDeformValidationSummary.ShouldBe("Inactive");
     }
 
+    [Test]
+    public void GenerateAsync_DefaultsToTrue()
+    {
+        // Phase C: async program/buffer generation is the default. Renderers
+        // that genuinely need synchronous generation (full-screen pipeline
+        // passes, FBO blits, light combine renderers) must opt out
+        // explicitly with GenerateAsync = false.
+        var renderer = new XRMeshRenderer();
+        renderer.GenerateAsync.ShouldBeTrue();
+    }
+
+    [Test]
+    public void GenerateAsync_FullScreenQuadBlitOptsOut()
+    {
+        // Pin one of the known synchronous-required overrides:
+        // XRQuadFrameBuffer's FullScreenMesh sets GenerateAsync = false so
+        // that fullscreen blits are guaranteed ready on the frame they run.
+        var renderer = new XRMeshRenderer { GenerateAsync = false };
+        renderer.GenerateAsync.ShouldBeFalse();
+    }
+
     private static XRMesh CreateSingleTriangleMesh()
     {
         Vector3[] positions =

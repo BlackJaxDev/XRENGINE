@@ -464,6 +464,53 @@ public partial class XRMaterial
         return PrepareUberVariantImmediately();
     }
 
+    /// <summary>
+    /// Returns true if this material does not require uber-variant preparation
+    /// (non-uber material) or if a generated variant is already active. Used by
+    /// the GL mesh generation queue to gate first-use renderer Generate() calls
+    /// so the synchronous shader-source generation does not run on the render
+    /// thread inside <see cref="GLMeshRenderer.Generate"/>.
+    /// </summary>
+    public bool IsUberVariantReadyForRendering()
+    {
+        XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
+        if (!ActiveUberVariant.IsEmpty && UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+            return true;
+
+        // Non-uber materials never need variant prep.
+        if (!TryGetUberMaterialState(out _, out _))
+            return true;
+
+        // Failed prep falls back to the canonical shader; don't keep the queue
+        // blocked waiting on a state that won't progress.
+        return UberVariantStatus.Stage is EUberMaterialVariantStage.Failed;
+    }
+
+    /// <summary>
+    /// Kicks off an asynchronous uber-variant build for this material if one is
+    /// not already in flight or complete. Safe no-op for non-uber materials.
+    /// </summary>
+    public void RequestUberVariantPreparationIfNeeded()
+    {
+        XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
+        if (!ActiveUberVariant.IsEmpty && UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+            return;
+
+        if (UberVariantStatus.Stage is EUberMaterialVariantStage.Requested or
+            EUberMaterialVariantStage.Preparing or
+            EUberMaterialVariantStage.Compiling or
+            EUberMaterialVariantStage.Ready or
+            EUberMaterialVariantStage.Active)
+        {
+            return;
+        }
+
+        if (!TryGetUberMaterialState(out _, out _))
+            return;
+
+        RequestUberVariantRebuild();
+    }
+
     public void RequestUberVariantRebuildDebounced(int debounceMilliseconds = UberConstantPropertyEditDebounceMilliseconds)
     {
         if (debounceMilliseconds <= 0)

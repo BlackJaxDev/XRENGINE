@@ -363,6 +363,12 @@ public sealed class RuntimeRenderingHostServicesTests
         public void EnqueueRenderThreadTask(Action task, string reason)
             => task();
 
+        public void EnqueueAppThreadTask(Action task)
+            => task();
+
+        public void EnqueueAppThreadTask(Action task, string reason)
+            => task();
+
         public void EnqueueRenderThreadCoroutine(Func<bool> task)
             => task();
 

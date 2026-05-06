@@ -586,6 +586,79 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldNotContain("gl_Layer");
     }
 
+    /// <summary>
+    /// Regression guard for the historical link error
+    /// "FragBinorm not declared as input from previous stage" observed in the
+    /// 2026-05-06 12:08 baseline (see
+    /// docs/work/todo/rendering/opengl-shader-linking-stall-followups-todo.md).
+    /// The directional cascade shadow geometry shaders are paired with the
+    /// shadow-caster fragment variant of UberShader.frag, which still declares
+    /// FragTan (location 2) and FragBinorm (location 3) as inputs. If either
+    /// geometry shader stops emitting those outputs at the matching location,
+    /// the program link silently fails for any forward Uber-based shadow
+    /// caster.
+    /// </summary>
+    [Test]
+    public void DirectionalCascadeShadowGeometryShaders_EmitFullUberFragmentInterface()
+    {
+        foreach (string fileName in new[]
+        {
+            "DirectionalCascadeShadowDepth.gs",
+            "DirectionalCascadeAtlasShadowDepth.gs",
+        })
+        {
+            string source = LoadShaderSource(fileName);
+
+            // FragTan / FragBinorm are the most regression-prone outputs because
+            // shadow paths frequently strip them; UberShader.frag still consumes
+            // both at locations 2 and 3 in its shadow-caster variant.
+            source.ShouldContain("layout (location = 2) in vec3 InFragTan[];");
+            source.ShouldContain("layout (location = 2) out vec3 FragTan;");
+            source.ShouldContain("FragTan = InFragTan[i];");
+
+            source.ShouldContain("layout (location = 3) in vec3 InFragBinorm[];");
+            source.ShouldContain("layout (location = 3) out vec3 FragBinorm;");
+            source.ShouldContain("FragBinorm = InFragBinorm[i];");
+
+            // The remaining UberShader.frag inputs the shadow path relies on.
+            source.ShouldContain("layout (location = 0) out vec3 FragPos;");
+            source.ShouldContain("layout (location = 1) out vec3 FragNorm;");
+            source.ShouldContain("layout (location = 4) out vec2 FragUV0;");
+            source.ShouldContain("layout (location = 12) out vec4 FragColor0;");
+            source.ShouldContain("layout (location = 20) out vec3 FragPosLocal;");
+        }
+
+        // UberShader.frag must still declare FragBinorm as a fragment input;
+        // if that ever moves location or gets removed, the GS contract above
+        // also has to be updated.
+        string uberFrag = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+        uberFrag.ShouldContain("layout(location = 3)  in vec3 FragBinorm;");
+    }
+
+    /// <summary>
+    /// The point-light geometry shaders are paired with the inline depth-only
+    /// fragment shader in <see cref="ShadowCasterVariantFactory"/>, which
+    /// declares only <c>FragPos</c> at location 0. They must therefore NOT
+    /// emit Uber-style FragTan/FragBinorm outputs (they would be unused, and
+    /// adding them back would imply incorrectly switching to the Uber FS path).
+    /// </summary>
+    [Test]
+    public void PointLightShadowGeometryShaders_OnlyEmitDepthOnlyInterface()
+    {
+        foreach (string fileName in new[]
+        {
+            "PointLightShadowDepth.gs",
+            "PointLightAtlasShadowDepth.gs",
+        })
+        {
+            string source = LoadShaderSource(fileName);
+
+            source.ShouldContain("layout (location = 0) out vec3 FragPos;");
+            source.ShouldNotContain("out vec3 FragTan;");
+            source.ShouldNotContain("out vec3 FragBinorm;");
+        }
+    }
+
     [Test]
     public void DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndSequentialFallback()
     {

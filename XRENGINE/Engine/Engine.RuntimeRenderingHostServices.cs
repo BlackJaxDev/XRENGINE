@@ -272,6 +272,12 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void EnqueueRenderThreadTask(Action task, string reason)
         => Engine.EnqueueRenderThreadTask(task, reason);
 
+    public void EnqueueAppThreadTask(Action task)
+        => Engine.EnqueueAppThreadTask(task);
+
+    public void EnqueueAppThreadTask(Action task, string reason)
+        => Engine.EnqueueAppThreadTask(task, reason);
+
     public void EnqueueRenderThreadCoroutine(Func<bool> task)
         => Engine.AddRenderThreadCoroutine(task);
 

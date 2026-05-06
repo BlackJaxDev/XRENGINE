@@ -1154,6 +1154,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         Stereo = stereo;
         GlobalIlluminationMode = Engine.UserSettings.GlobalIlluminationMode;
         WarmDeferredLightingShaders();
+        WarmFirstRenderShaders();
         _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -1169,6 +1170,35 @@ public partial class DefaultRenderPipeline : RenderPipeline
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingPoint.fs"), EShaderType.Fragment);
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingSpot.fs"), EShaderType.Fragment);
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "DeferredLightingDir.fs"), EShaderType.Fragment);
+    }
+
+    /// <summary>
+    /// Phase 7: Pre-warm shader assets that are otherwise first-touched on the
+    /// render thread inside <c>XRViewport.Render</c> and produce ~500 ms
+    /// <c>AssetManager.DeserializeAsset</c> stalls on a cold cache.
+    /// </summary>
+    private void WarmFirstRenderShaders()
+    {
+        // MotionVectors.fs is requested by the velocity / TAA / vendor-upscale
+        // path on the first frame that motion vectors are needed.
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "MotionVectors.fs"), EShaderType.Fragment);
+        // DepthNormalPrePass.fs is the prepass material; created lazily but
+        // first-touched on the render thread.
+        ShaderHelper.WarmEngineShader(Path.Combine("Common", "DepthNormalPrePass.fs"), EShaderType.Fragment);
+        // TemporalAccumulation.fs is first-touched when TAA prepares its history
+        // material; observed at ~325 ms on the render thread on cold cache.
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "TemporalAccumulation.fs"), EShaderType.Fragment);
+        // UI text batched shaders are first-touched the moment editor ImGui-style
+        // text-batched UI hits a draw call; observed at ~487 ms on cold cache.
+        ShaderHelper.WarmEngineShader(Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine("Common", "UITextBatched.vs"), EShaderType.Vertex);
+        // Forward+ tile light culling compute shader; the variant matching the
+        // pipeline's stereo flag is the one VPRC_ForwardPlusLightCullingPass
+        // requests on its first execution.
+        if (Stereo)
+            ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "ForwardPlus", "LightCullingStereo.comp"), EShaderType.Compute);
+        else
+            ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "ForwardPlus", "LightCulling.comp"), EShaderType.Compute);
     }
 
     private bool EnableTransformIdVisualization
