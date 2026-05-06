@@ -809,6 +809,7 @@ namespace XREngine.Rendering.OpenGL
             ResetImGuiFrameMarker();
 
             // Clean up shared contexts and async queues
+            ShaderProgramLifecycleDiagnostics.LogSummary(_programBinaryUploadQueue);
             _programBinaryUploadQueue = null;
             _programCompileLinkQueue = null;
             _programBinarySharedContext?.Dispose();

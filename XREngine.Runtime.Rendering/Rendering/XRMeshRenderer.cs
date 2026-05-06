@@ -380,7 +380,12 @@ namespace XREngine.Rendering
             }
         }
 
-        private bool _generateAsync = false;
+        // Phase C: default to async generation. Renderers that genuinely
+        // require their programs/buffers to be ready on the same frame
+        // they are constructed (full-screen pipeline passes, FBO quads,
+        // light-volume combine renderers, indirect render pass setup)
+        // must opt out by setting GenerateAsync = false explicitly.
+        private bool _generateAsync = true;
         /// <summary>
         /// If true, the mesh will be generated for rendering asynchronously.
         /// False by default.

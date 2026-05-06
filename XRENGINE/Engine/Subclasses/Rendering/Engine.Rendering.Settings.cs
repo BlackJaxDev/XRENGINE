@@ -388,7 +388,7 @@ namespace XREngine
                 private bool _allowBinaryProgramCaching = true;
                 private bool _asyncProgramBinaryUpload = true;
                 private bool _asyncProgramCompilation = true;
-                private int _maxAsyncShaderProgramsPerFrame = 4;
+                private int _maxAsyncShaderProgramsPerFrame = 16;
                 private EOpenGLShaderLinkStrategy _openGLShaderLinkStrategy = EOpenGLShaderLinkStrategy.Auto;
                 private int _openGLShaderCompilerThreadCount = -1;
                 private bool _openGLParallelShaderCompileProbeEnabled = true;

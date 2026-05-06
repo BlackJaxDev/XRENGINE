@@ -278,7 +278,7 @@ namespace XREngine.Rendering.Commands
             scene.EnsureAtlasBuffers();
             scene.RebuildAllAtlasesIfDirty();
 
-            _indirectRenderer = new XRMeshRenderer();
+            _indirectRenderer = new XRMeshRenderer { GenerateAsync = false };
             var defVer = _indirectRenderer.GetDefaultVersion();
             defVer.Generate();
 

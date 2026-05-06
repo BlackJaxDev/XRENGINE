@@ -721,15 +721,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRMesh pointLightMesh = PointLightComponent.GetVolumeMesh();
             XRMesh spotLightMesh = SpotLightComponent.GetVolumeMesh();
 
-            PointLightRenderer = new XRMeshRenderer(pointLightMesh, pointLightMat);
+            // Phase C: deferred-light combine renderers must be ready on the
+            // first frame their pipeline pass runs; opt out of async default.
+            PointLightRenderer = new XRMeshRenderer(pointLightMesh, pointLightMat) { GenerateAsync = false };
             PointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            SpotLightRenderer = new XRMeshRenderer(spotLightMesh, spotLightMat);
+            SpotLightRenderer = new XRMeshRenderer(spotLightMesh, spotLightMat) { GenerateAsync = false };
             SpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
             XRMesh dirLightMesh = DirectionalLightComponent.GetVolumeMesh();
 
-            DirectionalLightRenderer = new XRMeshRenderer(dirLightMesh, dirLightMat);
+            DirectionalLightRenderer = new XRMeshRenderer(dirLightMesh, dirLightMat) { GenerateAsync = false };
             DirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
             // Invalidate MSAA renderers since the simple phase depends on the resolved GBuffer.
@@ -828,22 +830,24 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             XRMesh dirMesh = DirectionalLightComponent.GetVolumeMesh();
 
-            MsaaSimplePointLightRenderer = new XRMeshRenderer(pointMesh, simplePointMat);
+            // Phase C: MSAA combine renderers must be ready on the first
+            // pipeline frame they run; opt out of async default.
+            MsaaSimplePointLightRenderer = new XRMeshRenderer(pointMesh, simplePointMat) { GenerateAsync = false };
             MsaaSimplePointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaSimpleSpotLightRenderer = new XRMeshRenderer(spotMesh, simpleSpotMat);
+            MsaaSimpleSpotLightRenderer = new XRMeshRenderer(spotMesh, simpleSpotMat) { GenerateAsync = false };
             MsaaSimpleSpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaSimpleDirectionalLightRenderer = new XRMeshRenderer(dirMesh, simpleDirMat);
+            MsaaSimpleDirectionalLightRenderer = new XRMeshRenderer(dirMesh, simpleDirMat) { GenerateAsync = false };
             MsaaSimpleDirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaComplexPointLightRenderer = new XRMeshRenderer(pointMesh, msaaPointMat);
+            MsaaComplexPointLightRenderer = new XRMeshRenderer(pointMesh, msaaPointMat) { GenerateAsync = false };
             MsaaComplexPointLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
 
-            MsaaComplexSpotLightRenderer = new XRMeshRenderer(spotMesh, msaaSpotMat);
+            MsaaComplexSpotLightRenderer = new XRMeshRenderer(spotMesh, msaaSpotMat) { GenerateAsync = false };
             MsaaComplexSpotLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
 
-            MsaaComplexDirectionalLightRenderer = new XRMeshRenderer(dirMesh, msaaDirMat);
+            MsaaComplexDirectionalLightRenderer = new XRMeshRenderer(dirMesh, msaaDirMat) { GenerateAsync = false };
             MsaaComplexDirectionalLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
         }
 

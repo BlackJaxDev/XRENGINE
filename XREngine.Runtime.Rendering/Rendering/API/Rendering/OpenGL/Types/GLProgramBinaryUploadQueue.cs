@@ -20,6 +20,14 @@ namespace XREngine.Rendering.OpenGL
         {
             private readonly GLSharedContext _sharedContext = sharedContext;
             private readonly ConcurrentDictionary<uint, UploadResult> _completed = new();
+            // Phase 4: dedup uploads by cacheKey so 50 different program instances
+            // sharing the same shader binary do not flood the queue simultaneously.
+            // Reservations are released as soon as the worker has finished writing to
+            // _completed; a sibling caller for the same cacheKey will then be free to
+            // queue its own upload (each instance still needs its own programId loaded
+            // with glProgramBinary).
+            private readonly ConcurrentDictionary<string, byte> _inFlightCacheKeys = new();
+            private long _coalescedCount;
             private int _inFlight;
             private long _completedCount;
             private long _failedCount;
@@ -29,8 +37,16 @@ namespace XREngine.Rendering.OpenGL
             /// Maximum number of program binary uploads that can be queued but not yet
             /// consumed by the main thread. Prevents unbounded VRAM allocation from the
             /// shared context competing with main-thread buffer/mesh uploads.
+            /// <para/>
+            /// Phase 10: raised from 8 to 32 so that during cold-startup shader floods
+            /// (Sponza first-render: ~387 programs) the upload worker is not artificially
+            /// throttled while the render thread is finalizing previous results. The
+            /// worker is still single-threaded; this only widens the producer/consumer
+            /// buffer so backpressure does not stall enqueue latency. Each in-flight
+            /// program binary is small (typically &lt;100 KB), so 32 * ~100 KB = ~3 MB of
+            /// transient VRAM is acceptable on any target GPU.
             /// </summary>
-            public const int MaxInFlight = 8;
+            public const int MaxInFlight = 32;
 
             public bool IsAvailable => _sharedContext.IsRunning;
 
@@ -45,11 +61,41 @@ namespace XREngine.Rendering.OpenGL
             public long CompletedCount => Interlocked.Read(ref _completedCount);
             public long FailedCount => Interlocked.Read(ref _failedCount);
             public long BackpressureCount => Interlocked.Read(ref _backpressureCount);
+            public long CoalescedCount => Interlocked.Read(ref _coalescedCount);
+            public int InFlightCacheKeyCount => _inFlightCacheKeys.Count;
             public double OldestPendingAgeSeconds => _sharedContext.OldestPendingAgeSeconds;
             public bool IsWorkerUnhealthy => _sharedContext.IsWorkerUnhealthy;
 
             public void RecordBackpressure()
                 => Interlocked.Increment(ref _backpressureCount);
+
+            /// <summary>
+            /// Phase 4 coalescing reservation. Returns <c>true</c> if no other upload
+            /// for the same <paramref name="cacheKey"/> is currently being processed by
+            /// the worker. Returns <c>false</c> if a sibling caller already owns the key,
+            /// in which case the caller should defer (treat as backpressure) and retry
+            /// next frame. Each caller still owns a unique programId/handle.
+            /// </summary>
+            public bool TryReserveCacheKey(string cacheKey)
+            {
+                if (string.IsNullOrEmpty(cacheKey))
+                    return true;
+                if (_inFlightCacheKeys.TryAdd(cacheKey, 0))
+                    return true;
+                Interlocked.Increment(ref _coalescedCount);
+                return false;
+            }
+
+            /// <summary>
+            /// Releases a cacheKey reservation made via <see cref="TryReserveCacheKey"/>.
+            /// Safe to call with an unknown key.
+            /// </summary>
+            public void ReleaseCacheKey(string? cacheKey)
+            {
+                if (string.IsNullOrEmpty(cacheKey))
+                    return;
+                _inFlightCacheKeys.TryRemove(cacheKey, out _);
+            }
 
             public enum UploadStatus : byte { Success, Failed }
 
@@ -170,6 +216,10 @@ namespace XREngine.Rendering.OpenGL
                         Interlocked.Increment(ref _completedCount);
                     else
                         Interlocked.Increment(ref _failedCount);
+                    // Phase 4: release the cacheKey now that the binary bytes have
+                    // landed (or failed). A sibling caller can pick up its own upload
+                    // on the next frame without deadlock.
+                    _inFlightCacheKeys.TryRemove(cacheKey, out _);
                 }, $"ProgramBinaryUpload:{cacheKey}");
             }
 

@@ -112,6 +112,32 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
         future.ShouldNotBe(current);
     }
 
+    // Phase 2 regression guard: the binary-cache-hit fast path must not depend on
+    // CompileInputsReady. PrepareLinkData skips PrepareCompileInputs() on cache hits,
+    // so CompileInputsReady will be false on that path. The selector must still pick
+    // the binary upload lane regardless.
+    [Test]
+    public void BinaryCacheHit_SelectsBinaryUploadLane_EvenWithoutCompileInputs()
+    {
+        OpenGLShaderLinkBackendSelection asyncSelection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            hasBinaryCacheHit: true,
+            binaryUploadAvailable: true,
+            binaryUploadCanEnqueue: true,
+            compileInputsReady: false));
+
+        asyncSelection.Lane.ShouldBe(EOpenGLProgramBuildLane.BinaryUploadAsync);
+        asyncSelection.IsAsync.ShouldBeTrue();
+
+        OpenGLShaderLinkBackendSelection syncSelection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            hasBinaryCacheHit: true,
+            asyncProgramBinaryUpload: false,
+            binaryUploadAvailable: false,
+            compileInputsReady: false));
+
+        syncSelection.Lane.ShouldBe(EOpenGLProgramBuildLane.BinaryUploadSynchronous);
+        syncSelection.IsAsync.ShouldBeFalse();
+    }
+
     private static OpenGLShaderLinkBackendContext CreateContext(
         EOpenGLShaderLinkStrategy strategy = EOpenGLShaderLinkStrategy.Auto,
         bool asyncProgramCompilation = true,

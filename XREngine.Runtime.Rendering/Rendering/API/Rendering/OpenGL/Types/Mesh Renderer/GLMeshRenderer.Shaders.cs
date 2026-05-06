@@ -161,12 +161,24 @@ namespace XREngine.Rendering.OpenGL
             /// <inheritdoc />
             public bool TryPrepareForRendering(out string reason)
             {
-                bool ok = TryPrepareForRendering();
+                bool ok = TryPrepareForRendering(0.0);
                 reason = _lastPrepareResult;
                 return ok;
             }
 
             public bool TryPrepareForRendering()
+                => TryPrepareForRendering(0.0);
+
+            /// <summary>
+            /// Prepares this renderer with an optional defer-on-overrun budget.
+            /// When <paramref name="deferOverrunBudgetMs"/> is greater than zero,
+            /// the method bails out early with <c>_lastPrepareResult = "DeferredOverrun"</c>
+            /// once the accumulated stage timers exceed the budget, so the caller can
+            /// requeue the renderer for the next frame instead of compounding
+            /// expensive first-use shader work into a single render-thread stall.
+            /// A budget of <c>0.0</c> disables the check and matches historical behaviour.
+            /// </summary>
+            public bool TryPrepareForRendering(double deferOverrunBudgetMs)
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.TryPrepareForRendering", ProfilerScopeKind.ConditionalLoop);
                 long methodStart = Stopwatch.GetTimestamp();
@@ -179,6 +191,8 @@ namespace XREngine.Rendering.OpenGL
                 double configureDrawTopologyMs = 0.0;
                 double bindBuffersMs = 0.0;
                 double dynamicRenderDataMs = 0.0;
+                bool budgetActive = deferOverrunBudgetMs > 0.0;
+                _lastDeferOverrunMs = 0.0;
 
                 if (Data is null)
                 {
@@ -223,6 +237,30 @@ namespace XREngine.Rendering.OpenGL
                     System.Threading.Interlocked.Increment(ref _genCallSiteTryPrepareNull);
                     GenProgramsAndBuffers();
                     genProgramsAndBuffersMs = ElapsedMilliseconds(stageStart);
+                }
+
+                if (budgetActive)
+                {
+                    double accumulated = ensureRenderSettingsMs + ensureMaterialStateMs + genProgramsAndBuffersMs;
+                    if (accumulated > deferOverrunBudgetMs)
+                    {
+                        _lastDeferOverrunMs = accumulated;
+                        LogSlowTryPrepare(
+                            "DeferredOverrun",
+                            ElapsedMilliseconds(methodStart),
+                            generateMs,
+                            ensureRenderSettingsMs,
+                            ensureMaterialStateMs,
+                            genProgramsAndBuffersMs,
+                            materialLookupMs,
+                            getProgramsMs,
+                            configureDrawTopologyMs,
+                            bindBuffersMs,
+                            dynamicRenderDataMs);
+                        _lastPrepareResult = "DeferredOverrun";
+                        _lastPrepareDetail = string.Empty;
+                        return false;
+                    }
                 }
 
                 stageStart = Stopwatch.GetTimestamp();
@@ -419,7 +457,7 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
-                if (!vertexProgram.Link())
+                if (!vertexProgram.Link(nonBlocking: true))
                 {
                     vertexProgram = null;
                     Dbg("GetCombinedProgram: link failed", "Programs");
@@ -472,7 +510,7 @@ namespace XREngine.Rendering.OpenGL
             private bool UseSuppliedVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
             {
                 vertexProgram = materialProgram;
-                if (materialProgram?.Link() ?? false)
+                if (materialProgram?.Link(nonBlocking: true) ?? false)
                 {
                     _pipeline!.Set(mask, materialProgram);
                     Dbg("UseSuppliedVertexShader: material vertex shader linked & set", "Programs");
@@ -501,7 +539,7 @@ namespace XREngine.Rendering.OpenGL
                     ? GetForcedGeneratedVertexProgram()
                     : GetOrCreateSeparatedVertexProgram();
 
-                if (materialProgram?.Link() ?? false)
+                if (materialProgram?.Link(nonBlocking: true) ?? false)
                     _pipeline!.Set(mask, materialProgram);
                 else
                 {
@@ -509,7 +547,7 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
-                if (vertexProgram?.Link() ?? false)
+                if (vertexProgram?.Link(nonBlocking: true) ?? false)
                     _pipeline!.Set(EProgramStageMask.VertexShaderBit, vertexProgram);
                 else
                 {

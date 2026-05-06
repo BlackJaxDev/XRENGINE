@@ -51,6 +51,28 @@ namespace XREngine.Rendering.OpenGL
             private const double SlowRendererPrepareLogThresholdMs = 50.0;
 
             /// <summary>
+            /// If <see cref="GLMeshRenderer.Generate"/> alone consumes more than this
+            /// many milliseconds, the renderer is requeued for the next frame instead
+            /// of running <see cref="GLMeshRenderer.TryPrepareForRendering"/> in the
+            /// same frame. Bisects expensive first-use preparation across two frames
+            /// so the render thread does not sit on a 50-70ms compound stall.
+            /// </summary>
+            private const double GenerateOverrunDeferThresholdMs = 8.0;
+
+            /// <summary>
+            /// Per-frame budget passed into <see cref="GLMeshRenderer.TryPrepareForRendering(double)"/>.
+            /// If the accumulated <c>EnsureProgramsMatchRenderSettings</c> +
+            /// <c>EnsureProgramsMatchMaterialShaderState</c> +
+            /// <c>GenProgramsAndBuffers</c> stages consume more than this many
+            /// milliseconds, <c>TryPrepareForRendering</c> bails out before the
+            /// expensive <c>GetPrograms</c>/<c>BindBuffers</c> stages and the
+            /// queue requeues the renderer for the next frame.
+            /// Bounds compound first-use stalls when material-readiness gating
+            /// has not yet landed (e.g. non-uber materials).
+            /// </summary>
+            public double TryPrepareOverrunDeferThresholdMs { get; set; } = 8.0;
+
+            /// <summary>
             /// Maximum number of generation attempts per renderer before giving up.
             /// The renderer is retried from scratch when its mesh data genuinely changes.
             /// </summary>
@@ -66,7 +88,14 @@ namespace XREngine.Rendering.OpenGL
             /// The time budget is checked between renderers, so a count cap prevents
             /// a large backlog from chaining several individually-expensive first-use preparations.
             /// </summary>
-            public int MaxNormalRenderersPerFrame { get; set; } = 2;
+            /// <remarks>
+            /// First-use Sponza-class submesh preparation can run 50-70ms per renderer
+            /// of synchronous OpenGL driver work (immutable buffer allocation + VAO
+            /// setup) that cannot be sliced inside a single ProcessRenderer call.
+            /// Capping at 1 ensures a frame contains at most one such overrun rather
+            /// than compounding two of them into a 100ms+ render-thread stall.
+            /// </remarks>
+            public int MaxNormalRenderersPerFrame { get; set; } = 1;
 
             /// <summary>
             /// Hard cap for render-pipeline-priority renderer preparation when priority generation is throttled.
@@ -205,8 +234,16 @@ namespace XREngine.Rendering.OpenGL
                     && (!throttlePriorityGeneration || priorityProcessed < MaxThrottledPriorityRenderersPerFrame)
                     && _priorityQueue.TryDequeue(out var priorityRenderer))
                 {
-                    priorityProcessed++;
                     _pendingSet.TryRemove(priorityRenderer, out _);
+
+                    if (!IsMaterialReadyForGeneration(priorityRenderer))
+                    {
+                        RequestMaterialPrepIfNeeded(priorityRenderer);
+                        deferredPriority.Add(priorityRenderer);
+                        continue;
+                    }
+
+                    priorityProcessed++;
                     QueueProcessResult result = ProcessRenderer(priorityRenderer);
                     CountProcessResult(priorityRenderer, result, deferredPriority, ref generated, ref failed);
 
@@ -220,8 +257,20 @@ namespace XREngine.Rendering.OpenGL
                     && normalProcessed < MaxNormalRenderersPerFrame
                     && _normalQueue.TryDequeue(out var renderer))
                 {
-                    normalProcessed++;
                     _pendingSet.TryRemove(renderer, out _);
+
+                    // Defer renderers whose material's uber-variant preparation has not
+                    // completed without consuming a per-frame slot. The synchronous
+                    // shader-source generation otherwise runs inside GLMeshRenderer.Generate()
+                    // on the render thread (50-70ms per first-use Sponza-class material).
+                    if (!IsMaterialReadyForGeneration(renderer))
+                    {
+                        RequestMaterialPrepIfNeeded(renderer);
+                        deferredNormal.Add(renderer);
+                        continue;
+                    }
+
+                    normalProcessed++;
                     QueueProcessResult result = ProcessRenderer(renderer);
                     CountProcessResult(renderer, result, deferredNormal, ref generated, ref failed);
                 }
@@ -384,14 +433,33 @@ namespace XREngine.Rendering.OpenGL
                         return QueueProcessResult.Failed;
                     }
 
+                    // If Generate() alone consumed most of a frame budget, defer
+                    // TryPrepareForRendering to the next frame so we do not compound
+                    // a 50ms+ Generate with a 50ms+ TryPrepare in a single render
+                    // frame. The Pending result requeues the renderer.
+                    if (generateMs > GenerateOverrunDeferThresholdMs)
+                    {
+                        LogSlowRendererPreparation(renderer, QueueProcessResult.Pending, ElapsedMilliseconds(processStart), generateMs, prepareMs);
+                        return QueueProcessResult.Pending;
+                    }
+
                     long prepareStart = Stopwatch.GetTimestamp();
-                    bool prepared = renderer.TryPrepareForRendering();
+                    bool prepared = renderer.TryPrepareForRendering(TryPrepareOverrunDeferThresholdMs);
                     prepareMs = ElapsedMilliseconds(prepareStart);
                     if (prepared)
                     {
                         LogSlowRendererPreparation(renderer, QueueProcessResult.Completed, ElapsedMilliseconds(processStart), generateMs, prepareMs);
                         _failureCount.TryRemove(renderer, out _);
                         return QueueProcessResult.Completed;
+                    }
+
+                    if (string.Equals(renderer.LastPrepareResult, "DeferredOverrun", StringComparison.Ordinal))
+                    {
+                        Debug.OpenGL(
+                            $"[GLMeshGenerationQueue] TryPrepare deferred: deferOverrunMs={renderer.LastDeferOverrunMs:F2}, " +
+                            $"budgetMs={TryPrepareOverrunDeferThresholdMs:F2}, generateMs={generateMs:F2}, " +
+                            $"renderer='{renderer.GetDescribingName()}', material='{renderer.MeshRenderer.Material?.Name ?? "<null>"}'.");
+                        return QueueProcessResult.Pending;
                     }
 
                     LogSlowRendererPreparation(renderer, QueueProcessResult.Pending, ElapsedMilliseconds(processStart), generateMs, prepareMs);
@@ -437,6 +505,26 @@ namespace XREngine.Rendering.OpenGL
 
             private static double ElapsedMilliseconds(long startTimestamp)
                 => (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+
+            /// <summary>
+            /// Returns true if the renderer's material has either no uber-variant
+            /// requirement or a prepared variant already active. False means
+            /// preparation is in flight (or hasn't been requested yet) and the
+            /// renderer should be deferred to a later frame so the synchronous
+            /// shader-source generation does not run on the render thread.
+            /// </summary>
+            private static bool IsMaterialReadyForGeneration(GLMeshRenderer renderer)
+            {
+                XRMaterial? material = renderer.MeshRenderer.Material;
+                return material is null || material.IsUberVariantReadyForRendering();
+            }
+
+            /// <summary>
+            /// Asks the material to start an asynchronous uber-variant build if
+            /// one is not already in flight or complete. No-op for non-uber materials.
+            /// </summary>
+            private static void RequestMaterialPrepIfNeeded(GLMeshRenderer renderer)
+                => renderer.MeshRenderer.Material?.RequestUberVariantPreparationIfNeeded();
         }
 
         private GLMeshGenerationQueue? _meshGenerationQueue;

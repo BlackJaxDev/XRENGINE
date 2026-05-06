@@ -245,7 +245,7 @@
   // Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it.
   "AsyncProgramCompilation": true,
   // Maximum number of pending async OpenGL shader programs to advance per render frame.
-  "MaxAsyncShaderProgramsPerFrame": 4,
+  "MaxAsyncShaderProgramsPerFrame": 16,
   // Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.
   "OpenGLShaderCompilerThreadCount": -1,
   // Runs a small startup probe before using the explicit DriverParallel OpenGL link path.

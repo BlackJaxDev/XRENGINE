@@ -523,6 +523,17 @@ public interface IRuntimeRenderingHostServices
     void EnqueueRenderThreadTask(Action task, string reason);
 
     /// <summary>
+    /// Queues work for execution on the host application/update thread. Use this for
+    /// non-GPU work (scene/editor/networking) so it does not stall the render thread.
+    /// </summary>
+    void EnqueueAppThreadTask(Action task);
+
+    /// <summary>
+    /// Queues named work for execution on the host application/update thread.
+    /// </summary>
+    void EnqueueAppThreadTask(Action task, string reason);
+
+    /// <summary>
     /// Queues a render-thread coroutine that returns <see langword="true"/> when it should continue.
     /// </summary>
     void EnqueueRenderThreadCoroutine(Func<bool> task);

@@ -391,7 +391,16 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                compileInputs = PrepareCompileInputs();
+                // Phase 2: skip full source materialization on the warm binary-cache fast
+                // path. Binary cache hits do not need shader source text - the link path
+                // and verbose telemetry both fall back to walking _shaderCache when
+                // _preparedCompileInputs is null. Binary cache misses still get inputs
+                // either here (below) or via the lazy fallback at the source-build site.
+                // Phase 3: skip source materialization for hashes that have already failed
+                // in this session - we will short-circuit the link with a rate-limited
+                // SOURCE_FAILED_SKIPPED log instead of attempting another source build.
+                if (!isCached && !Failed.ContainsKey(hash))
+                    compileInputs = PrepareCompileInputs();
 
                 _preparedHash = hash;
                 _preparedCacheKey = cacheKey;
@@ -405,6 +414,7 @@ namespace XREngine.Rendering.OpenGL
                 if (preparationMilliseconds >= SlowLinkPreparationWarningMilliseconds)
                 {
                     Debug.OpenGLWarning($"[ShaderCache] Slow link preparation: hash={hash}, shaderCount={_shaderCache.Count}, cached={isCached}, compileInputs={compileInputs?.Length ?? 0}, elapsedMs={preparationMilliseconds:F2}.");
+                    ShaderProgramLifecycleDiagnostics.RecordSlowLinkPreparation();
                 }
             }
 
@@ -512,6 +522,22 @@ namespace XREngine.Rendering.OpenGL
 
             //private static object HashLock = new();
             private static readonly ConcurrentDictionary<ulong, byte> Failed = new();
+
+            // Phase 3: per-hash diagnostic record captured the first time a hash fails,
+            // and used to rate-limit follow-up SOURCE_FAILED_SKIPPED logs and supply
+            // compact metadata without paying for a full ShaderProgramSourceSummary on
+            // every retry.
+            private readonly record struct FailedHashRecord(
+                long FirstFailureTicks,
+                long LastLogTicks,
+                int SkipCount,
+                string? Reason,
+                string? Label,
+                string? StageList,
+                bool Separable);
+
+            private static readonly ConcurrentDictionary<ulong, FailedHashRecord> FailedHashDiagnostics = new();
+            private const double FailedHashSkipLogThrottleSeconds = 10.0;
 
             /// <summary>
             /// Tracks hashes currently being compiled from source so that duplicate
@@ -772,6 +798,7 @@ namespace XREngine.Rendering.OpenGL
 
                         if (anyFailed)
                         {
+                            ShaderProgramLifecycleDiagnostics.RecordSourceFailure();
                             Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
                             CompleteUberBackendTracking(false, "Backend shader compile failed.", compileMilliseconds, 0.0);
                             PublishBackendStatus(
@@ -782,7 +809,7 @@ namespace XREngine.Rendering.OpenGL
                                 compileMilliseconds,
                                 0.0);
                             CompleteBuildTelemetry(false, compileMilliseconds, failureReason: "Backend shader compile failed.");
-                            Failed.TryAdd(Hash, 0);
+                            MarkHashFailed("Backend shader compile failed.");
                             InFlightCompilations.TryRemove(Hash, out _);
                             CleanupAsyncLink();
                             MarkBuildFailed();
@@ -820,7 +847,7 @@ namespace XREngine.Rendering.OpenGL
 
                         if (!noErrors)
                         {
-                            Failed.TryAdd(Hash, 0);
+                            MarkHashFailed("Driver-parallel attach observed shader compile errors.");
                             InFlightCompilations.TryRemove(Hash, out _);
                             CleanupAsyncLink();
                             MarkBuildFailed();
@@ -981,7 +1008,7 @@ namespace XREngine.Rendering.OpenGL
                     $"Abandoning async link for program '{Data.Name ?? "<unnamed>"}' hash={Hash}: programId={linkedProgramId} " +
                     $"and {(_asyncAttachedShaderIds?.Length ?? 0)} shader(s) leaked to avoid blocking GL calls.");
 
-                Failed.TryAdd(Hash, 0);
+                MarkHashFailed("Async link timed out (driver never reported completion).");
                 CompleteUberBackendTracking(false, "Async link timed out (driver never reported completion).");
                 PublishBackendStatus(
                     EShaderProgramBackendStage.Abandoned,
@@ -1048,7 +1075,7 @@ namespace XREngine.Rendering.OpenGL
                         compileMilliseconds,
                         linkMilliseconds);
                     CompleteBuildTelemetry(false, compileMilliseconds, linkMilliseconds, failureReason: linkError);
-                    Failed.TryAdd(Hash, 0);
+                    MarkHashFailed(linkError);
                 }
 
                 CompleteUberBackendTracking(linked, linkError, compileMilliseconds, linkMilliseconds);
@@ -1701,6 +1728,96 @@ namespace XREngine.Rendering.OpenGL
             private bool ReturnPendingBuildResult()
                 => IsLinked && _replacementProgramPending;
 
+            // Phase 3: capture compact diagnostic metadata the first time a hash fails
+            // and bump the failed-hash dictionary. Cheap, non-allocating in the steady
+            // state because subsequent calls just hit the AddOrUpdate update branch.
+            private void MarkHashFailed(string? reason)
+            {
+                Failed.TryAdd(Hash, 0);
+                long now = Stopwatch.GetTimestamp();
+                string label = Data.Name ?? "<unnamed>";
+                string stageList = BuildFailedHashStageListSnapshot();
+                bool separable = Data.Separable;
+                FailedHashDiagnostics.AddOrUpdate(
+                    Hash,
+                    static (_, args) => new FailedHashRecord(
+                        args.now,
+                        0L,
+                        0,
+                        args.reason,
+                        args.label,
+                        args.stageList,
+                        args.separable),
+                    static (_, existing, args) => existing with
+                    {
+                        Reason = existing.Reason ?? args.reason,
+                        Label = existing.Label ?? args.label,
+                        StageList = existing.StageList ?? args.stageList,
+                    },
+                    (now, reason, label, stageList, separable));
+            }
+
+            private string BuildFailedHashStageListSnapshot()
+            {
+                int count = Data.Shaders.Count;
+                if (count == 0)
+                    return "<none>";
+                var sb = new StringBuilder(count * 16);
+                for (int i = 0; i < count; i++)
+                {
+                    if (i > 0)
+                        sb.Append('|');
+                    sb.Append(Data.Shaders[i].Type);
+                }
+                return sb.ToString();
+            }
+
+            // Phase 3: rate-limited follow-up log for known-failed hashes encountered
+            // during link. The first failure already produced a full diagnostic via
+            // PrintLinkDebug / PublishBackendStatus(Failed); this path emits compact
+            // SOURCE_FAILED_SKIPPED entries throttled to one per hash per
+            // FailedHashSkipLogThrottleSeconds, so a flood of retries does not spam
+            // logs or regenerate ShaderProgramSourceSummary every frame.
+            private void EmitFailedHashSkipLog(string? cacheKey, uint bindingId)
+            {
+                long now = Stopwatch.GetTimestamp();
+                bool emit = false;
+                FailedHashRecord snapshot = default;
+                FailedHashDiagnostics.AddOrUpdate(
+                    Hash,
+                    _ =>
+                    {
+                        emit = true;
+                        snapshot = new FailedHashRecord(now, now, 1, null, Data.Name ?? "<unnamed>", BuildFailedHashStageListSnapshot(), Data.Separable);
+                        return snapshot;
+                    },
+                    (_, existing) =>
+                    {
+                        int newSkip = existing.SkipCount + 1;
+                        double secondsSinceLast = StopwatchTicksToMilliseconds(now - existing.LastLogTicks) / 1000.0;
+                        if (existing.LastLogTicks == 0L || secondsSinceLast >= FailedHashSkipLogThrottleSeconds)
+                        {
+                            emit = true;
+                            snapshot = existing with { LastLogTicks = now, SkipCount = newSkip };
+                            return snapshot;
+                        }
+                        snapshot = existing with { SkipCount = newSkip };
+                        return snapshot;
+                    });
+
+                if (!emit)
+                    return;
+
+                ShaderProgramLifecycleDiagnostics.RecordFailedHashSkip();
+                long start = snapshot.FirstFailureTicks > 0L ? snapshot.FirstFailureTicks : now;
+                double elapsedMs = StopwatchTicksToMilliseconds(now - start);
+                Debug.OpenGLWarning(
+                    $"[ShaderLink] SOURCE_FAILED_SKIPPED hash={Hash} label='{snapshot.Label ?? Data.Name ?? "<unnamed>"}' " +
+                    $"separable={snapshot.Separable} stages={snapshot.StageList ?? "<none>"} skipCount={snapshot.SkipCount} " +
+                    $"elapsedMs={elapsedMs:F0} reason='{snapshot.Reason ?? "<unknown>"}' " +
+                    $"fingerprint={cacheKey ?? "<none>"} programId={bindingId}.");
+            }
+
             private void MarkBuildFailed()
             {
                 if (_replacementProgramPending)
@@ -1717,7 +1834,7 @@ namespace XREngine.Rendering.OpenGL
                 IsLinked = false;
             }
 
-            public bool Link(bool force = false)
+            public bool Link(bool force = false, bool nonBlocking = false)
             {
                 using var prof = Engine.Profiler.Start("GLRenderProgram.Link", ProfilerScopeKind.ConditionalLoop);
 
@@ -1857,7 +1974,7 @@ namespace XREngine.Rendering.OpenGL
                                 compileResult.CompileMilliseconds,
                                 compileResult.LinkMilliseconds,
                                 failureReason: compileResult.ErrorLog);
-                            Failed.TryAdd(Hash, 0);
+                            MarkHashFailed(compileResult.ErrorLog ?? $"async {errorKind} failed");
                             InFlightCompilations.TryRemove(Hash, out _);
                             MarkBuildFailed();
                             return IsLinked;
@@ -1942,6 +2059,7 @@ namespace XREngine.Rendering.OpenGL
                     using var cacheLoadProf = Engine.Profiler.Start("GLRenderProgram.Link.LoadCachedBinary", ProfilerScopeKind.OneOffInvoke);
                     _cachedProgram = binProg;
                     GLEnum format = binProg.Format;
+                    ShaderProgramLifecycleDiagnostics.RecordBinaryCacheHit();
                     PublishBackendStatus(
                         EShaderProgramBackendStage.CacheHit,
                         "BinaryCache",
@@ -2000,6 +2118,32 @@ namespace XREngine.Rendering.OpenGL
 
                         if (selection.Lane == EOpenGLProgramBuildLane.BinaryUploadAsync && uploadQueue is not null)
                         {
+                            // Phase 4: coalesce duplicate uploads of the same cacheKey.
+                            // If a sibling GLRenderProgram is already uploading this exact
+                            // binary, defer this caller until that upload completes so we
+                            // do not flood the queue with 50 simultaneous uploads of the
+                            // same bytes (each program still needs its own programId
+                            // populated; serialization just prevents queue saturation).
+                            if (!uploadQueue.TryReserveCacheKey(binProg.CacheKey))
+                            {
+                                uploadQueue.RecordBackpressure();
+                                PublishBackendStatus(
+                                    EShaderProgramBackendStage.QueueBackpressure,
+                                    "BinaryUploadAsync",
+                                    "duplicate cacheKey upload already in flight",
+                                    fingerprint: binProg.CacheKey);
+                                LogRenderingProgramBuildEvent(
+                                    "BINARY_UPLOAD_COALESCED",
+                                    "BinaryUploadAsync",
+                                    "duplicate cacheKey upload already in flight",
+                                    binProg.CacheKey,
+                                    bindingId,
+                                    binaryBytes: binProg.Length,
+                                    binaryFormat: format.ToString());
+                                RegisterPendingAsyncProgram();
+                                return ReturnPendingBuildResult();
+                            }
+
                             BeginBuildTelemetry("BinaryUploadAsync", binProg.CacheKey);
                             uploadQueue.EnqueueUpload(bindingId, binProg.Binary, format, binProg.Length, Hash, binProg.CacheKey);
                             _asyncBinaryUploadPending = true;
@@ -2119,6 +2263,22 @@ namespace XREngine.Rendering.OpenGL
                 }
                 else
                 {
+                    // Phase 3: short-circuit known-failed hashes BEFORE the
+                    // BINARY_CACHE_MISS log + ShaderProgramSourceSummary so repeated
+                    // failed hashes do not regenerate full miss records every frame.
+                    if (Failed.ContainsKey(Hash))
+                    {
+                        EmitFailedHashSkipLog(cacheKey, bindingId);
+                        PublishBackendStatus(
+                            EShaderProgramBackendStage.Failed,
+                            "Source",
+                            "hash previously failed",
+                            "Hash is marked failed.",
+                            fingerprint: cacheKey);
+                        MarkBuildFailed();
+                        return IsLinked;
+                    }
+
                     PublishBackendStatus(
                         EShaderProgramBackendStage.CacheMiss,
                         "BinaryCache",
@@ -2133,18 +2293,6 @@ namespace XREngine.Rendering.OpenGL
                         _preparedCompileInputs);
                 }
 
-                if (Failed.ContainsKey(Hash))
-                {
-                    PublishBackendStatus(
-                        EShaderProgramBackendStage.Failed,
-                        "Source",
-                        "hash previously failed",
-                        "Hash is marked failed.",
-                        fingerprint: cacheKey);
-                    MarkBuildFailed();
-                    return IsLinked;
-                }
-
                 // If another GLRenderProgram with the same hash is already compiling,
                 // defer until its binary lands in the cache.
                 bool waitingForCompileQueue = _asyncCompileLinkQueueWaitPending;
@@ -2156,6 +2304,8 @@ namespace XREngine.Rendering.OpenGL
                     if (!waitingForCompileQueue)
                     {
                         CaptureLinkRequestStackTrace();
+                        ShaderProgramLifecycleDiagnostics.RecordBinaryCacheMiss();
+                        ShaderProgramLifecycleDiagnostics.RecordSourceBuild();
                         Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
                     }
 
@@ -2166,7 +2316,21 @@ namespace XREngine.Rendering.OpenGL
                         (Renderer.UseSharedContextProgramCompileLinkQueue ||
                          Engine.Rendering.Settings.OpenGLShaderLinkStrategy == EOpenGLShaderLinkStrategy.SharedContext);
                     if (wantsSharedSourceInputs && inputs is null && !isKnownAsyncLinkHazard)
+                    {
+                        if (nonBlocking)
+                        {
+                            // Phase B: PrepareCompileInputs() resolves and concatenates
+                            // shader source on the calling thread. Skip on the
+                            // render-prep hot path; kick async preparation instead
+                            // so PollPendingAsyncPrograms can advance the program
+                            // next frame.
+                            InFlightCompilations.TryRemove(Hash, out _);
+                            BeginPrepareLinkData();
+                            RegisterPendingAsyncProgram();
+                            return ReturnPendingBuildResult();
+                        }
                         inputs = PrepareCompileInputs();
+                    }
 
                     OpenGLShaderLinkBackendSelection sourceSelection = OpenGLShaderLinkBackendSelector.Select(new OpenGLShaderLinkBackendContext(
                         Engine.Rendering.Settings.OpenGLShaderLinkStrategy,
@@ -2228,6 +2392,7 @@ namespace XREngine.Rendering.OpenGL
                                 "SharedContextSource",
                                 sourceSelection.Reason,
                                 fingerprint: cacheKey);
+                            ShaderProgramLifecycleDiagnostics.RecordSharedContextSourceQueued();
                             Debug.OpenGL($"[ShaderCache] QUEUE hash={Hash}, compiling {_shaderCache.Count} shader(s) on shared context.");
                             LogRenderingProgramBuildEvent(
                                 "SOURCE_QUEUE_ASYNC_QUEUED",
@@ -2245,6 +2410,23 @@ namespace XREngine.Rendering.OpenGL
                     _asyncCompileLinkQueueWaitPending = false;
                     if (sourceSelection.Lane == EOpenGLProgramBuildLane.SynchronousSource)
                     {
+                        if (nonBlocking)
+                        {
+                            // Phase B: defer the synchronous source-compile fallback
+                            // off the render-prep hot path. PollPendingAsyncPrograms
+                            // will pick this program up and run the same work
+                            // bounded by PollPendingAsyncProgramsSyncBudgetMilliseconds
+                            // inside the upload pump rather than inside
+                            // GLMeshRenderer.TryPrepareForRendering.
+                            InFlightCompilations.TryRemove(Hash, out _);
+                            PublishBackendStatus(
+                                EShaderProgramBackendStage.SynchronousFallback,
+                                "SynchronousSource",
+                                sourceSelection.Reason + " (deferred: non-blocking caller)",
+                                fingerprint: cacheKey);
+                            RegisterPendingAsyncProgram();
+                            return ReturnPendingBuildResult();
+                        }
                         PublishBackendStatus(
                             EShaderProgramBackendStage.SynchronousFallback,
                             "SynchronousSource",
@@ -2342,6 +2524,7 @@ namespace XREngine.Rendering.OpenGL
 
                     if (_shaderCache.Values.Any(x => !x.IsCompiled))
                     {
+                        ShaderProgramLifecycleDiagnostics.RecordSourceFailure();
                         Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
                         CompleteUberBackendTracking(false, "Backend shader compile failed.", compileMilliseconds, 0.0);
                         PublishBackendStatus(
@@ -2352,7 +2535,7 @@ namespace XREngine.Rendering.OpenGL
                             compileMilliseconds,
                             0.0);
                         CompleteBuildTelemetry(false, compileMilliseconds, failureReason: "Backend shader compile failed.");
-                        Failed.TryAdd(Hash, 0);
+                        MarkHashFailed("Backend shader compile failed.");
                         InFlightCompilations.TryRemove(Hash, out _);
                         //TODO: return invalid material until shaders are compiled
                         MarkBuildFailed();
@@ -2451,7 +2634,7 @@ namespace XREngine.Rendering.OpenGL
                                 compileMilliseconds,
                                 linkMilliseconds);
                             CompleteBuildTelemetry(false, compileMilliseconds, linkMilliseconds, failureReason: linkError);
-                            Failed.TryAdd(Hash, 0);
+                            MarkHashFailed(linkError);
                             sourceBuildFailed = true;
                         }
                         else
@@ -2482,7 +2665,7 @@ namespace XREngine.Rendering.OpenGL
                             "One or more shaders failed to compile.",
                             compileMilliseconds);
                         CompleteBuildTelemetry(false, compileMilliseconds, failureReason: "One or more shaders failed to compile.");
-                        Failed.TryAdd(Hash, 0);
+                        MarkHashFailed("One or more shaders failed to compile.");
                         sourceBuildFailed = true;
                     }
 

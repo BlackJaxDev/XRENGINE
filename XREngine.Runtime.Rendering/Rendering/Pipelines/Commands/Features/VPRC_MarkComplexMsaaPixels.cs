@@ -117,7 +117,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             };
 
             var mesh = CreateFullscreenTriangle();
-            var renderer = new XRMeshRenderer(mesh, mat);
+            var renderer = new XRMeshRenderer(mesh, mat) { GenerateAsync = false };
             renderer.SettingUniforms += (_, materialProgram) =>
             {
                 uint sampleCount = XREngine.Rendering.RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame();
