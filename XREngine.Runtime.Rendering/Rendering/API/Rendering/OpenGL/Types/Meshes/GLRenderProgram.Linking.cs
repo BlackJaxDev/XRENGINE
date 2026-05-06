@@ -354,6 +354,7 @@ namespace XREngine.Rendering.OpenGL
             // call is documented to implicitly wait for completion and is known to hang
             // indefinitely on NVIDIA's threaded driver when the parallel-link worker is stuck.
             private const double AsyncShaderHardAbandonSeconds = 30.0;
+            private const double SlowLinkPreparationWarningMilliseconds = 25.0;
 
             /// <summary>
             /// Pre-computes the shader source hash and binary cache lookup.
@@ -365,6 +366,7 @@ namespace XREngine.Rendering.OpenGL
                 if (_linkDataPrepared || IsLinked || _shaderCache.IsEmpty)
                     return;
 
+                long preparationStartTimestamp = Stopwatch.GetTimestamp();
                 ulong hash;
                 bool isCached = false;
                 BinaryProgram binProg = default;
@@ -390,6 +392,12 @@ namespace XREngine.Rendering.OpenGL
                 _preparedCompileInputs = compileInputs;
                 _linkPreparationFailure = null;
                 _linkDataPrepared = true;
+
+                double preparationMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - preparationStartTimestamp);
+                if (preparationMilliseconds >= SlowLinkPreparationWarningMilliseconds)
+                {
+                    Debug.OpenGLWarning($"[ShaderCache] Slow link preparation: hash={hash}, shaderCount={_shaderCache.Count}, cached={isCached}, compileInputs={compileInputs?.Length ?? 0}, elapsedMs={preparationMilliseconds:F2}.");
+                }
             }
 
             public void BeginPrepareLinkData()
@@ -466,6 +474,21 @@ namespace XREngine.Rendering.OpenGL
             private bool IsLinkPreparationPending
                 => Volatile.Read(ref _linkPreparationPendingGeneration) == Volatile.Read(ref _linkPreparationGeneration);
 
+            private bool ShouldDeferLinkPreparationOnRenderThread()
+            {
+                if (!Engine.IsRenderThread || _linkDataPrepared || IsLinkPreparationPending || _shaderCache.IsEmpty)
+                    return false;
+
+                if (Renderer.ProgramCompileLinkQueue is { IsAvailable: true })
+                    return true;
+
+                if (Renderer.UseDriverParallelShaderCompile)
+                    return true;
+
+                return Engine.Rendering.Settings.AsyncProgramBinaryUpload &&
+                       Renderer.ProgramBinaryUploadQueue is { IsAvailable: true };
+            }
+
             private void InvalidatePreparedLinkData()
             {
                 Interlocked.Increment(ref _linkPreparationGeneration);
@@ -513,7 +536,9 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private bool HasPendingAsyncWork
-                => _asyncBinaryUploadPending ||
+                => IsLinkPreparationPending ||
+                   _linkDataPrepared ||
+                   _asyncBinaryUploadPending ||
                    _asyncCompileLinkPending ||
                    _asyncCompileLinkQueueWaitPending ||
                    _asyncLinkPhase != EAsyncLinkPhase.Idle;
@@ -952,7 +977,9 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private bool ShouldBypassBinaryCacheForLiveUberVariant()
-                => Renderer.UseDriverParallelShaderCompile && TryResolveUberVariantHash(out _);
+                => Renderer.UseDriverParallelShaderCompile &&
+                   !IsKnownAsyncLinkHazard &&
+                   TryResolveUberVariantHash(out _);
 
             /// <summary>
             /// Programs known to hang NVIDIA's <c>GL_ARB_parallel_shader_compile</c>
@@ -1102,9 +1129,11 @@ namespace XREngine.Rendering.OpenGL
                 if (IsLinkPreparationPending)
                     return false;
 
-                if (_linkPreparationFailure is not null)
+                Exception? linkPreparationException = _linkPreparationFailure;
+                bool linkPreparationFailed = linkPreparationException is not null;
+                if (linkPreparationException is not null)
                 {
-                    Debug.OpenGLWarning($"GLRenderProgram link preparation failed for '{Data.Name ?? "unnamed"}': {_linkPreparationFailure.Message}");
+                    Debug.OpenGLWarning($"GLRenderProgram link preparation failed for '{Data.Name ?? "unnamed"}': {linkPreparationException.Message}");
                     _linkPreparationFailure = null;
                 }
 
@@ -1152,6 +1181,7 @@ namespace XREngine.Rendering.OpenGL
                         if (compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.Success)
                         {
                             CompleteUberBackendTracking(true, compileMilliseconds: compileResult.CompileMilliseconds, linkMilliseconds: compileResult.LinkMilliseconds);
+                            Debug.OpenGL($"[ShaderCache] READY hash={Hash}, shared-context compileMs={compileResult.CompileMilliseconds:F2}, linkMs={compileResult.LinkMilliseconds:F2}.");
                             IsLinked = true;
                             using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms");
                             CacheActiveUniforms();
@@ -1172,6 +1202,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                     else
                     {
+                        ReportSlowAsyncPending("shared-context compile/link");
                         return false; // Compile+link still in progress.
                     }
                 }
@@ -1194,6 +1225,13 @@ namespace XREngine.Rendering.OpenGL
 
                 if (_shaderCache.IsEmpty/* || _shaderCache.Values.Any(x => !x.IsCompiled)*/)
                     return false;
+
+                if (!force && !linkPreparationFailed && ShouldDeferLinkPreparationOnRenderThread())
+                {
+                    BeginPrepareLinkData();
+                    RegisterPendingAsyncProgram();
+                    return false;
+                }
 
                 bool isCached;
                 uint bindingId = BindingId;
@@ -1306,23 +1344,16 @@ namespace XREngine.Rendering.OpenGL
                         Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
                     }
 
-                    // Prefer the configured shared context compile+link queue. It can
-                    // safely block without freezing the render thread.
-                    // Known parallel-link hazards (single-stage separable / compute
-                    // on NVIDIA) are deliberately NOT routed through the shared
-                    // queue: the worker thread's glGetProgram(LINK_STATUS) query
-                    // would block waiting on the parallel-link worker (which wedges
-                    // on those programs), starving every subsequent job. They use
-                    // the render-thread sync-link path below with
-                    // TryDisableParallelShaderCompileForHazardousLink, which links
-                    // them inline (typically milliseconds for single-shader / compute
-                    // programs) without hitting the wedge.
+                    // Prefer the shared context compile+link queue when available.
+                    // Known driver-parallel hazards still bypass the driver-parallel
+                    // lane, but routing them through the worker keeps unexpected
+                    // driver stalls off the render thread. If the queue is unavailable
+                    // or source resolution fails, the guarded synchronous fallback
+                    // below is the last-resort path.
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
-                    bool sharedQueueAvailable = compileQueue is not null && compileQueue.IsAvailable;
-                    bool useSharedQueue = sharedQueueAvailable
-                        && Renderer.UseSharedContextProgramCompileLinkQueue
-                        && !IsKnownAsyncLinkHazard;
-                    if (useSharedQueue)
+                    bool isKnownAsyncLinkHazard = IsKnownAsyncLinkHazard;
+                    if (compileQueue is { IsAvailable: true }
+                        && (Renderer.UseSharedContextProgramCompileLinkQueue || isKnownAsyncLinkHazard))
                     {
                         GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs ?? PrepareCompileInputs();
                         bool allResolved = inputs is { Length: > 0 };
@@ -1340,24 +1371,24 @@ namespace XREngine.Rendering.OpenGL
                                 BeginUberBackendCompileTracking(queuedVariantHash);
 
                             compileQueue.EnqueueCompileAndLink(bindingId, inputs!);
+                            Debug.OpenGL($"[ShaderCache] QUEUE hash={Hash}, compiling {_shaderCache.Count} shader(s) on shared context. hazard={isKnownAsyncLinkHazard}.");
                             _asyncCompileLinkQueueWaitPending = false;
                             _asyncCompileLinkPending = true;
                             RegisterPendingAsyncProgram();
                             return false;
                         }
-                        // If source resolution failed, fall through to the synchronous path.
+                        Debug.OpenGLWarning($"[ShaderCache] Shared compile queue input preparation failed for hash {Hash}. Falling back to synchronous source path.");
                     }
                     _asyncCompileLinkQueueWaitPending = false;
 
-                    // NVIDIA's GL_ARB_parallel_shader_compile worker is known to hang
-                    // permanently when asked to async-link a single-stage separable
-                    // program (typical for imported model materials, where vertex and
-                    // fragment stages are split into separate programs). For these we
-                    // temporarily set the driver compiler thread count to 0 so both
+                    // If a hazardous program reaches the synchronous fallback, disable
+                    // driver parallel compile just around this link. This avoids asking
+                    // the NVIDIA parallel-link worker to process a shape that can wedge.
+                    // In this fallback, suppressing driver parallel compile lets
                     // glCompileShader and glLinkProgram run inline on the GL thread —
-                    // queries that would otherwise block waiting on the parallel-link
-                    // worker can then complete normally.
-                    bool hazardSyncLink = IsKnownAsyncLinkHazard
+                    // status queries can complete without waiting on the parallel-link
+                    // worker.
+                    bool hazardSyncLink = isKnownAsyncLinkHazard
                         && Renderer.UseDriverParallelShaderCompile
                         && Renderer.TryDisableParallelShaderCompileForHazardousLink();
 
@@ -1379,13 +1410,10 @@ namespace XREngine.Rendering.OpenGL
                         }
                     }
 
-                    // NVIDIA's GL_ARB_parallel_shader_compile worker is known to hang
-                    // permanently when asked to async-link a single-stage separable
-                    // program (typical for imported model materials, where vertex and
-                    // fragment stages are split into separate programs). Detect that
-                    // case up front and force the link down the synchronous path.
+                    // Driver-parallel linking is only safe for shapes outside the
+                    // known hazard set.
                     bool useDriverParallelLink = Renderer.UseDriverParallelShaderCompile
-                        && !IsKnownAsyncLinkHazard;
+                        && !isKnownAsyncLinkHazard;
 
                     if (!useDriverParallelLink)
                     {
