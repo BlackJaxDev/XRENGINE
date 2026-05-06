@@ -562,8 +562,6 @@ public partial class DefaultRenderPipeline2
                 c.Add<VPRC_SurfelGIPass>();
             }
 
-            c.Add<VPRC_RenderDebugShapes>();
-            c.Add<VPRC_RenderDebugPhysics>();
         }
 
         // MSAA resolve blit: only execute when MSAA is active for the current camera.
@@ -920,6 +918,7 @@ public partial class DefaultRenderPipeline2
             {
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
                 c.Add<VPRC_RenderQuadFBO>().SetOptions(ForwardPassFBOName);
+                AppendDebugOverlay(c);
             }
         }
         return c;
@@ -941,18 +940,30 @@ public partial class DefaultRenderPipeline2
                 {
                     // Debug visualization is produced by a quad shader; present it directly.
                     c.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
+                    AppendDebugOverlay(c, visible: false);
                 }
                 else if (ActiveTransparencyDebugFboName is not null)
                 {
                     c.Add<VPRC_RenderQuadToFBO>().SetTargets(ActiveTransparencyDebugFboName, null);
+                    AppendDebugOverlay(c, visible: false);
                 }
                 else
                 {
                     AppendViewportFinalOutputSourceCommands(c, bypassVendorUpscale);
+                    AppendDebugOverlay(c);
                 }
             }
         }
         return c;
+    }
+
+    private void AppendDebugOverlay(ViewportRenderCommandContainer c, bool visible = true)
+    {
+        c.Add<VPRC_ColorMask>().Set(visible, visible, visible, visible);
+        c.Add<VPRC_RenderDebugShapes>();
+        c.Add<VPRC_RenderDebugPhysics>();
+        if (!visible)
+            c.Add<VPRC_ColorMask>().Set(true, true, true, true);
     }
 
     private void AppendViewportFinalOutputSourceCommands(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
