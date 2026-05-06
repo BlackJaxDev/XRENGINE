@@ -483,8 +483,6 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_SurfelGIPass>();
             }
 
-            c.Add<VPRC_RenderDebugShapes>();
-            c.Add<VPRC_RenderDebugPhysics>();
         }
 
         var msaaResolve = c.Add<VPRC_IfElse>();
@@ -910,6 +908,7 @@ public partial class DefaultRenderPipeline
             {
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
                 c.Add<VPRC_RenderQuadFBO>().SetOptions(ForwardPassFBOName);
+                AppendDebugOverlay(c);
             }
         }
         return c;
@@ -926,18 +925,30 @@ public partial class DefaultRenderPipeline
                 if (EnableTransformIdVisualization)
                 {
                     c.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
+                    AppendDebugOverlay(c, visible: false);
                 }
                 else if (ActiveTransparencyDebugFboName is not null)
                 {
                     c.Add<VPRC_RenderQuadToFBO>().SetTargets(ActiveTransparencyDebugFboName, null);
+                    AppendDebugOverlay(c, visible: false);
                 }
                 else
                 {
                     AppendViewportFinalOutputSourceCommands(c, bypassVendorUpscale);
+                    AppendDebugOverlay(c);
                 }
             }
         }
         return c;
+    }
+
+    private void AppendDebugOverlay(ViewportRenderCommandContainer c, bool visible = true)
+    {
+        c.Add<VPRC_ColorMask>().Set(visible, visible, visible, visible);
+        c.Add<VPRC_RenderDebugShapes>();
+        c.Add<VPRC_RenderDebugPhysics>();
+        if (!visible)
+            c.Add<VPRC_ColorMask>().Set(true, true, true, true);
     }
 
     private void AppendViewportFinalOutputSourceCommands(ViewportRenderCommandContainer c, bool bypassVendorUpscale)

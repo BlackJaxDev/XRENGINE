@@ -547,8 +547,53 @@ namespace XREngine.Components.Scene.Mesh
 
             ApplyHighlightRenderOptionsOverride(mat);
             ModelRenderDiagnostics.LogCommandCollect(this, _rc, passes, camera, distance);
+            QueueCollectedMeshBoundsDebug(passes, camera);
 
             return true;
+        }
+
+        private void QueueCollectedMeshBoundsDebug(RenderCommandCollection passes, IRuntimeRenderCamera? camera)
+        {
+            if (!ShouldQueueCollectedMeshBoundsDebug(passes, camera))
+                return;
+
+            Box? box = ((IOctreeItem)RenderInfo).WorldCullingVolume;
+            if (box is null)
+                return;
+
+            ColorF4 boundsColor = Engine.EditorPreferences.Theme.MeshBoundsContainedColor;
+            Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, boundsColor);
+        }
+
+        private bool ShouldQueueCollectedMeshBoundsDebug(RenderCommandCollection passes, IRuntimeRenderCamera? camera)
+        {
+            if (!RenderBounds ||
+                passes.IsShadowPass ||
+                Engine.Rendering.State.IsShadowPass ||
+                Engine.Rendering.State.IsLightProbePass ||
+                Engine.Rendering.State.IsSceneCapturePass)
+            {
+                return false;
+            }
+
+            if (camera is not XRCamera xrCamera || !HasNonShadowViewport(xrCamera))
+                return false;
+
+            var debug = Engine.EditorPreferences.Debug;
+            return debug.RenderMesh3DBounds &&
+                   !debug.VisualizeTransparencyModeOverlay &&
+                   !debug.VisualizeTransparencyClassificationOverlay;
+        }
+
+        private static bool HasNonShadowViewport(XRCamera camera)
+        {
+            for (int i = 0; i < camera.Viewports.Count; i++)
+            {
+                if (camera.Viewports[i].RenderPipeline?.IsShadowPass != true)
+                    return true;
+            }
+
+            return false;
         }
 
         internal static bool ShouldRecordImportedTextureStreamingUsage(bool isShadowPass, bool isMainPass)
