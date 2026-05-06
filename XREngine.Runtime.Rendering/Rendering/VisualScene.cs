@@ -1,5 +1,6 @@
 using System.Collections;
 using XREngine.Data.Core;
+using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
@@ -59,7 +60,7 @@ namespace XREngine.Scene
         /// </summary>
         public virtual void GlobalSwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("VisualScene.GlobalSwapBuffers");
+            using var sample = Engine.Profiler.Start("VisualScene.GlobalSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
             GenericRenderTree.Swap();
             GPUCommands.SwapCommandBuffers();
         }

@@ -830,6 +830,34 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Same as <see cref="TryPrepareForRendering(bool)"/> but also returns the most recent
+        /// preparation stage result (e.g. "Ready", "ProgramsPending", "BuffersPending").
+        /// </summary>
+        public bool TryPrepareForRendering(out string reason, bool forceNoStereo = false)
+        {
+            BaseVersion version = GetVersion(forceNoStereo);
+            AbstractRenderAPIObject? apiObject = AbstractRenderer.Current?.GetOrCreateAPIRenderObject(version);
+            if (apiObject is IRenderPreparationState preparationState)
+                return preparationState.TryPrepareForRendering(out reason);
+
+            reason = apiObject is null ? "NoApiObject" : "NoPreparationState";
+            return apiObject is not null;
+        }
+
+        /// <summary>
+        /// Supplemental detail captured by the underlying API object on the most recent
+        /// <see cref="TryPrepareForRendering(out string, bool)"/> call. Empty when not available.
+        /// </summary>
+        public string GetLastPrepareDetail(bool forceNoStereo = false)
+        {
+            BaseVersion version = GetVersion(forceNoStereo);
+            AbstractRenderAPIObject? apiObject = AbstractRenderer.Current?.GetOrCreateAPIRenderObject(version);
+            if (apiObject is IRenderPreparationState preparationState)
+                return preparationState.LastPrepareDetail;
+            return string.Empty;
+        }
+
+        /// <summary>
         /// Get the weight of a blendshape by name, with the weight returned being a percentage from 0 to 100.
         /// </summary>
         /// <param name="name"></param>

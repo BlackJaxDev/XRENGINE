@@ -104,6 +104,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             {
                 Name = n.Name,
                 ElapsedMs = n.ElapsedMs,
+                ScopeKind = n.ScopeKind,
                 Children = ConvertNodes(n.Children),
             };
         }

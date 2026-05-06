@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Core;
+using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.OpenGL
@@ -16,8 +17,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void GenProgramsAndBuffers()
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.GenProgramsAndBuffers");
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.GenProgramsAndBuffers", ProfilerScopeKind.OneOffInvoke);
                 BuffersBound = false;
+                System.Threading.Interlocked.Increment(ref _programGenerationCount);
 
                 PrepareUberVariantForCurrentMaterial();
 
@@ -43,6 +45,7 @@ namespace XREngine.Rendering.OpenGL
 
                 if (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
                 {
+                    _combinedProgram?.Destroy();
                     _combinedProgram = null;
 
                     IEnumerable<XRShader> shaders = material.Data.VertexShaders;
@@ -57,6 +60,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 else
                 {
+                    _separatedVertexProgram?.Destroy();
                     _separatedVertexProgram = null;
 
                     IEnumerable<XRShader> shaders = material.Data.Shaders;
@@ -78,6 +82,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 _shaderConfigVersion = settingsVersion;
+                System.Threading.Interlocked.Increment(ref _programDestructionCount);
 
                 _combinedProgram?.Destroy();
                 _combinedProgram = null;
@@ -95,6 +100,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 BuffersBound = false;
+                System.Threading.Interlocked.Increment(ref _genCallSiteEnsureSettings);
                 GenProgramsAndBuffers();
             }
 
@@ -112,6 +118,7 @@ namespace XREngine.Rendering.OpenGL
 
                 _programMaterialStateKey = material;
                 _programMaterialShaderStateRevision = shaderStateRevision;
+                System.Threading.Interlocked.Increment(ref _programDestructionCount);
 
                 _combinedProgram?.Destroy();
                 _combinedProgram = null;
@@ -151,9 +158,17 @@ namespace XREngine.Rendering.OpenGL
                 && !VertexArrayBindingsStale()
                 && AreBuffersReadyForRendering();
 
+            /// <inheritdoc />
+            public bool TryPrepareForRendering(out string reason)
+            {
+                bool ok = TryPrepareForRendering();
+                reason = _lastPrepareResult;
+                return ok;
+            }
+
             public bool TryPrepareForRendering()
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.TryPrepareForRendering");
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.TryPrepareForRendering", ProfilerScopeKind.ConditionalLoop);
                 long methodStart = Stopwatch.GetTimestamp();
                 double generateMs = 0.0;
                 double ensureRenderSettingsMs = 0.0;
@@ -166,7 +181,10 @@ namespace XREngine.Rendering.OpenGL
                 double dynamicRenderDataMs = 0.0;
 
                 if (Data is null)
+                {
+                    _lastPrepareResult = "NoData";
                     return false;
+                }
 
                 if (!IsGenerated)
                 {
@@ -187,6 +205,7 @@ namespace XREngine.Rendering.OpenGL
                             configureDrawTopologyMs,
                             bindBuffersMs,
                             dynamicRenderDataMs);
+                        _lastPrepareResult = "GenerateFailed";
                         return false;
                     }
                 }
@@ -201,6 +220,7 @@ namespace XREngine.Rendering.OpenGL
                 if (_combinedProgram is null && _separatedVertexProgram is null)
                 {
                     stageStart = Stopwatch.GetTimestamp();
+                    System.Threading.Interlocked.Increment(ref _genCallSiteTryPrepareNull);
                     GenProgramsAndBuffers();
                     genProgramsAndBuffersMs = ElapsedMilliseconds(stageStart);
                 }
@@ -222,6 +242,7 @@ namespace XREngine.Rendering.OpenGL
                         configureDrawTopologyMs,
                         bindBuffersMs,
                         dynamicRenderDataMs);
+                    _lastPrepareResult = "MaterialMissing";
                     return false;
                 }
 
@@ -241,6 +262,8 @@ namespace XREngine.Rendering.OpenGL
                         configureDrawTopologyMs,
                         bindBuffersMs,
                         dynamicRenderDataMs);
+                    _lastPrepareResult = "ProgramsPending";
+                    _lastPrepareDetail = BuildProgramsPendingDetail(material);
                     return false;
                 }
                 getProgramsMs = ElapsedMilliseconds(stageStart);
@@ -266,7 +289,13 @@ namespace XREngine.Rendering.OpenGL
                     dynamicRenderDataMs = ElapsedMilliseconds(stageStart);
                 }
 
-                bool ready = BuffersBound && AreBuffersReadyForRendering();
+                bool buffersBound = BuffersBound;
+                bool buffersReady = buffersBound && AreBuffersReadyForRendering();
+                bool ready = buffersReady;
+                _lastPrepareResult = ready
+                    ? "Ready"
+                    : (buffersBound ? "BuffersNotReady" : "BuffersPending");
+                _lastPrepareDetail = string.Empty;
                 LogSlowTryPrepare(
                     ready ? "Ready" : "BuffersPending",
                     ElapsedMilliseconds(methodStart),
@@ -280,6 +309,44 @@ namespace XREngine.Rendering.OpenGL
                     bindBuffersMs,
                     dynamicRenderDataMs);
                 return ready;
+            }
+
+            private string BuildProgramsPendingDetail(GLMaterial material)
+            {
+                var xrMaterial = MeshRenderer.Material;
+                int vsCount = xrMaterial?.VertexShaders?.Count ?? 0;
+                int shCount = xrMaterial?.Shaders?.Count ?? 0;
+                long matRev = xrMaterial?.ShaderStateRevision ?? 0;
+                int settingsVer = Engine.Rendering.Settings.ShaderConfigVersion;
+                bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
+                bool allowPipelines = Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;
+                string versionType = Data?.GetType()?.Name ?? "<null>";
+                string vsSel = Data?.VertexShaderSelector?.Method?.Name ?? "<null>";
+
+                return string.Concat(
+                    "mat='", xrMaterial?.Name ?? "<null>", "'",
+                    " inst#", _instanceId.ToString(),
+                    " progGen=", _programGenerationCount.ToString(),
+                    " progDestroy=", _programDestructionCount.ToString(),
+                    " genSites[settings=", _genCallSiteEnsureSettings.ToString(),
+                    ",tryPrepNull=", _genCallSiteTryPrepareNull.ToString(),
+                    ",postGen=", _genCallSitePostGenerated.ToString(),
+                    ",regen=", _genCallSiteRegenerate.ToString(), "]",
+                    " meshChg=", _meshChangedCount.ToString(),
+                    " matChg=", _materialChangedCount.ToString(),
+                    " vsCount=", vsCount.ToString(),
+                    " shCount=", shCount.ToString(),
+                    " matRev=", matRev.ToString(),
+                    " capRev=", _programMaterialShaderStateRevision.ToString(),
+                    " settingsVer=", settingsVer.ToString(),
+                    " capVer=", _shaderConfigVersion.ToString(),
+                    " combNull=", (_combinedProgram is null).ToString(),
+                    " sepNull=", (_separatedVertexProgram is null).ToString(),
+                    " forcedNull=", (_forcedGeneratedVertexProgram is null).ToString(),
+                    " pipelineMode=", allowPipelines.ToString(),
+                    " forcePipelines=", forceShaderPipelines.ToString(),
+                    " ver=", versionType,
+                    " vsSelector=", vsSel);
             }
 
             private void LogSlowTryPrepare(
@@ -500,7 +567,7 @@ namespace XREngine.Rendering.OpenGL
                 Func<XRShader, bool> vertexShaderSelector,
                 Func<string> vertexSourceGenerator)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.CreateCombinedProgram");
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.CreateCombinedProgram", ProfilerScopeKind.OneOffInvoke);
                 XRShader vertexShader = hasNoVertexShaders
                     ? GenerateVertexShader(vertexSourceGenerator)
                     : FindVertexShader(shaders, vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
@@ -535,10 +602,10 @@ namespace XREngine.Rendering.OpenGL
                 Func<XRShader, bool> vertexShaderSelector,
                 Func<string> vertexSourceGenerator)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.CreateSeparatedVertexProgram");
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.CreateSeparatedVertexProgram", ProfilerScopeKind.OneOffInvoke);
                 XRShader vertexShader = hasNoVertexShaders
                     ? GenerateVertexShader(vertexSourceGenerator)
-                    : vertexShaders.FirstOrDefault(vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
+                    : FindVertexShader(vertexShaders, vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
 
                 var separatedData = new XRRenderProgram(false, true, vertexShader)
                 {
@@ -561,7 +628,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void InitiateLink(GLRenderProgram vertexProgram)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.InitiateLink");
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.InitiateLink", ProfilerScopeKind.OneOffInvoke);
                 vertexProgram.Data.AllowLink();
                 vertexProgram.BeginPrepareLinkData();
                 if (!Data.Parent.GenerateAsync)
@@ -573,7 +640,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void CheckProgramLinked(object? sender, IXRPropertyChangedEventArgs e)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.CheckProgramLinked");
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.CheckProgramLinked", ProfilerScopeKind.OneOffInvoke);
                 GLRenderProgram? program = sender as GLRenderProgram;
                 if (e.PropertyName != nameof(GLRenderProgram.IsLinked) || !(program?.IsLinked ?? false))
                     return;

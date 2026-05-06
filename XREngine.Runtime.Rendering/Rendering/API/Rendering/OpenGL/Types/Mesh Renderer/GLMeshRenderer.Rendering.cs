@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Generator;
@@ -326,7 +327,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.Render");
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.Render", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
                 if (!IsGenerated)
                 {
@@ -351,7 +352,7 @@ namespace XREngine.Rendering.OpenGL
                         return; // Skip rendering until generated
                     }
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.Generate"))
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.Generate", ProfilerScopeKind.OneOffInvoke))
                     {
                         if (!_inlineGenerateFallbackLogged)
                         {
@@ -384,7 +385,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                using (Engine.Profiler.Start("GLMeshRenderer.Render.ProgramSetup"))
+                using (Engine.Profiler.Start("GLMeshRenderer.Render.ProgramSetup", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
                     EnsureProgramsMatchRenderSettings();
                     EnsureProgramsMatchMaterialShaderState();
@@ -424,7 +425,7 @@ namespace XREngine.Rendering.OpenGL
 
                     SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms"))
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         material.SetUniforms(mat);
                         if (renderOptionsOverride is not null)
@@ -444,7 +445,7 @@ namespace XREngine.Rendering.OpenGL
 
                     try
                     {
-                        using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw"))
+                        using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw", ProfilerScopeKind.AlwaysOnHotPathLoop))
                         {
                             LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
                             Renderer.RenderMesh(this, false, drawInstances);

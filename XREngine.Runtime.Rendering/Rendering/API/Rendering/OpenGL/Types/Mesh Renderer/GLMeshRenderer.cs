@@ -42,6 +42,38 @@ namespace XREngine.Rendering.OpenGL
             private int _shaderConfigVersion = Engine.Rendering.Settings.ShaderConfigVersion;
             private XRMaterial? _programMaterialStateKey;
             private long _programMaterialShaderStateRevision;
+            private string _lastPrepareResult = "NeverCalled";
+            private string _lastPrepareDetail = string.Empty;
+
+            // Identity / lifecycle counters for diagnosing program churn.
+            private static int s_nextInstanceId;
+            private readonly int _instanceId = System.Threading.Interlocked.Increment(ref s_nextInstanceId);
+            private int _programGenerationCount;
+            private int _programDestructionCount;
+            private int _meshChangedCount;
+            private int _materialChangedCount;
+            // Per-callsite counters for GenProgramsAndBuffers.
+            internal int _genCallSiteEnsureSettings;
+            internal int _genCallSiteTryPrepareNull;
+            internal int _genCallSitePostGenerated;
+            internal int _genCallSiteRegenerate;
+
+            public int InstanceId => _instanceId;
+            public int ProgramGenerationCount => _programGenerationCount;
+            public int ProgramDestructionCount => _programDestructionCount;
+
+            /// <summary>
+            /// Result string of the most recent <see cref="TryPrepareForRendering()"/> call.
+            /// One of: "Ready", "BuffersPending", "ProgramsPending", "GenerateFailed", "MaterialMissing", "NoData", "NeverCalled".
+            /// </summary>
+            public string LastPrepareResult => _lastPrepareResult;
+
+            /// <summary>
+            /// Supplemental detail describing the most recent ProgramsPending failure
+            /// (variant counts, material revision, which program slots are null).
+            /// Empty for non-pending or non-program failures.
+            /// </summary>
+            public string LastPrepareDetail => _lastPrepareDetail;
 
             // Cached shadow material lookup to avoid ConcurrentDictionary hit per shadow draw.
             private XRMaterial? _shadowVariantKey;
@@ -122,6 +154,12 @@ namespace XREngine.Rendering.OpenGL
             public uint Instances { get; set; } = 1;
             public GLMaterial? Material => Renderer.GenericToAPI<GLMaterial>(MeshRenderer.Material);
 
+            /// <summary>
+            /// Tracks whether per-frame vertex buffers are currently bound to the VAO.
+            /// Marked transient so that toggling on/off each frame does NOT invalidate
+            /// the GL object and trigger a destroy/recreate of the VAO and shader programs.
+            /// </summary>
+            [TransientGLState]
             public bool BuffersBound
             {
                 get => _buffersBound;

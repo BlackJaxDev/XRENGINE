@@ -3,6 +3,18 @@ using MemoryPack;
 namespace XREngine.Data.Profiling;
 
 /// <summary>
+/// Describes how a profiled scope is expected to recur, so diagnostics can
+/// separate steady frame-budget cost from bursty or one-off work.
+/// </summary>
+public enum ProfilerScopeKind : byte
+{
+    Unspecified = 0,
+    AlwaysOnHotPathLoop = 1,
+    ConditionalLoop = 2,
+    OneOffInvoke = 3,
+}
+
+/// <summary>
 /// Full profiler frame snapshot sent at ~30 Hz.
 /// Mirrors Engine.CodeProfiler.ProfilerFrameSnapshot.
 /// </summary>
@@ -41,6 +53,7 @@ public sealed partial class ProfilerNodeData
 {
     public string Name { get; set; } = string.Empty;
     public float ElapsedMs { get; set; }
+    public ProfilerScopeKind ScopeKind { get; set; }
     public ProfilerNodeData[] Children { get; set; } = [];
 }
 

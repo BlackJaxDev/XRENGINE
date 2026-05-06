@@ -68,6 +68,7 @@ namespace XREngine.Rendering.OpenGL
             private void OnMaterialChanged()
             {
                 Dbg("OnMaterialChanged", "Lifecycle");
+                System.Threading.Interlocked.Increment(ref _materialChangedCount);
 
                 _shadowVariantKey = null;
                 _shadowMaterialCache = null;
@@ -81,6 +82,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void RegenerateProgramsAndBuffers()
             {
+                System.Threading.Interlocked.Increment(ref _programDestructionCount);
                 _combinedProgram?.Destroy();
                 _combinedProgram = null;
 
@@ -101,12 +103,16 @@ namespace XREngine.Rendering.OpenGL
                 if (MeshRenderer.GenerateAsync)
                     Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                 else
+                {
+                    System.Threading.Interlocked.Increment(ref _genCallSiteRegenerate);
                     GenProgramsAndBuffers();
+                }
             }
 
             private void OnMeshChanged(XRMesh? mesh)
             {
                 Dbg($"OnMeshChanged -> {mesh?.Name ?? "null"}", "Lifecycle");
+                System.Threading.Interlocked.Increment(ref _meshChangedCount);
                 Destroy();
 
                 if (mesh is not null)
@@ -124,7 +130,10 @@ namespace XREngine.Rendering.OpenGL
                 MakeIndexBuffers();
 
                 if (!MeshRenderer.GenerateAsync)
+                {
+                    System.Threading.Interlocked.Increment(ref _genCallSitePostGenerated);
                     GenProgramsAndBuffers();
+                }
             }
 
             /// <summary>

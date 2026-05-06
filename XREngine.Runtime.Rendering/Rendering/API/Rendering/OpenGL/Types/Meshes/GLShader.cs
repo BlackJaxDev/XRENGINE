@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.IO;
+using System.Text;
 using Silk.NET.OpenGL;
 using XREngine.Data.Core;
 
@@ -107,18 +109,30 @@ namespace XREngine.Rendering.OpenGL
                 if (!_compilePending)
                     return true;
 
-                Api.GetShader(BindingId, (GLEnum)GL_COMPLETION_STATUS_ARB, out int complete);
+                int complete = 0;
+                MeasureRenderingShaderGlCall(
+                    "glGetShaderiv(GL_COMPLETION_STATUS)",
+                    () => Api.GetShader(BindingId, (GLEnum)GL_COMPLETION_STATUS_ARB, out complete),
+                    "phase=compile-poll");
                 if (complete == 0)
                     return false; // Still compiling
 
                 // Compilation finished — query actual result
                 _compilePending = false;
-                Api.GetShader(BindingId, GLEnum.CompileStatus, out int status);
+                int status = 0;
+                MeasureRenderingShaderGlCall(
+                    "glGetShaderiv(GL_COMPILE_STATUS)",
+                    () => Api.GetShader(BindingId, GLEnum.CompileStatus, out status),
+                    "phase=compile-final-status");
                 IsCompiled = status != 0;
 
                 if (!IsCompiled)
                 {
-                    Api.GetShaderInfoLog(BindingId, out string? info);
+                    string? info = null;
+                    MeasureRenderingShaderGlCall(
+                        "glGetShaderInfoLog",
+                        () => Api.GetShaderInfoLog(BindingId, out info),
+                        "phase=compile-final-log");
                     if (!string.IsNullOrEmpty(info))
                         Debug.OpenGLWarning(info);
                 }
@@ -137,12 +151,20 @@ namespace XREngine.Rendering.OpenGL
                     return true;
 
                 _compilePending = false;
-                Api.GetShader(BindingId, GLEnum.CompileStatus, out int status);
+                int status = 0;
+                MeasureRenderingShaderGlCall(
+                    "glGetShaderiv(GL_COMPILE_STATUS)",
+                    () => Api.GetShader(BindingId, GLEnum.CompileStatus, out status),
+                    "phase=compile-blocking-status");
                 IsCompiled = status != 0;
 
                 if (!IsCompiled)
                 {
-                    Api.GetShaderInfoLog(BindingId, out string? info);
+                    string? info = null;
+                    MeasureRenderingShaderGlCall(
+                        "glGetShaderInfoLog",
+                        () => Api.GetShaderInfoLog(BindingId, out info),
+                        "phase=compile-blocking-log");
                     if (!string.IsNullOrEmpty(info))
                         Debug.OpenGLWarning(info);
                     else
@@ -193,7 +215,14 @@ namespace XREngine.Rendering.OpenGL
                 => PushSource();
 
             protected override uint CreateObject()
-                => Api.CreateShader(ToGLEnum(Mode));
+            {
+                uint shaderId = 0;
+                MeasureRenderingShaderGlCall(
+                    "glCreateShader",
+                    () => shaderId = Api.CreateShader(ToGLEnum(Mode)),
+                    $"shaderType={Mode}");
+                return shaderId;
+            }
 
             private void PushSource(bool compile = true)
             {
@@ -213,7 +242,10 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                Api.ShaderSource(BindingId, trueScript);
+                MeasureRenderingShaderGlCall(
+                    "glShaderSource",
+                    () => Api.ShaderSource(BindingId, trueScript),
+                    $"bytes={CountUtf8Bytes(trueScript)} lines={CountLines(trueScript)} compile={compile}");
                 if (compile && !Compile(out _) && !_compilePending)
                     Debug.OpenGLWarning(GetFullSource(true));
             }
@@ -245,7 +277,10 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool Compile(out string? info, bool printLogInfo = true)
             {
-                Api.CompileShader(BindingId);
+                MeasureRenderingShaderGlCall(
+                    "glCompileShader",
+                    () => Api.CompileShader(BindingId),
+                    Renderer.UseDriverParallelShaderCompile ? "driverParallel=true" : "driverParallel=false");
 
                 if (Renderer.UseDriverParallelShaderCompile)
                 {
@@ -254,8 +289,17 @@ namespace XREngine.Rendering.OpenGL
                     return false; // Compilation in progress — caller must poll
                 }
 
-                Api.GetShader(BindingId, GLEnum.CompileStatus, out int status);
-                Api.GetShaderInfoLog(BindingId, out info);
+                int status = 0;
+                MeasureRenderingShaderGlCall(
+                    "glGetShaderiv(GL_COMPILE_STATUS)",
+                    () => Api.GetShader(BindingId, GLEnum.CompileStatus, out status),
+                    "phase=compile-sync-status");
+                string? infoLog = null;
+                MeasureRenderingShaderGlCall(
+                    "glGetShaderInfoLog",
+                    () => Api.GetShaderInfoLog(BindingId, out infoLog),
+                    "phase=compile-sync-log");
+                info = infoLog;
                 IsCompiled = status != 0;
                 if (printLogInfo)
                 {
@@ -273,7 +317,10 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool Compile()
             {
-                Api.CompileShader(BindingId);
+                MeasureRenderingShaderGlCall(
+                    "glCompileShader",
+                    () => Api.CompileShader(BindingId),
+                    Renderer.UseDriverParallelShaderCompile ? "driverParallel=true" : "driverParallel=false");
 
                 if (Renderer.UseDriverParallelShaderCompile)
                 {
@@ -281,7 +328,11 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
-                Api.GetShader(BindingId, GLEnum.CompileStatus, out int status);
+                int status = 0;
+                MeasureRenderingShaderGlCall(
+                    "glGetShaderiv(GL_COMPILE_STATUS)",
+                    () => Api.GetShader(BindingId, GLEnum.CompileStatus, out status),
+                    "phase=compile-sync-status");
                 IsCompiled = status != 0;
                 return IsCompiled;
             }
@@ -325,6 +376,61 @@ namespace XREngine.Rendering.OpenGL
 
                 return false;
             }
+
+            private double MeasureRenderingShaderGlCall(string callName, Action action, string? detail = null)
+            {
+                if (!ShouldLogRenderingShaderVerbose())
+                {
+                    action();
+                    return 0.0;
+                }
+
+                long startTimestamp = Stopwatch.GetTimestamp();
+                action();
+                double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
+
+                bool renderThread = Engine.IsRenderThread;
+                uint shaderId = TryGetBindingId(out uint id) ? id : 0;
+                Debug.Rendering(
+                    EOutputVerbosity.Verbose,
+                    false,
+                    "[ShaderGLCall] call={0} shaderId={1} shaderType={2} separable={3} elapsedMs={4:F3} renderThread={5} renderThreadStallMs={6:F3}{7}.",
+                    callName,
+                    shaderId,
+                    Mode,
+                    RequiresSeparableCompatibility(),
+                    elapsedMilliseconds,
+                    renderThread,
+                    renderThread ? elapsedMilliseconds : 0.0,
+                    FormatRenderingDetail(detail));
+                return elapsedMilliseconds;
+            }
+
+            private static bool ShouldLogRenderingShaderVerbose()
+                => Debug.AllowOutput && RuntimeDebugHostServices.Current.OutputVerbosity >= EOutputVerbosity.Verbose;
+
+            private static string FormatRenderingDetail(string? detail)
+                => string.IsNullOrWhiteSpace(detail) ? string.Empty : $" detail='{detail.Replace('\'', '"')}'";
+
+            private static int CountUtf8Bytes(string? source)
+                => string.IsNullOrEmpty(source) ? 0 : Encoding.UTF8.GetByteCount(source);
+
+            private static int CountLines(string? source)
+            {
+                if (string.IsNullOrEmpty(source))
+                    return 0;
+
+                int lines = 1;
+                for (int i = 0; i < source.Length; i++)
+                {
+                    if (source[i] == '\n')
+                        lines++;
+                }
+                return lines;
+            }
+
+            private static double StopwatchTicksToMilliseconds(long ticks)
+                => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
         }
 
         //public ShaderType CurrentShaderMode { get; private set; } = ShaderType.FragmentShader;

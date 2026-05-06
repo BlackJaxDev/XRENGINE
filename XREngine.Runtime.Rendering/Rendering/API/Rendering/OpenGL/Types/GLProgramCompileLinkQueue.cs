@@ -1,6 +1,7 @@
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Threading;
 using XREngine.Rendering.Shaders;
 
@@ -76,9 +77,11 @@ namespace XREngine.Rendering.OpenGL
 
             public bool TryEnqueueCompileAndLink(uint programId, ShaderInput[] shaders, out string? rejectReason)
             {
+                ShaderInputSummary summary = SummarizeShaderInputs(shaders);
                 if (ContainsKnownAsyncLinkHazard(shaders))
                 {
                     rejectReason = "known async-link hazard";
+                    LogRenderingQueueEvent("REJECTED_HAZARD", programId, summary, rejectReason);
                     Interlocked.Increment(ref _rejectedCount);
                     return false;
                 }
@@ -86,14 +89,21 @@ namespace XREngine.Rendering.OpenGL
                 if (!CanEnqueue)
                 {
                     rejectReason = "compile/link queue is at capacity";
+                    LogRenderingQueueEvent("BACKPRESSURE", programId, summary, rejectReason);
                     Interlocked.Increment(ref _backpressureCount);
                     return false;
                 }
 
                 rejectReason = null;
+                LogRenderingQueueEvent(
+                    "ENQUEUE",
+                    programId,
+                    summary,
+                    $"inFlight={InFlightCount}/{MaxInFlight}");
                 Interlocked.Increment(ref _inFlight);
                 _sharedContext.Enqueue(gl =>
                 {
+                    LogRenderingQueueEvent("WORKER_BEGIN", programId, summary, null);
                     long compileStartTimestamp = Stopwatch.GetTimestamp();
                     uint[] shaderIds = new uint[shaders.Length];
                     bool allCompiled = true;
@@ -102,22 +112,66 @@ namespace XREngine.Rendering.OpenGL
                     for (int i = 0; i < shaders.Length; i++)
                     {
                         ref readonly ShaderInput input = ref shaders[i];
-                        uint sid = gl.CreateShader(input.Type);
+                        ShaderType shaderType = input.Type;
+                        string resolvedSource = input.ResolvedSource;
+                        uint sid = 0;
+                        MeasureRenderingWorkerGlCall(
+                            "glCreateShader",
+                            programId,
+                            0,
+                            shaderType,
+                            () => sid = gl.CreateShader(shaderType),
+                            "worker=source-compile");
                         shaderIds[i] = sid;
 
-                        gl.ShaderSource(sid, input.ResolvedSource);
-                        gl.CompileShader(sid);
+                        MeasureRenderingWorkerGlCall(
+                            "glShaderSource",
+                            programId,
+                            sid,
+                            shaderType,
+                            () => gl.ShaderSource(sid, resolvedSource),
+                            $"bytes={CountUtf8Bytes(resolvedSource)} lines={CountLines(resolvedSource)} worker=source-compile");
+                        MeasureRenderingWorkerGlCall(
+                            "glCompileShader",
+                            programId,
+                            sid,
+                            shaderType,
+                            () => gl.CompileShader(sid),
+                            "worker=source-compile");
 
-                        gl.GetShader(sid, ShaderParameterName.CompileStatus, out int status);
+                        int status = 0;
+                        MeasureRenderingWorkerGlCall(
+                            "glGetShaderiv(GL_COMPILE_STATUS)",
+                            programId,
+                            sid,
+                            shaderType,
+                            () => gl.GetShader(sid, ShaderParameterName.CompileStatus, out status),
+                            "worker=source-compile-status");
                         if (status == 0)
                         {
-                            gl.GetShaderInfoLog(sid, out string? info);
+                            string? info = null;
+                            MeasureRenderingWorkerGlCall(
+                                "glGetShaderInfoLog",
+                                programId,
+                                sid,
+                                shaderType,
+                                () => gl.GetShaderInfoLog(sid, out info),
+                                "worker=source-compile-log");
                             errorLog = info;
                             allCompiled = false;
 
                             // Clean up all created shaders so far.
                             for (int j = 0; j <= i; j++)
-                                gl.DeleteShader(shaderIds[j]);
+                            {
+                                uint deleteShaderId = shaderIds[j];
+                                MeasureRenderingWorkerGlCall(
+                                    "glDeleteShader",
+                                    programId,
+                                    deleteShaderId,
+                                    shaders[j].Type,
+                                    () => gl.DeleteShader(deleteShaderId),
+                                    "worker=compile-failed-cleanup");
+                            }
                             break;
                         }
                     }
@@ -125,6 +179,11 @@ namespace XREngine.Rendering.OpenGL
                     if (!allCompiled)
                     {
                         double compileMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - compileStartTimestamp);
+                        LogRenderingQueueEvent(
+                            "WORKER_COMPILE_FAILED",
+                            programId,
+                            summary,
+                            $"compileMs={compileMilliseconds:F2} error={errorLog ?? "<none>"}");
                         _completed[programId] = new CompileResult(CompileStatus.CompileFailed, errorLog, compileMilliseconds, 0.0);
                         Interlocked.Increment(ref _failedCount);
                         return;
@@ -134,27 +193,83 @@ namespace XREngine.Rendering.OpenGL
 
                     // Attach all compiled shaders to the program.
                     for (int i = 0; i < shaderIds.Length; i++)
-                        gl.AttachShader(programId, shaderIds[i]);
+                    {
+                        uint shaderId = shaderIds[i];
+                        ShaderType shaderType = shaders[i].Type;
+                        MeasureRenderingWorkerGlCall(
+                            "glAttachShader",
+                            programId,
+                            shaderId,
+                            shaderType,
+                            () => gl.AttachShader(programId, shaderId),
+                            "worker=source-link-attach");
+                    }
 
                     long linkStartTimestamp = Stopwatch.GetTimestamp();
-                    gl.LinkProgram(programId);
-                    gl.GetProgram(programId, ProgramPropertyARB.LinkStatus, out int linkStatus);
+                    MeasureRenderingWorkerGlCall(
+                        "glLinkProgram",
+                        programId,
+                        0,
+                        null,
+                        () => gl.LinkProgram(programId),
+                        "worker=source-link");
+                    int linkStatus = 0;
+                    MeasureRenderingWorkerGlCall(
+                        "glGetProgramiv(GL_LINK_STATUS)",
+                        programId,
+                        0,
+                        null,
+                        () => gl.GetProgram(programId, ProgramPropertyARB.LinkStatus, out linkStatus),
+                        "worker=source-link-status");
 
                     string? linkError = null;
                     if (linkStatus == 0)
-                        gl.GetProgramInfoLog(programId, out linkError);
+                    {
+                        MeasureRenderingWorkerGlCall(
+                            "glGetProgramInfoLog",
+                            programId,
+                            0,
+                            null,
+                            () => gl.GetProgramInfoLog(programId, out linkError),
+                            "worker=source-link-log");
+                    }
 
                     // Detach and delete shader objects — no longer needed after linking.
                     for (int i = 0; i < shaderIds.Length; i++)
                     {
-                        gl.DetachShader(programId, shaderIds[i]);
-                        gl.DeleteShader(shaderIds[i]);
+                        uint shaderId = shaderIds[i];
+                        ShaderType shaderType = shaders[i].Type;
+                        MeasureRenderingWorkerGlCall(
+                            "glDetachShader",
+                            programId,
+                            shaderId,
+                            shaderType,
+                            () => gl.DetachShader(programId, shaderId),
+                            "worker=source-link-detach");
+                        MeasureRenderingWorkerGlCall(
+                            "glDeleteShader",
+                            programId,
+                            shaderId,
+                            shaderType,
+                            () => gl.DeleteShader(shaderId),
+                            "worker=source-link-delete-shader");
                     }
 
                     // Synchronize so the linked program is usable on the main context.
-                    gl.Finish();
+                    MeasureRenderingWorkerGlCall(
+                        "glFinish",
+                        programId,
+                        0,
+                        null,
+                        () => gl.Finish(),
+                        "worker=source-link-handoff");
 
                     double linkMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp);
+                    LogRenderingQueueEvent(
+                        linkStatus != 0 ? "WORKER_READY" : "WORKER_LINK_FAILED",
+                        programId,
+                        summary,
+                        $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMilliseconds:F2} error={linkError ?? "<none>"}");
 
                     _completed[programId] = new CompileResult(
                         linkStatus != 0 ? CompileStatus.Success : CompileStatus.LinkFailed,
@@ -214,6 +329,113 @@ namespace XREngine.Rendering.OpenGL
                     EShaderType.Mesh => (ShaderType)0x9559,
                     _ => ShaderType.FragmentShader
                 };
+
+            private readonly record struct ShaderInputSummary(
+                int ShaderCount,
+                long SourceBytes,
+                int SourceLines,
+                string StageList);
+
+            private static ShaderInputSummary SummarizeShaderInputs(ReadOnlySpan<ShaderInput> shaders)
+            {
+                if (shaders.Length == 0)
+                    return new ShaderInputSummary(0, 0, 0, "<none>");
+
+                long bytes = 0;
+                int lines = 0;
+                var stages = new StringBuilder(shaders.Length * 16);
+                for (int i = 0; i < shaders.Length; i++)
+                {
+                    if (i > 0)
+                        stages.Append('|');
+
+                    stages.Append(shaders[i].Type);
+                    bytes += CountUtf8Bytes(shaders[i].ResolvedSource);
+                    lines += CountLines(shaders[i].ResolvedSource);
+                }
+
+                return new ShaderInputSummary(shaders.Length, bytes, lines, stages.ToString());
+            }
+
+            private static double MeasureRenderingWorkerGlCall(
+                string callName,
+                uint programId,
+                uint shaderId,
+                ShaderType? shaderType,
+                Action action,
+                string? detail = null)
+            {
+                if (!ShouldLogRenderingShaderLinkVerbose())
+                {
+                    action();
+                    return 0.0;
+                }
+
+                long startTimestamp = Stopwatch.GetTimestamp();
+                action();
+                double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
+
+                bool renderThread = Engine.IsRenderThread;
+                Debug.Rendering(
+                    EOutputVerbosity.Verbose,
+                    false,
+                    "[ShaderGLCall] call={0} program='<shared-context-worker>' hash=0 programId={1} shaderId={2} shaderType={3} elapsedMs={4:F3} renderThread={5} renderThreadStallMs={6:F3}{7}.",
+                    callName,
+                    programId,
+                    shaderId,
+                    shaderType?.ToString() ?? "<program>",
+                    elapsedMilliseconds,
+                    renderThread,
+                    renderThread ? elapsedMilliseconds : 0.0,
+                    FormatRenderingDetail(detail));
+                return elapsedMilliseconds;
+            }
+
+            private static void LogRenderingQueueEvent(
+                string eventName,
+                uint programId,
+                ShaderInputSummary summary,
+                string? detail)
+            {
+                if (!ShouldLogRenderingShaderLinkVerbose())
+                    return;
+
+                Debug.Rendering(
+                    EOutputVerbosity.Verbose,
+                    false,
+                    "[ShaderLinkQueue] {0} programId={1} shaderCount={2} shaderTypes={3} sourceBytes={4} sourceLines={5} renderThread={6}{7}.",
+                    eventName,
+                    programId,
+                    summary.ShaderCount,
+                    summary.StageList,
+                    summary.SourceBytes,
+                    summary.SourceLines,
+                    Engine.IsRenderThread,
+                    FormatRenderingDetail(detail));
+            }
+
+            private static bool ShouldLogRenderingShaderLinkVerbose()
+                => Debug.AllowOutput && RuntimeDebugHostServices.Current.OutputVerbosity >= EOutputVerbosity.Verbose;
+
+            private static string FormatRenderingDetail(string? detail)
+                => string.IsNullOrWhiteSpace(detail) ? string.Empty : $" detail='{detail.Replace('\'', '"')}'";
+
+            private static int CountUtf8Bytes(string? source)
+                => string.IsNullOrEmpty(source) ? 0 : Encoding.UTF8.GetByteCount(source);
+
+            private static int CountLines(string? source)
+            {
+                if (string.IsNullOrEmpty(source))
+                    return 0;
+
+                int lines = 1;
+                for (int i = 0; i < source.Length; i++)
+                {
+                    if (source[i] == '\n')
+                        lines++;
+                }
+                return lines;
+            }
 
             private static double StopwatchTicksToMilliseconds(long ticks)
                 => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;

@@ -195,14 +195,20 @@ public partial class OpenGLRenderer
             if (_parallelShaderCompileExtensionName == ArbParallelShaderCompileExtensionName &&
                 arbParallelShaderCompile is not null)
             {
-                arbParallelShaderCompile.MaxShaderCompilerThreads(count);
+                MeasureRenderingParallelShaderCompileGlCall(
+                    "glMaxShaderCompilerThreadsARB",
+                    () => arbParallelShaderCompile.MaxShaderCompilerThreads(count),
+                    $"threads={FormatThreadCount(count)}");
                 return true;
             }
 
             if (_parallelShaderCompileExtensionName == KhrParallelShaderCompileExtensionName &&
                 _glMaxShaderCompilerThreadsKhr is not null)
             {
-                _glMaxShaderCompilerThreadsKhr(count);
+                MeasureRenderingParallelShaderCompileGlCall(
+                    "glMaxShaderCompilerThreadsKHR",
+                    () => _glMaxShaderCompilerThreadsKhr(count),
+                    $"threads={FormatThreadCount(count)}");
                 return true;
             }
         }
@@ -213,6 +219,37 @@ public partial class OpenGLRenderer
 
         return false;
     }
+
+    private static double MeasureRenderingParallelShaderCompileGlCall(string callName, Action action, string? detail = null)
+    {
+        if (!ShouldLogRenderingShaderLinkVerbose())
+        {
+            action();
+            return 0.0;
+        }
+
+        long startTimestamp = Stopwatch.GetTimestamp();
+        action();
+        double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
+
+        bool renderThread = Engine.IsRenderThread;
+        Debug.Rendering(
+            EOutputVerbosity.Verbose,
+            false,
+            "[ShaderGLCall] call={0} program='<parallel-shader-compile-config>' hash=0 programId=0 elapsedMs={1:F3} renderThread={2} renderThreadStallMs={3:F3}{4}.",
+            callName,
+            elapsedMilliseconds,
+            renderThread,
+            renderThread ? elapsedMilliseconds : 0.0,
+            FormatRenderingDetail(detail));
+        return elapsedMilliseconds;
+    }
+
+    private static bool ShouldLogRenderingShaderLinkVerbose()
+        => Debug.AllowOutput && RuntimeDebugHostServices.Current.OutputVerbosity >= EOutputVerbosity.Verbose;
+
+    private static string FormatRenderingDetail(string? detail)
+        => string.IsNullOrWhiteSpace(detail) ? string.Empty : $" detail='{detail.Replace('\'', '"')}'";
 
     private static int TryGetMaxShaderCompilerThreads(GL api)
     {
@@ -373,6 +410,9 @@ public partial class OpenGLRenderer
 
     private static long MillisecondsToStopwatchTicks(int milliseconds)
         => (long)(milliseconds * (Stopwatch.Frequency / 1000.0));
+
+    private static double StopwatchTicksToMilliseconds(long ticks)
+        => ticks <= 0L ? 0.0 : ticks * 1000.0 / Stopwatch.Frequency;
 
     private static string FormatThreadCount(uint count)
         => count == ParallelShaderCompileImplementationMaxThreads ? "implementation-max" : count.ToString();

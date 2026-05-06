@@ -67,6 +67,23 @@ All collection, serialization, and network I/O runs on the sender background
 thread. The six collector delegates read engine state through lock-free /
 volatile patterns — **no collector takes a lock on any engine subsystem**.
 
+### Profiler scope kinds
+
+`Engine.Profiler.Start(...)` accepts an optional `ProfilerScopeKind` so call
+sites can describe the expected cadence of the work being measured:
+
+| Kind | Use for | Logging policy |
+|------|---------|----------------|
+| `AlwaysOnHotPathLoop` | Work expected every frame or every render/update loop pass | Aggregate in frame history and FPS-drop/render-stall diagnostics; do not emit per-scope spike logs. |
+| `ConditionalLoop` | Work checked from a loop but only active sometimes, such as queue drains or async polling | Aggregate normally and write rate-limited slow-scope entries to `profiler-conditional-loop-spikes.log`. |
+| `OneOffInvoke` | Startup, linking, compilation, cache load, or other discrete invokes | Aggregate normally and write rate-limited slow individual invokes to `profiler-one-off-invokes.log`. |
+| `Unspecified` | Legacy or not-yet-classified scopes | Preserve existing aggregate behavior. |
+
+Scope kind is carried through the MemoryPack profiler frame packet, in-process
+editor profiler data source, UDP sender, and shared profiler UI. The profiler
+tree labels non-default scopes with their kind and keeps otherwise-identical
+method names separate if their cadence differs.
+
 ### Allocation budget (sender thread, per ~33 ms cycle)
 
 | Source | Allocation |
@@ -189,6 +206,10 @@ disk diagnostics for severe frame anomalies:
 - `profiler-fps-drops.log` records completed-frame spikes using the per-thread snapshot history.
 - `profiler-render-stalls.log` records when an active render dispatch goes longer than
   **CodeProfilerRenderStallThresholdMs** without completing a render, then logs how long recovery took once the next render finishes.
+- `profiler-conditional-loop-spikes.log` records rate-limited slow scopes tagged
+  `ConditionalLoop`.
+- `profiler-one-off-invokes.log` records rate-limited slow scopes tagged
+  `OneOffInvoke`.
 - `profiler-main-thread-invokes.log` records verbose queued render-thread invoke diagnostics when **Enable Main Thread Invoke Diagnostics** is enabled.
 
 Profiler settings also allow **Update (s)** to be set to `0` for every-render

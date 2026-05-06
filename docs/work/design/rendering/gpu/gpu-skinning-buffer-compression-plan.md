@@ -1,6 +1,6 @@
 # GPU Skinning Buffer Compression Plan
 
-Last Updated: 2026-04-20
+Last Updated: 2026-05-06
 Status: design
 Scope: renderer-level refactor of XRMesh and XRMeshRenderer skinning influence and palette buffers across direct vertex skinning, compute skinning, OpenGL, Vulkan, and cooked mesh payloads.
 
@@ -45,7 +45,7 @@ Recommended target outcomes:
 
 - dominant meshes with `<= 4` influences per vertex drop from 32 bytes per vertex to 12 or 16 bytes per vertex depending on palette size,
 - overflow vertices pay only for extra influences instead of penalizing the whole mesh,
-- renderer bone palette bandwidth drops from 128 bytes per bone to 48 bytes per bone,
+- renderer bone palette bandwidth drops from 128 bytes per bone to 48 bytes per bone (62.5% reduction) when no previous-frame palette is required, or to 96 bytes per bone (~25% reduction) when temporal motion vectors require a previous-frame companion stream,
 - compute skinning and direct vertex skinning consume one logical decode contract,
 - GPU-produced animation sources fit the same palette abstraction instead of special-casing CPU-owned `BoneMatricesBuffer`.
 
@@ -259,6 +259,28 @@ That means:
 
 That is a sign the buffer model is not clean enough. A better format should support both 4-max-bones weighting and unbounded-bones weighting without forcing a mesh-wide storage mode toggle.
 
+### 3.5 Cost Summary
+
+This is the headline motivation for the refactor and is repeated here for visibility. The detailed derivations live in [§5.5](#55-storage-cost-comparison) and [§7.2](#72-affine-matrix-layout).
+
+Mesh influence storage (bytes per vertex):
+
+| Influences / vertex | Current fixed | Current variable | Proposed `Core4x8` | Proposed `Core4x16` |
+|---|---:|---:|---:|---:|
+| 1 | 32 | 16 | 12 | 16 |
+| 4 | 32 | 40 | 12 | 16 |
+| 5 | N/A | 48 | 16 | 20 |
+| 8 | N/A | 72 | 28 | 32 |
+
+Renderer palette storage (bytes per bone):
+
+| Mode | Current dual-`mat4` | Proposed affine 3x4 |
+|---|---:|---:|
+| No temporal companion | 128 | 48 (62.5% reduction) |
+| With previous-frame companion | 128 | 96 (~25% reduction) |
+
+Proposed `Core4x8` and `Core4x16` rows always include the universal 4-byte spill header; see [§6.6](#66-overflow-header-allocation-strategy) for that trade-off.
+
 ---
 
 ## 4. Goals And Non-Goals
@@ -330,6 +352,24 @@ The design should support two core index variants:
 | `Core4x8` | `UtilizedBones.Length <= 255` | 4 x u8 | 4 x UNorm8 | 1 x u32 | 12 |
 | `Core4x16` | `256 <= UtilizedBones.Length <= 65535` | 4 x u16 | 4 x UNorm8 | 1 x u32 | 16 |
 
+Because indices store `boneIndex + 1` with `0` reserved, `Core4x8` addresses up to 255 real bones and `Core4x16` addresses up to 65535 real bones; the table conditions are written in those terms.
+
+Byte map per vertex (little-endian, written in this order in cooked payloads and uploaded as such on all platforms):
+
+```text
+Core4x8 (12 bytes / vertex):
+  bytes  0..3  : core indices  (u8 i0, u8 i1, u8 i2, u8 i3)
+  bytes  4..7  : core weights  (UNorm8 w0, w1, w2, w3)
+  bytes  8..11 : spill header  (u32, see §5.4)
+
+Core4x16 (16 bytes / vertex):
+  bytes  0..7  : core indices  (u16 i0, i1, i2, i3)
+  bytes  8..11 : core weights  (UNorm8 w0, w1, w2, w3)
+  bytes 12..15 : spill header  (u32, see §5.4)
+```
+
+Core attributes are aligned on a 4-byte boundary and the per-vertex stride is the value listed above. The core indices and core weights buffers are exposed both as integer/normalized vertex attributes (direct path) and as raw `uint` SSBO words (compute path); compute consumes them via `unpackUnorm4x8` and equivalent integer unpacks, which assume little-endian byte order matching the layout above.
+
 The core weights remain `UNorm8` in both variants.
 
 Rationale:
@@ -350,23 +390,25 @@ The spill contract is:
 Recommended spill header layout:
 
 ```text
-uint SpillHeader
-bits  0..23 : spillOffset
-bits 24..31 : extraInfluenceCount
+uint SpillHeader (little-endian within the uint)
+bits  0..23 : spillOffset           (entry index into BoneInfluenceSpillEntries)
+bits 24..31 : extraInfluenceCount   (count of spill entries; 0 ⇒ no spill)
 ```
 
 Recommended spill entry layout:
 
 ```text
-uint SpillEntry
-bits  0..15 : boneIndexPlusOne
-bits 16..31 : weightUNorm16
+uint SpillEntry (little-endian within the uint)
+bits  0..15 : boneIndexPlusOne   (u16; 0 = sentinel)
+bits 16..23 : weightUNorm8       (matches core weight precision)
+bits 24..31 : reserved (must be 0)
 ```
 
 Notes:
 
 - `boneIndexPlusOne` preserves the existing sentinel contract.
-- `weightUNorm16` is chosen instead of `UNorm8` because the spill tail is where very small weights are more likely to appear.
+- Spill weights use `UNorm8` to match the core lanes. This keeps a single weight precision across the whole format, allows a shared decode helper, and avoids growing the entry to 6 bytes (and the resulting alignment padding to 8 bytes). Tail influences whose weight rounds below 1/255 are dropped during packing rather than carried at higher precision.
+- One spill entry occupies a full 4-byte word for `std430` alignment and to keep simple `uint` indexing on both compute and vertex paths. The reserved high byte is available for a future flag if needed.
 - 24 bits of offset permits over 16 million spill entries in one mesh payload, which is far beyond expected usage.
 
 ### 5.5 Storage Cost Comparison
@@ -376,9 +418,9 @@ Under the proposed design, vertex cost becomes:
 - `Core4x8`: `12 + 4e` bytes per vertex,
 - `Core4x16`: `16 + 4e` bytes per vertex,
 
-where `e = max(0, influenceCount - 4)`.
+where `e = max(0, influenceCount - 4)`. The `12` and `16` constants both already include the universal 4-byte spill header (see [§6.6](#66-overflow-header-allocation-strategy)); they are not headerless variants.
 
-Representative comparisons:
+Representative comparisons (bytes per vertex):
 
 | Influences / vertex | Current fixed | Current variable | Proposed `Core4x8` | Proposed `Core4x16` |
 |---|---:|---:|---:|---:|
@@ -428,21 +470,23 @@ Recommended replacement names:
 - `BoneInfluenceSpillHeaders`
 - `BoneInfluenceSpillEntries`
 
-If the engine wants to minimize churn during migration, aliases can be maintained temporarily in `ECommonBufferType`, but the target state should use explicit names.
+The rename is deferred to Phase 4 (Cleanup And Removal); see [§10](#10-recommended-implementation-order). Phases 1–3 keep the existing `ECommonBufferType` names so the influence and palette refactors can land without dragging a workspace-wide rename through every dependent backend, tool, and test. Phase 4 then performs a single clean rename with no aliases retained: callers that referenced the old names are updated in the same change, and the old enum values are removed rather than aliased.
 
 ### 6.2 Build Rules
 
 When rebuilding skinning buffers from imported or author-authored vertex weights:
 
 1. Normalize the full weight set.
-2. Sort influences by descending weight.
-3. Write the first four into core lanes.
-4. Write any remaining influences into the spill list.
-5. Renormalize using the final packed weights if exact packed-sum consistency is required for validation.
+2. Sort influences by descending weight, breaking ties by ascending bone index for determinism.
+3. Drop trailing influences whose weight rounds to zero at the target quantization (`UNorm8` for both core and spill).
+4. Write the first four into core lanes.
+5. Write any remaining influences into the spill list.
+6. Quantize all surviving weights to `UNorm8`.
+7. Renormalize on the CPU by absorbing the quantization residual `(255 - Σ quantizedWeights)` into the lane with the largest quantized weight, breaking ties toward the first lane. This is the binding renormalization rule for the engine: shaders do **not** renormalize at decode time, and packed weight sums are guaranteed to equal `255` per vertex (i.e. exactly 1.0 in normalized space) after this step.
 
 Important detail:
 
-- sorting by descending weight must become explicit and deterministic.
+- sorting by descending weight (with the bone-index tiebreak above) must become explicit and deterministic.
 
 The current code iterates dictionaries after normalization. That is sufficient for the current loose formats but not ideal for a tightly packed binary contract where lane ordering should be stable.
 
@@ -471,6 +515,15 @@ For the direct vertex path:
 - core weights should be exposed as normalized `u8` vertex attributes,
 - spill headers and spill entries should be available through SSBO bindings when a mesh has any overflow influences.
 
+Concrete vertex attribute formats:
+
+| Variant | Indices format | Weights format |
+|---|---|---|
+| `Core4x8` | `R8G8B8A8_UINT` (GL: `GL_UNSIGNED_BYTE` + `glVertexAttribIPointer`) | `R8G8B8A8_UNORM` |
+| `Core4x16` | `R16G16B16A16_UINT` (GL: `GL_UNSIGNED_SHORT` + `glVertexAttribIPointer`) | `R8G8B8A8_UNORM` |
+
+Both formats are core in OpenGL 4.6 and Vulkan 1.0; no extension or feature-bit gating is required. Spill SSBO bindings use `std430` and consume the same `BoneInfluenceSpillHeaders` and `BoneInfluenceSpillEntries` buffers used by the compute path, so backends do not need duplicate GPU views in the steady state. During migration, a temporary duplicate view is acceptable per [§12.2](#122-backend-binding-details).
+
 That means the direct path continues to benefit from cheap fixed-function attribute fetch for the dominant case while still supporting unbounded-bones weighting through the spill path.
 
 ### 6.5 Compute Path Contract
@@ -496,6 +549,26 @@ This is not the minimum theoretical memory cost, but it is the best first trade:
 
 A later optimization may replace the universal header with a sparse overflow table if profiling proves it matters.
 
+### 6.7 Zero-Influence Vertices
+
+Vertices with zero bone influences (rigid attachments, unweighted geometry) are represented as:
+
+- core indices: `(0, 0, 0, 0)` — all sentinel,
+- core weights: `(0, 0, 0, 0)`,
+- spill header: `0` — zero offset, zero extra count.
+
+Decode treats sentinel-0 lanes as no-op contributions, so a fully zero-influence vertex emits the input position unchanged. This matches the current behavior and is preserved as a design invariant in [§4.3](#43-design-invariants).
+
+### 6.8 Endianness And Bit Order
+
+All multi-byte fields in influence buffers (core indices `u16`, core weights `UNorm8`, spill headers, spill entries) are written and read in little-endian byte order. This matches:
+
+- the GLSL packed-uint helpers used by compute (`unpackUnorm4x8`, `bitfieldExtract`),
+- both supported backends (OpenGL on x64 Windows, Vulkan on x64 Windows),
+- the cooked payload format on disk.
+
+No platform in the current support matrix requires byte-swapping at load time. If a future big-endian platform is added, the loader — not the runtime decode — must convert.
+
 ---
 
 ## 7. Palette Compression Plan
@@ -520,13 +593,29 @@ For GPU-driven sources, the producer should write final skin matrices directly.
 
 Recommended skin matrix layout per bone:
 
-- three `vec4` columns encoding the affine transform needed by row-vector skinning.
+- three `vec4` rows encoding the affine transform needed for skinning, declared in GLSL as `vec4 skin[3]` (three independent `vec4`s, not a `mat3x4`). This avoids GLSL’s implicit `column_major` packing rules for matrix types under `std430` and keeps the on-disk byte order identical to the in-shader load order.
+
+Each row stores `(linear.row_i.xyz, translation_i)`, so a position is reconstructed as:
+
+```glsl
+vec3 transformPosition(vec4 skin[3], vec3 p) {
+    return vec3(
+        dot(skin[0], vec4(p, 1.0)),
+        dot(skin[1], vec4(p, 1.0)),
+        dot(skin[2], vec4(p, 1.0)));
+}
+```
 
 This costs:
 
 - `3 * 16 = 48` bytes per bone.
 
-Compared to the current 128-byte dual-`mat4` palette, that is a **62.5% reduction** before any secondary effects.
+Compared to the current 128-byte dual-`mat4` palette, that is:
+
+- a **62.5% reduction** when no previous-frame palette is required (current palette: 128 B/bone → proposed: 48 B/bone),
+- a **~25% reduction** for temporal paths that retain a previous-frame companion stream (current palette: 128 B/bone → proposed: 96 B/bone for current + previous combined).
+
+The headline number depends on whether the consuming render path needs motion vectors. Both numbers should be cited together when summarizing this change.
 
 ### 7.3 Why Affine 3x4 Is Enough
 
@@ -557,7 +646,7 @@ It also aligns with the zero-readback GPU animation work where the actual palett
 
 ### 7.5 Global Packing Changes
 
-`GlobalAnimationInputBuffers` should eventually become a skin-palette packer rather than a pair-of-`mat4` packers.
+`GlobalAnimationInputBuffers` should eventually become a skin-palette packer rather than a pair-of-`mat4` packers. The renamed/replacement type should be `GlobalSkinPaletteBuffers` (parallel naming to the `ActiveSkinPaletteBuffer` surface in [§7.4](#74-new-renderer-palette-abstraction)); the rename lands together with the rest of the buffer rename in Phase 4.
 
 Recommended target direction:
 
@@ -589,7 +678,7 @@ Recommended metadata:
 Recommended internal state changes:
 
 - replace `MaxWeightCount` as the primary runtime layout selector,
-- retain `MaxWeightCount` only as descriptive metadata for inspection/debugging if still useful,
+- retain `MaxWeightCount` as descriptive metadata only — it is no longer consulted by any code path that selects buffer layout, shader variant, or upload format. It remains exposed on `XRMesh` for inspection, telemetry, and import diagnostics. Any new runtime branch that depends on `MaxWeightCount` is a regression and should fail review.
 - store stable sorted influence order before packing.
 
 ### 8.2 XRMeshRenderer
@@ -634,11 +723,17 @@ Recommended direction:
 
 Because the repository is pre-ship, the preferred migration is:
 
-1. introduce a new cooked skinning payload version,
+1. bump the `XRMesh.CookedBinary` skinning payload version field,
 2. invalidate and recook existing cooked meshes,
 3. remove the legacy runtime skinning buffer layout after validation.
 
 This is cleaner than carrying long-lived dual decode paths for old cooked assets.
+
+Concrete versioning rule:
+
+- the existing cooked-mesh header carries a payload version integer; the skinning refactor increments that integer by one,
+- on load, a mismatch between the on-disk version and the runtime version causes the loader to **reject** the cooked payload and force a reimport from source assets,
+- there is no in-place cooked-to-cooked translator; legacy payloads are not silently upgraded.
 
 ### 9.2 Payload Changes
 
@@ -666,6 +761,16 @@ When a mesh still has source vertex weights available, rebuilding the compressed
 
 If a direct cooked-to-cooked migration tool is later needed, it should translate through a canonical logical influence list rather than relying on implicit meaning from legacy buffer names.
 
+### 9.4 Rollback Strategy
+
+The refactor introduces a `SkinningInfluenceEncoding` enum on `XRMesh` (see [§8.1](#81-xrmesh)). The legacy fixed-4 and variable-length runtime layouts are retained behind the enum value `SkinningInfluenceEncoding.Legacy` through the end of Phase 3, gated by a single engine setting:
+
+- if the new format triggers a content regression that cannot be resolved before Phase 4, the engine can be flipped back to `Legacy` for a release without reverting code,
+- Phase 4 removes the `Legacy` enum value and the corresponding code paths,
+- after Phase 4, rollback is a code revert rather than a runtime toggle.
+
+The rollback path is explicitly **temporary**. No long-lived dual-encoding support is planned.
+
 ---
 
 ## 10. Recommended Implementation Order
@@ -676,31 +781,36 @@ If a direct cooked-to-cooked migration tool is later needed, it should translate
 - Add unit tests that compare CPU logical weights against packed decode results.
 - Add deterministic influence ordering before any packing changes.
 
-### Phase 1: Mesh Influence Refactor
+### Phase 1: Influence And Shader Refactor (combined)
 
-- Implement `Core4x8` and `Core4x16` packing.
+The original plan split mesh influence work (compute) from direct-path migration into two phases. They are merged here so the engine never runs in a state where compute and direct paths disagree on the influence format.
+
+- Implement `Core4x8` and `Core4x16` packing on `XRMesh`.
 - Introduce spill headers and spill entries.
-- Update compute skinning shaders to decode the new format.
-- Keep legacy direct vertex skinning behind a temporary fallback if needed.
+- Update compute skinning shaders (`SkinningPrepass.comp`, `SkinningPrepassInterleaved.comp`) to decode the new format.
+- Update `DefaultVertexShaderGenerator` to declare compact core attributes and bind spill SSBOs for overflow-capable meshes.
+- Remove the mesh-wide fixed-vs-variable skinning branch from both compute and direct paths in the same change.
+- The `SkinningInfluenceEncoding.Legacy` runtime fallback (see [§9.4](#94-rollback-strategy)) provides the only supported escape hatch during this phase.
 
-### Phase 2: Direct Vertex Path Migration
+### Phase 2: Palette Compression
 
-- Update `DefaultVertexShaderGenerator` to declare compact core attributes.
-- Bind spill buffers for overflow-capable meshes.
-- Remove the mesh-wide fixed-vs-variable skinning branch.
-
-### Phase 3: Palette Compression
+(Renumbered from the original Phase 3.)
 
 - Add final skin palette buffers to `XRMeshRenderer`.
 - Compose dirty bone matrices directly into the new format.
 - Update compute and direct paths to consume the new palette abstraction.
-- Refactor global palette packing.
+- Refactor global palette packing (`GlobalAnimationInputBuffers` → `GlobalSkinPaletteBuffers`, target rename in Phase 3 cleanup).
 
-### Phase 4: Cleanup And Removal
+### Phase 3: Cleanup And Removal
 
+(Renumbered from the original Phase 4.)
+
+- Rename mesh influence buffers (`BoneMatrixOffset` → `BoneInfluenceCoreIndices`, etc.; see [§6.1](#61-recommended-logical-buffers)). No `ECommonBufferType` aliases are retained.
+- Rename `GlobalAnimationInputBuffers` → `GlobalSkinPaletteBuffers`.
+- Remove the `SkinningInfluenceEncoding.Legacy` enum value and the corresponding fallback paths.
 - Remove legacy `BoneInvBindMatricesBuffer` hot-path usage.
 - Remove float-backed skinning integer decode.
-- Remove or repurpose obsolete engine settings.
+- Remove or repurpose obsolete engine settings (`OptimizeSkinningTo4Weights`, `OptimizeSkinningWeightsIfPossible`, skinning-specific use of `UseIntegerUniformsInShaders`).
 - Regenerate cooked assets and remove legacy payload support.
 
 ---
@@ -711,12 +821,21 @@ If a direct cooked-to-cooked migration tool is later needed, it should translate
 
 Add targeted tests in `XREngine.UnitTests/Rendering` for:
 
-- deterministic packing order,
+- deterministic packing order (descending weight, ascending bone-index tiebreak),
 - correct decode for `Core4x8` with 0 to 4 influences,
 - correct decode for spill vertices with 5+ influences,
-- weight sum preservation after quantization,
+- weight sum preservation after quantization — packed `Σ weight == 255` exactly per vertex (the absorb-into-largest renormalization rule from [§6.2](#62-build-rules)),
 - sentinel handling for unused lanes,
+- zero-influence vertex contract from [§6.7](#67-zero-influence-vertices) — input position passes through unchanged,
 - equivalence between legacy logical weights and new decode results within tolerance.
+
+Numerical tolerances (binding for these tests):
+
+- per-lane weight delta: `|w_logical − w_decoded| <= 1.5 / 255` (one quantization step plus rounding margin),
+- skinned position delta: `|p_legacy − p_new| <= 1e-3 * meshBoundsDiagonal`,
+- skinned normal delta: `dot(n_legacy, n_new) >= cos(0.5°)`.
+
+Also add a transition test for the boundary between core-only and spill vertices: a vertex authored with 5 influences whose 5th influence rounds below `1/255` must produce a packed result with `extraInfluenceCount == 0` and pure core lanes — the spill list must not contain a zero-weight tail entry.
 
 ### 11.2 Shader Contract Tests
 
@@ -736,6 +855,8 @@ Validate representative content buckets:
 - dense facial or cloth-like rigs with 5+ influences,
 - GPU-driven bone sources such as physics-chain-driven skinning.
 
+For each bucket, capture **golden-image visual diffs** of a posed character at a fixed set of animation keyframes (idle T-pose, mid-walk, extreme facial pose if applicable). Diffs should be produced from the unit-testing world via the existing screenshot harness; the acceptance threshold is mean per-channel pixel delta `<= 1` in 8-bit color space and no individual pixel delta `> 4`. Larger deltas are treated as regressions until explicitly waived.
+
 ### 11.4 Performance Validation
 
 Measure at minimum:
@@ -747,11 +868,15 @@ Measure at minimum:
 - global palette copy volume,
 - shader instruction impact from spill decode.
 
-Expected outcome:
+Binding regression budgets:
 
-- reduced upload size,
-- reduced SSBO fetch bandwidth,
-- no visible regression in skin deformation quality on typical assets.
+- mesh skinning buffer bytes per vertex: **strictly lower** than baseline for every measured asset,
+- palette bytes per bone: **strictly lower** than baseline,
+- compute skinning dispatch time at equivalent vertex count: within **±5%** of baseline,
+- direct vertex path frame time on the skinned regression scene: within **±5%** of baseline,
+- global palette copy volume per frame: **strictly lower** than baseline.
+
+A regression that exceeds these budgets blocks Phase advance until either fixed or explicitly waived in the PR with measured numbers.
 
 ---
 
@@ -836,6 +961,10 @@ Deferred because it complicates mixed-count vertex semantics and is not required
 
 Rejected as the primary palette strategy because it still keeps two palette streams and preserves per-influence matrix composition in shader. A single precomposed affine palette is a cleaner win.
 
+### 13.5 Dual-Quaternion Skinning Palette
+
+Out of scope. Dual-quaternion skinning is orthogonal to influence and palette **storage** compression: the same `Core4 + Spill` influence format would still be applicable, and the palette format change is independent of whether the underlying transform is stored as an affine matrix or a dual-quaternion. Evaluating dual-quaternion skinning as a deformation-quality choice is a separate decision and is not blocked or precluded by anything in this plan.
+
 ---
 
 ## 14. Recommended Direction
@@ -844,10 +973,10 @@ If the refactor is executed in only one pass, the recommended target state is:
 
 1. Mesh influences use a unified `Core4 + Spill` format.
 2. Core weights use `UNorm8`.
-3. Spill entries use `u16 boneIndexPlusOne + UNorm16 weight`.
+3. Spill entries use `u16 boneIndexPlusOne + UNorm8 weight + 1 reserved byte`, packed one per `uint`.
 4. Meshes choose only the core **index width** (`u8` or `u16`), not a completely different layout.
-5. Shaders always decode four core lanes, then optional spill.
-6. Renderers publish final affine skin matrices instead of separate world and inverse-bind matrices.
-7. Global packed animation buffers become packed skin palettes.
+5. Shaders always decode four core lanes, then optional spill, with no per-vertex renormalization (the packer guarantees `Σ weight == 1.0`).
+6. Renderers publish final affine skin matrices (declared as `vec4 skin[3]`, not `mat3x4`) instead of separate world and inverse-bind matrices.
+7. Global packed animation buffers become packed skin palettes (`GlobalSkinPaletteBuffers`).
 
 That design is substantially smaller, simpler, and more compatible with the engine's broader zero-readback rendering direction than the current format split.

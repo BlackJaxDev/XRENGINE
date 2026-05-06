@@ -10,6 +10,7 @@ using XREngine.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
@@ -1049,6 +1050,7 @@ internal sealed class RuntimeAssetFacade
 internal sealed class RuntimeProfilerFacade
 {
     public IDisposable Start(string? label = null) => DisposableAction.Empty;
+    public IDisposable Start(string? label, ProfilerScopeKind scopeKind) => DisposableAction.Empty;
 }
 
 internal sealed class RuntimeVrState
