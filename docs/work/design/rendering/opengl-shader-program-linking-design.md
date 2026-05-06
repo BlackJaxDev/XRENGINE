@@ -126,10 +126,11 @@ Fences order GPU command streams; shader compiler completion is represented by
   shape or shader family, not scattered ad hoc branches. The current empirically
   verified NVIDIA hazard set is: programs with a single attached shader
   (`shaderCount <= 1`, including separable single-stage programs) and any
-  program containing a compute shader. Hazardous programs must NOT be queued
-  on the shared-context source queue (see Shared-Context Queue Rules) because
-  the worker's own `glGetProgramiv(GL_LINK_STATUS)` will block on the wedged
-  parallel-link worker and stall every other queued job.
+  program containing a compute shader. Hazardous programs must bypass the
+  driver-parallel lane. When the shared-context source queue is available,
+  they should use it so a driver stall cannot freeze the render thread; only
+  the no-queue fallback should link synchronously with parallel compile
+  temporarily disabled.
 - Program-binary loads must reapply or rebuild all runtime state that
   `glProgramBinary` resets, especially default-block uniforms.
 - Cache misses, binary-load failures, async queue backpressure, abandoned driver
@@ -241,6 +242,9 @@ if program binary cache hit:
     upload/load binary, preferably on shared-context queue
 else if program hash is known failed:
     fail fast
+else if program shape is a known driver-parallel hazard
+     and shared-context source queue exists:
+    use shared-context source queue
 else if program shape is a known driver-parallel hazard:
     use budgeted render-thread synchronous link, with parallel-compile
     temporarily disabled around the link, then restored
@@ -290,9 +294,9 @@ Any scoped disable must therefore:
 - be paired with a `RestoreParallelShaderCompile` immediately after, and
 - never be left enabled across normal frame loops.
 
-This is why hazardous programs are linked synchronously on the render thread
-rather than on the shared-context worker: the disable is short-lived and
-local to one link call, instead of starving every other queued shader job.
+This scoped disable is only the fallback when no shared-context source queue is
+available. If the queue exists, hazardous programs should be moved off the
+render thread and diagnosed as worker-lane stalls instead of UI freezes.
 
 **Known hazard shapes (NVIDIA, GL 4.6, driver 581.x).**
 
@@ -310,7 +314,8 @@ check.
 ### Shared-Context Queue Rules
 
 The shared-context queue is the preferred fallback when driver-parallel compile
-cannot be trusted, **for non-hazardous programs only**.
+cannot be trusted. It is also the preferred lane for known hazardous programs
+when the alternative would be a blocking render-thread compile/link.
 
 Worker contexts should be created once during renderer initialization, share
 with the primary context, and remain current on their owning worker thread. The
@@ -329,14 +334,15 @@ thread into synchronous work.
 
 **Single-worker hazard.** As of Phase 1, both program-binary upload and
 source compile/link share one `GLSharedContext` worker thread. One wedged
-job (typically a hazardous link that slipped past the predicate) halts every
-queued shader operation, including binary uploads needed by mesh prep, and
-manifests as "submeshes never appear" or "materials never become visible."
+source job can halt every queued shader operation, including binary uploads
+needed by mesh prep, and manifests as "submeshes never appear" or "materials
+never become visible."
 Mitigations:
 
-- Hazardous programs are excluded from the queue (see Backend Selection).
-- The queue must use a hard per-job timeout when polling completion; a
-  timed-out job is logged, abandoned, and the queue continues.
+- Hazardous programs are allowed onto the queue to protect the render thread,
+  but slow pending jobs must be logged with the program hash and phase.
+- The queue needs hard per-job abandon semantics so a timed-out job is logged
+  and no longer blocks local material state.
 - Phase 3+ should consider splitting the binary-upload worker from the
   source-compile/link worker so a wedge in one lane does not starve the
   other. See Open Questions.
@@ -345,8 +351,10 @@ Mitigations:
 context is bound by the same rule as the render thread: it must not call
 blocking status queries on a hazardous program. Because the worker today
 does call `glGetShaderiv(COMPILE_STATUS)` and `glGetProgramiv(LINK_STATUS)`
-immediately after `glLinkProgram`, the only safe way to use it is to keep
-hazardous shapes off the queue.
+immediately after `glLinkProgram`, a hazardous job can still stall the worker.
+That is preferable to freezing the editor, but it is not the final design; the
+source queue should either poll non-blocking completion where available or be
+isolated from binary uploads.
 
 ### Program Binary Cache
 
@@ -454,8 +462,8 @@ Profiler and log touchpoints:
 - Ensure known driver hazards are encoded as predicates on `GLRenderProgram`.
   Current predicate (`IsKnownAsyncLinkHazard`) covers single-shader programs
   and any program containing a compute shader. Hazardous programs route to
-  the render-thread sync-link path with parallel-compile temporarily
-  disabled, not the shared-context queue.
+  the shared-context source queue when available; the render-thread sync-link
+  path with parallel-compile temporarily disabled is the no-queue fallback.
 - Keep per-frame pumping capped by program count and synchronous wall-clock
   budget. Hazard-sync-link work runs inside this budget; cold-start frames
   may show "slow render prep" warnings during warm-up and that is by design.
@@ -509,8 +517,8 @@ Run these scenarios before treating the design as complete:
 | Driver/version fingerprint change | Old binaries are ignored or deleted and source rebuild succeeds. |
 | `GL_ARB/KHR_parallel_shader_compile` unavailable | Shared-context queue or budgeted synchronous fallback is used. |
 | Shared context unavailable | Engine remains functional with diagnostic warnings and sync budget. |
-| Known NVIDIA separable hazard (single-shader program) | Hazard bypasses driver-parallel and shared-context queue, links synchronously, does not hang render thread. |
-| Known NVIDIA compute-program hazard | Compute program bypasses driver-parallel and shared-context queue, links synchronously; dispatchers gate on `IsLinked`. |
+| Known NVIDIA separable hazard (single-shader program) | Hazard bypasses driver-parallel, uses the shared-context queue when available, and does not hang the render thread. |
+| Known NVIDIA compute-program hazard | Compute program bypasses driver-parallel, uses the shared-context queue when available, and dispatchers gate on `IsLinked`. |
 | Shader editor hot reload | Old program remains active until replacement is ready or failed. |
 | Imported model with many materials | p99 frame time stays within budget after initial warm-up strategy. |
 | Binary load failure | Bad cache entry is deleted and source fallback completes. |
@@ -521,7 +529,7 @@ Run these scenarios before treating the design as complete:
 | Risk | Mitigation |
 |------|------------|
 | Driver reports completion but first use still stalls | Track first-draw-after-swap time and pre-warm critical programs during load screens. |
-| Shared-context worker wedges inside driver link | Keep hazardous programs off the queue entirely (head-of-line blocking is fatal: one worker serves both binary uploads and compile/link). Expose queue starvation, allow strategy override, and enforce per-job timeouts. |
+| Shared-context worker wedges inside driver link | Keep the render thread non-blocking, log slow pending jobs, allow strategy override, and split/timeout the source worker so binary uploads are not starved. |
 | Cache key misses a driver- or engine-specific input | Use conservative fingerprints and bump cache schema when in doubt. |
 | Binary load resets uniforms and produces wrong rendering | Rebuild binding state after binary load; prefer explicit UBO/SSBO/sampler bindings. |
 | Separable interfaces drift across stages | Require explicit locations/bindings and add shader contract tests. |
@@ -551,5 +559,6 @@ Run these scenarios before treating the design as complete:
   blocking: a wedged compile/link starves binary uploads and prevents
   meshes/materials from becoming visible. Phase 3+ should split these into
   two workers (or two queues serviced by independent contexts) so a wedge
-  in one lane does not block the other. Until then, hazardous programs must
-  bypass the queue entirely.
+  in one lane does not block the other. Until then, hazardous programs may
+  still use the source queue to keep the editor responsive, with slow-pending
+  diagnostics marking the remaining worker-lane risk.
