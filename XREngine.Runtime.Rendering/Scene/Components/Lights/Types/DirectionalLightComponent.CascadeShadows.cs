@@ -185,6 +185,7 @@ namespace XREngine.Components.Lights
         private float _publishedCascadeRangeNear;
         private float _publishedCascadeRangeFar;
         private XRTexture2DArray? _cascadeShadowMapTexture;
+        private XRTexture2DArray? _cascadeRasterDepthTexture;
         private XRFrameBuffer[] _cascadeShadowFrameBuffers = [];
         private XRFrameBuffer? _cascadeLayeredShadowFrameBuffer;
         private XRViewport[] _cascadeShadowViewports = [];
@@ -1014,17 +1015,34 @@ namespace XREngine.Components.Lights
             int requiredCascades = Math.Clamp(_cascadeCount, 1, MaxCascadeRenderCount);
             uint width = Math.Max(1u, ShadowMapResolutionWidth);
             uint height = Math.Max(1u, ShadowMapResolutionHeight);
-            ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(ShadowMapStorageFormat);
+            ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
+            bool momentEncoding = selection.Encoding != EShadowMapEncoding.Depth;
+            ShadowMapTextureFormat shadowFormat = momentEncoding
+                ? GetShadowMapTextureFormat(selection.Format.StorageFormat)
+                : GetShadowMapTextureFormat(IsDepthShadowMapStorageFormat(ShadowMapStorageFormat)
+                    ? ShadowMapStorageFormat
+                    : DefaultShadowMapStorageFormat);
+            ETexMinFilter minFilter = selection.Format.RequiresLinearFiltering
+                ? (ShadowMomentUseMipmaps ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear)
+                : ETexMinFilter.Nearest;
+            ETexMagFilter magFilter = selection.Format.RequiresLinearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
 
             bool recreateTexture = _cascadeShadowMapTexture is null ||
                 _cascadeShadowMapTexture.Depth != (uint)requiredCascades ||
                 _cascadeShadowMapTexture.Width != width ||
                 _cascadeShadowMapTexture.Height != height ||
-                _cascadeShadowMapTexture.SizedInternalFormat != shadowFormat.SizedInternalFormat;
+                _cascadeShadowMapTexture.SizedInternalFormat != shadowFormat.SizedInternalFormat ||
+                (momentEncoding && _cascadeRasterDepthTexture is null) ||
+                (!momentEncoding && _cascadeRasterDepthTexture is not null) ||
+                (momentEncoding && (_cascadeShadowMapTexture.MinFilter != minFilter ||
+                    _cascadeShadowMapTexture.MagFilter != magFilter ||
+                    _cascadeShadowMapTexture.AutoGenerateMipmaps != ShadowMomentUseMipmaps));
 
             if (recreateTexture)
             {
                 _cascadeShadowMapTexture?.Destroy();
+                _cascadeRasterDepthTexture?.Destroy();
+                _cascadeRasterDepthTexture = null;
                 _cascadeShadowMapTexture = XRTexture2DArray.CreateFrameBufferTexture(
                     (uint)requiredCascades,
                     width,
@@ -1032,15 +1050,41 @@ namespace XREngine.Components.Lights
                     shadowFormat.InternalFormat,
                     shadowFormat.PixelFormat,
                     shadowFormat.PixelType,
-                    EFrameBufferAttachment.DepthAttachment);
+                    momentEncoding ? EFrameBufferAttachment.ColorAttachment0 : EFrameBufferAttachment.DepthAttachment);
                 _cascadeShadowMapTexture.SamplerName = "ShadowMapArray";
+                _cascadeShadowMapTexture.MinFilter = momentEncoding ? minFilter : ETexMinFilter.Nearest;
+                _cascadeShadowMapTexture.MagFilter = momentEncoding ? magFilter : ETexMagFilter.Nearest;
+                _cascadeShadowMapTexture.AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps;
+
+                if (momentEncoding)
+                {
+                    ShadowMapTextureFormat depthFormat = GetShadowMapTextureFormat(DefaultShadowMapStorageFormat);
+                    _cascadeRasterDepthTexture = XRTexture2DArray.CreateFrameBufferTexture(
+                        (uint)requiredCascades,
+                        width,
+                        height,
+                        depthFormat.InternalFormat,
+                        depthFormat.PixelFormat,
+                        depthFormat.PixelType,
+                        EFrameBufferAttachment.DepthAttachment);
+                    _cascadeRasterDepthTexture.SamplerName = "ShadowRasterDepthArray";
+                }
             }
 
             if (recreateTexture || _cascadeLayeredShadowFrameBuffer is null)
             {
                 _cascadeLayeredShadowFrameBuffer ??= new XRFrameBuffer();
-                _cascadeLayeredShadowFrameBuffer.SetRenderTargets(
-                    (_cascadeShadowMapTexture!, EFrameBufferAttachment.DepthAttachment, 0, -1));
+                if (momentEncoding)
+                {
+                    _cascadeLayeredShadowFrameBuffer.SetRenderTargets(
+                        (_cascadeShadowMapTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                        (_cascadeRasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, -1));
+                }
+                else
+                {
+                    _cascadeLayeredShadowFrameBuffer.SetRenderTargets(
+                        (_cascadeShadowMapTexture!, EFrameBufferAttachment.DepthAttachment, 0, -1));
+                }
             }
 
             if (_cascadeShadowFrameBuffers.Length == requiredCascades && !recreateTexture)
@@ -1085,7 +1129,11 @@ namespace XREngine.Components.Lights
                 transforms[i] = transform;
                 cameras[i] = camera;
                 viewports[i] = viewport;
-                frameBuffers[i] = new XRFrameBuffer((_cascadeShadowMapTexture!, EFrameBufferAttachment.DepthAttachment, 0, i));
+                frameBuffers[i] = momentEncoding
+                    ? new XRFrameBuffer(
+                        (_cascadeShadowMapTexture!, EFrameBufferAttachment.ColorAttachment0, 0, i),
+                        (_cascadeRasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
+                    : new XRFrameBuffer((_cascadeShadowMapTexture!, EFrameBufferAttachment.DepthAttachment, 0, i));
             }
 
             _cascadeShadowTransforms = transforms;
@@ -1106,6 +1154,8 @@ namespace XREngine.Components.Lights
 
             _cascadeShadowMapTexture?.Destroy();
             _cascadeShadowMapTexture = null;
+            _cascadeRasterDepthTexture?.Destroy();
+            _cascadeRasterDepthTexture = null;
             _cascadeLayeredShadowFrameBuffer?.Destroy();
             _cascadeLayeredShadowFrameBuffer = null;
             if (_cascadeGeometryShadowMaterial is not null)
@@ -1116,6 +1166,18 @@ namespace XREngine.Components.Lights
                 _cascadeInstancedShadowMaterial.SettingShadowUniforms -= SetShadowMapUniforms;
             _cascadeInstancedShadowMaterial?.Destroy();
             _cascadeInstancedShadowMaterial = null;
+            if (_cascadeAtlasGeometryShadowMaterial is not null)
+                _cascadeAtlasGeometryShadowMaterial.SettingShadowUniforms -= SetShadowMapUniforms;
+            _cascadeAtlasGeometryShadowMaterial?.Destroy();
+            _cascadeAtlasGeometryShadowMaterial = null;
+            if (_cascadeAtlasInstancedShadowMaterial is not null)
+                _cascadeAtlasInstancedShadowMaterial.SettingShadowUniforms -= SetShadowMapUniforms;
+            _cascadeAtlasInstancedShadowMaterial?.Destroy();
+            _cascadeAtlasInstancedShadowMaterial = null;
+            if (_shadowAtlasMaterial is not null)
+                _shadowAtlasMaterial.SettingShadowUniforms -= SetShadowMapUniforms;
+            _shadowAtlasMaterial?.Destroy();
+            _shadowAtlasMaterial = null;
             _cascadeShadowFrameBuffers = [];
             _cascadeShadowViewports = [];
             _cascadeShadowTransforms = [];
@@ -1215,7 +1277,7 @@ namespace XREngine.Components.Lights
 
         private uint GetCascadeFitResolution(int cascadeIndex, XRTexture2DArray cascadeTexture)
         {
-            if (!Engine.Rendering.Settings.UseDirectionalShadowAtlas)
+            if (!UsesDirectionalShadowAtlasForCurrentEncoding)
                 return Math.Max(cascadeTexture.Width, cascadeTexture.Height);
 
             lock (_cascadeDataLock)
@@ -1350,7 +1412,7 @@ namespace XREngine.Components.Lights
                     Vector3 halfExtents = Vector3.Max((max - min) * 0.5f, new Vector3(1e-3f, 1e-3f, NearZ + 1e-3f));
                     Vector3 centerLS = (min + max) * 0.5f;
                     uint fitResolution = GetCascadeFitResolution(resourceSlot, cascadeTexture);
-                    uint biasResolution = Engine.Rendering.Settings.UseDirectionalShadowAtlas
+                    uint biasResolution = UsesDirectionalShadowAtlasForCurrentEncoding
                         ? GetDesiredShadowAtlasResolution()
                         : fitResolution;
                     SnapCascadeCenterToTexels(ref centerLS, halfExtents, fitResolution);
@@ -1440,14 +1502,16 @@ namespace XREngine.Components.Lights
                 world is null ||
                 world.Lights.NeedsPrimaryDirectionalShadowMap();
 
-            return needsPrimary &&
-                (ShadowMap is not null || Engine.Rendering.Settings.UseDirectionalShadowAtlas);
+            bool momentSingleMap = ResolveDirectionalSamplingShadowMapFormat().Encoding != EShadowMapEncoding.Depth;
+            return (needsPrimary || momentSingleMap) &&
+                (ShadowMap is not null ||
+                 UsesDirectionalShadowAtlasForCurrentEncoding);
         }
 
         private DirectionalCascadeShadowRenderPlan CreateCascadeShadowRenderPlan(int cascadeCount)
             => CreateCascadeShadowRenderPlan(
                 cascadeCount,
-                Engine.Rendering.Settings.UseDirectionalShadowAtlas
+                UsesDirectionalShadowAtlasForCurrentEncoding
                     ? DirectionalCascadeShadowBackend.AtlasPage
                     : DirectionalCascadeShadowBackend.LegacyTextureArray,
                 hasGroupedAtlasAllocation: false);
@@ -1710,7 +1774,7 @@ namespace XREngine.Components.Lights
 
         private bool ShouldPrepareAtlasGroupedCascadeCollection(int cascadeCount)
         {
-            if (!Engine.Rendering.Settings.UseDirectionalShadowAtlas ||
+            if (!UsesDirectionalShadowAtlasForCurrentEncoding ||
                 cascadeCount <= 1 ||
                 _cascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential ||
                 !Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
@@ -1731,13 +1795,12 @@ namespace XREngine.Components.Lights
 
         private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();
 
-        private static XRMaterial CreateShadowAtlasMaterial()
+        private XRMaterial CreateShadowAtlasMaterial()
         {
-            // Directional atlas receivers sample the page raster depth attachment, matching the legacy
-            // directional shadow-map path instead of a color-packed depth copy with different precision.
-            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_ShadowMomentOutput));
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
             return mat;
         }
 
@@ -1757,7 +1820,7 @@ namespace XREngine.Components.Lights
         {
             XRMaterial mat = new(
                 XRShader.EngineShader("DirectionalCascadeShadowDepth.gs", EShaderType.Geometry),
-                new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+                new XRShader(EShaderType.Fragment, ShaderHelper.Frag_ShadowMomentOutput));
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.GeometryShader;
@@ -1767,7 +1830,7 @@ namespace XREngine.Components.Lights
 
         private XRMaterial CreateCascadeInstancedShadowMaterial()
         {
-            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_ShadowMomentOutput));
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.InstancedLayered;
@@ -1779,7 +1842,7 @@ namespace XREngine.Components.Lights
         {
             XRMaterial mat = new(
                 XRShader.EngineShader("DirectionalCascadeAtlasShadowDepth.gs", EShaderType.Geometry),
-                new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+                new XRShader(EShaderType.Fragment, ShaderHelper.Frag_ShadowMomentOutput));
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.AtlasGeometryShader;
@@ -1789,7 +1852,7 @@ namespace XREngine.Components.Lights
 
         private XRMaterial CreateCascadeAtlasInstancedShadowMaterial()
         {
-            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_ShadowMomentOutput));
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.DirectionalCascadeShadowMaterialKind = EDirectionalCascadeShadowMaterialKind.AtlasInstancedLayered;
@@ -1826,6 +1889,7 @@ namespace XREngine.Components.Lights
 
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
             shadowPipeline.PreserveExistingRenderArea = true;
+            shadowPipeline.ClearColor = GetShadowMapClearColor();
             try
             {
                 var state = viewport.RenderPipelineInstance.RenderState;
@@ -1913,6 +1977,7 @@ namespace XREngine.Components.Lights
             shadowPipeline.PreserveExistingRenderArea = true;
             shadowPipeline.IndexedClearRegions = _groupedAtlasClearRects;
             shadowPipeline.IndexedClearRegionCount = groupedCount;
+            shadowPipeline.ClearColor = GetShadowMapClearColor();
             try
             {
                 int pageWidth = checked((int)atlasFbo.Width);
@@ -1967,6 +2032,7 @@ namespace XREngine.Components.Lights
 
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
             shadowPipeline.PreserveExistingRenderArea = true;
+            shadowPipeline.ClearColor = GetShadowMapClearColor();
             try
             {
                 var state = viewport.RenderPipelineInstance.RenderState;
@@ -2006,13 +2072,62 @@ namespace XREngine.Components.Lights
             LogLegacyDirectionalShadowRender(renderCascades, shadowMap is not null, shadowMaterial is not null, cascadeCount);
 
             if (ShouldCollectPrimaryShadowViewport() && shadowMap is not null && shadowMaterial is not null)
+            {
+                if (PrimaryShadowViewport.RenderPipeline is ShadowRenderPipeline shadowPipeline)
+                    shadowPipeline.ClearColor = GetShadowMapClearColor();
+
                 PrimaryShadowViewport.Render(shadowMap, null, null, true, shadowMaterial);
+                GenerateMomentShadowMipmapsIfNeeded();
+            }
 
             if (shadowMaterial is null)
                 return;
 
             if (renderCascades)
+            {
                 RenderCascadeShadowMaps(cascadeShadowViewports, cascadeShadowFrameBuffers, cascadeCount, shadowMaterial);
+                GenerateCascadeMomentShadowMipmapsIfNeeded();
+            }
+        }
+
+        private void GenerateMomentShadowMipmapsIfNeeded()
+        {
+            if (!CastsShadows ||
+                !ShadowMomentUseMipmaps ||
+                ShadowMapEncoding == EShadowMapEncoding.Depth ||
+                ShadowMap?.Material?.Textures is not { } textures)
+            {
+                return;
+            }
+
+            ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
+            if (selection.Encoding == EShadowMapEncoding.Depth)
+                return;
+
+            for (int i = 0; i < textures.Count; i++)
+            {
+                if (textures[i] is XRTexture2D texture && texture.SamplerName == "ShadowMap")
+                {
+                    texture.GenerateMipmapsGPU();
+                    return;
+                }
+            }
+        }
+
+        private void GenerateCascadeMomentShadowMipmapsIfNeeded()
+        {
+            if (!CastsShadows ||
+                !ShadowMomentUseMipmaps ||
+                _cascadeShadowMapTexture is null)
+            {
+                return;
+            }
+
+            ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
+            if (selection.Encoding == EShadowMapEncoding.Depth)
+                return;
+
+            _cascadeShadowMapTexture.GenerateMipmapsGPU();
         }
 
         private void RenderCascadeShadowMaps(
@@ -2023,6 +2138,11 @@ namespace XREngine.Components.Lights
         {
             DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
             PublishCascadeShadowRenderPlan(plan);
+            var clearColor = GetShadowMapClearColor();
+            for (int i = 0; i < cascadeCount; i++)
+                if (cascadeShadowViewports[i].RenderPipeline is ShadowRenderPipeline shadowPipeline)
+                    shadowPipeline.ClearColor = clearColor;
+
             if (plan.IsLayered && plan.LayeredFrameBuffer is not null)
             {
                 Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];

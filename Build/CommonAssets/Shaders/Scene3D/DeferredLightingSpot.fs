@@ -402,7 +402,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 	float lit = 1.0f;
 	if (SpotShadowAtlasEnabled)
 	{
-		vec2 atlasUv = fragCoord.xy * SpotShadowAtlasUvScaleBias.xy + SpotShadowAtlasUvScaleBias.zw;
+		vec2 atlasUv = XRENGINE_ShadowAtlasUvFromLocal(fragCoord.xy, SpotShadowAtlasUvScaleBias);
 		float atlasNearZ = SpotShadowAtlasDepthParams.x;
 		float atlasFarZ = SpotShadowAtlasDepthParams.y;
 		float atlasDepth = LinearizeSpotShadowDepth01(
@@ -416,30 +416,63 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 			ShadowFilterRadius,
 			constantBias,
 			max(ShadowBiasParams.y, 0.0f));
-		lit = XRENGINE_SampleLinearDepthShadowAtlasFilteredAsPerspective(
-			SpotShadowAtlas,
-			vec3(fragCoord.xy, atlasDepth),
-			float(SpotShadowAtlasPageIndex),
-			fragCoord.z,
-			SpotShadowAtlasUvScaleBias,
-			atlasLocalTexelSize,
-			atlasBias,
-			ShadowBlockerSamples,
-			ShadowFilterSamples,
-			ShadowFilterRadius,
-			ShadowBlockerSearchRadius,
-			SoftShadowMode,
-			LightSourceRadius,
-			ShadowMinPenumbra,
-			ShadowMaxPenumbra,
-			ShadowVogelTapCount,
-			atlasNearZ,
-			atlasFarZ) * contact;
-
-		if (ShadowDebugMode != 0)
+		if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
 		{
-			float centerDepth = XRENGINE_LinearDepth01ToPerspectiveDepth(texture(SpotShadowAtlas, vec3(atlasUv, float(SpotShadowAtlasPageIndex))).r, atlasNearZ, atlasFarZ);
-			_dbgShadowMargin = centerDepth - (fragCoord.z - atlasBias);
+			float momentReceiverDepth = clamp(atlasDepth - min(atlasBias, 0.01f), 0.0f, 1.0f);
+			lit = XRENGINE_SampleShadowMoment2DArray(
+				SpotShadowAtlas,
+				atlasUv,
+				float(SpotShadowAtlasPageIndex),
+				momentReceiverDepth,
+				ShadowMapEncoding,
+				ShadowMomentParams0.x,
+				ShadowMomentParams0.y,
+				ShadowMomentParams0.z,
+				ShadowMomentParams0.w,
+				0.0f,
+				false) * contact;
+
+			if (ShadowDebugMode != 0)
+			{
+				_dbgShadowMargin = XRENGINE_EstimateShadowMomentMargin(
+					SpotShadowAtlas,
+					atlasUv,
+					float(SpotShadowAtlasPageIndex),
+					momentReceiverDepth,
+					ShadowMapEncoding,
+					ShadowMomentParams0.z,
+					ShadowMomentParams0.w,
+					0.0f,
+					false);
+			}
+		}
+		else
+		{
+			lit = XRENGINE_SampleLinearDepthShadowAtlasFilteredAsPerspective(
+				SpotShadowAtlas,
+				vec3(fragCoord.xy, atlasDepth),
+				float(SpotShadowAtlasPageIndex),
+				fragCoord.z,
+				SpotShadowAtlasUvScaleBias,
+				atlasLocalTexelSize,
+				atlasBias,
+				ShadowBlockerSamples,
+				ShadowFilterSamples,
+				ShadowFilterRadius,
+				ShadowBlockerSearchRadius,
+				SoftShadowMode,
+				LightSourceRadius,
+				ShadowMinPenumbra,
+				ShadowMaxPenumbra,
+				ShadowVogelTapCount,
+				atlasNearZ,
+				atlasFarZ) * contact;
+
+			if (ShadowDebugMode != 0)
+			{
+				float centerDepth = XRENGINE_LinearDepth01ToPerspectiveDepth(texture(SpotShadowAtlas, vec3(atlasUv, float(SpotShadowAtlasPageIndex))).r, atlasNearZ, atlasFarZ);
+				_dbgShadowMargin = centerDepth - (fragCoord.z - atlasBias);
+			}
 		}
 	}
 	else

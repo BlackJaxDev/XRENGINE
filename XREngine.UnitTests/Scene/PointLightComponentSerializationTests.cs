@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
@@ -88,6 +89,25 @@ public sealed class PointLightComponentSerializationTests : GpuTestBase
         clone!.SceneNode.ShouldBeSameAs(cloneNode);
         clone.Marker.ShouldBe(42);
         clone.Label.ShouldBe("AliasCheck");
+    }
+
+    [Test]
+    public void YamlDeserializer_ResolvesComponentType_FromRuntimeIntegrationAssembly()
+    {
+        const string audioListenerTypeName = "XREngine.Components.AudioListenerComponent";
+        string yaml = $"""
+Components:
+- __type: {audioListenerTypeName}
+Name: AudioListenerNode
+""";
+
+        SceneNode? cloneNode = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+        cloneNode.ShouldNotBeNull();
+
+        XRComponent? listener = cloneNode!.Components.FirstOrDefault(
+            component => component.GetType().FullName == audioListenerTypeName);
+        listener.ShouldNotBeNull();
+        listener!.SceneNode.ShouldBeSameAs(cloneNode);
     }
 
     private sealed class FileSystemRuntimeShaderServices(string shaderBasePath) : IRuntimeShaderServices

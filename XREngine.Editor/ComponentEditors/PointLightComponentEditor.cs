@@ -72,5 +72,10 @@ public sealed class PointLightComponentEditor : IXRComponentEditor
 
         ImGui.TextDisabled($"Effective: {light.EffectiveShadowRenderMode}");
         ImGui.TextDisabled($"Fallback: {light.ShadowRenderFallbackReason}");
+        ImGui.TextDisabled($"Relevant faces: {FormatFaceMask(light.ShadowFaceRelevanceMask)}");
+        ImGui.TextDisabled($"Rendered faces: {FormatFaceMask(light.LastRenderedShadowFaceMask)}");
     }
+
+    private static string FormatFaceMask(int mask)
+        => "0b" + Convert.ToString(mask & 0x3F, 2).PadLeft(6, '0');
 }

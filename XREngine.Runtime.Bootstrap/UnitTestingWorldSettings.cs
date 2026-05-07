@@ -113,6 +113,11 @@ public class UnitTestingWorldSettings
     public bool SpotLight = false;
     public bool DirLight2 = false;
     public bool PointLight = false;
+    public int DynamicPointLightCount { get; set; } = 0;
+    public int DynamicSpotLightCount { get; set; } = 0;
+    public bool DynamicLightsCastShadows { get; set; } = true;
+    public bool DynamicLightsForceShadowAtlas { get; set; } = true;
+    public int DynamicLightSeed { get; set; } = 1337;
     public LightProbeMode LightProbe { get; set; } = LightProbeMode.ModelGrid;
     public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.None;
     public float LightProbeCaptureMs = 100;

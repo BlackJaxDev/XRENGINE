@@ -72,6 +72,15 @@ public static class BootstrapWorldFactory
         if (settings.PointLight)
             AddPointLight(rootNode);
 
+        if (settings.DynamicPointLightCount > 0 || settings.DynamicSpotLightCount > 0)
+            BootstrapLightingBuilder.AddDynamicDebugLights(
+                rootNode,
+                settings.DynamicPointLightCount,
+                settings.DynamicSpotLightCount,
+                settings.DynamicLightSeed,
+                settings.DynamicLightsCastShadows,
+                settings.DynamicLightsForceShadowAtlas);
+
         if (settings.SoundNode)
             BootstrapAudioWorldBuilder.AddSoundNode(rootNode);
 

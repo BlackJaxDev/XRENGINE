@@ -5,9 +5,11 @@ using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Core.Attributes;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Shadows;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Lights
@@ -67,8 +69,20 @@ namespace XREngine.Components.Lights
         public override bool SupportsShadowMapStorageFormat(EShadowMapStorageFormat format)
             => IsDepthShadowMapStorageFormat(format);
 
+        [Browsable(false)]
+        public bool UsesDirectionalShadowAtlasForCurrentEncoding
+        {
+            get
+            {
+                if (!Engine.Rendering.Settings.UseDirectionalShadowAtlas)
+                    return false;
+
+                return ResolveDirectionalSamplingShadowMapFormat().DemotionReason != SkipReason.UnsupportedEncoding;
+            }
+        }
+
         protected override bool UsesAtlasShadowViewport
-            => Engine.Rendering.Settings.UseDirectionalShadowAtlas;
+            => UsesDirectionalShadowAtlasForCurrentEncoding;
 
         /// <summary>
         /// Scale of the orthographic shadow volume.
@@ -249,6 +263,17 @@ namespace XREngine.Components.Lights
         {
             base.SetShadowMapUniforms(material, program);
 
+            ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
+            program.Uniform("ShadowDepthSourceMode", 1);
+            program.Uniform("ShadowMapEncoding", (int)selection.Encoding);
+            program.Uniform("ShadowMomentMinVariance", ShadowMomentMinVariance);
+            program.Uniform("ShadowMomentLightBleedReduction", ShadowMomentLightBleedReduction);
+            program.Uniform("ShadowMomentPositiveExponent", selection.PositiveExponent);
+            program.Uniform("ShadowMomentNegativeExponent", selection.NegativeExponent);
+            program.Uniform("ShadowMomentMipBias", ShadowMomentMipBias);
+            program.Uniform("CameraNearZ", ShadowCamera?.NearZ ?? NearZ);
+            program.Uniform("CameraFarZ", ShadowCamera?.FarZ ?? MathF.Max(Scale.Z, NearZ + 0.001f));
+
             int cascadeCount;
             lock (_cascadeDataLock)
             {
@@ -262,27 +287,58 @@ namespace XREngine.Components.Lights
 
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
         {
-            ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(ShadowMapStorageFormat);
+            EShadowMapStorageFormat depthStorageFormat = IsDepthShadowMapStorageFormat(ShadowMapStorageFormat)
+                ? ShadowMapStorageFormat
+                : DefaultShadowMapStorageFormat;
+            ShadowMapTextureFormat depthFormat = GetShadowMapTextureFormat(depthStorageFormat);
+            ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
+            ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(selection.Format.StorageFormat);
+            bool momentEncoding = selection.Encoding != EShadowMapEncoding.Depth;
+            ETexMinFilter minFilter = selection.Format.RequiresLinearFiltering
+                ? (ShadowMomentUseMipmaps ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear)
+                : ETexMinFilter.Nearest;
+            ETexMagFilter magFilter = selection.Format.RequiresLinearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
             XRTexture[] refs =
             [
-                 new XRTexture2D(width, height, shadowFormat.InternalFormat, shadowFormat.PixelFormat, shadowFormat.PixelType)
-                 {
-                     MinFilter = ETexMinFilter.Nearest,
-                     MagFilter = ETexMagFilter.Nearest,
-                     UWrap = ETexWrapMode.ClampToEdge,
-                     VWrap = ETexWrapMode.ClampToEdge,
-                     FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
-                     SamplerName = "ShadowMap"
-                 }
+                new XRTexture2D(width, height, depthFormat.InternalFormat, depthFormat.PixelFormat, depthFormat.PixelType)
+                {
+                    MinFilter = ETexMinFilter.Nearest,
+                    MagFilter = ETexMagFilter.Nearest,
+                    UWrap = ETexWrapMode.ClampToEdge,
+                    VWrap = ETexWrapMode.ClampToEdge,
+                    FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
+                    SamplerName = "ShadowRasterDepth",
+                },
+                new XRTexture2D(width, height, shadowFormat.InternalFormat, shadowFormat.PixelFormat, shadowFormat.PixelType)
+                {
+                    MinFilter = minFilter,
+                    MagFilter = magFilter,
+                    UWrap = ETexWrapMode.ClampToEdge,
+                    VWrap = ETexWrapMode.ClampToEdge,
+                    FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
+                    SamplerName = "ShadowMap",
+                    AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps,
+                },
             ];
 
             // This material is used for rendering to the framebuffer.
-            XRMaterial mat = new(refs, new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
+            XRMaterial mat = new(refs, new XRShader(EShaderType.Fragment, ShaderHelper.Frag_ShadowMomentOutput));
 
             // No culling so a light inside geometry still shadows everything around it.
             mat.RenderOptions.CullMode = ECullMode.None;
+            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
 
             return mat;
+        }
+
+        private ShadowMapFormatSelection ResolveDirectionalSamplingShadowMapFormat()
+            => ResolveShadowMapFormat(preferredStorageFormat: null);
+
+        protected override ColorF4 GetShadowMapClearColor()
+        {
+            ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
+            Vector4 clear = selection.ClearSentinel.Value;
+            return new ColorF4(clear.X, clear.Y, clear.Z, clear.W);
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -314,6 +370,11 @@ namespace XREngine.Components.Lights
                     }
                     break;
                 case nameof(CascadeCount):
+                    EnsureCascadeShadowResources();
+                    break;
+                case nameof(ShadowMapStorageFormat):
+                case nameof(ShadowMapEncoding):
+                case nameof(ShadowMomentUseMipmaps):
                     EnsureCascadeShadowResources();
                     break;
                 case nameof(CastsShadows):

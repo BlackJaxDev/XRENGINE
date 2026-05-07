@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Extensions;
@@ -41,6 +42,10 @@ namespace XREngine.Components.Capture.Lights.Types
         private EPointShadowRenderMode _shadowRenderMode = EPointShadowRenderMode.InstancedLayered;
         private EPointShadowRenderMode _effectiveShadowRenderMode = EPointShadowRenderMode.InstancedLayered;
         private PointShadowRenderFallbackReason _shadowRenderFallbackReason = PointShadowRenderFallbackReason.None;
+        private int _shadowFaceRelevanceMask = LocalShadowFrustumRelevance.AllPointFacesMask;
+        private int _lastRenderedShadowFaceMask;
+        private ulong _lastShadowRelevanceFrame;
+        private ulong _lastShadowRenderFrame;
 
         private static readonly Vector3[] ShadowFaceForwardVectors =
         [
@@ -50,6 +55,36 @@ namespace XREngine.Components.Capture.Lights.Types
             -Vector3.UnitY,
             Vector3.UnitZ,
             -Vector3.UnitZ,
+        ];
+
+        private static readonly string[] ViewProjectionMatrixUniformNames =
+        [
+            "ViewProjectionMatrices[0]",
+            "ViewProjectionMatrices[1]",
+            "ViewProjectionMatrices[2]",
+            "ViewProjectionMatrices[3]",
+            "ViewProjectionMatrices[4]",
+            "ViewProjectionMatrices[5]",
+        ];
+
+        private static readonly string[] PointShadowViewProjectionMatrixUniformNames =
+        [
+            "PointShadowViewProjectionMatrices[0]",
+            "PointShadowViewProjectionMatrices[1]",
+            "PointShadowViewProjectionMatrices[2]",
+            "PointShadowViewProjectionMatrices[3]",
+            "PointShadowViewProjectionMatrices[4]",
+            "PointShadowViewProjectionMatrices[5]",
+        ];
+
+        private static readonly string[] PointShadowFaceIndexUniformNames =
+        [
+            "PointShadowFaceIndices[0]",
+            "PointShadowFaceIndices[1]",
+            "PointShadowFaceIndices[2]",
+            "PointShadowFaceIndices[3]",
+            "PointShadowFaceIndices[4]",
+            "PointShadowFaceIndices[5]",
         ];
 
         public readonly record struct PointShadowAtlasFaceSlot(
@@ -123,6 +158,22 @@ namespace XREngine.Components.Capture.Lights.Types
         public string ShadowRenderFallbackReason => _shadowRenderFallbackReason.ToString();
 
         [Category("Shadows")]
+        [DisplayName("Shadow Face Relevance Mask")]
+        [Description("Six-bit mask of point shadow faces considered relevant to the current camera set.")]
+        public int ShadowFaceRelevanceMask => _shadowFaceRelevanceMask;
+
+        [Category("Shadows")]
+        [DisplayName("Last Rendered Shadow Face Mask")]
+        [Description("Six-bit mask of point shadow faces rendered by the most recent legacy cubemap shadow pass.")]
+        public int LastRenderedShadowFaceMask => _lastRenderedShadowFaceMask;
+
+        [Browsable(false)]
+        public ulong LastShadowRelevanceFrame => _lastShadowRelevanceFrame;
+
+        [Browsable(false)]
+        public ulong LastShadowRenderFrame => _lastShadowRenderFrame;
+
+        [Category("Shadows")]
         [DisplayName("Shadow Near Plane")]
         [Description("Near clipping distance used by the point-light cubemap shadow cameras.")]
         public float ShadowNearPlaneDistance
@@ -144,13 +195,35 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         public XRCamera[] ShadowCameras => _shadowCameras;
 
+        [Browsable(false)]
+        public bool UsesPointShadowAtlasForCurrentEncoding
+        {
+            get
+            {
+                if (!Engine.Rendering.Settings.UsePointShadowAtlas)
+                    return false;
+
+                return true;
+            }
+        }
+
         protected override bool UsesAtlasOnlyShadowMapResource
-            => Engine.Rendering.Settings.UsePointShadowAtlas;
+            => UsesPointShadowAtlasForCurrentEncoding;
 
         internal static Vector3 GetShadowFaceForward(int faceIndex)
             => (uint)faceIndex < (uint)ShadowFaceForwardVectors.Length
                 ? ShadowFaceForwardVectors[faceIndex]
                 : Vector3.UnitZ;
+
+        internal void SetShadowFaceRelevanceMask(int faceMask, ulong frameId)
+        {
+            int clampedMask = faceMask & LocalShadowFrustumRelevance.AllPointFacesMask;
+            SetField(ref _shadowFaceRelevanceMask, clampedMask, nameof(ShadowFaceRelevanceMask));
+            SetField(ref _lastShadowRelevanceFrame, frameId, nameof(LastShadowRelevanceFrame));
+        }
+
+        private int CurrentShadowFaceRelevanceMask
+            => _shadowFaceRelevanceMask & LocalShadowFrustumRelevance.AllPointFacesMask;
 
         private XRViewport CreateShadowViewport(uint resolution)
             => new(null, resolution, resolution)
@@ -234,26 +307,32 @@ namespace XREngine.Components.Capture.Lights.Types
             EnsureShadowResources();
             SyncShadowCaptureTransforms();
 
+            int faceMask = CurrentShadowFaceRelevanceMask;
+            if (faceMask == 0)
+                return;
+
             PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
             PublishShadowRenderPlan(plan);
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedFaceCollection();
-            if (plan.IsLayered || prepareAtlasGroupedCommands)
+            if (plan.IsLayered)
             {
                 // Layered and grouped-atlas passes render all selected faces from one draw list.
                 _viewports[0].CollectVisible(
                     collectMirrors: false,
                     collectionVolumeOverride: _influenceVolume);
-                if (prepareAtlasGroupedCommands && !plan.IsLayered)
-                {
-                    for (int i = 1; i < ShadowFaceCount; i++)
+            }
+            else if (prepareAtlasGroupedCommands)
+            {
+                for (int i = 0; i < ShadowFaceCount; i++)
+                    if ((faceMask & (1 << i)) != 0)
                         _viewports[i].CollectVisible(collectMirrors: false);
-                }
             }
             else
             {
                 LogShadowRenderModeFallbackIfNeeded(plan);
                 for (int i = 0; i < ShadowFaceCount; i++)
-                    _viewports[i].CollectVisible(collectMirrors: false);
+                    if ((faceMask & (1 << i)) != 0)
+                        _viewports[i].CollectVisible(collectMirrors: false);
             }
         }
 
@@ -263,6 +342,10 @@ namespace XREngine.Components.Capture.Lights.Types
                 return;
 
             EnsureShadowResources();
+
+            int faceMask = CurrentShadowFaceRelevanceMask;
+            if (faceMask == 0)
+                return;
 
             PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
             PublishShadowRenderPlan(plan);
@@ -275,14 +358,15 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 LogShadowRenderModeFallbackIfNeeded(plan);
                 for (int i = 0; i < ShadowFaceCount; i++)
-                    _viewports[i].SwapBuffers();
+                    if ((faceMask & (1 << i)) != 0)
+                        _viewports[i].SwapBuffers();
             }
             lightmapBaker?.ProcessDynamicCachedAutoBake(this);
         }
 
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
-            if (!CastsShadows || Engine.Rendering.Settings.UsePointShadowAtlas)
+            if (!CastsShadows || UsesPointShadowAtlasForCurrentEncoding)
                 return;
 
             EnsureShadowMapForActiveDynamicLight();
@@ -292,6 +376,10 @@ namespace XREngine.Components.Capture.Lights.Types
             EnsureShadowResources();
             SyncShadowCaptureTransforms();
 
+            int faceMask = CurrentShadowFaceRelevanceMask;
+            if (faceMask == 0)
+                return;
+
             if (collectVisibleNow)
             {
                 CollectVisibleItems();
@@ -300,27 +388,36 @@ namespace XREngine.Components.Capture.Lights.Types
 
             PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
             PublishShadowRenderPlan(plan);
+            ApplyShadowMapClearColor();
             if (plan.IsLayered)
             {
                 Span<Matrix4x4> faceMatrices = stackalloc Matrix4x4[ShadowFaceCount];
-                int faceCount = CopyShadowFaceMatrices(faceMatrices);
+                Span<int> faceIndices = stackalloc int[ShadowFaceCount];
+                int faceCount = CopyShadowFaceMatrices(faceMatrices, faceIndices, faceMask);
+                if (faceCount == 0)
+                    return;
+
                 XRMaterial layeredMaterial = plan.IsInstancedLayered
                     ? PointInstancedShadowMaterial
                     : PointGeometryShadowMaterial;
                 using var pointShadowPass = _viewports[0].RenderPipelineInstance.RenderState
-                    .PushPointLightLayeredShadowPass(plan.IsInstancedLayered, faceMatrices[..faceCount]);
+                    .PushPointLightLayeredShadowPass(plan.IsInstancedLayered, faceMatrices[..faceCount], faceIndices[..faceCount]);
                 _viewports[0].Render(ShadowMap, null, null, true, layeredMaterial);
+                SetField(ref _lastRenderedShadowFaceMask, faceMask, nameof(LastRenderedShadowFaceMask));
+                SetField(ref _lastShadowRenderFrame, Engine.Rendering.State.RenderFrameId, nameof(LastShadowRenderFrame));
+                GenerateMomentShadowMipmapsIfNeeded();
                 return;
             }
 
             LogShadowRenderModeFallbackIfNeeded(plan);
-            RenderSequentialShadowFaces();
+            RenderSequentialShadowFaces(faceMask);
+            GenerateMomentShadowMipmapsIfNeeded();
         }
 
         private PointShadowRenderPlan CreatePointShadowRenderPlan()
         {
             EPointShadowRenderMode requestedMode = _shadowRenderMode;
-            if (Engine.Rendering.Settings.UsePointShadowAtlas)
+            if (UsesPointShadowAtlasForCurrentEncoding)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.AtlasUsesSequentialTiles);
 
             if (ShadowMap is null)
@@ -452,19 +549,47 @@ namespace XREngine.Components.Capture.Lights.Types
             return count;
         }
 
-        private void RenderSequentialShadowFaces()
+        private int CopyShadowFaceMatrices(Span<Matrix4x4> matrices, Span<int> faceIndices, int faceMask)
+        {
+            int count = 0;
+            int cameraCount = Math.Min(ShadowFaceCount, _shadowCameras.Length);
+            for (int faceIndex = 0; faceIndex < cameraCount && count < matrices.Length && count < faceIndices.Length; ++faceIndex)
+            {
+                if ((faceMask & (1 << faceIndex)) == 0)
+                    continue;
+
+                XRCamera cam = _shadowCameras[faceIndex];
+                Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
+                matrices[count] = viewMatrix * cam.ProjectionMatrix;
+                faceIndices[count] = faceIndex;
+                count++;
+            }
+
+            return count;
+        }
+
+        private void RenderSequentialShadowFaces(int faceMask)
         {
             _perFaceFbo ??= new XRFrameBuffer();
             var mat = ShadowMap!.Material!;
             var depthCube = (IFrameBufferAttachement)mat.Textures[0]!;
             var shadowCube = (IFrameBufferAttachement)mat.Textures[1]!;
+            int renderedMask = 0;
             for (int i = 0; i < ShadowFaceCount; i++)
             {
+                if ((faceMask & (1 << i)) == 0)
+                    continue;
+
                 _perFaceFbo.SetRenderTargets(
                     (depthCube, EFrameBufferAttachment.DepthAttachment, 0, i),
                     (shadowCube, EFrameBufferAttachment.ColorAttachment0, 0, i));
                 _viewports[i].Render(_perFaceFbo, null, null, true, mat);
+                renderedMask |= 1 << i;
             }
+
+            SetField(ref _lastRenderedShadowFaceMask, renderedMask, nameof(LastRenderedShadowFaceMask));
+            if (renderedMask != 0)
+                SetField(ref _lastShadowRenderFrame, Engine.Rendering.State.RenderFrameId, nameof(LastShadowRenderFrame));
         }
 
         private void LogShadowRenderModeFallbackIfNeeded(in PointShadowRenderPlan plan)
@@ -487,11 +612,11 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         private bool ShouldProcessShadowViewports()
-            => CastsShadows && (ShadowMap is not null || Engine.Rendering.Settings.UsePointShadowAtlas);
+            => CastsShadows && (ShadowMap is not null || UsesPointShadowAtlasForCurrentEncoding);
 
         private bool ShouldPrepareAtlasGroupedFaceCollection()
         {
-            if (!Engine.Rendering.Settings.UsePointShadowAtlas ||
+            if (!UsesPointShadowAtlasForCurrentEncoding ||
                 _shadowRenderMode == EPointShadowRenderMode.Sequential ||
                 !Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
                 ShadowFaceCount > Engine.Rendering.State.MaxOpenGLViewports)
@@ -742,6 +867,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
             shadowPipeline.PreserveExistingRenderArea = true;
+            shadowPipeline.ClearColor = GetShadowMapClearColor();
             try
             {
                 var state = viewport.RenderPipelineInstance.RenderState;
@@ -825,6 +951,7 @@ namespace XREngine.Components.Capture.Lights.Types
             shadowPipeline.PreserveExistingRenderArea = true;
             shadowPipeline.IndexedClearRegions = _groupedAtlasClearRects;
             shadowPipeline.IndexedClearRegionCount = groupedCount;
+            shadowPipeline.ClearColor = GetShadowMapClearColor();
             try
             {
                 int pageWidth = checked((int)atlasFbo.Width);
@@ -956,45 +1083,65 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         protected override void SetShadowMapUniforms(XRMaterialBase material, XRRenderProgram program)
         {
+            ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
             program.Uniform("FarPlaneDist", _influenceVolume.Radius);
             program.Uniform("LightPos", Transform.RenderTranslation);
+            program.Uniform("ShadowMapEncoding", (int)selection.Encoding);
+            program.Uniform("ShadowMomentMinVariance", ShadowMomentMinVariance);
+            program.Uniform("ShadowMomentLightBleedReduction", ShadowMomentLightBleedReduction);
+            program.Uniform("ShadowMomentPositiveExponent", selection.PositiveExponent);
+            program.Uniform("ShadowMomentNegativeExponent", selection.NegativeExponent);
+            program.Uniform("ShadowMomentMipBias", ShadowMomentMipBias);
             var state = Engine.Rendering.State.RenderingPipelineState;
             if (state?.PointLightLayeredShadowPass == true && state.PointLightShadowFaceCount > 0)
             {
                 int layeredFaceCount = Math.Min(ShadowFaceCount, state.PointLightShadowFaceCount);
                 program.Uniform("PointShadowFaceCount", layeredFaceCount);
+                int faceMask = 0;
                 for (int i = 0; i < layeredFaceCount; ++i)
                 {
                     if (state.TryGetPointLightShadowFaceMatrix(i, out Matrix4x4 vp))
                     {
-                        program.Uniform($"ViewProjectionMatrices[{i}]", vp);
-                        program.Uniform($"PointShadowViewProjectionMatrices[{i}]", vp);
+                        program.Uniform(ViewProjectionMatrixUniformNames[i], vp);
+                        program.Uniform(PointShadowViewProjectionMatrixUniformNames[i], vp);
                     }
 
                     if (state.TryGetPointLightShadowFaceIndex(i, out int faceIndex))
-                        program.Uniform($"PointShadowFaceIndices[{i}]", faceIndex);
+                    {
+                        program.Uniform(PointShadowFaceIndexUniformNames[i], faceIndex);
+                        if ((uint)faceIndex < ShadowFaceCount)
+                            faceMask |= 1 << faceIndex;
+                    }
                 }
 
+                program.Uniform("PointShadowFaceMask", faceMask);
                 return;
             }
 
             int faceCount = Math.Min(ShadowFaceCount, _shadowCameras.Length);
             program.Uniform("PointShadowFaceCount", faceCount);
+            program.Uniform("PointShadowFaceMask", CurrentShadowFaceRelevanceMask);
             for (int i = 0; i < faceCount; ++i)
             {
                 XRCamera cam = _shadowCameras[i];
                 Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
                 Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
-                program.Uniform($"ViewProjectionMatrices[{i}]", vp);
-                program.Uniform($"PointShadowViewProjectionMatrices[{i}]", vp);
-                program.Uniform($"PointShadowFaceIndices[{i}]", i);
+                program.Uniform(ViewProjectionMatrixUniformNames[i], vp);
+                program.Uniform(PointShadowViewProjectionMatrixUniformNames[i], vp);
+                program.Uniform(PointShadowFaceIndexUniformNames[i], i);
             }
         }
 
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
         {
             uint cubeExtent = Math.Max(width, height);
-            ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(ShadowMapStorageFormat);
+            ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
+            ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(selection.Format.StorageFormat);
+            bool momentEncoding = selection.Encoding != EShadowMapEncoding.Depth;
+            ETexMinFilter minFilter = selection.Format.RequiresLinearFiltering
+                ? (ShadowMomentUseMipmaps ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear)
+                : ETexMinFilter.Nearest;
+            ETexMagFilter magFilter = selection.Format.RequiresLinearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
             XRTexture[] refs =
             [
                 new XRTextureCube(cubeExtent, GetShadowDepthMapFormat(precision), EPixelFormat.DepthComponent, EPixelType.UnsignedInt, false)
@@ -1010,8 +1157,8 @@ namespace XREngine.Components.Capture.Lights.Types
                 },
                 new XRTextureCube(cubeExtent, shadowFormat.InternalFormat, shadowFormat.PixelFormat, shadowFormat.PixelType, false)
                 {
-                    MinFilter = ETexMinFilter.Nearest,
-                    MagFilter = ETexMagFilter.Nearest,
+                    MinFilter = minFilter,
+                    MagFilter = magFilter,
                     UWrap = ETexWrapMode.ClampToEdge,
                     VWrap = ETexWrapMode.ClampToEdge,
                     WWrap = ETexWrapMode.ClampToEdge,
@@ -1019,6 +1166,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
                     SamplerName = "ShadowMap",
                     Resizable = false,
+                    AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps,
                 },
             ];
 
@@ -1030,6 +1178,45 @@ namespace XREngine.Components.Capture.Lights.Types
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
 
             return mat;
+        }
+
+        private void ApplyShadowMapClearColor()
+        {
+            ColorF4 clearColor = GetShadowMapClearColor();
+            for (int i = 0; i < _viewports.Length; i++)
+                if (_viewports[i].RenderPipeline is ShadowRenderPipeline shadowPipeline)
+                    shadowPipeline.ClearColor = clearColor;
+        }
+
+        private void GenerateMomentShadowMipmapsIfNeeded()
+        {
+            if (!CastsShadows ||
+                !ShadowMomentUseMipmaps ||
+                ShadowMapEncoding == EShadowMapEncoding.Depth ||
+                ShadowMap?.Material?.Textures is not { } textures)
+            {
+                return;
+            }
+
+            ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
+            if (selection.Encoding == EShadowMapEncoding.Depth)
+                return;
+
+            for (int i = 0; i < textures.Count; i++)
+            {
+                if (textures[i] is XRTextureCube texture && texture.SamplerName == "ShadowMap")
+                {
+                    texture.GenerateMipmapsGPU();
+                    return;
+                }
+            }
+        }
+
+        private ColorF4 GetShadowMapClearColor()
+        {
+            ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
+            Vector4 clear = selection.ClearSentinel.Value;
+            return new ColorF4(clear.X, clear.Y, clear.Z, clear.W);
         }
 
         internal override void BuildShadowFrusta(List<PreparedFrustum> output)

@@ -28,6 +28,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         // Chosen to avoid conflicts with other SSBO users.
         public const uint LocalLightsBinding = 20;
         public const uint VisibleIndicesBinding = 21;
+        // Per-tile light count buffer used by debug visualization.
+        public const uint TileLightCountsBinding = 29;
 
         public string DepthViewTexture { get; set; } = "DepthView";
 
@@ -36,6 +38,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private XRDataBuffer? _localLightsBuffer;
         private XRDataBuffer? _visibleIndicesBuffer;
+        private XRDataBuffer? _tileLightCountsBuffer;
 
         private XRTexture? _depthTextureCache;
         private int _lastTileCountX;
@@ -74,6 +77,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Engine.Rendering.State.IsShadowPass)
             {
                 Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
+                Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
+                Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
                 return;
             }
 
@@ -83,6 +89,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
                 Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
                 Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
                 return;
             }
 
@@ -92,6 +99,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
                 Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
                 Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
                 return;
             }
 
@@ -132,6 +140,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
                     Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
                     Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                    Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
                     return;
                 }
 
@@ -141,6 +150,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
                 _localLightsBuffer!.BindTo(_computeProgramStereo!, LocalLightsBinding);
                 _visibleIndicesBuffer!.BindTo(_computeProgramStereo!, VisibleIndicesBinding);
+                _tileLightCountsBuffer!.BindTo(_computeProgramStereo!, TileLightCountsBinding);
                 _computeProgramStereo!.Sampler("depthMap", depthArray, 0);
                 _computeProgramStereo!.Uniform("screenSize", new IVector2(width, height));
                 _computeProgramStereo!.Uniform("lightCount", lightCount);
@@ -164,6 +174,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 _localLightsBuffer!.BindTo(_computeProgram!, LocalLightsBinding);
                 _visibleIndicesBuffer!.BindTo(_computeProgram!, VisibleIndicesBinding);
+                _tileLightCountsBuffer!.BindTo(_computeProgram!, TileLightCountsBinding);
                 _computeProgram!.Sampler("depthMap", depthTex, 0);
                 _computeProgram!.Uniform("view", view);
                 _computeProgram!.Uniform("projection", proj);
@@ -178,6 +189,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             // Publish state so forward materials can bind buffers for shading.
             Engine.Rendering.State.ForwardPlusLocalLightsBuffer = _localLightsBuffer;
             Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = _visibleIndicesBuffer;
+            Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = _tileLightCountsBuffer;
             Engine.Rendering.State.ForwardPlusScreenSize = new Vector2(width, height);
             Engine.Rendering.State.ForwardPlusTileSize = TileSize;
             Engine.Rendering.State.ForwardPlusTileCountX = tileCountX;
@@ -280,6 +292,27 @@ namespace XREngine.Rendering.Pipelines.Commands
                 };
                 _visibleIndicesBuffer.PushData();
             }
+
+            uint tileCount = (uint)(tileCountX * tileCountY * Math.Max(eyeCount, 1));
+            if (_tileLightCountsBuffer is null ||
+                _tileLightCountsBuffer.ElementCount != tileCount ||
+                tileCountX != _lastTileCountX ||
+                tileCountY != _lastTileCountY)
+            {
+                _tileLightCountsBuffer = new XRDataBuffer(
+                    "ForwardPlusTileLightCounts",
+                    EBufferTarget.ShaderStorageBuffer,
+                    Math.Max(tileCount, 1u),
+                    EComponentType.UInt,
+                    1u,
+                    normalize: false,
+                    integral: true)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    PadEndingToVec4 = true,
+                };
+                _tileLightCountsBuffer.PushData();
+            }
         }
 
         private void UploadLocalLights(List<ForwardPlusLocalLight> lights)
@@ -309,6 +342,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             builder.SampleTexture(MakeTextureResource(DepthViewTexture));
             builder.ReadWriteBuffer("ForwardPlusLocalLights");
             builder.ReadWriteBuffer("ForwardPlusVisibleIndices");
+            builder.ReadWriteBuffer("ForwardPlusTileLightCounts");
         }
     }
 }

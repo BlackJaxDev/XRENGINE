@@ -1374,4 +1374,135 @@ public partial class DefaultRenderPipeline2
             return t;
         }
     }
+
+    /// <summary>
+    /// RGBA16F full-internal-resolution texture that the bilateral upscale writes
+    /// and PostProcess.fs composites from (sampler name <c>VolumetricFogColor</c>).
+    /// rgb = in-scattered radiance, a = transmittance. Mono only; stereo skips the
+    /// scatter chain.
+    /// </summary>
+    private XRTexture CreateVolumetricFogColorTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MinFilter = ETexMinFilter.Linear;
+        t.MagFilter = ETexMagFilter.Linear;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = VolumetricFogColorTextureName;
+        t.Name = VolumetricFogColorTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// R32F half-internal-resolution depth view used by the half-res scatter
+    /// pass. Stores raw (un-resolved) depth so <c>XRENGINE_ResolveDepth</c>
+    /// works identically to the full-res path.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfDepthTexture()
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            w, h,
+            EPixelInternalFormat.R32f,
+            EPixelFormat.Red,
+            EPixelType.Float,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.R32f;
+        // Nearest sampling keeps per-pixel depth crisp for bilateral weighting.
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = VolumetricFogHalfDepthTextureName;
+        t.Name = VolumetricFogHalfDepthTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution target that the scatter raymarch writes
+    /// into. Read by the bilateral upscale shader alongside the full-res
+    /// <see cref="DepthViewTextureName"/> to produce <see cref="VolumetricFogColorTextureName"/>.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfScatterTexture()
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            w, h,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MinFilter = ETexMinFilter.Linear;
+        t.MagFilter = ETexMagFilter.Linear;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = VolumetricFogHalfScatterTextureName;
+        t.Name = VolumetricFogHalfScatterTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution target containing the temporally
+    /// reprojected fog result for the current frame. Read by the full-res
+    /// bilateral upscale shader.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfTemporalTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = VolumetricFogHalfTemporalTextureName;
+        texture.Name = VolumetricFogHalfTemporalTextureName;
+        return texture;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution history texture sampled by
+    /// VolumetricFogReproject.fs. The current temporal output is copied into
+    /// this target after the upscale consumes it.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfHistoryTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = VolumetricFogHalfHistoryTextureName;
+        texture.Name = VolumetricFogHalfHistoryTextureName;
+        return texture;
+    }
 }

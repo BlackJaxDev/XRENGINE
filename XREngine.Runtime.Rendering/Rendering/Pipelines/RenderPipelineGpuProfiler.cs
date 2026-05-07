@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using XREngine.Data.Profiling;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Pipelines.Commands;
@@ -9,6 +10,8 @@ namespace XREngine.Rendering;
 internal sealed class RenderPipelineGpuProfiler
 {
     public static RenderPipelineGpuProfiler Instance { get; } = new();
+    private const ulong PartialPublishDelayFrames = 3;
+    private const ulong StalePendingQueryFrames = 120;
 
     private sealed class NodeAccumulator
     {
@@ -97,6 +100,12 @@ internal sealed class RenderPipelineGpuProfiler
         public GLRenderQuery EndQuery { get; } = endQuery;
     }
 
+    private readonly struct OrphanedQuery(ulong frameId, GLRenderQuery query)
+    {
+        public ulong FrameId { get; } = frameId;
+        public GLRenderQuery Query { get; } = query;
+    }
+
     public readonly struct Scope : IDisposable
     {
         private readonly RenderPipelineGpuProfiler? _profiler;
@@ -129,7 +138,12 @@ internal sealed class RenderPipelineGpuProfiler
     private readonly Queue<XRRenderQuery> _queryPool = new();
     private readonly Dictionary<ulong, FrameCapture> _frames = [];
     private readonly List<PendingScope> _pendingScopes = [];
+    private readonly List<OrphanedQuery> _orphanedQueries = [];
     private RenderStatsGpuPipelineSnapshot _latestSnapshot = RenderStatsGpuPipelineSnapshot.Disabled();
+    private ulong _lastPublishedFrameId;
+    private bool _hasPublishedFrame;
+    private string _lastBackendName = string.Empty;
+    private int _enabled;
 
     private RenderPipelineGpuProfiler()
     {
@@ -153,17 +167,28 @@ internal sealed class RenderPipelineGpuProfiler
 
     public void BeginFrame(ulong frameId, bool enabled)
     {
+        Volatile.Write(ref _enabled, enabled ? 1 : 0);
+
         lock (_lock)
         {
             if (!enabled)
             {
+                CancelDanglingUserScopesNoLock();
                 ClearPendingScopesNoLock();
+                ClearOrphanedQueriesNoLock();
                 _frames.Clear();
+                _hasPublishedFrame = false;
+                _lastPublishedFrameId = 0UL;
                 _latestSnapshot = RenderStatsGpuPipelineSnapshot.Disabled();
                 return;
             }
 
-            ResolveCompletedScopesNoLock();
+            CancelDanglingUserScopesNoLock();
+            ResolveOrphanedQueriesNoLock(frameId);
+            ResolveCompletedScopesNoLock(frameId);
+            if (!_latestSnapshot.Enabled)
+                _latestSnapshot = RenderStatsGpuPipelineSnapshot.Pending(GetLastBackendNameNoLock(), "Waiting for the first resolved GPU command frame.");
+
             PublishLatestResolvedFrameNoLock(frameId);
             PruneFramesNoLock(frameId);
         }
@@ -173,7 +198,7 @@ internal sealed class RenderPipelineGpuProfiler
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        if (!Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling || !Engine.Rendering.Stats.EnableTracking)
+        if (Volatile.Read(ref _enabled) == 0)
             return default;
 
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
@@ -207,6 +232,7 @@ internal sealed class RenderPipelineGpuProfiler
 
         lock (_lock)
         {
+            _lastBackendName = "OpenGL";
             FrameCapture frame = GetOrCreateFrameNoLock(frameId);
             frame.Supported = true;
             frame.BackendName = "OpenGL";
@@ -220,8 +246,7 @@ internal sealed class RenderPipelineGpuProfiler
     public bool PushUserScope(string scopeName)
     {
         if (string.IsNullOrWhiteSpace(scopeName) ||
-            !Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling ||
-            !Engine.Rendering.Stats.EnableTracking)
+            Volatile.Read(ref _enabled) == 0)
         {
             return false;
         }
@@ -254,6 +279,7 @@ internal sealed class RenderPipelineGpuProfiler
 
         lock (_lock)
         {
+            _lastBackendName = "OpenGL";
             FrameCapture frame = GetOrCreateFrameNoLock(frameId);
             frame.Supported = true;
             frame.BackendName = "OpenGL";
@@ -288,7 +314,7 @@ internal sealed class RenderPipelineGpuProfiler
         {
             lock (_lock)
             {
-                ReleaseQueryNoLock(scope.StartQuery);
+                RetireQueryWhenReadyNoLock(scope.FrameId, scope.StartQuery);
                 CancelPendingSampleNoLock(scope.FrameId);
             }
             return;
@@ -311,8 +337,18 @@ internal sealed class RenderPipelineGpuProfiler
                 stack.RemoveAt(stack.Count - 1);
         }
 
-        if (path is null || startQuery is null || AbstractRenderer.Current is not OpenGLRenderer renderer)
+        if (path is null || startQuery is null)
             return;
+
+        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        {
+            lock (_lock)
+            {
+                RetireQueryWhenReadyNoLock(frameId, startQuery);
+                CancelPendingSampleNoLock(frameId);
+            }
+            return;
+        }
 
         GLRenderQuery endQuery = AcquireTimestampQuery(renderer);
         endQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
@@ -332,11 +368,33 @@ internal sealed class RenderPipelineGpuProfiler
         return created;
     }
 
-    private void ResolveCompletedScopesNoLock()
+    private void ResolveCompletedScopesNoLock(ulong currentFrameId)
     {
         for (int i = _pendingScopes.Count - 1; i >= 0; i--)
         {
             PendingScope pending = _pendingScopes[i];
+            if (IsOlderThan(currentFrameId, pending.FrameId, StalePendingQueryFrames))
+            {
+                CancelPendingSampleNoLock(pending.FrameId);
+                RetireQueryWhenReadyNoLock(pending.FrameId, pending.StartQuery);
+                RetireQueryWhenReadyNoLock(pending.FrameId, pending.EndQuery);
+                _pendingScopes.RemoveAt(i);
+                continue;
+            }
+
+            if (_hasPublishedFrame && pending.FrameId <= _lastPublishedFrameId)
+            {
+                if (TryReadTimestamp(pending.StartQuery, out _) &&
+                    TryReadTimestamp(pending.EndQuery, out _))
+                {
+                    ReleaseQueryNoLock(pending.StartQuery);
+                    ReleaseQueryNoLock(pending.EndQuery);
+                    _pendingScopes.RemoveAt(i);
+                }
+
+                continue;
+            }
+
             if (!TryReadTimestamp(pending.StartQuery, out ulong startTimestamp) ||
                 !TryReadTimestamp(pending.EndQuery, out ulong endTimestamp))
             {
@@ -360,8 +418,7 @@ internal sealed class RenderPipelineGpuProfiler
 
     private void CancelPendingSampleNoLock(ulong frameId)
     {
-        FrameCapture frame = GetOrCreateFrameNoLock(frameId);
-        if (frame.PendingSamples > 0)
+        if (_frames.TryGetValue(frameId, out FrameCapture? frame) && frame.PendingSamples > 0)
             frame.PendingSamples--;
     }
 
@@ -371,10 +428,19 @@ internal sealed class RenderPipelineGpuProfiler
 
         foreach ((ulong frameId, FrameCapture frame) in _frames)
         {
-            if (frameId >= currentFrameId || frame.PendingSamples > 0)
+            if (frameId >= currentFrameId)
                 continue;
 
-            if (!frame.HasSamples && !frame.Supported)
+            if (frame.PendingSamples > 0 &&
+                !IsOlderThan(currentFrameId, frameId, PartialPublishDelayFrames))
+            {
+                continue;
+            }
+
+            if (frame.PendingSamples > 0 && !frame.HasSamples)
+                continue;
+
+            if (!frame.HasSamples)
                 continue;
 
             if (best is null || frameId > best.FrameId)
@@ -385,6 +451,11 @@ internal sealed class RenderPipelineGpuProfiler
             return;
 
         _latestSnapshot = CreateSnapshot(best);
+        if (!_hasPublishedFrame || best.FrameId > _lastPublishedFrameId)
+        {
+            _lastPublishedFrameId = best.FrameId;
+            _hasPublishedFrame = true;
+        }
 
         List<ulong> keysToRemove = [];
         foreach (ulong key in _frames.Keys)
@@ -402,7 +473,7 @@ internal sealed class RenderPipelineGpuProfiler
         List<ulong>? stale = null;
         foreach ((ulong frameId, FrameCapture frame) in _frames)
         {
-            if (currentFrameId <= frameId + 8 || frame.PendingSamples > 0)
+            if (!IsOlderThan(currentFrameId, frameId, StalePendingQueryFrames))
                 continue;
 
             stale ??= [];
@@ -416,15 +487,82 @@ internal sealed class RenderPipelineGpuProfiler
             _frames.Remove(stale[i]);
     }
 
+    private void CancelDanglingUserScopesNoLock()
+    {
+        Stack<UserScopeHandle>? openScopes = _openUserScopes;
+        int danglingCount = openScopes?.Count ?? 0;
+        if (danglingCount > 0)
+        {
+            while (openScopes!.Count > 0)
+            {
+                UserScopeHandle scope = openScopes.Pop();
+                CancelPendingSampleNoLock(scope.FrameId);
+                RetireQueryWhenReadyNoLock(scope.FrameId, scope.StartQuery);
+            }
+
+            Debug.RenderingWarningEvery(
+                "RenderPipelineGpuProfiler.DanglingUserScopes",
+                TimeSpan.FromSeconds(1),
+                "Cleared {0} dangling GPU timer scope(s) at frame boundary. Check VPRC_GPUTimerBegin/End pairing.",
+                danglingCount);
+        }
+
+        _userScopeStack?.Clear();
+
+        if (_commandScopeStack is { Count: > 0 } commandStack)
+        {
+            Debug.RenderingWarningEvery(
+                "RenderPipelineGpuProfiler.DanglingCommandScopes",
+                TimeSpan.FromSeconds(1),
+                "Cleared {0} dangling GPU command timer scope(s) at frame boundary.",
+                commandStack.Count);
+            commandStack.Clear();
+        }
+    }
+
+    private void ResolveOrphanedQueriesNoLock(ulong currentFrameId)
+    {
+        for (int i = _orphanedQueries.Count - 1; i >= 0; i--)
+        {
+            OrphanedQuery orphaned = _orphanedQueries[i];
+            if (TryReadTimestamp(orphaned.Query, out _))
+            {
+                ReleaseQueryNoLock(orphaned.Query);
+                _orphanedQueries.RemoveAt(i);
+                continue;
+            }
+
+            if (IsOlderThan(currentFrameId, orphaned.FrameId, StalePendingQueryFrames))
+            {
+                orphaned.Query.Destroy();
+                _orphanedQueries.RemoveAt(i);
+            }
+        }
+    }
+
+    private void RetireQueryWhenReadyNoLock(ulong frameId, GLRenderQuery query)
+    {
+        query.Data.CurrentQuery = null;
+        _orphanedQueries.Add(new OrphanedQuery(frameId, query));
+    }
+
     private void ClearPendingScopesNoLock()
     {
         for (int i = 0; i < _pendingScopes.Count; i++)
         {
-            ReleaseQueryNoLock(_pendingScopes[i].StartQuery);
-            ReleaseQueryNoLock(_pendingScopes[i].EndQuery);
+            _pendingScopes[i].StartQuery.Destroy();
+            _pendingScopes[i].EndQuery.Destroy();
         }
 
         _pendingScopes.Clear();
+    }
+
+    private void ClearOrphanedQueriesNoLock()
+    {
+        for (int i = 0; i < _orphanedQueries.Count; i++)
+            _orphanedQueries[i].Query.Destroy();
+
+        _orphanedQueries.Clear();
     }
 
     private GLRenderQuery AcquireTimestampQuery(OpenGLRenderer renderer)
@@ -448,6 +586,9 @@ internal sealed class RenderPipelineGpuProfiler
         _queryPool.Enqueue(query.Data);
     }
 
+    private string GetLastBackendNameNoLock()
+        => string.IsNullOrWhiteSpace(_lastBackendName) ? GetBackendName() : _lastBackendName;
+
     private static bool TryReadTimestamp(GLRenderQuery query, out ulong timestamp)
     {
         timestamp = 0UL;
@@ -459,13 +600,28 @@ internal sealed class RenderPipelineGpuProfiler
         return true;
     }
 
+    private static bool IsOlderThan(ulong currentFrameId, ulong frameId, ulong frameCount)
+        => currentFrameId > frameId && currentFrameId - frameId > frameCount;
+
     private static string GetBackendName()
-        => AbstractRenderer.Current switch
+    {
+        string currentName = AbstractRenderer.Current switch
         {
             OpenGLRenderer => "OpenGL",
             Vulkan.VulkanRenderer => "Vulkan",
+            _ => string.Empty
+        };
+
+        if (!string.IsNullOrWhiteSpace(currentName))
+            return currentName;
+
+        return RuntimeRenderingHostServices.Current.CurrentRenderBackend switch
+        {
+            RuntimeGraphicsApiKind.OpenGL => "OpenGL",
+            RuntimeGraphicsApiKind.Vulkan => "Vulkan",
             _ => "Unknown"
         };
+    }
 
     private static RenderStatsGpuPipelineSnapshot CreateSnapshot(FrameCapture frame)
     {
@@ -478,7 +634,11 @@ internal sealed class RenderPipelineGpuProfiler
             frameMilliseconds += node.ElapsedMs;
         }
 
-        return new RenderStatsGpuPipelineSnapshot(true, frame.Supported, roots.Length > 0, frame.BackendName, frame.StatusMessage, frameMilliseconds, roots);
+        string statusMessage = frame.PendingSamples > 0
+            ? $"{frame.PendingSamples} GPU timer sample(s) were still pending; showing resolved commands."
+            : frame.StatusMessage;
+
+        return new RenderStatsGpuPipelineSnapshot(true, frame.Supported, roots.Length > 0, frame.BackendName, statusMessage, frameMilliseconds, roots);
     }
 
     private static GpuPipelineTimingNodeData ToPacket(NodeAccumulator node)
@@ -515,6 +675,9 @@ internal sealed class RenderPipelineGpuProfiler
 
         public static RenderStatsGpuPipelineSnapshot Disabled()
             => new(false, true, false, string.Empty, "GPU render-pipeline command timing is disabled.", 0.0, []);
+
+        public static RenderStatsGpuPipelineSnapshot Pending(string backendName, string statusMessage)
+            => new(true, true, false, backendName, statusMessage, 0.0, []);
 
         public static RenderStatsGpuPipelineSnapshot Unsupported(string backendName, string statusMessage)
             => new(true, false, false, backendName, statusMessage, 0.0, []);

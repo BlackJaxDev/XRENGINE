@@ -490,6 +490,7 @@ internal static partial class Engine
             public static uint VulkanDeviceId { get; internal set; }
             public static XRDataBuffer? ForwardPlusLocalLightsBuffer { get; internal set; }
             public static XRDataBuffer? ForwardPlusVisibleIndicesBuffer { get; internal set; }
+            public static XRDataBuffer? ForwardPlusTileLightCountsBuffer { get; internal set; }
             public static Vector2 ForwardPlusScreenSize { get; internal set; }
             public static int ForwardPlusTileSize { get; internal set; }
             public static int ForwardPlusTileCountX { get; internal set; }

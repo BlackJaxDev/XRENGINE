@@ -139,6 +139,20 @@ namespace XREngine.Rendering.OpenGL
                             () => gl.CompileShader(sid),
                             "worker=source-compile");
 
+                        // Poll non-blocking GL_COMPLETION_STATUS_ARB before issuing the
+                        // blocking GL_COMPILE_STATUS query. On NVIDIA, a blocking status
+                        // query during a long cold compile holds a driver-wide lock that
+                        // starves the main GL context (no render-thread GL calls progress
+                        // until the worker's query returns). Polling with a short sleep
+                        // releases that lock between queries.
+                        PollCompletionStatusBlocking(
+                            gl,
+                            programId,
+                            sid,
+                            shaderType,
+                            isShader: true,
+                            phase: "worker=source-compile-completion-poll");
+
                         int status = 0;
                         MeasureRenderingWorkerGlCall(
                             "glGetShaderiv(GL_COMPILE_STATUS)",
@@ -213,6 +227,21 @@ namespace XREngine.Rendering.OpenGL
                         null,
                         () => gl.LinkProgram(programId),
                         "worker=source-link");
+
+                    // Poll non-blocking GL_COMPLETION_STATUS_ARB before issuing the
+                    // blocking GL_LINK_STATUS query. The blocking query holds a
+                    // driver-wide lock on NVIDIA that prevents the main GL context
+                    // from making any progress for the entire duration of a cold
+                    // link (observed: 109+ seconds on a 387 KB single-stage
+                    // separable fragment program), freezing the render thread.
+                    PollCompletionStatusBlocking(
+                        gl,
+                        programId,
+                        0,
+                        null,
+                        isShader: false,
+                        phase: "worker=source-link-completion-poll");
+
                     int linkStatus = 0;
                     MeasureRenderingWorkerGlCall(
                         "glGetProgramiv(GL_LINK_STATUS)",
@@ -285,6 +314,64 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
+            /// Polls <c>GL_COMPLETION_STATUS_ARB</c> on the worker context until the
+            /// driver reports the most recent compile or link is complete. Sleeps
+            /// briefly between polls so the NVIDIA driver can release its internal
+            /// shader-compiler lock and let the main GL context continue making
+            /// progress. Without this, a blocking <c>glGetShaderiv(GL_COMPILE_STATUS)</c>
+            /// or <c>glGetProgramiv(GL_LINK_STATUS)</c> on the worker can stall every
+            /// render-thread GL call for the full duration of a cold compile/link
+            /// (observed: 100+ seconds for large imported-model fragment shaders).
+            /// </summary>
+            private static void PollCompletionStatusBlocking(
+                GL gl,
+                uint programId,
+                uint shaderId,
+                ShaderType? shaderType,
+                bool isShader,
+                string phase)
+            {
+                // Initial fast-poll burst — most binary cache hits and warm links
+                // complete in microseconds. After the burst, back off to a 1 ms
+                // sleep to avoid spinning during long cold compiles.
+                const int FastPollIterations = 64;
+                int iterations = 0;
+                while (true)
+                {
+                    int complete = 0;
+                    if (isShader)
+                    {
+                        MeasureRenderingWorkerGlCall(
+                            "glGetShaderiv(GL_COMPLETION_STATUS)",
+                            programId,
+                            shaderId,
+                            shaderType,
+                            () => gl.GetShader(shaderId, (GLEnum)GLShader.GL_COMPLETION_STATUS_ARB, out complete),
+                            phase);
+                    }
+                    else
+                    {
+                        MeasureRenderingWorkerGlCall(
+                            "glGetProgramiv(GL_COMPLETION_STATUS)",
+                            programId,
+                            shaderId,
+                            shaderType,
+                            () => gl.GetProgram(programId, (GLEnum)GLShader.GL_COMPLETION_STATUS_ARB, out complete),
+                            phase);
+                    }
+
+                    if (complete != 0)
+                        return;
+
+                    iterations++;
+                    if (iterations < FastPollIterations)
+                        Thread.Yield();
+                    else
+                        Thread.Sleep(1);
+                }
+            }
+
+            /// <summary>
             /// Checks whether an async compile+link has completed for the given program.
             /// The result is consumed (removed) on retrieval, freeing an in-flight slot.
             /// </summary>
@@ -300,9 +387,21 @@ namespace XREngine.Rendering.OpenGL
 
             public static bool ContainsKnownAsyncLinkHazard(ReadOnlySpan<ShaderInput> shaders)
             {
-                if (shaders.Length <= 1)
-                    return true;
-
+                // Compute programs are the documented NVIDIA parallel-link hang
+                // shape: glDispatchCompute implicitly waits for link completion,
+                // so a hung worker would deadlock the render thread on the next
+                // dispatch. Keep them on the guarded synchronous render-thread
+                // path with parallel compile suppressed.
+                //
+                // Single-stage separable graphics programs (vertex- or fragment-
+                // only) used to be rejected here too, but the parallel-link hang
+                // was only observed with the driver-parallel lane on the main
+                // context. They are safe to compile + link on the shared-context
+                // worker, where a slow cold link costs only worker time and not
+                // render-thread time. Letting them through restores the policy
+                // documented in GLRenderProgram.IsKnownAsyncLinkHazard: graphics
+                // hazards still use the shared-context source lane so large cold
+                // links cannot freeze the render thread.
                 for (int i = 0; i < shaders.Length; i++)
                 {
                     if (shaders[i].Type == ShaderType.ComputeShader)

@@ -298,6 +298,58 @@ namespace XREngine.Components
             set => SetField(ref _directionalShadowRenderingMode, value);
         }
 
+        // ==================== Forward+ Debug Visualization ====================
+        // These proxy properties write straight through to the underlying XRCamera, which
+        // is what the renderer reads each frame. Exposing them here keeps the camera-component
+        // editor a single place to discover and toggle debug overlays at runtime.
+
+        [Category("Debug (Forward+)")]
+        [DisplayName("Light Culling Debug Mode")]
+        [Description("Visualizes the Forward+ tiled-light-culling buckets. None disables the overlay.")]
+        public XRCamera.EForwardPlusDebugMode ForwardPlusDebugMode
+        {
+            get => Camera.ForwardPlusDebugMode;
+            set
+            {
+                if (Camera.ForwardPlusDebugMode == value)
+                    return;
+                Camera.ForwardPlusDebugMode = value;
+                OnPropertyChanged(nameof(ForwardPlusDebugMode), Camera.ForwardPlusDebugMode, value);
+            }
+        }
+
+        [Category("Debug (Forward+)")]
+        [DisplayName("Light Culling Debug Opacity")]
+        [Description("Alpha used when blending the Forward+ debug overlay onto the scene (0..1).")]
+        public float ForwardPlusDebugOpacity
+        {
+            get => Camera.ForwardPlusDebugOpacity;
+            set
+            {
+                float clamped = Math.Clamp(value, 0.0f, 1.0f);
+                if (MathF.Abs(Camera.ForwardPlusDebugOpacity - clamped) < 1e-6f)
+                    return;
+                Camera.ForwardPlusDebugOpacity = clamped;
+                OnPropertyChanged(nameof(ForwardPlusDebugOpacity), Camera.ForwardPlusDebugOpacity, clamped);
+            }
+        }
+
+        [Category("Debug (Forward+)")]
+        [DisplayName("Light Culling Debug Max Count")]
+        [Description("Per-tile light count that maps to the top of the heatmap ramp. Tiles with this many or more lights saturate to 'hot'.")]
+        public int ForwardPlusDebugMaxCount
+        {
+            get => Camera.ForwardPlusDebugMaxCount;
+            set
+            {
+                int clamped = Math.Max(1, value);
+                if (Camera.ForwardPlusDebugMaxCount == clamped)
+                    return;
+                Camera.ForwardPlusDebugMaxCount = clamped;
+                OnPropertyChanged(nameof(ForwardPlusDebugMaxCount), Camera.ForwardPlusDebugMaxCount, clamped);
+            }
+        }
+
         private Func<IRuntimeCullingCamera>? _cullingCameraOverride = null;
         /// <summary>
         /// When CullWithFrustum is true and this property is not null, this method retrieves the camera frustum to cull with.
@@ -312,7 +364,9 @@ namespace XREngine.Components
         private XRCamera CameraFactory()
         {
             XRCameraParameters parameters = CameraParameters;
-            var cam = new XRCamera(Transform, parameters);
+            var cam = SceneNode is null
+                ? new XRCamera { Parameters = parameters }
+                : new XRCamera(Transform, parameters);
             cam.DepthMode = RuntimeRenderingHostServices.Current.ResolveSceneCameraDepthModePreference();
             cam.PropertyChanged += CameraPropertyChanged;
             cam.ViewportAdded += ViewportAdded;
@@ -417,6 +471,9 @@ namespace XREngine.Components
                     if (UserInterface is { IsScreenSpace: false } ui)
                     {
                         bool cameraWasCreated = _camera.IsValueCreated;
+                        if (!cameraWasCreated && SceneNode is null)
+                            break;
+
                         XRCamera camera = Camera;
                         if (cameraWasCreated)
                             ui.ResizeCameraSpace(camera, camera.Parameters);

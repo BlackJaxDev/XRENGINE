@@ -88,6 +88,8 @@ namespace XREngine.Scene
         private readonly List<PreparedFrustum> _frustumScratch = new(6);
         private readonly List<(Frustum Frustum, Vector3 Position, float MaxDistance)> _cameraFrustumScratch = new(4);
         private readonly List<XRCamera> _shadowAtlasCameraScratch = new(4);
+        private readonly List<PreparedFrustum> _localShadowRelevanceFrustaScratch = new(4);
+        private readonly List<Vector3> _localShadowIntersectionScratch = new(64);
         private readonly ConcurrentQueue<CaptureWorkItem> _captureWorkQueue = new();
         private readonly HashSet<SceneCaptureComponentBase> _pendingCaptureComponents = new();
         private ulong _lastShadowMapsRenderFrameId = ulong.MaxValue;

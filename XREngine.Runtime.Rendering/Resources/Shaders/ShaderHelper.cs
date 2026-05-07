@@ -984,6 +984,7 @@ uniform float ShadowMomentPositiveExponent = 5.0;
 uniform float ShadowMomentNegativeExponent = 5.0;
 uniform float CameraNearZ = 0.1;
 uniform float CameraFarZ = 1000.0;
+uniform int ShadowDepthSourceMode = 0; // 0 = perspective camera depth, 1 = projected depth already normalized.
 
 #define XRENGINE_SHADOW_ENCODING_DEPTH 0
 #define XRENGINE_SHADOW_ENCODING_VARIANCE2 1
@@ -997,6 +998,14 @@ float LinearizeShadowDepth01(float depth, float nearZ, float farZ)
     float z = depth * 2.0 - 1.0;
     float linearZ = (2.0 * n * f) / (f + n - z * (f - n));
     return clamp((linearZ - n) / (f - n), 0.0, 1.0);
+}
+
+float ResolveShadowDepth01(float depth)
+{
+    if (ShadowDepthSourceMode == 1)
+        return clamp(depth, 0.0, 1.0);
+
+    return LinearizeShadowDepth01(depth, CameraNearZ, CameraFarZ);
 }
 
 vec2 EncodeVsmMoments(float depth)
@@ -1033,7 +1042,7 @@ vec4 EncodeEvsm4Moments(float depth, float positiveExponent, float negativeExpon
 
 void main()
 {
-    float depth = LinearizeShadowDepth01(gl_FragCoord.z, CameraNearZ, CameraFarZ);
+    float depth = ResolveShadowDepth01(gl_FragCoord.z);
     if (ShadowMapEncoding == XRENGINE_SHADOW_ENCODING_EVSM4)
         ShadowMoments = EncodeEvsm4Moments(depth, ShadowMomentPositiveExponent, ShadowMomentNegativeExponent);
     else if (ShadowMapEncoding == XRENGINE_SHADOW_ENCODING_EVSM2)
@@ -1041,7 +1050,7 @@ void main()
     else if (ShadowMapEncoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
         ShadowMoments = vec4(EncodeVsmMoments(depth), 0.0, 0.0);
     else
-        ShadowMoments = vec4(gl_FragCoord.z, 0.0, 0.0, 0.0);
+        ShadowMoments = vec4(depth, 0.0, 0.0, 0.0);
 }";
 
     #endregion

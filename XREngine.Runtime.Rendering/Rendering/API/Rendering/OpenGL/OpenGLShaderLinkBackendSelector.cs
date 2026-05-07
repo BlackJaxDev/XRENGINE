@@ -80,9 +80,23 @@ internal static class OpenGLShaderLinkBackendSelector
 
         if (context.IsKnownAsyncLinkHazard)
         {
+            // Hazardous shapes (single-stage separable, compute) are always denied
+            // the driver-parallel lane — that is the documented NVIDIA parallel-link
+            // worker hang. They may still use the shared-context source lane: the
+            // link runs on a worker thread on a separate GL context, so even an
+            // expensive cold link does not freeze the render thread. The queue
+            // applies its own final guard for shapes (e.g. compute) that should
+            // not be linked on the worker context.
+            if (context.SharedContextCompileAvailable && context.CompileInputsReady)
+            {
+                return SelectSharedContextSource(
+                    context,
+                    "known async-link hazard; routed to shared-context lane to avoid render-thread stall");
+            }
+
             return new OpenGLShaderLinkBackendSelection(
                 EOpenGLProgramBuildLane.SynchronousSource,
-                "known async-link hazard; driver-parallel and shared-source lanes are bypassed",
+                "known async-link hazard; no shared-context lane available",
                 IsAsync: false);
         }
 

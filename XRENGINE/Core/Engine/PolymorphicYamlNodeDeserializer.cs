@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.Loader;
 using XREngine.Core;
 using XREngine.Core.Files;
 using YamlDotNet.Core;
@@ -19,6 +22,9 @@ namespace XREngine
     /// </summary>
     public sealed class PolymorphicYamlNodeDeserializer : INodeDeserializer
     {
+        private static readonly object EngineAssemblyLoadLock = new();
+        private static bool _engineAssemblyLoadAttempted;
+
         public bool Deserialize(
             IParser reader,
             Type expectedType,
@@ -141,8 +147,89 @@ namespace XREngine
             if (type is not null)
                 return true;
 
-            type = null;
-            return false;
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                return false;
+
+            type = ResolveTypeFromLoadedAssemblies(typeName);
+            if (type is not null)
+                return true;
+
+            EnsureEngineRuntimeAssembliesLoaded();
+            type = ResolveTypeFromLoadedAssemblies(typeName);
+            return type is not null;
+        }
+
+        private static Type? ResolveTypeFromLoadedAssemblies(string typeName)
+        {
+            Type? resolved = Type.GetType(typeName, throwOnError: false, ignoreCase: false);
+            if (resolved is not null)
+                return resolved;
+
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    resolved = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
+                    if (resolved is not null)
+                        return resolved;
+                }
+                catch
+                {
+                }
+            }
+
+            return null;
+        }
+
+        private static void EnsureEngineRuntimeAssembliesLoaded()
+        {
+            if (_engineAssemblyLoadAttempted)
+                return;
+
+            lock (EngineAssemblyLoadLock)
+            {
+                if (_engineAssemblyLoadAttempted)
+                    return;
+
+                _engineAssemblyLoadAttempted = true;
+
+                string baseDirectory = AppContext.BaseDirectory;
+                if (string.IsNullOrWhiteSpace(baseDirectory) || !Directory.Exists(baseDirectory))
+                    return;
+
+                HashSet<string> loadedAssemblyNames = [.. AppDomain.CurrentDomain.GetAssemblies()
+                    .Where(static assembly => !assembly.IsDynamic)
+                    .Select(static assembly => assembly.GetName().Name)
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Cast<string>()];
+
+                foreach (string assemblyPath in Directory
+                    .EnumerateFiles(baseDirectory, "XREngine.Runtime*.dll", SearchOption.TopDirectoryOnly)
+                    .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
+                {
+                    AssemblyName assemblyName;
+                    try
+                    {
+                        assemblyName = AssemblyName.GetAssemblyName(assemblyPath);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    string? simpleName = assemblyName.Name;
+                    if (string.IsNullOrWhiteSpace(simpleName) || !loadedAssemblyNames.Add(simpleName))
+                        continue;
+
+                    try
+                    {
+                        AssemblyLoadContext.Default.LoadFromAssemblyPath(assemblyPath);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
         }
 
         private static IReadOnlyList<ParsingEvent> CaptureNode(IParser parser)

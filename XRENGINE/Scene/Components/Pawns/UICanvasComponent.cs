@@ -22,7 +22,13 @@ namespace XREngine.Components
     {
         private const float DefaultAutoWorldCanvasDistance = 1500.0f;
 
-        public UICanvasTransform CanvasTransform => TransformAs<UICanvasTransform>(true)!;
+        public UICanvasTransform CanvasTransform => GetCanvasTransformOrNull(true)!;
+
+        private UICanvasTransform? GetCanvasTransformOrNull(bool forceConvert = false)
+            => TransformAs<UICanvasTransform>(forceConvert);
+
+        private ECanvasDrawSpace CanvasDrawSpaceOrDefault
+            => GetCanvasTransformOrNull()?.DrawSpace ?? ECanvasDrawSpace.Screen;
 
         public RenderInfo[] RenderedObjects { get; }
 
@@ -221,27 +227,32 @@ namespace XREngine.Components
         /// <returns></returns>
         public UICanvasInputComponent? GetInputComponent() => GetSiblingComponent<UICanvasInputComponent>();
 
-        bool IRuntimeScreenSpaceUserInterface.IsScreenSpace => CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen;
+        bool IRuntimeScreenSpaceUserInterface.IsActive => IsActive && GetCanvasTransformOrNull() is not null;
+
+        bool IRuntimeScreenSpaceUserInterface.IsScreenSpace => CanvasDrawSpaceOrDefault == ECanvasDrawSpace.Screen;
 
         public void ResizeScreenSpace(Vector2 size)
         {
-            if (CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
-                CanvasTransform.SetSize(size);
+            var canvasTransform = GetCanvasTransformOrNull(true);
+            if (canvasTransform?.DrawSpace == ECanvasDrawSpace.Screen)
+                canvasTransform.SetSize(size);
         }
 
         public void ResizeCameraSpace(XRCamera camera, XRCameraParameters parameters)
         {
-            if (CanvasTransform.DrawSpace != ECanvasDrawSpace.Camera)
+            var canvasTransform = GetCanvasTransformOrNull(true);
+            if (canvasTransform is null || canvasTransform.DrawSpace != ECanvasDrawSpace.Camera)
                 return;
 
-            CanvasTransform.SetSize(parameters.GetFrustumSizeAtDistance(CanvasTransform.CameraDrawSpaceDistance));
-            CanvasTransform.CameraSpaceCamera = camera;
+            canvasTransform.SetSize(parameters.GetFrustumSizeAtDistance(canvasTransform.CameraDrawSpaceDistance));
+            canvasTransform.CameraSpaceCamera = camera;
         }
 
         public void ClearCameraSpaceCamera(XRCamera camera)
         {
-            if (ReferenceEquals(CanvasTransform.CameraSpaceCamera, camera))
-                CanvasTransform.CameraSpaceCamera = null;
+            var canvasTransform = GetCanvasTransformOrNull();
+            if (canvasTransform is not null && ReferenceEquals(canvasTransform.CameraSpaceCamera, camera))
+                canvasTransform.CameraSpaceCamera = null;
         }
 
         public bool TryGetImGuiDisplayMetrics(
@@ -251,7 +262,15 @@ namespace XREngine.Components
             out Vector2 displayPosition,
             out Vector2 framebufferScale)
         {
-            var canvasTransform = CanvasTransform;
+            var canvasTransform = GetCanvasTransformOrNull();
+            if (canvasTransform is null)
+            {
+                displaySize = Vector2.Zero;
+                displayPosition = Vector2.Zero;
+                framebufferScale = Vector2.One;
+                return false;
+            }
+
             displaySize = canvasTransform.ActualSize;
             displayPosition = canvasTransform.DrawSpace == ECanvasDrawSpace.Screen
                 ? Vector2.Zero
@@ -276,7 +295,7 @@ namespace XREngine.Components
         //private int _screenRenderDiagCount = 0;
         public void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO)
         {
-            if (!IsActive)
+            if (!IsActive || GetCanvasTransformOrNull() is null)
                 return;
 
             XRViewport? concreteViewport = viewport as XRViewport;
@@ -443,7 +462,7 @@ namespace XREngine.Components
         //private int _screenCollectDiagCount = 0;
         public void CollectVisibleItemsScreenSpace(XRViewport? viewport = null)
         {
-            if (!IsActive)
+            if (!IsActive || GetCanvasTransformOrNull() is null)
                 return;
 
             using var sample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace");

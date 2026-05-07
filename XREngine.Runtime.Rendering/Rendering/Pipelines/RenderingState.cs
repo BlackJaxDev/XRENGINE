@@ -453,9 +453,18 @@ public sealed partial class XRRenderPipelineInstance
             }
         }
 
+        public sealed class ScopedProgramBindings
+        {
+            public Action<XRRenderProgram>? ApplyUniforms { get; init; }
+
+            public void Apply(XRRenderProgram program)
+                => ApplyUniforms?.Invoke(program);
+        }
+
         private readonly Stack<ScopedTextureBinding> _textureBindings = new();
         private readonly Stack<ScopedBufferBinding> _bufferBindings = new();
         private readonly Stack<ScopedShaderGlobals> _shaderGlobals = new();
+        private readonly Stack<ScopedProgramBindings> _programBindings = new();
 
         public StateObject PushTextureBinding(ScopedTextureBinding binding)
         {
@@ -493,6 +502,18 @@ public sealed partial class XRRenderPipelineInstance
                 _shaderGlobals.Pop();
         }
 
+        public StateObject PushProgramBindings(ScopedProgramBindings bindings)
+        {
+            _programBindings.Push(bindings);
+            return StateObject.New(PopProgramBindings);
+        }
+
+        public void PopProgramBindings()
+        {
+            if (_programBindings.Count > 0)
+                _programBindings.Pop();
+        }
+
         public void ApplyScopedProgramBindings(XRRenderProgram program)
         {
             XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance;
@@ -509,6 +530,9 @@ public sealed partial class XRRenderPipelineInstance
 
             foreach (var globals in _shaderGlobals.Reverse())
                 globals.Apply(program);
+
+            foreach (var bindings in _programBindings.Reverse())
+                bindings.Apply(program);
         }
 
         /// <summary>
