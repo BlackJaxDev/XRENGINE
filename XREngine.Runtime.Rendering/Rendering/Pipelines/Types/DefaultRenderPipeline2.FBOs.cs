@@ -3,7 +3,6 @@ using System.IO;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 
@@ -41,14 +40,26 @@ public partial class DefaultRenderPipeline2
     {
         // Texture array order must match the shader's sampler declaration order in PostProcess.fs,
         // because Vulkan binds by index (binding N → Textures[N]), not by name.
-        XRTexture[] postProcessRefs =
-        [
-            GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2D HDRSceneTex
-            GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2D BloomBlurTexture
-            GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2D DepthView
-            GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2D StencilView
-            GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
-        ];
+        // The VolumetricFogColor binding is mono-only; stereo PostProcessStereo.fs does
+        // not declare that sampler and omits the slot to keep Vulkan binding indices aligned.
+        XRTexture[] postProcessRefs = Stereo
+            ?
+            [
+                GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2DArray HDRSceneTex
+                GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2DArray BloomBlurTexture
+                GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2DArray DepthView
+                GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2DArray StencilView
+                GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
+            ]
+            :
+            [
+                GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2D HDRSceneTex
+                GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2D BloomBlurTexture
+                GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2D DepthView
+                GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2D StencilView
+                GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
+                GetTexture<XRTexture>(VolumetricFogColorTextureName)!, // binding 5: sampler2D VolumetricFogColor
+            ];
         XRShader postProcessShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, PostProcessShaderName()), EShaderType.Fragment);
         XRMaterial postProcessMat = new(postProcessRefs, postProcessShader)
         {
@@ -64,7 +75,6 @@ public partial class DefaultRenderPipeline2
             }
         };
         var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
-        PostProcessFBO.SettingUniforms += PostProcessFBO_SettingUniforms;
         return PostProcessFBO;
     }
 
@@ -109,7 +119,6 @@ public partial class DefaultRenderPipeline2
         {
             Name = TransformIdDebugQuadFBOName
         };
-        fbo.SettingUniforms += TransformIdDebugQuadFBO_SettingUniforms;
         return fbo;
     }
 
@@ -138,7 +147,6 @@ public partial class DefaultRenderPipeline2
             throw new InvalidOperationException("FXAA output texture is not an FBO-attachable texture.");
 
         fxaaFbo.SetRenderTargets((fxaaAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-        fxaaFbo.SettingUniforms += FxaaFBO_SettingUniforms;
         return fxaaFbo;
     }
 
@@ -176,7 +184,6 @@ public partial class DefaultRenderPipeline2
             throw new InvalidOperationException("TSR upscale output texture is not an FBO-attachable texture.");
 
         fbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-        fbo.SettingUniforms += TsrUpscaleFBO_SettingUniforms;
         return fbo;
     }
 
@@ -192,17 +199,6 @@ public partial class DefaultRenderPipeline2
         };
     }
 
-    private void TransformIdDebugQuadFBO_SettingUniforms(XRRenderProgram program)
-    {
-        XRTexture? transformId = GetTexture<XRTexture>(TransformIdTextureName);
-        if (transformId is null)
-            return;
-
-        program.Sampler(TransformIdTextureName, transformId, 0);
-        program.Uniform("ScreenWidth", (float)InternalWidth);
-        program.Uniform("ScreenHeight", (float)InternalHeight);
-    }
-
     private XRFrameBuffer CreateTransparentSceneCopyFBO()
     {
         var colorAttachment = EnsureTextureAttachment(TransparentSceneCopyTextureName, CreateTransparentSceneCopyTexture);
@@ -210,6 +206,12 @@ public partial class DefaultRenderPipeline2
         {
             Name = TransparentSceneCopyFBOName
         };
+    }
+
+    private static void ApplyTransformIdDebugProgramBindings(XRRenderProgram program)
+    {
+        program.Uniform("ScreenWidth", (float)InternalWidth);
+        program.Uniform("ScreenHeight", (float)InternalHeight);
     }
 
     private XRFrameBuffer CreateDeferredTransparencyBlurFBO()
@@ -282,7 +284,6 @@ public partial class DefaultRenderPipeline2
         };
 
         var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = TransparentResolveFBOName };
-        fbo.SettingUniforms += TransparentResolveFBO_SettingUniforms;
 
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
@@ -293,21 +294,18 @@ public partial class DefaultRenderPipeline2
         => CreateTransparencyDebugFBO(
             TransparentAccumulationDebugFBOName,
             TransparentAccumulationDebugShaderName(),
-            TransparentAccumulationDebugFBO_SettingUniforms,
             GetTexture<XRTexture>(TransparentAccumTextureName)!);
 
     private XRFrameBuffer CreateTransparentRevealageDebugFBO()
         => CreateTransparencyDebugFBO(
             TransparentRevealageDebugFBOName,
             TransparentRevealageDebugShaderName(),
-            TransparentRevealageDebugFBO_SettingUniforms,
             GetTexture<XRTexture>(TransparentRevealageTextureName)!);
 
     private XRFrameBuffer CreateTransparentOverdrawDebugFBO()
         => CreateTransparencyDebugFBO(
             TransparentOverdrawDebugFBOName,
             TransparentOverdrawDebugShaderName(),
-            TransparentOverdrawDebugFBO_SettingUniforms,
             GetTexture<XRTexture>(TransparentRevealageTextureName)!,
             GetTexture<XRTexture>(TransparentAccumTextureName)!);
 
@@ -339,7 +337,6 @@ public partial class DefaultRenderPipeline2
     private XRFrameBuffer CreateTransparencyDebugFBO(
         string name,
         string shaderName,
-        DelSetUniforms setUniforms,
         params XRTexture[] textures)
     {
         XRMaterial material = new(
@@ -358,52 +355,13 @@ public partial class DefaultRenderPipeline2
         };
 
         var fbo = new XRQuadFrameBuffer(material) { Name = name };
-        fbo.SettingUniforms += setUniforms;
         return fbo;
     }
 
-    private void TransparentResolveFBO_SettingUniforms(XRRenderProgram program)
+    private static void ApplyTransparentResolveProgramBindings(XRRenderProgram program)
     {
-        XRTexture? sceneColor = GetTexture<XRTexture>(TransparentSceneCopyTextureName);
-        XRTexture? accum = GetTexture<XRTexture>(TransparentAccumTextureName);
-        XRTexture? revealage = GetTexture<XRTexture>(TransparentRevealageTextureName);
-        if (sceneColor is null || accum is null || revealage is null)
-            return;
-
-        program.Sampler(TransparentSceneCopyTextureName, sceneColor, 0);
-        program.Sampler(TransparentAccumTextureName, accum, 1);
-        program.Sampler(TransparentRevealageTextureName, revealage, 2);
         program.Uniform("ScreenWidth", (float)InternalWidth);
         program.Uniform("ScreenHeight", (float)InternalHeight);
-    }
-
-    private void TransparentAccumulationDebugFBO_SettingUniforms(XRRenderProgram program)
-    {
-        XRTexture? accum = GetTexture<XRTexture>(TransparentAccumTextureName);
-        if (accum is null)
-            return;
-
-        program.Sampler(TransparentAccumTextureName, accum, 0);
-    }
-
-    private void TransparentRevealageDebugFBO_SettingUniforms(XRRenderProgram program)
-    {
-        XRTexture? revealage = GetTexture<XRTexture>(TransparentRevealageTextureName);
-        if (revealage is null)
-            return;
-
-        program.Sampler(TransparentRevealageTextureName, revealage, 0);
-    }
-
-    private void TransparentOverdrawDebugFBO_SettingUniforms(XRRenderProgram program)
-    {
-        XRTexture? revealage = GetTexture<XRTexture>(TransparentRevealageTextureName);
-        XRTexture? accum = GetTexture<XRTexture>(TransparentAccumTextureName);
-        if (revealage is null || accum is null)
-            return;
-
-        program.Sampler(TransparentRevealageTextureName, revealage, 0);
-        program.Sampler(TransparentAccumTextureName, accum, 1);
     }
 
     private XRFrameBuffer CreateForwardPassFBO()
@@ -505,7 +463,6 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        material.SettingUniforms += MotionVectorsMaterial_SettingUniforms;
         return material;
     }
 
@@ -527,7 +484,7 @@ public partial class DefaultRenderPipeline2
         };
     }
 
-    private void MotionVectorsMaterial_SettingUniforms(XRMaterialBase material, XRRenderProgram program)
+    private void ApplyMotionVectorsProgramBindings(XRRenderProgram program)
     {
         if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
         {
@@ -647,7 +604,6 @@ public partial class DefaultRenderPipeline2
             (filteredAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (exposureAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1));
 
-        fbo.SettingUniforms += TemporalAccumulationFBO_SettingUniforms;
         return fbo;
     }
 
@@ -683,7 +639,6 @@ public partial class DefaultRenderPipeline2
         };
 
         var fbo = new XRQuadFrameBuffer(material) { Name = MotionBlurFBOName };
-        fbo.SettingUniforms += MotionBlurFBO_SettingUniforms;
         return fbo;
     }
 
@@ -719,7 +674,6 @@ public partial class DefaultRenderPipeline2
         };
 
         var fbo = new XRQuadFrameBuffer(material) { Name = DepthOfFieldFBOName };
-        fbo.SettingUniforms += DepthOfFieldFBO_SettingUniforms;
         return fbo;
     }
 
@@ -843,10 +797,6 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        // Wire probe/AO binding through the material's SettingUniforms so that probe sampler
-        // locations are registered in _boundSamplerLocations BEFORE BindFallbackSamplers runs.
-        lightCombineMat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
-
         var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false) { Name = LightCombineFBOName };
 
         if (diffuseTexture is not IFrameBufferAttachement attach)
@@ -887,9 +837,7 @@ public partial class DefaultRenderPipeline2
                 BlendModeAllDrawBuffers = additiveBlend
             }
         };
-        var fbo = new XRQuadFrameBuffer(restirCompositeMaterial) { Name = RestirCompositeFBOName };
-        fbo.SettingUniforms += RestirCompositeFBO_SettingUniforms;
-        return fbo;
+        return new XRQuadFrameBuffer(restirCompositeMaterial) { Name = RestirCompositeFBOName };
     }
 
     private XRFrameBuffer CreateSurfelGICompositeFBO()
@@ -921,9 +869,7 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = SurfelGICompositeFBOName };
-        fbo.SettingUniforms += SurfelGICompositeFBO_SettingUniforms;
-        return fbo;
+        return new XRQuadFrameBuffer(material) { Name = SurfelGICompositeFBOName };
     }
 
     private XRFrameBuffer CreateLightVolumeCompositeFBO()
@@ -955,9 +901,7 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = LightVolumeCompositeFBOName };
-        fbo.SettingUniforms += LightVolumeCompositeFBO_SettingUniforms;
-        return fbo;
+        return new XRQuadFrameBuffer(material) { Name = LightVolumeCompositeFBOName };
     }
 
     private XRFrameBuffer CreateRadianceCascadeCompositeFBO()
@@ -992,12 +936,10 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = RadianceCascadeCompositeFBOName };
-        fbo.SettingUniforms += RadianceCascadeCompositeFBO_SettingUniforms;
-        return fbo;
+        return new XRQuadFrameBuffer(material) { Name = RadianceCascadeCompositeFBOName };
     }
 
-    private void RadianceCascadeCompositeFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyRadianceCascadeCompositeProgramBindings(XRRenderProgram program)
     {
         XRTexture? radianceCascadeGI = GetTexture<XRTexture>(RadianceCascadeGITextureName);
         XRTexture? depthView = GetTexture<XRTexture>(DepthViewTextureName);
@@ -1094,10 +1036,211 @@ public partial class DefaultRenderPipeline2
             }
         };
 
-        // Wire through material SettingUniforms (same reason as non-MSAA path above).
-        mat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
-
         var fbo = new XRQuadFrameBuffer(mat, true, false) { Name = MsaaLightCombineFBOName };
         return fbo;
+    }
+
+    /// <summary>
+    /// Quad FBO that runs <c>VolumetricFogHalfDepthDownsample.fs</c> at half
+    /// internal resolution, writing <see cref="VolumetricFogHalfDepthTextureName"/>
+    /// from the full-res <see cref="DepthViewTextureName"/>. Raw depth is
+    /// preserved so the scatter shader's <c>XRENGINE_ResolveDepth</c> path
+    /// still handles reversed-Z correctly.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHalfDepthQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(DepthViewTextureName)!, // binding 0: sampler2D DepthView
+        ];
+        XRShader downsampleShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogHalfDepthDownsample.fs"),
+            EShaderType.Fragment);
+        XRMaterial mat = new(refs, downsampleShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                // Downsample only reads the depth sampler; no engine uniforms required.
+            }
+        };
+        return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = VolumetricFogHalfDepthQuadFBOName
+        };
+    }
+
+    /// <summary>
+    /// Destination FBO that wraps <see cref="VolumetricFogHalfDepthTextureName"/>
+    /// as color0 for the half-resolution depth downsample pass.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHalfDepthFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfDepthTextureName, CreateVolumetricFogHalfDepthTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogHalfDepthFBOName
+        };
+    }
+
+    /// <summary>
+    /// Quad FBO for the half-resolution scatter raymarch. Material binding 0
+    /// is <see cref="VolumetricFogHalfDepthTextureName"/>; ShadowMap /
+    /// ShadowMapArray flow via <see cref="EUniformRequirements.Lights"/>.
+    /// Settings and fragment-only camera uniforms are pushed via
+    /// <see cref="ApplyVolumetricFogHalfScatterProgramBindings"/>.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHalfScatterQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)!, // binding 0: sampler2D VolumetricFogHalfDepth
+        ];
+        XRShader scatterShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogScatter.fs"),
+            EShaderType.Fragment);
+        XRMaterial scatterMat = new(refs, scatterShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                RequiredEngineUniforms = EUniformRequirements.Lights | EUniformRequirements.RenderTime,
+            }
+        };
+        var fbo = new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = VolumetricFogHalfScatterQuadFBOName
+        };
+        return fbo;
+    }
+
+    /// <summary>
+    /// Destination FBO for the half-resolution scatter pass. Wraps
+    /// <see cref="VolumetricFogHalfScatterTextureName"/> as color0.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHalfScatterFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfScatterTextureName, CreateVolumetricFogHalfScatterTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogHalfScatterFBOName
+        };
+    }
+
+    /// <summary>
+    /// Quad FBO that temporally reprojects the current half-res scatter result
+    /// against the previous half-res fog history.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogReprojectQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName)!, // binding 0: sampler2D VolumetricFogHalfScatter
+            GetTexture<XRTexture>(VolumetricFogHalfHistoryTextureName)!, // binding 1: sampler2D VolumetricFogHalfHistory
+            GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)!,   // binding 2: sampler2D VolumetricFogHalfDepth
+        ];
+        XRShader reprojectShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogReproject.fs"),
+            EShaderType.Fragment);
+        XRMaterial reprojectMat = new(refs, reprojectShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+        var fbo = new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = VolumetricFogReprojectQuadFBOName
+        };
+        return fbo;
+    }
+
+    /// <summary>
+    /// Destination FBO for the current-frame temporally reprojected fog result.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogReprojectFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfTemporalTextureName, CreateVolumetricFogHalfTemporalTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogReprojectFBOName
+        };
+    }
+
+    /// <summary>
+    /// Persistent previous-frame history target for the fog temporal pass.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogHistoryFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfHistoryTextureName, CreateVolumetricFogHalfHistoryTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogHistoryFBOName
+        };
+    }
+
+    /// <summary>
+    /// Quad FBO that drives the bilateral upscale. Reads the temporal half-res fog,
+    /// half-res depth, and full-res depth, emitting the full-resolution
+    /// <see cref="VolumetricFogColorTextureName"/> consumed by PostProcess.fs.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogUpscaleQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(VolumetricFogHalfTemporalTextureName)!, // binding 0: sampler2D VolumetricFogHalfTemporal
+            GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)!,   // binding 1: sampler2D VolumetricFogHalfDepth
+            GetTexture<XRTexture>(DepthViewTextureName)!,                // binding 2: sampler2D DepthView
+        ];
+        XRShader upscaleShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogUpscale.fs"),
+            EShaderType.Fragment);
+        XRMaterial upscaleMat = new(refs, upscaleShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+        var fbo = new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = VolumetricFogUpscaleQuadFBOName
+        };
+        return fbo;
+    }
+
+    /// <summary>
+    /// Destination FBO for the volumetric fog upscale pass. Wraps
+    /// <see cref="VolumetricFogColorTextureName"/> as color0 and is the texture
+    /// the post-process composite binds.
+    /// </summary>
+    private XRFrameBuffer CreateVolumetricFogUpscaleFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogColorTextureName, CreateVolumetricFogColorTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = VolumetricFogUpscaleFBOName
+        };
     }
 }

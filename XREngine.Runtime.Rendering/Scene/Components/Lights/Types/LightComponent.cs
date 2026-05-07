@@ -499,7 +499,7 @@ namespace XREngine.Components.Capture.Lights.Types
             return (uint)Math.Max(1, Math.Max(width, height));
         }
 
-        private uint _shadowMapResolutionWidth = 4096u;
+        private uint _shadowMapResolutionWidth = 1024u;
 
         /// <summary>
         /// Width of this light's standalone shadow map. Cubemap lights use the larger width/height as the face size.
@@ -511,7 +511,7 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetShadowMapResolution(value, ShadowMapResolutionHeight);
         }
 
-        private uint _shadowMapResolutionHeight = 4096u;
+        private uint _shadowMapResolutionHeight = 1024u;
 
         /// <summary>
         /// Height of this light's standalone shadow map. Cubemap lights use the larger width/height as the face size.

@@ -61,6 +61,8 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                if (enableComputePasses)
+                    c.Add<VPRC_ForwardPlusDebugOverlay>();
             }
         }
 
@@ -107,17 +109,16 @@ public partial class DefaultRenderPipeline
             AppendMotionBlurAndDoF(c);
             AppendTemporalAccumulation(c);
             AppendPostTemporalForwardPasses(c);
+            // Fog must composite after the late forward batches; its passes upload
+            // the temporal pass' stored current projection so depth reconstruction
+            // still matches the jittered depth buffer after PopJitter.
+            if (!Stereo)
+                AppendVolumetricFog(c);
             c.Add<VPRC_DepthTest>().Enable = false;
             AppendPostProcessResourceCaching(c);
             AppendDebugVisualizationCaching(c);
             AppendAntiAliasingResourceCaching(c);
         }
-
-        // Volumetric fog scatter runs once at internal resolution, writing an
-        // RGBA16F texture that the post-process composite samples. Skipped in
-        // stereo (no stereo scatter variant yet).
-        if (!Stereo)
-            AppendVolumetricFog(c);
 
         AppendExposureUpdate(c);
         AppendFxaaTsrUpscaleChain(c);
@@ -482,6 +483,9 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_RadianceCascadesPass>();
                 c.Add<VPRC_SurfelGIPass>();
             }
+
+            if (enableComputePasses)
+                c.Add<VPRC_ForwardPlusDebugOverlay>();
 
         }
 

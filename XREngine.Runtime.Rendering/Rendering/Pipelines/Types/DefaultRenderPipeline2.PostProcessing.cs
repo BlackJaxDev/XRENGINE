@@ -1667,7 +1667,7 @@ public partial class DefaultRenderPipeline2
         (tonemapping ?? new TonemappingSettings()).SetUniforms(program);
     }
 
-    private void PostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
+    private void ApplyPostProcessProgramBindings(XRRenderProgram materialProgram)
     {
         materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
 
@@ -1685,7 +1685,7 @@ public partial class DefaultRenderPipeline2
         ApplyPostProcessUniforms(state, materialProgram);
     }
 
-    private void FxaaFBO_SettingUniforms(XRRenderProgram materialProgram)
+    private void ApplyFxaaProgramBindings(XRRenderProgram materialProgram)
     {
         float width = Math.Max(1u, FullWidth);
         float height = Math.Max(1u, FullHeight);
@@ -1712,7 +1712,7 @@ public partial class DefaultRenderPipeline2
         };
     }
 
-    private void TsrUpscaleFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyTsrUpscaleProgramBindings(XRRenderProgram program)
     {
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
@@ -1750,13 +1750,13 @@ public partial class DefaultRenderPipeline2
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
     }
 
-    private void BrightPassFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyBrightPassProgramBindings(XRRenderProgram program)
     {
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyBloomBrightPassUniforms(state, program);
     }
 
-    private void DepthOfFieldFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyDepthOfFieldProgramBindings(XRRenderProgram program)
     {
         float width = Math.Max(1u, InternalWidth);
         float height = Math.Max(1u, InternalHeight);
@@ -1779,7 +1779,7 @@ public partial class DefaultRenderPipeline2
         settings.SetUniforms(program, texelSize);
     }
 
-    private void MotionBlurFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyMotionBlurProgramBindings(XRRenderProgram program)
     {
         float width = Math.Max(1u, InternalWidth);
         float height = Math.Max(1u, InternalHeight);
@@ -1801,7 +1801,7 @@ public partial class DefaultRenderPipeline2
         settings.SetUniforms(program, texelSize);
     }
 
-    private void TemporalAccumulationFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyTemporalAccumulationProgramBindings(XRRenderProgram program)
     {
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
@@ -1834,5 +1834,125 @@ public partial class DefaultRenderPipeline2
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+    }
+
+    private static bool _loggedVolumetricFogScatterLightsOnce;
+    private static bool _loggedVolumetricFogScatterCascadeOnce;
+    private static ulong _lastVolumetricFogScatterLightsKey = ulong.MaxValue;
+
+    private void VolumetricFog_SetFragmentCameraUniforms(XRRenderProgram materialProgram)
+    {
+        var renderState = RenderingPipelineState;
+        renderState?.SceneCamera?.SetUniforms(materialProgram, true);
+        renderState?.StereoRightEyeCamera?.SetUniforms(materialProgram, false);
+    }
+
+    /// <summary>
+    /// Pushes volumetric-fog + primary directional shadow uniforms to the
+    /// half-resolution scatter quad pass. The <see cref="EUniformRequirements.Lights"/>
+    /// engine-uniform plumbing also handles ShadowMap / ShadowMapArray sampler binds,
+    /// but we re-issue the forward-lighting upload explicitly here as well so that
+    /// DirectionalLights / DirLightCount / ShadowMapEnabled are guaranteed to be
+    /// present on this program even if the missing-uniform cache was warmed by an
+    /// earlier pass that bound the same flag bit for a different program.
+    /// </summary>
+    private void ApplyVolumetricFogHalfScatterProgramBindings(XRRenderProgram materialProgram)
+    {
+        VolumetricFog_SetFragmentCameraUniforms(materialProgram);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var volumetricFog = GetSettings<VolumetricFogSettings>(state);
+        (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
+        materialProgram.Uniform("GlobalAmbient", new Vector3(0.1f, 0.1f, 0.1f));
+
+        var lights = Engine.Rendering.State.RenderingWorld?.Lights;
+        if (lights is not null)
+        {
+            lights.SetForwardLightingUniforms(materialProgram);
+
+            // Mirror the deferred directional-light upload path used by the scene light-combine
+            // pass so the volumetric fog shader can read the primary directional light through
+            // `LightData.*` instead of the array-of-struct `DirectionalLights[0].*` path.
+            if (lights.DynamicDirectionalLights.Count > 0)
+                lights.DynamicDirectionalLights[0].SetUniforms(materialProgram);
+
+            int dirCount = lights.DynamicDirectionalLights.Count;
+            bool casts = false;
+            bool hasShadowTex = false;
+            int texCount = 0;
+            if (dirCount > 0)
+            {
+                var first = lights.DynamicDirectionalLights[0];
+                casts = first.CastsShadows;
+                texCount = first.ShadowMap?.Material?.Textures.Count ?? 0;
+                hasShadowTex = texCount > 0;
+            }
+            ulong key = ((ulong)(uint)dirCount)
+                      | ((casts ? 1UL : 0UL) << 32)
+                      | ((hasShadowTex ? 1UL : 0UL) << 33)
+                      | (((ulong)(uint)texCount) << 40);
+            if (key != _lastVolumetricFogScatterLightsKey)
+            {
+                _lastVolumetricFogScatterLightsKey = key;
+                Debug.Lighting($"[VolumetricFog.Scatter] Lights upload: DirLights={dirCount} CastsShadows={casts} HasShadowTex={hasShadowTex} TexCount={texCount}");
+            }
+
+            if (!_loggedVolumetricFogScatterCascadeOnce && dirCount > 0)
+            {
+                _loggedVolumetricFogScatterCascadeOnce = true;
+                var first = lights.DynamicDirectionalLights[0];
+                int activeCascades = first.ActiveCascadeCount;
+                Debug.Lighting(
+                    $"[VolumetricFog.Scatter] DirLight[0] EnableCascadedShadows={first.EnableCascadedShadows} " +
+                    $"ActiveCascadeCount={activeCascades} CascadedShadowMapTexture={(first.CascadedShadowMapTexture != null ? "present" : "null")} " +
+                    $"WorldForward=({first.Transform.WorldForward.X:F3},{first.Transform.WorldForward.Y:F3},{first.Transform.WorldForward.Z:F3})");
+            }
+        }
+        else if (!_loggedVolumetricFogScatterLightsOnce)
+        {
+            _loggedVolumetricFogScatterLightsOnce = true;
+            Debug.Lighting("[VolumetricFog.Scatter] Lights upload skipped: RenderingWorld is null at scatter pass.");
+        }
+    }
+
+    private void ApplyVolumetricFogUpscaleProgramBindings(XRRenderProgram materialProgram)
+    {
+        VolumetricFog_SetFragmentCameraUniforms(materialProgram);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var volumetricFog = GetSettings<VolumetricFogSettings>(state);
+        (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
+    }
+
+    private void ApplyVolumetricFogReprojectProgramBindings(XRRenderProgram materialProgram)
+    {
+        VolumetricFog_SetFragmentCameraUniforms(materialProgram);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var volumetricFog = GetSettings<VolumetricFogSettings>(state);
+        float maxDistance = volumetricFog is not null && volumetricFog.Enabled && volumetricFog.Intensity > 0.0f
+            ? volumetricFog.MaxDistance
+            : 0.0f;
+        int debugMode = volumetricFog is null ? 0 : (int)volumetricFog.DebugMode;
+
+        bool historyReady = false;
+        Matrix4x4 previousViewProjection = Matrix4x4.Identity;
+        uint historyWidth = 1u;
+        uint historyHeight = 1u;
+        if (VPRC_VolumetricFogHistoryPass.TryGetTemporalUniformData(out var temporalData))
+        {
+            historyReady = temporalData.HistoryReady && maxDistance > 0.0f && debugMode == 0;
+            previousViewProjection = temporalData.PreviousViewProjection;
+            historyWidth = Math.Max(1u, temporalData.Width);
+            historyHeight = Math.Max(1u, temporalData.Height);
+        }
+
+        materialProgram.Uniform("VolumetricFogHistoryReady", historyReady);
+        materialProgram.Uniform("VolumetricFogPreviousViewProjection", previousViewProjection);
+        materialProgram.Uniform("VolumetricFogHistoryTexelSize", new Vector2(1.0f / historyWidth, 1.0f / historyHeight));
+        materialProgram.Uniform("VolumetricFogMaxDistance", maxDistance);
+        materialProgram.Uniform("VolumetricFogTemporalAlpha", 0.9f);
+        materialProgram.Uniform("VolumetricFogDepthRejectThreshold", 1.0f);
+        materialProgram.Uniform("VolumetricFogDebugMode", debugMode);
     }
 }

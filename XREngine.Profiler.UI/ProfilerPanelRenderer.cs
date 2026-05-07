@@ -2232,13 +2232,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (_renderStatsHistoryCount < RenderStatsHistorySamples)
             _renderStatsHistoryCount++;
 
-        PushGpuPipelineSample(stats);
+        PushGpuPipelineSample(stats, index);
     }
 
-    private void PushGpuPipelineSample(RenderStatsPacket stats)
+    private void PushGpuPipelineSample(RenderStatsPacket stats, int index)
     {
         _gpuPipelineRootSampleSerial++;
-        int index = _renderStatsHistoryHead;
 
         foreach (float[] series in _gpuPipelineRootHistory.Values)
             series[index] = 0f;

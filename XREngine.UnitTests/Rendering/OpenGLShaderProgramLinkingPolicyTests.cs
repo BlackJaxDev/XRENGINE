@@ -32,17 +32,48 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
     }
 
     [Test]
-    public void KnownHazards_BypassDriverParallelAndSharedSource()
+    public void KnownHazards_BypassDriverParallel_ButPreferSharedContext()
     {
         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
-            strategy: EOpenGLShaderLinkStrategy.SharedContext,
+            strategy: EOpenGLShaderLinkStrategy.Auto,
             driverParallelAvailable: true,
             sharedContextCompileAvailable: true,
+            isKnownAsyncLinkHazard: true));
+
+        // Hazards must never use driver-parallel, but the shared-context lane
+        // links on a worker thread on a separate GL context so a slow cold
+        // link does not freeze the render thread.
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SharedContextSource);
+        selection.IsAsync.ShouldBeTrue();
+        selection.Reason.ShouldContain("hazard");
+    }
+
+    [Test]
+    public void KnownHazards_FallBackToSynchronous_WhenSharedContextUnavailable()
+    {
+        OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            strategy: EOpenGLShaderLinkStrategy.Auto,
+            driverParallelAvailable: true,
+            sharedContextCompileAvailable: false,
             isKnownAsyncLinkHazard: true));
 
         selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SynchronousSource);
         selection.IsAsync.ShouldBeFalse();
         selection.Reason.ShouldContain("hazard");
+    }
+
+    [Test]
+    public void KnownHazards_FallBackToSynchronous_WhenCompileInputsNotReady()
+    {
+        OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            strategy: EOpenGLShaderLinkStrategy.Auto,
+            driverParallelAvailable: true,
+            sharedContextCompileAvailable: true,
+            compileInputsReady: false,
+            isKnownAsyncLinkHazard: true));
+
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SynchronousSource);
+        selection.IsAsync.ShouldBeFalse();
     }
 
     [Test]

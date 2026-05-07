@@ -32,6 +32,8 @@ namespace XREngine.Components.Capture.Lights.Types
         private Cone _outerCone;
         private Cone _innerCone;
         private XRMaterial? _shadowAtlasMaterial;
+        private bool _shadowFrustumRelevant = true;
+        private ulong _lastShadowRelevanceFrame;
 
         /// <summary>
         /// Creates a spot light with explicit cone, attenuation, and intensity settings.
@@ -192,13 +194,28 @@ namespace XREngine.Components.Capture.Lights.Types
                 if (!Engine.Rendering.Settings.UseSpotShadowAtlas)
                     return false;
 
-                ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
-                return selection.Encoding == EShadowMapEncoding.Depth;
+                return true;
             }
         }
 
         protected override bool UsesAtlasShadowViewport
             => UsesSpotShadowAtlasForCurrentEncoding;
+
+        protected override bool PrimaryShadowViewportRelevant => _shadowFrustumRelevant;
+
+        [Category("Shadows")]
+        [DisplayName("Shadow Frustum Relevant")]
+        [Description("True when this spot shadow frustum intersects the current shadow relevance camera set.")]
+        public bool ShadowFrustumRelevant => _shadowFrustumRelevant;
+
+        [Browsable(false)]
+        public ulong LastShadowRelevanceFrame => _lastShadowRelevanceFrame;
+
+        internal void SetShadowRelevance(bool relevant, ulong frameId)
+        {
+            SetField(ref _shadowFrustumRelevant, relevant, nameof(ShadowFrustumRelevant));
+            SetField(ref _lastShadowRelevanceFrame, frameId, nameof(LastShadowRelevanceFrame));
+        }
 
         protected override float ContactHardeningLightRadius
             => CalculateOuterConeRadius(Distance, OuterCutoffAngleDegrees);
@@ -329,8 +346,14 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
+            bool shouldGenerateMipmaps =
+                _shadowFrustumRelevant &&
+                CastsShadows &&
+                ShadowMap is not null;
+
             base.RenderShadowMap(collectVisibleNow);
-            GenerateMomentShadowMipmapsIfNeeded();
+            if (shouldGenerateMipmaps)
+                GenerateMomentShadowMipmapsIfNeeded();
         }
 
         private void GenerateMomentShadowMipmapsIfNeeded()
@@ -366,13 +389,14 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();
 
-        private static XRMaterial CreateShadowAtlasMaterial()
+        private XRMaterial CreateShadowAtlasMaterial()
         {
-            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_LinearDepthOutput));
+            XRMaterial mat = new(new XRShader(EShaderType.Fragment, ShaderHelper.Frag_ShadowMomentOutput));
 
             // Match the legacy spot shadow caster state while rendering into atlas color pages.
             mat.RenderOptions.CullMode = ECullMode.None;
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            mat.SettingShadowUniforms += SetShadowMapUniforms;
 
             return mat;
         }
@@ -398,6 +422,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
             shadowPipeline.PreserveExistingRenderArea = true;
+            shadowPipeline.ClearColor = GetShadowMapClearColor();
             try
             {
                 var state = viewport.RenderPipelineInstance.RenderState;

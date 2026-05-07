@@ -230,6 +230,7 @@ Validation note: `Build-Editor` succeeds. Focused `dotnet test` discovery is blo
 - [x] Route VSM/EVSM spot lights through the standalone moment map while the spot atlas remains depth-only.
 - [x] Regenerate standalone spot moment-map mip levels after each shadow render when mipmaps are enabled.
 - [x] Sample spot moment mips with explicit LOD so mip filtering is not driven by the main camera's screen-space derivatives.
+- [x] Local shadow-frustum culling skips standalone spot moment renders and mip regeneration when the spot frustum is not relevant; mips regenerate normally after the next relevant render.
 - [ ] Add per-resource separable blur for non-atlas moment spot maps.
 - [ ] Implement moment debug viewer for `sampler2D` resources:
   - [ ] `M1`
@@ -269,20 +270,20 @@ Validation note: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj /propert
 
 ### Tasks
 
-- [ ] Extend point shadow resources to selected encoding.
-- [ ] Update `PointLightShadowDepth.fs` or successor shader to write depth, VSM, EVSM2, or EVSM4.
-- [ ] Encode radial depth: `length(worldPos - lightPosition) / lightRadius`.
-- [ ] Keep fixed-function depth cubemap only for raster visibility.
-- [ ] Ensure geometry-shader and six-pass fallback paths use the same moment encoding.
-- [ ] For geometry-shader path, omit or clamp derivative-derived second-moment term near cube face discontinuities.
-- [ ] Add `samplerCube` VSM and EVSM sampling helpers.
-- [ ] Update deferred point-light receiver.
-- [ ] Update forward point-light receiver.
+- [x] Extend point shadow resources to selected encoding.
+- [x] Update `PointLightShadowDepth.fs` or successor shader to write depth, VSM, EVSM2, or EVSM4.
+- [x] Encode radial depth: `length(worldPos - lightPosition) / lightRadius`.
+- [x] Keep fixed-function depth cubemap only for raster visibility.
+- [x] Ensure geometry-shader and six-pass fallback paths use the same moment encoding.
+- [x] For geometry-shader path, omit or clamp derivative-derived second-moment term near cube face discontinuities.
+- [x] Add `samplerCube` VSM and EVSM sampling helpers.
+- [x] Update deferred point-light receiver.
+- [x] Update forward point-light receiver.
 - [ ] Validate masked caster variants write correct radial moments.
 
 ### Exit Criteria
 
-- [ ] Point light VSM/EVSM samples radial moment depth consistently.
+- [x] Point light VSM/EVSM samples radial moment depth consistently.
 - [ ] Geometry-shader and six-pass paths match within expected filtering differences.
 - [ ] Face seams are no worse than depth mode.
 
@@ -299,19 +300,19 @@ Validation note: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj /propert
 
 ### Tasks
 
-- [ ] Add color sampling texture to directional single-shadow resources.
-- [ ] Keep depth attachment for rasterization and early rejection.
-- [ ] Write linear normalized directional shadow depth or moments.
-- [ ] Update deferred directional fallback sampling.
-- [ ] Update forward directional fallback sampling.
-- [ ] Update volumetric fog directional sampling if it consumes the primary directional binding.
+- [x] Add color sampling texture to directional single-shadow resources.
+- [x] Keep depth attachment for rasterization and early rejection.
+- [x] Write linear normalized directional shadow depth or moments.
+- [x] Update deferred directional fallback sampling.
+- [x] Update forward directional fallback sampling.
+- [x] Update volumetric fog directional sampling if it consumes the primary directional binding.
 - [ ] Confirm unified color `Depth` path quality against legacy hardware depth path.
 
 ### Exit Criteria
 
-- [ ] Directional single-map mode supports all encodings.
+- [x] Directional single-map mode supports all encodings.
 - [ ] Depth mode quality remains acceptable with manual compare.
-- [ ] Known directional consumers either use the dispatcher or are explicitly excluded.
+- [x] Known directional consumers either use the dispatcher or are explicitly excluded.
 
 ### Validation
 
@@ -325,20 +326,20 @@ Validation note: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj /propert
 
 ### Tasks
 
-- [ ] Add color moment array resources for cascades.
-- [ ] Keep per-layer depth attachments for rasterization.
-- [ ] Add `sampler2DArray` VSM and EVSM helpers.
-- [ ] Extend cascade receiver dispatcher for all encodings.
-- [ ] Keep per-cascade bias and receiver offset uniform behavior.
-- [ ] Enforce per-cascade visibility computation before blend.
-- [ ] Add a shader/source test that fails if moment vectors are blended across cascades before Chebyshev.
-- [ ] Require stable cascade texel snapping before enabling directional moment maps.
+- [x] Add color moment array resources for cascades.
+- [x] Keep per-layer depth attachments for rasterization.
+- [x] Add `sampler2DArray` VSM and EVSM helpers.
+- [x] Extend cascade receiver dispatcher for all encodings.
+- [x] Keep per-cascade bias and receiver offset uniform behavior.
+- [x] Enforce per-cascade visibility computation before blend.
+- [x] Add a shader/source test that fails if moment vectors are blended across cascades before Chebyshev.
+- [x] Require stable cascade texel snapping before enabling directional moment maps.
 - [ ] Validate cascade debug colors and blend widths.
 
 ### Exit Criteria
 
-- [ ] Cascaded directional shadows support all encodings.
-- [ ] Cascade transition bands blend visibility scalars only.
+- [x] Cascaded directional shadows support all encodings.
+- [x] Cascade transition bands blend visibility scalars only.
 - [ ] Moment maps do not amplify cascade jitter beyond acceptable tolerance.
 
 ### Validation
@@ -358,7 +359,7 @@ Validation note: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj /propert
 - [ ] Clamp blur samples to tile inner rects.
 - [x] Add optional mip generation for standalone spot moment maps; atlas mip generation stays disabled until gutters are valid.
 - [x] Add `ShadowMomentMipBias` support in standalone spot receiver sampling as an explicit mip-level offset.
-- [ ] Expose blur and mip controls in editor.
+- [x] Expose blur and mip controls in editor.
 - [ ] Add optional MSAA shadow rasterization for non-atlas resources first.
 - [ ] Add single-sample moment resolve from MSAA depth source.
 - [ ] Keep tile-aware MSAA resolve out of v1 atlas unless separately validated.
@@ -381,23 +382,24 @@ Validation note: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj /propert
 
 ### Tasks
 
-- [ ] Map `EShadowMapEncoding` to atlas group:
-  - [ ] depth atlas,
-  - [ ] VSM atlas,
-  - [ ] EVSM2 atlas,
-  - [ ] EVSM4 atlas.
-- [ ] Encode clear sentinel per request and use it for tile clears and gutters.
-- [ ] Make encoding part of allocation compatibility.
-- [ ] Retire and reissue allocations on runtime encoding changes.
+- [x] Map `EShadowMapEncoding` to atlas group:
+  - [x] depth atlas,
+  - [x] VSM atlas,
+  - [x] EVSM2 atlas,
+  - [x] EVSM4 atlas.
+- [x] Encode clear sentinel per request and use it for tile clears.
+- [ ] Use clear sentinel for untouched atlas texels and gutters.
+- [x] Make encoding part of allocation compatibility.
+- [x] Retire and reissue allocations on runtime encoding changes.
 - [ ] Implement agreed demotion policy when encoding budget is exhausted.
 - [ ] Publish moment filter parameters through `ShadowAtlasTile.filterParams`.
-- [ ] Verify fallback metadata short-circuits before sampling missing moment tiles.
+- [x] Verify fallback metadata short-circuits before sampling missing moment tiles.
 - [ ] Add atlas debug views for moment channels.
 
 ### Exit Criteria
 
-- [ ] Atlas can host depth and moment tiles without resource-format ambiguity.
-- [ ] Runtime encoding flips do not sample stale incompatible data.
+- [x] Atlas can host depth and moment tiles without resource-format ambiguity.
+- [x] Runtime encoding flips do not sample stale incompatible data.
 - [ ] Moment filtering respects atlas tile boundaries.
 
 ### Validation
@@ -405,6 +407,11 @@ Validation note: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj /propert
 - [ ] Mixed encoding atlas scene.
 - [ ] Encoding flip at runtime.
 - [ ] Oversubscribed moment atlas scene exercising demotion and fallback.
+
+Validation note: Phase 5-7 code validation on 2026-05-07:
+`dotnet build .\XREngine.Editor\XREngine.Editor.csproj /property:GenerateFullPaths=true /consoleloggerparameters:ErrorsOnly` succeeds.
+An `XRE_UNIT_TEST_WORLD_KIND=UberShader` OpenGL smoke run produced no fresh shader compile/link failures in `log_opengl.txt`.
+Focused `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~ShadowMapMomentPhase2Tests --no-restore /property:GenerateFullPaths=true /consoleloggerparameters:ErrorsOnly` remains blocked before test execution by unrelated existing UnitTests compile errors (`Engine` type ambiguity plus audio/VR helper APIs).
 
 ## Phase 8: Other Shadow Consumers And Legacy Cleanup
 

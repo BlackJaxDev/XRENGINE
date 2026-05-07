@@ -154,6 +154,31 @@ vec4 XRENGINE_FetchShadowMoments2D(
         : texture(shadowMap, uv);
 }
 
+vec4 XRENGINE_FetchShadowMomentsCube(
+    samplerCube shadowMap,
+    vec3 direction,
+    float mipLevel,
+    bool useMipmaps)
+{
+    vec3 sampleDirection = normalize(direction);
+    return useMipmaps
+        ? textureLod(shadowMap, sampleDirection, max(mipLevel, 0.0))
+        : texture(shadowMap, sampleDirection);
+}
+
+vec4 XRENGINE_FetchShadowMoments2DArray(
+    sampler2DArray shadowMap,
+    vec2 uv,
+    float layer,
+    float mipLevel,
+    bool useMipmaps)
+{
+    vec3 sampleCoord = vec3(uv, layer);
+    return useMipmaps
+        ? textureLod(shadowMap, sampleCoord, max(mipLevel, 0.0))
+        : texture(shadowMap, sampleCoord);
+}
+
 float XRENGINE_SampleShadowMoment2D(
     sampler2D shadowMap,
     vec2 uv,
@@ -167,6 +192,83 @@ float XRENGINE_SampleShadowMoment2D(
     bool useMipmaps)
 {
     vec4 moments = XRENGINE_FetchShadowMoments2D(shadowMap, uv, mipLevel, useMipmaps);
+    float clampedReceiver = clamp(receiverDepth, 0.0, 1.0);
+
+    if (encoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
+    {
+        return XRENGINE_ChebyshevUpperBound(moments.xy, clampedReceiver, minVariance, lightBleedReduction);
+    }
+
+    if (encoding == XRENGINE_SHADOW_ENCODING_EVSM2)
+    {
+        float warpedReceiver = exp(max(positiveExponent, 0.0) * clampedReceiver);
+        return XRENGINE_ChebyshevUpperBound(moments.xy, warpedReceiver, minVariance, lightBleedReduction);
+    }
+
+    if (encoding == XRENGINE_SHADOW_ENCODING_EVSM4)
+    {
+        float warpedPositive = exp(max(positiveExponent, 0.0) * clampedReceiver);
+        float warpedNegative = -exp(-max(negativeExponent, 0.0) * clampedReceiver);
+        float positiveVisibility = XRENGINE_ChebyshevUpperBound(moments.xy, warpedPositive, minVariance, lightBleedReduction);
+        float negativeVisibility = XRENGINE_ChebyshevUpperBound(moments.zw, warpedNegative, minVariance, lightBleedReduction);
+        return min(positiveVisibility, negativeVisibility);
+    }
+
+    return (clampedReceiver <= moments.r) ? 1.0 : 0.0;
+}
+
+float XRENGINE_SampleShadowMoment2DArray(
+    sampler2DArray shadowMap,
+    vec2 uv,
+    float layer,
+    float receiverDepth,
+    int encoding,
+    float minVariance,
+    float lightBleedReduction,
+    float positiveExponent,
+    float negativeExponent,
+    float mipLevel,
+    bool useMipmaps)
+{
+    vec4 moments = XRENGINE_FetchShadowMoments2DArray(shadowMap, uv, layer, mipLevel, useMipmaps);
+    float clampedReceiver = clamp(receiverDepth, 0.0, 1.0);
+
+    if (encoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
+    {
+        return XRENGINE_ChebyshevUpperBound(moments.xy, clampedReceiver, minVariance, lightBleedReduction);
+    }
+
+    if (encoding == XRENGINE_SHADOW_ENCODING_EVSM2)
+    {
+        float warpedReceiver = exp(max(positiveExponent, 0.0) * clampedReceiver);
+        return XRENGINE_ChebyshevUpperBound(moments.xy, warpedReceiver, minVariance, lightBleedReduction);
+    }
+
+    if (encoding == XRENGINE_SHADOW_ENCODING_EVSM4)
+    {
+        float warpedPositive = exp(max(positiveExponent, 0.0) * clampedReceiver);
+        float warpedNegative = -exp(-max(negativeExponent, 0.0) * clampedReceiver);
+        float positiveVisibility = XRENGINE_ChebyshevUpperBound(moments.xy, warpedPositive, minVariance, lightBleedReduction);
+        float negativeVisibility = XRENGINE_ChebyshevUpperBound(moments.zw, warpedNegative, minVariance, lightBleedReduction);
+        return min(positiveVisibility, negativeVisibility);
+    }
+
+    return (clampedReceiver <= moments.r) ? 1.0 : 0.0;
+}
+
+float XRENGINE_SampleShadowMomentCube(
+    samplerCube shadowMap,
+    vec3 direction,
+    float receiverDepth,
+    int encoding,
+    float minVariance,
+    float lightBleedReduction,
+    float positiveExponent,
+    float negativeExponent,
+    float mipLevel,
+    bool useMipmaps)
+{
+    vec4 moments = XRENGINE_FetchShadowMomentsCube(shadowMap, direction, mipLevel, useMipmaps);
     float clampedReceiver = clamp(receiverDepth, 0.0, 1.0);
 
     if (encoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
@@ -216,6 +318,56 @@ float XRENGINE_SampleShadowMoment2D(
         false);
 }
 
+float XRENGINE_SampleShadowMoment2DArray(
+    sampler2DArray shadowMap,
+    vec2 uv,
+    float layer,
+    float receiverDepth,
+    int encoding,
+    float minVariance,
+    float lightBleedReduction,
+    float positiveExponent,
+    float negativeExponent,
+    float mipLevel)
+{
+    return XRENGINE_SampleShadowMoment2DArray(
+        shadowMap,
+        uv,
+        layer,
+        receiverDepth,
+        encoding,
+        minVariance,
+        lightBleedReduction,
+        positiveExponent,
+        negativeExponent,
+        mipLevel,
+        false);
+}
+
+float XRENGINE_SampleShadowMomentCube(
+    samplerCube shadowMap,
+    vec3 direction,
+    float receiverDepth,
+    int encoding,
+    float minVariance,
+    float lightBleedReduction,
+    float positiveExponent,
+    float negativeExponent,
+    float mipLevel)
+{
+    return XRENGINE_SampleShadowMomentCube(
+        shadowMap,
+        direction,
+        receiverDepth,
+        encoding,
+        minVariance,
+        lightBleedReduction,
+        positiveExponent,
+        negativeExponent,
+        mipLevel,
+        false);
+}
+
 float XRENGINE_EstimateShadowMomentMargin(
     sampler2D shadowMap,
     vec2 uv,
@@ -242,6 +394,57 @@ float XRENGINE_EstimateShadowMomentMargin(
 }
 
 float XRENGINE_EstimateShadowMomentMargin(
+    sampler2DArray shadowMap,
+    vec2 uv,
+    float layer,
+    float receiverDepth,
+    int encoding,
+    float positiveExponent,
+    float negativeExponent,
+    float mipLevel,
+    bool useMipmaps)
+{
+    vec4 moments = XRENGINE_FetchShadowMoments2DArray(shadowMap, uv, layer, mipLevel, useMipmaps);
+    if (encoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
+        return moments.x - receiverDepth;
+    if (encoding == XRENGINE_SHADOW_ENCODING_EVSM2)
+        return log(max(moments.x, 0.000001)) / max(positiveExponent, 0.0001) - receiverDepth;
+    if (encoding == XRENGINE_SHADOW_ENCODING_EVSM4)
+    {
+        float positiveDepth = log(max(moments.x, 0.000001)) / max(positiveExponent, 0.0001);
+        float negativeDepth = -log(max(-moments.z, 0.000001)) / max(negativeExponent, 0.0001);
+        return min(positiveDepth - receiverDepth, negativeDepth - receiverDepth);
+    }
+
+    return moments.r - receiverDepth;
+}
+
+float XRENGINE_EstimateShadowMomentMargin(
+    samplerCube shadowMap,
+    vec3 direction,
+    float receiverDepth,
+    int encoding,
+    float positiveExponent,
+    float negativeExponent,
+    float mipLevel,
+    bool useMipmaps)
+{
+    vec4 moments = XRENGINE_FetchShadowMomentsCube(shadowMap, direction, mipLevel, useMipmaps);
+    if (encoding == XRENGINE_SHADOW_ENCODING_VARIANCE2)
+        return moments.x - receiverDepth;
+    if (encoding == XRENGINE_SHADOW_ENCODING_EVSM2)
+        return log(max(moments.x, 0.000001)) / max(positiveExponent, 0.0001) - receiverDepth;
+    if (encoding == XRENGINE_SHADOW_ENCODING_EVSM4)
+    {
+        float positiveDepth = log(max(moments.x, 0.000001)) / max(positiveExponent, 0.0001);
+        float negativeDepth = -log(max(-moments.z, 0.000001)) / max(negativeExponent, 0.0001);
+        return min(positiveDepth - receiverDepth, negativeDepth - receiverDepth);
+    }
+
+    return moments.r - receiverDepth;
+}
+
+float XRENGINE_EstimateShadowMomentMargin(
     sampler2D shadowMap,
     vec2 uv,
     float receiverDepth,
@@ -252,6 +455,25 @@ float XRENGINE_EstimateShadowMomentMargin(
     return XRENGINE_EstimateShadowMomentMargin(
         shadowMap,
         uv,
+        receiverDepth,
+        encoding,
+        positiveExponent,
+        negativeExponent,
+        0.0,
+        false);
+}
+
+float XRENGINE_EstimateShadowMomentMargin(
+    samplerCube shadowMap,
+    vec3 direction,
+    float receiverDepth,
+    int encoding,
+    float positiveExponent,
+    float negativeExponent)
+{
+    return XRENGINE_EstimateShadowMomentMargin(
+        shadowMap,
+        direction,
         receiverDepth,
         encoding,
         positiveExponent,

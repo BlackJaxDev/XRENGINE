@@ -47,7 +47,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (ActivePipelineInstance.Pipeline is not DefaultRenderPipeline defaultPipeline || !defaultPipeline.UsesRestirGI)
+            bool usesRestirGI = ActivePipelineInstance.Pipeline switch
+            {
+                DefaultRenderPipeline pipeline => pipeline.UsesRestirGI,
+                DefaultRenderPipeline2 pipeline => pipeline.UsesRestirGI,
+                _ => false,
+            };
+            if (!usesRestirGI)
                 return;
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;

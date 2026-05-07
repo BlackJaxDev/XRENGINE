@@ -82,6 +82,8 @@ uniform float ContactShadowFadeStart = 10.0f;
 uniform float ContactShadowFadeEnd = 40.0f;
 uniform float ContactShadowNormalOffset = 0.0f;
 uniform float ContactShadowJitterStrength = 1.0f;
+uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // min variance, light bleed reduction, positive exponent, negative exponent
+uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // blur radius texels, blur passes, use mipmaps, mip bias
 
 struct DirLight
 {
@@ -545,6 +547,27 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 			return contact;
 		}
 
+		if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+		{
+			float momentReceiverDepth = clamp(fragCoord.z - min(bias, 0.01f), 0.0f, 1.0f);
+			bool useMomentMipmaps = ShadowMomentFilterParams.z != 0.0f;
+			float momentMipLevel = XRENGINE_ResolveShadowMomentMipLevel(
+				ShadowMomentFilterParams.w,
+				ShadowMomentFilterParams.x,
+				useMomentMipmaps);
+			return XRENGINE_SampleShadowMoment2D(
+				ShadowMap,
+				fragCoord.xy,
+				momentReceiverDepth,
+				ShadowMapEncoding,
+				ShadowMomentParams0.x,
+				ShadowMomentParams0.y,
+				ShadowMomentParams0.z,
+				ShadowMomentParams0.w,
+				momentMipLevel,
+				useMomentMipmaps) * contact;
+		}
+
 		return SampleShadowMapFilteredLocal(
 			ShadowMap,
 			fragCoord,
@@ -648,6 +671,13 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)
 			: 1.0f;
 
+		bool useMomentMipmaps = ShadowMomentFilterParams.z != 0.0f;
+		float momentMipLevel = XRENGINE_ResolveShadowMomentMipLevel(
+			ShadowMomentFilterParams.w,
+			ShadowMomentFilterParams.x,
+			useMomentMipmaps);
+		float momentReceiverDepth = clamp(fragCoord.z - min(bias, 0.01f), 0.0f, 1.0f);
+
 		if (DirectionalShadowAtlasEnabled)
 		{
 			ivec4 atlasI0 = DirectionalShadowAtlasPacked0[cascadeIndex];
@@ -662,6 +692,24 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 					filterRadius,
 					constantBias,
 					LightData.CascadeBiasMax[cascadeIndex]);
+				if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+				{
+					vec2 atlasUv = XRENGINE_ShadowAtlasUvFromLocal(fragCoord.xy, atlasUvScaleBias);
+					float atlasMomentReceiverDepth = clamp(fragCoord.z - min(atlasBias, 0.01f), 0.0f, 1.0f);
+					return XRENGINE_SampleShadowMoment2DArray(
+						DirectionalShadowAtlas,
+						atlasUv,
+						float(atlasI0.y),
+						atlasMomentReceiverDepth,
+						ShadowMapEncoding,
+						ShadowMomentParams0.x,
+						ShadowMomentParams0.y,
+						ShadowMomentParams0.z,
+						ShadowMomentParams0.w,
+						0.0f,
+						false) * contact;
+				}
+
 				return SampleDirectionalAtlasPage(
 					atlasI0.y,
 					fragCoord,
@@ -680,6 +728,22 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 			}
 
 			return contact;
+		}
+
+		if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+		{
+			return XRENGINE_SampleShadowMoment2DArray(
+				ShadowMapArray,
+				fragCoord.xy,
+				float(cascadeIndex),
+				momentReceiverDepth,
+				ShadowMapEncoding,
+				ShadowMomentParams0.x,
+				ShadowMomentParams0.y,
+				ShadowMomentParams0.z,
+				ShadowMomentParams0.w,
+				momentMipLevel,
+				useMomentMipmaps) * contact;
 		}
 
 		return SampleShadowMapArrayFilteredLocal(

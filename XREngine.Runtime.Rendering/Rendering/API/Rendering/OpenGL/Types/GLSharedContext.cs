@@ -17,8 +17,10 @@ namespace XREngine.Rendering.OpenGL
         /// (and other shared resources) are accessible from both the main render context
         /// and this background thread.
         /// </summary>
-        public sealed class GLSharedContext(string threadName = "XR GL Shared Context") : IDisposable
+        public sealed class GLSharedContext : IDisposable
         {
+            private readonly string _threadName;
+            private readonly double _workerUnhealthySeconds;
             private readonly ConcurrentQueue<SharedContextJob> _jobs = new();
             private readonly AutoResetEvent _signal = new(false);
             private CancellationTokenSource? _cts;
@@ -32,11 +34,33 @@ namespace XREngine.Rendering.OpenGL
             private long _failedCount;
             private volatile bool _workerUnhealthy;
 
-            private const double WorkerUnhealthySeconds = 30.0;
+            /// <summary>
+            /// Default unhealthy threshold for jobs running on the shared context thread.
+            /// Long enough to cover most asset/upload work but short enough to detect a
+            /// genuinely wedged worker. Caller may override via the constructor when
+            /// the work shape is known to be slow (e.g. cold shader compile/link of
+            /// large uber shaders, which can legitimately take more than a minute on
+            /// first run with a fresh driver cache).
+            /// </summary>
+            private const double DefaultWorkerUnhealthySeconds = 30.0;
+
+            public GLSharedContext(string threadName = "XR GL Shared Context")
+                : this(threadName, DefaultWorkerUnhealthySeconds)
+            {
+            }
+
+            public GLSharedContext(string threadName, double workerUnhealthySeconds)
+            {
+                _threadName = threadName;
+                _workerUnhealthySeconds = workerUnhealthySeconds > 0.0
+                    ? workerUnhealthySeconds
+                    : DefaultWorkerUnhealthySeconds;
+            }
 
             public bool IsRunning => _running && !IsWorkerUnhealthy;
             public bool IsThreadAlive => _running;
-            public bool IsWorkerUnhealthy => _workerUnhealthy || CurrentJobElapsedSeconds >= WorkerUnhealthySeconds;
+            public bool IsWorkerUnhealthy => _workerUnhealthy || CurrentJobElapsedSeconds >= _workerUnhealthySeconds;
+            public double WorkerUnhealthySeconds => _workerUnhealthySeconds;
             public int PendingCount => _jobs.Count;
             public long CompletedCount => Interlocked.Read(ref _completedCount);
             public long FailedCount => Interlocked.Read(ref _failedCount);
@@ -107,7 +131,7 @@ namespace XREngine.Rendering.OpenGL
                 _thread = new Thread(() => Run(sharedWindow, token))
                 {
                     IsBackground = true,
-                    Name = threadName,
+                    Name = _threadName,
                 };
                 _thread.Start();
 
@@ -140,7 +164,7 @@ namespace XREngine.Rendering.OpenGL
                 _thread = new Thread(() => Run(preCreatedSharedWindow, token))
                 {
                     IsBackground = true,
-                    Name = threadName,
+                    Name = _threadName,
                 };
                 _thread.Start();
 

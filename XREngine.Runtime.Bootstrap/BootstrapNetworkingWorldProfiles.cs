@@ -28,6 +28,10 @@ public static class BootstrapNetworkingWorldProfiles
         settings.DirLight2 = false;
         settings.PointLight = false;
         settings.SpotLight = false;
+        settings.DynamicPointLightCount = 0;
+        settings.DynamicSpotLightCount = 0;
+        settings.DynamicLightsCastShadows = false;
+        settings.DynamicLightsForceShadowAtlas = false;
         settings.LightProbe = LightProbeMode.Off;
         settings.Mirror = false;
         settings.Spline = false;

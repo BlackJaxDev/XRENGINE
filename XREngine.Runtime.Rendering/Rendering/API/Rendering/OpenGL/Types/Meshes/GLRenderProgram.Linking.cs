@@ -1211,8 +1211,9 @@ namespace XREngine.Rendering.OpenGL
                    TryResolveUberVariantHash(out _);
 
             /// <summary>
-            /// Programs known to hang NVIDIA's <c>GL_ARB_parallel_shader_compile</c>
-            /// link worker. Covers:
+            /// Programs known to hang or stall NVIDIA's
+            /// <c>GL_ARB_parallel_shader_compile</c> link worker on the main
+            /// context. Covers:
             ///  * Single-stage separable programs (imported model materials whose
             ///    vertex/fragment stages are split into individual programs).
             ///  * Compute programs (always single-stage; NVIDIA's parallel-link
@@ -1222,11 +1223,15 @@ namespace XREngine.Rendering.OpenGL
             ///    BVH/physics-chain dispatch in <c>GlobalPreRender</c>).
             ///  * Any program with a single attached shader, which exhibits the
             ///    same hazard regardless of the <c>Separable</c> flag.
-            /// For these we bypass the driver-parallel lane. Graphics programs may
-            /// still use the shared-context source lane so large cold links cannot
-            /// freeze the render thread. If no shared lane is available, the guarded
-            /// synchronous path temporarily disables driver compiler threads, links
-            /// on the render thread under the per-frame shader-work budget, and leaves
+            /// For these we always bypass the driver-parallel lane. Single-stage
+            /// graphics programs are still routed to the shared-context source
+            /// lane (when available) so their cold link runs on a worker thread
+            /// on a separate GL context instead of stalling the render thread.
+            /// Compute programs are denied the shared-context lane as well — the
+            /// queue's <c>ContainsKnownAsyncLinkHazard</c> filter still rejects
+            /// them — and fall back to the guarded synchronous path which
+            /// temporarily disables driver compiler threads, links inline on the
+            /// render thread under the per-frame shader-work budget, and leaves
             /// any previously linked hot-reload program visible.
             /// </summary>
             private bool IsKnownAsyncLinkHazard
@@ -2312,10 +2317,18 @@ namespace XREngine.Rendering.OpenGL
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
                     bool isKnownAsyncLinkHazard = IsKnownAsyncLinkHazard;
                     GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs;
+                    // Hazardous graphics programs (single-stage separable) are
+                    // routed to the shared-context lane by the selector when the
+                    // queue is available, even under Auto strategy, to keep the
+                    // (potentially huge) cold link off the render thread. Prepare
+                    // their inputs unconditionally so the selector can choose the
+                    // shared-context lane. The queue still rejects compute hazards,
+                    // which fall through to the synchronous path below.
                     bool wantsSharedSourceInputs = compileQueue is { IsAvailable: true } &&
                         (Renderer.UseSharedContextProgramCompileLinkQueue ||
-                         Engine.Rendering.Settings.OpenGLShaderLinkStrategy == EOpenGLShaderLinkStrategy.SharedContext);
-                    if (wantsSharedSourceInputs && inputs is null && !isKnownAsyncLinkHazard)
+                         Engine.Rendering.Settings.OpenGLShaderLinkStrategy == EOpenGLShaderLinkStrategy.SharedContext ||
+                         isKnownAsyncLinkHazard);
+                    if (wantsSharedSourceInputs && inputs is null)
                     {
                         if (nonBlocking)
                         {

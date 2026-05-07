@@ -253,6 +253,20 @@ public sealed class ShadowAtlasManager
                 continue;
             }
 
+            if (request.ForcedSkipReason != SkipReason.None)
+            {
+                ShadowAtlasAllocation allocation = CreateSkippedAllocation(request, request.ForcedSkipReason);
+                int allocationIndex = _frameAllocations.Count;
+                if (allocation.IsResident)
+                {
+                    _currentAllocations[request.Key] = allocation;
+                    _currentAllocationIndices[request.Key] = allocationIndex;
+                }
+
+                _frameAllocations.Add(allocation);
+                continue;
+            }
+
             uint desired = NormalizeTileResolution(
                 request.DesiredResolution,
                 Math.Max(request.MinimumResolution, _settings.MinTileResolution),
@@ -328,6 +342,7 @@ public sealed class ShadowAtlasManager
                 if (!_currentAllocations.TryGetValue(candidate.Key, out ShadowAtlasAllocation allocation) ||
                     !_currentAllocationIndices.TryGetValue(candidate.Key, out int recordIndex) ||
                     !allocation.IsResident ||
+                    allocation.SkipReason != SkipReason.None ||
                     allocation.AtlasKind != EShadowAtlasKind.Directional ||
                     allocation.InnerPixelRect.Width <= 0 ||
                     allocation.InnerPixelRect.Height <= 0)
@@ -416,6 +431,7 @@ public sealed class ShadowAtlasManager
                 GetAtlasKind(seed.ProjectionType) != EShadowAtlasKind.Point ||
                 !_currentAllocations.TryGetValue(seed.Key, out ShadowAtlasAllocation seedAllocation) ||
                 !seedAllocation.IsResident ||
+                seedAllocation.SkipReason != SkipReason.None ||
                 seedAllocation.AtlasKind != EShadowAtlasKind.Point ||
                 HasPointFaceGroup(seed.Key.LightId, seed.Key.Domain, seed.Encoding, seedAllocation.PageIndex, seedAllocation.AtlasId))
             {
@@ -437,6 +453,7 @@ public sealed class ShadowAtlasManager
                 if (!_currentAllocations.TryGetValue(candidate.Key, out ShadowAtlasAllocation allocation) ||
                     !_currentAllocationIndices.TryGetValue(candidate.Key, out int recordIndex) ||
                     !allocation.IsResident ||
+                    allocation.SkipReason != SkipReason.None ||
                     allocation.AtlasKind != EShadowAtlasKind.Point ||
                     allocation.PageIndex != seedAllocation.PageIndex ||
                     allocation.AtlasId != seedAllocation.AtlasId ||
@@ -610,6 +627,12 @@ public sealed class ShadowAtlasManager
         for (int i = 0; i < _requests.Count; i++)
         {
             ShadowMapRequest request = _requests[i];
+            if (request.ForcedSkipReason != SkipReason.None)
+            {
+                skippedClean++;
+                continue;
+            }
+
             if (scheduled >= budget)
             {
                 deferredByBudget = _requests.Count - i;
@@ -1128,7 +1151,6 @@ public sealed class ShadowAtlasManager
     {
         long start = Stopwatch.GetTimestamp();
         if (seedRequest.Light is not DirectionalLightComponent light ||
-            group.Encoding != EShadowMapEncoding.Depth ||
             !GetEncodingState(group.AtlasKind, group.Encoding).TryGetPageResource(group.PageIndex, out ShadowAtlasPageResource? page) ||
             page is null)
         {
@@ -1227,7 +1249,6 @@ public sealed class ShadowAtlasManager
     {
         long start = Stopwatch.GetTimestamp();
         if (seedRequest.Light is not PointLightComponent light ||
-            group.Encoding != EShadowMapEncoding.Depth ||
             !GetEncodingState(group.AtlasKind, group.Encoding).TryGetPageResource(group.PageIndex, out ShadowAtlasPageResource? page) ||
             page is null)
         {
@@ -1281,8 +1302,7 @@ public sealed class ShadowAtlasManager
     private bool TryRenderTile(ShadowMapRequest request, ShadowAtlasAllocation allocation, bool collectVisibleNow)
     {
         long start = Stopwatch.GetTimestamp();
-        if (request.Encoding != EShadowMapEncoding.Depth ||
-            !GetEncodingState(allocation.AtlasKind, request.Encoding).TryGetPageResource(allocation.PageIndex, out ShadowAtlasPageResource? page) ||
+        if (!GetEncodingState(allocation.AtlasKind, request.Encoding).TryGetPageResource(allocation.PageIndex, out ShadowAtlasPageResource? page) ||
             page is null)
         {
             LogDirectionalRequestRenderState(request, allocation, "MissingPageResource", requiresRender: true);
@@ -1404,10 +1424,27 @@ public sealed class ShadowAtlasManager
     private ShadowAtlasAllocation CreateSkippedAllocation(ShadowMapRequest request, SkipReason skipReason)
     {
         EShadowAtlasKind atlasKind = GetAtlasKind(request.ProjectionType);
+        int atlasId = GetAtlasId(atlasKind, request.Encoding);
+        if (skipReason == SkipReason.NotRelevant &&
+            _previousAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation previous) &&
+            previous.IsResident &&
+            previous.AtlasKind == atlasKind &&
+            previous.AtlasId == atlasId &&
+            previous.PageIndex >= 0 &&
+            previous.InnerPixelRect.Width > 0 &&
+            previous.InnerPixelRect.Height > 0)
+        {
+            return previous with
+            {
+                ActiveFallback = ShadowFallbackMode.StaleTile,
+                SkipReason = SkipReason.NotRelevant,
+            };
+        }
+
         return new ShadowAtlasAllocation(
             request.Key,
             AtlasKind: atlasKind,
-            AtlasId: GetAtlasId(atlasKind, request.Encoding),
+            AtlasId: atlasId,
             PageIndex: -1,
             PixelRect: BoundingRectangle.Empty,
             InnerPixelRect: BoundingRectangle.Empty,
@@ -1498,12 +1535,16 @@ public sealed class ShadowAtlasManager
     {
         int residentCount = 0;
         int skippedCount = 0;
+        int notRelevantSkipCount = 0;
         for (int i = 0; i < _frameAllocations.Count; i++)
         {
             if (_frameAllocations[i].IsResident)
                 residentCount++;
             else
                 skippedCount++;
+
+            if (_frameAllocations[i].SkipReason == SkipReason.NotRelevant)
+                notRelevantSkipCount++;
         }
 
         int pageCount = 0;
@@ -1529,6 +1570,7 @@ public sealed class ShadowAtlasManager
             ResidentBytes: residentBytes,
             TilesScheduledThisFrame: _tilesScheduledThisFrame,
             QueueOverflowCount: _queueOverflowCount,
+            NotRelevantSkipCount: notRelevantSkipCount,
             LargestFreeRect: largestFreeRect,
             FreeTexelCount: freeTexels);
     }
@@ -1788,6 +1830,9 @@ public sealed class ShadowAtlasManager
 
             int pageLimit = GetPageLimit(settings);
             ShadowAtlasPageDescriptor descriptor = CreateDescriptor(AtlasKind, Encoding, 0, settings.PageSize);
+            ShadowMapFormatDescriptor format = ShadowMapResourceFactory.GetPreferredFormat(Encoding);
+            ETexMinFilter minFilter = format.RequiresLinearFiltering ? ETexMinFilter.Linear : ETexMinFilter.Nearest;
+            ETexMagFilter magFilter = format.RequiresLinearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
             _textureArray = new XRTexture2DArray(
                 checked((uint)pageLimit),
                 descriptor.PageSize,
@@ -1800,8 +1845,8 @@ public sealed class ShadowAtlasManager
                 SamplerName = $"ShadowAtlas_{AtlasKind}_{Encoding}",
                 UWrap = ETexWrapMode.ClampToEdge,
                 VWrap = ETexWrapMode.ClampToEdge,
-                MinFilter = ETexMinFilter.Nearest,
-                MagFilter = ETexMagFilter.Nearest,
+                MinFilter = minFilter,
+                MagFilter = magFilter,
                 FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
             };
             _rasterDepthTextureArray = new XRTexture2DArray(

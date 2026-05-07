@@ -144,6 +144,54 @@ namespace XREngine.Rendering
             => IsReversedDepth ? 0.0f : 1.0f;
 
         /// <summary>
+        /// Forward+ tiled-light-culling debug visualization mode for this camera.
+        /// </summary>
+        public enum EForwardPlusDebugMode
+        {
+            /// <summary>No debug overlay.</summary>
+            None = 0,
+            /// <summary>False-color heatmap of visible-light count per tile.</summary>
+            Heatmap = 1,
+            /// <summary>Heatmap with tile grid lines overlaid.</summary>
+            HeatmapWithGrid = 2,
+            /// <summary>Highlight only tiles that overflow MaxLightsPerTile.</summary>
+            OverflowOnly = 3,
+            /// <summary>Show only the tile grid (no heatmap fill).</summary>
+            GridOnly = 4,
+        }
+
+        private EForwardPlusDebugMode _forwardPlusDebugMode = EForwardPlusDebugMode.None;
+        /// <summary>
+        /// Selects the Forward+ tiled-light-culling debug visualization mode for this camera.
+        /// </summary>
+        public EForwardPlusDebugMode ForwardPlusDebugMode
+        {
+            get => _forwardPlusDebugMode;
+            set => SetField(ref _forwardPlusDebugMode, value);
+        }
+
+        private float _forwardPlusDebugOpacity = 0.65f;
+        /// <summary>
+        /// Overlay alpha for the Forward+ debug visualization (0..1).
+        /// </summary>
+        public float ForwardPlusDebugOpacity
+        {
+            get => _forwardPlusDebugOpacity;
+            set => SetField(ref _forwardPlusDebugOpacity, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        private int _forwardPlusDebugMaxCount = 32;
+        /// <summary>
+        /// Light count that maps to the top of the heatmap ramp.
+        /// Tile counts at or above this saturate to "hot".
+        /// </summary>
+        public int ForwardPlusDebugMaxCount
+        {
+            get => _forwardPlusDebugMaxCount;
+            set => SetField(ref _forwardPlusDebugMaxCount, Math.Max(1, value));
+        }
+
+        /// <summary>
         /// The transform that defines this camera's position and orientation in world space.
         /// Used to calculate view matrices and camera direction vectors.
         /// </summary>
@@ -547,7 +595,16 @@ namespace XREngine.Rendering
                     RefreshObliqueProjectionMatrix();
                     InvalidateProjectionMatrices();
                     break;
+                case nameof(RenderPipeline):
+                    SynchronizeRenderPipelineWithViewports();
+                    break;
             }
+        }
+
+        private void SynchronizeRenderPipelineWithViewports()
+        {
+            for (int i = 0; i < Viewports.Count; i++)
+                Viewports[i].SynchronizeRenderPipelineFromCamera(this);
         }
 
         /// <summary>

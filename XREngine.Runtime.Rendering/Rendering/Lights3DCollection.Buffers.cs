@@ -15,6 +15,7 @@ namespace XREngine.Scene
         {
             using var sample = Engine.Profiler.Start("Lights3DCollection.SwapBuffers");
 
+            PopulateLocalShadowRelevanceCameras();
             bool cullByCameraFrusta = Engine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !Engine.VRState.IsInVR;
             bool gateShadowSwaps = cullByCameraFrusta;
 
@@ -34,8 +35,11 @@ namespace XREngine.Scene
                 for (int i = 0; i < DynamicSpotLights.Count; i++)
                 {
                     SpotLightComponent l = DynamicSpotLights[i];
-                    if (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l))
+                    if (UpdateLocalShadowRelevanceState(l) &&
+                        (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l)))
+                    {
                         l.SwapBuffers(LightmapBaking);
+                    }
                 }
             }
 
@@ -44,8 +48,11 @@ namespace XREngine.Scene
                 for (int i = 0; i < DynamicPointLights.Count; i++)
                 {
                     PointLightComponent l = DynamicPointLights[i];
-                    if (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l))
+                    if (UpdateLocalShadowRelevanceState(l) &&
+                        (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l)))
+                    {
                         l.SwapBuffers(LightmapBaking);
+                    }
                 }
             }
 

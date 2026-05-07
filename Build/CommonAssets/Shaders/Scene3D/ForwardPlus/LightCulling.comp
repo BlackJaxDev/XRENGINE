@@ -22,6 +22,12 @@ layout(std430, binding = 21) writeonly buffer ForwardPlusVisibleLightIndicesBuff
 	int data[];
 } fpVisibleIndices;
 
+// Per-tile light count for debug visualization (one uint per tile, indexed by tileLinear).
+// Always written so the debug overlay can read it without recomputing.
+layout(std430, binding = 29) writeonly buffer ForwardPlusTileLightCountsBuffer {
+	uint data[];
+} fpTileCounts;
+
 // Uniforms
 layout(binding = 0) uniform sampler2D depthMap;
 uniform mat4 view;
@@ -139,7 +145,7 @@ void main()
 
 	barrier();
 
-	// Step 4: write out visible indices (with -1 sentinel)
+	// Step 4: write out visible indices (with -1 sentinel) and per-tile count
 	if (gl_LocalInvocationIndex == 0u)
 	{
 		uint baseOffset = tileLinear * uint(MAX_LIGHTS_PER_TILE);
@@ -150,5 +156,8 @@ void main()
 
 		if (count < uint(MAX_LIGHTS_PER_TILE))
 			fpVisibleIndices.data[baseOffset + count] = -1;
+
+		// Publish the unclamped count so debug visualization can also detect overflow.
+		fpTileCounts.data[tileLinear] = visibleLightCount;
 	}
 }

@@ -959,7 +959,20 @@ namespace XREngine.Rendering.OpenGL
 
             if (wantCompileLink)
             {
-                var compileContext = new GLSharedContext("XR Program Source Compile");
+                // Cold link of large uber shaders (e.g. imported model fragment
+                // programs near 400 KB) can legitimately take 60 - 120 seconds on
+                // the first run before the per-program binary cache is populated.
+                // Use a generous unhealthy threshold so the worker is not flagged
+                // as unhealthy while it is making forward progress on a real
+                // (slow) GL_COMPLETION_STATUS_ARB poll loop. If we let the
+                // default 30 s threshold trip, IsRunning flips false mid-link
+                // and the selector falls back to the synchronous render-thread
+                // path for any new hazardous program, which then stalls the
+                // render thread on glMaxShaderCompilerThreadsARB / glCreateShader
+                // for the remainder of the cold link. See repo memory note
+                // opengl-shared-context-worker-unhealthy-threshold.
+                const double CompileLinkUnhealthySeconds = 600.0;
+                var compileContext = new GLSharedContext("XR Program Source Compile", CompileLinkUnhealthySeconds);
                 if (compileContext.Initialize(XRWindow))
                 {
                     _programCompileLinkSharedContext = compileContext;

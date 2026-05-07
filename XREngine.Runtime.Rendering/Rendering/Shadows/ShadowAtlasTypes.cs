@@ -79,6 +79,7 @@ public enum SkipReason
     EditorPinnedHardMemoryCap = 18,
     InvalidRequest = 19,
     ResourceCreationFailed = 20,
+    NotRelevant = 21,
 }
 
 [Flags]
@@ -144,7 +145,8 @@ public readonly record struct ShadowMapRequest(
     ShadowDirtyReason DirtyReason,
     bool CanReusePreviousFrame,
     bool EditorPinned,
-    StereoVisibility StereoVis);
+    StereoVisibility StereoVis,
+    SkipReason ForcedSkipReason = SkipReason.None);
 
 public readonly record struct ShadowAtlasAllocation(
     ShadowRequestKey Key,
@@ -211,6 +213,7 @@ public readonly record struct ShadowAtlasMetrics(
     long ResidentBytes,
     int TilesScheduledThisFrame,
     int QueueOverflowCount,
+    int NotRelevantSkipCount,
     int LargestFreeRect,
     long FreeTexelCount);
 
