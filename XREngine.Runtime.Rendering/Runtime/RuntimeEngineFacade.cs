@@ -738,7 +738,7 @@ internal sealed class RuntimeRenderSettings
         get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
             ? services.MaxShadowAtlasPages
             : _maxShadowAtlasPages;
-        set => _maxShadowAtlasPages = 1;
+        set => _maxShadowAtlasPages = Math.Clamp(value, 1, 64);
     }
 
     public uint MaxShadowAtlasTileResolution

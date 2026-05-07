@@ -7,9 +7,12 @@ public sealed class ShadowAtlasFrameData
 {
     private ShadowAtlasAllocation[] _allocations = [];
     private ShadowAtlasGroupedDirectionalCascadeAllocation[] _directionalCascadeGroups = [];
+    private ShadowAtlasGroupedPointFaceAllocation[] _pointFaceGroups = [];
     private ShadowAtlasPageDescriptor[] _pages = [];
+    private readonly Dictionary<ShadowRequestKey, int> _allocationIndexByKey = new();
     private int _allocationCount;
     private int _directionalCascadeGroupCount;
+    private int _pointFaceGroupCount;
     private int _pageCount;
 
     public ulong FrameId { get; private set; }
@@ -17,9 +20,11 @@ public sealed class ShadowAtlasFrameData
     public ShadowAtlasMetrics Metrics { get; private set; }
     public int AllocationCount => _allocationCount;
     public int DirectionalCascadeGroupCount => _directionalCascadeGroupCount;
+    public int PointFaceGroupCount => _pointFaceGroupCount;
     public int PageCount => _pageCount;
     public ReadOnlySpan<ShadowAtlasAllocation> Allocations => _allocations.AsSpan(0, _allocationCount);
     public ReadOnlySpan<ShadowAtlasGroupedDirectionalCascadeAllocation> DirectionalCascadeGroups => _directionalCascadeGroups.AsSpan(0, _directionalCascadeGroupCount);
+    public ReadOnlySpan<ShadowAtlasGroupedPointFaceAllocation> PointFaceGroups => _pointFaceGroups.AsSpan(0, _pointFaceGroupCount);
     public ReadOnlySpan<ShadowAtlasPageDescriptor> Pages => _pages.AsSpan(0, _pageCount);
 
     public ShadowAtlasAllocation GetAllocation(int index)
@@ -46,16 +51,20 @@ public sealed class ShadowAtlasFrameData
         return _directionalCascadeGroups[index];
     }
 
+    public ShadowAtlasGroupedPointFaceAllocation GetPointFaceGroup(int index)
+    {
+        if ((uint)index >= (uint)_pointFaceGroupCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        return _pointFaceGroups[index];
+    }
+
     public bool TryGetAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
     {
-        for (int i = 0; i < _allocationCount; i++)
+        if (_allocationIndexByKey.TryGetValue(key, out int index))
         {
-            ShadowAtlasAllocation candidate = _allocations[i];
-            if (candidate.Key == key)
-            {
-                allocation = candidate;
-                return true;
-            }
+            allocation = _allocations[index];
+            return true;
         }
 
         allocation = default;
@@ -64,15 +73,10 @@ public sealed class ShadowAtlasFrameData
 
     public bool TryGetAllocationIndex(ShadowRequestKey key, out int index, out ShadowAtlasAllocation allocation)
     {
-        for (int i = 0; i < _allocationCount; i++)
+        if (_allocationIndexByKey.TryGetValue(key, out index))
         {
-            ShadowAtlasAllocation candidate = _allocations[i];
-            if (candidate.Key == key)
-            {
-                index = i;
-                allocation = candidate;
-                return true;
-            }
+            allocation = _allocations[index];
+            return true;
         }
 
         index = -1;
@@ -96,20 +100,43 @@ public sealed class ShadowAtlasFrameData
         return false;
     }
 
+    public bool TryGetPointFaceGroup(Guid lightId, out ShadowAtlasGroupedPointFaceAllocation group)
+    {
+        for (int i = 0; i < _pointFaceGroupCount; i++)
+        {
+            ShadowAtlasGroupedPointFaceAllocation candidate = _pointFaceGroups[i];
+            if (candidate.LightId == lightId)
+            {
+                group = candidate;
+                return true;
+            }
+        }
+
+        group = default;
+        return false;
+    }
+
     internal void SetData(
         ulong frameId,
         ulong generation,
         IReadOnlyList<ShadowAtlasAllocation> allocations,
         IReadOnlyList<ShadowAtlasGroupedDirectionalCascadeAllocation> directionalCascadeGroups,
+        IReadOnlyList<ShadowAtlasGroupedPointFaceAllocation> pointFaceGroups,
         IReadOnlyList<ShadowAtlasPageDescriptor> pages,
         ShadowAtlasMetrics metrics)
     {
         EnsureAllocationCapacity(allocations.Count);
         EnsureDirectionalCascadeGroupCapacity(directionalCascadeGroups.Count);
+        EnsurePointFaceGroupCapacity(pointFaceGroups.Count);
         EnsurePageCapacity(pages.Count);
+        _allocationIndexByKey.EnsureCapacity(allocations.Count);
+        _allocationIndexByKey.Clear();
 
         for (int i = 0; i < allocations.Count; i++)
+        {
             _allocations[i] = allocations[i];
+            _allocationIndexByKey[allocations[i].Key] = i;
+        }
         for (int i = allocations.Count; i < _allocationCount; i++)
             _allocations[i] = default;
 
@@ -118,6 +145,11 @@ public sealed class ShadowAtlasFrameData
         for (int i = directionalCascadeGroups.Count; i < _directionalCascadeGroupCount; i++)
             _directionalCascadeGroups[i] = default;
 
+        for (int i = 0; i < pointFaceGroups.Count; i++)
+            _pointFaceGroups[i] = pointFaceGroups[i];
+        for (int i = pointFaceGroups.Count; i < _pointFaceGroupCount; i++)
+            _pointFaceGroups[i] = default;
+
         for (int i = 0; i < pages.Count; i++)
             _pages[i] = pages[i];
         for (int i = pages.Count; i < _pageCount; i++)
@@ -125,6 +157,7 @@ public sealed class ShadowAtlasFrameData
 
         _allocationCount = allocations.Count;
         _directionalCascadeGroupCount = directionalCascadeGroups.Count;
+        _pointFaceGroupCount = pointFaceGroups.Count;
         _pageCount = pages.Count;
         FrameId = frameId;
         Generation = generation;
@@ -153,6 +186,18 @@ public sealed class ShadowAtlasFrameData
             next *= 2;
 
         Array.Resize(ref _directionalCascadeGroups, next);
+    }
+
+    private void EnsurePointFaceGroupCapacity(int count)
+    {
+        if (_pointFaceGroups.Length >= count)
+            return;
+
+        int next = Math.Max(4, _pointFaceGroups.Length);
+        while (next < count)
+            next *= 2;
+
+        Array.Resize(ref _pointFaceGroups, next);
     }
 
     private void EnsurePageCapacity(int count)

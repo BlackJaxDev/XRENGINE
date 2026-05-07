@@ -854,7 +854,8 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string renderSettingsSource = LoadRepoSource(Path.Combine("XRENGINE", "Engine", "Subclasses", "Rendering", "Engine.Rendering.Settings.cs"));
         renderSettingsSource.ShouldContain("Volatile.Read(ref _useDirectionalShadowAtlas)");
         renderSettingsSource.ShouldContain("Volatile.Write(ref _useDirectionalShadowAtlas, value)");
-        renderSettingsSource.ShouldContain("Current runtime enforces one page each for directional, point, and spot atlases.");
+        renderSettingsSource.ShouldContain("Maximum number of dynamic shadow atlas pages per light-family atlas.");
+        renderSettingsSource.ShouldContain("Math.Clamp(value, 1, 64)");
 
         string runtimeFacadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Runtime", "RuntimeEngineFacade.cs"));
         runtimeFacadeSource.ShouldContain("ProvidesShadowAtlasSettings");
@@ -894,15 +895,20 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         atlasManagerSource.ShouldContain("EShadowAtlasKind");
         atlasManagerSource.ShouldContain("EShadowProjectionType.DirectionalPrimary");
         atlasManagerSource.ShouldContain("RenderPrimaryShadowAtlasTile(");
+        atlasManagerSource.ShouldContain("ShadowResidentEntry");
+        atlasManagerSource.ShouldContain("ResidentEvictionTtlFrames");
+        atlasManagerSource.ShouldContain("PublishPendingSkippedAllocations");
         atlasManagerSource.ShouldContain("ResolveBalancedMinimumResolution");
-        atlasManagerSource.ShouldContain("TryReduceLargestBalancedAllocation");
+        atlasManagerSource.ShouldContain("TryReduceBalancedAllocation");
+        atlasManagerSource.ShouldContain("RelevanceScore");
+        atlasManagerSource.ShouldContain("TryReserveAlignedSubBlock");
         atlasManagerSource.ShouldContain("AtlasKind: atlasKind");
-        atlasManagerSource.ShouldContain("GetPageLimit(ShadowAtlasManagerSettings _)");
+        atlasManagerSource.ShouldContain("GetPageLimit(ShadowAtlasManagerSettings settings)");
         atlasManagerSource.ShouldContain("bool reuseStaleTile = hasRenderedTile");
         atlasManagerSource.ShouldContain("prior.PageIndex == pageIndex");
         atlasManagerSource.ShouldContain("prior.PixelRect.X == x");
         atlasManagerSource.ShouldContain("prior.PixelRect.Y == y");
-        atlasManagerSource.ShouldContain("prior.Resolution == resolution");
+        atlasManagerSource.ShouldContain("IsContainedInPriorRegion");
         atlasManagerSource.ShouldContain("SkipReason.StaleTileReused");
 
         string forwardSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
@@ -945,7 +951,8 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         atlasManagerSource.ShouldContain("ShadowAtlas.RenderScheduledTiles.Slow");
         atlasManagerSource.ShouldContain("ContentVersion = request.ContentHash");
         atlasManagerSource.ShouldContain("SkipReason = SkipReason.None");
-        atlasManagerSource.ShouldContain("LodChangeCooldownFrames");
+        atlasManagerSource.ShouldContain("LodDownsizeRePromotionCooldownFrames");
+        atlasManagerSource.ShouldContain("LodVoluntaryChangeCooldownFrames");
         atlasManagerSource.ShouldContain("ApplyLodHysteresis");
         atlasManagerSource.ShouldContain("RequestRepack()");
         atlasManagerSource.ShouldContain("activeFallback = ShadowFallbackMode.StaleTile");
@@ -954,6 +961,16 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         shadowTypesSource.ShouldContain("public enum ShadowDirtyReason");
         shadowTypesSource.ShouldContain("ShadowDirtyReason DirtyReason");
         shadowTypesSource.ShouldContain("ShadowDirtyReason LastDirtyReason");
+
+        string frameDataSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasFrameData.cs"));
+        frameDataSource.ShouldContain("PointFaceGroupCount");
+        frameDataSource.ShouldContain("TryGetPointFaceGroup");
+
+        string spotLightSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "SpotLightComponent.cs"));
+        spotLightSource.ShouldContain("ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat).Encoding == EShadowMapEncoding.Depth");
+
+        string pointLightSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
+        pointLightSource.ShouldContain("ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat).Encoding == EShadowMapEncoding.Depth");
     }
 
     [Test]

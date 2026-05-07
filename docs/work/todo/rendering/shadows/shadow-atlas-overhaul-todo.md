@@ -5,6 +5,8 @@ Status: proposed phased TODO. Supersedes and merges:
 - `shadow-relevance-scoring-todo.md` (score-driven request resolution from camera visibility)
 - `point-light-atlas-stability-todo.md` (per-face stability under contention)
 
+Implementation note 2026-05-07: the active runtime now includes the first overhaul slice: single-pass request bucketing by atlas kind/encoding, fixed-level buddy allocator buckets with incremental free stats, direct prior-slot reservation, sticky sub-rect reuse across downsizes, deferred in-place upgrades, relevance/priority-driven sticky demotion, O(1) published allocation lookup, honored multi-page settings, a bounded resident allocation table with TTL reuse, safe `NotRelevant` stale-tile reservation after live allocations, published point-face group metadata, and depth-only spot/point atlas eligibility so moment-encoded local lights stay on standalone maps. Remaining open items are the broader receiver-aware relevance pass, explicit fragmentation-triggered compaction, anchor slots, full heterogeneous point-face pre-reservation, and editor diagnostic expansion.
+
 Source files (primary edit surface):
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasFrameData.cs`

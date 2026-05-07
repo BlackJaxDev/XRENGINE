@@ -129,7 +129,7 @@ The editor must surface, per atlas:
 - tiles allocated / tiles possible,
 - fragmentation ratio (sum of free rects / largest free rect).
 
-A `MaxShadowAtlasMemoryBytes` budget control complements `MaxShadowAtlasPages`; whichever is reached first stops growth. The current runtime clamps `MaxShadowAtlasPages` to `1` per light-family atlas, giving the live depth path at most one directional page, one point page, and one spot page.
+A `MaxShadowAtlasMemoryBytes` budget control complements `MaxShadowAtlasPages`; whichever is reached first stops growth. The runtime default remains `1` page per light-family atlas, but the setting is now honored up to the manager cap so large scenes can opt into additional directional, point, and spot atlas layers.
 
 ## Caster Materials And Translucency
 
