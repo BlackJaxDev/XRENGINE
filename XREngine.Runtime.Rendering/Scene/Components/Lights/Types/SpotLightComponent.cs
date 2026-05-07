@@ -194,7 +194,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 if (!Engine.Rendering.Settings.UseSpotShadowAtlas)
                     return false;
 
-                return true;
+                return ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat).Encoding == EShadowMapEncoding.Depth;
             }
         }
 

@@ -4,6 +4,8 @@
 > Last reconciled: **2026-05-07** after point atlas bring-up, atlas page-array sampler conversion, point-face refresh grouping, and local shadow-frustum skip metadata.
 > Scope: runtime shadows, renderer integration, editor diagnostics, shader metadata.
 
+> 2026-05-07 allocator/stability update: `ShadowAtlasManager` now buckets requests once per solve, uses fixed-level buddy buckets, honors multi-page atlas settings, preserves prior placement through same-size reuse/downsize sub-rects/deferred upgrades, keeps a bounded resident table for short TTL reuse, reserves `NotRelevant` stale tiles only after live allocations, publishes point-face group metadata, keeps spot/point atlases depth-only, and uses sticky priority/relevance demotion under pressure.
+
 ## Target Outcome
 
 Replace fixed per-light shadow textures with a budgeted shadow atlas system:

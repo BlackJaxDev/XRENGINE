@@ -615,11 +615,11 @@ namespace XREngine
                 }
 
                 [Category("Shadows")]
-                [Description("Maximum number of dynamic shadow atlas pages per light-family atlas. Current runtime enforces one page each for directional, point, and spot atlases.")]
+                [Description("Maximum number of dynamic shadow atlas pages per light-family atlas.")]
                 public int MaxShadowAtlasPages
                 {
                     get => _maxShadowAtlasPages;
-                    set => SetField(ref _maxShadowAtlasPages, 1);
+                    set => SetField(ref _maxShadowAtlasPages, Math.Clamp(value, 1, 64));
                 }
 
                 [Category("Shadows")]
