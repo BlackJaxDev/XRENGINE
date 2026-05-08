@@ -7,7 +7,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_Switch : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
+        public string? Label { get; set; }
+
         public Func<int>? SwitchEvaluator { get; set; }
+
+        public override string GpuProfilingName
+            => string.IsNullOrWhiteSpace(Label) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Label}]";
 
         private sealed class SwitchState
         {

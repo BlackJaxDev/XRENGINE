@@ -104,10 +104,7 @@ namespace XREngine
         /// </remarks>
         private static void InitializeNetworking(GameStartupSettings startupSettings)
         {
-            if (Networking is BaseNetworkingManager previousNet)
-            {
-                previousNet.RemoteJobRequestReceived -= HandleRemoteJobRequestAsync;
-            }
+            ShutdownNetworking();
 
             if (!_environmentRealtimeHandoffApplied
                 && RealtimeJoinHandoff.TryApplyFromEnvironment(startupSettings, out _, out string? handoffSource))
@@ -159,6 +156,43 @@ namespace XREngine
             else
             {
                 Jobs.RemoteTransport = null;
+            }
+        }
+
+        private static void ShutdownNetworking()
+        {
+            IRemoteJobTransport? remoteTransport = Jobs.RemoteTransport;
+            Jobs.RemoteTransport = null;
+
+            if (remoteTransport is IDisposable disposableTransport)
+            {
+                try
+                {
+                    disposableTransport.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Debug.NetworkingWarning("[Net] Failed to dispose remote job transport during shutdown: {0}", ex.Message);
+                }
+            }
+
+            if (Networking is not BaseNetworkingManager net)
+                return;
+
+            net.RemoteJobRequestReceived -= HandleRemoteJobRequestAsync;
+
+            try
+            {
+                net.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Debug.NetworkingWarning("[Net] Failed to dispose networking manager during shutdown: {0}", ex.Message);
+            }
+            finally
+            {
+                if (ReferenceEquals(Networking, net))
+                    Networking = null;
             }
         }
 

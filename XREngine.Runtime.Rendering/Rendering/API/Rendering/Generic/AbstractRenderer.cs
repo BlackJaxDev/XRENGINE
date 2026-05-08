@@ -74,6 +74,7 @@ namespace XREngine.Rendering
 
         public abstract void Initialize();
         public abstract void CleanUp();
+        public virtual bool ShouldSkipNativeWindowDisposeForShutdown => false;
 
         protected abstract void WindowRenderCallback(double delta);
 

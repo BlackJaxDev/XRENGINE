@@ -595,7 +595,7 @@ internal static partial class Engine
             private bool _isIntel;
             private bool _isVulkan;
 
-                public ulong RenderFrameId { get; private set; }
+                public ulong RenderFrameId => RuntimeRenderingHostServices.Current.CurrentRenderFrameId;
                 public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
             public XRRenderPipelineInstance? CurrentRenderingPipeline
                 => PipelineOverrideStack.Count != 0
@@ -648,10 +648,7 @@ internal static partial class Engine
 
             public void BeginRenderFrame()
             {
-                unchecked
-                {
-                    RenderFrameId++;
-                }
+                // RenderFrameId is now sourced from the host bridge; no-op retained for legacy callers.
             }
 
             public IDisposable PushRenderGraphPassIndex(int passIndex)

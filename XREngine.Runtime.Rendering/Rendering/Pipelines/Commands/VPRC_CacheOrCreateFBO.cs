@@ -34,6 +34,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private RenderResourceSizePolicy? _sizePolicyOverride;
         private RenderResourceLifetime _lifetime = RenderResourceLifetime.Persistent;
 
+        public override string GpuProfilingName
+            => string.IsNullOrWhiteSpace(Name) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Name}]";
+
         public VPRC_CacheOrCreateFBO SetOptions(string name, Func<XRFrameBuffer> factory, Func<(uint x, uint y)>? sizeVerifier, Func<XRFrameBuffer, bool>? needsRecreate = null)
         {
             Name = name;

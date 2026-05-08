@@ -1,3 +1,4 @@
+using System;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Data.Rendering;
 
@@ -60,6 +61,15 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         PathIntent = pathIntent;
     }
 
+    public override string GpuProfilingName
+        => $"VPRC_RenderMeshesPass[{FormatRenderPassName(RenderPass)};{(GPUDispatch ? "GPU" : "CPU")};{PathIntent}]";
+
+    protected override bool ShouldExecuteThisFrame()
+    {
+        XRRenderPipelineInstance? activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        return activeInstance?.MeshRenderCommands.HasRenderingCommands(RenderPass) == true;
+    }
+
     protected override void Execute()
     {
         switch (PathIntent)
@@ -110,4 +120,9 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 target.GetDepthStoreOp());
         }
     }
+
+    private static string FormatRenderPassName(int renderPass)
+        => Enum.IsDefined(typeof(EDefaultRenderPass), renderPass)
+            ? ((EDefaultRenderPass)renderPass).ToString()
+            : renderPass.ToString();
 }

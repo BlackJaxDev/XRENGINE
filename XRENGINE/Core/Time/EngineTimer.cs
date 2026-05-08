@@ -437,6 +437,8 @@ namespace XREngine.Timers
                     Render.LastTimestampTicks = timestampTicks;
 
                     Engine.Rendering.State.BeginRenderFrame();
+                    ulong renderFrameId = Engine.Rendering.State.RenderFrameId;
+                    long renderFrameStartTicks = TimeTicks();
                     Engine.SetDispatchingRenderFrame(true);
                     try
                     {
@@ -457,6 +459,10 @@ namespace XREngine.Timers
 
                     timestampTicks = TimeTicks();
                     Render.ElapsedTicks = Math.Max(0L, timestampTicks - Render.LastTimestampTicks);
+
+                    long renderFrameElapsedTicks = Math.Max(0L, timestampTicks - renderFrameStartTicks);
+                    double renderFrameMs = renderFrameElapsedTicks * 1000.0 / Stopwatch.Frequency;
+                    XREngine.Rendering.RenderPipelineGpuProfiler.Instance.RecordRenderThreadFrameMs(renderFrameId, renderFrameMs);
                 }
                 return dispatch;
             }

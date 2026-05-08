@@ -48,6 +48,21 @@ namespace XREngine.Rendering.Pipelines.Commands
         //        ui?.SwapBuffers();
         //}
 
+        protected override bool ShouldExecuteThisFrame()
+        {
+            XRRenderPipelineInstance? instance = Engine.Rendering.State.CurrentRenderingPipeline;
+            if (instance is null)
+                return false;
+
+            var ui = instance.RenderState.ScreenSpaceUserInterface;
+            if (ui is null || !ui.IsActive)
+                return false;
+
+            return OutputTargetFBOName is null ||
+                !FailRenderIfNoOutputFBO ||
+                instance.GetFBO<XRFrameBuffer>(OutputTargetFBOName) is not null;
+        }
+
         protected override void Execute()
         {
             int passIndex = ResolvePassIndex(nameof(VPRC_RenderScreenSpaceUI));

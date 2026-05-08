@@ -38,6 +38,24 @@ namespace XREngine.Rendering.Pipelines.Commands
                 RenderPasses = [.. renderPasses];
         }
 
+        protected override bool ShouldExecuteThisFrame()
+        {
+            if (Engine.Rendering.State.IsSceneCapturePass || RenderPasses.Length == 0)
+                return false;
+
+            XRRenderPipelineInstance? activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+            if (activeInstance is null)
+                return false;
+
+            for (int i = 0; i < RenderPasses.Length; i++)
+            {
+                if (activeInstance.MeshRenderCommands.HasRenderingCommands(RenderPasses[i]))
+                    return true;
+            }
+
+            return false;
+        }
+
         protected override void Execute()
         {
             // Scene captures (light probes, reflection probes) don't need motion vectors.

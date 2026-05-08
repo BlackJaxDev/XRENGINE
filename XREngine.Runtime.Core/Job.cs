@@ -48,7 +48,12 @@ namespace XREngine
 
         internal long LastEnqueuedTimestamp;
         internal long FirstEnqueuedTimestamp;
-        internal bool UsesQueueSlot;
+        private int _usesQueueSlot;
+        internal bool UsesQueueSlot
+        {
+            get => Volatile.Read(ref _usesQueueSlot) != 0;
+            set => Volatile.Write(ref _usesQueueSlot, value ? 1 : 0);
+        }
 
         public JobPriority Priority { get; internal set; } = JobPriority.Normal;
         public JobAffinity Affinity { get; internal set; } = JobAffinity.Any;
@@ -116,7 +121,7 @@ namespace XREngine
                 _pendingTask = null;
                 _completionSource = null;
                 Handle = default;
-                UsesQueueSlot = false;
+                Volatile.Write(ref _usesQueueSlot, 0);
                 LastEnqueuedTimestamp = 0;
                 FirstEnqueuedTimestamp = 0;
                 _starvationLogged = 0;
@@ -129,6 +134,9 @@ namespace XREngine
             }
             return true;
         }
+
+        internal bool TryClearQueueSlot()
+            => Interlocked.Exchange(ref _usesQueueSlot, 0) != 0;
 
         public void Cancel()
         {

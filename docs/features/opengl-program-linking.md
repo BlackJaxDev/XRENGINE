@@ -192,11 +192,14 @@ Important records:
 
 - `[ShaderLink]` records build-lane decisions, program name, hash, GL program
   id, backend, separable mode, hazard status, shader count, shader types,
-  source bytes, source lines, binary bytes, binary format, fingerprint, frame,
-  and whether the event ran on the render thread.
+  source bytes, source lines, shader source labels, binary bytes, binary
+  format, fingerprint, frame, and whether the event ran on the render thread.
 - `[ShaderBackend]` records final ready/failed telemetry with queue, compile,
   link, binary-load, and reflection timings plus shader count, stage list,
-  source bytes, and source lines.
+  source bytes, source lines, and shader source labels. If the render program
+  has no explicit name, diagnostics synthesize one from stage topology, variant
+  metadata, and source hash so profiler dumps and link logs can still be
+  correlated.
 - `[ShaderGLCall]` records measured GL calls related to shader compile,
   program link, attach/detach, program binary upload, binary capture, deletion,
   and parallel-compile configuration. When the call runs on the render thread,
@@ -217,7 +220,7 @@ The instrumented GL calls include program creation/configuration,
 Example records:
 
 ```text
-[ShaderLink] SOURCE_BACKEND_SELECTED program='ForwardUber' hash=123 programId=47 backend=DriverParallelSource separable=False hazard=False shaderCount=2 shaderTypes=VertexShader|FragmentShader sourceBytes=84231 sourceLines=2140 binaryBytes=0 binaryFormat=<none> fingerprint=<none> frame=128 renderThread=True detail='auto selected driver-parallel after startup probe'.
+[ShaderLink] SOURCE_BACKEND_SELECTED program='ForwardUber' hash=123 programId=47 backend=DriverParallelSource separable=False hazard=False shaderCount=2 shaderTypes=VertexShader|FragmentShader sourceBytes=84231 sourceLines=2140 shaderSources=VertexShader:Scene3D/Forward.vs|FragmentShader:Scene3D/Forward.fs binaryBytes=0 binaryFormat=<none> fingerprint=<none> frame=128 renderThread=True detail='auto selected driver-parallel after startup probe'.
 ```
 
 ```text
@@ -498,6 +501,12 @@ builds, source failures, failed-hash skips, slow link preparations, and
 shared-context source queue submissions. The summary also pulls
 upload-queue completed/failed/backpressure/coalesced totals from the bound
 `GLProgramBinaryUploadQueue`. Use this line as the long-session sanity check.
+If shader source links or binary uploads are still in flight during shutdown,
+the OpenGL shutdown path skips the final `glFinish`, skips this summary,
+orphans pending program handles for deferred cleanup, and abandons
+shared-context workers without joining them. If that happens during an approved
+native window close, the XR window also skips synchronous scene-panel and native
+window/context disposal so closing the app stays immediate.
 
 ## Render-Thread Stall Mitigations (2026-05)
 
