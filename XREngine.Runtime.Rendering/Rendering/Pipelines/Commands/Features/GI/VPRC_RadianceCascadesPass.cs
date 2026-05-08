@@ -54,7 +54,24 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (ActivePipelineInstance.Pipeline is not DefaultRenderPipeline pipeline || !pipeline.UsesRadianceCascades)
+            bool usesRadianceCascades;
+            bool stereo;
+            switch (ActivePipelineInstance.Pipeline)
+            {
+                case DefaultRenderPipeline pipeline:
+                    usesRadianceCascades = pipeline.UsesRadianceCascades;
+                    stereo = pipeline.Stereo;
+                    break;
+                case DefaultRenderPipeline2 pipeline:
+                    usesRadianceCascades = pipeline.UsesRadianceCascades;
+                    stereo = pipeline.Stereo;
+                    break;
+                default:
+                    usesRadianceCascades = false;
+                    stereo = false;
+                    break;
+            }
+            if (!usesRadianceCascades)
                 return;
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;
@@ -65,8 +82,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             if (region.Width <= 0 || region.Height <= 0)
                 return;
-
-            bool stereo = pipeline.Stereo;
 
             if (!EnsureProgram(stereo))
                 return;

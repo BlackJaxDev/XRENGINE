@@ -497,6 +497,12 @@ namespace XREngine
                 public static XRDataBuffer? ForwardPlusVisibleIndicesBuffer { get; internal set; }
 
                 /// <summary>
+                /// GPU buffer containing per-tile visible light counts (one uint per tile, including overflow above
+                /// ForwardPlusMaxLightsPerTile). Used by debug visualization. Null when Forward+ is not active.
+                /// </summary>
+                public static XRDataBuffer? ForwardPlusTileLightCountsBuffer { get; internal set; }
+
+                /// <summary>
                 /// Screen dimensions used for Forward+ tile calculations.
                 /// Determines how many tiles exist horizontally and vertically.
                 /// </summary>

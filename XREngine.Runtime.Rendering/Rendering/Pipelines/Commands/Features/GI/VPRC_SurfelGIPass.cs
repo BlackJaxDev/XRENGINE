@@ -163,11 +163,28 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (ActivePipelineInstance.Pipeline is not DefaultRenderPipeline pipeline || !pipeline.UsesSurfelGI)
+            bool usesSurfelGI;
+            bool stereo;
+            switch (ActivePipelineInstance.Pipeline)
+            {
+                case DefaultRenderPipeline pipeline:
+                    usesSurfelGI = pipeline.UsesSurfelGI;
+                    stereo = pipeline.Stereo;
+                    break;
+                case DefaultRenderPipeline2 pipeline:
+                    usesSurfelGI = pipeline.UsesSurfelGI;
+                    stereo = pipeline.Stereo;
+                    break;
+                default:
+                    usesSurfelGI = false;
+                    stereo = false;
+                    break;
+            }
+            if (!usesSurfelGI)
                 return;
 
             // Mono-only for the first iteration.
-            if (pipeline.Stereo)
+            if (stereo)
             {
                 var anyOutput = ActivePipelineInstance.GetTexture<XRTexture>(OutputTextureName);
                 anyOutput?.Clear(ColorF4.Transparent);
@@ -218,7 +235,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 LogGuardFailure(
                     nameof(Execute),
-                    $"Mono Surfel GI inputs unavailable. depth={DescribeTexture(depthInput)}, normal={DescribeTexture(normalInput)}, albedo={DescribeTexture(albedoInput)}, transformId={DescribeTexture(transformIdInput)}, output={DescribeTexture(outputInput)}, deferredMsaa={DefaultRenderPipeline.RuntimeEnableMsaaDeferred}, stereo={pipeline.Stereo}");
+                    $"Mono Surfel GI inputs unavailable. depth={DescribeTexture(depthInput)}, normal={DescribeTexture(normalInput)}, albedo={DescribeTexture(albedoInput)}, transformId={DescribeTexture(transformIdInput)}, output={DescribeTexture(outputInput)}, deferredMsaa={DefaultRenderPipeline.RuntimeEnableMsaaDeferred}, stereo={stereo}");
                 return;
             }
 

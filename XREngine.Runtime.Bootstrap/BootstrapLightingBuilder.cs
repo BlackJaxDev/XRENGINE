@@ -2,7 +2,9 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Capture;
 using XREngine.Components.Capture.Lights;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
+using XREngine.Data.Core;
 using XREngine.Data.Vectors;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -243,5 +245,278 @@ public static class BootstrapLightingBuilder
         dirLightComp.CastsShadows = true;
         dirLightComp.SetShadowMapResolution(4096, 4096);
         return dirLightComp;
+    }
+
+    public static void AddDynamicDebugLights(
+        SceneNode rootNode,
+        int pointLightCount,
+        int spotLightCount,
+        int seed,
+        bool castsShadows,
+        bool forceShadowAtlas)
+    {
+        pointLightCount = Math.Max(0, pointLightCount);
+        spotLightCount = Math.Max(0, spotLightCount);
+        int totalLightCount = pointLightCount + spotLightCount;
+        if (totalLightCount == 0)
+            return;
+
+        if (castsShadows && forceShadowAtlas)
+            EnableRequiredDynamicLightShadowAtlases(pointLightCount, spotLightCount);
+
+        Random random = new(seed);
+        SceneNode rigNode = rootNode.NewChild("DynamicDebugLights");
+        DynamicDebugLightState[] states = new DynamicDebugLightState[totalLightCount];
+        int stateIndex = 0;
+
+        for (int i = 0; i < pointLightCount; i++)
+        {
+            SceneNode pointNode = rigNode.NewChild($"DynamicPointLight_{i:D2}");
+            Transform pointTransform = pointNode.SetTransform<Transform>();
+            PointLightComponent pointLight = pointNode.AddComponent<PointLightComponent>()!;
+            pointLight.Name = $"DynamicPointLight_{i:D2}";
+            pointLight.Color = NextLightColor(random);
+            pointLight.DiffuseIntensity = NextRange(random, 3.0f, 8.0f);
+            pointLight.Brightness = NextRange(random, 2.0f, 6.0f);
+            pointLight.Radius = NextRange(random, 10.0f, 28.0f);
+            pointLight.CastsShadows = castsShadows;
+
+            states[stateIndex++] = CreateDynamicLightState(random, pointTransform, lookAtTarget: false);
+        }
+
+        for (int i = 0; i < spotLightCount; i++)
+        {
+            SceneNode spotNode = rigNode.NewChild($"DynamicSpotLight_{i:D2}");
+            Transform spotTransform = spotNode.SetTransform<Transform>();
+            SpotLightComponent spotLight = spotNode.AddComponent<SpotLightComponent>()!;
+            spotLight.Name = $"DynamicSpotLight_{i:D2}";
+            spotLight.Color = NextLightColor(random);
+            spotLight.DiffuseIntensity = NextRange(random, 5.0f, 12.0f);
+            spotLight.Brightness = NextRange(random, 3.0f, 8.0f);
+            spotLight.Distance = NextRange(random, 16.0f, 38.0f);
+            float innerCutoff = NextRange(random, 8.0f, 18.0f);
+            spotLight.SetCutoffs(innerCutoff, innerCutoff + NextRange(random, 18.0f, 34.0f));
+            spotLight.CastsShadows = castsShadows;
+
+            states[stateIndex++] = CreateDynamicLightState(random, spotTransform, lookAtTarget: true);
+        }
+
+        DynamicDebugLightRigComponent rig = rigNode.AddComponent<DynamicDebugLightRigComponent>()!;
+        rig.Configure(states);
+    }
+
+    private static void EnableRequiredDynamicLightShadowAtlases(int pointLightCount, int spotLightCount)
+    {
+        var renderSettings = Engine.Rendering.Settings;
+
+        if (pointLightCount > 0)
+            renderSettings.UsePointShadowAtlas = true;
+
+        if (spotLightCount > 0)
+            renderSettings.UseSpotShadowAtlas = true;
+    }
+
+    private static DynamicDebugLightState CreateDynamicLightState(Random random, Transform transform, bool lookAtTarget)
+    {
+        Vector3 center = new(
+            NextRange(random, -14.0f, 14.0f),
+            lookAtTarget ? NextRange(random, 5.0f, 12.0f) : NextRange(random, 2.0f, 7.0f),
+            NextRange(random, -14.0f, 14.0f));
+
+        Vector3 positionAmplitude = new(
+            NextRange(random, 2.0f, 7.0f),
+            NextRange(random, 0.75f, 3.0f),
+            NextRange(random, 2.0f, 7.0f));
+
+        Vector3 positionFrequency = new(
+            NextRange(random, 0.17f, 0.43f),
+            NextRange(random, 0.11f, 0.31f),
+            NextRange(random, 0.19f, 0.47f));
+
+        Vector3 positionPhase = NextPhaseVector(random);
+        Vector3 rotationFrequency = new(
+            NextRange(random, 0.16f, 0.55f),
+            NextRange(random, 0.14f, 0.50f),
+            NextRange(random, 0.12f, 0.45f));
+
+        Vector3 targetCenter = new(
+            NextRange(random, -3.5f, 3.5f),
+            NextRange(random, 0.5f, 3.0f),
+            NextRange(random, -3.5f, 3.5f));
+
+        Vector3 targetAmplitude = new(
+            NextRange(random, 0.75f, 3.5f),
+            NextRange(random, 0.25f, 1.5f),
+            NextRange(random, 0.75f, 3.5f));
+
+        Vector3 targetFrequency = new(
+            NextRange(random, 0.09f, 0.24f),
+            NextRange(random, 0.07f, 0.19f),
+            NextRange(random, 0.10f, 0.27f));
+
+        return new DynamicDebugLightState(
+            transform,
+            lookAtTarget,
+            center,
+            positionAmplitude,
+            positionFrequency,
+            positionPhase,
+            rotationFrequency,
+            NextPhaseVector(random),
+            targetCenter,
+            targetAmplitude,
+            targetFrequency,
+            NextPhaseVector(random));
+    }
+
+    private static Vector3 NextLightColor(Random random)
+    {
+        float hue = random.NextSingle();
+        float saturation = NextRange(random, 0.65f, 1.0f);
+        float value = NextRange(random, 0.80f, 1.0f);
+        return HsvToRgb(hue, saturation, value);
+    }
+
+    private static Vector3 HsvToRgb(float hue, float saturation, float value)
+    {
+        float h = hue - MathF.Floor(hue);
+        float scaled = h * 6.0f;
+        int sector = (int)MathF.Floor(scaled);
+        float fraction = scaled - sector;
+        float p = value * (1.0f - saturation);
+        float q = value * (1.0f - saturation * fraction);
+        float t = value * (1.0f - saturation * (1.0f - fraction));
+
+        return sector switch
+        {
+            0 => new Vector3(value, t, p),
+            1 => new Vector3(q, value, p),
+            2 => new Vector3(p, value, t),
+            3 => new Vector3(p, q, value),
+            4 => new Vector3(t, p, value),
+            _ => new Vector3(value, p, q),
+        };
+    }
+
+    private static float NextRange(Random random, float min, float max)
+        => min + random.NextSingle() * (max - min);
+
+    private static Vector3 NextPhaseVector(Random random)
+        => new(
+            NextRange(random, 0.0f, XRMath.TwoPIf),
+            NextRange(random, 0.0f, XRMath.TwoPIf),
+            NextRange(random, 0.0f, XRMath.TwoPIf));
+
+    private readonly record struct DynamicDebugLightState(
+        Transform Transform,
+        bool LookAtTarget,
+        Vector3 Center,
+        Vector3 PositionAmplitude,
+        Vector3 PositionFrequency,
+        Vector3 PositionPhase,
+        Vector3 RotationFrequency,
+        Vector3 RotationPhase,
+        Vector3 TargetCenter,
+        Vector3 TargetAmplitude,
+        Vector3 TargetFrequency,
+        Vector3 TargetPhase);
+
+    private sealed class DynamicDebugLightRigComponent : XRComponent
+    {
+        private DynamicDebugLightState[] _states = [];
+
+        public void Configure(DynamicDebugLightState[] states)
+        {
+            SetField(ref _states, states);
+            UpdateLights();
+        }
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            RegisterTick(ETickGroup.Normal, ETickOrder.Animation, UpdateLights);
+            UpdateLights();
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, UpdateLights);
+        }
+
+        private void UpdateLights()
+        {
+            float time = (float)Engine.ElapsedTime;
+
+            for (int i = 0; i < _states.Length; i++)
+                UpdateLight(_states[i], time);
+        }
+
+        private static void UpdateLight(in DynamicDebugLightState state, float time)
+        {
+            Vector3 position = Oscillate(
+                time,
+                state.Center,
+                state.PositionAmplitude,
+                state.PositionFrequency,
+                state.PositionPhase);
+
+            state.Transform.Translation = position;
+
+            if (state.LookAtTarget)
+            {
+                Vector3 target = Oscillate(
+                    time,
+                    state.TargetCenter,
+                    state.TargetAmplitude,
+                    state.TargetFrequency,
+                    state.TargetPhase);
+                Vector3 forward = target - position;
+                if (forward.LengthSquared() < 0.0001f)
+                    forward = Globals.Forward;
+                else
+                    forward = Vector3.Normalize(forward);
+
+                float roll = MathF.Sin(time * state.RotationFrequency.Z + state.RotationPhase.Z) * 0.35f;
+                state.Transform.Rotation = CreateForwardRotation(forward, roll);
+                return;
+            }
+
+            state.Transform.Rotation = Quaternion.CreateFromYawPitchRoll(
+                MathF.Sin(time * state.RotationFrequency.Y + state.RotationPhase.Y) * 1.2f,
+                MathF.Sin(time * state.RotationFrequency.X + state.RotationPhase.X) * 0.8f,
+                MathF.Sin(time * state.RotationFrequency.Z + state.RotationPhase.Z) * 1.0f);
+        }
+
+        private static Vector3 Oscillate(float time, Vector3 center, Vector3 amplitude, Vector3 frequency, Vector3 phase)
+            => center + new Vector3(
+                MathF.Sin(time * frequency.X + phase.X) * amplitude.X,
+                MathF.Sin(time * frequency.Y + phase.Y) * amplitude.Y,
+                MathF.Sin(time * frequency.Z + phase.Z) * amplitude.Z);
+
+        private static Quaternion CreateForwardRotation(Vector3 forward, float rollRadians)
+        {
+            Vector3 backward = -forward;
+            Vector3 upSeed = MathF.Abs(Vector3.Dot(backward, Globals.Up)) > 0.99f
+                ? Globals.Right
+                : Globals.Up;
+            Vector3 right = Vector3.Normalize(Vector3.Cross(upSeed, backward));
+            Vector3 up = Vector3.Normalize(Vector3.Cross(backward, right));
+
+            if (rollRadians != 0.0f)
+            {
+                Quaternion roll = Quaternion.CreateFromAxisAngle(forward, rollRadians);
+                right = Vector3.Transform(right, roll);
+                up = Vector3.Transform(up, roll);
+            }
+
+            Matrix4x4 basis = new(
+                right.X, right.Y, right.Z, 0.0f,
+                up.X, up.Y, up.Z, 0.0f,
+                backward.X, backward.Y, backward.Z, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f);
+
+            return Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(basis));
+        }
     }
 }

@@ -1,8 +1,10 @@
 # Dynamic Shadow Atlas And LOD Allocation TODO
 
 > Status: **active phased TODO**
-> Last reconciled: **2026-05-04** after point atlas bring-up, atlas page-array sampler conversion, and point-face refresh grouping.
+> Last reconciled: **2026-05-07** after point atlas bring-up, atlas page-array sampler conversion, point-face refresh grouping, and local shadow-frustum skip metadata.
 > Scope: runtime shadows, renderer integration, editor diagnostics, shader metadata.
+
+> 2026-05-07 allocator/stability update: `ShadowAtlasManager` now buckets requests once per solve, uses fixed-level buddy buckets, honors multi-page atlas settings, preserves prior placement through same-size reuse/downsize sub-rects/deferred upgrades, keeps a bounded resident table for short TTL reuse, reserves `NotRelevant` stale tiles only after live allocations, publishes point-face group metadata, keeps spot/point atlases depth-only, and uses sticky priority/relevance demotion under pressure.
 
 ## Target Outcome
 
@@ -29,6 +31,7 @@ Replace fixed per-light shadow textures with a budgeted shadow atlas system:
 - [x] Directional cascade matrices are texel-snapped using the current atlas allocation resolution when available, with desired-resolution fallback before first allocation.
 - [x] Point lights become six independent direct-to-atlas 2D face requests in atlas mode; no cubemap shadow texture is produced or sampled on the atlas path.
 - [ ] Point-light atlas rendering supports per-face priority, LOD, residency, and skip/fallback. A point light does not require all six faces to be resident in order to cast useful shadows.
+  - [x] Initial local shadow-frustum culling can force `SkipReason.NotRelevant` per point face while preserving stale resident metadata when available.
 - [ ] The optimized point-light atlas path is a true atlas geometry-shader renderer: selected faces fan out directly into atlas pages/tiles, not into an intermediate cubemap.
 - [ ] `Submit(in ShadowMapRequest)` performs no heap allocation after warmup.
 - [ ] Allocation, sorting, packing, and frame-data publish perform no per-frame hot-path allocations after warmup.
@@ -64,7 +67,8 @@ public readonly record struct ShadowMapRequest(
     ShadowDirtyReason DirtyReason,
     bool CanReusePreviousFrame,
     bool EditorPinned,
-    StereoVisibility StereoVis);
+    StereoVisibility StereoVis,
+    SkipReason ForcedSkipReason = SkipReason.None);
 ```
 
 ```csharp
@@ -131,6 +135,7 @@ As of 2026-05-03:
 - [x] Forward/deferred receivers bind one atlas `sampler2DArray` per light family instead of uniform arrays of per-page `sampler2D` values.
 - [x] `CascadeShadowRenderMode` is exposed in ImGui. `Sequential` is the standard legacy cascade path, `GeometryShader` uses the layered framebuffer path when available, and `InstancedLayered` uses single-pass layered rendering on OpenGL drivers with vertex-stage layer write support.
 - [x] Directional atlas cascades publish grouped same-page allocation records and can use `GeometryShader` / `InstancedLayered` grouped atlas page renders with indexed viewport/scissor state; missing grouped allocation or OpenGL viewport-index support falls back to the existing per-tile atlas renderer.
+- [x] Local shadow-frustum relevance now publishes `NotRelevant` skip metadata for point atlas faces and spot atlas requests whose shadow frusta do not intersect the active consumer camera set. Previously resident local tiles stay available as stale fallback metadata instead of being sampled as undefined atlas space.
 - [ ] Unified GPU shadow metadata SSBO, point-light face atlas rendering/sampling, dirty-reason reporting, LOD hysteresis, and allocation-free hot-path validation remain open.
   - [x] Forward+ local records now carry source/shadow record indices, local atlas paths use SSBO-backed point/spot metadata, point atlas receiver filtering is face-seam aware, diagnostics report dirty reasons, and LOD changes are hysteresis/rate limited.
   - [ ] The final unified `ShadowAtlasTile` SSBO and allocation-free warmed validation remain open.
@@ -358,7 +363,7 @@ Current state: spot atlas rendering/sampling is live and remains the color-linea
 
 **Goal:** migrate point shadows from cubemap ownership to direct-to-atlas face tiles with independent per-face residency.
 
-Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic point lights submit six independent `PointFace` requests, render selected faces directly into point-family atlas tiles, publish six face metadata records, and sample the atlas in forward and deferred receivers. Same-page point faces can now render through the grouped atlas path using indexed viewport/scissor state with atlas-specific instanced and geometry-shader variants; sequential direct-to-atlas rendering remains the compatibility fallback. Receiver-side seam hardening re-selects the owning face per filter tap.
+Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic point lights submit six independent `PointFace` requests, render selected relevant faces directly into point-family atlas tiles, publish six face metadata records, and sample the atlas in forward and deferred receivers. Same-page point faces can now render through the grouped atlas path using indexed viewport/scissor state with atlas-specific instanced and geometry-shader variants; sequential direct-to-atlas rendering remains the compatibility fallback. Receiver-side seam hardening re-selects the owning face per filter tap.
 
 ### Design Decisions
 
@@ -381,6 +386,7 @@ Current state: point atlas mode is live behind `UsePointShadowAtlas`. Dynamic po
   - [ ] Add projected receiver/caster overlap and editor pinning.
 - [ ] Allow per-face LOD and optional per-face skip when the face cannot affect active consumers.
   - [x] Initial per-face LOD demotion based on face relevance.
+  - [x] Initial face-frustum intersection skip with `SkipReason.NotRelevant` and stale resident fallback metadata.
   - [ ] Optional request skip for faces outside active consumers.
 - [x] Keep valid skipped faces resident when content is reusable and `StaleTile` fallback is allowed.
 - [x] Add direct-to-atlas sequential rendering for selected point faces.

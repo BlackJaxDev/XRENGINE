@@ -567,6 +567,37 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
+    public void DefaultPipelineVolumetricFog_CompositesAfterLateForwardWithTemporalProjection()
+    {
+        string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        commandChainSource.ShouldContain("Fog must composite after the late forward batches");
+        commandChainSource.IndexOf("AppendMotionBlurAndDoF(c);", StringComparison.Ordinal)
+            .ShouldBeLessThan(commandChainSource.IndexOf("AppendTemporalAccumulation(c);", StringComparison.Ordinal));
+        commandChainSource.IndexOf("AppendTemporalAccumulation(c);", StringComparison.Ordinal)
+            .ShouldBeLessThan(commandChainSource.IndexOf("AppendPostTemporalForwardPasses(c);", StringComparison.Ordinal));
+        commandChainSource.IndexOf("AppendPostTemporalForwardPasses(c);", StringComparison.Ordinal)
+            .ShouldBeLessThan(commandChainSource.IndexOf("AppendVolumetricFog(c);", StringComparison.Ordinal));
+        commandChainSource.IndexOf("AppendVolumetricFog(c);", StringComparison.Ordinal)
+            .ShouldBeLessThan(commandChainSource.IndexOf("AppendPostProcessResourceCaching(c);", StringComparison.Ordinal));
+
+        string postProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        postProcessSource.ShouldContain("VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData)");
+        postProcessSource.ShouldContain("EEngineUniform.ProjMatrix.ToStringFast(), temporalData.CurrProjection");
+        postProcessSource.ShouldContain("EEngineUniform.InverseProjMatrix.ToStringFast(), temporalData.CurrInverseProjection");
+        postProcessSource.ShouldContain("EEngineUniform.ViewProjectionMatrix.ToStringFast(), temporalData.CurrViewProjection");
+
+        string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
+        temporalSource.ShouldContain("public Matrix4x4 CurrProjection");
+        temporalSource.ShouldContain("public Matrix4x4 CurrInverseProjection");
+        temporalSource.ShouldContain("state.CurrProjection = jitteredProjection;");
+        temporalSource.ShouldContain("state.CurrInverseProjection = camera.InverseProjectionMatrix;");
+
+        string historyPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VolumetricFogHistoryPass.cs").Replace("\r\n", "\n");
+        historyPassSource.ShouldContain("? temporalData.CurrViewProjection");
+        historyPassSource.ShouldNotContain("state.CurrentViewProjection = camera.ViewProjectionMatrixUnjittered;");
+    }
+
+    [Test]
     public void AmbientOcclusionModeEvaluation_UsesResolvedCameraFallbacks()
     {
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");

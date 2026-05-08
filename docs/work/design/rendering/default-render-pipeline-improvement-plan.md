@@ -2,6 +2,8 @@
 
 **Goal:** Maximize readability, minimize out-of-render-pipeline processing, and fully leverage the new VPRC command inventory (including `VPRC_CacheOrCreateBuffer`, `VPRC_CacheOrCreateRenderBuffer`, `VPRC_BindBuffer`, `VPRC_PushShaderGlobals`, and `VPRC_SetVariable`).
 
+**Status (2026-05-07):** The parallel `DefaultRenderPipeline2` implementation now satisfies the core migration goals for V2: decomposed command-chain builders, GPU annotations/timers, no V2 `VPRC_Manual` commands, no V2 FBO/material `SettingUniforms +=` subscriptions, no raw V2 `BindTo()` SSBO calls in `DefaultRenderPipeline2*.cs`, PPLL state managed through typed commands and pipeline variables, runtime debug visualization branches, and light-probe shader bindings scoped through the command chain. Some original wording below remains historical and mentions `VPRC_PushShaderGlobals`; V2 uses command-scoped program bindings where the uniform payload still needs live camera/post-process state at draw time.
+
 ---
 
 ## 1. Executive Summary

@@ -587,8 +587,17 @@ public static partial class EditorImGuiUI
                 return;
             }
 
+            if (target is EffectiveSettingsInspectorTarget)
+            {
+                DrawEffectiveSettingsInspector();
+                return;
+            }
+
             if (target is XRAsset asset)
             {
+                if (IsRuntimeEngineDefaultsTarget(asset))
+                    DrawRuntimeEngineDefaultsInspectorNote();
+
                 DrawThirdPartyImportSettings(asset, visited);
                 if (TryDrawAssetInspector(new InspectorTargetSet(new[] { asset }, asset.GetType()), visited))
                     return;

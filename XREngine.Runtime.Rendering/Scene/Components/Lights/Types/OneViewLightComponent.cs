@@ -106,8 +106,10 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected virtual bool UsesAtlasShadowViewport => false;
 
+        protected virtual bool PrimaryShadowViewportRelevant => true;
+
         private bool ShouldProcessShadowViewport()
-            => CastsShadows && (ShadowMap is not null || UsesAtlasShadowViewport);
+            => CastsShadows && PrimaryShadowViewportRelevant && (ShadowMap is not null || UsesAtlasShadowViewport);
 
         /// <summary>
         /// Swaps the one-view shadow viewport buffers after visible shadow casters have been collected.
@@ -139,7 +141,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
-            if (!CastsShadows || ShadowMap is null)
+            if (!CastsShadows || ShadowMap is null || !PrimaryShadowViewportRelevant)
                 return;
 
             if (!_loggedShadowRenderOnce)

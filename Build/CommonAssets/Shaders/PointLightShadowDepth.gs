@@ -12,6 +12,9 @@ layout (location = 12) in vec4 InFragColor0[];
 layout (location = 20) in vec3 InFragPosLocal[];
 
 uniform mat4 ViewProjectionMatrices[6];
+uniform int PointShadowFaceCount;
+uniform int PointShadowFaceIndices[6];
+uniform int PointShadowFaceMask;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -21,8 +24,13 @@ layout (location = 20) out vec3 FragPosLocal;
 
 void main()
 {
-	for (int face = 0; face < 6; ++face)
+	int faceCount = clamp(PointShadowFaceCount, 0, 6);
+	for (int slot = 0; slot < faceCount; ++slot)
 	{
+		int face = clamp(PointShadowFaceIndices[slot], 0, 5);
+		if ((PointShadowFaceMask & (1 << face)) == 0)
+			continue;
+
 		gl_Layer = face;
 		for (int i = 0; i < 3; ++i)
 		{
@@ -31,7 +39,7 @@ void main()
 			FragUV0 = InFragUV0[i];
 			FragColor0 = InFragColor0[i];
 			FragPosLocal = InFragPosLocal[i];
-			gl_Position = ViewProjectionMatrices[face] * vec4(FragPos, 1.0);
+			gl_Position = ViewProjectionMatrices[slot] * vec4(FragPos, 1.0);
 			EmitVertex();
 		}    
 		EndPrimitive();

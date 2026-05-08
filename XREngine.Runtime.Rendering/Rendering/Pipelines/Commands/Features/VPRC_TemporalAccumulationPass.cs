@@ -34,6 +34,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public uint HaltonIndex = 1;
         public Vector2 CurrentJitter = Vector2.Zero;
         public Vector2 PreviousJitter = Vector2.Zero;
+        public Matrix4x4 CurrProjection = Matrix4x4.Identity;
+        public Matrix4x4 CurrInverseProjection = Matrix4x4.Identity;
         public Matrix4x4 CurrViewProjection = Matrix4x4.Identity;
         public Matrix4x4 CurrViewProjectionUnjittered = Matrix4x4.Identity;
         public Matrix4x4 CurrInverseViewProjection = Matrix4x4.Identity;
@@ -57,6 +59,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public bool HistoryReady { get; init; }
         public Matrix4x4 PrevViewProjection { get; init; }
         public Matrix4x4 PrevViewProjectionUnjittered { get; init; }
+        public Matrix4x4 CurrProjection { get; init; }
+        public Matrix4x4 CurrInverseProjection { get; init; }
         public Matrix4x4 CurrInverseViewProjection { get; init; }
         public Matrix4x4 CurrViewProjection { get; init; }
         public Matrix4x4 CurrViewProjectionUnjittered { get; init; }
@@ -270,6 +274,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 HistoryExposureReady = state.HistoryExposureReady,
                 PrevViewProjection = state.PrevViewProjection,
                 PrevViewProjectionUnjittered = state.PrevViewProjectionUnjittered,
+                CurrProjection = state.CurrProjection,
+                CurrInverseProjection = state.CurrInverseProjection,
                 CurrInverseViewProjection = state.CurrInverseViewProjection,
                 CurrViewProjection = state.CurrViewProjection,
                 CurrViewProjectionUnjittered = state.CurrViewProjectionUnjittered,
@@ -360,6 +366,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (camera is null)
         {
             state.CurrentJitter = Vector2.Zero;
+            state.CurrProjection = Matrix4x4.Identity;
+            state.CurrInverseProjection = Matrix4x4.Identity;
             state.CurrViewProjection = Matrix4x4.Identity;
             state.CurrViewProjectionUnjittered = Matrix4x4.Identity;
             state.CurrInverseViewProjection = Matrix4x4.Identity;
@@ -402,6 +410,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             inverseViewProjection = Matrix4x4.Identity;
 
         state.CurrViewProjectionUnjittered = baseViewProjection;
+        state.CurrProjection = jitteredProjection;
+        state.CurrInverseProjection = camera.InverseProjectionMatrix;
         state.CurrViewProjection = jitteredViewProjection;
         state.CurrInverseViewProjection = inverseViewProjection;
         //Debug.Out("[Temporal] Begin completed: VP/Jitter prepared.");

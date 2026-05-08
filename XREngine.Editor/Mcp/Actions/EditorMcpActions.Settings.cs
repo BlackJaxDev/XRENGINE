@@ -176,7 +176,7 @@ namespace XREngine.Editor.Mcp
         }
 
         // ───────────────────────────────────────────────────────────────────
-        // P5.3 — Engine Settings (read-only overview)
+        // P5.3 — Runtime engine configuration overview
         // ───────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -315,7 +315,7 @@ namespace XREngine.Editor.Mcp
         [Description("Read the contents of a config file from the project's Config/ directory.")]
         public static Task<McpToolResponse> ReadGameConfigAsync(
             McpToolContext context,
-            [McpName("path"), Description("Relative path within the Config/ directory (e.g., 'engine_settings.asset').")]
+            [McpName("path"), Description("Relative path within the Config/ directory (e.g., 'editor_preferences_overrides.asset').")]
             string path)
         {
             if (string.IsNullOrWhiteSpace(path))

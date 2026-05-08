@@ -1,7 +1,7 @@
 # Local Shadow Frustum Culling TODO
 
-> Status: **proposed phased TODO**
-> Last reconciled: **2026-05-04**
+> Status: **implemented in code; validation/manual smoke still pending**
+> Last reconciled: **2026-05-07**
 > Scope: point-light cubemap faces, point-light atlas faces, spot-light shadow frusta, shadow request submission, legacy shadow rendering, diagnostics.
 
 ## Target Outcome
@@ -16,12 +16,12 @@ Avoid rendering local shadow projections that cannot affect the current camera s
 - Atlas point faces can be skipped, demoted, or left stale with explicit diagnostics instead of always submitting all six faces.
 - The result is conservative: if relevance cannot be proven safely, render the shadow rather than dropping a visible receiver shadow.
 
-This is a narrow tactical improvement that can land before the broader [Shadow Relevance Scoring TODO](shadow-relevance-scoring-todo.md). The larger relevance system should eventually own the same camera-set and receiver-driven concepts.
+This is a narrow tactical improvement that can land before the broader [Shadow Atlas Major Overhaul TODO](shadow-atlas-overhaul-todo.md). The larger relevance system inside that overhaul should eventually own the same camera-set and receiver-driven concepts.
 
 ## Source Context
 
 - [Dynamic Shadow Atlas And LOD Allocation TODO](dynamic-shadow-atlas-lod-todo.md)
-- [Shadow Relevance Scoring TODO](shadow-relevance-scoring-todo.md)
+- [Shadow Atlas Major Overhaul TODO](shadow-atlas-overhaul-todo.md)
 - [VSM And EVSM Shadow Filtering TODO](shadow-filtering-vsm-evsm-todo.md)
 - `XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs`
 - `XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Buffers.cs`
@@ -36,16 +36,17 @@ This is a narrow tactical improvement that can land before the broader [Shadow R
 
 ## Current State
 
-- `CullShadowCollectionByCameraFrusta` can cull whole-light shadow collection for local lights when not in VR.
-- Point-light whole-light collection relevance uses the point influence sphere, not per-face frusta.
-- Spot-light whole-light collection relevance uses the spot cone, not the actual shadow camera frustum.
-- Legacy point non-GS collection is per face, but `RenderShadowMap` still renders all six faces.
-- Legacy point GS collection uses the influence sphere and renders all six cubemap layers in one pass.
-- Point atlas mode submits six `PointFace` requests for every active shadow-casting point light.
-- `EstimatePointFaceRelevance` currently uses light-to-camera direction alignment to scale resolution; it does not test face-frustum intersection and does not skip faces.
-- Spot atlas mode submits a `SpotPrimary` request for each active eligible spot light without a shadow-frustum relevance gate.
-- `SkipReason` does not currently include `NotRelevant`; the broader relevance TODO explicitly tracks that gap.
-- `LightComponent.CameraIntersections` already records camera/light-frustum intersections for debug, but that state is not used to drive shadow rendering.
+As of 2026-05-07, the runtime code now implements the tactical local-frustum slice:
+
+- `Lights3DCollection` builds a reusable local shadow relevance camera set from active world viewports and VR eye viewports.
+- `LocalShadowFrustumRelevance` provides conservative point-face and spot-frustum intersection queries.
+- Point lights cache a six-bit `ShadowFaceRelevanceMask`, skip non-relevant legacy cubemap faces, and upload compact face indices for layered/GS rendering.
+- Spot lights cache `ShadowFrustumRelevant`; non-relevant standalone spot renders skip collection, swap, render, and moment-map mip regeneration.
+- Point atlas faces and spot atlas requests can publish `SkipReason.NotRelevant`; previously resident local tiles stay available as stale fallback metadata when useful.
+- ImGui light diagnostics show point relevance/render masks and spot relevance state.
+
+Remaining non-code validation is still open: baseline captures, editor visual smoke, VR stereo smoke, and the final branch merge back to `main`.
+Targeted runtime/editor builds passed on 2026-05-07. The unit-test project currently fails to compile before test filters run because of unrelated project-wide test compile errors.
 
 ## Non-Negotiable Design Rules
 
@@ -72,7 +73,7 @@ This is a narrow tactical improvement that can land before the broader [Shadow R
 
 Goal: isolate the work and record today's behavior before changing scheduling.
 
-- [ ] Create a dedicated branch, for example `local-shadow-frustum-culling`.
+- [x] Create a dedicated branch, for example `local-shadow-frustum-culling`.
 - [ ] Capture baseline metrics in a scene with many point and spot lights:
   - [ ] legacy point GS enabled
   - [ ] legacy point GS disabled
@@ -100,45 +101,45 @@ Goal: isolate the work and record today's behavior before changing scheduling.
 
 Goal: create one allocation-free relevance query used by atlas and legacy paths.
 
-- [ ] Introduce a small reusable camera-set helper for local shadow relevance.
+- [x] Introduce a small reusable camera-set helper for local shadow relevance.
 - [ ] Inputs:
-  - [ ] active desktop/world viewports that target the world
-  - [ ] VR left eye viewport when active
-  - [ ] VR right eye viewport when active
+  - [x] active desktop/world viewports that target the world
+  - [x] VR left eye viewport when active
+  - [x] VR right eye viewport when active
   - [ ] optional mirror/capture/probe cameras only when explicitly flagged as relevance consumers
-- [ ] Store prepared frusta in a reusable scratch list or fixed-capacity buffer owned by `Lights3DCollection`.
-- [ ] Add point-face query:
-  - [ ] `bool IsPointFaceRelevant(PointLightComponent light, int faceIndex, in ShadowRelevanceCameraSet cameras)`
-  - [ ] uses the face `XRCamera.WorldFrustum().Prepare()` or cached equivalent
-  - [ ] returns true when any relevance camera intersects that face frustum
-- [ ] Add spot query:
-  - [ ] `bool IsSpotShadowRelevant(SpotLightComponent light, in ShadowRelevanceCameraSet cameras)`
-  - [ ] uses the actual `ShadowCamera.WorldFrustum()` when available
-  - [ ] falls back to conservative cone/sphere relevance if the shadow camera does not exist yet
-- [ ] Add a no-camera policy:
-  - [ ] atlas keeps existing `NoConsumerCamera` behavior
-  - [ ] legacy runtime rendering returns conservative relevant unless the world is explicitly headless/no-render
-- [ ] Add geometry tests:
-  - [ ] disjoint frusta returns false
-  - [ ] touching/edge-overlap returns true
-  - [ ] contained frustum returns true
-  - [ ] invalid light/camera state returns conservative true
+- [x] Store prepared frusta in a reusable scratch list or fixed-capacity buffer owned by `Lights3DCollection`.
+- [x] Add point-face query:
+  - [x] `bool IsPointFaceRelevant(PointLightComponent light, int faceIndex, in ShadowRelevanceCameraSet cameras)`
+  - [x] uses the face `XRCamera.WorldFrustum().Prepare()` or cached equivalent
+  - [x] returns true when any relevance camera intersects that face frustum
+- [x] Add spot query:
+  - [x] `bool IsSpotShadowRelevant(SpotLightComponent light, in ShadowRelevanceCameraSet cameras)`
+  - [x] uses the actual `ShadowCamera.WorldFrustum()` when available
+  - [x] falls back to conservative cone/sphere relevance if the shadow camera does not exist yet
+- [x] Add a no-camera policy:
+  - [x] atlas keeps existing `NoConsumerCamera` behavior
+  - [x] legacy runtime rendering returns conservative relevant unless the world is explicitly headless/no-render
+- [x] Add geometry tests:
+  - [x] disjoint frusta returns false
+  - [x] touching/edge-overlap returns true
+  - [x] contained frustum returns true
+  - [x] invalid light/camera state returns conservative true
 
 ## Phase 2: Point Atlas Face Submission And Skip Reasons
 
 Goal: stop submitting or rendering point atlas faces that cannot affect the camera set.
 
-- [ ] Add `SkipReason.NotRelevant` to `ShadowAtlasTypes.cs`.
-- [ ] Extend point-face request generation in `Lights3DCollection.SubmitPointShadowAtlasRequests`.
+- [x] Add `SkipReason.NotRelevant` to `ShadowAtlasTypes.cs`.
+- [x] Extend point-face request generation in `Lights3DCollection.SubmitPointShadowAtlasRequests`.
 - [ ] For each face:
-  - [ ] compute face relevance using the shared query
+  - [x] compute face relevance using the shared query
   - [ ] if not relevant and no previous resident tile is needed, do not submit the request
-  - [ ] if not relevant and previous metadata should remain visible for diagnostics/fallback, publish a skipped allocation with `NotRelevant`
-  - [ ] if relevant, submit normally and keep the existing priority/resolution logic
-- [ ] Decide stale-tile behavior:
-  - [ ] not relevant + previous resident tile -> may keep stale metadata but does not schedule rendering
-  - [ ] relevant again + stale tile -> schedules a fresh render immediately
-- [ ] Ensure receivers for missing point faces use the existing explicit fallback path, usually contact-only or lit, never undefined atlas samples.
+  - [x] if not relevant and previous metadata should remain visible for diagnostics/fallback, publish a skipped allocation with `NotRelevant`
+  - [x] if relevant, submit normally and keep the existing priority/resolution logic
+- [x] Decide stale-tile behavior:
+  - [x] not relevant + previous resident tile -> may keep stale metadata but does not schedule rendering
+  - [x] relevant again + stale tile -> schedules a fresh render immediately
+- [x] Ensure receivers for missing point faces use the existing explicit fallback path, usually contact-only or lit, never undefined atlas samples.
 - [ ] Add unit tests:
   - [ ] six-face point light with only one relevant face submits/renders one face
   - [ ] non-relevant face produces `NotRelevant` when metadata is published
@@ -149,11 +150,11 @@ Goal: stop submitting or rendering point atlas faces that cannot affect the came
 
 Goal: skip spot atlas work when the spot shadow frustum is outside the relevance camera set.
 
-- [ ] Gate `SubmitSpotShadowAtlasRequests` with the shared spot relevance query.
+- [x] Gate `SubmitSpotShadowAtlasRequests` with the shared spot relevance query.
 - [ ] Decide whether non-relevant spot lights:
   - [ ] do not submit at all when no previous metadata is useful
-  - [ ] publish `SkipReason.NotRelevant` when diagnostics or stale fallback require a record
-- [ ] Keep moment-map behavior unchanged: VSM/EVSM spot lights that bypass the atlas must be handled by the legacy path phases.
+  - [x] publish `SkipReason.NotRelevant` when diagnostics or stale fallback require a record
+- [x] Keep moment-map behavior unchanged: VSM/EVSM spot lights that bypass the atlas must be handled by the legacy path phases.
 - [ ] Add unit tests:
   - [ ] disjoint spot frustum submits no atlas request
   - [ ] intersecting spot frustum submits one `SpotPrimary` request
@@ -164,60 +165,60 @@ Goal: skip spot atlas work when the spot shadow frustum is outside the relevance
 
 Goal: skip individual cubemap face passes in the non-GS path.
 
-- [ ] Compute and cache the current point-face mask before `CollectVisibleItems`, `SwapBuffers`, and `RenderShadowMap`.
+- [x] Compute and cache the current point-face mask before `CollectVisibleItems`, `SwapBuffers`, and `RenderShadowMap`.
 - [ ] In non-GS collection:
-  - [ ] collect only relevant face viewports
+  - [x] collect only relevant face viewports
   - [ ] leave skipped face command buffers untouched or explicitly clear them according to the stale-face policy
 - [ ] In non-GS swap:
-  - [ ] swap only relevant face viewports
-- [ ] In non-GS render:
-  - [ ] render only relevant face FBO attachments
-  - [ ] skip the per-face framebuffer attachment setup for non-relevant faces
-- [ ] If the relevance mask is empty, skip the point shadow render entirely.
-- [ ] Add tests or source-contract checks:
-  - [ ] render loop checks a face relevance mask before binding/rendering a face
-  - [ ] collect and swap use the same mask source as render
-  - [ ] empty mask short-circuits render
+  - [x] swap only relevant face viewports
+- [x] In non-GS render:
+  - [x] render only relevant face FBO attachments
+  - [x] skip the per-face framebuffer attachment setup for non-relevant faces
+- [x] If the relevance mask is empty, skip the point shadow render entirely.
+- [x] Add tests or source-contract checks:
+  - [x] render loop checks a face relevance mask before binding/rendering a face
+  - [x] collect and swap use the same mask source as render
+  - [x] empty mask short-circuits render
 
 ## Phase 5: Legacy Point GS Layer Masking
 
 Goal: make the GS path avoid non-relevant cubemap layers without losing the single-draw fast path when most faces are relevant.
 
-- [ ] Choose the GS partial-face strategy:
-  - [ ] preferred: add a six-bit `PointShadowFaceMask` uniform consumed by `PointLightShadowDepth.gs`
+- [x] Choose the GS partial-face strategy:
+  - [x] preferred: add a six-bit `PointShadowFaceMask` uniform consumed by `PointLightShadowDepth.gs`
   - [ ] fallback: when the mask is partial, temporarily use the non-GS per-face renderer for relevant faces only
-- [ ] If using a GS mask:
-  - [ ] upload `PointShadowFaceMask` in `PointLightComponent.SetShadowMapUniforms`
-  - [ ] skip `gl_Layer` emission for masked-off faces
-  - [ ] keep view-projection array uploads unchanged for relevant faces
-  - [ ] skip the whole draw when the mask is zero
-- [ ] Review collection for GS:
-  - [ ] current sphere collection is conservative and acceptable for correctness
+- [x] If using a GS mask:
+  - [x] upload `PointShadowFaceMask` in `PointLightComponent.SetShadowMapUniforms`
+  - [x] skip `gl_Layer` emission for masked-off faces
+  - [x] keep view-projection array uploads unchanged for relevant faces
+  - [x] skip the whole draw when the mask is zero
+- [x] Review collection for GS:
+  - [x] current sphere collection is conservative and acceptable for correctness
   - [ ] optionally add a union-of-relevant-face-frusta collection volume later if CPU collection cost remains high
-- [ ] Add shader/source tests:
-  - [ ] GS declares and uses `PointShadowFaceMask`
-  - [ ] masked-off faces do not emit vertices
-  - [ ] zero mask avoids the draw at the C# render-call level
+- [x] Add shader/source tests:
+  - [x] GS declares and uses `PointShadowFaceMask`
+  - [x] masked-off faces do not emit vertices
+  - [x] zero mask avoids the draw at the C# render-call level
 - [ ] Validate with GS on and off in the same scene.
 
 ## Phase 6: Legacy Spot Rendering
 
 Goal: skip standalone spot shadow-map rendering when the spot shadow frustum cannot affect the camera set.
 
-- [ ] Add a relevance gate to `OneViewLightComponent` or `SpotLightComponent` without affecting directional primary shadows.
+- [x] Add a relevance gate to `OneViewLightComponent` or `SpotLightComponent` without affecting directional primary shadows.
 - [ ] For spot legacy collection:
-  - [ ] skip `PrimaryShadowViewport.CollectVisible(false)` when not relevant
+  - [x] skip `PrimaryShadowViewport.CollectVisible(false)` when not relevant
 - [ ] For spot legacy swap:
-  - [ ] skip `PrimaryShadowViewport.SwapBuffers()` when not relevant
+  - [x] skip `PrimaryShadowViewport.SwapBuffers()` when not relevant
 - [ ] For spot legacy render:
-  - [ ] skip `PrimaryShadowViewport.Render(...)` when not relevant
-- [ ] Preserve VSM/EVSM standalone mip generation:
-  - [ ] do not generate mips when the shadow map was not rendered
-  - [ ] regenerate normally when the spot becomes relevant again
-- [ ] Add tests/source checks:
-  - [ ] spot relevance gate does not affect directional one-view lights
-  - [ ] mip generation is conditional on an actual render
-  - [ ] non-relevant spot render returns without touching the FBO
+  - [x] skip `PrimaryShadowViewport.Render(...)` when not relevant
+- [x] Preserve VSM/EVSM standalone mip generation:
+  - [x] do not generate mips when the shadow map was not rendered
+  - [x] regenerate normally when the spot becomes relevant again
+- [x] Add tests/source checks:
+  - [x] spot relevance gate does not affect directional one-view lights
+  - [x] mip generation is conditional on an actual render
+  - [x] non-relevant spot render returns without touching the FBO
 
 ## Phase 7: Diagnostics And Editor Visibility
 
@@ -231,9 +232,9 @@ Goal: make skipped faces/frusta visible and debuggable.
   - [ ] GS masks used
   - [ ] GS partial masks that fell back to non-GS, if applicable
 - [ ] Extend ImGui light diagnostics:
-  - [ ] point light face mask
+  - [x] point light face mask
   - [ ] atlas face skip reasons
-  - [ ] spot relevance state
+  - [x] spot relevance state
   - [ ] last relevant frame
 - [ ] Add optional debug draw:
   - [ ] relevant point face frusta in one color
@@ -251,8 +252,8 @@ Goal: prove the optimization saves work without visible regressions.
   - [ ] `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter ShadowAtlasManagerPhaseTests`
   - [ ] `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter CascadedShadowDefaultsAndForwardShaderTests`
 - [ ] Run targeted builds:
-  - [ ] `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj`
-  - [ ] `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
+  - [x] `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj`
+  - [x] `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
 - [ ] Smoke validation in `Editor (Unit Testing World)`:
   - [ ] point light with GS enabled
   - [ ] point light with GS disabled
@@ -276,10 +277,10 @@ Goal: prove the optimization saves work without visible regressions.
 
 Goal: keep the local optimization aligned with the broader shadow roadmap.
 
-- [ ] Cross-link final behavior into [shadow-relevance-scoring-todo.md](shadow-relevance-scoring-todo.md).
-- [ ] Update [dynamic-shadow-atlas-lod-todo.md](dynamic-shadow-atlas-lod-todo.md) for point-face skip/fallback parity.
-- [ ] Update [shadow-filtering-vsm-evsm-todo.md](shadow-filtering-vsm-evsm-todo.md) if standalone moment spot rendering changes.
-- [ ] Update `docs/architecture/rendering/default-render-pipeline-notes.md` if behavior becomes user-visible or diagnostic settings are added.
+- [x] Cross-link final behavior into [shadow-atlas-overhaul-todo.md](shadow-atlas-overhaul-todo.md).
+- [x] Update [dynamic-shadow-atlas-lod-todo.md](dynamic-shadow-atlas-lod-todo.md) for point-face skip/fallback parity.
+- [x] Update [shadow-filtering-vsm-evsm-todo.md](shadow-filtering-vsm-evsm-todo.md) if standalone moment spot rendering changes.
+- [x] Update `docs/architecture/rendering/default-render-pipeline-notes.md` if behavior becomes user-visible or diagnostic settings are added.
 - [ ] File follow-up work for receiver-visibility scoring if this TODO remains purely frustum-based.
 
 ## Final Task

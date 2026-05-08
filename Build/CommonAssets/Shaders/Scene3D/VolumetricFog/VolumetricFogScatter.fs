@@ -42,6 +42,8 @@ uniform float ShadowBiasMin;
 uniform float ShadowBiasMax;
 uniform int ShadowSamples;
 uniform float ShadowFilterRadius;
+uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // min variance, light bleed reduction, positive exponent, negative exponent
+uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // blur radius texels, blur passes, use mipmaps, mip bias
 
 // Debug visualization mode:
 //   0  = normal scatter output (default)
@@ -69,6 +71,7 @@ uniform int VolumetricFogDebugMode;
 // copy here drifts whenever the shared struct changes and silently mismaps
 // uniforms by name lookup.
 #pragma snippet "LightStructs"
+#pragma snippet "ShadowMomentEncoding"
 
 // Mirror the legacy deferred-light upload path (`LightData`) because that is
 // the same directional-light uniform surface the scene light-combine pass uses.
@@ -311,6 +314,26 @@ float EvaluatePrimaryDirectionalShadow(vec3 samplePosWS)
   vec3 shadowCoord = ProjectShadowCoord(LightData.WorldToLightSpaceMatrix, samplePosWS);
   if (!ShadowCoordInBounds(shadowCoord))
     return 1.0f;
+
+  if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+  {
+    bool useMomentMipmaps = ShadowMomentFilterParams.z != 0.0f;
+    float momentMipLevel = XRENGINE_ResolveShadowMomentMipLevel(
+      ShadowMomentFilterParams.w,
+      ShadowMomentFilterParams.x,
+      useMomentMipmaps);
+    return XRENGINE_SampleShadowMoment2D(
+      ShadowMap,
+      shadowCoord.xy,
+      clamp(shadowCoord.z - min(bias, 0.01f), 0.0f, 1.0f),
+      ShadowMapEncoding,
+      ShadowMomentParams0.x,
+      ShadowMomentParams0.y,
+      ShadowMomentParams0.z,
+      ShadowMomentParams0.w,
+      momentMipLevel,
+      useMomentMipmaps);
+  }
 
   return ShadowSamples <= 1
     ? SampleShadowMapSimple(ShadowMap, shadowCoord, bias)

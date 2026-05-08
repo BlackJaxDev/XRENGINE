@@ -358,6 +358,25 @@ namespace XREngine.Rendering
             set => SetField(ref _setRenderPipelineFromCamera, value);
         }
 
+        internal void SynchronizeRenderPipelineFromCamera(XRCamera camera)
+        {
+            if (!SetRenderPipelineFromCamera || !ReferenceEquals(ActiveCamera, camera))
+                return;
+
+            SynchronizeRenderPipelineFromActiveCamera();
+        }
+
+        private void SynchronizeRenderPipelineFromActiveCamera()
+        {
+            _renderPipeline.Pipeline = ActiveCamera?.RenderPipeline;
+
+            // When the camera's pipeline changes, push current sizing into the
+            // existing runtime instance so the new command chain sees valid targets
+            // immediately instead of waiting for a later resize.
+            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
+            _renderPipeline.ViewportResized(Width, Height);
+        }
+
         /// <summary>
         /// When true, visible objects are automatically collected each frame via Engine.Time.Timer.CollectVisible.
         /// This populates the render command collection with all objects visible to this viewport's camera.
@@ -626,20 +645,7 @@ namespace XREngine.Rendering
                             RuntimeRenderingHostServices.Current.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
                     }
                     if (SetRenderPipelineFromCamera)
-                    {
-                        _renderPipeline.Pipeline = _camera?.RenderPipeline;
-
-                        // When the camera (and therefore pipeline) changes, we must push current
-                        // sizing into the new pipeline instance. Otherwise the new pipeline can run
-                        // with stale dimensions until a window resize occurs.
-                        _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
-                        _renderPipeline.ViewportResized(Width, Height);
-
-                        // InternalResolutionResized already invalidates the physical GPU
-                        // resources. Doing it again here can tear down the GBuffer in the
-                        // middle of the transition frame, leaving LightCombine with null
-                        // attachments immediately after the camera swap.
-                    }
+                        SynchronizeRenderPipelineFromActiveCamera();
                     break;
                 case nameof(CameraComponent):
                     ResizeCameraComponentUI();
@@ -655,6 +661,10 @@ namespace XREngine.Rendering
                     EnsureViewportBoundToCamera();
                     Debug.Rendering($"[XRViewport] After EnsureViewportBoundToCamera: VP[{Index}] Camera.Viewports.Count={ActiveCamera?.Viewports.Count ?? -1}");
                     //_renderPipeline.Pipeline = CameraComponent?.RenderPipeline;
+                    break;
+                case nameof(SetRenderPipelineFromCamera):
+                    if (_setRenderPipelineFromCamera)
+                        SynchronizeRenderPipelineFromActiveCamera();
                     break;
             }
         }

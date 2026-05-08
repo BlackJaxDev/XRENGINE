@@ -27,10 +27,35 @@ public partial class OpenGLRenderer
     [ThreadStatic]
     private static bool _suppressDriverParallelShaderCompile;
 
+    /// <summary>
+    /// Shared-context program compile/link worker queue gating.
+    ///
+    /// Source linking must never fall back to a render-thread synchronous link:
+    /// cold links of large imported-model and uber shaders can block the editor
+    /// for 60-120 seconds at a time. The worker queue is therefore ON by default
+    /// whenever async program compilation is enabled.
+    ///
+    /// <c>XRE_ENABLE_SHARED_CONTEXT_LINK_QUEUE=1</c> is kept as a compatibility
+    /// no-op for existing launch profiles.
+    ///
+    /// <c>XRE_DISABLE_SHARED_CONTEXT_LINK_QUEUE=1</c> still forces the queue
+    /// off (kept for parity with prior tooling).
+    /// </summary>
+    private static readonly bool s_enableSharedContextLinkQueueEnv =
+        string.Equals(Environment.GetEnvironmentVariable("XRE_ENABLE_SHARED_CONTEXT_LINK_QUEUE"), "1", StringComparison.Ordinal);
+
+    private static readonly bool s_disableSharedContextLinkQueueEnv =
+        string.Equals(Environment.GetEnvironmentVariable("XRE_DISABLE_SHARED_CONTEXT_LINK_QUEUE"), "1", StringComparison.Ordinal);
+
     private static bool WantsSharedContextProgramCompileLinkQueue
     {
         get
         {
+            if (s_disableSharedContextLinkQueueEnv)
+                return false;
+
+            _ = s_enableSharedContextLinkQueueEnv;
+
             if (!Engine.Rendering.Settings.AsyncProgramCompilation)
                 return false;
 
@@ -261,6 +286,55 @@ public partial class OpenGLRenderer
         {
             return -1;
         }
+    }
+
+    /// <summary>
+    /// Enables <c>KHR_parallel_shader_compile</c> on a background shared-context
+    /// worker. The extension is per-context: without this, each worker context
+    /// defaults to serial driver compilation, which on NVIDIA can cause cold
+    /// links of large uber fragment shaders to take 60-120+ seconds per program
+    /// and stall every subsequent program queued on that worker. Must be called
+    /// on the worker's own thread (i.e. from inside an enqueued job) so the
+    /// state mutation targets the worker's GL context.
+    /// </summary>
+    private void EnableParallelShaderCompileOnSharedContextWorker(GLSharedContext worker, string workerLabel)
+    {
+        if (!_parallelShaderCompileSupported)
+            return;
+
+        uint requested = ResolveParallelShaderCompilerThreadCount();
+        string extensionName = _parallelShaderCompileExtensionName;
+        GlMaxShaderCompilerThreadsDelegate? khrDelegate = _glMaxShaderCompilerThreadsKhr;
+
+        worker.Enqueue(gl =>
+        {
+            try
+            {
+                bool set = false;
+                if (extensionName == ArbParallelShaderCompileExtensionName &&
+                    gl.TryGetExtension<ArbParallelShaderCompile>(out var arb))
+                {
+                    arb.MaxShaderCompilerThreads(requested);
+                    set = true;
+                }
+                else if (extensionName == KhrParallelShaderCompileExtensionName && khrDelegate is not null)
+                {
+                    khrDelegate(requested);
+                    set = true;
+                }
+
+                int reported = TryGetMaxShaderCompilerThreads(gl);
+                Debug.OpenGL(
+                    $"[ShaderCache] Worker '{workerLabel}' parallel shader compile: " +
+                    $"extension={extensionName}, requested={FormatThreadCount(requested)}, " +
+                    $"reported={reported}, set={set}.");
+            }
+            catch (Exception ex)
+            {
+                Debug.OpenGLWarning(
+                    $"[ShaderCache] Worker '{workerLabel}' failed to enable parallel shader compile: {ex.Message}");
+            }
+        }, "InitParallelShaderCompile");
     }
 
     /// <summary>

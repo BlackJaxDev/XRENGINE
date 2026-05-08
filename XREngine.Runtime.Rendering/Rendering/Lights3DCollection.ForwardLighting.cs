@@ -41,6 +41,9 @@ namespace XREngine.Scene
         private static readonly int[] _directionalShadowMapEnabled = new int[MaxForwardDirectionalLights];
         private static readonly int[] _directionalUseCascadedShadows = new int[MaxForwardDirectionalLights];
         private static readonly int[] _directionalShadowAtlasEnabled = new int[MaxForwardDirectionalLights];
+        private static readonly int[] _directionalShadowMapEncoding = new int[MaxForwardDirectionalLights];
+        private static readonly Vector4[] _directionalShadowMomentParams0 = new Vector4[MaxForwardDirectionalLights];
+        private static readonly Vector4[] _directionalShadowMomentFilterParams = new Vector4[MaxForwardDirectionalLights];
 
         // Pre-computed sampler uniform names for indexed shadow resources.
         // Avoids per-draw string interpolation allocations on the render thread.
@@ -115,6 +118,8 @@ namespace XREngine.Scene
             public Vector4 Params3;
             public Vector4 Params4;
             public Vector4 Params5;
+            public IVector4 Packed2;
+            public Vector4 Params6;
             public IVector4 AtlasPacked0Face0;
             public IVector4 AtlasPacked0Face1;
             public IVector4 AtlasPacked0Face2;
@@ -711,9 +716,13 @@ namespace XREngine.Scene
             Array.Clear(_directionalUseCascadedShadows);
             Array.Clear(_directionalShadowAtlasEnabled);
             Array.Clear(_directionalShadowBiasProjectionParams);
+            Array.Clear(_directionalShadowMapEncoding);
+            Array.Clear(_directionalShadowMomentParams0);
+            Array.Clear(_directionalShadowMomentFilterParams);
             if (directionalLightCount > 0)
             {
                 var firstDirLight = DynamicDirectionalLights[0];
+                ShadowMapFormatSelection firstShadowFormat = firstDirLight.ResolveShadowMapFormat(preferredStorageFormat: null);
                 program.Uniform("ShadowPackedI0", new IVector4(
                     firstDirLight.BlockerSamples,
                     firstDirLight.FilterSamples,
@@ -746,12 +755,22 @@ namespace XREngine.Scene
                     0.0f));
                 program.Uniform("ShadowBiasParams", firstDirLight.ShadowBiasParameters);
                 program.Uniform("ShadowBiasProjectionParams", firstDirLight.GetPrimaryShadowBiasProjectionParameters());
+                program.Uniform("ShadowMapEncoding", (int)firstShadowFormat.Encoding);
+                program.Uniform("ShadowMomentParams0", new Vector4(
+                    firstDirLight.ShadowMomentMinVariance,
+                    firstDirLight.ShadowMomentLightBleedReduction,
+                    firstShadowFormat.PositiveExponent,
+                    firstShadowFormat.NegativeExponent));
+                program.Uniform("ShadowMomentFilterParams", new Vector4(
+                    firstDirLight.ShadowMomentBlurRadiusTexels,
+                    firstDirLight.ShadowMomentBlurPasses,
+                    firstDirLight.ShadowMomentUseMipmaps ? 1.0f : 0.0f,
+                    firstDirLight.ShadowMomentMipBias));
 
                 if (firstDirLight.CastsShadows)
                 {
                     // 2D shadow map (non-cascaded / fallback path).
-                    if (firstDirLight.ShadowMap?.Material?.Textures.Count > 0)
-                        forwardShadowTex = firstDirLight.ShadowMap.Material.Textures[0];
+                    forwardShadowTex = FindShadowMapTexture(firstDirLight);
 
                     // Cascaded shadow array — evaluated independently of the 2D map because
                     // in cascaded mode the 2D ShadowMap may never be populated but the
@@ -762,14 +781,14 @@ namespace XREngine.Scene
                     useCascadedDirectionalShadows =
                         cameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
                         firstDirLight.EnableCascadedShadows &&
-                        firstDirLight.CascadedShadowMapTexture is not null &&
+                        (firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding || firstDirLight.CascadedShadowMapTexture is not null) &&
                         firstDirLight.ActiveCascadeCount > 0;
 
                     if (useCascadedDirectionalShadows)
                         forwardCascadeShadowTex = firstDirLight.CascadedShadowMapTexture;
 
                     useDirectionalShadowAtlas =
-                        Engine.Rendering.Settings.UseDirectionalShadowAtlas &&
+                        firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding &&
                         firstDirLight.CastsShadows;
 
                     if (useDirectionalShadowAtlas)
@@ -859,22 +878,37 @@ namespace XREngine.Scene
                 if (i < directionalLightCount)
                 {
                     DirectionalLightComponent dirLight = DynamicDirectionalLights[i];
+                    ShadowMapFormatSelection dirShadowFormat = dirLight.ResolveShadowMapFormat(preferredStorageFormat: null);
+                    bool perLightUseAtlas = dirLight.UsesDirectionalShadowAtlasForCurrentEncoding;
+                    useDirectionalShadowAtlas |= perLightUseAtlas;
                     _directionalShadowBiasProjectionParams[i] = dirLight.GetPrimaryShadowBiasProjectionParameters();
+                    _directionalShadowMapEncoding[i] = (int)dirShadowFormat.Encoding;
+                    _directionalShadowMomentParams0[i] = new Vector4(
+                        dirLight.ShadowMomentMinVariance,
+                        dirLight.ShadowMomentLightBleedReduction,
+                        dirShadowFormat.PositiveExponent,
+                        dirShadowFormat.NegativeExponent);
+                    _directionalShadowMomentFilterParams[i] = new Vector4(
+                        dirLight.ShadowMomentBlurRadiusTexels,
+                        dirLight.ShadowMomentBlurPasses,
+                        dirLight.ShadowMomentUseMipmaps ? 1.0f : 0.0f,
+                        dirLight.ShadowMomentMipBias);
 
                     if (dirLight.CastsShadows)
                     {
-                        perLightShadowTex = FindShadowMapTexture(dirLight);
+                        if (!perLightUseAtlas)
+                            perLightShadowTex = FindShadowMapTexture(dirLight);
                         perLightUseCascades =
                             directionalShadowCameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
                             dirLight.EnableCascadedShadows &&
-                            dirLight.CascadedShadowMapTexture is not null &&
+                            (perLightUseAtlas || dirLight.CascadedShadowMapTexture is not null) &&
                             dirLight.ActiveCascadeCount > 0;
 
-                        if (perLightUseCascades)
+                        if (perLightUseCascades && !perLightUseAtlas)
                             perLightCascadeTex = dirLight.CascadedShadowMapTexture;
                     }
 
-                    bool perLightShadowEnabled = perLightShadowTex is not null || perLightCascadeTex is not null;
+                    bool perLightShadowEnabled = perLightUseAtlas || perLightShadowTex is not null || perLightCascadeTex is not null;
                     _directionalShadowMapEnabled[i] = perLightShadowEnabled ? 1 : 0;
                     _directionalUseCascadedShadows[i] = perLightUseCascades ? 1 : 0;
                     anyDirectionalShadowEnabled |= perLightShadowEnabled;
@@ -886,10 +920,20 @@ namespace XREngine.Scene
 
             int pointShadowSlot = 0;
             bool usePointAtlas = Engine.Rendering.Settings.UsePointShadowAtlas;
-            XRTexture2DArray pointAtlasTexture = usePointAtlas &&
-                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Point, EShadowMapEncoding.Depth, 0, out XRTexture2DArray pointAtlas)
-                    ? pointAtlas
-                    : DummyShadowMapArray;
+            EShadowMapEncoding pointAtlasEncoding = EShadowMapEncoding.Depth;
+            for (int i = 0; i < pointLightCount; i++)
+            {
+                PointLightComponent light = DynamicPointLights[i];
+                if (!light.UsesPointShadowAtlasForCurrentEncoding)
+                    continue;
+
+                pointAtlasEncoding = light.ResolveShadowMapFormat(preferredStorageFormat: light.ShadowMapStorageFormat).Encoding;
+                break;
+            }
+            XRTexture2DArray? pointAtlas = null;
+            bool pointAtlasTextureAvailable = usePointAtlas &&
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Point, pointAtlasEncoding, 0, out pointAtlas);
+            XRTexture2DArray pointAtlasTexture = pointAtlasTextureAvailable && pointAtlas is not null ? pointAtlas : DummyShadowMapArray;
             int pointAtlasLayerCount = checked((int)Math.Max(1u, pointAtlasTexture.Depth));
             program.Sampler(PointShadowAtlasName, pointAtlasTexture, pointShadowAtlasStartUnit);
 
@@ -899,9 +943,11 @@ namespace XREngine.Scene
             {
                 PointLightComponent light = DynamicPointLights[i];
                 int shadowSlot = -1;
+                bool useLightPointAtlas = light.UsesPointShadowAtlasForCurrentEncoding;
+                ShadowMapFormatSelection pointShadowFormat = light.ResolveShadowMapFormat(preferredStorageFormat: light.ShadowMapStorageFormat);
 
                 XRTexture? shadowTexture = FindShadowMapTexture(light);
-                if (!usePointAtlas &&
+                if (!useLightPointAtlas &&
                     shadowTexture is XRTextureCube shadowCube &&
                     pointShadowSlot < maxForwardShadowedPointLights)
                 {
@@ -920,21 +966,25 @@ namespace XREngine.Scene
                     Params3 = new Vector4(light.ContactShadowThickness, light.ContactShadowFadeStart, light.ContactShadowFadeEnd, light.ContactShadowNormalOffset),
                     Params4 = new Vector4(light.ContactShadowJitterStrength, 0.0f, 0.0f, 0.0f),
                     Params5 = light.ShadowBiasParameters,
+                    Packed2 = new IVector4((int)pointShadowFormat.Encoding, light.ShadowMomentUseMipmaps ? 1 : 0, light.ShadowMomentBlurRadiusTexels, light.ShadowMomentBlurPasses),
+                    Params6 = new Vector4(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, pointShadowFormat.PositiveExponent, pointShadowFormat.NegativeExponent),
                 };
 
                 for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
                 {
-                    IVector4 atlasPacked0 = new(0, -1, (int)(usePointAtlas ? ShadowFallbackMode.ContactOnly : ShadowFallbackMode.Legacy), -1);
+                    IVector4 atlasPacked0 = new(0, -1, (int)(useLightPointAtlas ? ShadowFallbackMode.ContactOnly : ShadowFallbackMode.Legacy), -1);
                     Vector4 atlasParams0 = Vector4.Zero;
                     Vector4 atlasParams1 = new(light.ShadowNearPlaneDistance, MathF.Max(light.Radius, light.ShadowNearPlaneDistance + 0.001f), 0.0f, 1.0f);
 
-                    if (usePointAtlas &&
+                    if (useLightPointAtlas &&
                         TryGetPointShadowAtlasFaceAllocation(light, faceIndex, out ShadowAtlasAllocation allocation, out int recordIndex))
                     {
                         ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
                             ? allocation.ActiveFallback
                             : ShadowFallbackMode.Lit;
-                        bool atlasResident = IsShadowAtlasAllocationSampleable(allocation, pointAtlasLayerCount);
+                        bool atlasResident = pointAtlasTextureAvailable &&
+                            allocation.Key.Encoding == pointAtlasEncoding &&
+                            IsShadowAtlasAllocationSampleable(allocation, pointAtlasLayerCount);
                         uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
                         float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
                         float resolutionScale = light.GetShadowAtlasResolutionScale(sampleResolution);
@@ -954,17 +1004,37 @@ namespace XREngine.Scene
 
             int spotShadowSlot = 0;
             bool useSpotAtlas = Engine.Rendering.Settings.UseSpotShadowAtlas;
-            XRTexture2DArray spotAtlasTexture = useSpotAtlas &&
-                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Spot, EShadowMapEncoding.Depth, 0, out XRTexture2DArray spotAtlas)
-                    ? spotAtlas
-                    : DummyShadowMapArray;
+            EShadowMapEncoding spotAtlasEncoding = EShadowMapEncoding.Depth;
+            for (int i = 0; i < spotLightCount; i++)
+            {
+                SpotLightComponent light = DynamicSpotLights[i];
+                if (!light.UsesSpotShadowAtlasForCurrentEncoding)
+                    continue;
+
+                spotAtlasEncoding = light.ResolveShadowMapFormat(preferredStorageFormat: light.ShadowMapStorageFormat).Encoding;
+                break;
+            }
+            XRTexture2DArray? spotAtlas = null;
+            bool spotAtlasTextureAvailable = useSpotAtlas &&
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Spot, spotAtlasEncoding, 0, out spotAtlas);
+            XRTexture2DArray spotAtlasTexture = spotAtlasTextureAvailable && spotAtlas is not null ? spotAtlas : DummyShadowMapArray;
             int spotAtlasLayerCount = checked((int)Math.Max(1u, spotAtlasTexture.Depth));
             program.Sampler(SpotShadowAtlasName, spotAtlasTexture, spotShadowAtlasStartUnit);
 
-            XRTexture2DArray directionalAtlasTexture = useDirectionalShadowAtlas &&
-                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, EShadowMapEncoding.Depth, 0, out XRTexture2DArray directionalAtlas)
-                    ? directionalAtlas
-                    : DummyShadowMapArray;
+            EShadowMapEncoding directionalAtlasEncoding = EShadowMapEncoding.Depth;
+            for (int i = 0; i < directionalLightCount; i++)
+            {
+                DirectionalLightComponent light = DynamicDirectionalLights[i];
+                if (!light.UsesDirectionalShadowAtlasForCurrentEncoding)
+                    continue;
+
+                directionalAtlasEncoding = light.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding;
+                break;
+            }
+            XRTexture2DArray? directionalAtlas = null;
+            bool directionalAtlasTextureAvailable = useDirectionalShadowAtlas &&
+                ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, directionalAtlasEncoding, 0, out directionalAtlas);
+            XRTexture2DArray directionalAtlasTexture = directionalAtlasTextureAvailable && directionalAtlas is not null ? directionalAtlas : DummyShadowMapArray;
             int directionalAtlasLayerCount = checked((int)Math.Max(1u, directionalAtlasTexture.Depth));
             program.Sampler(DirectionalShadowAtlasName, directionalAtlasTexture, directionalShadowAtlasStartUnit);
 
@@ -986,7 +1056,9 @@ namespace XREngine.Scene
                     ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
                         ? allocation.ActiveFallback
                         : ShadowFallbackMode.Lit;
-                    atlasResident = IsShadowAtlasAllocationSampleable(allocation, spotAtlasLayerCount);
+                    atlasResident = spotAtlasTextureAvailable &&
+                        allocation.Key.Encoding == spotAtlasEncoding &&
+                        IsShadowAtlasAllocationSampleable(allocation, spotAtlasLayerCount);
                     float atlasNearPlane = light.ShadowCamera?.NearZ ?? 0.1f;
                     float atlasFarPlane = light.ShadowCamera?.FarZ ?? MathF.Max(atlasNearPlane + 0.001f, light.Distance);
                     uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
@@ -1046,6 +1118,9 @@ namespace XREngine.Scene
                     if (!dirLight.CastsShadows)
                         continue;
 
+                    if (dirLight.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding != directionalAtlasEncoding)
+                        continue;
+
                     int atlasRecordOffset = i * ForwardMaxCascades;
                     bool perLightUseCascades = _directionalUseCascadedShadows[i] != 0;
                     dirLight.CopyPublishedDirectionalAtlasUniformData(
@@ -1054,7 +1129,8 @@ namespace XREngine.Scene
                         _directionalShadowAtlasParams0.AsSpan(atlasRecordOffset, ForwardMaxCascades),
                         _directionalShadowAtlasParams1.AsSpan(atlasRecordOffset, ForwardMaxCascades));
 
-                    bool perLightAtlasSampleable = AreRequiredDirectionalAtlasTilesSampleable(
+                    bool perLightAtlasSampleable = directionalAtlasTextureAvailable &&
+                        AreRequiredDirectionalAtlasTilesSampleable(
                         _directionalShadowAtlasPacked0,
                         atlasRecordOffset,
                         perLightUseCascades ? dirLight.ActiveCascadeCount : 1,
@@ -1075,6 +1151,9 @@ namespace XREngine.Scene
             program.Uniform("DirectionalUseCascadedShadows", _directionalUseCascadedShadows);
             program.Uniform("DirectionalShadowBiasProjectionParams", _directionalShadowBiasProjectionParams);
             program.Uniform("DirectionalShadowAtlasEnabled", _directionalShadowAtlasEnabled);
+            program.Uniform("DirectionalShadowMapEncoding", _directionalShadowMapEncoding);
+            program.Uniform("DirectionalShadowMomentParams0", _directionalShadowMomentParams0);
+            program.Uniform("DirectionalShadowMomentFilterParams", _directionalShadowMomentFilterParams);
             program.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
             program.Uniform("DirectionalShadowAtlasParams0", _directionalShadowAtlasParams0);
             program.Uniform("DirectionalShadowAtlasParams1", _directionalShadowAtlasParams1);

@@ -1,5 +1,7 @@
 using Silk.NET.OpenGL;
+using Silk.NET.OpenGL.Extensions.ARB;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
 using System.Threading;
@@ -10,41 +12,143 @@ namespace XREngine.Rendering.OpenGL
     public unsafe partial class OpenGLRenderer
     {
         /// <summary>
-        /// Dispatches shader compilation and program linking to a shared GL context thread.
-        /// This eliminates main-thread stalls on drivers that lack
-        /// <c>GL_ARB_parallel_shader_compile</c> by performing all blocking GL compiler work
-        /// on the background thread, then synchronizing via <c>glFinish()</c>.
+        /// Dispatches shader compilation and program linking to one or more shared GL
+        /// context worker threads. This eliminates main-thread stalls on drivers that
+        /// lack <c>GL_ARB_parallel_shader_compile</c> by performing all blocking GL
+        /// compiler work on background threads, then synchronizing via <c>glFinish()</c>.
         /// <para/>
-        /// Shader objects are created, sourced, compiled, attached, and destroyed entirely
-        /// on the shared context (they share the same object namespace via GLFW context sharing).
-        /// The program object (identified by <paramref name="programId"/>) must already exist —
-        /// it was created on the main thread.
+        /// Shader objects are created, sourced, compiled, attached, and destroyed
+        /// entirely on the shared context that owns the job (they share the same object
+        /// namespace via GLFW context sharing). The program object (identified by
+        /// <paramref name="programId"/>) must already exist — it was created on the
+        /// main thread. With multiple workers, jobs are dispatched to the least-loaded
+        /// worker so a single hot fragment-shader link cannot starve the queue tail.
         /// </summary>
-        public sealed class GLProgramCompileLinkQueue(GLSharedContext sharedContext)
+        public sealed class GLProgramCompileLinkQueue
         {
-            private readonly GLSharedContext _sharedContext = sharedContext;
+            private readonly GLSharedContext[] _workers;
             private readonly ConcurrentDictionary<uint, CompileResult> _completed = new();
+            private int _roundRobinCursor;
             private int _inFlight;
             private long _completedCount;
             private long _failedCount;
             private long _rejectedCount;
             private long _backpressureCount;
+            private static readonly bool SuppressParallelCompileForSingleStageWorkerPrograms =
+                string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL"),
+                    "1",
+                    StringComparison.Ordinal);
 
             /// <summary>
-            /// Compilation is heavier than binary upload; keep in-flight count lower
-            /// to avoid GPU memory pressure and driver contention.
+            /// Per-worker in-flight cap. Compilation is heavier than binary upload;
+            /// keep the per-worker count lower to avoid GPU memory pressure and
+            /// driver contention. Total in-flight is <see cref="MaxInFlight"/>
+            /// multiplied by the worker count.
             /// </summary>
             public const int MaxInFlight = 4;
 
-            public bool IsAvailable => _sharedContext.IsRunning;
-            public bool CanEnqueue => Volatile.Read(ref _inFlight) < MaxInFlight;
+            public GLProgramCompileLinkQueue(GLSharedContext sharedContext)
+                : this(new[] { sharedContext })
+            {
+            }
+
+            public GLProgramCompileLinkQueue(IReadOnlyList<GLSharedContext> sharedContexts)
+            {
+                if (sharedContexts is null || sharedContexts.Count == 0)
+                    throw new ArgumentException("At least one shared context is required.", nameof(sharedContexts));
+
+                _workers = new GLSharedContext[sharedContexts.Count];
+                for (int i = 0; i < sharedContexts.Count; i++)
+                    _workers[i] = sharedContexts[i] ?? throw new ArgumentNullException(nameof(sharedContexts));
+            }
+
+            public int WorkerCount => _workers.Length;
+            public int MaxInFlightTotal => MaxInFlight * _workers.Length;
+
+            public bool IsAvailable
+            {
+                get
+                {
+                    for (int i = 0; i < _workers.Length; i++)
+                        if (_workers[i].IsRunning)
+                            return true;
+                    return false;
+                }
+            }
+
+            public bool CanEnqueue => Volatile.Read(ref _inFlight) < MaxInFlightTotal;
             public int InFlightCount => Volatile.Read(ref _inFlight);
             public long CompletedCount => Interlocked.Read(ref _completedCount);
             public long FailedCount => Interlocked.Read(ref _failedCount);
             public long RejectedCount => Interlocked.Read(ref _rejectedCount);
             public long BackpressureCount => Interlocked.Read(ref _backpressureCount);
-            public double OldestPendingAgeSeconds => _sharedContext.OldestPendingAgeSeconds;
-            public bool IsWorkerUnhealthy => _sharedContext.IsWorkerUnhealthy;
+
+            public double OldestPendingAgeSeconds
+            {
+                get
+                {
+                    double oldest = 0.0;
+                    for (int i = 0; i < _workers.Length; i++)
+                    {
+                        double age = _workers[i].OldestPendingAgeSeconds;
+                        if (age > oldest)
+                            oldest = age;
+                    }
+                    return oldest;
+                }
+            }
+
+            /// <summary>
+            /// True only if every running worker is unhealthy (or none are running).
+            /// Caller code that gates on this should still check <see cref="IsAvailable"/>
+            /// to know whether to issue work at all.
+            /// </summary>
+            public bool IsWorkerUnhealthy
+            {
+                get
+                {
+                    bool anyRunning = false;
+                    for (int i = 0; i < _workers.Length; i++)
+                    {
+                        if (!_workers[i].IsRunning)
+                            continue;
+
+                        anyRunning = true;
+                        if (!_workers[i].IsWorkerUnhealthy)
+                            return false;
+                    }
+                    return anyRunning;
+                }
+            }
+
+            /// <summary>
+            /// Picks the least-loaded running worker for the next compile/link job.
+            /// Round-robin advance is used as a tiebreaker so equal-depth queues fan
+            /// out evenly. Returns <c>null</c> if no worker is running.
+            /// </summary>
+            private GLSharedContext? PickWorker()
+            {
+                int start = Interlocked.Increment(ref _roundRobinCursor);
+                GLSharedContext? best = null;
+                int bestPending = int.MaxValue;
+                for (int i = 0; i < _workers.Length; i++)
+                {
+                    int idx = ((start + i) % _workers.Length + _workers.Length) % _workers.Length;
+                    var worker = _workers[idx];
+                    if (!worker.IsRunning)
+                        continue;
+                    int pending = worker.PendingCount;
+                    if (pending < bestPending)
+                    {
+                        bestPending = pending;
+                        best = worker;
+                        if (pending == 0)
+                            break;
+                    }
+                }
+                return best;
+            }
 
             public enum CompileStatus : byte
             {
@@ -94,16 +198,43 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
+                GLSharedContext? worker = PickWorker();
+                if (worker is null)
+                {
+                    rejectReason = "no shared-context worker is running";
+                    LogRenderingQueueEvent("BACKPRESSURE", programId, summary, rejectReason);
+                    Interlocked.Increment(ref _backpressureCount);
+                    return false;
+                }
+
                 rejectReason = null;
                 LogRenderingQueueEvent(
                     "ENQUEUE",
                     programId,
                     summary,
-                    $"inFlight={InFlightCount}/{MaxInFlight}");
+                    $"inFlight={InFlightCount}/{MaxInFlightTotal} workers={_workers.Length} pickedPending={worker.PendingCount}");
                 Interlocked.Increment(ref _inFlight);
-                _sharedContext.Enqueue(gl =>
+                worker.Enqueue(gl =>
                 {
                     LogRenderingQueueEvent("WORKER_BEGIN", programId, summary, null);
+
+                    // Keep worker-side parallel shader compile enabled by default.
+                    // The previous default suppressed it for single-stage programs,
+                    // but cold uber fragment compiles then sat pending for minutes
+                    // without ever publishing a WORKER_READY result. The render
+                    // thread still never links synchronously; this only changes how
+                    // the shared context worker lets the driver run its compiler.
+                    // Set XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1 to restore
+                    // the old workaround for driver builds that specifically need it.
+                    bool hazardSuppressParallel = ShouldSuppressParallelCompileForWorkerProgram(shaders);
+                    ArbParallelShaderCompile? hazardArbExt = null;
+                    if (hazardSuppressParallel && gl.TryGetExtension(out ArbParallelShaderCompile arbForHazard))
+                    {
+                        hazardArbExt = arbForHazard;
+                        try { arbForHazard.MaxShaderCompilerThreads(0u); }
+                        catch { hazardArbExt = null; }
+                    }
+
                     long compileStartTimestamp = Stopwatch.GetTimestamp();
                     uint[] shaderIds = new uint[shaders.Length];
                     bool allCompiled = true;
@@ -139,8 +270,6 @@ namespace XREngine.Rendering.OpenGL
                             () => gl.CompileShader(sid),
                             "worker=source-compile");
 
-<<<<<<< Updated upstream
-=======
                         // Poll non-blocking GL_COMPLETION_STATUS_ARB before issuing the
                         // blocking GL_COMPILE_STATUS query. On NVIDIA, a blocking status
                         // query during a long cold compile holds a driver-wide lock that
@@ -159,7 +288,6 @@ namespace XREngine.Rendering.OpenGL
                             return;
                         }
 
->>>>>>> Stashed changes
                         int status = 0;
                         MeasureRenderingWorkerGlCall(
                             "glGetShaderiv(GL_COMPILE_STATUS)",
@@ -207,6 +335,14 @@ namespace XREngine.Rendering.OpenGL
                             $"compileMs={compileMilliseconds:F2} error={errorLog ?? "<none>"}");
                         _completed[programId] = new CompileResult(CompileStatus.CompileFailed, errorLog, compileMilliseconds, 0.0);
                         Interlocked.Increment(ref _failedCount);
+
+                        // Restore parallel compile on the worker context if we
+                        // suppressed it for the hazardous single-stage shape.
+                        if (hazardArbExt is not null)
+                        {
+                            try { hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu); }
+                            catch { /* best-effort restore */ }
+                        }
                         return;
                     }
 
@@ -233,9 +369,6 @@ namespace XREngine.Rendering.OpenGL
                         0,
                         null,
                         () => gl.LinkProgram(programId),
-<<<<<<< Updated upstream
-                        "worker=source-link");
-=======
                         hazardSuppressParallel ? "worker=source-link parallel-suppressed" : "worker=source-link");
 
                     // Poll non-blocking GL_COMPLETION_STATUS_ARB before issuing the
@@ -256,7 +389,6 @@ namespace XREngine.Rendering.OpenGL
                         return;
                     }
 
->>>>>>> Stashed changes
                     int linkStatus = 0;
                     MeasureRenderingWorkerGlCall(
                         "glGetProgramiv(GL_LINK_STATUS)",
@@ -276,6 +408,14 @@ namespace XREngine.Rendering.OpenGL
                             null,
                             () => gl.GetProgramInfoLog(programId, out linkError),
                             "worker=source-link-log");
+                    }
+
+                    // Restore parallel compile on the worker context if we
+                    // suppressed it for the hazardous single-stage compile/link.
+                    if (hazardArbExt is not null)
+                    {
+                        try { hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu); }
+                        catch { /* best-effort restore */ }
                     }
 
                     // Detach and delete shader objects — no longer needed after linking.
@@ -329,8 +469,6 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
-<<<<<<< Updated upstream
-=======
             /// Polls <c>GL_COMPLETION_STATUS_ARB</c> on the worker context until the
             /// driver reports the most recent compile or link is complete. Sleeps
             /// briefly between polls so the NVIDIA driver can release its internal
@@ -396,7 +534,6 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
->>>>>>> Stashed changes
             /// Checks whether an async compile+link has completed for the given program.
             /// The result is consumed (removed) on retrieval, freeing an in-flight slot.
             /// </summary>
@@ -412,16 +549,52 @@ namespace XREngine.Rendering.OpenGL
 
             public static bool ContainsKnownAsyncLinkHazard(ReadOnlySpan<ShaderInput> shaders)
             {
-                if (shaders.Length <= 1)
-                    return true;
-
-                for (int i = 0; i < shaders.Length; i++)
-                {
-                    if (shaders[i].Type == ShaderType.ComputeShader)
-                        return true;
-                }
-
+                // No shader stages are unconditionally rejected here anymore.
+                //
+                // Compute programs were previously rejected because
+                // glDispatchCompute implicitly waits for link completion on
+                // NVIDIA, so a hung parallel link would deadlock the render
+                // thread on the next dispatch. The synchronous render-thread
+                // fallback that handled them, however, was itself a worse
+                // hazard: it took the driver compile lock on the render
+                // context for the full duration of a cold compute link, which
+                // serialized against any in-flight worker links and (when
+                // graphics single-stage links were still finishing) starved
+                // the GPU command queue long enough to trip the Windows TDR
+                // 2-second watchdog (observed 2026-05-07: WATCHDOG-141 +
+                // STATUS_INVALID_HANDLE in ntdll right after a sync compute
+                // fallback firing inside RenderCallback).
+                //
+                // Compute now goes through the same shared-context worker
+                // path as graphics, but is treated as a single-stage hazard
+                // (parallel compile suppressed on the worker context for the
+                // entire compile+link block, then restored). The worker
+                // already issues glFinish before publishing the result, so by
+                // the time the render thread picks up the linked program the
+                // link is fully complete and glDispatchCompute will not
+                // serialize on it.
+                _ = shaders;
                 return false;
+            }
+
+            /// <summary>
+            /// True when the opt-in single-stage worker workaround is enabled
+            /// for shapes that have historically been sensitive to threaded
+            /// driver compilation.
+            /// </summary>
+            private static bool ShouldSuppressParallelCompileForWorkerProgram(ReadOnlySpan<ShaderInput> shaders)
+                => SuppressParallelCompileForSingleStageWorkerPrograms &&
+                   IsSingleStageSeparableGraphicsHazard(shaders);
+
+            private static bool IsSingleStageSeparableGraphicsHazard(ReadOnlySpan<ShaderInput> shaders)
+            {
+                if (shaders.Length != 1)
+                    return false;
+
+                ShaderType type = shaders[0].Type;
+                return type == ShaderType.VertexShader
+                    || type == ShaderType.FragmentShader
+                    || type == ShaderType.ComputeShader;
             }
 
             /// <summary>

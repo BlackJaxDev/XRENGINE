@@ -39,7 +39,7 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 - `Intermediate/`: generated artifacts (solutions, project files, build outputs) managed by the C# project builder; editors dynamically load DLLs from here.
 - `Build/`: the latest cooked builds, organized per configuration and platform for distribution.
 - `Packages/`: third-party or externally sourced content mirrored into the project.
-- `Config/`: persistent project + engine settings, including `engine_settings.asset` and per-user overrides.
+- `Config/`: persistent project settings, including `editor_preferences_overrides.asset`, `game_settings.asset`, `user_settings.asset`, and `build_settings.asset`.
 
 ## Further Reading
 - [Audio Architecture](audio-architecture.md)

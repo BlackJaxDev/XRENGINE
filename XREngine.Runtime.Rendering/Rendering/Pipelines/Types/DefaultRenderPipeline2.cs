@@ -664,7 +664,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 5)
+        int expectedCount = Stereo ? 5 : 6;
+        if (textures.Count != expectedCount)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(HDRSceneTextureName))
@@ -672,6 +673,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(StencilViewTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(AutoExposureTextureName)))
+            return true;
+
+        if (!Stereo && !ReferenceEquals(textures[5], GetTexture<XRTexture>(VolumetricFogColorTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -683,6 +687,231 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
+
+    private bool NeedsRecreateVolumetricFogHalfDepthQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(DepthViewTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogHalfDepthDownsample.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogHalfDepthFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateVolumetricFogHalfScatterQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogScatter.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogHalfScatterFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateVolumetricFogReprojectQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 3)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(VolumetricFogHalfScatterTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VolumetricFogHalfHistoryTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogReproject.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogReprojectFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogHalfTemporalTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateVolumetricFogHistoryFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogHalfHistoryTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateVolumetricFogUpscaleQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 3)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(VolumetricFogHalfTemporalTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VolumetricFogHalfDepthTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "VolumetricFog", "VolumetricFogUpscale.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateVolumetricFogUpscaleFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(VolumetricFogColorTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    // --- Half-internal size helpers ---
+    // Mirror XRRenderPipeline.{GetDesiredFBOSizeInternal,NeedsRecreateTextureInternalSize,
+    // ResizeTextureInternalSize} for the half-resolution volumetric fog chain.
+    private static (uint x, uint y) GetDesiredFBOSizeHalfInternal()
+        => (System.Math.Max(1u, InternalWidth / 2u), System.Math.Max(1u, InternalHeight / 2u));
+
+    private static bool NeedsRecreateTextureHalfInternalSize(XRTexture t)
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                return t2d.Width != w || t2d.Height != h;
+            case XRTexture2DArray t2da:
+                return t2da.Width != w || t2da.Height != h;
+            case XRTexture2DView:
+            case XRTexture2DArrayView:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    private static void ResizeTextureHalfInternalSize(XRTexture t)
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                t2d.Resize(w, h);
+                break;
+            case XRTexture2DArray t2da:
+                t2da.Resize(w, h);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Invalidates the separated volumetric fog temporal history for a camera.
+    /// Call this after teleports, scene loads, or other discontinuous camera cuts.
+    /// </summary>
+    public static void InvalidateVolumetricFogHistory(XRCamera? camera)
+        => VPRC_VolumetricFogHistoryPass.ResetHistory(camera);
 
     private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)
     {
@@ -787,6 +1016,20 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
+    public const string VolumetricFogColorTextureName = "VolumetricFogColor";
+    public const string VolumetricFogHalfDepthTextureName = "VolumetricFogHalfDepth";
+    public const string VolumetricFogHalfScatterTextureName = "VolumetricFogHalfScatter";
+    public const string VolumetricFogHalfTemporalTextureName = "VolumetricFogHalfTemporal";
+    public const string VolumetricFogHalfHistoryTextureName = "VolumetricFogHalfHistory";
+    public const string VolumetricFogHalfDepthQuadFBOName = "VolumetricFogHalfDepthQuadFBO";
+    public const string VolumetricFogHalfDepthFBOName = "VolumetricFogHalfDepthFBO";
+    public const string VolumetricFogHalfScatterQuadFBOName = "VolumetricFogHalfScatterQuadFBO";
+    public const string VolumetricFogHalfScatterFBOName = "VolumetricFogHalfScatterFBO";
+    public const string VolumetricFogReprojectQuadFBOName = "VolumetricFogReprojectQuadFBO";
+    public const string VolumetricFogReprojectFBOName = "VolumetricFogReprojectFBO";
+    public const string VolumetricFogHistoryFBOName = "VolumetricFogHistoryFBO";
+    public const string VolumetricFogUpscaleQuadFBOName = "VolumetricFogUpscaleQuadFBO";
+    public const string VolumetricFogUpscaleFBOName = "VolumetricFogUpscaleFBO";
     public const string FxaaFBOName = "FxaaFBO";
     public const string SmaaFBOName = "SmaaFBO";
     public const string UserInterfaceFBOName = "UserInterfaceFBO";
@@ -974,23 +1217,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
 
     private bool EnablePerPixelLinkedListVisualization
-        => !Stereo && Engine.EditorPreferences.Debug.VisualizePerPixelLinkedListFragments;
+        => ExactTransparencyEnabled && Engine.EditorPreferences.Debug.VisualizePerPixelLinkedListFragments;
 
     private bool EnableDepthPeelingLayerVisualization
-        => !Stereo && Engine.EditorPreferences.Debug.VisualizeDepthPeelingLayer;
-
-    private string? ActiveTransparencyDebugFboName
-        => EnableTransparencyAccumulationVisualization
-            ? TransparentAccumulationDebugFBOName
-            : EnableTransparencyRevealageVisualization
-                ? TransparentRevealageDebugFBOName
-                : EnableTransparencyOverdrawVisualization
-                    ? TransparentOverdrawDebugFBOName
-                    : EnablePerPixelLinkedListVisualization
-                        ? PpllFragmentCountDebugFBOName
-                        : EnableDepthPeelingLayerVisualization
-                            ? DepthPeelingDebugFBOName
-                    : null;
+        => ExactTransparencyEnabled && Engine.EditorPreferences.Debug.VisualizeDepthPeelingLayer;
 
     protected override void OnDestroying()
     {
@@ -1159,11 +1389,17 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private XRDataBuffer? _probeParamBuffer;
     private XRDataBuffer? _probeGridCellBuffer;
     private XRDataBuffer? _probeGridIndexBuffer;
+    private const string LightProbePositionBufferName = "LightProbePositions";
+    private const string LightProbeParamBufferName = "LightProbeParameters";
+    private const string LightProbeTetraBufferName = "LightProbeTetra";
+    private const string LightProbeGridCellBufferName = "LightProbeGridCells";
+    private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
+    private const string LightProbeIrradianceArrayName = "LightProbeIrradianceArray";
+    private const string LightProbePrefilterArrayName = "LightProbePrefilterArray";
     private Vector3 _probeGridOrigin;
     private float _probeGridCellSize;
     private IVector3 _probeGridDims;
     private bool _useProbeGridAcceleration = true;
-    private const ulong ProbeContentRefreshDebounceFrames = 12;
     private int _lastProbeCount = 0;
     private readonly Dictionary<Guid, Vector3> _cachedProbePositions = new();
     private readonly Dictionary<Guid, (XRTexture2D Irradiance, XRTexture2D Prefilter)> _cachedProbeTextures = new();
@@ -1171,7 +1407,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private ProbePositionData[] _cachedProbePositionData = [];
     private ProbeParamData[] _cachedProbeParamData = [];
     private volatile bool _pendingProbeRefresh;
-    private bool _pendingProbeRefreshContentOnly;
     private bool _pendingProbeRefreshDeferredByBatchCapture;
     private int _observedLightProbeBatchCompletedVersion;
     private ulong _probeRefreshEarliestFrameId;
@@ -1224,7 +1459,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         return ambient;
     }
 
-    private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyLightCombineProgramBindings(XRRenderProgram program)
     {
         program.Uniform("DeferredDebugMode", (int)DeferredDebugView);
         program.Uniform("GlobalAmbient", ResolveGlobalAmbient());
@@ -1303,14 +1538,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         program.Sampler("PrefilterArray", _probePrefilterArray!, 8);
 
         program.Uniform("ProbeCount", _probeBindingProbeCount);
-        _probePositionBuffer!.BindTo(program, 0);
-        _probeParamBuffer!.BindTo(program, 2);
         program.Uniform("UseProbeGrid", _probeBindingUseGrid);
 
         if (_probeBindingUseGrid)
         {
-            _probeGridCellBuffer!.BindTo(program, 3);
-            _probeGridIndexBuffer!.BindTo(program, 4);
             program.Uniform("ProbeGridOrigin", _probeGridOrigin);
             program.Uniform("ProbeGridCellSize", _probeGridCellSize);
             program.Uniform("ProbeGridDims", _probeGridDims);
@@ -1319,8 +1550,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         program.Uniform("TetraCount", _probeBindingTetraCount);
         if (_probeBindingTetraCount > 0)
         {
-            _probeTetraBuffer!.BindTo(program, 1);
-
             ulong frameId = Engine.Rendering.State.RenderFrameId;
             if (Engine.EditorPreferences.Debug.RenderLightProbeTetrahedra
                 && _probeTetrahedraDebugRenderFrameId != frameId)
@@ -1383,9 +1612,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             case EProbeRefreshKind.Immediate:
                 BuildProbeResources(readyProbes);
                 break;
-            case EProbeRefreshKind.DeferredContentOnly:
-                ScheduleDeferredProbeRefresh();
-                break;
         }
 
         if (_pendingProbeRefresh && frameId >= _probeRefreshEarliestFrameId)
@@ -1395,10 +1621,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
                 bool deferredByBatchCapture = _pendingProbeRefreshDeferredByBatchCapture;
                 _pendingProbeRefreshDeferredByBatchCapture = false;
 
-                if (_pendingProbeRefreshContentOnly && _probeIrradianceArray is not null)
-                    RefreshProbeTextureContent(readyProbes, deferredByBatchCapture);
-                else
-                    BuildProbeResources(readyProbes, deferredByBatchCapture);
+                BuildProbeResources(readyProbes, deferredByBatchCapture);
             }
         }
 
@@ -1480,9 +1703,13 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private void BuildProbeGrid(IReadOnlyList<ProbePositionData> positions, IReadOnlyList<ProbeParamData> parameters, IReadOnlyList<ProbeTetraData>? tetraData = null)
     {
-        _probeGridCellBuffer?.Dispose();
+        bool removedGridCells = RemoveProbeBufferResource(LightProbeGridCellBufferName);
+        bool removedGridIndices = RemoveProbeBufferResource(LightProbeGridIndexBufferName);
+        if (!removedGridCells)
+            _probeGridCellBuffer?.Dispose();
         _probeGridCellBuffer = null;
-        _probeGridIndexBuffer?.Dispose();
+        if (!removedGridIndices)
+            _probeGridIndexBuffer?.Dispose();
         _probeGridIndexBuffer = null;
         _probeGridOrigin = Vector3.Zero;
         _probeGridCellSize = 0f;
@@ -1568,19 +1795,21 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             });
         }
 
-        _probeGridCellBuffer = new XRDataBuffer("LightProbeGridCells", EBufferTarget.ShaderStorageBuffer, (uint)offsets.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeGridCell>(), false, false)
+        _probeGridCellBuffer = new XRDataBuffer(LightProbeGridCellBufferName, EBufferTarget.ShaderStorageBuffer, (uint)offsets.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeGridCell>(), false, false)
         {
             BindingIndexOverride = 3,
         };
         _probeGridCellBuffer.SetDataRaw(offsets);
         _probeGridCellBuffer.PushData();
+        RegisterProbeBuffer(_probeGridCellBuffer);
 
-        _probeGridIndexBuffer = new XRDataBuffer("LightProbeGridIndices", EBufferTarget.ShaderStorageBuffer, (uint)indices.Count, EComponentType.Int, sizeof(int), false, false)
+        _probeGridIndexBuffer = new XRDataBuffer(LightProbeGridIndexBufferName, EBufferTarget.ShaderStorageBuffer, (uint)indices.Count, EComponentType.Int, sizeof(int), false, false)
         {
             BindingIndexOverride = 4,
         };
         _probeGridIndexBuffer.SetDataRaw(indices);
         _probeGridIndexBuffer.PushData();
+        RegisterProbeBuffer(_probeGridIndexBuffer);
     }
 
     private static void GetProbeInfluenceBounds(ProbePositionData position, ProbeParamData parameters, out Vector3 min, out Vector3 max)
@@ -1751,25 +1980,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     {
         None,
         Immediate,
-        DeferredContentOnly,
-    }
-
-    private void ScheduleDeferredProbeRefresh(bool deferredByBatchCapture = false)
-    {
-        _pendingProbeRefresh = true;
-        _pendingProbeRefreshContentOnly = true;
-        _pendingProbeRefreshDeferredByBatchCapture = deferredByBatchCapture;
-
-        ulong delayFrames = deferredByBatchCapture ? 1ul : ProbeContentRefreshDebounceFrames;
-        ulong earliestFrameId = Engine.Rendering.State.RenderFrameId + delayFrames;
-        if (_probeRefreshEarliestFrameId < earliestFrameId)
-            _probeRefreshEarliestFrameId = earliestFrameId;
     }
 
     private void ScheduleDeferredStructuralProbeRefreshForBatchCapture()
     {
         _pendingProbeRefresh = true;
-        _pendingProbeRefreshContentOnly = false;
         _pendingProbeRefreshDeferredByBatchCapture = true;
 
         ulong earliestFrameId = Engine.Rendering.State.RenderFrameId + 1;
@@ -1786,17 +2001,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         }
 
         return EProbeRefreshKind.Immediate;
-    }
-
-    private EProbeRefreshKind ResolveContentProbeRefresh(bool batchCaptureActive)
-    {
-        if (batchCaptureActive)
-        {
-            ScheduleDeferredProbeRefresh(deferredByBatchCapture: true);
-            return EProbeRefreshKind.None;
-        }
-
-        return EProbeRefreshKind.DeferredContentOnly;
     }
 
     private bool AreProbeBindingResourcesMissing()
@@ -1820,7 +2024,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             return ResolveStructuralProbeRefresh(batchCaptureActive);
         }
 
-        bool contentOnlyChanged = false;
+        bool captureVersionChanged = false;
 
         foreach (var probe in readyProbes)
         {
@@ -1841,28 +2045,45 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
                 || observedVersion != probe.CaptureVersion)
             {
                 _observedProbeCaptureVersions[probe.ID] = probe.CaptureVersion;
-                contentOnlyChanged = true;
+                captureVersionChanged = true;
             }
         }
 
-        return contentOnlyChanged ? ResolveContentProbeRefresh(batchCaptureActive) : EProbeRefreshKind.None;
+        // Captures can mutate the existing XRTexture2D objects while the shader samples copied
+        // texture-array resources. Rebuild the arrays so GI observes the new capture immediately.
+        return captureVersionChanged ? ResolveStructuralProbeRefresh(batchCaptureActive) : EProbeRefreshKind.None;
     }
 
     private void ClearProbeResources()
     {
-        _probeIrradianceArray?.Destroy();
+        bool removedIrradiance = RemoveProbeTextureResource(LightProbeIrradianceArrayName);
+        bool removedPrefilter = RemoveProbeTextureResource(LightProbePrefilterArrayName);
+        bool removedPosition = RemoveProbeBufferResource(LightProbePositionBufferName);
+        bool removedParam = RemoveProbeBufferResource(LightProbeParamBufferName);
+        bool removedTetra = RemoveProbeBufferResource(LightProbeTetraBufferName);
+        bool removedGridCells = RemoveProbeBufferResource(LightProbeGridCellBufferName);
+        bool removedGridIndices = RemoveProbeBufferResource(LightProbeGridIndexBufferName);
+
+        if (!removedIrradiance)
+            _probeIrradianceArray?.Destroy();
         _probeIrradianceArray = null;
-        _probePrefilterArray?.Destroy();
+        if (!removedPrefilter)
+            _probePrefilterArray?.Destroy();
         _probePrefilterArray = null;
-        _probePositionBuffer?.Dispose();
+        if (!removedPosition)
+            _probePositionBuffer?.Dispose();
         _probePositionBuffer = null;
-        _probeParamBuffer?.Dispose();
+        if (!removedParam)
+            _probeParamBuffer?.Dispose();
         _probeParamBuffer = null;
-        _probeTetraBuffer?.Dispose();
+        if (!removedTetra)
+            _probeTetraBuffer?.Dispose();
         _probeTetraBuffer = null;
-        _probeGridCellBuffer?.Dispose();
+        if (!removedGridCells)
+            _probeGridCellBuffer?.Dispose();
         _probeGridCellBuffer = null;
-        _probeGridIndexBuffer?.Dispose();
+        if (!removedGridIndices)
+            _probeGridIndexBuffer?.Dispose();
         _probeGridIndexBuffer = null;
         _probeGridOrigin = Vector3.Zero;
         _probeGridCellSize = 0f;
@@ -1878,7 +2099,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _cachedProbeParamData = [];
         _lastProbeCount = 0;
         _pendingProbeRefresh = false;
-        _pendingProbeRefreshContentOnly = false;
         _pendingProbeRefreshDeferredByBatchCapture = false;
         _probeRefreshEarliestFrameId = 0;
         _probeBindingStateFrameId = ulong.MaxValue;
@@ -1887,29 +2107,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _probeBindingUseGrid = false;
         _probeBindingProbeCount = 0;
         _probeBindingTetraCount = 0;
-    }
-
-    /// <summary>
-    /// Fast path for when only probe texture content has changed (e.g. a probe re-captured).
-    /// Re-copies all source texture layers into the existing texture arrays on the GPU
-    /// without destroying/recreating any GPU resources or rebuilding the grid.
-    /// </summary>
-    private void RefreshProbeTextureContent(IList<LightProbeComponent> readyProbes, bool deferredByBatchCapture = false)
-    {
-        Stopwatch stopwatch = Stopwatch.StartNew();
-
-        _probeIrradianceArray?.PushData();
-        _probePrefilterArray?.PushData();
-
-        foreach (var probe in readyProbes)
-            _observedProbeCaptureVersions[probe.ID] = probe.CaptureVersion;
-
-        _pendingProbeRefresh = false;
-        _pendingProbeRefreshContentOnly = false;
-        _pendingProbeRefreshDeferredByBatchCapture = false;
-
-        stopwatch.Stop();
-        ReportProbeResourceRefresh(structuralRefresh: false, readyProbes.Count, stopwatch.Elapsed, deferredByBatchCapture);
     }
 
     private void BuildProbeResources(IList<LightProbeComponent> readyProbes, bool deferredByBatchCapture = false)
@@ -1962,7 +2159,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         _probeIrradianceArray = new XRTexture2DArray([.. irrTextures])
         {
-            Name = "LightProbeIrradianceArray",
+            Name = LightProbeIrradianceArrayName,
             MinFilter = ETexMinFilter.Linear,
             MagFilter = ETexMagFilter.Linear,
             SizedInternalFormat = ESizedInternalFormat.Rgb16f,
@@ -1970,26 +2167,29 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         _probePrefilterArray = new XRTexture2DArray([.. preTextures])
         {
-            Name = "LightProbePrefilterArray",
+            Name = LightProbePrefilterArrayName,
             MinFilter = ETexMinFilter.LinearMipmapLinear,
             MagFilter = ETexMagFilter.Linear,
             SizedInternalFormat = ESizedInternalFormat.Rgb16f,  // Match prefilter texture format
         };
+        RegisterProbeTextureArrays();
         PushProbeTextureArrays();
 
-        _probePositionBuffer = new XRDataBuffer("LightProbePositions", EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
+        _probePositionBuffer = new XRDataBuffer(LightProbePositionBufferName, EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
         {
             BindingIndexOverride = 0,
         };
         _probePositionBuffer.SetDataRaw<ProbePositionData>(positions);
         _probePositionBuffer.PushData();
+        RegisterProbeBuffer(_probePositionBuffer);
 
-        _probeParamBuffer = new XRDataBuffer("LightProbeParameters", EBufferTarget.ShaderStorageBuffer, (uint)parameters.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeParamData>(), false, false)
+        _probeParamBuffer = new XRDataBuffer(LightProbeParamBufferName, EBufferTarget.ShaderStorageBuffer, (uint)parameters.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeParamData>(), false, false)
         {
             BindingIndexOverride = 2,
         };
         _probeParamBuffer.SetDataRaw<ProbeParamData>(parameters);
         _probeParamBuffer.PushData();
+        RegisterProbeBuffer(_probeParamBuffer);
 
         _cachedProbePositionData = [.. positions];
         _cachedProbeParamData = [.. parameters];
@@ -1999,7 +2199,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         _lastProbeCount = positions.Count;
         _pendingProbeRefresh = false;
-        _pendingProbeRefreshContentOnly = false;
         _pendingProbeRefreshDeferredByBatchCapture = false;
 
         StartTetrahedralizationJob(readyProbes);
@@ -2022,6 +2221,46 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             renderer?.GetOrCreateAPIRenderObject(_probePrefilterArray, generateNow: true);
             _probePrefilterArray.PushData();
         }
+    }
+
+    private void RegisterProbeTextureArrays()
+    {
+        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is null)
+            return;
+
+        if (_probeIrradianceArray is not null)
+            pipeline.SetTexture(_probeIrradianceArray);
+        if (_probePrefilterArray is not null)
+            pipeline.SetTexture(_probePrefilterArray);
+    }
+
+    private static void RegisterProbeBuffer(XRDataBuffer? buffer)
+    {
+        if (buffer is null)
+            return;
+
+        Engine.Rendering.State.CurrentRenderingPipeline?.SetBuffer(buffer);
+    }
+
+    private static bool RemoveProbeBufferResource(string name)
+    {
+        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is null || !pipeline.Resources.TryGetBuffer(name, out _))
+            return false;
+
+        pipeline.Resources.RemoveBuffer(name);
+        return true;
+    }
+
+    private static bool RemoveProbeTextureResource(string name)
+    {
+        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is null || !pipeline.Resources.TryGetTexture(name, out _))
+            return false;
+
+        pipeline.Resources.RemoveTexture(name);
+        return true;
     }
 
     private void ReportProbeResourceRefresh(bool structuralRefresh, int readyProbeCount, TimeSpan elapsed, bool deferredByBatchCapture)
@@ -2163,7 +2402,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (generation != _probeTessellationGeneration)
             return;
 
-        _probeTetraBuffer?.Dispose();
+        bool removedTetra = RemoveProbeBufferResource(LightProbeTetraBufferName);
+        if (!removedTetra)
+            _probeTetraBuffer?.Dispose();
         if (tetraData.Count == 0)
         {
             _probeTetraBuffer = null;
@@ -2175,12 +2416,13 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
         List<ProbeTetraData> tetraList = tetraData as List<ProbeTetraData> ?? [.. tetraData];
 
-        _probeTetraBuffer = new XRDataBuffer("LightProbeTetra", EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
+        _probeTetraBuffer = new XRDataBuffer(LightProbeTetraBufferName, EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
         {
             BindingIndexOverride = 1,
         };
         _probeTetraBuffer.SetDataRaw(tetraList);
         _probeTetraBuffer.PushData();
+        RegisterProbeBuffer(_probeTetraBuffer);
         _probeTetraProbeCount = probeCount;
 
         if (_useProbeGridAcceleration && _cachedProbePositionData.Length == probeCount && _cachedProbeParamData.Length == probeCount)
@@ -2188,7 +2430,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     }
 
 
-    private void RestirCompositeFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyRestirCompositeProgramBindings(XRRenderProgram program)
     {
     var region = RenderingPipelineState?.CurrentRenderRegion;
         float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
@@ -2197,7 +2439,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         program.Uniform("ScreenHeight", height);
     }
 
-    private void SurfelGICompositeFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplySurfelGICompositeProgramBindings(XRRenderProgram program)
     {
         var region = RenderingPipelineState?.CurrentRenderRegion;
         float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
@@ -2206,7 +2448,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         program.Uniform("ScreenHeight", height);
     }
 
-    private void LightVolumeCompositeFBO_SettingUniforms(XRRenderProgram program)
+    private void ApplyLightVolumeCompositeProgramBindings(XRRenderProgram program)
     {
         var region = RenderingPipelineState?.CurrentRenderRegion;
         float width = region?.Width > 0 ? region.Value.Width : InternalWidth;

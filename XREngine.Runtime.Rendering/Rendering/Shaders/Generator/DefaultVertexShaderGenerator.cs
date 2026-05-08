@@ -379,6 +379,7 @@ namespace XREngine.Rendering.Shaders.Generator
             if (UsePointLightInstancedLayering)
             {
                 Line("uniform int PointShadowFaceCount;");
+                Line("uniform int PointShadowFaceIndices[6];");
                 Line("uniform mat4 PointShadowViewProjectionMatrices[6];");
             }
         }
@@ -957,11 +958,12 @@ namespace XREngine.Rendering.Shaders.Generator
         private void AssignPointLightLayeredPosition(string localInputPositionName)
         {
             Line("int xrePointShadowFaceCount = clamp(PointShadowFaceCount, 1, 6);");
-            Line("int xrePointShadowFace = gl_InstanceID % xrePointShadowFaceCount;");
+            Line("int xrePointShadowSlot = gl_InstanceID % xrePointShadowFaceCount;");
+            Line("int xrePointShadowFace = clamp(PointShadowFaceIndices[xrePointShadowSlot], 0, 5);");
             Line($"vec3 xrePointShadowWorldPos = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
-            Line("gl_Position = PointShadowViewProjectionMatrices[xrePointShadowFace] * vec4(xrePointShadowWorldPos, 1.0f);");
+            Line("gl_Position = PointShadowViewProjectionMatrices[xrePointShadowSlot] * vec4(xrePointShadowWorldPos, 1.0f);");
             if (UsePointLightAtlasInstancedLayering)
-                Line("gl_ViewportIndex = xrePointShadowFace;");
+                Line("gl_ViewportIndex = xrePointShadowSlot;");
             else
                 Line("gl_Layer = xrePointShadowFace;");
         }

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Rendering.RenderGraph;
@@ -107,7 +108,10 @@ public sealed class VPRC_VolumetricFogHistoryPass : ViewportRenderCommand
         if (!TryGetActiveState(out XRRenderPipelineInstance? instance, out VolumetricFogTemporalState? state))
             return;
 
-        XRCamera camera = instance.RenderState.SceneCamera;
+        XRCamera? camera = instance.RenderState.SceneCamera;
+        if (camera is null)
+            return;
+
         uint halfWidth = 1u;
         uint halfHeight = 1u;
         var viewport = instance.RenderState.WindowViewport;
@@ -125,7 +129,9 @@ public sealed class VPRC_VolumetricFogHistoryPass : ViewportRenderCommand
             state.HistoryReady = false;
         }
 
-        state.CurrentViewProjection = camera.ViewProjectionMatrixUnjittered;
+        state.CurrentViewProjection = VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData)
+            ? temporalData.CurrViewProjection
+            : camera.ViewProjectionMatrix;
         state.CurrentCameraPosition = camera.Transform.RenderTranslation;
         state.CurrentCameraForward = NormalizeOrForward(camera.Transform.RenderForward);
         state.ForceHistoryReset = sizeChanged || !state.HistoryReady || IsCameraCut(state);
@@ -145,7 +151,9 @@ public sealed class VPRC_VolumetricFogHistoryPass : ViewportRenderCommand
         state.ForceHistoryReset = false;
     }
 
-    private static bool TryGetActiveState(out XRRenderPipelineInstance? instance, out VolumetricFogTemporalState? state)
+    private static bool TryGetActiveState(
+        [NotNullWhen(true)] out XRRenderPipelineInstance? instance,
+        [NotNullWhen(true)] out VolumetricFogTemporalState? state)
     {
         instance = ActivePipelineInstance;
         if (instance?.RenderState.SceneCamera is not { } camera)

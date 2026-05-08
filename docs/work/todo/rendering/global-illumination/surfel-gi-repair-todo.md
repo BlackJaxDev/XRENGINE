@@ -45,8 +45,8 @@ There are also stability issues after the input contracts are corrected:
 - [ ] Attach the main `TransformId` texture to `CreateForwardDepthPrePassMergeFBO()` in `DefaultRenderPipeline`.
 - [ ] Mirror the attachment change in `DefaultRenderPipeline2` while it remains present.
 - [ ] Keep shared prepass color, depth, and stencil clears disabled so deferred IDs survive untouched pixels.
-- [ ] Update `DepthNormalPrePass.fs` to declare `FragTransformId` and write `TransformId`.
-- [ ] Update `ForwardDepthNormalVariantFactory` so generated prepass variants write both normal and transform ID.
+- [ ] Update `DepthNormalPrePass.fs` to declare `FragTransformId` and write `TransformId = floatBitsToUint(FragTransformId);` to match the deferred convention and the `R32UI` `TransformId` texture format.
+- [ ] Update `ForwardDepthNormalVariantFactory` so generated prepass variants write both normal and transform ID using the same `floatBitsToUint` encoding.
 - [ ] Update explicit `XRENGINE_DEPTH_NORMAL_PREPASS` shader branches so they write transform ID too.
 - [ ] Ensure generated vertex programs emit `FragTransformId` whenever the effective prepass material consumes it.
 - [ ] Add regression tests for generated depth-normal variants that include `TransformId` output and `FragTransformId` input.
@@ -64,9 +64,9 @@ There are also stability issues after the input contracts are corrected:
 
 ## Phase 3: Fix normal and depth decode contracts
 
-- [ ] Replace the Surfel GI custom `DecodeNormal(vec3)` logic with octahedral decoding matching `NormalEncoding.glsl`.
+- [ ] Replace the Surfel GI custom `DecodeNormal(vec3)` logic with octahedral decoding matching `NormalEncoding.glsl` (the Normal texture is `vec2` octahedral, populated via `XRENGINE_EncodeNormal`).
 - [ ] Sample normal textures through `.rg`, not `.rgb`, in `Spawn.comp` and `Shade.comp`.
-- [ ] Remove the extra `cameraToWorldMatrix` normal transform if sampled G-buffer normals are already world-space.
+- [ ] Remove the extra `cameraToWorldMatrix` normal transform: the prepass and deferred shaders already write world-space normals, so re-rotating them by `cameraToWorldMatrix` rotates them out of world space.
 - [ ] Audit `LightVolumes` and `RadianceCascades` compute shaders for the same normal decode bug and decide whether to repair them in the same GI input-contract pass.
 - [ ] Confirm `DepthView` is a non-linear depth view compatible with the current inverse-projection reconstruction.
 - [ ] Add a small shader/unit test that reconstructs normal and world position from synthetic G-buffer inputs.
@@ -76,11 +76,14 @@ There are also stability issues after the input contracts are corrected:
 
 - [ ] Add a debug mode that counts candidate spawn tiles, rejected depth pixels, rejected normal pixels, invalid transform IDs, and allocated surfels.
 - [ ] Revisit the spawn heuristic so it samples deterministic coverage-poor pixels rather than only one pseudo-random pixel per tile.
-- [ ] Fix same-frame visibility for reused surfels that move after `BuildGrid.comp`.
+- [ ] Fix the dispatch ordering bug: `Execute()` runs `BuildGrid` before `Spawn`, so newly allocated surfels are not present in this frame's grid and cannot be gathered until next frame. Either move grid build after spawn, or have spawn insert new (and moved-reused) surfels into the grid with duplicate protection.
+- [ ] Fix same-frame visibility for reused surfels that move across cells after `BuildGrid.comp`.
+- [ ] Audit `Init.comp` and `Recycle.comp` so `meta.y` (active) and `meta.z` (transformId) start at 0, recycled slots clear `meta.z`, and recycle rejects surfels whose `TransformId` no longer resolves to a valid transform.
 - [ ] Decide whether reused surfels should be reinserted into the grid during spawn with duplicate protection.
-- [ ] Add an alternative order of recycle, reset grid, spawn/update, then build grid if that is cleaner.
+- [ ] Settle on the canonical pass order (recycle, reset grid, spawn/update, build grid) and document it next to `Execute()`.
 - [ ] Keep surfel update and grid-build paths allocation-free on CPU.
 - [ ] Add tests for reused surfel movement across grid cells.
+- [ ] Add a test that spawns a surfel and confirms it is gatherable in the same frame.
 
 ## Phase 5: Verify compute barriers and composition
 
@@ -93,14 +96,64 @@ There are also stability issues after the input contracts are corrected:
 
 ## Phase 6: Add practical debug views
 
-- [ ] Add or expose `TransformId` debug output in the ImGui editor while Surfel GI is active.
-- [ ] Add a Surfel GI input validation overlay for depth, normal, albedo, and transform ID at the sampled pixel.
-- [ ] Add a surfel allocation/count panel.
-- [ ] Add surfel grid occupancy visualization.
-- [ ] Add invalid-ID and failed-matrix-load counters.
-- [ ] Add a mode to visualize surfels colored by transform ID.
-- [ ] Add a mode to visualize surfels colored by normal direction.
-- [ ] Add a mode to visualize `SurfelGITexture` before composite.
+Existing surfaces to extend: `SurfelDebugRenderPipeline` (`ESurfelDebugVisualization`) and `VPRC_SurfelDebugVisualization` (`EVisualizationMode.SurfelCircles` / `GridHeatmap`). Today the disc visualization is a screen-space compute raster with a flat color; the goal of this phase is to render every live surfel as a real 3D oriented disc/quad in world space, with selectable color and orientation attributes, so spawn/reuse/normal/transform bugs are visible at a glance.
+
+### 6.1 - Per-surfel 3D disc rendering primitive
+
+- [ ] Add a `VPRC_SurfelDebugDrawPass` that draws one oriented disc per active surfel using instanced rendering, sourcing instance data directly from the `SurfelGI_Surfels` SSBO via `gl_InstanceID` (no CPU readback, no allocation per frame).
+- [ ] Use `glDrawArraysIndirect` / `glMultiDrawArraysIndirect` with `stackTop` (clamped to `MaxSurfels`) as the instance count, so dispatch matches GPU-resident state without a CPU sync.
+- [ ] Use a small disc/fan mesh (e.g. 16-segment triangle fan) as the base geometry; let radius come from `posRadius.w` and orientation come from `normal.xyz` rotated into world space via the per-surfel transform matrix (same `TryLoadWorldMatrix` path the compute shaders use).
+- [ ] Reconstruct world position in the vertex shader as `(model * vec4(localPos, 1)).xyz`; reconstruct world normal as `normalize(transpose(inverse(mat3(model))) * localNormal)`.
+- [ ] Build an orthonormal basis from the world normal in the vertex shader to orient the disc; do not rely on per-surfel tangent data.
+- [ ] Skip inactive surfels (`meta.y == 0`) by emitting a degenerate triangle, not by branching the draw call.
+- [ ] Add a uniform `radiusScale` (default 1.0) so users can shrink/inflate discs without re-spawning surfels.
+- [ ] Add a uniform `solidAlpha` (default ~0.6) and an option to render as wireframe rings instead of filled discs for occlusion-heavy scenes.
+- [ ] Render with depth test on, depth write off, and `GL_BLEND` enabled so discs read existing scene depth and overlay correctly on top of `HDRSceneTex` / forward output.
+
+### 6.2 - Color-by attribute modes
+
+Add a `ESurfelDebugColorMode` (mirrored as a uniform on the disc shader) that the ImGui panel can switch live, and surface each through `SurfelDebugRenderPipeline`:
+
+- [ ] `Albedo` - sample stored `albedo.rgb` directly.
+- [ ] `WorldNormal` - `normal * 0.5 + 0.5` after world-space reconstruction (lets users see normal-decode bugs immediately).
+- [ ] `LocalNormal` - raw `normal.xyz * 0.5 + 0.5` before any matrix application (diff against `WorldNormal` to spot transform bugs).
+- [ ] `TransformId` - hashed-color of `meta.z`, with a distinct sentinel color (e.g. magenta) for `meta.z == 0` so the "ambiguous zero" case lights up.
+- [ ] `Age` - gradient over `frameIndex - meta.x` (green = fresh, red = stale, gray = beyond `MaxSurfelAgeFrames`).
+- [ ] `RadiusHeat` - gradient over `posRadius.w` so radius-heuristic problems stand out.
+- [ ] `CellOccupancy` - color by how full this surfel's grid cell is (`counts[cell] / maxPerCell`); useful for diagnosing grid saturation.
+- [ ] `MatrixResolved` - solid green when `TryLoadWorldMatrix` succeeded for this surfel, red when it failed (renders the failed cases as discs sitting in local space at the world origin so they are visually obvious).
+- [ ] `SurfelIndex` - hashed-color of `gl_InstanceID`, useful as a stable per-surfel identity unrelated to transform ID.
+
+### 6.3 - Orientation and shape diagnostics
+
+- [ ] Add an option to draw a short normal arrow (line segment from disc center along the world normal, length proportional to radius) so flipped or zero normals are visible without sampling the disc face.
+- [ ] Add an option to render the disc as a half-disc plus a tangent tick so users can distinguish front-face from back-face when normals are nearly view-aligned.
+- [ ] Add a "twin" mode that draws each surfel twice, once filled and once as a wireframe at 1.05x radius, to spot z-fighting against scene geometry.
+
+### 6.4 - Filtering controls
+
+- [ ] Add filter uniforms: by transform ID (single ID or all), by cell index/range, by minimum age, by activity flag, and by minimum/maximum radius.
+- [ ] Add a "highlight" uniform that fades non-matching surfels to ~10% alpha instead of culling them, so context is preserved.
+- [ ] Add a "freeze" toggle that snapshots the surfel buffer to a debug copy buffer, so the user can study one frame's surfels while spawn/recycle continues.
+
+### 6.5 - Grid and counter overlays
+
+- [ ] Keep the existing `GridHeatmap` mode but render it as 3D wireframe boxes per non-empty cell (instanced cubes sourcing `counts[cellIndex]`), not just a screen-space heat overlay.
+- [ ] Color each cell box by `counts[cell] / maxPerCell`, with a saturated "overflow" color when `counts[cell] >= maxPerCell` to flag clipped cells.
+- [ ] Render the active grid bounds (from `CurrentGridOrigin` + `CurrentCellSize * gridDim`) as a wireframe box so users can confirm the grid is camera-following correctly.
+
+### 6.6 - Per-pixel input and scalar HUD
+
+- [ ] Add a Surfel GI input validation overlay for depth, normal, albedo, and transform ID at the cursor pixel, including the decoded world position, decoded world normal, and the ID-resolved world matrix's translation.
+- [ ] Add a surfel HUD panel showing: live surfel count (read from `stackTop`), free count, allocations this frame, recycled this frame, reused-on-spawn this frame, invalid-ID samples, failed `TryLoadWorldMatrix` counts, and average/max cell occupancy.
+- [ ] Drive these counters from a small `SurfelGI_DebugCounters` SSBO incremented atomically inside Spawn/BuildGrid/Recycle/Shade; clear it once per frame on the GPU.
+- [ ] Expose `SurfelGITexture` as a selectable output before composite (raw GI), and as a side-by-side with composited result.
+
+### 6.7 - ImGui surfacing
+
+- [ ] Add a "Surfel GI Debug" panel under the Global Editor Preferences / Render Debug section that toggles `SurfelDebugRenderPipeline`, picks `ESurfelDebugVisualization`, picks `ESurfelDebugColorMode`, and exposes the filter uniforms above.
+- [ ] Persist the currently selected debug mode and color mode in editor preferences.
+- [ ] Add MCP tool coverage for the same toggles so headless validation runs can capture screenshots in each mode (`SurfelGI.SetDebugMode`, `SurfelGI.SetColorMode`).
 
 ## Phase 7: Improve visual quality after correctness
 
@@ -126,6 +179,7 @@ There are also stability issues after the input contracts are corrected:
 
 - [ ] Update `docs/features/gi/surfel-gi.md` with the repaired input contracts and known limitations.
 - [ ] Update `docs/architecture/rendering/default-render-pipeline-notes.md` if the prepass identity convention changes.
+- [ ] Reconcile the C# `SurfelGPU.Meta` field comment (currently `Vector4 Meta; // x=frameIndex, y=reserved, z=reserved, w=reserved`) with the GLSL `uvec4 meta` layout (`x=lastUsedFrame, y=active, z=transformId`) so the storage convention does not drift.
 - [ ] Link this todo from any relevant GI planning index if one exists.
 - [ ] Record any remaining non-blocking quality issues as follow-up todos.
 - [ ] Merge the completed Surfel GI repair branch back into `main` after implementation and validation are complete.

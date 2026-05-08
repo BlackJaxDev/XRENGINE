@@ -169,6 +169,67 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
+    public void RenderScheduledTiles_RendersDirtyDirectionalCascadeGroupPastTileBudget()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1, maxTiles: 1);
+        DirectionalLightComponent light = CreateDirectionalLight(2048u);
+        ShadowMapRequest[] requests =
+        [
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 0, 1024u, 128u, 10000.0f, 1u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 1, 1024u, 128u, 9900.0f, 2u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 2, 1024u, 128u, 9800.0f, 3u),
+        ];
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, requests);
+
+        frameData.DirectionalCascadeGroupCount.ShouldBe(1);
+        for (int i = 0; i < requests.Length; i++)
+        {
+            frameData.TryGetAllocation(requests[i].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
+            allocation.LastRenderedFrame.ShouldBe(1u);
+            allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.None);
+        }
+    }
+
+    [Test]
+    public void SolveAllocations_DirtyDirectionalRefreshDoesNotPublishStaleFallbackBeforeRender()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 1024u, maxPages: 1);
+        DirectionalLightComponent light = CreateDirectionalLight(1024u);
+        ShadowMapRequest firstRequest = CreateRequest(
+            light,
+            EShadowProjectionType.DirectionalCascade,
+            0,
+            512u,
+            128u,
+            10000.0f,
+            1u);
+        RunFrame(manager, 1u, firstRequest)
+            .TryGetAllocation(firstRequest.Key, out ShadowAtlasAllocation firstAllocation)
+            .ShouldBeTrue();
+        firstAllocation.LastRenderedFrame.ShouldBe(1u);
+
+        ShadowMapRequest movedRequest = CreateRequest(
+            light,
+            EShadowProjectionType.DirectionalCascade,
+            0,
+            512u,
+            128u,
+            10000.0f,
+            2u);
+        manager.BeginFrame(2u, activeCameraCount: 1);
+        manager.Submit(movedRequest).ShouldBeTrue();
+        manager.SolveAllocations();
+        manager.PublishFrameData();
+
+        ShadowAtlasFrameData frameData = manager.PublishedFrameData;
+        frameData.TryGetAllocation(movedRequest.Key, out ShadowAtlasAllocation movedAllocation).ShouldBeTrue();
+        movedAllocation.LastRenderedFrame.ShouldBe(1u);
+        movedAllocation.ActiveFallback.ShouldBe(ShadowFallbackMode.Lit);
+        movedAllocation.SkipReason.ShouldBe(SkipReason.None);
+    }
+
+    [Test]
     public void SolveAllocations_UsesSeparateAtlasPagesPerLightFamily()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
@@ -192,6 +253,28 @@ public sealed class ShadowAtlasManagerPhaseTests
         directionalAllocation.AtlasId.ShouldNotBe(pointAllocation.AtlasId);
         directionalAllocation.AtlasId.ShouldNotBe(spotAllocation.AtlasId);
         pointAllocation.AtlasId.ShouldNotBe(spotAllocation.AtlasId);
+    }
+
+    [Test]
+    public void SolveAllocations_HonorsConfiguredMultiPageLimitPerFamily()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 2);
+        ShadowMapRequest[] requests =
+        [
+            CreateRequest(CreateSpotLight(512u), EShadowProjectionType.SpotPrimary, 0, 512u, 512u, 10.0f, 1u),
+            CreateRequest(CreateSpotLight(512u), EShadowProjectionType.SpotPrimary, 0, 512u, 512u, 9.0f, 2u),
+            CreateRequest(CreateSpotLight(512u), EShadowProjectionType.SpotPrimary, 0, 512u, 512u, 8.0f, 3u),
+        ];
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, requests);
+
+        frameData.Metrics.PageCount.ShouldBe(2);
+        frameData.Metrics.ResidentTileCount.ShouldBe(2);
+        frameData.Metrics.SkippedRequestCount.ShouldBe(1);
+        frameData.TryGetAllocation(requests[0].Key, out ShadowAtlasAllocation first).ShouldBeTrue();
+        frameData.TryGetAllocation(requests[1].Key, out ShadowAtlasAllocation second).ShouldBeTrue();
+        first.PageIndex.ShouldBe(0);
+        second.PageIndex.ShouldBe(1);
     }
 
     [Test]
@@ -226,6 +309,21 @@ public sealed class ShadowAtlasManagerPhaseTests
             allocation.Resolution.ShouldBe(256u);
             allocation.IsResident.ShouldBeTrue();
             allocation.Key.FaceOrCascadeIndex.ShouldBe(faceIndex);
+        }
+
+        frameData.PointFaceGroupCount.ShouldBe(1);
+        frameData.TryGetPointFaceGroup(light.ID, out ShadowAtlasGroupedPointFaceAllocation group).ShouldBeTrue();
+        group.AtlasKind.ShouldBe(EShadowAtlasKind.Point);
+        group.PageIndex.ShouldBe(0);
+        group.FaceCount.ShouldBe(PointLightComponent.ShadowFaceCount);
+        group.Members.Length.ShouldBe(PointLightComponent.ShadowFaceCount);
+        for (int faceIndex = 0; faceIndex < group.FaceCount; faceIndex++)
+        {
+            ShadowAtlasGroupedAllocationMember member = group.Members[faceIndex];
+            member.CascadeIndex.ShouldBe(faceIndex);
+            member.ViewportScissorIndex.ShouldBe(faceIndex);
+            member.RecordIndex.ShouldBeGreaterThanOrEqualTo(0);
+            frameData.GetAllocation(member.RecordIndex).Key.ShouldBe(requests[faceIndex].Key);
         }
     }
 
@@ -322,12 +420,222 @@ public sealed class ShadowAtlasManagerPhaseTests
         overflow.ActiveFallback.ShouldBe(ShadowFallbackMode.StaleTile);
     }
 
-    private static ShadowAtlasManager CreateManager(uint pageSize, int maxPages, int maxRequests = 32)
+    [Test]
+    public void SolveAllocations_DownsizeReusesPriorSubRectAndPreservesRenderedFrame()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
+        SpotLightComponent light = CreateSpotLight(512u);
+        ShadowMapRequest fullSize = CreateRequest(
+            light,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            512u,
+            128u,
+            10.0f,
+            1u);
+        ShadowAtlasFrameData firstFrame = RunFrame(manager, 1u, fullSize);
+        firstFrame.TryGetAllocation(fullSize.Key, out ShadowAtlasAllocation first).ShouldBeTrue();
+        first.LastRenderedFrame.ShouldBe(1u);
+
+        ShadowMapRequest halfSize = CreateRequest(
+            light,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            256u,
+            128u,
+            10.0f,
+            2u);
+        ShadowAtlasFrameData secondFrame = RunFrame(manager, 10u, halfSize);
+
+        secondFrame.TryGetAllocation(halfSize.Key, out ShadowAtlasAllocation second).ShouldBeTrue();
+        second.IsResident.ShouldBeTrue();
+        second.Resolution.ShouldBe(256u);
+        second.PageIndex.ShouldBe(first.PageIndex);
+        second.PixelRect.X.ShouldBe(first.PixelRect.X);
+        second.PixelRect.Y.ShouldBe(first.PixelRect.Y);
+        second.LastRenderedFrame.ShouldBe(first.LastRenderedFrame);
+        second.SkipReason.ShouldBe(SkipReason.StaleTileReused);
+    }
+
+    [Test]
+    public void SolveAllocations_DeferredUpgradeKeepsPriorSlotWhenSurroundingBlockIsOccupied()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
+        SpotLightComponent growLight = CreateSpotLight(512u);
+        SpotLightComponent blockerLight = CreateSpotLight(256u);
+        ShadowMapRequest growInitial = CreateRequest(
+            growLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            256u,
+            128u,
+            10.0f,
+            1u);
+        ShadowMapRequest blockerInitial = CreateRequest(
+            blockerLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            256u,
+            128u,
+            9.0f,
+            2u);
+        ShadowAtlasFrameData firstFrame = RunFrame(manager, 1u, growInitial, blockerInitial);
+        firstFrame.TryGetAllocation(growInitial.Key, out ShadowAtlasAllocation growFirst).ShouldBeTrue();
+        firstFrame.TryGetAllocation(blockerInitial.Key, out ShadowAtlasAllocation blockerFirst).ShouldBeTrue();
+
+        ShadowMapRequest blockerNext = CreateRequest(
+            blockerLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            256u,
+            128u,
+            100.0f,
+            3u);
+        ShadowMapRequest growUpgrade = CreateRequest(
+            growLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            512u,
+            128u,
+            10.0f,
+            4u);
+        ShadowAtlasFrameData secondFrame = RunFrame(manager, 10u, blockerNext, growUpgrade);
+
+        secondFrame.TryGetAllocation(growUpgrade.Key, out ShadowAtlasAllocation growSecond).ShouldBeTrue();
+        secondFrame.TryGetAllocation(blockerNext.Key, out ShadowAtlasAllocation blockerSecond).ShouldBeTrue();
+        blockerSecond.PageIndex.ShouldBe(blockerFirst.PageIndex);
+        blockerSecond.PixelRect.X.ShouldBe(blockerFirst.PixelRect.X);
+        blockerSecond.PixelRect.Y.ShouldBe(blockerFirst.PixelRect.Y);
+        growSecond.Resolution.ShouldBe(256u);
+        growSecond.PageIndex.ShouldBe(growFirst.PageIndex);
+        growSecond.PixelRect.X.ShouldBe(growFirst.PixelRect.X);
+        growSecond.PixelRect.Y.ShouldBe(growFirst.PixelRect.Y);
+    }
+
+    [Test]
+    public void SolveAllocations_ReusesResidentTileAfterTransientMissingRequest()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
+        SpotLightComponent returningLight = CreateSpotLight(256u);
+        SpotLightComponent steadyLight = CreateSpotLight(256u);
+        ShadowMapRequest returning = CreateRequest(
+            returningLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            256u,
+            128u,
+            10.0f,
+            1u);
+        ShadowMapRequest steady = CreateRequest(
+            steadyLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            256u,
+            128u,
+            9.0f,
+            2u);
+
+        ShadowAtlasFrameData firstFrame = RunFrame(manager, 1u, returning, steady);
+        firstFrame.TryGetAllocation(returning.Key, out ShadowAtlasAllocation first).ShouldBeTrue();
+        first.IsResident.ShouldBeTrue();
+
+        RunFrame(manager, 2u, steady);
+        ShadowAtlasFrameData thirdFrame = RunFrame(manager, 3u, returning, steady);
+
+        thirdFrame.TryGetAllocation(returning.Key, out ShadowAtlasAllocation third).ShouldBeTrue();
+        third.IsResident.ShouldBeTrue();
+        third.PageIndex.ShouldBe(first.PageIndex);
+        third.PixelRect.X.ShouldBe(first.PixelRect.X);
+        third.PixelRect.Y.ShouldBe(first.PixelRect.Y);
+        third.Resolution.ShouldBe(first.Resolution);
+    }
+
+    [Test]
+    public void SolveAllocations_ReusesNotRelevantStaleTileWhenRegionRemainsFree()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
+        SpotLightComponent light = CreateSpotLight(256u);
+        ShadowMapRequest visible = CreateRequest(
+            light,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            256u,
+            128u,
+            10.0f,
+            1u);
+        ShadowAtlasFrameData firstFrame = RunFrame(manager, 1u, visible);
+        firstFrame.TryGetAllocation(visible.Key, out ShadowAtlasAllocation first).ShouldBeTrue();
+
+        ShadowMapRequest notRelevant = CreateRequest(
+            light,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            256u,
+            128u,
+            10.0f,
+            2u,
+            forcedSkipReason: SkipReason.NotRelevant);
+        ShadowAtlasFrameData secondFrame = RunFrame(manager, 2u, notRelevant);
+
+        secondFrame.TryGetAllocation(notRelevant.Key, out ShadowAtlasAllocation second).ShouldBeTrue();
+        second.IsResident.ShouldBeTrue();
+        second.SkipReason.ShouldBe(SkipReason.NotRelevant);
+        second.PageIndex.ShouldBe(first.PageIndex);
+        second.PixelRect.X.ShouldBe(first.PixelRect.X);
+        second.PixelRect.Y.ShouldBe(first.PixelRect.Y);
+    }
+
+    [Test]
+    public void SolveAllocations_DropsNotRelevantStaleTileWhenLiveTileClaimsRegion()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 512u, maxPages: 1);
+        SpotLightComponent staleLight = CreateSpotLight(512u);
+        SpotLightComponent liveLight = CreateSpotLight(512u);
+        ShadowMapRequest staleVisible = CreateRequest(
+            staleLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            512u,
+            512u,
+            10.0f,
+            1u);
+        ShadowAtlasFrameData firstFrame = RunFrame(manager, 1u, staleVisible);
+        firstFrame.TryGetAllocation(staleVisible.Key, out ShadowAtlasAllocation first).ShouldBeTrue();
+        first.IsResident.ShouldBeTrue();
+
+        ShadowMapRequest staleNotRelevant = CreateRequest(
+            staleLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            512u,
+            512u,
+            1.0f,
+            2u,
+            forcedSkipReason: SkipReason.NotRelevant);
+        ShadowMapRequest live = CreateRequest(
+            liveLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            512u,
+            512u,
+            100.0f,
+            3u);
+        ShadowAtlasFrameData secondFrame = RunFrame(manager, 2u, staleNotRelevant, live);
+
+        secondFrame.TryGetAllocation(staleNotRelevant.Key, out ShadowAtlasAllocation stale).ShouldBeTrue();
+        secondFrame.TryGetAllocation(live.Key, out ShadowAtlasAllocation liveAllocation).ShouldBeTrue();
+        stale.IsResident.ShouldBeFalse();
+        stale.SkipReason.ShouldBe(SkipReason.NotRelevant);
+        liveAllocation.IsResident.ShouldBeTrue();
+        AssertNoResidentOverlaps(secondFrame);
+    }
+
+    private static ShadowAtlasManager CreateManager(uint pageSize, int maxPages, int maxRequests = 32, int maxTiles = 16)
         => new(new ShadowAtlasManagerSettings(
             PageSize: pageSize,
             MaxPages: maxPages,
             MaxMemoryBytes: 0L,
-            MaxTilesRenderedPerFrame: 16,
+            MaxTilesRenderedPerFrame: maxTiles,
             MaxRenderMilliseconds: 2.0f,
             MinTileResolution: 128u,
             MaxTileResolution: pageSize,
@@ -373,7 +681,8 @@ public sealed class ShadowAtlasManagerPhaseTests
         uint desiredResolution,
         uint minimumResolution,
         float priority,
-        ulong contentHash)
+        ulong contentHash,
+        SkipReason forcedSkipReason = SkipReason.None)
     {
         ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, faceOrCascadeIndex);
         return new ShadowMapRequest(
@@ -396,7 +705,8 @@ public sealed class ShadowAtlasManagerPhaseTests
             DirtyReason: ShadowDirtyReason.ContentChanged,
             CanReusePreviousFrame: true,
             EditorPinned: false,
-            StereoVis: StereoVisibility.Mono);
+            StereoVis: StereoVisibility.Mono,
+            ForcedSkipReason: forcedSkipReason);
     }
 
     private static Dictionary<ShadowRequestKey, AllocationSignature> CaptureLayout(ShadowAtlasFrameData frameData)

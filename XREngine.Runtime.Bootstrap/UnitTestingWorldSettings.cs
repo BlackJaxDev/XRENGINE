@@ -113,6 +113,11 @@ public class UnitTestingWorldSettings
     public bool SpotLight = false;
     public bool DirLight2 = false;
     public bool PointLight = false;
+    public int DynamicPointLightCount { get; set; } = 0;
+    public int DynamicSpotLightCount { get; set; } = 0;
+    public bool DynamicLightsCastShadows { get; set; } = true;
+    public bool DynamicLightsForceShadowAtlas { get; set; } = true;
+    public int DynamicLightSeed { get; set; } = 1337;
     public LightProbeMode LightProbe { get; set; } = LightProbeMode.ModelGrid;
     public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.None;
     public float LightProbeCaptureMs = 100;
@@ -247,6 +252,7 @@ public class UnitTestingWorldSettings
     public bool AllowBinaryProgramCaching { get; set; } = true;
     public bool AsyncProgramBinaryUpload { get; set; } = true;
     public bool AsyncProgramCompilation { get; set; } = true;
+    public int OpenGLProgramCompileLinkWorkerCount { get; set; } = 1;
     public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16;
     public int OpenGLShaderCompilerThreadCount { get; set; } = -1;
     public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true;
