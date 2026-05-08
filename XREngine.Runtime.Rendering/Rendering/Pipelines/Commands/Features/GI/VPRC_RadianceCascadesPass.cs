@@ -44,6 +44,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string CompositeQuadFBOName { get; set; } = DefaultRenderPipeline.RadianceCascadeCompositeFBOName;
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
+        protected override bool ShouldExecuteThisFrame()
+            => Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
+            {
+                DefaultRenderPipeline pipeline => pipeline.UsesRadianceCascades,
+                DefaultRenderPipeline2 pipeline => pipeline.UsesRadianceCascades,
+                _ => false,
+            };
+
         protected override void Execute()
         {
             if (ActivePipelineInstance.Pipeline is not DefaultRenderPipeline pipeline || !pipeline.UsesRadianceCascades)

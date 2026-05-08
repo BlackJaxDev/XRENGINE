@@ -2031,7 +2031,7 @@ public static partial class EditorImGuiUI
 
         /// <summary>
         /// Synchronously flushes the current ImGui layout (dock nodes, window state) and
-        /// editor panel visibility to disk, bypassing the normal debounce window.
+        /// editor panel visibility to disk when no async layout write is already running.
         ///
         /// This must only be called from live ImGui close paths before the native ImGui
         /// context is torn down. Calling it from process-exit or other late shutdown hooks
@@ -2044,13 +2044,8 @@ public static partial class EditorImGuiUI
             if (string.IsNullOrWhiteSpace(iniFilename))
                 return;
 
-            // Wait briefly for any in-flight async write to finish so we don't race with it.
-            for (int i = 0; i < 200; i++)
-            {
-                if (Interlocked.CompareExchange(ref _iniSaveInFlight, 1, 0) == 0)
-                    break;
-                Thread.Sleep(10);
-            }
+            if (Interlocked.CompareExchange(ref _iniSaveInFlight, 1, 0) != 0)
+                return;
 
             try
             {

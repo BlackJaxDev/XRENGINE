@@ -153,6 +153,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             public Vector4 Meta; // x=frameIndex, y=reserved, z=reserved, w=reserved
         }
 
+        protected override bool ShouldExecuteThisFrame()
+            => Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
+            {
+                DefaultRenderPipeline pipeline => pipeline.UsesSurfelGI,
+                DefaultRenderPipeline2 pipeline => pipeline.UsesSurfelGI,
+                _ => false,
+            };
+
         protected override void Execute()
         {
             if (ActivePipelineInstance.Pipeline is not DefaultRenderPipeline pipeline || !pipeline.UsesSurfelGI)

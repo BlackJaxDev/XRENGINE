@@ -693,6 +693,12 @@ namespace XREngine
                 public static Data.Profiling.GpuPipelineTimingNodeData[] GetGpuRenderPipelineTimingRoots()
                     => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Roots;
 
+                public static bool TryDumpGpuRenderPipelineTimingHistory(
+                    string pipelineName,
+                    out string fileName,
+                    out string? error)
+                    => RenderPipelineGpuProfiler.Instance.TryDumpTimingHistory(pipelineName, out fileName, out error);
+
                 /// <summary>
                 /// Call this at the start of each frame to reset the counters.
                 /// </summary>

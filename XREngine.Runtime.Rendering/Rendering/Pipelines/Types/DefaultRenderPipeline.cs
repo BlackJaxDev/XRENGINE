@@ -1369,6 +1369,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
+        ifElse.Label = "WindowViewportTarget";
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
         ifElse.TrueCommands = CreateViewportTargetCommandsLegacy();
         ifElse.FalseCommands = CreateFBOTargetCommandsLegacy();
@@ -1475,6 +1476,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             {
                 // Render to the ambient occlusion FBO using a switch to select the active AO implementation.
                 var aoSwitch = c.Add<VPRC_Switch>();
+                aoSwitch.Label = "Ambient Occlusion Mode";
                 aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
                 aoSwitch.Cases = new()
                 {
@@ -1491,6 +1493,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             else
             {
                 var aoSwitch = c.Add<VPRC_Switch>();
+                aoSwitch.Label = "Ambient Occlusion Mode";
                 aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
                 aoSwitch.Cases = new()
                 {
@@ -1546,6 +1549,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // so that the AO pass has correct GBuffer data (SSAO doesn't support MSAA textures).
             {
                 var msaaGBufferBranch = c.Add<VPRC_IfElse>();
+                msaaGBufferBranch.Label = "MSAA Deferred GBuffer Resolve";
                 msaaGBufferBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                 {
                     var msaaGeomCmds = new ViewportRenderCommandContainer(this);
@@ -1561,12 +1565,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
             // Forward depth+normal pre-pass
             var prePassChoice = c.Add<VPRC_IfElse>();
+            prePassChoice.Label = "Forward Depth Normal PrePass";
             prePassChoice.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
             {
                 // When sharing GBuffer targets, skip the dedicated forward-only FBO
                 // and render only into the merged GBuffer attachments.
                 var shareChoice = new ViewportRenderCommandContainer(this);
                 var shareIfElse = shareChoice.Add<VPRC_IfElse>();
+                shareIfElse.Label = "Forward PrePass Shares GBuffer Targets";
                 shareIfElse.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
                 shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
                 shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
@@ -1576,6 +1582,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_DepthTest>().Enable = false;
 
             var aoResolveSwitch = c.Add<VPRC_Switch>();
+            aoResolveSwitch.Label = "Ambient Occlusion Resolve";
             aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
             aoResolveSwitch.Cases = new()
             {
@@ -1597,6 +1604,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // MSAA deferred: mark complex pixels in the MSAA depth-stencil before lighting
             {
                 var msaaMarkBranch = c.Add<VPRC_IfElse>();
+                msaaMarkBranch.Label = "MSAA Deferred Complex Pixel Mark";
                 msaaMarkBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                 {
                     var markCmds = new ViewportRenderCommandContainer(this);
@@ -1620,6 +1628,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // Otherwise, light volumes render into the standard LightCombine FBO.
             {
                 var msaaLightingBranch = c.Add<VPRC_IfElse>();
+                msaaLightingBranch.Label = "MSAA Deferred Lighting";
                 msaaLightingBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                 {
                     // MSAA path: render lights into MSAA Lighting FBO, then resolve to DiffuseTexture
@@ -1783,6 +1792,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             {
                 // Depth preload is only needed for MSAA.
                 var msaaPreload = c.Add<VPRC_IfElse>();
+                msaaPreload.Label = "MSAA Forward Depth Preload";
                 msaaPreload.ConditionEvaluator = () => RuntimeEnableMsaa;
                 {
                     var preloadCmds = new ViewportRenderCommandContainer(this);
@@ -1792,6 +1802,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     // depth at silhouette edges so the skybox can render at actual sky samples
                     // and forward meshes get correct per-sample depth testing.
                     var deferredChoice = preloadCmds.Add<VPRC_IfElse>();
+                    deferredChoice.Label = "MSAA Deferred Depth Source";
                     deferredChoice.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                     {
                         var blitCmds = new ViewportRenderCommandContainer(this);
@@ -1857,6 +1868,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // for subsequent transparent passes and post-processing.
             {
                 var msaaResolve = c.Add<VPRC_IfElse>();
+                msaaResolve.Label = "MSAA Forward Resolve";
                 msaaResolve.ConditionEvaluator = () => RuntimeEnableMsaa;
                 {
                     var resolveCmds = new ViewportRenderCommandContainer(this);
@@ -1932,6 +1944,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_DepthTest>().Enable = false;
 
             var bloomChoice = c.Add<VPRC_IfElse>();
+            bloomChoice.Label = "Bloom";
             bloomChoice.ConditionEvaluator = ShouldUseBloom;
             {
                 var bloomCommands = new ViewportRenderCommandContainer(this);
@@ -1943,10 +1956,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
 
             var motionBlurChoice = c.Add<VPRC_IfElse>();
+            motionBlurChoice.Label = "Motion Blur";
             motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
             motionBlurChoice.TrueCommands = CreateMotionBlurPassCommands();
 
             var dofChoice = c.Add<VPRC_IfElse>();
+            dofChoice.Label = "Depth Of Field";
             dofChoice.ConditionEvaluator = ShouldUseDepthOfField;
             dofChoice.TrueCommands = CreateDepthOfFieldPassCommands();
 
@@ -2092,15 +2107,17 @@ public partial class DefaultRenderPipeline : RenderPipeline
         // resolves from internal resolution and writes a full-resolution result.
         {
             var upscaleChoice = c.Add<VPRC_IfElse>();
-                upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
+            upscaleChoice.Label = "Post AA Upscale";
+            upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
             {
                 var upscaleCmds = new ViewportRenderCommandContainer(this);
 
                 // Apply the selected anti-aliasing path.
                 using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
                 {
-                        var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
-                        tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+                    var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
+                    tsrOrPostAa.Label = "TSR Or Post AA";
+                    tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
                     {
                             var tsrUpscale = new ViewportRenderCommandContainer(this);
                             tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
@@ -2117,6 +2134,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     {
                             var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
                             var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
+                            postAaChoice.Label = "FXAA Or SMAA";
                             postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
                             {
                                 var fxaaUpscale = new ViewportRenderCommandContainer(this);

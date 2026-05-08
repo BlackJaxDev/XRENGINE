@@ -241,6 +241,24 @@ public interface IRuntimeRenderingHostServices
     /// </summary>
     bool ForwardPrePassSharesGBufferTargets { get; }
 
+    /// <summary>
+    /// Gets whether the host has per-frame render statistics tracking enabled.
+    /// When false, render-stats sampling and the GPU pipeline profiler are skipped.
+    /// </summary>
+    bool EnableRenderStatisticsTracking { get; }
+
+    /// <summary>
+    /// Gets whether the host has GPU render-pipeline command timing enabled.
+    /// When false, the render-pipeline GPU profiler short-circuits scope creation.
+    /// </summary>
+    bool EnableGpuRenderPipelineProfiling { get; }
+
+    /// <summary>
+    /// Gets the host's current render frame id. Used by runtime rendering code that
+    /// needs to correlate work to the same frame counter the host increments per frame.
+    /// </summary>
+    ulong CurrentRenderFrameId { get; }
+
     #endregion
 
     #region Shadow settings

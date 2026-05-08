@@ -417,7 +417,16 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private bool HasGpuEligibleMeshCommands(int renderPass)
+        public bool HasRenderingCommands(int renderPass)
+        {
+            using (_lock.EnterScope())
+            {
+                return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
+                    list.Count > 0;
+            }
+        }
+
+        public bool HasGpuEligibleMeshCommands(int renderPass)
         {
             using (_lock.EnterScope())
             {
