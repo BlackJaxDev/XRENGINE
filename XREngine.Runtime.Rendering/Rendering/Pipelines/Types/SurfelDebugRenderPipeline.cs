@@ -436,11 +436,14 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
 
     private XRTexture CreateAlbedoOpacityTexture()
     {
+        // Match DefaultRenderPipeline AlbedoOpacity format (sRGB8Alpha8) so
+        // shaders binding by name see consistent storage across pipelines.
         var t = XRTexture2D.CreateFrameBufferTexture(
             InternalWidth, InternalHeight,
-            EPixelInternalFormat.Rgba16f,
+            EPixelInternalFormat.Srgb8Alpha8,
             EPixelFormat.Rgba,
-            EPixelType.HalfFloat);
+            EPixelType.UnsignedByte);
+        t.SizedInternalFormat = ESizedInternalFormat.Srgb8Alpha8;
         t.MinFilter = ETexMinFilter.Nearest;
         t.MagFilter = ETexMagFilter.Nearest;
         t.Name = AlbedoOpacityTextureName;

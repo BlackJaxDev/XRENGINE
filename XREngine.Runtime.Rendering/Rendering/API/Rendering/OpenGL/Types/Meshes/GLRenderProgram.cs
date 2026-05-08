@@ -237,6 +237,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
+                _asyncCompileDuplicateHashWaitPending = false;
                 _linkRequestStackTrace = null;
                 _activeBuildBackend = null;
                 _activeBuildFingerprint = null;

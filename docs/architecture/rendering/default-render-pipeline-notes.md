@@ -215,6 +215,8 @@ Forward shading reserves two directional shadow slots. `DirectionalShadowMaps[0.
 
 Cascaded directional shadows publish per-cascade effective bias values on the directional light struct (`CascadeBiasMin`, `CascadeBiasMax`, `CascadeReceiverOffsets`). Automatic values are derived from the light's texel bias controls plus cascade texel size, light-space depth span, and shadow-map resolution. `CascadeBiasMin` is the constant depth floor, `CascadeBiasMax` is the slope scale in texels, and `CascadeReceiverOffsets` is the world-space normal offset.
 
+Forward cascade receivers must not sample the last cascade after the view-space depth has passed that cascade's far split. The last cascade fades to the contact/lit fallback over its configured blend width, and fragments beyond the final split use the same fallback instead of reading undefined/stale far-cascade depth.
+
 Live forward and deferred shadow receivers use three user-facing bias controls: `ShadowDepthBiasTexels`, `ShadowSlopeBiasTexels`, and `ShadowNormalBiasTexels`. The shaders convert those texel values to the active shadow map, cascade, atlas tile, spot projection, or cubemap face instead of relying on fixed absolute compare-bias numbers.
 
 Atlas tiles also publish `requestedResolution / allocatedResolution` in their depth metadata. Receiver shaders use that scale to recover the authored texel size for bias math, while atlas PCF/PCSS taps remain in local shadow-map UV space and are clamped inside the tile before converting to atlas page UVs. This keeps bias and contact-hardening settings tuned for a standalone `4096` map from being double-scaled or contaminated by neighboring atlas tiles when the allocator demotes the tile to `2048`, `1024`, etc. Directional atlas receivers sample the page raster depth attachment, not the atlas color attachment, so directional atlas compares use the same depth precision/encoding class as the non-atlased directional path.
@@ -430,3 +432,11 @@ The ImGui Texture Streaming panel shows tracked textures with backend, committed
 The Default Render Pipeline tonemapping stage now exposes AgX and GT7 in addition to the earlier Linear, Gamma, Clip, Reinhard, Hable, Mobius, ACES, Neutral, and Filmic operators. `PostProcess.fs`, `PostProcessStereo.fs`, and `TonemapStandalone.fs` all route through the shared snippet, so new operators should be added there first and then covered by `TonemappingShaderContractTests`.
 
 `GT7` is the lightweight Uchimura/Gran Turismo per-channel curve intended for the engine's SDR post-process path. It is not the full GT7 physical HDR/display pipeline with target-display adaptation and perceptual gamut mapping.
+
+---
+
+## 25. ImGui Platform Viewport Disposal
+
+**Rule:** Runtime ImGui platform viewport close must not call native window disposal from the viewport disposal pump.
+
+Closing a detached ImGui viewport hides and detaches the Silk/GLFW window, releases the managed ImGui viewport handle, and keeps the native window quarantined for process shutdown. This avoids freezes observed inside native `IWindow.Dispose()` when ImGui retires a platform viewport during the frame. Set `XRE_IMGUI_VIEWPORT_DISPOSE_NATIVE=1` only for local diagnostics when testing the underlying Silk/GLFW close path.

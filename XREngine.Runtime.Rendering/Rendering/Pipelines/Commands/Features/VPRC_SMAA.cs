@@ -427,16 +427,20 @@ void main()
         _edgeTexture.SamplerName = ResolvedEdgeTextureName;
         _edgeTexture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
         _edgeTexture.Resizable = false;
-        _edgeTexture.MagFilter = ETexMagFilter.Linear;
-        _edgeTexture.MinFilter = ETexMinFilter.Linear;
+        _edgeTexture.MagFilter = ETexMagFilter.Nearest;
+        _edgeTexture.MinFilter = ETexMinFilter.Nearest;
+        _edgeTexture.UWrap = ETexWrapMode.ClampToEdge;
+        _edgeTexture.VWrap = ETexWrapMode.ClampToEdge;
 
         _blendTexture = XRTexture2D.CreateFrameBufferTexture(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
         _blendTexture.Name = ResolvedBlendTextureName;
         _blendTexture.SamplerName = ResolvedBlendTextureName;
         _blendTexture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
         _blendTexture.Resizable = false;
-        _blendTexture.MagFilter = ETexMagFilter.Linear;
-        _blendTexture.MinFilter = ETexMinFilter.Linear;
+        _blendTexture.MagFilter = ETexMagFilter.Nearest;
+        _blendTexture.MinFilter = ETexMinFilter.Nearest;
+        _blendTexture.UWrap = ETexWrapMode.ClampToEdge;
+        _blendTexture.VWrap = ETexWrapMode.ClampToEdge;
 
         _outputTexture = XRTexture2D.CreateFrameBufferTexture(width, height, sourceInternalFormat, sourcePixelFormat, sourcePixelType);
         _outputTexture.Name = OutputTextureName;
@@ -445,6 +449,8 @@ void main()
         _outputTexture.Resizable = false;
         _outputTexture.MagFilter = ETexMagFilter.Linear;
         _outputTexture.MinFilter = ETexMinFilter.Linear;
+        _outputTexture.UWrap = ETexWrapMode.ClampToEdge;
+        _outputTexture.VWrap = ETexWrapMode.ClampToEdge;
 
         _edgeFbo = new XRFrameBuffer((_edgeTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {

@@ -269,6 +269,17 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
+    public void ForwardDirectionalCascades_FadeLastCascadeToContactFallback()
+    {
+        string source = LoadShaderSource("Snippets/ForwardLighting.glsl");
+
+        source.ShouldContain("if (viewDepth <= splitFar)");
+        source.ShouldContain("float shadow1 = XRENGINE_ReadDirectionalContactShadowOnly(lightIndex, light, fragPos, normal, diffuseFactor);");
+        source.ShouldContain("return mix(shadow0, shadow1, t);");
+        source.ShouldNotContain("if (viewDepth <= splitFar || isLast)");
+    }
+
+    [Test]
     public void DeferredPointShadow_HasR16fQuantizationBiasGuard()
     {
         string source = LoadShaderSource("Scene3D/DeferredLightingPoint.fs");

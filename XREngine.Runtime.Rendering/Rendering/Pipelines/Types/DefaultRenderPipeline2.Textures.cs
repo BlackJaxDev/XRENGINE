@@ -138,6 +138,10 @@ public partial class DefaultRenderPipeline2
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
                 Name = DepthViewTextureName,
                 SamplerName = DepthViewTextureName,
             };
@@ -151,6 +155,10 @@ public partial class DefaultRenderPipeline2
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
                 Name = DepthViewTextureName,
                 SamplerName = DepthViewTextureName,
             };
@@ -169,6 +177,10 @@ public partial class DefaultRenderPipeline2
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
                 Name = ForwardContactDepthViewTextureName,
                 SamplerName = ForwardContactDepthViewTextureName,
             };
@@ -182,6 +194,10 @@ public partial class DefaultRenderPipeline2
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
                 Name = ForwardContactDepthViewTextureName,
                 SamplerName = ForwardContactDepthViewTextureName,
             };
@@ -200,6 +216,10 @@ public partial class DefaultRenderPipeline2
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Stencil,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
                 Name = StencilViewTextureName,
                 SamplerName = StencilViewTextureName,
             };
@@ -213,6 +233,10 @@ public partial class DefaultRenderPipeline2
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Stencil,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
                 Name = StencilViewTextureName,
                 SamplerName = StencilViewTextureName,
             };
@@ -269,6 +293,10 @@ public partial class DefaultRenderPipeline2
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
                 Name = HistoryDepthViewTextureName,
                 SamplerName = HistoryDepthViewTextureName,
             };
@@ -282,6 +310,10 @@ public partial class DefaultRenderPipeline2
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
                 Name = HistoryDepthViewTextureName,
                 SamplerName = HistoryDepthViewTextureName,
             };
@@ -290,16 +322,19 @@ public partial class DefaultRenderPipeline2
 
     private XRTexture CreateAlbedoOpacityTexture()
     {
+        // Albedo is bounded [0,1] and opacity is also [0,1]; storing as
+        // sRGB8Alpha8 with GL_FRAMEBUFFER_SRGB enabled gives perceptually
+        // uniform 8-bit precision on RGB while halving bandwidth vs RGBA16F.
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Rgba16f,
+                EPixelInternalFormat.Srgb8Alpha8,
                 EPixelFormat.Rgba,
-                EPixelType.HalfFloat);
+                EPixelType.UnsignedByte);
             t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.SizedInternalFormat = ESizedInternalFormat.Srgb8Alpha8;
             t.OVRMultiViewParameters = new(0, 2u);
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
@@ -311,9 +346,10 @@ public partial class DefaultRenderPipeline2
         {
             var t = XRTexture2D.CreateFrameBufferTexture(
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Rgba16f,
+                EPixelInternalFormat.Srgb8Alpha8,
                 EPixelFormat.Rgba,
-                EPixelType.HalfFloat);
+                EPixelType.UnsignedByte);
+            t.SizedInternalFormat = ESizedInternalFormat.Srgb8Alpha8;
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = AlbedoOpacityTextureName;
@@ -493,17 +529,22 @@ public partial class DefaultRenderPipeline2
 
     private XRTexture CreateLightingTexture()
     {
+        // Deferred lighting accumulation. R11fG11fB10f is true 32-bit storage
+        // (vs RGB16F which most GL drivers promote to 64-bit RGBA16F) and
+        // covers the full HDR range needed for direct lighting + emissive.
+        // MSAA variant keeps Rgb16f because R11fG11fB10f MSAA support is
+        // less reliable across drivers.
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Rgb16f,
+                EPixelInternalFormat.R11fG11fB10f,
                 EPixelFormat.Rgb,
-                EPixelType.HalfFloat);
+                EPixelType.Float);
             t.OVRMultiViewParameters = new(0, 2u);
             t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Rgb16f;
+            t.SizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
             t.Name = DiffuseTextureName;
             t.SamplerName = DiffuseTextureName;
             return t;
@@ -512,9 +553,10 @@ public partial class DefaultRenderPipeline2
         {
             var t = XRTexture2D.CreateFrameBufferTexture(
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Rgb16f,
+                EPixelInternalFormat.R11fG11fB10f,
                 EPixelFormat.Rgb,
-                EPixelType.HalfFloat);
+                EPixelType.Float);
+            t.SizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
             t.Name = DiffuseTextureName;
             t.SamplerName = DiffuseTextureName;
             return t;
@@ -525,11 +567,14 @@ public partial class DefaultRenderPipeline2
 
     private XRTexture CreateMsaaAlbedoOpacityTexture()
     {
+        // sRGB8Alpha8 to match the non-MSAA AlbedoOpacityTexture; GL spec
+        // supports sRGB encoding on multisample storage and resolve.
         var t = XRTexture2D.CreateFrameBufferTexture(
             InternalWidth, InternalHeight,
-            EPixelInternalFormat.Rgba16f,
+            EPixelInternalFormat.Srgb8Alpha8,
             EPixelFormat.Rgba,
-            EPixelType.HalfFloat);
+            EPixelType.UnsignedByte);
+        t.SizedInternalFormat = ESizedInternalFormat.Srgb8Alpha8;
         t.MultiSampleCount = MsaaSampleCount;
         t.MinFilter = ETexMinFilter.Nearest;
         t.MagFilter = ETexMagFilter.Nearest;
@@ -594,6 +639,10 @@ public partial class DefaultRenderPipeline2
             false, true)
         {
             DepthStencilViewFormat = EDepthStencilFmt.Depth,
+            MinFilter = ETexMinFilter.Nearest,
+            MagFilter = ETexMagFilter.Nearest,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
             Name = MsaaDepthViewTextureName,
             SamplerName = DepthViewTextureName,
         };
@@ -626,6 +675,10 @@ public partial class DefaultRenderPipeline2
             false, true)
         {
             DepthStencilViewFormat = EDepthStencilFmt.Depth,
+            MinFilter = ETexMinFilter.Nearest,
+            MagFilter = ETexMagFilter.Nearest,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
             Name = ForwardPassMsaaDepthViewTextureName,
             SamplerName = ForwardPassMsaaDepthViewTextureName,
         };
@@ -1144,17 +1197,19 @@ public partial class DefaultRenderPipeline2
 
     private XRTexture CreateTransparentRevealageTexture()
     {
+        // Weighted-blended OIT revealage is a [0,1] product. R8 unorm provides
+        // sufficient precision and halves the bandwidth of the 16F variant.
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.R16f,
+                EPixelInternalFormat.R8,
                 EPixelFormat.Red,
-                EPixelType.HalfFloat,
+                EPixelType.UnsignedByte,
                 EFrameBufferAttachment.ColorAttachment1);
             t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.R16f;
+            t.SizedInternalFormat = ESizedInternalFormat.R8;
             t.OVRMultiViewParameters = new(0, 2u);
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
@@ -1168,15 +1223,15 @@ public partial class DefaultRenderPipeline2
         var texture = XRTexture2D.CreateFrameBufferTexture(
             InternalWidth,
             InternalHeight,
-            EPixelInternalFormat.R16f,
+            EPixelInternalFormat.R8,
             EPixelFormat.Red,
-            EPixelType.HalfFloat,
+            EPixelType.UnsignedByte,
             EFrameBufferAttachment.ColorAttachment1);
         texture.MinFilter = ETexMinFilter.Nearest;
         texture.MagFilter = ETexMagFilter.Nearest;
         texture.UWrap = ETexWrapMode.ClampToEdge;
         texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.SizedInternalFormat = ESizedInternalFormat.R16f;
+        texture.SizedInternalFormat = ESizedInternalFormat.R8;
         texture.SamplerName = TransparentRevealageTextureName;
         texture.Name = TransparentRevealageTextureName;
         return texture;

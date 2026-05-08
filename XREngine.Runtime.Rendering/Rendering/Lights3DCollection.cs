@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
@@ -85,11 +86,6 @@ namespace XREngine.Scene
 
         private bool _capturing = false;
         private ITriangulation<LightProbeComponent, LightProbeCell>? _cells;
-        private readonly List<PreparedFrustum> _frustumScratch = new(6);
-        private readonly List<(Frustum Frustum, Vector3 Position, float MaxDistance)> _cameraFrustumScratch = new(4);
-        private readonly List<XRCamera> _shadowAtlasCameraScratch = new(4);
-        private readonly List<PreparedFrustum> _localShadowRelevanceFrustaScratch = new(4);
-        private readonly List<Vector3> _localShadowIntersectionScratch = new(64);
         private readonly ConcurrentQueue<CaptureWorkItem> _captureWorkQueue = new();
         private readonly HashSet<SceneCaptureComponentBase> _pendingCaptureComponents = new();
         private ulong _lastShadowMapsRenderFrameId = ulong.MaxValue;
@@ -108,6 +104,25 @@ namespace XREngine.Scene
         // visibility buffer (depending on viewport implementation), causing shadows to flicker on/off.
         // Track which lights actually collected this tick so SwapBuffers can preserve the last good buffers.
         private readonly HashSet<LightComponent> _shadowLightsCollectedThisTick = new();
+
+        #endregion
+
+        #region Thread Scratch
+
+        [ThreadStatic]
+        private static ShadowScratch? t_shadowScratch;
+
+        private static ShadowScratch CurrentShadowScratch
+            => t_shadowScratch ??= new();
+
+        private sealed class ShadowScratch
+        {
+            public readonly List<PreparedFrustum> Frusta = new(6);
+            public readonly List<(Frustum Frustum, Vector3 Position, float MaxDistance)> CameraFrusta = new(4);
+            public readonly List<XRCamera> ShadowAtlasCameras = new(4);
+            public readonly List<PreparedFrustum> LocalShadowRelevanceFrusta = new(4);
+            public readonly List<Vector3> LocalShadowIntersections = new(64);
+        }
 
         #endregion
 

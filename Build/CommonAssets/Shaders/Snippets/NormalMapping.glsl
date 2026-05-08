@@ -2,13 +2,16 @@
 
 vec3 XRENGINE_UnpackNormal(vec4 packedNormal)
 {
-    return packedNormal.xyz * 2.0 - 1.0;
+    vec3 normal = packedNormal.xyz * 2.0 - 1.0;
+    normal.y = -normal.y;
+    return normal;
 }
 
 vec3 XRENGINE_UnpackNormalDXT5nm(vec4 packedNormal)
 {
     vec3 normal;
     normal.xy = packedNormal.wy * 2.0 - 1.0;
+    normal.y = -normal.y;
     normal.z = sqrt(1.0 - clamp(dot(normal.xy, normal.xy), 0.0, 1.0));
     return normal;
 }

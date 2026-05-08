@@ -1354,22 +1354,24 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
             float splitFar = light.CascadeSplits[i];
             bool isLast = (i == cascadeCount - 1);
 
-            if (viewDepth <= splitFar || isLast)
+            if (viewDepth <= splitFar)
             {
                 float shadow0 = XRENGINE_ReadCascadeShadowMapDir(lightIndex, light, fragPos, normal, diffuseFactor, i);
                 if (shadow0 < 0.0) shadow0 = 1.0;
 
-                // Blend toward next cascade across the overlap zone.
-                if (!isLast)
+                float blendWidth = light.CascadeBlendWidths[i];
+                if (blendWidth > 0.0 && viewDepth > splitFar - blendWidth)
                 {
-                    float blendWidth = light.CascadeBlendWidths[i];
-                    if (blendWidth > 0.0 && viewDepth > splitFar - blendWidth)
+                    float t = clamp((viewDepth - (splitFar - blendWidth)) / blendWidth, 0.0, 1.0);
+                    if (!isLast)
                     {
-                        float t = clamp((viewDepth - (splitFar - blendWidth)) / blendWidth, 0.0, 1.0);
                         float shadow1 = XRENGINE_ReadCascadeShadowMapDir(lightIndex, light, fragPos, normal, diffuseFactor, i + 1);
                         if (shadow1 < 0.0) shadow1 = shadow0;
                         return mix(shadow0, shadow1, t);
                     }
+
+                    float shadow1 = XRENGINE_ReadDirectionalContactShadowOnly(lightIndex, light, fragPos, normal, diffuseFactor);
+                    return mix(shadow0, shadow1, t);
                 }
 
                 return shadow0;

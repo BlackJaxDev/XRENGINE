@@ -260,6 +260,8 @@
   "AsyncProgramBinaryUpload": true,
   // Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it.
   "AsyncProgramCompilation": true,
+  // Number of shared-context worker threads used to compile and link uncached OpenGL shader programs in parallel.
+  "OpenGLProgramCompileLinkWorkerCount": 1,
   // Maximum number of pending async OpenGL shader programs to advance per render frame.
   "MaxAsyncShaderProgramsPerFrame": 16,
   // Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.

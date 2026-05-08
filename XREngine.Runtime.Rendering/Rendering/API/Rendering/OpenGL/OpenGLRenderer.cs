@@ -9,6 +9,7 @@ using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
 using Silk.NET.OpenGLES.Extensions.NV;
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -253,10 +254,49 @@ namespace XREngine.Rendering.OpenGL
             }
 
             public void Render()
-                => _controller.Render();
+            {
+                // ImGui's vertex colors and font atlas are authored in sRGB and
+                // its draw shader writes those bytes directly. With
+                // GL_FRAMEBUFFER_SRGB enabled (so scene rendering can rely on
+                // hardware linear->sRGB encoding), the default framebuffer is
+                // typically sRGB-capable and would re-encode ImGui's already-
+                // sRGB output, washing it out. Disable framebuffer-sRGB while
+                // ImGui draws so its bytes pass through unchanged.
+                using var _ = FramebufferSrgbScope.Disable(_renderer.Api);
+                _controller.Render();
+            }
 
             public void RenderPlatformWindows()
-                => _renderer._imguiMultiViewportController?.RenderPlatformWindows();
+            {
+                using var _ = FramebufferSrgbScope.Disable(_renderer.Api);
+                _renderer._imguiMultiViewportController?.RenderPlatformWindows();
+            }
+        }
+
+        private readonly ref struct FramebufferSrgbScope
+        {
+            private readonly Silk.NET.OpenGL.GL _api;
+            private readonly bool _wasEnabled;
+
+            private FramebufferSrgbScope(Silk.NET.OpenGL.GL api, bool wasEnabled)
+            {
+                _api = api;
+                _wasEnabled = wasEnabled;
+            }
+
+            public static FramebufferSrgbScope Disable(Silk.NET.OpenGL.GL api)
+            {
+                bool wasEnabled = api.IsEnabled(EnableCap.FramebufferSrgb);
+                if (wasEnabled)
+                    api.Disable(EnableCap.FramebufferSrgb);
+                return new FramebufferSrgbScope(api, wasEnabled);
+            }
+
+            public void Dispose()
+            {
+                if (_wasEnabled)
+                    _api.Enable(EnableCap.FramebufferSrgb);
+            }
         }
 
         private ImGuiController? GetImGuiController()
@@ -479,8 +519,13 @@ namespace XREngine.Rendering.OpenGL
 
             api.ClipControl(GLEnum.LowerLeft, GLEnum.NegativeOneToOne);
 
-            //Fix gamma manually inside of the post process shader
-            //api.Enable(EnableCap.FramebufferSrgb);
+            // Enable framebuffer-sRGB: only sRGB-formatted color attachments
+            // (e.g. AlbedoOpacityTexture as Srgb8Alpha8) get linear<->sRGB
+            // conversion on read/write. Non-sRGB attachments (RGBA16F,
+            // R11fG11fB10f, RGBA8 unorm, depth, etc.) are unaffected per the
+            // OpenGL spec, so the existing "manual gamma in PostProcess.fs"
+            // path for the LDR display output remains correct.
+            api.Enable(EnableCap.FramebufferSrgb);
 
             api.PixelStore(PixelStoreParameter.PackAlignment, 1);
             api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
@@ -813,10 +858,14 @@ namespace XREngine.Rendering.OpenGL
             _programBinaryUploadQueue = null;
             _programCompileLinkQueue = null;
             _programBinarySharedContext?.Dispose();
-            _programCompileLinkSharedContext?.Dispose();
+            if (_programCompileLinkSharedContexts is { Length: > 0 } compileLinkContexts)
+            {
+                for (int i = 0; i < compileLinkContexts.Length; i++)
+                    compileLinkContexts[i]?.Dispose();
+            }
             _sharedContext?.Dispose();
             _programBinarySharedContext = null;
-            _programCompileLinkSharedContext = null;
+            _programCompileLinkSharedContexts = null;
             _sharedContext = null;
 
             CancelPendingFrontLuminanceReadback();
@@ -889,13 +938,26 @@ namespace XREngine.Rendering.OpenGL
 
         private GLSharedContext? _sharedContext;
         private GLSharedContext? _programBinarySharedContext;
-        private GLSharedContext? _programCompileLinkSharedContext;
+        private GLSharedContext[]? _programCompileLinkSharedContexts;
         private GLProgramBinaryUploadQueue? _programBinaryUploadQueue;
         private GLProgramCompileLinkQueue? _programCompileLinkQueue;
 
         internal bool HasSharedContext => _sharedContext is { IsRunning: true }
                                        || _programBinarySharedContext is { IsRunning: true }
-                                       || _programCompileLinkSharedContext is { IsRunning: true };
+                                       || HasAnyRunningCompileLinkSharedContext;
+
+        private bool HasAnyRunningCompileLinkSharedContext
+        {
+            get
+            {
+                if (_programCompileLinkSharedContexts is not { } contexts)
+                    return false;
+                for (int i = 0; i < contexts.Length; i++)
+                    if (contexts[i] is { IsRunning: true })
+                        return true;
+                return false;
+            }
+        }
 
         /// <summary>
         /// Gets the async program binary upload queue, or <c>null</c> if the shared context
@@ -915,15 +977,48 @@ namespace XREngine.Rendering.OpenGL
                 ? _sharedContext
                 : _programBinarySharedContext is { IsRunning: true }
                     ? _programBinarySharedContext
-                    : _programCompileLinkSharedContext is { IsRunning: true }
-                        ? _programCompileLinkSharedContext
-                        : null;
+                    : FirstRunningCompileLinkSharedContext();
 
             if (sharedContext is null)
                 return false;
 
             sharedContext.Enqueue(job);
             return true;
+        }
+
+        private GLSharedContext? FirstRunningCompileLinkSharedContext()
+        {
+            if (_programCompileLinkSharedContexts is not { } contexts)
+                return null;
+            for (int i = 0; i < contexts.Length; i++)
+                if (contexts[i] is { IsRunning: true } running)
+                    return running;
+            return null;
+        }
+
+        private static int ResolveProgramCompileLinkWorkerCount()
+        {
+            int configured = Math.Clamp(
+                Engine.Rendering.Settings.OpenGLProgramCompileLinkWorkerCount,
+                1,
+                16);
+
+            if (configured <= 1)
+                return 1;
+
+            if (string.Equals(
+                Environment.GetEnvironmentVariable("XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL"),
+                "1",
+                StringComparison.Ordinal))
+            {
+                return configured;
+            }
+
+            Debug.OpenGL(
+                $"[ShaderCache] OpenGLProgramCompileLinkWorkerCount={configured} requested, " +
+                "but compile/link worker pools are disabled by default for OpenGL driver startup stability. " +
+                "Using 1 worker; set XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1 to opt in.");
+            return 1;
         }
 
         /// <summary>
@@ -936,6 +1031,8 @@ namespace XREngine.Rendering.OpenGL
             bool wantBinaryUpload = Engine.Rendering.Settings.AsyncProgramBinaryUpload
                                  && Engine.Rendering.Settings.AllowBinaryProgramCaching;
             bool wantCompileLink = WantsSharedContextProgramCompileLinkQueue;
+            if (!wantCompileLink)
+                Debug.OpenGL("[ShaderCache] Shared-context compile/link queue disabled by settings. Shader source cache misses will stay pending; render-thread synchronous source linking is disabled.");
             bool wantSparseTextureUploads = GetSparseTextureStreamingSupport(ESizedInternalFormat.Rgba8).IsAvailable;
 
             if (!wantBinaryUpload && !wantCompileLink && !wantSparseTextureUploads)
@@ -972,17 +1069,45 @@ namespace XREngine.Rendering.OpenGL
                 // for the remainder of the cold link. See repo memory note
                 // opengl-shared-context-worker-unhealthy-threshold.
                 const double CompileLinkUnhealthySeconds = 600.0;
-                var compileContext = new GLSharedContext("XR Program Source Compile", CompileLinkUnhealthySeconds);
-                if (compileContext.Initialize(XRWindow))
+
+                int requestedWorkers = ResolveProgramCompileLinkWorkerCount();
+
+                var compileContexts = new List<GLSharedContext>(requestedWorkers);
+                for (int i = 0; i < requestedWorkers; i++)
                 {
-                    _programCompileLinkSharedContext = compileContext;
-                    _programCompileLinkQueue = new GLProgramCompileLinkQueue(compileContext);
-                    Debug.OpenGL("[ShaderCache] Async program compile+link enabled via shared GL context.");
+                    string threadName = requestedWorkers == 1
+                        ? "XR Program Source Compile"
+                        : $"XR Program Source Compile {i + 1}/{requestedWorkers}";
+                    var compileContext = new GLSharedContext(threadName, CompileLinkUnhealthySeconds);
+                    if (compileContext.Initialize(XRWindow))
+                    {
+                        compileContexts.Add(compileContext);
+                        // KHR_parallel_shader_compile is per-context. Without enabling
+                        // it on each worker, the driver falls back to serial compile/
+                        // link on the worker context, causing cold links of large
+                        // uber fragment shaders to take 60-120+ seconds per program.
+                        EnableParallelShaderCompileOnSharedContextWorker(compileContext, threadName);
+                    }
+                    else
+                    {
+                        Debug.OpenGLWarning($"[ShaderCache] Failed to create compile/link shared context #{i + 1}/{requestedWorkers}; will continue with {compileContexts.Count} worker(s).");
+                        compileContext.Dispose();
+                        // If at least one worker started, keep going with what we have.
+                        // If none have started yet, keep trying — early failures may be
+                        // transient. After the loop, we still create the queue from
+                        // whatever workers we got (or skip queue creation if zero).
+                    }
+                }
+
+                if (compileContexts.Count > 0)
+                {
+                    _programCompileLinkSharedContexts = compileContexts.ToArray();
+                    _programCompileLinkQueue = new GLProgramCompileLinkQueue(_programCompileLinkSharedContexts);
+                    Debug.OpenGL($"[ShaderCache] Async program compile+link enabled via {_programCompileLinkSharedContexts.Length} shared GL context worker(s).");
                 }
                 else
                 {
-                    Debug.OpenGLWarning("[ShaderCache] Failed to create compile/link shared context. Shader source links will fall back by strategy.");
-                    compileContext.Dispose();
+                    Debug.OpenGLWarning("[ShaderCache] Failed to create any compile/link shared context. Shader source cache misses will remain pending because render-thread synchronous source linking is disabled.");
                 }
             }
 

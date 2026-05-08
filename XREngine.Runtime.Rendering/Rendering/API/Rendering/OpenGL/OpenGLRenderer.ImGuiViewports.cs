@@ -56,6 +56,11 @@ namespace XREngine.Rendering.OpenGL
             private static readonly TranslateInputKeyDelegate? TranslateInputKey = CreateTranslateInputKeyDelegate();
             private static readonly List<IWindow> AbandonedShutdownWindows = [];
             private static readonly List<IInputContext> AbandonedShutdownInputContexts = [];
+            private static readonly bool DisposeNativeViewportWindows =
+                string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_IMGUI_VIEWPORT_DISPOSE_NATIVE"),
+                    "1",
+                    StringComparison.Ordinal);
 
             private readonly OpenGLRenderer _renderer;
             private readonly ImGuiController _controller;
@@ -654,7 +659,7 @@ namespace XREngine.Rendering.OpenGL
                         }
                     }
 
-                    pending.Window.Dispose();
+                    pending.Window.ReleaseAfterRuntimeClose();
                 }
 
                 if (writeIndex < _pendingPlatformWindowDisposals.Count)
@@ -1486,6 +1491,21 @@ namespace XREngine.Rendering.OpenGL
 
                     if (_handle.IsAllocated)
                         _handle.Free();
+                }
+
+                public void ReleaseAfterRuntimeClose()
+                {
+                    if (DisposeNativeViewportWindows)
+                    {
+                        Dispose();
+                        return;
+                    }
+
+                    // Native window disposal can block inside the GLFW/Silk close path
+                    // when ImGui retires a platform viewport during the frame. Hide and
+                    // detach it instead; the process owns these short-lived editor
+                    // windows and can reclaim them on shutdown.
+                    AbandonNativeWindowForShutdown();
                 }
 
                 public void AbandonNativeWindowForShutdown()

@@ -436,7 +436,7 @@ namespace XREngine.Rendering.OpenGL
                 [MaybeNullWhen(false)] out GLRenderProgram? materialProgram)
             {
                 bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
-                bool materialDiffers = !ReferenceEquals(material, Material);
+                bool materialDiffers = !ReferenceEquals(material.Data, MeshRenderer.Material);
                 bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
                     || forceShaderPipelines
                     || materialDiffers;
@@ -444,6 +444,40 @@ namespace XREngine.Rendering.OpenGL
                 return usePipelines
                     ? GetPipelinePrograms(material, out vertexProgram, out materialProgram)
                     : GetCombinedProgram(out vertexProgram, out materialProgram);
+            }
+
+            private bool ShouldSkipShadowDrawForProgramBuild(GLMaterial material)
+            {
+                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                if (renderState?.ShadowPass != true)
+                    return false;
+
+                bool forceShaderPipelines = renderState.ForceShaderPipelines;
+                bool materialDiffers = !ReferenceEquals(material.Data, MeshRenderer.Material);
+                bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
+                    || forceShaderPipelines
+                    || materialDiffers;
+
+                if (!usePipelines)
+                    return _combinedProgram?.IsAsyncBuildPending ?? false;
+
+                material.Data.EnsureShaderPipelineProgram();
+                GLRenderProgram? materialProgram = material.SeparableProgram;
+                if (materialProgram?.IsAsyncBuildPending ?? false)
+                    return true;
+
+                EProgramStageMask mask = materialProgram?.Data?.GetShaderTypeMask() ?? EProgramStageMask.None;
+                if (mask.HasFlag(EProgramStageMask.VertexShaderBit))
+                    return false;
+
+                bool pointLightShadowPass = renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
+                    && UsesPointLightShadowDepthOutput(globalMaterialOverride);
+                bool forceGeneratedVertexProgram = renderState.ForceGeneratedVertexProgram || pointLightShadowPass;
+                GLRenderProgram? vertexProgram = forceGeneratedVertexProgram
+                    ? _forcedGeneratedVertexProgram
+                    : _separatedVertexProgram;
+
+                return vertexProgram?.IsAsyncBuildPending ?? false;
             }
 
             /// <summary>

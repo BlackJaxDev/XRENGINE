@@ -69,7 +69,7 @@ public sealed class ShaderSourceResolverCachingTests
                 shaderPath,
                 "#version 450\n" +
                 "#pragma snippet \"UnitSnippet\"\n" +
-                "void main() {}\n");
+                "void main() { float v = XRE_SNIPPET_VALUE; }\n");
 
             string firstResolved = ShaderSourceResolver.ResolveSource(File.ReadAllText(shaderPath), shaderPath);
             firstResolved.ShouldContain("XRE_SNIPPET_VALUE = 1.0");
@@ -95,7 +95,7 @@ public sealed class ShaderSourceResolverCachingTests
             ShaderSnippets.Register(snippetName, "const vec3 XRE_REGISTERED_SNIPPET = vec3(0.1, 0.2, 0.3);\n");
 
             string resolved = ShaderSourcePreprocessor.ResolveSource(
-                "#version 450\n#pragma snippet \"UnitTest_RegisteredSnippet\"\nvoid main() {}\n",
+                "#version 450\n#pragma snippet \"UnitTest_RegisteredSnippet\"\nvoid main() { vec3 v = XRE_REGISTERED_SNIPPET; }\n",
                 sourcePath: null);
 
             resolved.ShouldContain("XRE_REGISTERED_SNIPPET");

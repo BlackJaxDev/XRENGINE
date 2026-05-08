@@ -297,6 +297,7 @@ vec3 hueShiftOklab(vec3 color, float shift) {
 vec3 unpackNormal(vec4 packednormal, float scale) {
     vec3 normal;
     normal.xy = (packednormal.xy * 2.0 - 1.0) * scale;
+    normal.y = -normal.y;
     normal.z = sqrt(1.0 - saturate(dot(normal.xy, normal.xy)));
     return normal;
 }

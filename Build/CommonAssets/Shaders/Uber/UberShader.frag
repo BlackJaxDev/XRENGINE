@@ -600,16 +600,25 @@ vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseCo
     int startIndex = skipPrimaryDirectional ? 1 : 0;
 
     for (int i = startIndex; i < DirLightCount; ++i) {
-        totalLight += XRENGINE_CalcDirLightWithViewDir(
-            i,
-            DirectionalLights[i],
+        DirLight dirLight = DirectionalLights[i];
+        vec3 lightDir = normalize(-dirLight.Direction);
+        float shadow = 1.0;
+        if (i == 0) {
+            float geometricNDotL = max(dot(mesh.vertexNormal, lightDir), 0.0);
+            shadow = XRENGINE_ReadShadowMapDir(i, dirLight, mesh.worldPos, mesh.vertexNormal, geometricNDotL);
+        }
+
+        totalLight += XRENGINE_CalculateDirectPbrLightWithViewDir(
+            dirLight.Base.Color,
+            dirLight.Base.DiffuseIntensity,
+            lightDir,
             normal,
             mesh.worldPos,
             baseColor,
             rms,
             pbr.F0,
-            i == 0,    // only the primary directional samples the sun shadow cascade
-            mesh.viewDir);
+            1.0,
+            mesh.viewDir) * shadow;
     }
 
     return totalLight;
@@ -862,11 +871,16 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
 // Shadow Map Sampling
 // ============================================
 // Thin wrapper around the directional-shadow snippet; returns 1.0 (fully lit)
-// when there is no directional light to sample.
-float sampleShadowMap(vec3 worldPos, vec3 normal, float nDotL) {
+// when there is no directional light to sample. Shadow visibility uses the
+// geometric receiver normal so normal maps cannot push cascade/contact reads
+// into broad false-shadow bands.
+float sampleShadowMap(ToonMesh mesh) {
     if (DirLightCount <= 0)
         return 1.0;
-    return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], worldPos, normal, max(nDotL, 0.0));
+
+    vec3 lightDir = normalize(-DirectionalLights[0].Direction);
+    float geometricNDotL = max(dot(mesh.vertexNormal, lightDir), 0.0);
+    return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], mesh.worldPos, mesh.vertexNormal, geometricNDotL);
 }
 
 // ============================================
@@ -1025,7 +1039,7 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     return baseColor * (light.color * saturate(light.nDotL) + light.indirectColor);
 #else
-    return applyShadingWithShadow(baseColor, light, mesh, normal, sampleShadowMap(mesh.worldPos, normal, light.nDotL));
+    return applyShadingWithShadow(baseColor, light, mesh, normal, sampleShadowMap(mesh));
 #endif
 }
 

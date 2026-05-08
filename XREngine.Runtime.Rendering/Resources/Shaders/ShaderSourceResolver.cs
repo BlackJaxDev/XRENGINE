@@ -38,6 +38,10 @@ internal static partial class ShaderSourceResolver
 
     private static long _registeredSnippetVersion;
 
+    // Default-disabled. See ExpandIncludesRecursive for rationale.
+    private static readonly bool s_emitIncludeDceMarkers =
+        string.Equals(Environment.GetEnvironmentVariable("XRE_GLSL_DCE_INCLUDES"), "1", StringComparison.Ordinal);
+
     // Matches `#include "path"` or `#include <path>` optionally followed by whitespace and/or a `//` line comment.
     [GeneratedRegex(@"^\s*#\s*include\s+[""<](?<path>[^"">]+)["">]\s*(?://.*)?$", RegexOptions.Compiled | RegexOptions.Multiline)]
     private static partial Regex IncludeRegex();
@@ -332,16 +336,26 @@ internal static partial class ShaderSourceResolver
             resolvedPaths.AddRange(expandedInclude.ResolvedPaths);
             MergeDependencies(fileDependencies, expandedInclude.FileDependencies);
 
+            // Wrap the inlined content in machine-readable BEGIN/END INCLUDE
+            // markers so the downstream dead-code eliminator can identify the
+            // include region and trim unreferenced top-level declarations.
+            // The markers are GLSL line comments, so they are inert at compile
+            // time; humans benefit from them too as origin annotations.
+            //
+            // Disabled by default: include DCE has been observed to produce
+            // GLSL the front-end accepts (linkStatus=1) but the NVIDIA back-end
+            // crashes on first GPU use (TDR + nvoglv64.dll AV, 2026-05-07).
+            // Enable with environment variable XRE_GLSL_DCE_INCLUDES=1 to opt
+            // back into include DCE for testing the eliminator.
+            if (s_emitIncludeDceMarkers)
+                output.AppendLine($"// ===== BEGIN INCLUDE: {includePath} =====");
             if (annotateIncludes)
-            {
                 output.AppendLine($"// begin include {includePath}");
-                output.AppendLine(expandedInclude.ExpandedSource);
+            output.AppendLine(expandedInclude.ExpandedSource);
+            if (annotateIncludes)
                 output.AppendLine($"// end include {includePath}");
-            }
-            else
-            {
-                output.AppendLine(expandedInclude.ExpandedSource);
-            }
+            if (s_emitIncludeDceMarkers)
+                output.AppendLine($"// ===== END INCLUDE: {includePath} =====");
         }
 
         return output.ToString();
@@ -429,6 +443,11 @@ internal static partial class ShaderSourceResolver
 
         Dictionary<string, ShaderSourceFileDependency> fileDependencies = new(StringComparer.OrdinalIgnoreCase);
         string resolvedSource = ResolveSnippetsRecursive(source, context, new HashSet<string>(StringComparer.OrdinalIgnoreCase), fileDependencies);
+        // Strip unreferenced top-level declarations from the inlined snippet regions
+        // so each variant only carries the functions/uniforms/blocks/buffers it
+        // actually consumes. This is conservative: any chunk that fails to parse
+        // is preserved, and anything outside the snippet markers is untouched.
+        resolvedSource = GlslSnippetDeadCodeEliminator.Trim(resolvedSource);
         SnippetResolutionCacheEntry resolvedEntry = new(
             resolvedSource,
             [.. fileDependencies.Values],
