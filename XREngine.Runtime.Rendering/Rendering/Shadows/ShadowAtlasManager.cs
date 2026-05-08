@@ -15,7 +15,9 @@ public sealed class ShadowAtlasManager
     private const ulong LodVoluntaryChangeCooldownFrames = 6u;
     private const ulong LodDownsizeRePromotionCooldownFrames = 36u;
     private const ulong DemotionPromotionCooldownFrames = 12u;
-    private const ulong ResidentEvictionTtlFrames = 8u;
+    // Keep recently used regions warm long enough to survive transient camera/
+    // relevance gaps without repacking visible cascades a few frames later.
+    private const ulong ResidentEvictionTtlFrames = 240u;
     private const float DemotionSwitchMargin = 0.25f;
 
     private sealed class RequestComparer : IComparer<ShadowMapRequest>
@@ -408,7 +410,8 @@ public sealed class ShadowAtlasManager
                 Math.Min(_settings.MaxTileResolution, _settings.PageSize),
                 _settings.PageSize);
             uint minimum = ResolveBalancedMinimumResolution(request, desired, _settings.PageSize);
-            desired = ApplyLodHysteresis(request, desired, minimum);
+            if (request.ProjectionType != EShadowProjectionType.DirectionalCascade)
+                desired = ApplyLodHysteresis(request, desired, minimum);
             minimum = Math.Min(minimum, desired);
 
             _balancedAllocationEntries.Add(new BalancedAllocationEntry
@@ -421,6 +424,7 @@ public sealed class ShadowAtlasManager
         }
 
         int entryCount = _balancedAllocationEntries.Count;
+        ApplyDirectionalCascadeGroupResolutionCaps(entryCount);
         ShadowAtlasEncodingState state = GetEncodingState(atlasKind, encoding);
         if (entryCount == 0)
         {
@@ -852,9 +856,88 @@ public sealed class ShadowAtlasManager
     private static uint ResolveBalancedMinimumResolution(ShadowMapRequest request, uint desired, uint pageSize)
     {
         if (GetAtlasKind(request.ProjectionType) == EShadowAtlasKind.Directional)
-            return 1u;
+            return NormalizeTileResolution(request.MinimumResolution, 1u, desired, pageSize);
 
         return NormalizeTileResolution(request.MinimumResolution, 1u, desired, pageSize);
+    }
+
+    private void ApplyDirectionalCascadeGroupResolutionCaps(int entryCount)
+    {
+        for (int i = 0; i < entryCount; i++)
+        {
+            ShadowMapRequest seed = _balancedAllocationEntries[i].Request;
+            if (seed.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+                HasEarlierDirectionalCascadeGroup(seed, i))
+            {
+                continue;
+            }
+
+            int cascadeCount = CountDirectionalCascadeGroupMembers(seed, entryCount);
+            if (cascadeCount <= 1)
+                continue;
+
+            uint fairResolution = CalculateDirectionalCascadeGroupResolutionCap(cascadeCount);
+            for (int j = i; j < entryCount; j++)
+            {
+                BalancedAllocationEntry entry = _balancedAllocationEntries[j];
+                if (!IsSameDirectionalCascadeGroup(seed, entry.Request))
+                    continue;
+
+                uint cappedResolution = Math.Min(entry.Resolution, fairResolution);
+                uint cappedMinimum = Math.Min(entry.MinimumResolution, cappedResolution);
+                _balancedAllocationEntries[j] = entry with
+                {
+                    Resolution = cappedResolution,
+                    MinimumResolution = cappedMinimum,
+                };
+            }
+        }
+    }
+
+    private bool HasEarlierDirectionalCascadeGroup(ShadowMapRequest request, int currentIndex)
+    {
+        for (int i = 0; i < currentIndex; i++)
+        {
+            if (IsSameDirectionalCascadeGroup(request, _balancedAllocationEntries[i].Request))
+                return true;
+        }
+
+        return false;
+    }
+
+    private int CountDirectionalCascadeGroupMembers(ShadowMapRequest request, int entryCount)
+    {
+        int count = 0;
+        for (int i = 0; i < entryCount; i++)
+            if (IsSameDirectionalCascadeGroup(request, _balancedAllocationEntries[i].Request))
+                count++;
+
+        return count;
+    }
+
+    private static bool IsSameDirectionalCascadeGroup(ShadowMapRequest x, ShadowMapRequest y)
+        => y.ProjectionType == EShadowProjectionType.DirectionalCascade &&
+           x.Key.LightId == y.Key.LightId &&
+           x.Key.Domain == y.Key.Domain &&
+           x.Encoding == y.Encoding;
+
+    private uint CalculateDirectionalCascadeGroupResolutionCap(int cascadeCount)
+    {
+        int tilesPerAxis = 1;
+        while (tilesPerAxis * tilesPerAxis < cascadeCount)
+            tilesPerAxis++;
+
+        uint maxByGrid = Math.Max(1u, _settings.PageSize / (uint)tilesPerAxis);
+        return LargestPowerOfTwoAtMost(maxByGrid);
+    }
+
+    private static uint LargestPowerOfTwoAtMost(uint value)
+    {
+        value = Math.Max(1u, value);
+        uint result = 1u;
+        while (result <= value / 2u)
+            result <<= 1;
+        return result;
     }
 
     public int RenderScheduledTiles(bool collectVisibleNow = false)
@@ -881,14 +964,17 @@ public sealed class ShadowAtlasManager
                 continue;
             }
 
-            if (scheduled >= budget)
+            bool criticalDirectionalRefresh = ShouldRenderDirectionalRefreshPastBudget(request);
+            if (scheduled >= budget && !(budget > 0 && criticalDirectionalRefresh))
             {
                 deferredByBudget = _requests.Count - i;
                 firstDeferredRequestIndex = i;
                 break;
             }
 
-            if (scheduled > 0 && HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
+            if (scheduled > 0 &&
+                !criticalDirectionalRefresh &&
+                HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
             {
                 deferredByBudget = _requests.Count - i;
                 firstDeferredRequestIndex = i;
@@ -906,6 +992,7 @@ public sealed class ShadowAtlasManager
                 TryGetDirectionalCascadeGroupRenderRequirement(group, out bool requiresGroupedRender))
             {
                 if (requiresGroupedRender &&
+                    !criticalDirectionalRefresh &&
                     RenderWorkBudgetCoordinator.ShouldDeferShadowAtlasLowPriorityTile(request.Priority, request.EditorPinned))
                 {
                     deferredByTexture = _requests.Count - i;
@@ -914,13 +1001,14 @@ public sealed class ShadowAtlasManager
                 }
 
                 if (requiresGroupedRender &&
-                    CanRenderGroupedTileSet(scheduled, budget, group.CascadeCount) &&
+                    (CanRenderGroupedTileSet(scheduled, budget, group.CascadeCount) || (budget > 0 && criticalDirectionalRefresh)) &&
                     TryRenderDirectionalCascadeGroup(request, group, collectVisibleNow))
                 {
                     scheduled += group.CascadeCount;
                     checkedTiles += group.CascadeCount;
 
-                    if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
+                    if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
+                        !ShouldRenderDirectionalRefreshPastBudgetAtIndex(i + 1))
                     {
                         int nextRequestIndex = i + 1;
                         deferredByBudget = _requests.Count - nextRequestIndex;
@@ -970,7 +1058,8 @@ public sealed class ShadowAtlasManager
                 continue;
             }
 
-            if (RenderWorkBudgetCoordinator.ShouldDeferShadowAtlasLowPriorityTile(request.Priority, request.EditorPinned))
+            if (!criticalDirectionalRefresh &&
+                RenderWorkBudgetCoordinator.ShouldDeferShadowAtlasLowPriorityTile(request.Priority, request.EditorPinned))
             {
                 deferredByTexture = _requests.Count - i;
                 firstDeferredRequestIndex = i;
@@ -992,7 +1081,8 @@ public sealed class ShadowAtlasManager
                 LogDirectionalRequestRenderState(request, renderedAllocation, "Rendered", requiresRender: true);
             scheduled++;
 
-            if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
+            if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
+                !ShouldRenderDirectionalRefreshPastBudgetAtIndex(i + 1))
             {
                 int nextRequestIndex = i + 1;
                 deferredByBudget = _requests.Count - nextRequestIndex;
@@ -1067,6 +1157,30 @@ public sealed class ShadowAtlasManager
             budget);
 
         return scheduled;
+    }
+
+    private bool ShouldRenderDirectionalRefreshPastBudgetAtIndex(int requestIndex)
+    {
+        if ((uint)requestIndex >= (uint)_requests.Count)
+            return false;
+
+        return ShouldRenderDirectionalRefreshPastBudget(_requests[requestIndex]);
+    }
+
+    private static bool ShouldRenderDirectionalRefreshPastBudget(ShadowMapRequest request)
+    {
+        if (!IsDirectionalRequest(request) || !request.IsDirty)
+            return false;
+
+        const ShadowDirtyReason criticalReasons =
+            ShadowDirtyReason.FirstSubmission |
+            ShadowDirtyReason.ContentChanged |
+            ShadowDirtyReason.ProjectionOrCameraFitChanged |
+            ShadowDirtyReason.DynamicLight |
+            ShadowDirtyReason.ReuseDisabled |
+            ShadowDirtyReason.NeverRendered;
+
+        return (request.DirtyReason & criticalReasons) != 0;
     }
 
     private static bool HasRenderBudgetExpired(long startTimestamp, float maxRenderMilliseconds)
@@ -1401,7 +1515,8 @@ public sealed class ShadowAtlasManager
 
         bool requiresFreshRender = request.IsDirty || !request.CanReusePreviousFrame;
         bool hasRenderedTile = lastRendered != 0u;
-        bool reuseStaleTile = hasRenderedTile && requiresFreshRender && request.Fallback == ShadowFallbackMode.StaleTile;
+        bool allowStaleTile = request.Fallback == ShadowFallbackMode.StaleTile && !ShouldRenderDirectionalRefreshPastBudget(request);
+        bool reuseStaleTile = hasRenderedTile && requiresFreshRender && allowStaleTile;
         ShadowFallbackMode activeFallback = ShadowFallbackMode.None;
         SkipReason skipReason = SkipReason.None;
 
@@ -1417,11 +1532,15 @@ public sealed class ShadowAtlasManager
                 activeFallback = request.Fallback != ShadowFallbackMode.None
                     ? request.Fallback
                     : ShadowFallbackMode.Lit;
+                if (activeFallback == ShadowFallbackMode.StaleTile && !allowStaleTile)
+                    activeFallback = ShadowFallbackMode.Lit;
             }
         }
         else if (!hasRenderedTile && request.Fallback != ShadowFallbackMode.None)
         {
             activeFallback = request.Fallback;
+            if (activeFallback == ShadowFallbackMode.StaleTile && !allowStaleTile)
+                activeFallback = ShadowFallbackMode.Lit;
         }
 
         if (!(hasRenderedTile && requiresFreshRender))

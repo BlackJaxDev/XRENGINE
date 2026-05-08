@@ -215,12 +215,13 @@ namespace XREngine.Scene
 
         private void UpdateDirectionalCameraLightIntersections(IReadOnlyList<DirectionalLightComponent> lights, XRCamera camera, PreparedFrustum preparedCamera, ColorF4 debugColor)
         {
+            List<PreparedFrustum> frustumScratch = CurrentShadowScratch.Frusta;
             for (int i = 0; i < lights.Count; i++)
             {
                 var light = lights[i];
-                _frustumScratch.Clear();
-                light.BuildShadowFrusta(_frustumScratch);
-                light.UpdateCameraIntersections(preparedCamera, _frustumScratch);
+                frustumScratch.Clear();
+                light.BuildShadowFrusta(frustumScratch);
+                light.UpdateCameraIntersections(preparedCamera, frustumScratch);
 
                 RenderIntersectionDebug(light, debugColor);
                 RenderCascadeDebug(light, debugColor);
@@ -230,12 +231,13 @@ namespace XREngine.Scene
         private void UpdateCameraLightIntersections<TLight>(IReadOnlyList<TLight> lights, PreparedFrustum preparedCamera, ColorF4 debugColor)
             where TLight : LightComponent
         {
+            List<PreparedFrustum> frustumScratch = CurrentShadowScratch.Frusta;
             for (int i = 0; i < lights.Count; i++)
             {
                 var light = lights[i];
-                _frustumScratch.Clear();
-                light.BuildShadowFrusta(_frustumScratch);
-                light.UpdateCameraIntersections(preparedCamera, _frustumScratch);
+                frustumScratch.Clear();
+                light.BuildShadowFrusta(frustumScratch);
+                light.UpdateCameraIntersections(preparedCamera, frustumScratch);
 
                 RenderIntersectionDebug(light, debugColor);
             }

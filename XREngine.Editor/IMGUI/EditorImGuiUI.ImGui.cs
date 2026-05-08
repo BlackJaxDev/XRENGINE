@@ -1264,8 +1264,11 @@ public static partial class EditorImGuiUI
                 if (ImGui.MenuItem("User Settings"))
                     OpenSettingsInInspector(Engine.UserSettings, "User Settings");
 
-                if (ImGui.MenuItem("Engine Settings"))
-                    OpenSettingsInInspector(Engine.Rendering.Settings, "Engine Settings");
+                if (ImGui.MenuItem("Runtime Engine Defaults"))
+                    OpenSettingsInInspector(Engine.Rendering.DefaultSettings, RuntimeEngineDefaultsInspectorTitle);
+
+                if (ImGui.MenuItem("Effective Settings"))
+                    OpenEffectiveSettingsInInspector();
 
                 if (ImGui.MenuItem("Game Settings"))
                     OpenSettingsInInspector(Engine.GameSettings, "Game Settings");
@@ -2273,17 +2276,16 @@ public static partial class EditorImGuiUI
                 {
                     // Build Settings has a dedicated persisted asset file.
                     // Game Settings also persist per project, separate from runtime engine defaults.
-                    // Engine Rendering Settings is currently a runtime settings object and should not
-                    // be rebound onto the project's engine_settings.asset path here because that path
-                    // is already used by EditorPreferencesOverrides in the current project flow.
+                    // Runtime engine defaults are a session baseline. Project/user/editor override
+                    // assets own persisted changes above this layer.
                     if (title == "Build Settings" && Engine.CurrentProject.BuildSettingsPath is string buildSettingsPath)
                         asset.FilePath = buildSettingsPath;
                     else if (title == "Game Settings" && Engine.CurrentProject.GameSettingsPath is string gameSettingsPath)
                         asset.FilePath = gameSettingsPath;
                 }
 
-                // Engine Settings are runtime-only defaults, so do not add them to the save/dirty asset flow.
-                if (title != "Engine Settings")
+                // Runtime engine defaults are not saved as a project asset.
+                if (!IsRuntimeEngineDefaultsTarget(asset))
                     TryEnsureSettingsAssetTracked(asset, title);
             }
 

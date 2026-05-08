@@ -70,6 +70,16 @@ namespace XREngine
                 }
             }
 
+            /// <summary>
+            /// Runtime baseline used as the engine-default layer for resolved settings.
+            /// Project and user settings may override these values at runtime.
+            /// </summary>
+            public static EngineSettings DefaultSettings
+            {
+                get => Settings;
+                set => Settings = value;
+            }
+
             private static void HandleSettingsPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
             {
                 if (e.PropertyName == nameof(EngineSettings.PhysicsVisualizeSettings))
@@ -388,6 +398,7 @@ namespace XREngine
                 private bool _allowBinaryProgramCaching = true;
                 private bool _asyncProgramBinaryUpload = true;
                 private bool _asyncProgramCompilation = true;
+                private int _openGLProgramCompileLinkWorkerCount = 1;
                 private int _maxAsyncShaderProgramsPerFrame = 16;
                 private EOpenGLShaderLinkStrategy _openGLShaderLinkStrategy = EOpenGLShaderLinkStrategy.Auto;
                 private int _openGLShaderCompilerThreadCount = -1;
@@ -963,6 +974,20 @@ namespace XREngine
                 {
                     get => _asyncProgramCompilation;
                     set => SetField(ref _asyncProgramCompilation, value);
+                }
+
+                /// <summary>
+                /// Number of shared-context worker threads used to compile and link
+                /// uncached OpenGL shader programs. The runtime uses one worker by
+                /// default for driver startup stability; values above one require
+                /// XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1. Clamped to [1, 16].
+                /// </summary>
+                [Category("Performance")]
+                [Description("Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. Values above one require XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1. Clamped to [1, 16].")]
+                public int OpenGLProgramCompileLinkWorkerCount
+                {
+                    get => _openGLProgramCompileLinkWorkerCount;
+                    set => SetField(ref _openGLProgramCompileLinkWorkerCount, Math.Clamp(value, 1, 16));
                 }
 
                 /// <summary>

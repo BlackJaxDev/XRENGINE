@@ -9,6 +9,7 @@ internal enum EOpenGLProgramBuildLane
     DriverParallelSource,
     SharedContextSource,
     SharedContextQueueBackpressure,
+    SourceUnavailable,
     SynchronousSource,
     FailedHash,
 }
@@ -32,7 +33,8 @@ internal readonly record struct OpenGLShaderLinkBackendContext(
     bool SharedContextCompileCanEnqueue,
     bool CompileInputsReady,
     bool IsKnownAsyncLinkHazard,
-    bool HashPreviouslyFailed);
+    bool HashPreviouslyFailed,
+    bool AllowSynchronousSourceLink);
 
 internal static class OpenGLShaderLinkBackendSelector
 {
@@ -70,12 +72,11 @@ internal static class OpenGLShaderLinkBackendSelector
 
         if (!context.AsyncProgramCompilation || context.Strategy == EOpenGLShaderLinkStrategy.Synchronous)
         {
-            return new OpenGLShaderLinkBackendSelection(
-                EOpenGLProgramBuildLane.SynchronousSource,
+            return SelectSynchronousSource(
+                context,
                 context.Strategy == EOpenGLShaderLinkStrategy.Synchronous
                     ? "strategy requests synchronous source compile/link"
-                    : "async source compilation is disabled",
-                IsAsync: false);
+                    : "async source compilation is disabled");
         }
 
         if (context.IsKnownAsyncLinkHazard)
@@ -94,10 +95,9 @@ internal static class OpenGLShaderLinkBackendSelector
                     "known async-link hazard; routed to shared-context lane to avoid render-thread stall");
             }
 
-            return new OpenGLShaderLinkBackendSelection(
-                EOpenGLProgramBuildLane.SynchronousSource,
-                "known async-link hazard; no shared-context lane available",
-                IsAsync: false);
+            return SelectSynchronousSource(
+                context,
+                "known async-link hazard; no shared-context lane available");
         }
 
         return context.Strategy switch
@@ -123,11 +123,26 @@ internal static class OpenGLShaderLinkBackendSelector
             EOpenGLShaderLinkStrategy.Auto when context.SharedContextCompileAvailable && context.CompileInputsReady =>
                 SelectSharedContextSource(context, "auto selected shared-context fallback"),
 
-            _ => new OpenGLShaderLinkBackendSelection(
-                EOpenGLProgramBuildLane.SynchronousSource,
-                "no async source lane is available",
-                IsAsync: false),
+            _ => SelectSynchronousSource(context, "no async source lane is available"),
         };
+    }
+
+    private static OpenGLShaderLinkBackendSelection SelectSynchronousSource(
+        OpenGLShaderLinkBackendContext context,
+        string reason)
+    {
+        if (context.AllowSynchronousSourceLink)
+        {
+            return new OpenGLShaderLinkBackendSelection(
+                EOpenGLProgramBuildLane.SynchronousSource,
+                reason,
+                IsAsync: false);
+        }
+
+        return new OpenGLShaderLinkBackendSelection(
+            EOpenGLProgramBuildLane.SourceUnavailable,
+            $"{reason}; synchronous source linking is disabled",
+            IsAsync: true);
     }
 
     private static OpenGLShaderLinkBackendSelection SelectSharedContextSource(

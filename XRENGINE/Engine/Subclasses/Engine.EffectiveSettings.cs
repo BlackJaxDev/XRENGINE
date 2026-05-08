@@ -8,14 +8,14 @@ namespace XREngine
     {
         /// <summary>
         /// Provides resolved effective settings values using the cascading override system.
-        /// Resolution order: User Settings > Project Settings > Engine Defaults
+        /// Resolution order: User Settings > Project Settings > Runtime Engine Defaults
         /// </summary>
         /// <remarks>
         /// This class resolves settings from three levels:
         /// <list type="number">
         ///     <item><description>User Settings - End-user preferences (highest priority)</description></item>
         ///     <item><description>Project Settings - Game/project configuration</description></item>
-        ///     <item><description>Engine Settings - Global engine defaults (lowest priority)</description></item>
+        ///     <item><description>Runtime Engine Defaults - session baseline values (lowest priority)</description></item>
         /// </list>
         /// Each level can optionally override the next level down using <see cref="OverrideableSetting{T}"/>.
         /// </remarks>
@@ -562,7 +562,7 @@ namespace XREngine
             /// </summary>
             public enum SettingSource
             {
-                /// <summary>Value comes from engine defaults.</summary>
+                /// <summary>Value comes from runtime engine defaults.</summary>
                 Engine,
                 /// <summary>Value comes from project settings.</summary>
                 Project,

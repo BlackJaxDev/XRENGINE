@@ -461,10 +461,13 @@ void main()
 
   if (!OutputHDR)
   {
-	  //Gamma-correct
-	  sceneColor = pow(max(sceneColor, vec3(0.0f)), vec3(1.0f / max(ColorGrade.Gamma, 0.0001f)));
-
-    //Fix subtle banding by applying fine noise
+    // Linear pipeline: do NOT manually gamma-encode here. With
+    // GL_FRAMEBUFFER_SRGB enabled, the hardware applies the linear->sRGB
+    // transfer on write to sRGB-capable color attachments (the default
+    // framebuffer / sRGB FBOs). Manual gamma here would double-encode and
+    // wash out the image.
+    //
+    // Fix subtle banding by applying fine noise in linear space.
     sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, rand(uv));
   }
 

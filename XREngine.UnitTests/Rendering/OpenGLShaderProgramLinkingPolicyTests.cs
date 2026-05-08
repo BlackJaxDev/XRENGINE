@@ -49,7 +49,7 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
     }
 
     [Test]
-    public void KnownHazards_FallBackToSynchronous_WhenSharedContextUnavailable()
+    public void KnownHazards_Defer_WhenSharedContextUnavailable()
     {
         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
             strategy: EOpenGLShaderLinkStrategy.Auto,
@@ -57,13 +57,14 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
             sharedContextCompileAvailable: false,
             isKnownAsyncLinkHazard: true));
 
-        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SynchronousSource);
-        selection.IsAsync.ShouldBeFalse();
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SourceUnavailable);
+        selection.IsAsync.ShouldBeTrue();
         selection.Reason.ShouldContain("hazard");
+        selection.Reason.ShouldContain("synchronous source linking is disabled");
     }
 
     [Test]
-    public void KnownHazards_FallBackToSynchronous_WhenCompileInputsNotReady()
+    public void KnownHazards_Defer_WhenCompileInputsNotReady()
     {
         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
             strategy: EOpenGLShaderLinkStrategy.Auto,
@@ -72,8 +73,8 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
             compileInputsReady: false,
             isKnownAsyncLinkHazard: true));
 
-        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SynchronousSource);
-        selection.IsAsync.ShouldBeFalse();
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SourceUnavailable);
+        selection.IsAsync.ShouldBeTrue();
     }
 
     [Test]
@@ -182,7 +183,8 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
         bool sharedContextCompileCanEnqueue = true,
         bool compileInputsReady = true,
         bool isKnownAsyncLinkHazard = false,
-        bool hashPreviouslyFailed = false)
+        bool hashPreviouslyFailed = false,
+        bool allowSynchronousSourceLink = false)
         => new(
             strategy,
             asyncProgramCompilation,
@@ -196,7 +198,8 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
             sharedContextCompileCanEnqueue,
             compileInputsReady,
             isKnownAsyncLinkHazard,
-            hashPreviouslyFailed);
+            hashPreviouslyFailed,
+            allowSynchronousSourceLink);
 
     private static ShaderBinaryRuntimeFingerprint CreateFingerprint()
         => new("4.6", "TestVendor", "TestRenderer", "4.60");

@@ -85,6 +85,7 @@ vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 tangentWS, vec3 bitangentWS, 
         else
         {
             vec3 sampledNormal = sampledColor * 2.0 - 1.0;
+            sampledNormal.y = -sampledNormal.y;
             if (!XRENGINE_IsFiniteVec3(sampledNormal) || dot(sampledNormal, sampledNormal) <= 1e-6)
                 return N;
 

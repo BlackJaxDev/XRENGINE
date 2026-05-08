@@ -252,6 +252,7 @@ public class UnitTestingWorldSettings
     public bool AllowBinaryProgramCaching { get; set; } = true;
     public bool AsyncProgramBinaryUpload { get; set; } = true;
     public bool AsyncProgramCompilation { get; set; } = true;
+    public int OpenGLProgramCompileLinkWorkerCount { get; set; } = 1;
     public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16;
     public int OpenGLShaderCompilerThreadCount { get; set; } = -1;
     public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true;

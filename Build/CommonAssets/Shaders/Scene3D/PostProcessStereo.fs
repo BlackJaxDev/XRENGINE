@@ -343,9 +343,12 @@ void main()
 
     ldrSceneColor = ApplyVignette(ldrSceneColor, uv);
 
-    // Gamma-correct
-    ldrSceneColor = pow(max(ldrSceneColor, vec3(0.0f)), vec3(1.0 / max(ColorGrade.Gamma, 0.0001f)));
-    // Fix subtle banding by applying fine noise
+    // Linear pipeline: do NOT manually gamma-encode here. With
+    // GL_FRAMEBUFFER_SRGB enabled, the hardware applies the linear->sRGB
+    // transfer on write to sRGB-capable color attachments. Manual gamma
+    // here would double-encode and wash out the image.
+    //
+    // Fix subtle banding by applying fine noise in linear space.
     ldrSceneColor += mix(-0.5 / 255.0, 0.5 / 255.0, rand(uv));
 
     OutColor = vec4(ldrSceneColor, 1.0);

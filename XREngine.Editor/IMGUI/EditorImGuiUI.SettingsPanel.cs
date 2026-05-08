@@ -69,8 +69,8 @@ public static partial class EditorImGuiUI
             if (Engine.EditorPreferencesOverrides is XRAsset overridesAsset && Engine.Assets is not null)
             {
                 overridesAsset.Name ??= "Editor Preferences Overrides";
-                if (Engine.CurrentProject?.EngineSettingsPath is string engineSettingsPath)
-                    overridesAsset.FilePath = engineSettingsPath;
+                if (Engine.CurrentProject?.EditorPreferencesOverridesPath is string overridesPath)
+                    overridesAsset.FilePath = overridesPath;
 
                 Engine.Assets.EnsureTracked(overridesAsset.SourceAsset);
             }

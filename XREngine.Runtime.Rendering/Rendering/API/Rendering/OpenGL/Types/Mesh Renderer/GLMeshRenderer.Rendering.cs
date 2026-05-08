@@ -394,6 +394,12 @@ namespace XREngine.Rendering.OpenGL
                 GLMaterial material = GetRenderMaterial(materialOverride, instances);
                 uint drawInstances = ResolveLayeredShadowInstanceCount(material.Data, instances);
 
+                if (ShouldSkipShadowDrawForProgramBuild(material))
+                {
+                    Dbg("Render early-out: shadow pass skipped because this mesh's active shadow program is still building", "Render");
+                    return;
+                }
+
                 if (GetPrograms(material, out var vtx, out var mat))
                 {
                     Dbg("Programs ready - binding SSBOs and uniforms", "Render");

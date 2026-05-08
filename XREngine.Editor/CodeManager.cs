@@ -495,7 +495,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string configuration,
         string platform,
         string startupAssetName,
-        string engineSettingsAssetName,
+        string editorPreferencesAssetName,
         string userSettingsAssetName)
     {
         string projectName = GetProjectName();
@@ -515,7 +515,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string programSource = BuildLauncherProgramSource(
             settings,
             startupAssetName,
-            engineSettingsAssetName,
+            editorPreferencesAssetName,
             userSettingsAssetName);
         File.WriteAllText(programPath, programSource, Encoding.UTF8);
 
@@ -916,7 +916,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     private static string BuildLauncherProgramSource(
         BuildSettings settings,
         string startupAssetName,
-        string engineSettingsAssetName,
+        string editorPreferencesAssetName,
         string userSettingsAssetName)
     {
         string configFolder = string.IsNullOrWhiteSpace(settings.ConfigOutputFolder)
@@ -942,7 +942,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string escapedContentArchive = EscapeForLiteral(contentArchive);
         string escapedCommonAssetsArchive = EscapeForLiteral(commonAssetsArchive);
         string escapedStartup = EscapeForLiteral(startupAssetName);
-        string escapedEngine = EscapeForLiteral(engineSettingsAssetName);
+        string escapedEditorPreferences = EscapeForLiteral(editorPreferencesAssetName);
         string escapedUser = EscapeForLiteral(userSettingsAssetName);
 
         var sb = new StringBuilder();
@@ -999,7 +999,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("            return;");
         sb.AppendLine("        }");
         sb.AppendLine();
-        sb.AppendLine($"        var editorPreferences = Engine.Assets.Load<EditorPreferences>(\"{escapedEngine}\");");
+        sb.AppendLine($"        var editorPreferences = Engine.Assets.Load<EditorPreferences>(\"{escapedEditorPreferences}\");");
         sb.AppendLine("        if (editorPreferences is not null)");
         sb.AppendLine("            Engine.GlobalEditorPreferences = editorPreferences;");
         sb.AppendLine();

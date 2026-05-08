@@ -174,6 +174,7 @@ vec3 applyDetailNormal(
     vec4 detailNormalTex = texture(detailNormalMap, detailUV);
     vec3 detailNormal;
     detailNormal.xy = (detailNormalTex.xy * 2.0 - 1.0) * detail.normalScale;
+    detailNormal.y = -detailNormal.y;
     detailNormal.z = sqrt(1.0 - clamp(dot(detailNormal.xy, detailNormal.xy), 0.0, 1.0));
     
     // Transform to world space

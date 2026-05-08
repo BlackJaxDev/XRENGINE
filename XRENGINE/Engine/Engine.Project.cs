@@ -155,10 +155,16 @@ namespace XREngine
             return Path.Combine(baseDir, "XREngine", SandboxFolderName, SandboxConfigFolderName);
         }
 
-        private static string? GetSandboxEditorPreferencesOverridePath()
+        private static string? GetSandboxEditorPreferencesOverridesPath()
         {
             string? configDir = GetSandboxConfigDirectory();
-            return configDir is null ? null : Path.Combine(configDir, XRProject.EngineSettingsFileName);
+            return configDir is null ? null : Path.Combine(configDir, XRProject.EditorPreferencesOverridesFileName);
+        }
+
+        private static string? GetLegacySandboxEditorPreferencesOverridesPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.LegacyEngineSettingsFileName);
         }
 
         private static string? GetGlobalEditorPreferencesPath()
@@ -313,17 +319,22 @@ namespace XREngine
             if (Assets is null)
                 return;
 
-            if (CurrentProject?.EngineSettingsPath is null)
+            if (CurrentProject?.EditorPreferencesOverridesPath is null)
             {
                 LoadSandboxEditorPreferencesOverrides();
                 return;
             }
 
-            string settingsPath = CurrentProject.EngineSettingsPath;
+            string settingsPath = CurrentProject.EditorPreferencesOverridesPath;
+            string loadPath = File.Exists(settingsPath)
+                ? settingsPath
+                : CurrentProject.LegacyEngineSettingsPath is string legacyPath && File.Exists(legacyPath)
+                    ? legacyPath
+                    : settingsPath;
 
-            if (File.Exists(settingsPath))
+            if (File.Exists(loadPath))
             {
-                var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(settingsPath);
+                var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(loadPath);
                 if (settings is not null)
                 {
                     settings.FilePath = settingsPath;
@@ -344,13 +355,20 @@ namespace XREngine
 
         private static void LoadSandboxEditorPreferencesOverrides()
         {
-            string? settingsPath = GetSandboxEditorPreferencesOverridePath();
+            string? settingsPath = GetSandboxEditorPreferencesOverridesPath();
             if (string.IsNullOrWhiteSpace(settingsPath) || Assets is null)
                 return;
 
-            if (File.Exists(settingsPath))
+            string? legacySettingsPath = GetLegacySandboxEditorPreferencesOverridesPath();
+            string loadPath = File.Exists(settingsPath)
+                ? settingsPath
+                : !string.IsNullOrWhiteSpace(legacySettingsPath) && File.Exists(legacySettingsPath)
+                    ? legacySettingsPath
+                    : settingsPath;
+
+            if (File.Exists(loadPath))
             {
-                var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(settingsPath);
+                var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(loadPath);
                 if (settings is not null)
                 {
                     settings.FilePath = settingsPath;
@@ -615,10 +633,10 @@ namespace XREngine
             if (settings is null)
                 return;
 
-            if (CurrentProject.EngineSettingsPath is null)
+            if (CurrentProject.EditorPreferencesOverridesPath is null)
                 return;
 
-            string settingsPath = CurrentProject.EngineSettingsPath;
+            string settingsPath = CurrentProject.EditorPreferencesOverridesPath;
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
                 Directory.CreateDirectory(settingsDirectory);
@@ -638,7 +656,7 @@ namespace XREngine
             if (settings is null)
                 return;
 
-            string? settingsPath = GetSandboxEditorPreferencesOverridePath();
+            string? settingsPath = GetSandboxEditorPreferencesOverridesPath();
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 

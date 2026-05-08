@@ -704,6 +704,12 @@ internal sealed class RuntimeRenderSettings
     public bool AllowSkinning { get; set; } = true;
     public bool AsyncProgramBinaryUpload { get; set; } = true;
     public bool AsyncProgramCompilation { get; set; } = true;
+    private int _openGLProgramCompileLinkWorkerCount = 1;
+    public int OpenGLProgramCompileLinkWorkerCount
+    {
+        get => _openGLProgramCompileLinkWorkerCount;
+        set => _openGLProgramCompileLinkWorkerCount = Math.Clamp(value, 1, 16);
+    }
     public bool CacheGpuHiZOcclusionOncePerFrame { get; set; } = true;
     public bool CalculateBlendshapesInComputeShader { get; set; }
     public bool CalculateSkinnedBoundsInComputeShader { get; set; }
