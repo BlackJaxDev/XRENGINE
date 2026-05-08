@@ -93,7 +93,7 @@ Use these public setting names unless implementation discovers a better local co
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `ShadowAtlasPageSize` | `uint` | `4096` | Per page width/height. |
-| `MaxShadowAtlasPages` | `int` | `1` | Current runtime cap per light-family atlas. The live depth atlas may have one directional page, one point page, and one spot page. |
+| `MaxShadowAtlasPages` | `int` | `1` | Runtime default per light-family atlas; users may raise it up to the manager cap when memory budget allows. |
 | `MaxShadowAtlasMemoryBytes` | `long` | `0` | `0` means derive from page caps; positive values are a hard cap. |
 | `MaxShadowTilesRenderedPerFrame` | `int` | `16` | Editor-pinned lights bypass ranking but not hard memory limits. |
 | `MaxShadowRenderMilliseconds` | `float` | `2.0` | Soft per-frame shadow render budget. |

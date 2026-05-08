@@ -146,6 +146,26 @@
       "type": "boolean",
       "description": "Enables or disables PointLight."
     },
+    "DynamicPointLightCount": {
+      "type": "integer",
+      "description": "Adds this many animated dynamic point lights with deterministic random colors and smooth pseudo-random motion."
+    },
+    "DynamicSpotLightCount": {
+      "type": "integer",
+      "description": "Adds this many animated dynamic spot lights with deterministic random colors and smooth pseudo-random motion."
+    },
+    "DynamicLightsCastShadows": {
+      "type": "boolean",
+      "description": "Controls whether generated dynamic point and spot lights cast shadows."
+    },
+    "DynamicLightsForceShadowAtlas": {
+      "type": "boolean",
+      "description": "When generated dynamic lights cast shadows, enables the matching point and spot shadow atlas paths before the lights are added."
+    },
+    "DynamicLightSeed": {
+      "type": "integer",
+      "description": "Seed used for generated dynamic debug light colors and animation curves."
+    },
     "LightProbe": {
       "$ref": "#/definitions/LightProbeMode",
       "description": "Selects which light-probe layout gets added to the scene.",
@@ -341,15 +361,15 @@
     },
     "UseStartupShadowThrottlingForModelImports": {
       "type": "boolean",
-      "description": "Throttles shadow atlas work while startup model imports are in progress."
+      "description": "Disables live model import load spikes by throttling shadow atlas work until all startup model imports finish."
     },
     "StartupMaxShadowTilesRenderedPerFrame": {
       "type": "integer",
-      "description": "Shadow atlas tile budget per frame while startup model imports are active."
+      "description": "Shadow tiles rendered per frame while startup model imports are active."
     },
     "StartupMaxShadowRenderMilliseconds": {
       "type": "number",
-      "description": "Shadow atlas render-time budget in milliseconds while startup model imports are active.",
+      "description": "Shadow atlas millisecond budget while startup model imports are active.",
       "minimum": 0
     },
     "AllowShaderPipelines": {
@@ -372,6 +392,10 @@
     "AsyncProgramCompilation": {
       "type": "boolean",
       "description": "Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it."
+    },
+    "OpenGLProgramCompileLinkWorkerCount": {
+      "type": "integer",
+      "description": "Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. Values above one require XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1."
     },
     "MaxAsyncShaderProgramsPerFrame": {
       "type": "integer",

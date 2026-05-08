@@ -77,6 +77,16 @@
   "DirLight2": false,
   // Enables or disables PointLight.
   "PointLight": false,
+  // Adds this many animated dynamic point lights with deterministic random colors and smooth pseudo-random motion.
+  "DynamicPointLightCount": 0,
+  // Adds this many animated dynamic spot lights with deterministic random colors and smooth pseudo-random motion.
+  "DynamicSpotLightCount": 0,
+  // Controls whether generated dynamic point and spot lights cast shadows.
+  "DynamicLightsCastShadows": true,
+  // When generated dynamic lights cast shadows, enables the matching point and spot shadow atlas paths before the lights are added.
+  "DynamicLightsForceShadowAtlas": true,
+  // Seed used for generated dynamic debug light colors and animation curves.
+  "DynamicLightSeed": 1337,
   // Selects which light-probe layout gets added to the scene.
   // LightProbe: Off, Single, Grid, ModelGrid
   "LightProbe": "ModelGrid",
@@ -233,6 +243,12 @@
   "IKTest": false,
   // Adds test animations to the character pawn.
   "TestAnimation": false,
+  // Disables live model import load spikes by throttling shadow atlas work until all startup model imports finish.
+  "UseStartupShadowThrottlingForModelImports": true,
+  // Shadow tiles rendered per frame while startup model imports are active.
+  "StartupMaxShadowTilesRenderedPerFrame": 1,
+  // Shadow atlas millisecond budget while startup model imports are active.
+  "StartupMaxShadowRenderMilliseconds": 0.5,
   // Indicates if the engine should use shader pipelines to mix and match shader stages. This will break debug shape rendering, and seems to render slower than making combined programs.
   "AllowShaderPipelines": false,
   // Selects the OpenGL shader compile/link path used by startup model shaders.
@@ -244,6 +260,8 @@
   "AsyncProgramBinaryUpload": true,
   // Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it.
   "AsyncProgramCompilation": true,
+  // Number of shared-context worker threads used to compile and link uncached OpenGL shader programs in parallel.
+  "OpenGLProgramCompileLinkWorkerCount": 1,
   // Maximum number of pending async OpenGL shader programs to advance per render frame.
   "MaxAsyncShaderProgramsPerFrame": 16,
   // Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.

@@ -17,7 +17,9 @@ namespace XREngine
     public partial class XRProject : XRAsset
     {
         public const string ProjectExtension = "xrproj";
-        public const string EngineSettingsFileName = "engine_settings.asset";
+        public const string EditorPreferencesFileName = "editor_preferences.asset";
+        public const string EditorPreferencesOverridesFileName = "editor_preferences_overrides.asset";
+        public const string LegacyEngineSettingsFileName = "engine_settings.asset";
         public const string GameSettingsFileName = "game_settings.asset";
         public const string UserSettingsFileName = "user_settings.asset";
         public const string BuildSettingsFileName = "build_settings.asset";
@@ -167,11 +169,18 @@ namespace XREngine
             : Path.Combine(ProjectDirectory, CacheDirectoryName);
 
         /// <summary>
-        /// Gets the path to the editor preferences file for this project.
+        /// Gets the path to the editor preferences override file for this project.
         /// </summary>
-        public string? EngineSettingsPath => ConfigDirectory is null
+        public string? EditorPreferencesOverridesPath => ConfigDirectory is null
             ? null
-            : Path.Combine(ConfigDirectory, EngineSettingsFileName);
+            : Path.Combine(ConfigDirectory, EditorPreferencesOverridesFileName);
+
+        /// <summary>
+        /// Gets the pre-rename path that used to store editor preferences overrides.
+        /// </summary>
+        public string? LegacyEngineSettingsPath => ConfigDirectory is null
+            ? null
+            : Path.Combine(ConfigDirectory, LegacyEngineSettingsFileName);
 
         /// <summary>
         /// Gets the path to the game settings file for this project.

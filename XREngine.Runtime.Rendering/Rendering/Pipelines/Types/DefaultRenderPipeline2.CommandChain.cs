@@ -14,6 +14,22 @@ public partial class DefaultRenderPipeline2
 {
     #region Command Chain Generation
 
+    private const string DebugVizTransformIdVariableName = "DebugViz_TransformId";
+    private const string DebugVizTransparencyAccumulationVariableName = "DebugViz_TransparencyAccumulation";
+    private const string DebugVizTransparencyRevealageVariableName = "DebugViz_TransparencyRevealage";
+    private const string DebugVizTransparencyOverdrawVariableName = "DebugViz_TransparencyOverdraw";
+    private const string DebugVizPpllFragmentsVariableName = "DebugViz_PpllFragments";
+    private const string DebugVizDepthPeelingLayerVariableName = "DebugViz_DepthPeelingLayer";
+
+    private static void BeginGpuScope(ViewportRenderCommandContainer c, string label)
+    {
+        c.Add<VPRC_Annotation>().Label = label;
+        c.Add<VPRC_GPUTimerBegin>().Label = label;
+    }
+
+    private static void EndGpuScope(ViewportRenderCommandContainer c, string label)
+        => c.Add<VPRC_GPUTimerEnd>().Label = label;
+
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer c = new(this);
@@ -60,6 +76,8 @@ public partial class DefaultRenderPipeline2
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                if (enableComputePasses)
+                    c.Add<VPRC_ForwardPlusDebugOverlay>();
             }
         }
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, GPURenderDispatch);
@@ -79,8 +97,11 @@ public partial class DefaultRenderPipeline2
             StringComparison.Ordinal);
 
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
+        AppendDebugVisualizationVariables(c);
 
+        BeginGpuScope(c, "Texture Caching");
         CacheTextures(c);
+        EndGpuScope(c, "Texture Caching");
         AppendVoxelConeTracingPass(c, enableComputePasses);
 
         //Create FBOs only after all their texture dependencies have been cached.
@@ -120,6 +141,12 @@ public partial class DefaultRenderPipeline2
             AppendAntiAliasingResourceCaching(c);
         }
 
+        // Volumetric fog scatter runs once at internal resolution, writing an
+        // RGBA16F texture that the post-process composite samples. Skipped in
+        // stereo (no stereo scatter variant yet).
+        if (!Stereo)
+            AppendVolumetricFog(c);
+
         // Compute exposure BEFORE the post-process quad so the 1x1 exposure
         // texture and _gpuAutoExposureReadyThisFrame flag are current when
         // PostProcess.fs reads them.
@@ -132,6 +159,26 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_RenderScreenSpaceUI>();
         return c;
     }
+
+    private void AppendDebugVisualizationVariables(ViewportRenderCommandContainer c)
+    {
+        AddDebugVisualizationVariable(c, DebugVizTransformIdVariableName, () => EnableTransformIdVisualization);
+        AddDebugVisualizationVariable(c, DebugVizTransparencyAccumulationVariableName, () => EnableTransparencyAccumulationVisualization);
+        AddDebugVisualizationVariable(c, DebugVizTransparencyRevealageVariableName, () => EnableTransparencyRevealageVisualization);
+        AddDebugVisualizationVariable(c, DebugVizTransparencyOverdrawVariableName, () => EnableTransparencyOverdrawVisualization);
+        AddDebugVisualizationVariable(c, DebugVizPpllFragmentsVariableName, () => EnablePerPixelLinkedListVisualization);
+        AddDebugVisualizationVariable(c, DebugVizDepthPeelingLayerVariableName, () => EnableDepthPeelingLayerVisualization);
+    }
+
+    private static void AddDebugVisualizationVariable(ViewportRenderCommandContainer c, string variableName, Func<bool> evaluator)
+    {
+        var command = c.Add<VPRC_SetVariable>();
+        command.VariableName = variableName;
+        command.ValueEvaluator = () => evaluator();
+    }
+
+    private static bool DebugVariableIsTrue(string variableName)
+        => Engine.Rendering.State.CurrentRenderingPipeline?.Variables.TryGet(variableName, out bool enabled) == true && enabled;
 
     /// <summary>Appends the voxel-cone-tracing voxelization dispatch (when compute is available).</summary>
     private void AppendVoxelConeTracingPass(ViewportRenderCommandContainer c, bool enableComputePasses)
@@ -154,6 +201,7 @@ public partial class DefaultRenderPipeline2
     /// <summary>Appends the ambient-occlusion mode switch (selecting SSAO, HBAO+, GTAO, etc.).</summary>
     private void AppendAmbientOcclusionSwitch(ViewportRenderCommandContainer c, bool enableComputePasses)
     {
+        BeginGpuScope(c, "AO Compute");
         if (enableComputePasses)
         {
             // Render to the ambient occlusion FBO using a switch to select the active AO implementation.
@@ -188,11 +236,13 @@ public partial class DefaultRenderPipeline2
             aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
         }
 
+        EndGpuScope(c, "AO Compute");
     }
 
     /// <summary>Caches MSAA deferred FBOs, renders deferred GBuffer geometry, and resolves MSAA when active.</summary>
     private void AppendDeferredGBufferPass(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "Deferred GBuffer");
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             DeferredGBufferFBOName,
             CreateDeferredGBufferFBO,
@@ -229,6 +279,7 @@ public partial class DefaultRenderPipeline2
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, GPURenderDispatch);
         }
+        EndGpuScope(c, "Deferred GBuffer");
 
         // When MSAA deferred is active, also resolve geometry into the non-MSAA GBuffer FBO
         // so that the AO pass has correct GBuffer data (SSAO doesn't support MSAA textures).
@@ -237,12 +288,14 @@ public partial class DefaultRenderPipeline2
             msaaGBufferBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
             {
                 var msaaGeomCmds = new ViewportRenderCommandContainer(this);
+                BeginGpuScope(msaaGeomCmds, "MSAA GBuffer Resolve");
                 // Resolve MSAA GBuffer â†’ non-MSAA GBuffer for AO compatibility.
                 msaaGeomCmds.Add<VPRC_ResolveMsaaGBuffer>().SetOptions(
                     MsaaGBufferFBOName,
                     DeferredGBufferFBOName,
                     colorAttachmentCount: 4,
                     resolveDepthStencil: true);
+                EndGpuScope(msaaGeomCmds, "MSAA GBuffer Resolve");
                 msaaGBufferBranch.TrueCommands = msaaGeomCmds;
             }
         }
@@ -252,6 +305,7 @@ public partial class DefaultRenderPipeline2
     /// <summary>Appends the forward depth+normal pre-pass (shared or separate GBuffer targets).</summary>
     private void AppendForwardDepthPrePass(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "Forward Pre-Pass");
         var prePassChoice = c.Add<VPRC_IfElse>();
         prePassChoice.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
         {
@@ -278,11 +332,13 @@ public partial class DefaultRenderPipeline2
             prePassChoice.TrueCommands = shareChoice;
         }
 
+        EndGpuScope(c, "Forward Pre-Pass");
     }
 
     /// <summary>Appends the AO blur/resolve switch (HBAO+, GTAO, or default).</summary>
     private void AppendAmbientOcclusionResolve(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "AO Resolve");
         var aoResolveSwitch = c.Add<VPRC_Switch>();
         aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
         aoResolveSwitch.Cases = new()
@@ -291,11 +347,13 @@ public partial class DefaultRenderPipeline2
             [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOResolveCommands(),
         };
         aoResolveSwitch.DefaultCase = CreateAmbientOcclusionResolveCommands();
+        EndGpuScope(c, "AO Resolve");
     }
 
     /// <summary>Caches LightCombine FBO, marks MSAA complex pixels, and renders the deferred lighting pass.</summary>
     private void AppendLightingPass(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "Lighting");
         c.Add<VPRC_SyncLightProbeResources>();
 
         //LightCombine FBO
@@ -340,6 +398,32 @@ public partial class DefaultRenderPipeline2
                 // depth is shared from the GBuffer and must be preserved for light volume testing.
                 using (msaaLightCmds.AddUsing<VPRC_BindFBOByName>(x =>
                     x.SetOptions(MsaaLightingFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbePositionBufferName;
+                    x.BindingLocation = 0u;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeTetraBufferName;
+                    x.BindingLocation = 1u;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeParamBufferName;
+                    x.BindingLocation = 2u;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeGridCellBufferName;
+                    x.BindingLocation = 3u;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeGridIndexBufferName;
+                    x.BindingLocation = 4u;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
                 {
                     msaaLightCmds.Add<VPRC_StencilMask>().Set(~0u);
                     var msaaLightPass = msaaLightCmds.Add<VPRC_LightCombinePass>();
@@ -365,6 +449,32 @@ public partial class DefaultRenderPipeline2
                 // Non-MSAA path: render lights directly into LightCombine FBO
                 var stdLightCmds = new ViewportRenderCommandContainer(this);
                 using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightCombineFBOName)))
+                using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbePositionBufferName;
+                    x.BindingLocation = 0u;
+                }))
+                using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeTetraBufferName;
+                    x.BindingLocation = 1u;
+                }))
+                using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeParamBufferName;
+                    x.BindingLocation = 2u;
+                }))
+                using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeGridCellBufferName;
+                    x.BindingLocation = 3u;
+                }))
+                using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeGridIndexBufferName;
+                    x.BindingLocation = 4u;
+                }))
+                using (stdLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
                 {
                     stdLightCmds.Add<VPRC_StencilMask>().Set(~0u);
                     stdLightCmds.Add<VPRC_LightCombinePass>().SetOptions(
@@ -377,6 +487,7 @@ public partial class DefaultRenderPipeline2
             }
         }
 
+        EndGpuScope(c, "Lighting");
     }
 
     /// <summary>Caches forward-pass FBOs, renders opaque/masked/GI/debug, and resolves MSAA.</summary>
@@ -489,6 +600,7 @@ public partial class DefaultRenderPipeline2
         // Depth is only cleared for MSAA (renderbuffers start undefined); the non-MSAA path
         // preserves GBuffer depth so forward materials depth-test against deferred geometry.
         // Stencil is always cleared so post-process outline is driven only by current-frame writes.
+        BeginGpuScope(c, "Forward Render");
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
             x.Write = true;
@@ -539,7 +651,33 @@ public partial class DefaultRenderPipeline2
             // The fullscreen per-sample combine path can blank deferred content on some
             // GL drivers, while this resolved path preserves visibility and still lets the
             // skybox refill uncovered MSAA samples afterward.
-            c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbePositionBufferName;
+                x.BindingLocation = 0u;
+            }))
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeTetraBufferName;
+                x.BindingLocation = 1u;
+            }))
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeParamBufferName;
+                x.BindingLocation = 2u;
+            }))
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeGridCellBufferName;
+                x.BindingLocation = 3u;
+            }))
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeGridIndexBufferName;
+                x.BindingLocation = 4u;
+            }))
+            using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
+                c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
 
             //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
             c.Add<VPRC_DepthTest>().Enable = true;
@@ -556,13 +694,23 @@ public partial class DefaultRenderPipeline2
 
             if (enableComputePasses)
             {
-                c.Add<VPRC_ReSTIRPass>();
-                c.Add<VPRC_LightVolumesPass>();
-                c.Add<VPRC_RadianceCascadesPass>();
-                c.Add<VPRC_SurfelGIPass>();
+                BeginGpuScope(c, "GI Composite");
+                using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyRestirCompositeProgramBindings))
+                    c.Add<VPRC_ReSTIRPass>();
+                using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightVolumeCompositeProgramBindings))
+                    c.Add<VPRC_LightVolumesPass>();
+                using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyRadianceCascadeCompositeProgramBindings))
+                    c.Add<VPRC_RadianceCascadesPass>();
+                using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplySurfelGICompositeProgramBindings))
+                    c.Add<VPRC_SurfelGIPass>();
+                EndGpuScope(c, "GI Composite");
             }
 
+            if (enableComputePasses)
+                c.Add<VPRC_ForwardPlusDebugOverlay>();
+
         }
+        EndGpuScope(c, "Forward Render");
 
         // MSAA resolve blit: only execute when MSAA is active for the current camera.
         // Only color is resolved; OpenGL 4.6 Â§18.3.1 forbids blitting depth/stencil
@@ -589,6 +737,7 @@ public partial class DefaultRenderPipeline2
     /// <summary>Appends WB-OIT accumulation/resolve and exact transparency passes.</summary>
     private void AppendTransparencyPasses(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "Transparency");
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         c.Add<VPRC_RenderQuadFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
@@ -600,14 +749,34 @@ public partial class DefaultRenderPipeline2
             c.Add<VPRC_DepthWrite>().Allow = false;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
         }
-        c.Add<VPRC_RenderQuadFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
+        using (c.AddUsing<VPRC_BindTexture>(x =>
+        {
+            x.TextureName = TransparentSceneCopyTextureName;
+            x.TextureUnit = 0;
+        }))
+        using (c.AddUsing<VPRC_BindTexture>(x =>
+        {
+            x.TextureName = TransparentAccumTextureName;
+            x.TextureUnit = 1;
+        }))
+        using (c.AddUsing<VPRC_BindTexture>(x =>
+        {
+            x.TextureName = TransparentRevealageTextureName;
+            x.TextureUnit = 2;
+        }))
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyTransparentResolveProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
+        }
 
         AppendExactTransparencyCommands(c);
+        EndGpuScope(c, "Transparency");
     }
 
     /// <summary>Caches the velocity FBO, renders motion vectors, and restores default clears.</summary>
     private void AppendVelocityPass(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "Velocity");
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             VelocityFBOName,
             CreateVelocityFBO,
@@ -627,28 +796,33 @@ public partial class DefaultRenderPipeline2
             c.Add<VPRC_DepthWrite>().Allow = false;
             // GPU path currently ignores override materials; force CPU so motion vectors render with the correct material.
             // Skip background/on-top passes so skyboxes/UI do not pollute the velocity buffer.
-            c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,
-                new[]
-                {
-                    (int)EDefaultRenderPass.OpaqueDeferred,
-                    (int)EDefaultRenderPass.DeferredDecals,
-                    (int)EDefaultRenderPass.OpaqueForward,
-                    (int)EDefaultRenderPass.MaskedForward,
-                    (int)EDefaultRenderPass.WeightedBlendedOitForward,
-                    (int)EDefaultRenderPass.PerPixelLinkedListForward,
-                    (int)EDefaultRenderPass.DepthPeelingForward,
-                    // TransparentForward is omitted: it renders after temporal
-                    // accumulation to avoid TAA smearing artifacts.
-                });
+            using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyMotionVectorsProgramBindings))
+            {
+                c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,
+                    new[]
+                    {
+                        (int)EDefaultRenderPass.OpaqueDeferred,
+                        (int)EDefaultRenderPass.DeferredDecals,
+                        (int)EDefaultRenderPass.OpaqueForward,
+                        (int)EDefaultRenderPass.MaskedForward,
+                        (int)EDefaultRenderPass.WeightedBlendedOitForward,
+                        (int)EDefaultRenderPass.PerPixelLinkedListForward,
+                        (int)EDefaultRenderPass.DepthPeelingForward,
+                        // TransparentForward is omitted: it renders after temporal
+                        // accumulation to avoid TAA smearing artifacts.
+                    });
+            }
             c.Add<VPRC_DepthWrite>().Allow = true;
         }
         // Restore clears for subsequent passes to the pipeline defaults.
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+        EndGpuScope(c, "Velocity");
     }
 
     /// <summary>Appends the bloom downsample/upsample pass.</summary>
     private void AppendBloomPass(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "Bloom");
         var bloomChoice = c.Add<VPRC_IfElse>();
         bloomChoice.ConditionEvaluator = ShouldUseBloom;
         {
@@ -660,11 +834,13 @@ public partial class DefaultRenderPipeline2
             bloomChoice.TrueCommands = bloomCommands;
         }
 
+        EndGpuScope(c, "Bloom");
     }
 
     /// <summary>Appends conditional motion blur and depth-of-field sub-chains.</summary>
     private void AppendMotionBlurAndDoF(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "Motion Blur / DoF");
         var motionBlurChoice = c.Add<VPRC_IfElse>();
         motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
         motionBlurChoice.TrueCommands = CreateMotionBlurPassCommands();
@@ -672,30 +848,37 @@ public partial class DefaultRenderPipeline2
         var dofChoice = c.Add<VPRC_IfElse>();
         dofChoice.ConditionEvaluator = ShouldUseDepthOfField;
         dofChoice.TrueCommands = CreateDepthOfFieldPassCommands();
+        EndGpuScope(c, "Motion Blur / DoF");
     }
 
     /// <summary>Appends temporal accumulation (TAA/TSR resolve) and pops the jitter offset.</summary>
     private void AppendTemporalAccumulation(ViewportRenderCommandContainer c)
     {
-        var temporalAccumulate = c.Add<VPRC_TemporalAccumulationPass>();
-        temporalAccumulate.Phase = VPRC_TemporalAccumulationPass.EPhase.Accumulate;
-        temporalAccumulate.ConfigureAccumulationTargets(
-            ForwardPassFBOName,
-            TemporalInputFBOName,
-            TemporalAccumulationFBOName,
-            HistoryCaptureFBOName,
-            HistoryExposureFBOName);
+        BeginGpuScope(c, "Temporal Accumulation");
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyTemporalAccumulationProgramBindings))
+        {
+            var temporalAccumulate = c.Add<VPRC_TemporalAccumulationPass>();
+            temporalAccumulate.Phase = VPRC_TemporalAccumulationPass.EPhase.Accumulate;
+            temporalAccumulate.ConfigureAccumulationTargets(
+                ForwardPassFBOName,
+                TemporalInputFBOName,
+                TemporalAccumulationFBOName,
+                HistoryCaptureFBOName,
+                HistoryExposureFBOName);
+        }
 
         // Pop jitter so transparent / masked forward passes render with a
         // clean (unjittered) projection. This prevents sub-pixel jitter from
         // shifting alpha-test / blend boundaries that cause TAA smearing.
         c.Add<VPRC_TemporalAccumulationPass>().Phase =
             VPRC_TemporalAccumulationPass.EPhase.PopJitter;
+        EndGpuScope(c, "Temporal Accumulation");
     }
 
     /// <summary>Renders transparent and on-top forward passes after temporal resolve (unjittered).</summary>
     private void AppendPostTemporalForwardPasses(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "Post-Temporal Forward");
         // Render transparent and on-top forward passes AFTER temporal resolve.
         // They composite on top of the resolved opaque image without temporal
         // accumulation, avoiding ghosting/smearing on transparent edges.
@@ -711,6 +894,7 @@ public partial class DefaultRenderPipeline2
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
         }
 
+        EndGpuScope(c, "Post-Temporal Forward");
     }
 
     /// <summary>Caches the post-process FBO (depends on BloomBlurTexture from the bloom pass).</summary>
@@ -730,46 +914,44 @@ public partial class DefaultRenderPipeline2
     /// <summary>Caches debug visualization FBOs (transform ID, transparency, overdraw, depth peeling).</summary>
     private void AppendDebugVisualizationCaching(ViewportRenderCommandContainer c)
     {
-        if (EnableTransformIdVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                TransformIdDebugQuadFBOName,
-                CreateTransformIdDebugQuadFBO,
-                GetDesiredFBOSizeInternal);
-        }
+        AppendConditionalDebugFboCache(
+            c,
+            DebugVizTransformIdVariableName,
+            TransformIdDebugQuadFBOName,
+            CreateTransformIdDebugQuadFBO);
 
-        if (EnableTransparencyAccumulationVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                TransparentAccumulationDebugFBOName,
-                CreateTransparentAccumulationDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
+        AppendConditionalDebugFboCache(
+            c,
+            DebugVizTransparencyAccumulationVariableName,
+            TransparentAccumulationDebugFBOName,
+            CreateTransparentAccumulationDebugFBO);
 
-        if (EnableTransparencyRevealageVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                TransparentRevealageDebugFBOName,
-                CreateTransparentRevealageDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
+        AppendConditionalDebugFboCache(
+            c,
+            DebugVizTransparencyRevealageVariableName,
+            TransparentRevealageDebugFBOName,
+            CreateTransparentRevealageDebugFBO);
 
-        if (EnableTransparencyOverdrawVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                TransparentOverdrawDebugFBOName,
-                CreateTransparentOverdrawDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
+        AppendConditionalDebugFboCache(
+            c,
+            DebugVizTransparencyOverdrawVariableName,
+            TransparentOverdrawDebugFBOName,
+            CreateTransparentOverdrawDebugFBO);
+    }
 
-        if (EnableDepthPeelingLayerVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                DepthPeelingDebugFBOName,
-                CreateDepthPeelingDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
-
+    private void AppendConditionalDebugFboCache(
+        ViewportRenderCommandContainer c,
+        string variableName,
+        string fboName,
+        Func<XRFrameBuffer> factory)
+    {
+        var conditional = c.Add<VPRC_ConditionalRender>();
+        conditional.VariableName = variableName;
+        conditional.Body = new ViewportRenderCommandContainer(this);
+        conditional.Body.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            fboName,
+            factory,
+            GetDesiredFBOSizeInternal);
     }
 
     /// <summary>Caches post-AA and TSR support resources used by the default pipeline.</summary>
@@ -820,6 +1002,7 @@ public partial class DefaultRenderPipeline2
     /// <summary>Appends the FXAA/SMAA/TSR post-AA chain.</summary>
     private void AppendFxaaTsrUpscaleChain(ViewportRenderCommandContainer c)
     {
+        BeginGpuScope(c, "AA Upscale");
         // Post-AA chain: FXAA and SMAA run against the post-process output, while TSR
         // resolves from internal resolution and writes a full-resolution result.
         {
@@ -835,7 +1018,8 @@ public partial class DefaultRenderPipeline2
                     tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
                     {
                         var tsrUpscale = new ViewportRenderCommandContainer(this);
-                        tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
+                        using (tsrUpscale.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyTsrUpscaleProgramBindings))
+                            tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
                         tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
                             TsrUpscaleFBOName,
                             TsrHistoryColorFBOName,
@@ -852,7 +1036,8 @@ public partial class DefaultRenderPipeline2
                         postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
                         {
                             var fxaaUpscale = new ViewportRenderCommandContainer(this);
-                            fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
+                            using (fxaaUpscale.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyFxaaProgramBindings))
+                                fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
                             postAaChoice.TrueCommands = fxaaUpscale;
                         }
                         {
@@ -870,6 +1055,7 @@ public partial class DefaultRenderPipeline2
                 upscaleChoice.TrueCommands = upscaleCmds;
             }
         }
+        EndGpuScope(c, "AA Upscale");
     }
 
     /// <summary>Dispatches the auto-exposure compute shader before the post-process pass.</summary>
@@ -884,8 +1070,11 @@ public partial class DefaultRenderPipeline2
         // Always materialize the post-process quad into a texture-backed output FBO so
         // final presentation does not depend on the quad-FBO fallback path.
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        using (c.AddUsing<VPRC_PushProgramBindings>(t => t.ApplyUniforms = ApplyPostProcessProgramBindings))
         {
+            BeginGpuScope(c, "Post-Processing");
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
+            EndGpuScope(c, "Post-Processing");
         }
     }
 
@@ -899,10 +1088,12 @@ public partial class DefaultRenderPipeline2
     /// <summary>Binds the output FBO and presents the final composited image (debug viz / vendor upscale / AA).</summary>
     private void AppendFinalOutput(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
     {
+        BeginGpuScope(c, "Final Output");
         var outputChoice = c.Add<VPRC_IfElse>();
         outputChoice.ConditionEvaluator = IsOffscreenSceneCaptureOutput;
         outputChoice.TrueCommands = CreateOffscreenCaptureFinalOutputCommands();
         outputChoice.FalseCommands = CreateViewportFinalOutputCommands(bypassVendorUpscale);
+        EndGpuScope(c, "Final Output");
     }
 
     private static bool IsOffscreenSceneCaptureOutput()
@@ -936,25 +1127,82 @@ public partial class DefaultRenderPipeline2
             {
                 //c.Add<VPRC_ClearByBoundFBO>();
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
-                if (EnableTransformIdVisualization)
-                {
-                    // Debug visualization is produced by a quad shader; present it directly.
-                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
-                    AppendDebugOverlay(c, visible: false);
-                }
-                else if (ActiveTransparencyDebugFboName is not null)
-                {
-                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(ActiveTransparencyDebugFboName, null);
-                    AppendDebugOverlay(c, visible: false);
-                }
-                else
-                {
-                    AppendViewportFinalOutputSourceCommands(c, bypassVendorUpscale);
-                    AppendDebugOverlay(c);
-                }
+                AppendRuntimeDebugOrStandardFinalOutput(c, bypassVendorUpscale);
             }
         }
         return c;
+    }
+
+    private void AppendRuntimeDebugOrStandardFinalOutput(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
+    {
+        var transformIdChoice = c.Add<VPRC_IfElse>();
+        transformIdChoice.ConditionEvaluator = () => DebugVariableIsTrue(DebugVizTransformIdVariableName);
+        transformIdChoice.TrueCommands = CreateTransformIdFinalOutputCommands();
+        transformIdChoice.FalseCommands = CreateTransparencyDebugSelectionCommands(bypassVendorUpscale);
+    }
+
+    private ViewportRenderCommandContainer CreateTransformIdFinalOutputCommands()
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        using (commands.AddUsing<VPRC_BindTexture>(x =>
+        {
+            x.TextureName = TransformIdTextureName;
+            x.TextureUnit = 0;
+        }))
+        using (commands.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyTransformIdDebugProgramBindings))
+        {
+            commands.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
+        }
+        AppendDebugOverlay(commands, visible: false);
+        return commands;
+    }
+
+    private ViewportRenderCommandContainer CreateTransparencyDebugSelectionCommands(bool bypassVendorUpscale)
+    {
+        var debugOutputs = new[]
+        {
+            (VariableName: DebugVizTransparencyAccumulationVariableName, FboName: TransparentAccumulationDebugFBOName),
+            (VariableName: DebugVizTransparencyRevealageVariableName, FboName: TransparentRevealageDebugFBOName),
+            (VariableName: DebugVizTransparencyOverdrawVariableName, FboName: TransparentOverdrawDebugFBOName),
+            (VariableName: DebugVizPpllFragmentsVariableName, FboName: PpllFragmentCountDebugFBOName),
+            (VariableName: DebugVizDepthPeelingLayerVariableName, FboName: DepthPeelingDebugFBOName),
+        };
+
+        return CreateTransparencyDebugSelectionCommands(debugOutputs, 0, CreateStandardFinalOutputWithOverlayCommands(bypassVendorUpscale));
+    }
+
+    private ViewportRenderCommandContainer CreateTransparencyDebugSelectionCommands(
+        (string VariableName, string FboName)[] debugOutputs,
+        int index,
+        ViewportRenderCommandContainer fallbackCommands)
+    {
+        if (index >= debugOutputs.Length)
+            return fallbackCommands;
+
+        var commands = new ViewportRenderCommandContainer(this);
+        var choice = commands.Add<VPRC_IfElse>();
+        string variableName = debugOutputs[index].VariableName;
+        string fboName = debugOutputs[index].FboName;
+        choice.ConditionEvaluator = () => DebugVariableIsTrue(variableName);
+        choice.TrueCommands = CreateTransparencyDebugFinalOutputCommands(fboName);
+        choice.FalseCommands = CreateTransparencyDebugSelectionCommands(debugOutputs, index + 1, fallbackCommands);
+        return commands;
+    }
+
+    private ViewportRenderCommandContainer CreateTransparencyDebugFinalOutputCommands(string fboName)
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        AppendTransparencyDebugOutput(commands, fboName);
+        AppendDebugOverlay(commands, visible: false);
+        return commands;
+    }
+
+    private ViewportRenderCommandContainer CreateStandardFinalOutputWithOverlayCommands(bool bypassVendorUpscale)
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        AppendViewportFinalOutputSourceCommands(commands, bypassVendorUpscale);
+        AppendDebugOverlay(commands);
+        return commands;
     }
 
     private void AppendDebugOverlay(ViewportRenderCommandContainer c, bool visible = true)
@@ -964,6 +1212,67 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_RenderDebugPhysics>();
         if (!visible)
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+    }
+
+    private void AppendTransparencyDebugOutput(ViewportRenderCommandContainer c, string fboName)
+    {
+        switch (fboName)
+        {
+            case TransparentAccumulationDebugFBOName:
+                using (c.AddUsing<VPRC_BindTexture>(x =>
+                {
+                    x.TextureName = TransparentAccumTextureName;
+                    x.TextureUnit = 0;
+                }))
+                {
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(fboName, null);
+                }
+                break;
+            case TransparentRevealageDebugFBOName:
+                using (c.AddUsing<VPRC_BindTexture>(x =>
+                {
+                    x.TextureName = TransparentRevealageTextureName;
+                    x.TextureUnit = 0;
+                }))
+                {
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(fboName, null);
+                }
+                break;
+            case TransparentOverdrawDebugFBOName:
+                using (c.AddUsing<VPRC_BindTexture>(x =>
+                {
+                    x.TextureName = TransparentRevealageTextureName;
+                    x.TextureUnit = 0;
+                }))
+                using (c.AddUsing<VPRC_BindTexture>(x =>
+                {
+                    x.TextureName = TransparentAccumTextureName;
+                    x.TextureUnit = 1;
+                }))
+                {
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(fboName, null);
+                }
+                break;
+            case PpllFragmentCountDebugFBOName:
+                using (c.AddUsing<VPRC_BindTexture>(x =>
+                {
+                    x.TextureName = PpllFragmentCountTextureName;
+                    x.TextureUnit = 0;
+                }))
+                {
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(fboName, null);
+                }
+                break;
+            case DepthPeelingDebugFBOName:
+                using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingDebugProgramBindings))
+                {
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(fboName, null);
+                }
+                break;
+            default:
+                c.Add<VPRC_RenderQuadToFBO>().SetTargets(fboName, null);
+                break;
+        }
     }
 
     private void AppendViewportFinalOutputSourceCommands(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
@@ -1636,7 +1945,10 @@ public partial class DefaultRenderPipeline2
             linearFilter: false);
 
         // Render the motion blur result back into the forward pass FBO
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(MotionBlurFBOName, ForwardPassFBOName);
+        using (container.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyMotionBlurProgramBindings))
+        {
+            container.Add<VPRC_RenderQuadToFBO>().SetTargets(MotionBlurFBOName, ForwardPassFBOName);
+        }
 
         return container;
     }
@@ -1732,7 +2044,10 @@ public partial class DefaultRenderPipeline2
             linearFilter: false);
 
         // Render the DoF result back into the forward pass FBO
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthOfFieldFBOName, ForwardPassFBOName);
+        using (container.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthOfFieldProgramBindings))
+        {
+            container.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthOfFieldFBOName, ForwardPassFBOName);
+        }
 
         return container;
     }
@@ -1938,6 +2253,148 @@ public partial class DefaultRenderPipeline2
             AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion => (int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion,
             _ => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
         };
+
+    /// <summary>
+    /// Appends the half-resolution volumetric fog chain:
+    ///   1. Half-resolution depth downsample (<c>VolumetricFogHalfDepth</c>).
+    ///   2. Half-resolution scatter raymarch (<c>VolumetricFogHalfScatter</c>).
+    ///   3. Half-resolution temporal reprojection (<c>VolumetricFogHalfTemporal</c>).
+    ///   4. Full-resolution bilateral upscale (<c>VolumetricFogColor</c>).
+    /// The scatter shader early-outs to (0,0,0,1) when no volumes are present
+    /// or the effect is disabled, so the post-process composite degrades to a
+    /// no-op without an external gate. Each pass uses
+    /// <see cref="VPRC_RenderQuadToFBO.MatchDestinationRenderArea"/> so the
+    /// viewport follows the destination FBO's size automatically.
+    /// </summary>
+    private void AppendVolumetricFog(ViewportRenderCommandContainer c)
+    {
+        BeginGpuScope(c, "Volumetric Fog");
+        // Stage 1: half-resolution depth downsample.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogHalfDepthTextureName,
+            CreateVolumetricFogHalfDepthTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHalfDepthQuadFBOName,
+            CreateVolumetricFogHalfDepthQuadFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHalfDepthQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHalfDepthFBOName,
+            CreateVolumetricFogHalfDepthFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHalfDepthFbo);
+
+        c.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(VolumetricFogHalfDepthQuadFBOName, VolumetricFogHalfDepthFBOName, matchDestinationRenderArea: true);
+
+        // Stage 2: half-resolution scatter raymarch.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogHalfScatterTextureName,
+            CreateVolumetricFogHalfScatterTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHalfScatterQuadFBOName,
+            CreateVolumetricFogHalfScatterQuadFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHalfScatterQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHalfScatterFBOName,
+            CreateVolumetricFogHalfScatterFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHalfScatterFbo);
+
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyVolumetricFogHalfScatterProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(VolumetricFogHalfScatterQuadFBOName, VolumetricFogHalfScatterFBOName, matchDestinationRenderArea: true);
+        }
+
+        // Stage 3: half-resolution temporal reprojection.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogHalfTemporalTextureName,
+            CreateVolumetricFogHalfTemporalTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogHalfHistoryTextureName,
+            CreateVolumetricFogHalfHistoryTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogReprojectQuadFBOName,
+            CreateVolumetricFogReprojectQuadFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogReprojectQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogReprojectFBOName,
+            CreateVolumetricFogReprojectFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogReprojectFbo);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogHistoryFBOName,
+            CreateVolumetricFogHistoryFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateVolumetricFogHistoryFbo);
+
+        c.Add<VPRC_VolumetricFogHistoryPass>().Phase = VPRC_VolumetricFogHistoryPass.EPhase.Begin;
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyVolumetricFogReprojectProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(VolumetricFogReprojectQuadFBOName, VolumetricFogReprojectFBOName, matchDestinationRenderArea: true);
+        }
+
+        // Stage 4: full-resolution bilateral upscale.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogColorTextureName,
+            CreateVolumetricFogColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogUpscaleQuadFBOName,
+            CreateVolumetricFogUpscaleQuadFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateVolumetricFogUpscaleQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogUpscaleFBOName,
+            CreateVolumetricFogUpscaleFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateVolumetricFogUpscaleFbo);
+
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyVolumetricFogUpscaleProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(VolumetricFogUpscaleQuadFBOName, VolumetricFogUpscaleFBOName, matchDestinationRenderArea: true);
+        }
+
+        c.Add<VPRC_BlitFrameBuffer>().SetOptions(
+            VolumetricFogReprojectFBOName,
+            VolumetricFogHistoryFBOName,
+            EReadBufferMode.ColorAttachment0,
+            blitColor: true,
+            blitDepth: false,
+            blitStencil: false,
+            linearFilter: false);
+
+        c.Add<VPRC_VolumetricFogHistoryPass>().Phase = VPRC_VolumetricFogHistoryPass.EPhase.Commit;
+        EndGpuScope(c, "Volumetric Fog");
+    }
 
     #endregion
 }

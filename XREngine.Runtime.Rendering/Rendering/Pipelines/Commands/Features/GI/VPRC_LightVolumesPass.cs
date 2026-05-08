@@ -41,7 +41,24 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (ActivePipelineInstance.Pipeline is not DefaultRenderPipeline pipeline || !pipeline.UsesLightVolumes)
+            bool usesLightVolumes;
+            bool stereo;
+            switch (ActivePipelineInstance.Pipeline)
+            {
+                case DefaultRenderPipeline pipeline:
+                    usesLightVolumes = pipeline.UsesLightVolumes;
+                    stereo = pipeline.Stereo;
+                    break;
+                case DefaultRenderPipeline2 pipeline:
+                    usesLightVolumes = pipeline.UsesLightVolumes;
+                    stereo = pipeline.Stereo;
+                    break;
+                default:
+                    usesLightVolumes = false;
+                    stereo = false;
+                    break;
+            }
+            if (!usesLightVolumes)
                 return;
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;
@@ -52,9 +69,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             if (region.Width <= 0 || region.Height <= 0)
                 return;
-
-            // Determine if we're in stereo mode
-            bool stereo = pipeline.Stereo;
 
             if (!EnsureProgram(stereo))
                 return;

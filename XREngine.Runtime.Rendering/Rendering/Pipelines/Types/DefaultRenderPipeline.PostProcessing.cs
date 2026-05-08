@@ -7,6 +7,7 @@ using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Resources;
 using static XREngine.Engine.Rendering.State;
 
 namespace XREngine.Rendering;
@@ -1702,6 +1703,13 @@ public partial class DefaultRenderPipeline
         var renderState = RenderingPipelineState;
         renderState?.SceneCamera?.SetUniforms(materialProgram, true);
         renderState?.StereoRightEyeCamera?.SetUniforms(materialProgram, false);
+
+        if (!VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            return;
+
+        materialProgram.Uniform(EEngineUniform.ProjMatrix.ToStringFast(), temporalData.CurrProjection);
+        materialProgram.Uniform(EEngineUniform.InverseProjMatrix.ToStringFast(), temporalData.CurrInverseProjection);
+        materialProgram.Uniform(EEngineUniform.ViewProjectionMatrix.ToStringFast(), temporalData.CurrViewProjection);
     }
 
     /// <summary>

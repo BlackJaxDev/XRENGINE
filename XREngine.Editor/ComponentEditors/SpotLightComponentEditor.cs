@@ -71,5 +71,7 @@ public sealed class SpotLightComponentEditor : IXRComponentEditor
             light.ShadowNearPlaneDistance = Math.Clamp(near, 0.0001f, maxNear);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Keep this as large as possible without clipping nearby shadow casters to improve depth precision.");
+
+        ImGui.TextDisabled($"Shadow relevant: {light.ShadowFrustumRelevant}");
     }
 }

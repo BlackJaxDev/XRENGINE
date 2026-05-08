@@ -3,6 +3,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
 using XREngine.Rendering;
+using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -23,9 +24,47 @@ public sealed class CameraComponentLazyInitializationTests
     }
 
     [Test]
-    public void AssigningCameraSpaceUserInterface_BindsConstructedCameraWithoutLazyReentry()
+    public void AssigningUnattachedCanvasComponent_DoesNotQueryMissingSceneTransform()
     {
         var component = new CameraComponent();
+        var canvas = new UICanvasComponent();
+
+        Assert.DoesNotThrow(() => component.UserInterface = canvas);
+
+        var runtimeCanvas = (IRuntimeScreenSpaceUserInterface)canvas;
+        runtimeCanvas.IsScreenSpace.ShouldBeTrue();
+        runtimeCanvas.IsActive.ShouldBeFalse();
+    }
+
+    [Test]
+    public void AssigningCameraSpaceUserInterface_WhenUnattached_DefersCameraBinding()
+    {
+        var component = new CameraComponent();
+        var ui = new TestUserInterface(isScreenSpace: false);
+
+        Assert.DoesNotThrow(() => component.UserInterface = ui);
+
+        ui.CameraSpaceResizeCount.ShouldBe(0);
+        ui.LastCamera.ShouldBeNull();
+        ui.LastParameters.ShouldBeNull();
+    }
+
+    [Test]
+    public void AccessingCamera_WhenUnattached_DoesNotQueryMissingSceneTransform()
+    {
+        var component = new CameraComponent();
+
+        Assert.DoesNotThrow(() => _ = component.Camera);
+
+        component.Camera.Transform.ShouldNotBeNull();
+        component.Camera.Parameters.ShouldBeSameAs(component.CameraParameters);
+    }
+
+    [Test]
+    public void AssigningCameraSpaceUserInterface_WhenAttached_BindsConstructedCameraWithoutLazyReentry()
+    {
+        var node = new SceneNode("Camera");
+        var component = node.AddComponent<CameraComponent>()!;
         var ui = new TestUserInterface(isScreenSpace: false);
 
         Assert.DoesNotThrow(() => component.UserInterface = ui);

@@ -2,12 +2,15 @@ using ImGuiNET;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using XREngine;
+using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -23,6 +26,7 @@ public static partial class EditorImGuiUI
     private const float HierarchyFocusCameraDurationSeconds = 0.35f;
     private const string HierarchyDeepDuplicatePopupId = "Deep Duplicate Scene Nodes?";
     private const int LargeHierarchyRootAutoCollapseChildCount = 64;
+    private const int MaxHierarchyAssetTraversalDepth = 128;
 
     // Scratch collections for CollectUnassignedRoots — reused every frame to avoid per-frame allocations.
     private static readonly HashSet<SceneNode> _assignedRootsScratch = [];
@@ -896,14 +900,19 @@ public static partial class EditorImGuiUI
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
 
         foreach (var node in nodes)
-            CollectDeepDuplicateAssets(node, assets, discovered, visited);
+            CollectDeepDuplicateAssets(node, assets, discovered, visited, depth: 0);
 
         return assets;
     }
 
-    private static void CollectDeepDuplicateAssets(object? value, List<XRAsset> assets, HashSet<XRAsset> discovered, HashSet<object> visited)
+    private static void CollectDeepDuplicateAssets(
+        object? value,
+        List<XRAsset> assets,
+        HashSet<XRAsset> discovered,
+        HashSet<object> visited,
+        int depth)
     {
-        if (value is null)
+        if (value is null || depth > MaxHierarchyAssetTraversalDepth)
             return;
 
         if (value is XRAsset asset)
@@ -920,8 +929,8 @@ public static partial class EditorImGuiUI
         {
             foreach (DictionaryEntry entry in dictionary)
             {
-                CollectDeepDuplicateAssets(entry.Key, assets, discovered, visited);
-                CollectDeepDuplicateAssets(entry.Value, assets, discovered, visited);
+                CollectDeepDuplicateAssets(entry.Key, assets, discovered, visited, depth + 1);
+                CollectDeepDuplicateAssets(entry.Value, assets, discovered, visited, depth + 1);
             }
 
             return;
@@ -930,7 +939,7 @@ public static partial class EditorImGuiUI
         if (value is IEnumerable enumerable && value is not string)
         {
             foreach (var item in enumerable)
-                CollectDeepDuplicateAssets(item, assets, discovered, visited);
+                CollectDeepDuplicateAssets(item, assets, discovered, visited, depth + 1);
 
             return;
         }
@@ -948,12 +957,12 @@ public static partial class EditorImGuiUI
                 continue;
             }
 
-            CollectDeepDuplicateAssets(propertyValue, assets, discovered, visited);
+            CollectDeepDuplicateAssets(propertyValue, assets, discovered, visited, depth + 1);
         }
 
         foreach (var field in members.Fields)
         {
-            CollectDeepDuplicateAssets(field.GetValue(value), assets, discovered, visited);
+            CollectDeepDuplicateAssets(field.GetValue(value), assets, discovered, visited, depth + 1);
         }
     }
 
@@ -1040,12 +1049,15 @@ public static partial class EditorImGuiUI
     private static void RestoreHierarchyAssetReferences(SceneNode source, SceneNode clone)
     {
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-        RestoreHierarchyAssetReferences(source, clone, visited);
+        RestoreHierarchyAssetReferences(source, clone, visited, depth: 0);
     }
 
-    private static void RestoreHierarchyAssetReferences(object? source, object? clone, HashSet<object> visited)
+    private static void RestoreHierarchyAssetReferences(object? source, object? clone, HashSet<object> visited, int depth)
     {
-        if (source is null || clone is null)
+        if (source is null || clone is null || depth > MaxHierarchyAssetTraversalDepth)
+            return;
+
+        if (source is XRAsset)
             return;
 
         Type type = source.GetType();
@@ -1068,7 +1080,7 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited);
+                    RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited, depth + 1);
                 }
             }
 
@@ -1088,7 +1100,7 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    RestoreHierarchyAssetReferences(sourceItem, cloneItem, visited);
+                    RestoreHierarchyAssetReferences(sourceItem, cloneItem, visited, depth + 1);
                 }
             }
 
@@ -1107,7 +1119,7 @@ public static partial class EditorImGuiUI
             try
             {
                 while (sourceIter.MoveNext() && cloneIter.MoveNext())
-                    RestoreHierarchyAssetReferences(sourceIter.Current, cloneIter.Current, visited);
+                    RestoreHierarchyAssetReferences(sourceIter.Current, cloneIter.Current, visited, depth + 1);
             }
             finally
             {
@@ -1148,7 +1160,7 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited);
+                RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited, depth + 1);
             }
         }
 
@@ -1168,7 +1180,7 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited);
+                RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited, depth + 1);
             }
         }
     }
@@ -1211,7 +1223,10 @@ public static partial class EditorImGuiUI
 
     private static bool IsHierarchyTraversalLeafType(Type type)
     {
-        if (type.IsPrimitive || type.IsEnum)
+        if (type.IsDefined(typeof(RuntimeOnlyAttribute), true))
+            return true;
+
+        if (type.IsValueType || type.IsPrimitive || type.IsEnum)
             return true;
 
         if (type == typeof(string)
@@ -1219,7 +1234,10 @@ public static partial class EditorImGuiUI
             || type == typeof(Guid)
             || type == typeof(DateTime)
             || type == typeof(DateTimeOffset)
-            || type == typeof(TimeSpan))
+            || type == typeof(TimeSpan)
+            || type == typeof(Type)
+            || typeof(MemberInfo).IsAssignableFrom(type)
+            || typeof(Assembly).IsAssignableFrom(type))
         {
             return true;
         }
@@ -1241,21 +1259,81 @@ public static partial class EditorImGuiUI
     {
         if (!property.CanRead
             || property.GetIndexParameters().Length != 0
-            || property.IsDefined(typeof(YamlIgnoreAttribute), true))
+            || property.IsDefined(typeof(YamlIgnoreAttribute), true)
+            || property.IsDefined(typeof(RuntimeOnlyAttribute), true))
         {
             return false;
         }
 
         Type propertyType = property.PropertyType;
-        return !typeof(Delegate).IsAssignableFrom(propertyType);
+        if (IsHierarchyTraversalLeafType(propertyType) || typeof(Delegate).IsAssignableFrom(propertyType))
+            return false;
+
+        bool explicitlySerialized = property.IsDefined(typeof(YamlMemberAttribute), true)
+            || property.IsDefined(typeof(YamlDefaultTypeAttribute), true);
+        if (property.SetMethod is null && !explicitlySerialized)
+            return false;
+
+        if (property.GetCustomAttribute<BrowsableAttribute>(true) is { Browsable: false } && !explicitlySerialized)
+            return false;
+
+        if (property.DeclaringType == typeof(XRComponent)
+            || property.DeclaringType == typeof(RuntimeWorldObjectBase)
+            || property.DeclaringType == typeof(XRBase))
+        {
+            return explicitlySerialized;
+        }
+
+        if ((typeof(SceneNode).IsAssignableFrom(propertyType)
+                || typeof(TransformBase).IsAssignableFrom(propertyType)
+                || typeof(XRComponent).IsAssignableFrom(propertyType))
+            && !explicitlySerialized)
+        {
+            return false;
+        }
+
+        if (propertyType.IsInterface
+            && !typeof(IEnumerable).IsAssignableFrom(propertyType)
+            && !typeof(XRAsset).IsAssignableFrom(propertyType)
+            && !explicitlySerialized)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static bool ShouldTraverseHierarchyField(FieldInfo field)
     {
-        if (field.IsStatic || field.IsDefined(typeof(YamlIgnoreAttribute), true) || typeof(Delegate).IsAssignableFrom(field.FieldType))
+        if (field.IsStatic
+            || field.IsInitOnly
+            || field.IsDefined(typeof(YamlIgnoreAttribute), true)
+            || field.IsDefined(typeof(RuntimeOnlyAttribute), true)
+            || field.IsDefined(typeof(CompilerGeneratedAttribute), true)
+            || typeof(Delegate).IsAssignableFrom(field.FieldType))
+        {
+            return false;
+        }
+
+        Type fieldType = field.FieldType;
+        if (IsHierarchyTraversalLeafType(fieldType))
             return false;
 
-        return !field.IsInitOnly;
+        if ((typeof(SceneNode).IsAssignableFrom(fieldType)
+                || typeof(TransformBase).IsAssignableFrom(fieldType)
+                || typeof(XRComponent).IsAssignableFrom(fieldType)))
+        {
+            return false;
+        }
+
+        if (fieldType.IsInterface
+            && !typeof(IEnumerable).IsAssignableFrom(fieldType)
+            && !typeof(XRAsset).IsAssignableFrom(fieldType))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static string GenerateHierarchyDuplicateName(SceneNode source)

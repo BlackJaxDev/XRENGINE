@@ -97,13 +97,13 @@ These walk the cascade in correct priority order and return the effective value.
 
 | Layer | Example Classes | Scope | Typical Location |
 |-------|-----------------|-------|------------------|
-| **Engine** | `EngineSettings` | Global defaults for all projects | Engine installation |
+| **Runtime Engine Defaults** | `EngineSettings` | Session baseline for all projects | Engine code/runtime state |
 | **Project** | `GameStartupSettings`, `EditorPreferencesOverrides` | Per-project configuration | Project assets folder |
 | **User** | `UserSettings` | Per-user preferences | User's app data |
 
 ### Layer Details
 
-**Engine defaults** – The baseline configuration shipped with the engine. These provide reasonable out-of-the-box behavior.
+**Runtime engine defaults** - The baseline configuration shipped with the engine. These provide reasonable out-of-the-box behavior and are not saved by the editor settings inspector.
 
 **Project overrides** – Stored in the project's assets. A game project can:
 - Override startup settings via `GameStartupSettings`
@@ -114,7 +114,10 @@ Project config assets now live under the project's `Config/` folder:
 - `game_settings.asset` stores persisted `GameStartupSettings`
 - `user_settings.asset` stores persisted per-user overrides for that project
 - `build_settings.asset` stores build/publish settings
-- `engine_settings.asset` stores `EditorPreferencesOverrides` for that project
+- `editor_preferences_overrides.asset` stores `EditorPreferencesOverrides` for that project
+
+The ImGui editor exposes `Runtime Engine Defaults` as the session baseline and `Effective Settings` as a read-only resolved view with the active source for each value.
+Existing projects with the older `engine_settings.asset` override file are still loaded as a legacy fallback and save back to `editor_preferences_overrides.asset`.
 
 Example camera-depth cascade:
 - `GameStartupSettings.DepthModeOverride` sets the project default for scene cameras.

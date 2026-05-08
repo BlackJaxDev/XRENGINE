@@ -326,7 +326,7 @@ internal static class ProjectBuilder
         WriteCookedAsset(Engine.GameSettings ?? new GameStartupSettings(), Path.Combine(staging, StartupAssetName), aotMetadata);
 
         if (Engine.EditorPreferences is not null)
-            WriteCookedAsset(Engine.EditorPreferences, Path.Combine(staging, XRProject.EngineSettingsFileName), aotMetadata);
+            WriteCookedAsset(Engine.EditorPreferences, Path.Combine(staging, XRProject.EditorPreferencesFileName), aotMetadata);
 
         WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName), aotMetadata);
 
@@ -633,7 +633,7 @@ internal static class ProjectBuilder
             configuration,
             platform,
             StartupAssetName,
-            XRProject.EngineSettingsFileName,
+            XRProject.EditorPreferencesFileName,
             XRProject.UserSettingsFileName);
 
         CopyLauncherArtifacts(launcherPath, context.BinariesOutputDirectory, settings.LauncherExecutableName, settings.IncludePdbFiles);

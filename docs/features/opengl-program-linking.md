@@ -40,9 +40,9 @@ Source compile/link selection is controlled by
 
 | Strategy | Behavior |
 | --- | --- |
-| `Auto` | Prefer driver-parallel compile/link when the startup probe passes; otherwise use the shared-context source queue when available. Known async-link hazards bypass async source lanes. |
-| `SharedContext` | Compile and link non-hazard source programs on the shared-context source worker. Queue-level hazard rejection still applies. |
-| `DriverParallel` | Use `GL_ARB_parallel_shader_compile` or `GL_KHR_parallel_shader_compile` after the extension/probe gate. If unavailable, fall back to shared context, then synchronous. |
+| `Auto` | Prefer driver-parallel compile/link when the startup probe passes; otherwise use the shared-context source queue when available. Known async-link hazards always bypass driver-parallel; graphics hazards still use the shared-context lane when available. |
+| `SharedContext` | Compile and link source programs on the shared-context source worker, including compute programs. |
+| `DriverParallel` | Use `GL_ARB_parallel_shader_compile` or `GL_KHR_parallel_shader_compile` after the extension/probe gate. Hazards skip this lane and try shared-context; if no async source lane is available, they stay pending. |
 | `Synchronous` | Compile and link source programs on the render thread. This does not disable async binary uploads; `AsyncProgramBinaryUpload` controls that lane. |
 
 Related settings:
@@ -53,6 +53,14 @@ Related settings:
 - `OpenGLParallelShaderCompileProbeEnabled` and
   `OpenGLParallelShaderCompileProbeTimeoutMs` control the startup probe.
 - `OpenGLShaderCompilerThreadCount` configures driver shader compiler threads.
+- `OpenGLProgramCompileLinkWorkerCount` configures the shared-context source
+  worker count. The runtime uses one worker by default for OpenGL driver
+  startup stability; values above one require
+  `XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1`.
+- `XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1` restores the older worker
+  workaround that sets shader compiler thread count to zero around single-stage
+  source jobs. Leave it unset by default; cold uber fragment programs have been
+  observed to remain pending for minutes when that workaround is active.
 - `MaxAsyncShaderProgramsPerFrame` caps how many pending program builds are
   advanced per frame.
 
@@ -70,23 +78,28 @@ if binary cache hit:
 else if hash was marked failed:
     fail before source compile/link
 else if async source compilation is disabled or strategy is Synchronous:
-    compile/link source synchronously
+    leave source build pending unless synchronous source linking was explicitly allowed
 else if program is a known driver-parallel hazard:
-    compile/link source synchronously with driver-parallel suppression
+    if a shared-context source lane is available:
+        enqueue source compile/link on the shared-context worker
+    else:
+        leave source build pending
 else if strategy is Auto and driver-parallel probe passed:
     use driver-parallel source compile/link
 else if selected/fallback shared-context source queue is available:
     enqueue source compile/link unless the queue is at capacity
 else:
-    compile/link source synchronously
+    leave source build pending
 ```
 
 Failed source hashes are negative-cached by resolved source hash. Repeated
 instances of the same broken program skip source compile/link after the cache
 lookup path confirms there is no usable binary.
 
-Queue capacity is reported as backpressure. The previous linked program remains
-active and the pending build is retried in later frames.
+Queue capacity and unavailable source lanes are reported as backpressure. The
+previous linked program remains active and the pending build is retried in
+later frames. Render-thread source linking is disabled in the runtime path
+because cold links of large uber shaders can stall the editor for minutes.
 
 ## Known Hazards
 
@@ -96,21 +109,57 @@ Known hazards are:
 - programs with one attached shader, including single-stage separable programs,
 - any program containing a compute shader.
 
-These shapes are denied driver-parallel source linking and shared-context
-source linking. They fall back to the guarded synchronous path until the engine
-has stronger pending-program safeguards for those topologies.
-
-If a hazard reaches synchronous source linking while driver-parallel compile is
-active, the link is wrapped in
-`TryDisableParallelShaderCompileForHazardousLink` /
-`RestoreParallelShaderCompile`. That temporarily requests zero driver shader
-compiler threads around the link so status queries do not wait on a wedged
-parallel-link worker.
+Both shapes are denied driver-parallel source linking and are routed to the
+shared-context source lane when one is available, so a slow cold link runs on
+a worker thread on a separate GL context instead of stalling the render thread.
+If no shared-context source lane is available, the program stays pending until
+one is available.
 
 This policy is conservative and tuned from NVIDIA GL 4.6 driver behavior. The
-engine avoids async source lanes for hazardous shapes because pending status
-queries and cross-context links for those shapes have been observed to wedge or
-stall unpredictably.
+engine avoids the driver-parallel lane for hazardous shapes because pending
+status queries on those shapes have been observed to wedge unpredictably; the
+shared-context lane is still used for graphics hazards because its links run
+on a worker thread on a separate context, so a slow or stalled link costs
+worker time rather than render-thread time.
+
+### Worker compile/link status polling
+
+The shared-context worker never issues a blocking `glGetShaderiv(GL_COMPILE_STATUS)`
+or `glGetProgramiv(GL_LINK_STATUS)` directly after dispatching compile/link
+work. On NVIDIA, those blocking queries hold a driver-wide compiler lock for
+the full duration of the underlying compile/link, which freezes every GL call
+on the main render context for as long as the worker is waiting. Cold links
+of large imported-model fragment shaders have been observed to take more than
+a hundred seconds, completely freezing the engine.
+
+Instead, `GLProgramCompileLinkQueue.PollCompletionStatusBlocking` polls
+`GL_COMPLETION_STATUS_ARB` (a non-blocking query exposed by
+`GL_ARB_parallel_shader_compile`) on the worker context. The first ~64 polls
+spin with `Thread.Yield()` so warm/cached cases resolve in microseconds; after
+that the worker sleeps 1 ms between polls so the driver can release its
+compiler lock and let the render context make progress. Once the driver
+reports completion, the regular status query runs immediately because the
+work is already done.
+
+### Worker unhealthy-job threshold
+
+`GLSharedContext.IsRunning` flips `false` while the current worker job has
+been running longer than the per-instance unhealthy threshold (default 30 s).
+That signal is consumed by the link selector via
+`SharedContextCompileAvailable`, so a worker that appears stuck can no longer
+accept new work. Source builds then remain pending until an async lane becomes
+available; runtime render-thread source linking is intentionally not used as a
+fallback for cold shader misses.
+
+Cold links of large imported-model uber shaders are legitimately slow on
+first run (60-120 s before the per-program binary cache is populated), so the
+shared context backing the compile/link queue is constructed with a much
+longer threshold (600 s). That keeps the queue available for the entire
+duration of the cold link, prevents hazardous fragment programs from being
+forced onto the synchronous render-thread path mid-link, and avoids the
+driver-lock-induced render-thread stalls on `glMaxShaderCompilerThreadsARB`
+and `glCreateShader`. Other shared contexts (binary upload, sparse texture
+uploads) keep the default threshold so genuine hangs are still detected.
 
 ## Binary Cache
 

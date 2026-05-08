@@ -65,6 +65,8 @@ uniform float ContactShadowFadeStart = 10.0f;
 uniform float ContactShadowFadeEnd = 40.0f;
 uniform float ContactShadowNormalOffset = 0.0f;
 uniform float ContactShadowJitterStrength = 1.0f;
+uniform vec4 ShadowMomentParams0 = vec4(0.00002f, 0.2f, 5.0f, 5.0f); // min variance, light bleed reduction, positive exponent, negative exponent
+uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // blur radius texels, blur passes, use mipmaps, mip bias
 // Debug: 0=normal, 1=shadow-only (white=lit), 2=margin heatmap (green=lit, red=shadow)
 uniform int ShadowDebugMode = 0;
 
@@ -615,12 +617,55 @@ float ReadPointShadowAtlasMap(in vec3 fragPosWS, in vec3 N, in float NoL)
 	}
 
 	vec2 sampledFaceUv;
-	SelectPointShadowAtlasFace(fragToLight, sampledFaceUv);
+	int sampledFaceIndex = SelectPointShadowAtlasFace(fragToLight, sampledFaceUv);
 	float receiverDepth = clamp(lightDist / max(farPlaneDist, 0.001f), 0.0f, 1.0f);
 	float sampleRadius = GetPointAtlasSampleRadius(authoredTexelSize, ShadowFilterRadius);
 	float blockerSearchRadius = GetPointAtlasSampleRadius(authoredTexelSize, ShadowBlockerSearchRadius);
 	float minPenumbra = GetPointAtlasSampleRadius(authoredTexelSize, ShadowMinPenumbra);
 	float maxPenumbra = GetPointAtlasSampleRadius(authoredTexelSize, ShadowMaxPenumbra);
+	if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+	{
+		ivec4 sampledAtlasPacked0 = PointShadowAtlasPacked0[sampledFaceIndex];
+		if (sampledAtlasPacked0.x == 0)
+		{
+			float fallbackLit = sampledAtlasPacked0.z == XRENGINE_SHADOW_FALLBACK_CONTACT_ONLY ? contact : 1.0f;
+			_dbgShadowLit = fallbackLit;
+			_dbgShadowMargin = 1.0f;
+			return fallbackLit;
+		}
+
+		vec2 atlasUv = XRENGINE_ShadowAtlasUvFromLocal(sampledFaceUv, PointShadowAtlasUvScaleBias[sampledFaceIndex]);
+		float momentReceiverDepth = clamp(receiverDepth - min(normalizedBias, 0.01f), 0.0f, 1.0f);
+		float litMoment = XRENGINE_SampleShadowMoment2DArray(
+			PointShadowAtlas,
+			atlasUv,
+			float(sampledAtlasPacked0.y),
+			momentReceiverDepth,
+			ShadowMapEncoding,
+			ShadowMomentParams0.x,
+			ShadowMomentParams0.y,
+			ShadowMomentParams0.z,
+			ShadowMomentParams0.w,
+			0.0f,
+			false) * contact;
+
+		if (ShadowDebugMode != 0)
+		{
+			_dbgShadowMargin = XRENGINE_EstimateShadowMomentMargin(
+				PointShadowAtlas,
+				atlasUv,
+				float(sampledAtlasPacked0.y),
+				momentReceiverDepth,
+				ShadowMapEncoding,
+				ShadowMomentParams0.z,
+				ShadowMomentParams0.w,
+				0.0f,
+				false);
+		}
+		_dbgShadowLit = litMoment;
+		return litMoment;
+	}
+
 	float lit = SamplePointAtlasCubeFiltered(
 		fragToLight,
 		receiverDepth,
@@ -715,26 +760,62 @@ float ReadPointShadowMap(in float farPlaneDist, in vec3 fragPosWS, in vec3 N, in
 		? SampleDeferredContactShadow(fragPosWS, N, normalize(LightData.Position - fragPosWS), normalOffset, contactBias, viewDepth)
 		: 1.0f;
 
-	float lit = SampleShadowCubeFilteredLocal(
-		ShadowMap,
-		fragToLight,
-		biasedLightDist,
-		farPlaneDist,
-		sampleRadius,
-		blockerSearchRadius,
-		ShadowBlockerSamples,
-		ShadowFilterSamples,
-		SoftShadowMode,
-		LightSourceRadius,
-		minPenumbra,
-		maxPenumbra,
-		ShadowVogelTapCount) * contact;
+	float receiverDepth = clamp(lightDist / max(farPlaneDist, 0.001f), 0.0f, 1.0f);
+	float normalizedBias = contactBias / max(farPlaneDist, 0.001f);
+	float lit = 1.0f;
+	if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+	{
+		float momentReceiverDepth = clamp(receiverDepth - min(normalizedBias, 0.01f), 0.0f, 1.0f);
+		bool useMomentMipmaps = ShadowMomentFilterParams.z != 0.0f;
+		float momentMipLevel = XRENGINE_ResolveShadowMomentMipLevel(
+			ShadowMomentFilterParams.w,
+			ShadowMomentFilterParams.x,
+			useMomentMipmaps);
+		lit = XRENGINE_SampleShadowMomentCube(
+			ShadowMap,
+			normalize(fragToLight),
+			momentReceiverDepth,
+			ShadowMapEncoding,
+			ShadowMomentParams0.x,
+			ShadowMomentParams0.y,
+			ShadowMomentParams0.z,
+			ShadowMomentParams0.w,
+			momentMipLevel,
+			useMomentMipmaps) * contact;
+	}
+	else
+	{
+		lit = SampleShadowCubeFilteredLocal(
+			ShadowMap,
+			fragToLight,
+			biasedLightDist,
+			farPlaneDist,
+			sampleRadius,
+			blockerSearchRadius,
+			ShadowBlockerSamples,
+			ShadowFilterSamples,
+			SoftShadowMode,
+			LightSourceRadius,
+			minPenumbra,
+			maxPenumbra,
+			ShadowVogelTapCount) * contact;
+	}
 
 	// Write debug state for visualisation (single center sample)
 	if (ShadowDebugMode != 0)
 	{
-		float centerDepth = texture(ShadowMap, normalize(fragToLight)).r * farPlaneDist;
-		_dbgShadowMargin = (centerDepth - biasedLightDist) / max(farPlaneDist, 0.001f);
+		float momentReceiverDepth = clamp(receiverDepth - min(normalizedBias, 0.01f), 0.0f, 1.0f);
+		_dbgShadowMargin = ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH
+			? XRENGINE_EstimateShadowMomentMargin(
+				ShadowMap,
+				normalize(fragToLight),
+				momentReceiverDepth,
+				ShadowMapEncoding,
+				ShadowMomentParams0.z,
+				ShadowMomentParams0.w,
+				XRENGINE_ResolveShadowMomentMipLevel(ShadowMomentFilterParams.w, ShadowMomentFilterParams.x, ShadowMomentFilterParams.z != 0.0f),
+				ShadowMomentFilterParams.z != 0.0f)
+			: (texture(ShadowMap, normalize(fragToLight)).r * farPlaneDist - biasedLightDist) / max(farPlaneDist, 0.001f);
 	}
 	_dbgShadowLit = lit;
 

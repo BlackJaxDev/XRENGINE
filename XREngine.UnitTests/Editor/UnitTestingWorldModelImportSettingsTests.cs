@@ -30,6 +30,41 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
+    public void Settings_RoundTripsDynamicDebugLightSettings_BetweenEditorAndRuntimeSettings()
+    {
+        var editorSettings = new EditorUnitTests.Settings
+        {
+            DynamicPointLightCount = 7,
+            DynamicSpotLightCount = 5,
+            DynamicLightsCastShadows = false,
+            DynamicLightsForceShadowAtlas = false,
+            DynamicLightSeed = 8675309,
+        };
+
+        UnitTestingWorldSettings runtimeSettings = editorSettings.ToRuntimeSettings();
+
+        runtimeSettings.DynamicPointLightCount.ShouldBe(7);
+        runtimeSettings.DynamicSpotLightCount.ShouldBe(5);
+        runtimeSettings.DynamicLightsCastShadows.ShouldBeFalse();
+        runtimeSettings.DynamicLightsForceShadowAtlas.ShouldBeFalse();
+        runtimeSettings.DynamicLightSeed.ShouldBe(8675309);
+
+        runtimeSettings.DynamicPointLightCount = 2;
+        runtimeSettings.DynamicSpotLightCount = 3;
+        runtimeSettings.DynamicLightsCastShadows = true;
+        runtimeSettings.DynamicLightsForceShadowAtlas = true;
+        runtimeSettings.DynamicLightSeed = 42;
+
+        EditorUnitTests.Settings roundTrip = EditorUnitTests.Settings.FromRuntime(runtimeSettings);
+
+        roundTrip.DynamicPointLightCount.ShouldBe(2);
+        roundTrip.DynamicSpotLightCount.ShouldBe(3);
+        roundTrip.DynamicLightsCastShadows.ShouldBeTrue();
+        roundTrip.DynamicLightsForceShadowAtlas.ShouldBeTrue();
+        roundTrip.DynamicLightSeed.ShouldBe(42);
+    }
+
+    [Test]
     public void ModelImportSettings_RoundTripsImporterBackend_BetweenEditorAndRuntimeSettings()
     {
         var editorSettings = new EditorUnitTests.Settings

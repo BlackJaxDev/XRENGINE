@@ -3,7 +3,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_BindTexture : ViewportStateRenderCommand<VPRC_PopTextureBinding>
     {
-        public required string TextureName { get; set; }
+        public string TextureName { get; set; } = string.Empty;
         public string? SamplerName { get; set; }
         public int TextureUnit { get; set; }
 

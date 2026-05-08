@@ -65,6 +65,7 @@ public static class BootstrapRenderSettings
         renderSettings.AllowBinaryProgramCaching = settings.AllowBinaryProgramCaching;
         renderSettings.AsyncProgramBinaryUpload = settings.AsyncProgramBinaryUpload;
         renderSettings.AsyncProgramCompilation = settings.AsyncProgramCompilation;
+        renderSettings.OpenGLProgramCompileLinkWorkerCount = settings.OpenGLProgramCompileLinkWorkerCount;
         renderSettings.MaxAsyncShaderProgramsPerFrame = settings.MaxAsyncShaderProgramsPerFrame;
         renderSettings.OpenGLShaderLinkStrategy = settings.OpenGLShaderLinkStrategy;
         renderSettings.OpenGLShaderCompilerThreadCount = settings.OpenGLShaderCompilerThreadCount;

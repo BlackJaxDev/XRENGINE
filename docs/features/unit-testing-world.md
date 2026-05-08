@@ -73,6 +73,7 @@ You do not need to understand every property up front. These are the ones that u
 - `VRPawn`, `UseOpenXR`, `EmulatedVRPawn`: control XR startup behavior
 - `AddPhysics`, `PhysicsBallCount`, `PhysicsChain`: enable physics-focused scenarios
 - `ModelsToImport`: imports test assets into the world at startup
+- `DynamicPointLightCount`, `DynamicSpotLightCount`, `DynamicLightSeed`: add repeatable animated local-light stress rigs
 - `GPURenderDispatch`: switches rendering dispatch mode
 - `StartInPlayModeWithoutTransitions`: skips the usual edit-to-play transition
 - `EnableProfilerLogging`: turns on profiler logging even without ImGui
@@ -115,6 +116,10 @@ For glTF validation work, the checked-in corpus under `XREngine.UnitTests/TestDa
 `FbxLogVerbosity` controls how much native FBX importer/exporter trace output is emitted while the unit-testing world boots. When enabled, those lines go through the engine `Assets` log category, so they show up in the editor console `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled. glTF does not currently expose a separate verbosity toggle; native glTF warnings and fallback diagnostics also flow through the normal asset-import logging path.
 
 This is the fastest way to spin up repeatable import tests without hand-building the scene each time.
+
+### Test dynamic local lights
+
+Use `DynamicPointLightCount` and `DynamicSpotLightCount` to spawn smooth animated debug lights with random colors. `DynamicLightSeed` keeps the generated colors and motion repeatable. `DynamicLightsCastShadows` is enabled by default; when `DynamicLightsForceShadowAtlas` is also enabled, the bootstrap turns on the matching point and spot shadow atlas paths before adding the generated lights.
 
 ### Test XR startup
 

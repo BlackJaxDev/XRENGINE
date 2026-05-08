@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using Silk.NET.OpenGL;
 
@@ -62,22 +63,22 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Engine.Rendering.State.IsSceneCapturePass)
                 return;
 
-            if (ParentPipeline is not DefaultRenderPipeline pipeline)
+            XRMaterial? material = ParentPipeline switch
             {
-                Debug.Rendering("[Velocity] Motion vectors pass skipped: parent pipeline missing or wrong type.");
+                DefaultRenderPipeline pipeline => pipeline.GetMotionVectorsMaterial(),
+                DefaultRenderPipeline2 pipeline => pipeline.GetMotionVectorsMaterial(),
+                _ => null,
+            };
+
+            if (material is null)
+            {
+                Debug.Rendering("[Velocity] Motion vectors pass skipped: parent pipeline missing, wrong type, or material unavailable.");
                 return;
             }
 
             if (RenderPasses.Length == 0)
             {
                 Debug.Rendering("[Velocity] Motion vectors pass skipped: no render passes configured.");
-                return;
-            }
-
-            var material = pipeline.GetMotionVectorsMaterial();
-            if (material is null)
-            {
-                Debug.Rendering("[Velocity] Motion vectors pass skipped: motion vector material unavailable.");
                 return;
             }
 

@@ -73,6 +73,7 @@ public static partial class EditorUnitTests
         s.AllowBinaryProgramCaching = Toggles.AllowBinaryProgramCaching;
         s.AsyncProgramBinaryUpload = Toggles.AsyncProgramBinaryUpload;
         s.AsyncProgramCompilation = Toggles.AsyncProgramCompilation;
+        s.OpenGLProgramCompileLinkWorkerCount = Toggles.OpenGLProgramCompileLinkWorkerCount;
         s.MaxAsyncShaderProgramsPerFrame = Toggles.MaxAsyncShaderProgramsPerFrame;
         s.OpenGLShaderLinkStrategy = Toggles.OpenGLShaderLinkStrategy;
         s.OpenGLShaderCompilerThreadCount = Toggles.OpenGLShaderCompilerThreadCount;

@@ -127,6 +127,11 @@ public static partial class EditorUnitTests
         public bool SpotLight = false;
         public bool DirLight2 = false;
         public bool PointLight = false;
+        public int DynamicPointLightCount { get; set; } = 0; //Adds this many animated dynamic point lights with deterministic random colors and smooth pseudo-random motion.
+        public int DynamicSpotLightCount { get; set; } = 0; //Adds this many animated dynamic spot lights with deterministic random colors and smooth pseudo-random motion.
+        public bool DynamicLightsCastShadows { get; set; } = true; //Controls whether generated dynamic point and spot lights cast shadows.
+        public bool DynamicLightsForceShadowAtlas { get; set; } = true; //When generated dynamic lights cast shadows, enables the matching point and spot shadow atlas paths before the lights are added.
+        public int DynamicLightSeed { get; set; } = 1337; //Seed used for generated dynamic debug light colors and animation curves.
         public LightProbeMode LightProbe { get; set; } = LightProbeMode.ModelGrid; //Selects which light-probe layout gets added to the scene.
         public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.None; //Controls whether light probes capture never, once on startup, or continuously.
         public float LightProbeCaptureMs = 100; //Interval between realtime captures, in milliseconds.
@@ -287,6 +292,7 @@ public static partial class EditorUnitTests
         public bool AllowBinaryProgramCaching { get; set; } = true; //Allows linked OpenGL shader programs to be cached as driver binaries.
         public bool AsyncProgramBinaryUpload { get; set; } = true; //Uploads cached OpenGL program binaries on a shared GL context thread when possible.
         public bool AsyncProgramCompilation { get; set; } = true; //Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it.
+        public int OpenGLProgramCompileLinkWorkerCount { get; set; } = 1; //Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. Values above one require XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1.
         public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16; //Maximum number of pending async OpenGL shader programs to advance per render frame.
         public int OpenGLShaderCompilerThreadCount { get; set; } = -1; //Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.
         public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true; //Runs a small startup probe before using the explicit DriverParallel OpenGL link path.

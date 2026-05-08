@@ -21,6 +21,7 @@ namespace XREngine.Scene
         public void CollectVisibleItems()
         {
             using var sample = Engine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
+            ShadowScratch scratch = CurrentShadowScratch;
 
             //CollectingVisibleShadowMaps = true;
 
@@ -29,6 +30,7 @@ namespace XREngine.Scene
             // If we build the cascades later during RenderShadowMaps(), lighting can
             // switch over to ShadowMapArray while the cascade buffers are still empty.
             PrepareDirectionalShadowMaps();
+            PopulateLocalShadowRelevanceCameras(scratch);
 
             _shadowLightsCollectedThisTick.Clear();
 
@@ -40,7 +42,7 @@ namespace XREngine.Scene
 
             if (cullByCameraFrusta)
             {
-                var cameraFrustumScratch = _cameraFrustumScratch;
+                var cameraFrustumScratch = scratch.CameraFrusta;
                 cameraFrustumScratch.Clear();
                 foreach ((XRWindow window, XRViewport viewport) in Engine.EnumerateActiveWindowViewports())
                 {
@@ -62,22 +64,22 @@ namespace XREngine.Scene
 
                 if (cameraFrustumScratch.Count > 0)
                 {
-                    CollectRelevantShadowItems(DynamicDirectionalLights, cameraFrustumScratch);
-                    CollectRelevantShadowItems(DynamicSpotLights, cameraFrustumScratch);
-                    CollectRelevantShadowItems(DynamicPointLights, cameraFrustumScratch);
+                    CollectRelevantShadowItems(DynamicDirectionalLights, cameraFrustumScratch, scratch);
+                    CollectRelevantShadowItems(DynamicSpotLights, cameraFrustumScratch, scratch);
+                    CollectRelevantShadowItems(DynamicPointLights, cameraFrustumScratch, scratch);
                 }
                 else
                 {
-                    CollectShadowItems(DynamicDirectionalLights);
-                    CollectShadowItems(DynamicSpotLights);
-                    CollectShadowItems(DynamicPointLights);
+                    CollectShadowItems(DynamicDirectionalLights, scratch);
+                    CollectShadowItems(DynamicSpotLights, scratch);
+                    CollectShadowItems(DynamicPointLights, scratch);
                 }
             }
             else
             {
-                CollectShadowItems(DynamicDirectionalLights);
-                CollectShadowItems(DynamicSpotLights);
-                CollectShadowItems(DynamicPointLights);
+                CollectShadowItems(DynamicDirectionalLights, scratch);
+                CollectShadowItems(DynamicSpotLights, scratch);
+                CollectShadowItems(DynamicPointLights, scratch);
             }
 
             //CollectingVisibleShadowMaps = false;
@@ -93,12 +95,12 @@ namespace XREngine.Scene
             => light switch
             {
                 SpotLightComponent spot => spot.UsesSpotShadowAtlasForCurrentEncoding,
-                DirectionalLightComponent => Engine.Rendering.Settings.UseDirectionalShadowAtlas,
-                PointLightComponent => Engine.Rendering.Settings.UsePointShadowAtlas,
+                DirectionalLightComponent directional => directional.UsesDirectionalShadowAtlasForCurrentEncoding,
+                PointLightComponent point => point.UsesPointShadowAtlasForCurrentEncoding,
                 _ => false,
             };
 
-        private void CollectShadowItems<TLight>(IReadOnlyList<TLight> lights) where TLight : LightComponent
+        private void CollectShadowItems<TLight>(IReadOnlyList<TLight> lights, ShadowScratch scratch) where TLight : LightComponent
         {
             int count = lights.Count;
             for (int i = 0; i < count; i++)
@@ -107,20 +109,30 @@ namespace XREngine.Scene
                 if (!ShouldCollectShadowItems(light))
                     continue;
 
+                if (!UpdateLocalShadowRelevanceState(light, scratch))
+                    continue;
+
                 light.CollectVisibleItems();
                 _shadowLightsCollectedThisTick.Add(light);
             }
         }
 
-        private void CollectRelevantShadowItems<TLight>(IReadOnlyList<TLight> lights, List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameras)
+        private void CollectRelevantShadowItems<TLight>(
+            IReadOnlyList<TLight> lights,
+            List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameras,
+            ShadowScratch scratch)
             where TLight : LightComponent
         {
             int count = lights.Count;
             for (int i = 0; i < count; i++)
             {
                 TLight light = lights[i];
-                if (!ShouldCollectShadowItems(light) || !IsLightShadowRelevant(light, cameras))
+                if (!ShouldCollectShadowItems(light) ||
+                    !IsLightShadowRelevant(light, cameras) ||
+                    !UpdateLocalShadowRelevanceState(light, scratch))
+                {
                     continue;
+                }
 
                 light.CollectVisibleItems();
                 _shadowLightsCollectedThisTick.Add(light);
@@ -238,13 +250,15 @@ namespace XREngine.Scene
 
         private void RenderShadowMapsInternal(bool collectVisibleNow, bool includeAuxiliaryCaptures)
         {
+            ShadowScratch scratch = CurrentShadowScratch;
+
             if (collectVisibleNow)
                 PrepareDirectionalShadowMaps();
 
             RenderingShadowMaps = true;
             try
             {
-                UpdateShadowAtlasRequests(collectVisibleNow);
+                UpdateShadowAtlasRequests(collectVisibleNow, scratch);
 
                 // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
                 for (int i = 0; i < DynamicDirectionalLights.Count; i++)
@@ -256,13 +270,17 @@ namespace XREngine.Scene
                 for (int i = 0; i < DynamicSpotLights.Count; i++)
                 {
                     SpotLightComponent light = DynamicSpotLights[i];
-                    if (!light.UsesSpotShadowAtlasForCurrentEncoding || ShouldRenderLegacySpotShadowMap(light))
+                    bool relevant = IsSpotShadowRelevant(light, scratch);
+                    light.SetShadowRelevance(relevant, Engine.Rendering.State.RenderFrameId);
+                    if (relevant && (!light.UsesSpotShadowAtlasForCurrentEncoding || ShouldRenderLegacySpotShadowMap(light)))
                         light.RenderShadowMap(collectVisibleNow);
                 }
                 for (int i = 0; i < DynamicPointLights.Count; i++)
                 {
                     PointLightComponent light = DynamicPointLights[i];
-                    if (!Engine.Rendering.Settings.UsePointShadowAtlas)
+                    int faceMask = CalculatePointShadowFaceMask(light, scratch);
+                    light.SetShadowFaceRelevanceMask(faceMask, Engine.Rendering.State.RenderFrameId);
+                    if (!light.UsesPointShadowAtlasForCurrentEncoding)
                         light.RenderShadowMap(collectVisibleNow);
                 }
             }
@@ -322,36 +340,38 @@ namespace XREngine.Scene
 
         #region Shadow Atlas Requests
 
-        private void UpdateShadowAtlasRequests(bool collectVisibleNow)
+        private void UpdateShadowAtlasRequests(bool collectVisibleNow, ShadowScratch scratch)
         {
             using var sample = Engine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
 
-            PopulateShadowAtlasActiveCameras();
-            ShadowAtlas.BeginFrame(World, CollectionsMarshal.AsSpan(_shadowAtlasCameraScratch));
+            PopulateShadowAtlasActiveCameras(scratch);
+            PrepareLocalShadowRelevanceFrusta(scratch);
+            ShadowAtlas.BeginFrame(World, CollectionsMarshal.AsSpan(scratch.ShadowAtlasCameras));
 
             SubmitDirectionalShadowAtlasRequests();
-            SubmitSpotShadowAtlasRequests();
-            SubmitPointShadowAtlasRequests();
+            SubmitSpotShadowAtlasRequests(scratch);
+            SubmitPointShadowAtlasRequests(scratch);
 
             ShadowAtlas.SolveAllocations();
             ShadowAtlas.RenderScheduledTiles(collectVisibleNow);
             ShadowAtlas.PublishFrameData();
             PublishShadowAtlasDiagnostics();
-            LogShadowAtlasFrameSummary(collectVisibleNow);
+            LogShadowAtlasFrameSummary(collectVisibleNow, scratch);
         }
 
-        private void PopulateShadowAtlasActiveCameras()
+        private void PopulateShadowAtlasActiveCameras(ShadowScratch scratch)
         {
-            _shadowAtlasCameraScratch.Clear();
+            List<XRCamera> cameras = scratch.ShadowAtlasCameras;
+            cameras.Clear();
 
             foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
-                AddShadowAtlasCamera(viewport);
+                AddShadowAtlasCamera(viewport, cameras);
 
-            AddShadowAtlasCamera(Engine.VRState.LeftEyeViewport);
-            AddShadowAtlasCamera(Engine.VRState.RightEyeViewport);
+            AddShadowAtlasCamera(Engine.VRState.LeftEyeViewport, cameras);
+            AddShadowAtlasCamera(Engine.VRState.RightEyeViewport, cameras);
         }
 
-        private void AddShadowAtlasCamera(XRViewport? viewport)
+        private void AddShadowAtlasCamera(XRViewport? viewport, List<XRCamera> cameras)
         {
             if (viewport is null ||
                 !ViewportTargetsWorld(viewport, World) ||
@@ -359,11 +379,88 @@ namespace XREngine.Scene
                 viewport.ActiveCamera is not XRCamera camera)
                 return;
 
-            for (int i = 0; i < _shadowAtlasCameraScratch.Count; i++)
-                if (ReferenceEquals(_shadowAtlasCameraScratch[i], camera))
+            for (int i = 0; i < cameras.Count; i++)
+                if (ReferenceEquals(cameras[i], camera))
                     return;
 
-            _shadowAtlasCameraScratch.Add(camera);
+            cameras.Add(camera);
+        }
+
+        private void PopulateLocalShadowRelevanceCameras(ShadowScratch scratch)
+        {
+            PopulateShadowAtlasActiveCameras(scratch);
+            PrepareLocalShadowRelevanceFrusta(scratch);
+        }
+
+        private void PrepareLocalShadowRelevanceFrusta(ShadowScratch scratch)
+        {
+            List<PreparedFrustum> frusta = scratch.LocalShadowRelevanceFrusta;
+            List<XRCamera> cameras = scratch.ShadowAtlasCameras;
+            frusta.Clear();
+
+            for (int i = 0; i < cameras.Count; i++)
+            {
+                try
+                {
+                    frusta.Add(cameras[i].WorldFrustum().Prepare());
+                }
+                catch
+                {
+                    frusta.Clear();
+                    return;
+                }
+            }
+        }
+
+        private static ShadowRelevanceCameraSet CurrentLocalShadowRelevanceCameras(ShadowScratch scratch)
+            => new(scratch.LocalShadowRelevanceFrusta);
+
+        private bool UpdateLocalShadowRelevanceState(LightComponent light, ShadowScratch scratch)
+        {
+            ulong frameId = Engine.Rendering.State.RenderFrameId;
+            if (light is PointLightComponent pointLight)
+            {
+                int faceMask = CalculatePointShadowFaceMask(pointLight, scratch);
+                pointLight.SetShadowFaceRelevanceMask(faceMask, frameId);
+                return faceMask != 0;
+            }
+
+            if (light is SpotLightComponent spotLight)
+            {
+                bool relevant = IsSpotShadowRelevant(spotLight, scratch);
+                spotLight.SetShadowRelevance(relevant, frameId);
+                return relevant;
+            }
+
+            return true;
+        }
+
+        private int CalculatePointShadowFaceMask(PointLightComponent light, ShadowScratch scratch)
+        {
+            if (scratch.LocalShadowRelevanceFrusta.Count <= 0)
+                return LocalShadowFrustumRelevance.AllPointFacesMask;
+
+            ShadowRelevanceCameraSet cameras = CurrentLocalShadowRelevanceCameras(scratch);
+            int mask = 0;
+            for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
+            {
+                if (LocalShadowFrustumRelevance.IsPointFaceRelevant(
+                    light,
+                    faceIndex,
+                    cameras,
+                    scratch.LocalShadowIntersections))
+                {
+                    mask |= 1 << faceIndex;
+                }
+            }
+
+            return mask;
+        }
+
+        private bool IsSpotShadowRelevant(SpotLightComponent light, ShadowScratch scratch)
+        {
+            ShadowRelevanceCameraSet cameras = CurrentLocalShadowRelevanceCameras(scratch);
+            return LocalShadowFrustumRelevance.IsSpotShadowRelevant(light, cameras, scratch.LocalShadowIntersections);
         }
 
         private void SubmitDirectionalShadowAtlasRequests()
@@ -375,7 +472,8 @@ namespace XREngine.Scene
             for (int i = 0; i < count; i++)
             {
                 DirectionalLightComponent light = DynamicDirectionalLights[i];
-                if (!ShouldSubmitShadowAtlasRequest(light))
+                if (!light.UsesDirectionalShadowAtlasForCurrentEncoding ||
+                    !ShouldSubmitShadowAtlasRequest(light))
                     continue;
 
                 int activeCascadeCount = light.ActiveCascadeCount;
@@ -413,7 +511,7 @@ namespace XREngine.Scene
             }
         }
 
-        private void SubmitSpotShadowAtlasRequests()
+        private void SubmitSpotShadowAtlasRequests(ShadowScratch scratch)
         {
             if (!Engine.Rendering.Settings.UseSpotShadowAtlas)
                 return;
@@ -429,17 +527,20 @@ namespace XREngine.Scene
                     continue;
                 }
 
+                bool relevant = IsSpotShadowRelevant(light, scratch);
+                light.SetShadowRelevance(relevant, Engine.Rendering.State.RenderFrameId);
                 SubmitShadowAtlasRequest(
                     light,
                     EShadowProjectionType.SpotPrimary,
                     faceOrCascadeIndex: 0,
                     camera,
-                    priority: 4000.0f + EstimateSpotPriority(light),
-                    fallback: ShadowFallbackMode.StaleTile);
+                    priority: 4000.0f + EstimateSpotPriority(light, scratch),
+                    fallback: ShadowFallbackMode.StaleTile,
+                    forcedSkipReason: relevant ? SkipReason.None : SkipReason.NotRelevant);
             }
         }
 
-        private void SubmitPointShadowAtlasRequests()
+        private void SubmitPointShadowAtlasRequests(ShadowScratch scratch)
         {
             if (!Engine.Rendering.Settings.UsePointShadowAtlas)
                 return;
@@ -448,16 +549,20 @@ namespace XREngine.Scene
             for (int i = 0; i < count; i++)
             {
                 PointLightComponent light = DynamicPointLights[i];
-                if (!ShouldSubmitShadowAtlasRequest(light))
+                if (!light.UsesPointShadowAtlasForCurrentEncoding ||
+                    !ShouldSubmitShadowAtlasRequest(light))
                     continue;
 
-                float basePriority = 3000.0f + EstimatePointPriority(light);
+                int faceMask = CalculatePointShadowFaceMask(light, scratch);
+                light.SetShadowFaceRelevanceMask(faceMask, Engine.Rendering.State.RenderFrameId);
+                float basePriority = 3000.0f + EstimatePointPriority(light, scratch);
                 for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
                 {
                     if (!light.TryGetShadowFaceCamera(faceIndex, out XRCamera faceCamera))
                         continue;
 
-                    float faceRelevance = EstimatePointFaceRelevance(light, faceIndex);
+                    bool faceRelevant = (faceMask & (1 << faceIndex)) != 0;
+                    float faceRelevance = EstimatePointFaceRelevance(light, faceIndex, scratch);
                     uint desiredResolution = GetDesiredPointFaceShadowAtlasResolution(light, faceRelevance);
                     SubmitShadowAtlasRequest(
                         light,
@@ -466,7 +571,8 @@ namespace XREngine.Scene
                         faceCamera,
                         priority: basePriority + faceRelevance * 750.0f - faceIndex * 0.01f,
                         fallback: ShadowFallbackMode.StaleTile,
-                        desiredResolutionOverride: desiredResolution);
+                        desiredResolutionOverride: desiredResolution,
+                        forcedSkipReason: faceRelevant ? SkipReason.None : SkipReason.NotRelevant);
                 }
             }
         }
@@ -478,7 +584,8 @@ namespace XREngine.Scene
             XRCamera camera,
             float priority,
             ShadowFallbackMode fallback,
-            uint? desiredResolutionOverride = null)
+            uint? desiredResolutionOverride = null,
+            SkipReason forcedSkipReason = SkipReason.None)
         {
             EShadowMapEncoding encoding = EShadowMapEncoding.Depth;
             ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, faceOrCascadeIndex, encoding);
@@ -522,7 +629,8 @@ namespace XREngine.Scene
                 dirtyReason,
                 canReusePreviousFrame,
                 EditorPinned: false,
-                StereoVis: Engine.VRState.IsInVR ? StereoVisibility.BothEyes : StereoVisibility.Mono);
+                StereoVis: Engine.VRState.IsInVR ? StereoVisibility.BothEyes : StereoVisibility.Mono,
+                ForcedSkipReason: forcedSkipReason);
 
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
             ShadowAtlas.Submit(request);
@@ -611,14 +719,17 @@ namespace XREngine.Scene
         private bool ShouldRenderLegacyDirectionalShadowMap(DirectionalLightComponent light, out bool renderCascades)
         {
             renderCascades = true;
-            if (!Engine.Rendering.Settings.UseDirectionalShadowAtlas)
+            ShadowMapFormatSelection selection = light.ResolveShadowMapFormat(preferredStorageFormat: null);
+            bool momentSingleMap = selection.Encoding != EShadowMapEncoding.Depth;
+            if (!light.UsesDirectionalShadowAtlasForCurrentEncoding)
             {
+                renderCascades = !momentSingleMap;
                 LogDirectionalLegacyDecision(
                     light,
-                    "AtlasDisabled",
+                    momentSingleMap ? "MomentSingleMap" : "AtlasDisabled",
                     legacyRender: true,
-                    renderCascades: true,
-                    needsLegacyCascades: true,
+                    renderCascades,
+                    needsLegacyCascades: renderCascades,
                     needsLegacyPrimary: light.ShadowMap is not null,
                     activeCascadeCount: light.ActiveCascadeCount);
                 return true;
@@ -651,16 +762,16 @@ namespace XREngine.Scene
         private uint GetMinimumShadowAtlasResolution(uint desiredResolution)
             => Math.Min(desiredResolution, ShadowAtlas.Settings.MinTileResolution);
 
-        private float EstimateSpotPriority(SpotLightComponent light)
+        private float EstimateSpotPriority(SpotLightComponent light, ShadowScratch scratch)
         {
             Cone cone = light.OuterCone;
             float halfHeight = cone.Height * 0.5f;
             float radius = MathF.Sqrt((halfHeight * halfHeight) + (cone.Radius * cone.Radius));
-            return EstimateLocalPriority(cone.Center, radius, light.Brightness);
+            return EstimateLocalPriority(cone.Center, radius, light.Brightness, scratch);
         }
 
-        private float EstimatePointPriority(PointLightComponent light)
-            => EstimateLocalPriority(light.Transform.RenderTranslation, light.Radius, light.Brightness);
+        private float EstimatePointPriority(PointLightComponent light, ShadowScratch scratch)
+            => EstimateLocalPriority(light.Transform.RenderTranslation, light.Radius, light.Brightness, scratch);
 
         private uint GetDesiredPointFaceShadowAtlasResolution(PointLightComponent light, float faceRelevance)
         {
@@ -677,17 +788,18 @@ namespace XREngine.Scene
                 ShadowAtlas.Settings.PageSize);
         }
 
-        private float EstimatePointFaceRelevance(PointLightComponent light, int faceIndex)
+        private float EstimatePointFaceRelevance(PointLightComponent light, int faceIndex, ShadowScratch scratch)
         {
-            if (_shadowAtlasCameraScratch.Count == 0)
+            List<XRCamera> cameras = scratch.ShadowAtlasCameras;
+            if (cameras.Count == 0)
                 return 1.0f;
 
             Vector3 lightPosition = light.Transform.RenderTranslation;
             Vector3 faceForward = PointLightComponent.GetShadowFaceForward(faceIndex);
             float best = 0.0f;
-            for (int i = 0; i < _shadowAtlasCameraScratch.Count; i++)
+            for (int i = 0; i < cameras.Count; i++)
             {
-                Vector3 toCamera = _shadowAtlasCameraScratch[i].Transform.RenderTranslation - lightPosition;
+                Vector3 toCamera = cameras[i].Transform.RenderTranslation - lightPosition;
                 float lengthSq = toCamera.LengthSquared();
                 if (lengthSq <= 0.000001f)
                 {
@@ -703,16 +815,17 @@ namespace XREngine.Scene
             return MathF.Max(best, 0.05f);
         }
 
-        private float EstimateLocalPriority(Vector3 center, float radius, float intensity)
+        private float EstimateLocalPriority(Vector3 center, float radius, float intensity, ShadowScratch scratch)
         {
-            if (_shadowAtlasCameraScratch.Count == 0)
+            List<XRCamera> cameras = scratch.ShadowAtlasCameras;
+            if (cameras.Count == 0)
                 return MathF.Max(1.0f, intensity);
 
             float best = 0.0f;
             float safeRadius = MathF.Max(radius, 0.001f);
-            for (int i = 0; i < _shadowAtlasCameraScratch.Count; i++)
+            for (int i = 0; i < cameras.Count; i++)
             {
-                XRCamera camera = _shadowAtlasCameraScratch[i];
+                XRCamera camera = cameras[i];
                 float distance = MathF.Max(0.001f, Vector3.Distance(camera.Transform.RenderTranslation, center) - safeRadius);
                 float score = safeRadius / distance;
                 best = MathF.Max(best, score);
@@ -837,7 +950,7 @@ namespace XREngine.Scene
                 frameId));
         }
 
-        private void LogShadowAtlasFrameSummary(bool collectVisibleNow)
+        private void LogShadowAtlasFrameSummary(bool collectVisibleNow, ShadowScratch scratch)
         {
             if (!Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.AtlasFrame.{GetHashCode()}",
@@ -851,17 +964,18 @@ namespace XREngine.Scene
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][AtlasFrame] frame={0} generation={1} useDirAtlas={2} useSpotAtlas={3} collectVisibleNow={4} activeAtlasCameras={5} requests={6} allocations={7} resident={8} skipped={9} pages={10} renderedThisFrame={11} queueOverflow={12} budgetTiles={13} budgetMs={14:F2}",
+                "[DirectionalShadowAudit][AtlasFrame] frame={0} generation={1} useDirAtlas={2} useSpotAtlas={3} collectVisibleNow={4} activeAtlasCameras={5} requests={6} allocations={7} resident={8} skipped={9} notRelevant={10} pages={11} renderedThisFrame={12} queueOverflow={13} budgetTiles={14} budgetMs={15:F2}",
                 frameData.FrameId,
                 frameData.Generation,
                 Engine.Rendering.Settings.UseDirectionalShadowAtlas,
                 Engine.Rendering.Settings.UseSpotShadowAtlas,
                 collectVisibleNow,
-                _shadowAtlasCameraScratch.Count,
+                scratch.ShadowAtlasCameras.Count,
                 metrics.RequestCount,
                 frameData.AllocationCount,
                 metrics.ResidentTileCount,
                 metrics.SkippedRequestCount,
+                metrics.NotRelevantSkipCount,
                 metrics.PageCount,
                 metrics.TilesScheduledThisFrame,
                 metrics.QueueOverflowCount,

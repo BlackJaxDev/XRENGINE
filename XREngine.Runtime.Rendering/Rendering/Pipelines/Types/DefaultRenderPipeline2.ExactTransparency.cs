@@ -18,22 +18,19 @@ public partial class DefaultRenderPipeline2
 
     private const string PpllNodeBufferName = "PpllNodeBuffer";
     private const string PpllCounterBufferName = "PpllCounterBuffer";
+    private const string ActiveDepthPeelLayerVariableName = "ActiveDepthPeelLayer";
     private const int PpllNodeStrideBytes = 32;
     private const int PpllResolveFragmentLimit = 16;
     private const int MaxDepthPeelingLayersSupported = 4;
     private const float DepthPeelingEpsilon = 1e-5f;
 
-    private XRDataBuffer? _ppllNodeBuffer;
-    private XRDataBuffer? _ppllCounterBuffer;
-    private int _activeDepthPeelLayerIndex = -1;
-
-    internal XRDataBuffer? PpllNodeBuffer => _ppllNodeBuffer;
-    internal XRDataBuffer? PpllCounterBuffer => _ppllCounterBuffer;
+    internal XRDataBuffer? PpllNodeBuffer => Engine.Rendering.State.CurrentRenderingPipeline?.GetBuffer(PpllNodeBufferName);
+    internal XRDataBuffer? PpllCounterBuffer => Engine.Rendering.State.CurrentRenderingPipeline?.GetBuffer(PpllCounterBufferName);
     internal XRTexture? PpllHeadPointerTexture => GetTexture<XRTexture>(PpllHeadPointerTextureName);
-    internal XRTexture? PreviousDepthPeelDepthTexture => _activeDepthPeelLayerIndex > 0
-        ? GetTexture<XRTexture>(DepthPeelDepthTextureName(_activeDepthPeelLayerIndex - 1))
+    internal XRTexture? PreviousDepthPeelDepthTexture => ActiveDepthPeelLayerIndex > 0
+        ? GetTexture<XRTexture>(DepthPeelDepthTextureName(ActiveDepthPeelLayerIndex - 1))
         : GetTexture<XRTexture>(DepthPeelDepthTextureName(0));
-    internal int ActiveDepthPeelLayerIndex => _activeDepthPeelLayerIndex;
+    internal int ActiveDepthPeelLayerIndex => ResolveActiveDepthPeelLayerIndex();
     internal float ActiveDepthPeelingEpsilon => DepthPeelingEpsilon;
     internal uint PpllMaxNodeCount => ComputePpllNodeCapacity();
 
@@ -61,6 +58,14 @@ public partial class DefaultRenderPipeline2
     {
         uint pixelCount = Math.Max(InternalWidth * InternalHeight, 1u);
         return Math.Max(pixelCount * 2u, 1024u);
+    }
+
+    private static int ResolveActiveDepthPeelLayerIndex()
+    {
+        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        return pipeline is not null && pipeline.Variables.TryGet(ActiveDepthPeelLayerVariableName, out int value)
+            ? value
+            : -1;
     }
 
     private void CacheExactTransparencyTextures(ViewportRenderCommandContainer c)
@@ -102,7 +107,15 @@ public partial class DefaultRenderPipeline2
         if (!ExactTransparencyEnabled)
             return;
 
-        EnsureExactTransparencyBuffers();
+        c.Add<VPRC_CacheOrCreateBuffer>().SetOptions(
+            PpllNodeBufferName,
+            CreatePpllNodeBuffer,
+            NeedsPpllNodeBufferResize);
+
+        c.Add<VPRC_CacheOrCreateBuffer>().SetOptions(
+            PpllCounterBufferName,
+            CreatePpllCounterBuffer,
+            NeedsPpllCounterBufferResize);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             PpllResolveFBOName,
@@ -116,21 +129,17 @@ public partial class DefaultRenderPipeline2
             GetDesiredFBOSizeInternal)
             .UseLifetime(RenderResourceLifetime.Transient);
 
-        if (EnablePerPixelLinkedListVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                PpllFragmentCountDebugFBOName,
-                CreatePpllFragmentCountDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
+        AppendConditionalDebugFboCache(
+            c,
+            DebugVizPpllFragmentsVariableName,
+            PpllFragmentCountDebugFBOName,
+            CreatePpllFragmentCountDebugFBO);
 
-        if (EnableDepthPeelingLayerVisualization)
-        {
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                DepthPeelingDebugFBOName,
-                CreateDepthPeelingDebugFBO,
-                GetDesiredFBOSizeInternal);
-        }
+        AppendConditionalDebugFboCache(
+            c,
+            DebugVizDepthPeelingLayerVariableName,
+            DepthPeelingDebugFBOName,
+            CreateDepthPeelingDebugFBO);
 
         for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
         {
@@ -143,7 +152,21 @@ public partial class DefaultRenderPipeline2
         }
 
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
-        c.Add<VPRC_Manual>().ManualAction = ResetPpllResources;
+        var resetPpll = c.Add<VPRC_ResetPpllResources>();
+        resetPpll.CounterBufferName = PpllCounterBufferName;
+        resetPpll.HeadPointerTextureName = PpllHeadPointerTextureName;
+        resetPpll.ClearHeadPointersComputeShaderPath = "Scene3D/ClearPpllHeadPointers.comp";
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = PpllNodeBufferName;
+            x.BindingLocation = 24u;
+        }))
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = PpllCounterBufferName;
+            x.BindingLocation = 25u;
+        }))
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyPpllForwardProgramBindings))
         using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
         {
             c.Add<VPRC_ColorMask>().Set(false, false, false, false);
@@ -152,13 +175,39 @@ public partial class DefaultRenderPipeline2
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, GPURenderDispatch);
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
         }
-        c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
+        using (c.AddUsing<VPRC_BindTexture>(x =>
+        {
+            x.TextureName = TransparentSceneCopyTextureName;
+            x.TextureUnit = 0;
+        }))
+        using (c.AddUsing<VPRC_BindTexture>(x =>
+        {
+            x.TextureName = PpllHeadPointerTextureName;
+            x.TextureUnit = 1;
+        }))
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = PpllNodeBufferName;
+            x.BindingLocation = 24u;
+        }))
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = PpllCounterBufferName;
+            x.BindingLocation = 25u;
+        }))
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyPpllResolveProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
+        }
 
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
         {
             int capture = layerIndex;
-            c.Add<VPRC_Manual>().ManualAction = () => _activeDepthPeelLayerIndex = capture;
+            var setLayer = c.Add<VPRC_SetVariable>();
+            setLayer.VariableName = ActiveDepthPeelLayerVariableName;
+            setLayer.IntValue = capture;
+            using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingForwardProgramBindings))
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(DepthPeelLayerFboName(capture), true, true, false, false)))
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
@@ -166,63 +215,96 @@ public partial class DefaultRenderPipeline2
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, GPURenderDispatch);
             }
         }
-        c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
-        c.Add<VPRC_Manual>().ManualAction = () => _activeDepthPeelLayerIndex = -1;
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingResolveProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
+        }
+        var clearLayer = c.Add<VPRC_SetVariable>();
+        clearLayer.VariableName = ActiveDepthPeelLayerVariableName;
+        clearLayer.IntValue = -1;
     }
 
-    private void EnsureExactTransparencyBuffers()
-    {
-        uint nodeCapacity = ComputePpllNodeCapacity();
-        if (_ppllNodeBuffer is null)
+    private XRDataBuffer CreatePpllNodeBuffer()
+        => new(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, ComputePpllNodeCapacity(), EComponentType.Struct, PpllNodeStrideBytes, false, false)
         {
-            _ppllNodeBuffer = new XRDataBuffer(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, nodeCapacity, EComponentType.Struct, PpllNodeStrideBytes, false, false)
-            {
-                Usage = EBufferUsage.DynamicCopy,
-                BindingIndexOverride = 24u,
-                DisposeOnPush = false,
-                PadEndingToVec4 = true,
-            };
-        }
-        else if (_ppllNodeBuffer.ElementCount < nodeCapacity)
-        {
-            _ppllNodeBuffer.Resize(nodeCapacity, false, true);
-        }
+            Usage = EBufferUsage.DynamicCopy,
+            BindingIndexOverride = 24u,
+            DisposeOnPush = false,
+            PadEndingToVec4 = true,
+        };
 
-        if (_ppllCounterBuffer is null)
+    private static XRDataBuffer CreatePpllCounterBuffer()
+        => new(PpllCounterBufferName, EBufferTarget.ShaderStorageBuffer, 2u, EComponentType.UInt, 1u, false, true)
         {
-            _ppllCounterBuffer = new XRDataBuffer(PpllCounterBufferName, EBufferTarget.ShaderStorageBuffer, 2u, EComponentType.UInt, 1u, false, true)
-            {
-                Usage = EBufferUsage.DynamicCopy,
-                BindingIndexOverride = 25u,
-                DisposeOnPush = false,
-                PadEndingToVec4 = true,
-            };
-        }
-        else if (_ppllCounterBuffer.ElementCount < 2u)
+            Usage = EBufferUsage.DynamicCopy,
+            BindingIndexOverride = 25u,
+            DisposeOnPush = false,
+            PadEndingToVec4 = true,
+        };
+
+    private bool NeedsPpllNodeBufferResize(XRDataBuffer buffer)
+        => buffer.ElementCount < ComputePpllNodeCapacity();
+
+    private static bool NeedsPpllCounterBufferResize(XRDataBuffer buffer)
+        => buffer.ElementCount < 2u;
+
+    private void ApplyPpllForwardProgramBindings(XRRenderProgram program)
+    {
+        XRTexture? headPointers = PpllHeadPointerTexture;
+        if (headPointers is null)
+            return;
+
+        program.BindImageTexture(0u, headPointers, 0, false, 0, XRRenderProgram.EImageAccess.ReadWrite, XRRenderProgram.EImageFormat.R32UI);
+        program.Uniform("ScreenWidth", (float)InternalWidth);
+        program.Uniform("ScreenHeight", (float)InternalHeight);
+        program.Uniform("PpllMaxNodes", (int)PpllMaxNodeCount);
+    }
+
+    private void ApplyPpllResolveProgramBindings(XRRenderProgram program)
+    {
+        program.Uniform("ScreenWidth", (float)InternalWidth);
+        program.Uniform("ScreenHeight", (float)InternalHeight);
+        program.Uniform("PpllResolveFragmentLimit", PpllResolveFragmentLimit);
+    }
+
+    private void ApplyDepthPeelingForwardProgramBindings(XRRenderProgram program)
+    {
+        XRTexture? previousDepth = PreviousDepthPeelDepthTexture;
+        if (previousDepth is not null)
+            program.Sampler("PrevPeelDepth", previousDepth, 8);
+
+        program.Uniform("ScreenWidth", (float)InternalWidth);
+        program.Uniform("ScreenHeight", (float)InternalHeight);
+        program.Uniform("DepthPeelLayerIndex", ActiveDepthPeelLayerIndex);
+        program.Uniform("DepthPeelEpsilon", ActiveDepthPeelingEpsilon);
+    }
+
+    private void ApplyDepthPeelingResolveProgramBindings(XRRenderProgram program)
+    {
+        XRTexture? sceneColor = GetTexture<XRTexture>(TransparentSceneCopyTextureName);
+        if (sceneColor is not null)
+            program.Sampler(TransparentSceneCopyTextureName, sceneColor, 0);
+
+        program.Uniform("ActiveDepthPeelLayers", ActiveDepthPeelLayerCount);
+        for (int layerIndex = 0; layerIndex < MaxDepthPeelingLayersSupported; layerIndex++)
         {
-            _ppllCounterBuffer.Resize(2u, false, true);
+            XRTexture? colorLayer = GetTexture<XRTexture>(DepthPeelColorTextureName(layerIndex));
+            if (colorLayer is not null)
+                program.Sampler($"DepthPeelColor{layerIndex}", colorLayer, layerIndex + 1);
         }
     }
 
-    private void ResetPpllResources()
+    private void ApplyDepthPeelingDebugProgramBindings(XRRenderProgram program)
     {
-        EnsureExactTransparencyBuffers();
-        if (_ppllCounterBuffer is null)
-            return;
+        int layerIndex = Math.Clamp(Engine.EditorPreferences.Debug.DepthPeelingPreviewLayer, 0, MaxDepthPeelingLayersSupported - 1);
+        for (int i = 0; i < MaxDepthPeelingLayersSupported; i++)
+        {
+            XRTexture? colorLayer = GetTexture<XRTexture>(DepthPeelColorTextureName(i));
+            if (colorLayer is not null)
+                program.Sampler($"DepthPeelColor{i}", colorLayer, i);
+        }
 
-        _ppllCounterBuffer.SetDataRawAtIndex(0, 0u);
-        _ppllCounterBuffer.SetDataRawAtIndex(1, 0u);
-        _ppllCounterBuffer.PushSubData();
-
-        XRTexture? headTexture = GetTexture<XRTexture>(PpllHeadPointerTextureName);
-        if (headTexture is null)
-            return;
-
-        XRRenderProgram program = new(false, false, XRShader.EngineShader("Scene3D/ClearPpllHeadPointers.comp", EShaderType.Compute));
-        program.BindImageTexture(0u, headTexture, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R32UI);
-        uint groupsX = (InternalWidth + 15u) / 16u;
-        uint groupsY = (InternalHeight + 15u) / 16u;
-        program.DispatchCompute(Math.Max(groupsX, 1u), Math.Max(groupsY, 1u), 1u, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.ShaderStorage);
+        program.Uniform("PreviewLayer", layerIndex);
     }
 
     private XRTexture CreatePpllHeadPointerTexture()
@@ -327,10 +409,8 @@ public partial class DefaultRenderPipeline2
                 },
             }
         };
-        material.SettingUniforms += PpllResolveMaterial_SettingUniforms;
 
         var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = PpllResolveFBOName };
-        fbo.SettingUniforms += PpllResolveFBO_SettingUniforms;
 
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         var fragmentCountAttachment = EnsureTextureAttachment(PpllFragmentCountTextureName, CreatePpllFragmentCountTexture);
@@ -344,7 +424,6 @@ public partial class DefaultRenderPipeline2
         => CreateTransparencyDebugFBO(
             PpllFragmentCountDebugFBOName,
             PpllFragmentCountDebugShaderName(),
-            PpllFragmentCountDebugFBO_SettingUniforms,
             GetTexture<XRTexture>(PpllFragmentCountTextureName)!);
 
     private XRFrameBuffer CreateDepthPeelLayerFBO(int layerIndex)
@@ -373,7 +452,6 @@ public partial class DefaultRenderPipeline2
                 },
             }
         };
-        material.SettingUniforms += DepthPeelingResolveMaterial_SettingUniforms;
 
         var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DepthPeelingResolveFBOName };
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
@@ -395,65 +473,6 @@ public partial class DefaultRenderPipeline2
                 },
             }
         };
-        material.SettingUniforms += DepthPeelingDebugMaterial_SettingUniforms;
         return new XRQuadFrameBuffer(material) { Name = DepthPeelingDebugFBOName };
-    }
-
-    private void PpllResolveFBO_SettingUniforms(XRRenderProgram program)
-    {
-        XRTexture? sceneColor = GetTexture<XRTexture>(TransparentSceneCopyTextureName);
-        XRTexture? headPointers = GetTexture<XRTexture>(PpllHeadPointerTextureName);
-        if (sceneColor is null || headPointers is null)
-            return;
-
-        program.Sampler(TransparentSceneCopyTextureName, sceneColor, 0);
-        program.Sampler(PpllHeadPointerTextureName, headPointers, 1);
-        program.Uniform("ScreenWidth", (float)InternalWidth);
-        program.Uniform("ScreenHeight", (float)InternalHeight);
-        program.Uniform("PpllResolveFragmentLimit", PpllResolveFragmentLimit);
-    }
-
-    private void PpllResolveMaterial_SettingUniforms(XRMaterialBase _, XRRenderProgram program)
-    {
-        _ppllNodeBuffer?.BindTo(program, 24u);
-        _ppllCounterBuffer?.BindTo(program, 25u);
-    }
-
-    private void PpllFragmentCountDebugFBO_SettingUniforms(XRRenderProgram program)
-    {
-        XRTexture? fragmentCount = GetTexture<XRTexture>(PpllFragmentCountTextureName);
-        if (fragmentCount is null)
-            return;
-
-        program.Sampler(PpllFragmentCountTextureName, fragmentCount, 0);
-    }
-
-    private void DepthPeelingResolveMaterial_SettingUniforms(XRMaterialBase _, XRRenderProgram program)
-    {
-        XRTexture? sceneColor = GetTexture<XRTexture>(TransparentSceneCopyTextureName);
-        if (sceneColor is null)
-            return;
-
-        program.Sampler(TransparentSceneCopyTextureName, sceneColor, 0);
-        program.Uniform("ActiveDepthPeelLayers", ActiveDepthPeelLayerCount);
-        for (int layerIndex = 0; layerIndex < MaxDepthPeelingLayersSupported; layerIndex++)
-        {
-            XRTexture? colorLayer = GetTexture<XRTexture>(DepthPeelColorTextureName(layerIndex));
-            if (colorLayer is not null)
-                program.Sampler($"DepthPeelColor{layerIndex}", colorLayer, layerIndex + 1);
-        }
-    }
-
-    private void DepthPeelingDebugMaterial_SettingUniforms(XRMaterialBase _, XRRenderProgram program)
-    {
-        int layerIndex = Math.Clamp(Engine.EditorPreferences.Debug.DepthPeelingPreviewLayer, 0, MaxDepthPeelingLayersSupported - 1);
-        for (int i = 0; i < MaxDepthPeelingLayersSupported; i++)
-        {
-            XRTexture? colorLayer = GetTexture<XRTexture>(DepthPeelColorTextureName(i));
-            if (colorLayer is not null)
-                program.Sampler($"DepthPeelColor{i}", colorLayer, i);
-        }
-
-        program.Uniform("PreviewLayer", layerIndex);
     }
 }

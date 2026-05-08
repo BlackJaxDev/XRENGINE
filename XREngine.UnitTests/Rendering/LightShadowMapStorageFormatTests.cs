@@ -50,12 +50,16 @@ public sealed class LightShadowMapStorageFormatTests
         light.ShadowMapStorageFormat.ShouldBe(EShadowMapStorageFormat.Depth24);
         light.ShadowMapStorageFormat = EShadowMapStorageFormat.Depth32Float;
 
-        XRTexture2D shadowMap = FindShadowMapTexture<XRTexture2D>(light.GetShadowMapMaterial(64u, 64u));
+        XRMaterial material = light.GetShadowMapMaterial(64u, 64u);
+        XRTexture2D rasterDepth = FindAttachmentTexture<XRTexture2D>(material, EFrameBufferAttachment.DepthAttachment);
+        XRTexture2D shadowMap = FindShadowMapTexture<XRTexture2D>(material);
 
-        shadowMap.SizedInternalFormat.ShouldBe(ESizedInternalFormat.DepthComponent32f);
-        shadowMap.Mipmaps[0].InternalFormat.ShouldBe(EPixelInternalFormat.DepthComponent32f);
-        shadowMap.Mipmaps[0].PixelFormat.ShouldBe(EPixelFormat.DepthComponent);
-        shadowMap.Mipmaps[0].PixelType.ShouldBe(EPixelType.Float);
+        rasterDepth.SizedInternalFormat.ShouldBe(ESizedInternalFormat.DepthComponent32f);
+        rasterDepth.Mipmaps[0].InternalFormat.ShouldBe(EPixelInternalFormat.DepthComponent32f);
+        rasterDepth.Mipmaps[0].PixelFormat.ShouldBe(EPixelFormat.DepthComponent);
+        rasterDepth.Mipmaps[0].PixelType.ShouldBe(EPixelType.Float);
+        shadowMap.SizedInternalFormat.ShouldBe(ESizedInternalFormat.R16f);
+        shadowMap.FrameBufferAttachment.ShouldBe(EFrameBufferAttachment.ColorAttachment0);
         light.CascadedShadowMapTexture.ShouldNotBeNull();
         light.CascadedShadowMapTexture!.SizedInternalFormat.ShouldBe(ESizedInternalFormat.DepthComponent32f);
     }
@@ -84,6 +88,17 @@ public sealed class LightShadowMapStorageFormatTests
                 return typed;
 
         Assert.Fail($"ShadowMap texture of type {typeof(TTexture).Name} was not found.");
+        return null!;
+    }
+
+    private static TTexture FindAttachmentTexture<TTexture>(XRMaterial material, EFrameBufferAttachment attachment)
+        where TTexture : XRTexture
+    {
+        foreach (XRTexture? texture in material.Textures)
+            if (texture is TTexture typed && texture.FrameBufferAttachment == attachment)
+                return typed;
+
+        Assert.Fail($"{attachment} texture of type {typeof(TTexture).Name} was not found.");
         return null!;
     }
 }

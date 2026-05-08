@@ -490,6 +490,7 @@ internal static partial class Engine
             public static uint VulkanDeviceId { get; internal set; }
             public static XRDataBuffer? ForwardPlusLocalLightsBuffer { get; internal set; }
             public static XRDataBuffer? ForwardPlusVisibleIndicesBuffer { get; internal set; }
+            public static XRDataBuffer? ForwardPlusTileLightCountsBuffer { get; internal set; }
             public static Vector2 ForwardPlusScreenSize { get; internal set; }
             public static int ForwardPlusTileSize { get; internal set; }
             public static int ForwardPlusTileCountX { get; internal set; }
@@ -700,6 +701,12 @@ internal sealed class RuntimeRenderSettings
     public bool AllowSkinning { get; set; } = true;
     public bool AsyncProgramBinaryUpload { get; set; } = true;
     public bool AsyncProgramCompilation { get; set; } = true;
+    private int _openGLProgramCompileLinkWorkerCount = 1;
+    public int OpenGLProgramCompileLinkWorkerCount
+    {
+        get => _openGLProgramCompileLinkWorkerCount;
+        set => _openGLProgramCompileLinkWorkerCount = Math.Clamp(value, 1, 16);
+    }
     public bool CacheGpuHiZOcclusionOncePerFrame { get; set; } = true;
     public bool CalculateBlendshapesInComputeShader { get; set; }
     public bool CalculateSkinnedBoundsInComputeShader { get; set; }
@@ -734,7 +741,7 @@ internal sealed class RuntimeRenderSettings
         get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
             ? services.MaxShadowAtlasPages
             : _maxShadowAtlasPages;
-        set => _maxShadowAtlasPages = 1;
+        set => _maxShadowAtlasPages = Math.Clamp(value, 1, 64);
     }
 
     public uint MaxShadowAtlasTileResolution

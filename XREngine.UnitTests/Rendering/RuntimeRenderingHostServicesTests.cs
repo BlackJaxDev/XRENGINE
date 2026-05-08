@@ -66,6 +66,33 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
+    public void CameraRenderPipelineReplacement_UpdatesConnectedViewportPipelineInstance()
+    {
+        RuntimeRenderingHostServices.Current = new TestRuntimeRenderingHostServices
+        {
+            DefaultPipeline = new TestRenderPipeline(),
+        };
+
+        XRCamera camera = new();
+        XRViewport viewport = new(null);
+        SinglePassRenderPipeline initialPipeline = new();
+        TwoPassRenderPipeline replacementPipeline = new();
+
+        camera.RenderPipeline = initialPipeline;
+        viewport.Camera = camera;
+
+        viewport.RenderPipelineInstance.Pipeline.ShouldBeSameAs(initialPipeline);
+        viewport.RenderPipelineInstance.MeshRenderCommands.GetUpdatingPassCount().ShouldBe(1);
+
+        camera.RenderPipeline = replacementPipeline;
+
+        viewport.RenderPipelineInstance.Pipeline.ShouldBeSameAs(replacementPipeline);
+        viewport.RenderPipelineInstance.MeshRenderCommands.GetUpdatingPassCount().ShouldBe(2);
+        initialPipeline.Instances.ShouldNotContain(viewport.RenderPipelineInstance);
+        replacementPipeline.Instances.ShouldContain(viewport.RenderPipelineInstance);
+    }
+
+    [Test]
     public void ViewportAutomaticCallbacks_UseRuntimeRenderingHostServicesSubscriptions()
     {
         TestRuntimeRenderingHostServices services = new()
@@ -569,5 +596,34 @@ public sealed class RuntimeRenderingHostServicesTests
 
         protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
             => [];
+    }
+
+    private sealed class SinglePassRenderPipeline : RenderPipeline
+    {
+        protected override Lazy<XRMaterial> InvalidMaterialFactory => new(() => new XRMaterial());
+
+        protected override ViewportRenderCommandContainer GenerateCommandChain()
+            => new(this);
+
+        protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
+            => new()
+            {
+                [10] = null,
+            };
+    }
+
+    private sealed class TwoPassRenderPipeline : RenderPipeline
+    {
+        protected override Lazy<XRMaterial> InvalidMaterialFactory => new(() => new XRMaterial());
+
+        protected override ViewportRenderCommandContainer GenerateCommandChain()
+            => new(this);
+
+        protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
+            => new()
+            {
+                [20] = null,
+                [30] = null,
+            };
     }
 }
