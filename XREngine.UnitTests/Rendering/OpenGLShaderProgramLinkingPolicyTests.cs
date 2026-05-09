@@ -78,6 +78,20 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
     }
 
     [Test]
+    public void LargeSourcePrograms_BypassDriverParallel_WhenSharedContextAvailable()
+    {
+        OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            strategy: EOpenGLShaderLinkStrategy.Auto,
+            driverParallelAvailable: true,
+            sharedContextCompileAvailable: true,
+            preferSharedContextForLargeSource: true));
+
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SharedContextSource);
+        selection.IsAsync.ShouldBeTrue();
+        selection.Reason.ShouldContain("large source program");
+    }
+
+    [Test]
     public void SynchronousStrategy_StillAllowsConfiguredAsyncBinaryUploads()
     {
         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
@@ -183,6 +197,7 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
         bool sharedContextCompileCanEnqueue = true,
         bool compileInputsReady = true,
         bool isKnownAsyncLinkHazard = false,
+        bool preferSharedContextForLargeSource = false,
         bool hashPreviouslyFailed = false,
         bool allowSynchronousSourceLink = false)
         => new(
@@ -198,6 +213,7 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
             sharedContextCompileCanEnqueue,
             compileInputsReady,
             isKnownAsyncLinkHazard,
+            preferSharedContextForLargeSource,
             hashPreviouslyFailed,
             allowSynchronousSourceLink);
 

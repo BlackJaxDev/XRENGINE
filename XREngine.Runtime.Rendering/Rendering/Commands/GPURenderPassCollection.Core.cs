@@ -25,6 +25,8 @@ namespace XREngine.Rendering.Commands
         /// This must match the OpenGL spec and the shader's DRAW_COMMAND_UINTS.
         /// </summary>
         private const uint ExpectedIndirectCommandStride = 20;
+        private const uint GpuClearUIntsLocalSizeX = 256u;
+        private const uint MaterialScatterLocalSizeX = 64u;
         
         private static readonly uint _indirectCommandStride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
         private static readonly uint _indirectCommandComponentCount = _indirectCommandStride / sizeof(uint);
@@ -498,6 +500,7 @@ namespace XREngine.Rendering.Commands
         public XRRenderProgram? _indirectRenderTaskShader;
         public XRRenderProgram? _buildHotCommandsProgram;
         public XRRenderProgram? _resetCountersComputeShader;
+        private XRRenderProgram? _clearUIntsComputeShader;
         public XRRenderProgram? _debugDrawProgram;
         private XRRenderProgram? _copyCommandsProgram; // new: passthrough copy
         private XRRenderProgram? _bvhFrustumCullProgram; // BVH-accelerated frustum culling

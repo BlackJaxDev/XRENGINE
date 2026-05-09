@@ -492,7 +492,8 @@ namespace XREngine.Rendering
             if (graphicsProgram is not null)
             {
                 LogShaderBind(graphicsProgram.GetType().Name);
-                graphicsProgram.Use();
+                if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirect"))
+                    return;
 
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader.
                 // Use a dedicated binding to avoid colliding with material SSBOs (for example text glyph buffers).
@@ -1043,7 +1044,8 @@ namespace XREngine.Rendering
             // Bind graphics program for rendering
             if (graphicsProgram is not null)
             {
-                graphicsProgram.Use();
+                if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectRange"))
+                    return;
 
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader
                 culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
@@ -1057,6 +1059,11 @@ namespace XREngine.Rendering
                     renderer.SetEngineUniforms(graphicsProgram, camera);
                 // Legacy materials might still reference ModelMatrix; set a sensible default.
                 graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
+            }
+            else
+            {
+                Debug.MeshesWarning("Indirect range draw aborted: no graphics program was provided.");
+                return;
             }
 
             // Bind VAO
@@ -2253,15 +2260,18 @@ namespace XREngine.Rendering
             if (versionInsertIndex < 0)
                 return false;
 
-            bool hasTransformId = SourceDeclaresGlslVariable(source, DefaultVertexShaderGenerator.FragTransformIdName);
-            bool hasRole = SourceDeclaresGlslVariable(source, FragLodTransitionRoleName);
-
             var helper = new StringBuilder();
             helper.AppendLine();
-            if (!hasTransformId)
-                helper.AppendLine($"layout(location = 21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
-            if (!hasRole)
-                helper.AppendLine($"layout(location = {FragLodTransitionRoleLocation}) flat in uint {FragLodTransitionRoleName};");
+            AppendGlslVariableDeclarationIfNeeded(
+                helper,
+                source,
+                DefaultVertexShaderGenerator.FragTransformIdName,
+                $"layout(location = 21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            AppendGlslVariableDeclarationIfNeeded(
+                helper,
+                source,
+                FragLodTransitionRoleName,
+                $"layout(location = {FragLodTransitionRoleLocation}) flat in uint {FragLodTransitionRoleName};");
             helper.AppendLine($"layout(std430, binding = {LodTransitionSsboBinding}) readonly buffer XreLodTransitionBuffer {{ uint xreLodTransitions[]; }};");
             helper.AppendLine("const uint XRE_LOD_TRANSITION_ACTIVE = 1u;");
             helper.AppendLine("const uint XRE_LOD_TRANSITION_UINTS = 4u;");
@@ -2321,6 +2331,200 @@ namespace XREngine.Rendering
                 source,
                 $@"(?:^|[;\r\n])\s*(?:layout\s*\([^)]*\)\s*)?(?:(?:flat|smooth|noperspective|centroid|sample|patch|invariant|precise|highp|mediump|lowp)\s+)*(?:in|out|uniform|varying)\s+[A-Za-z_][A-Za-z0-9_]*\s+{Regex.Escape(identifier)}\b",
                 RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        private static void AppendGlslVariableDeclarationIfNeeded(
+            StringBuilder helper,
+            string source,
+            string identifier,
+            string declaration)
+        {
+            if (SourceDeclaresUnconditionalGlslVariable(source, identifier, out string conditionalDeclarationExpression))
+                return;
+
+            if (conditionalDeclarationExpression.Length == 0)
+            {
+                helper.AppendLine(declaration);
+                return;
+            }
+
+            helper.AppendLine($"#if !({conditionalDeclarationExpression})");
+            helper.AppendLine(declaration);
+            helper.AppendLine("#endif");
+        }
+
+        private static bool SourceDeclaresUnconditionalGlslVariable(
+            string source,
+            string identifier,
+            out string conditionalDeclarationExpression)
+        {
+            conditionalDeclarationExpression = string.Empty;
+            var conditionalDeclarations = new List<string>();
+            var conditionStack = new List<GlslPreprocessorCondition>();
+
+            int index = 0;
+            while (index < source.Length)
+            {
+                int lineBreak = source.IndexOf('\n', index);
+                int lineEnd = lineBreak >= 0 ? lineBreak : source.Length;
+                int lineEndExclusive = lineEnd > index && source[lineEnd - 1] == '\r'
+                    ? lineEnd - 1
+                    : lineEnd;
+                string line = source[index..lineEndExclusive].TrimStart();
+
+                if (TryReadGlslPreprocessorDirective(line, out string directive, out string argument))
+                {
+                    UpdateGlslConditionStack(conditionStack, directive, argument);
+                }
+                else if (SourceDeclaresGlslVariable(line, identifier))
+                {
+                    if (conditionStack.Count == 0)
+                        return true;
+
+                    conditionalDeclarations.Add(BuildEffectiveGlslCondition(conditionStack));
+                }
+
+                if (lineBreak < 0)
+                    break;
+
+                index = lineBreak + 1;
+            }
+
+            conditionalDeclarationExpression = CombineGlslConditions(conditionalDeclarations, "||");
+            return false;
+        }
+
+        private static bool TryReadGlslPreprocessorDirective(string trimmedLine, out string directive, out string argument)
+        {
+            directive = string.Empty;
+            argument = string.Empty;
+
+            if (trimmedLine.Length == 0 || trimmedLine[0] != '#')
+                return false;
+
+            int index = 1;
+            while (index < trimmedLine.Length && char.IsWhiteSpace(trimmedLine[index]))
+                ++index;
+
+            int directiveStart = index;
+            while (index < trimmedLine.Length && char.IsLetter(trimmedLine[index]))
+                ++index;
+
+            if (index == directiveStart)
+                return false;
+
+            directive = trimmedLine[directiveStart..index];
+            argument = TrimGlslLineComment(trimmedLine[index..].Trim());
+            return true;
+        }
+
+        private static string TrimGlslLineComment(string text)
+        {
+            int commentIndex = text.IndexOf("//", StringComparison.Ordinal);
+            return commentIndex < 0 ? text : text[..commentIndex].TrimEnd();
+        }
+
+        private static void UpdateGlslConditionStack(
+            List<GlslPreprocessorCondition> conditionStack,
+            string directive,
+            string argument)
+        {
+            switch (directive)
+            {
+                case "if":
+                    conditionStack.Add(new GlslPreprocessorCondition(NormalizeGlslCondition(argument), NormalizeGlslCondition(argument)));
+                    break;
+                case "ifdef":
+                    {
+                        string condition = $"defined({ReadGlslMacroIdentifier(argument)})";
+                        conditionStack.Add(new GlslPreprocessorCondition(condition, condition));
+                        break;
+                    }
+                case "ifndef":
+                    {
+                        string condition = $"!defined({ReadGlslMacroIdentifier(argument)})";
+                        conditionStack.Add(new GlslPreprocessorCondition(condition, condition));
+                        break;
+                    }
+                case "elif":
+                    if (conditionStack.Count == 0)
+                        break;
+
+                    GlslPreprocessorCondition elifCondition = conditionStack[^1];
+                    string elifArgument = NormalizeGlslCondition(argument);
+                    string elifBranchCondition = CombineGlslConditions(
+                        [NegateGlslCondition(elifCondition.CoveredCondition), elifArgument],
+                        "&&");
+                    conditionStack[^1] = new GlslPreprocessorCondition(
+                        elifBranchCondition,
+                        CombineGlslConditions([elifCondition.CoveredCondition, elifArgument], "||"));
+                    break;
+                case "else":
+                    if (conditionStack.Count == 0)
+                        break;
+
+                    GlslPreprocessorCondition elseCondition = conditionStack[^1];
+                    conditionStack[^1] = new GlslPreprocessorCondition(
+                        NegateGlslCondition(elseCondition.CoveredCondition),
+                        "1");
+                    break;
+                case "endif":
+                    if (conditionStack.Count > 0)
+                        conditionStack.RemoveAt(conditionStack.Count - 1);
+                    break;
+            }
+        }
+
+        private static string NormalizeGlslCondition(string condition)
+            => condition.Length == 0 ? "0" : condition;
+
+        private static string ReadGlslMacroIdentifier(string argument)
+        {
+            int index = 0;
+            while (index < argument.Length && char.IsWhiteSpace(argument[index]))
+                ++index;
+
+            int start = index;
+            while (index < argument.Length && (char.IsLetterOrDigit(argument[index]) || argument[index] == '_'))
+                ++index;
+
+            return index == start ? "0" : argument[start..index];
+        }
+
+        private static string BuildEffectiveGlslCondition(List<GlslPreprocessorCondition> conditionStack)
+        {
+            var activeConditions = new List<string>(conditionStack.Count);
+            for (int i = 0; i < conditionStack.Count; ++i)
+                activeConditions.Add(conditionStack[i].CurrentCondition);
+
+            return CombineGlslConditions(activeConditions, "&&");
+        }
+
+        private static string CombineGlslConditions(IReadOnlyList<string> conditions, string op)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < conditions.Count; ++i)
+            {
+                string condition = conditions[i];
+                if (condition.Length == 0)
+                    continue;
+
+                if (sb.Length > 0)
+                    sb.Append(' ').Append(op).Append(' ');
+
+                sb.Append('(').Append(condition).Append(')');
+            }
+
+            return sb.Length == 0 ? "0" : sb.ToString();
+        }
+
+        private static string NegateGlslCondition(string condition)
+            => $"!({NormalizeGlslCondition(condition)})";
+
+        private readonly struct GlslPreprocessorCondition(string currentCondition, string coveredCondition)
+        {
+            public readonly string CurrentCondition = currentCondition;
+            public readonly string CoveredCondition = coveredCondition;
+        }
 
         private static int FindGlslVersionInsertIndex(string source)
         {
@@ -3117,6 +3321,8 @@ namespace XREngine.Rendering
                 var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
                 if (program is null)
                     continue;
+                if (!TryUseIndirectGraphicsProgram(program, "ZeroReadbackMaterialTier"))
+                    continue;
 
                 renderer.SetMaterialUniforms(material, program);
                 renderer.ApplyRenderParameters(material.RenderOptions);
@@ -3144,7 +3350,8 @@ namespace XREngine.Rendering
                         countByteOffset,
                         program,
                         camera,
-                        defaultModelMatrix);
+                        defaultModelMatrix,
+                        allowMaxDrawFallback: true);
                 }
             }
         }
@@ -3231,6 +3438,8 @@ namespace XREngine.Rendering
                 var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
                 if (program is null)
                     continue;
+                if (!TryUseIndirectGraphicsProgram(program, "ZeroReadbackActiveBucket"))
+                    continue;
 
                 renderer.SetMaterialUniforms(material, program);
                 renderer.ApplyRenderParameters(material.RenderOptions);
@@ -3255,7 +3464,8 @@ namespace XREngine.Rendering
                     countByteOffset,
                     program,
                     camera,
-                    defaultModelMatrix);
+                    defaultModelMatrix,
+                    allowMaxDrawFallback: true);
             }
         }
 
@@ -3334,6 +3544,9 @@ namespace XREngine.Rendering
             if (renderer is not null && invalidMaterial is not null)
                 renderer.ApplyRenderParameters(invalidMaterial.RenderOptions);
 
+            if (!TryUseIndirectGraphicsProgram(program, bindless ? "ZeroReadbackBindlessMaterialTable" : "ZeroReadbackMaterialTable"))
+                return;
+
             foreach (uint bucketIndex in activeBuckets)
             {
                 uint tier = bucketIndex % GPUBatchingBindings.MaterialTierCount;
@@ -3358,7 +3571,8 @@ namespace XREngine.Rendering
                     program,
                     camera,
                     defaultModelMatrix,
-                    materialTableBuffer);
+                    materialTableBuffer,
+                    allowMaxDrawFallback: true);
             }
         }
 
@@ -3411,13 +3625,16 @@ namespace XREngine.Rendering
             XRRenderProgram graphicsProgram,
             XRCamera camera,
             Matrix4x4 modelMatrix,
-            XRDataBuffer? materialTableBuffer = null)
+            XRDataBuffer? materialTableBuffer = null,
+            bool allowMaxDrawFallback = false)
         {
             var renderer = AbstractRenderer.Current;
             if (renderer is null || maxDrawCount == 0)
                 return;
 
-            graphicsProgram.Use();
+            if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectCountBucket"))
+                return;
+
             culledCommandsBuffer.BindTo(graphicsProgram, IndirectCommandSsboBinding);
             lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
             instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
@@ -3432,8 +3649,57 @@ namespace XREngine.Rendering
             if (vaoRenderer is not null)
                 renderer.ConfigureVAOAttributesForProgram(graphicsProgram, version);
 
+            uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             IndirectParityChecklist parity = BuildIndirectParityChecklist(renderer, indirectDrawBuffer, parameterBuffer, version);
+            bool useMaxDrawFallback = allowMaxDrawFallback && (renderer is OpenGLRenderer || !parity.UsesCountDrawPath);
+            if (useMaxDrawFallback)
+            {
+                if (!parity.IsSubmissionReady)
+                {
+                    renderer.BindVAOForRenderer(null);
+                    return;
+                }
+
+                if (!ValidateIndirectDrawRange(
+                    indirectDrawBuffer,
+                    maxDrawCount,
+                    stride,
+                    indirectByteOffset,
+                    "RenderIndirectCountBucketFallback"))
+                {
+                    renderer.BindVAOForRenderer(null);
+                    return;
+                }
+
+                renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
+                try
+                {
+                    renderer.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                    renderer.MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, indirectByteOffset);
+                }
+                finally
+                {
+                    renderer.UnbindDrawIndirectBuffer();
+                    renderer.BindVAOForRenderer(null);
+                }
+
+                return;
+            }
+
             if (!parity.UsesCountDrawPath)
+            {
+                renderer.BindVAOForRenderer(null);
+                return;
+            }
+
+            if (!ValidateIndirectCountDrawRange(
+                indirectDrawBuffer,
+                parameterBuffer,
+                maxDrawCount,
+                stride,
+                indirectByteOffset,
+                countByteOffset,
+                "RenderIndirectCountBucket"))
             {
                 renderer.BindVAOForRenderer(null);
                 return;
@@ -3443,8 +3709,8 @@ namespace XREngine.Rendering
             renderer.BindParameterBuffer(parameterBuffer);
             try
             {
-                renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
-                renderer.MultiDrawElementsIndirectCount(maxDrawCount, (uint)Marshal.SizeOf<DrawElementsIndirectCommand>(), indirectByteOffset, countByteOffset);
+                renderer.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
             }
             finally
             {
@@ -3452,6 +3718,93 @@ namespace XREngine.Rendering
                 renderer.UnbindDrawIndirectBuffer();
                 renderer.BindVAOForRenderer(null);
             }
+        }
+
+        private static bool ValidateIndirectDrawRange(
+            XRDataBuffer indirectDrawBuffer,
+            uint maxDrawCount,
+            uint stride,
+            nuint indirectByteOffset,
+            string context)
+        {
+            if (maxDrawCount == 0 || stride == 0)
+                return false;
+
+            ulong indirectOffset = indirectByteOffset;
+            ulong indirectBytes = indirectDrawBuffer.Length;
+            ulong requestedIndirectBytes = indirectOffset + ((ulong)maxDrawCount * stride);
+
+            if (indirectOffset % stride != 0 || requestedIndirectBytes > indirectBytes)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.IndirectDrawRange.{context}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] {0} skipped invalid indirect draw range: indirectOffset={1} maxDrawCount={2} stride={3} indirectBytes={4}.",
+                    context,
+                    indirectOffset,
+                    maxDrawCount,
+                    stride,
+                    indirectBytes);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool ValidateIndirectCountDrawRange(
+            XRDataBuffer indirectDrawBuffer,
+            XRDataBuffer parameterBuffer,
+            uint maxDrawCount,
+            uint stride,
+            nuint indirectByteOffset,
+            nuint countByteOffset,
+            string context)
+        {
+            if (maxDrawCount == 0 || stride == 0)
+                return false;
+
+            ulong indirectOffset = indirectByteOffset;
+            ulong countOffset = countByteOffset;
+            ulong indirectBytes = indirectDrawBuffer.Length;
+            ulong parameterBytes = parameterBuffer.Length;
+            ulong requestedIndirectBytes = indirectOffset + ((ulong)maxDrawCount * stride);
+            ulong requestedCountBytes = countOffset + sizeof(uint);
+
+            if (indirectOffset % stride != 0 ||
+                requestedIndirectBytes > indirectBytes ||
+                requestedCountBytes > parameterBytes)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.IndirectCountRange.{context}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] {0} skipped invalid indirect-count draw range: indirectOffset={1} maxDrawCount={2} stride={3} indirectBytes={4} countOffset={5} parameterBytes={6}.",
+                    context,
+                    indirectOffset,
+                    maxDrawCount,
+                    stride,
+                    indirectBytes,
+                    countOffset,
+                    parameterBytes);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryUseIndirectGraphicsProgram(XRRenderProgram graphicsProgram, string context)
+        {
+            graphicsProgram.Use();
+            if (graphicsProgram.IsLinked)
+                return true;
+
+            Engine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+            XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.ProgramNotReady.{context}.{RuntimeHelpers.GetHashCode(graphicsProgram)}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] {0} skipped because graphics program '{1}' is not linked yet. Avoiding stale-program indirect draw.",
+                context,
+                graphicsProgram.Name ?? "<unnamed>");
+            return false;
         }
 
         public struct RenderingStats

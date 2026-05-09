@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 
@@ -43,6 +44,18 @@ public sealed class GpuIndirectProgramContractTests
     }
 
     [Test]
+    public void LargeIndirectPrograms_RouteAwayFromDriverParallelLinks()
+    {
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLShaderLinkBackendSelector.cs");
+
+        programSource.ShouldContain("DriverParallelLargeSourceSharedContextThresholdBytes");
+        programSource.ShouldContain("ShouldPreferSharedContextForLargeSource(inputs)");
+        selectorSource.ShouldContain("PreferSharedContextForLargeSource");
+        selectorSource.ShouldContain("large source program routed to shared-context lane to avoid driver-parallel timeout");
+    }
+
+    [Test]
     public void IndirectVertexShaders_EmitWorldSpaceFragPos_ForForwardUberLighting()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
@@ -66,6 +79,18 @@ public sealed class GpuIndirectProgramContractTests
         source.ShouldNotContain("layout(location = 22) flat in uint");
     }
 
+    [Test]
+    public void IndirectLodAugmentation_GuardsPrepassOnlyTransformIdDeclarations()
+    {
+        string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Uber/UberShader.frag");
+        string augmentedSource = InvokeTryAugmentIndirectFragmentShader(source);
+
+        augmentedSource.ShouldContain("#if !");
+        augmentedSource.ShouldContain("defined(XRENGINE_DEPTH_NORMAL_PREPASS)");
+        augmentedSource.ShouldContain("layout(location = 21) in float FragTransformId;");
+        augmentedSource.ShouldContain("XRE_ApplyLodTransitionDither();");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string fullPath = ResolveWorkspacePath(relativePath);
@@ -86,5 +111,19 @@ public sealed class GpuIndirectProgramContractTests
         }
 
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
+    }
+
+    private static string InvokeTryAugmentIndirectFragmentShader(string source)
+    {
+        Type type = Type.GetType("XREngine.Rendering.HybridRenderingManager, XREngine.Runtime.Rendering")
+            ?? throw new TypeLoadException("Could not load XREngine.Rendering.HybridRenderingManager.");
+        MethodInfo method = type.GetMethod(
+            "TryAugmentIndirectFragmentShader",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(type.FullName, "TryAugmentIndirectFragmentShader");
+
+        object?[] args = [source, null];
+        ((bool)method.Invoke(null, args)!).ShouldBeTrue();
+        return (string)args[1]!;
     }
 }
