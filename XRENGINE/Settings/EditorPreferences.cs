@@ -4,6 +4,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Models;
 
 namespace XREngine
@@ -1372,6 +1373,7 @@ namespace XREngine
         private bool _forceGpuPassthroughCulling = false;
         private bool _allowGpuCpuFallback = false;
         private bool _enableZeroReadbackMaterialScatter = false;
+        private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
         private bool _enableProfilerFrameLogging = true;
         private bool _enableProfilerComponentTiming = true;
         private bool _enableRenderStatisticsTracking = true;
@@ -1690,6 +1692,15 @@ namespace XREngine
         {
             get => _enableZeroReadbackMaterialScatter;
             set => SetField(ref _enableZeroReadbackMaterialScatter, value);
+        }
+
+        [Category("GPU Rendering")]
+        [DisplayName("Zero-Readback Material Draw Path")]
+        [Description("Selects the material draw path used when zero-readback GPU mesh submission is active.")]
+        public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath
+        {
+            get => _zeroReadbackMaterialDrawPath;
+            set => SetField(ref _zeroReadbackMaterialDrawPath, value);
         }
 
         [Category("Profiling")]
@@ -2360,6 +2371,7 @@ namespace XREngine
             ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;
             EnableZeroReadbackMaterialScatter = source.EnableZeroReadbackMaterialScatter;
+            ZeroReadbackMaterialDrawPath = source.ZeroReadbackMaterialDrawPath;
             EnableProfilerFrameLogging = source.EnableProfilerFrameLogging;
             EnableProfilerComponentTiming = source.EnableProfilerComponentTiming;
             EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
@@ -2466,6 +2478,8 @@ namespace XREngine
                 AllowGpuCpuFallback = cpuFallback.Value;
             if (overrides.EnableZeroReadbackMaterialScatterOverride is { HasOverride: true } zeroReadback)
                 EnableZeroReadbackMaterialScatter = zeroReadback.Value;
+            if (overrides.ZeroReadbackMaterialDrawPathOverride is { HasOverride: true } zeroReadbackDrawPath)
+                ZeroReadbackMaterialDrawPath = zeroReadbackDrawPath.Value;
             if (overrides.EnableProfilerFrameLoggingOverride is { HasOverride: true } profilerLogging)
                 EnableProfilerFrameLogging = profilerLogging.Value;
             if (overrides.EnableProfilerComponentTimingOverride is { HasOverride: true } componentTiming)

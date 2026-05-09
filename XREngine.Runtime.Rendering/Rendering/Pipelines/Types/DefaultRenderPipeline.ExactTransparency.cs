@@ -149,7 +149,7 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_ColorMask>().Set(false, false, false, false);
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = false;
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, GPURenderDispatch);
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, MeshSubmissionStrategy);
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
         }
         c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
@@ -163,7 +163,7 @@ public partial class DefaultRenderPipeline
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
             }
         }
         c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);

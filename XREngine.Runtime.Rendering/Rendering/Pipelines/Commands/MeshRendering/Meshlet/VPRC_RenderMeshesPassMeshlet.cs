@@ -27,7 +27,7 @@ internal static class VPRC_RenderMeshesPassMeshlet
         gpuPass.UseMeshletPipeline = true;
         try
         {
-            activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass);
+            activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
         }
         finally
         {

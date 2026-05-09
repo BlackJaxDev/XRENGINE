@@ -373,8 +373,23 @@ namespace XREngine
             h[nameof(UserSettings.GlobalIlluminationModeOverride)] = ApplyGI;     // also matches GameStartup's identically-named property
 
             // ── GPU render dispatch ──
+            static void ApplyGpuDispatchSettings()
+            {
+                Rendering.ApplyGpuRenderDispatchPreference();
+                Rendering.LogVulkanFeatureProfileFingerprint();
+            }
             h[nameof(GameStartupSettings.GPURenderDispatch)] = Rendering.ApplyGpuRenderDispatchPreference;
             h[nameof(UserSettings.GPURenderDispatchOverride)] = Rendering.ApplyGpuRenderDispatchPreference;
+            h[nameof(GameStartupSettings.EnableGpuIndirectDebugLoggingOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(GameStartupSettings.EnableGpuIndirectCpuFallbackOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(GameStartupSettings.EnableGpuIndirectValidationLoggingOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(GameStartupSettings.EnableZeroReadbackMaterialScatterOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(GameStartupSettings.ZeroReadbackMaterialDrawPathOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(UserSettings.EnableGpuIndirectDebugLoggingOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(UserSettings.EnableGpuIndirectCpuFallbackOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(UserSettings.EnableGpuIndirectValidationLoggingOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(UserSettings.EnableZeroReadbackMaterialScatterOverride)] = ApplyGpuDispatchSettings;
+            h[nameof(UserSettings.ZeroReadbackMaterialDrawPathOverride)] = ApplyGpuDispatchSettings;
 
             // ── GPU BVH ──
             h[nameof(GameStartupSettings.UseGpuBvhOverride)] = Rendering.ApplyGpuBvhPreference;

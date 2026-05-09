@@ -861,6 +861,12 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                // Draw-indirect buffers are often GPU-written in the same frame they are created.
+                // Do not leave their first allocation in the frame-budgeted upload queue, or
+                // glMultiDrawElementsIndirect* can see a zero/undersized buffer.
+                if (Data.Target == EBufferTarget.DrawIndirectBuffer && !IsReadyForRendering)
+                    EnsureStorageAllocatedForGpuCopy();
+
                 uint resourceIndex;
                 if (bindindIndexOverride.HasValue)
                 {

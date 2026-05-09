@@ -3777,11 +3777,11 @@ namespace XREngine.Rendering.Commands
             if (!_useInternalBvh || !_bvhDirty)
                 return;
 
-            RebuildInternalBvh();
-            _bvhDirty = false;
+            if (RebuildInternalBvh())
+                _bvhDirty = false;
         }
 
-        private void RebuildInternalBvh()
+        private bool RebuildInternalBvh()
         {
             uint commandCount = _totalCommandCount;
             if (commandCount == 0 || _allLoadedCommandsBuffer is null)
@@ -3790,10 +3790,16 @@ namespace XREngine.Rendering.Commands
                 _bvhNodeCount = 0;
                 _bvhPrimitiveCount = 0;
                 _gpuBvhTree?.Clear();
-                return;
+                return true;
             }
 
             EnsureGpuBvhResources(commandCount);
+            if (!EnsureBvhProgramsReady(commandCount))
+            {
+                _bvhReady = false;
+                return false;
+            }
+
             DispatchCommandAabbBuild(commandCount);
 
             _gpuBvhTree!.Build(_commandAabbBuffer!, commandCount, _bounds);
@@ -3804,15 +3810,26 @@ namespace XREngine.Rendering.Commands
 
             if (IsGpuSceneLoggingEnabled())
                 SceneLog($"[GPUScene] Built internal BVH with {_bvhNodeCount} nodes for {commandCount} commands");
+
+            return true;
         }
 
-        private void RefitInternalBvh(uint commandCount)
+        private bool RefitInternalBvh(uint commandCount)
         {
             if (_gpuBvhTree is null || _allLoadedCommandsBuffer is null || _commandAabbBuffer is null)
-                return;
+            {
+                _bvhReady = false;
+                return false;
+            }
 
             if (commandCount == 0 || _bvhPrimitiveCount == 0)
-                return;
+                return true;
+
+            if (!EnsureBvhProgramsReady(commandCount))
+            {
+                _bvhReady = false;
+                return false;
+            }
 
             DispatchCommandAabbBuild(commandCount);
             _gpuBvhTree.Refit();
@@ -3820,6 +3837,7 @@ namespace XREngine.Rendering.Commands
             _bvhNodeCount = _gpuBvhTree.NodeCount;
             _bvhPrimitiveCount = _gpuBvhTree.PrimitiveCount;
             _bvhReady = _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
+            return true;
         }
 
         public void PrepareBvhForCulling(uint commandCount)
@@ -3838,16 +3856,18 @@ namespace XREngine.Rendering.Commands
 
             if (_bvhDirty || !_bvhReady || _bvhPrimitiveCount != commandCount || _gpuBvhTree is null)
             {
-                RebuildInternalBvh();
-                _bvhDirty = false;
-                _bvhRefitPending = false;
+                if (RebuildInternalBvh())
+                {
+                    _bvhDirty = false;
+                    _bvhRefitPending = false;
+                }
                 return;
             }
 
             if (_bvhRefitPending)
             {
-                RefitInternalBvh(commandCount);
-                _bvhRefitPending = false;
+                if (RefitInternalBvh(commandCount))
+                    _bvhRefitPending = false;
             }
         }
 
@@ -3856,6 +3876,29 @@ namespace XREngine.Rendering.Commands
             _gpuBvhTree ??= new GpuBvhTree();
             EnsureCommandAabbBuffer(commandCount);
             EnsureCommandAabbProgram();
+        }
+
+        private bool EnsureBvhProgramsReady(uint commandCount)
+        {
+            bool ready = EnsureProgramReady(_commandAabbProgram);
+            if (_gpuBvhTree is not null)
+                ready &= _gpuBvhTree.EnsureProgramsReady(commandCount);
+
+            return ready;
+        }
+
+        private static bool EnsureProgramReady(XRRenderProgram? program)
+        {
+            if (program is null)
+                return false;
+
+            if (program.IsLinked)
+                return true;
+
+            if (!program.LinkReady)
+                program.Link();
+
+            return false;
         }
 
         private void EnsureCommandAabbBuffer(uint commandCount)

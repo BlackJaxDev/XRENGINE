@@ -2,6 +2,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Vulkan;
 using System;
 using System.Threading;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -13,7 +14,7 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     public static void Execute(VPRC_RenderMeshesPassShared command)
     {
-        if (command.GPUDispatch)
+        if (command.MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
             RenderGPU(command);
         else
             RenderCPU(command);
@@ -39,11 +40,12 @@ internal static class VPRC_RenderMeshesPassTraditional
             true,
             camera,
             allowExcludedGpuFallbackMeshes: false);
-        activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass);
+        activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
 
         if (activeInstance.MeshRenderCommands.TryGetGpuPass(command.RenderPass, out var gpuPass) && gpuPass.VisibleCommandCount == 0)
         {
-            bool allowCpuSafetyNet = IsExplicitCpuFallbackAllowed();
+            bool allowCpuSafetyNet = command.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented
+                && IsExplicitCpuFallbackAllowed();
 
             if (allowCpuSafetyNet)
             {

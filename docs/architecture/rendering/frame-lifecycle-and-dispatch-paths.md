@@ -344,7 +344,7 @@ This is the classic scene-tree path.
 
 #### CPU traditional draw path
 
-The traditional CPU draw path is selected when the mesh pass command's `GPUDispatch` flag is false.
+The traditional CPU draw path is selected when the mesh pass command's `MeshSubmissionStrategy` is `CpuDirect`. The older `GPUDispatch == false` path still maps to this strategy.
 
 This path:
 
@@ -355,7 +355,10 @@ This is the simplest and most direct path, and it does not rely on GPU-driven cu
 
 #### GPU traditional indirect draw path
 
-This is the main GPU-driven production path today.
+This is the main GPU-driven production path today. It has two explicit strategy modes:
+
+- `GpuIndirectInstrumented`: validation and bring-up path; CPU readbacks, count dumps, and CPU safety-net fallback are allowed only here.
+- `GpuIndirectZeroReadback`: production path; GPU-written count and material-tier buffers are consumed directly and steady-state CPU readbacks are forbidden.
 
 It consists of:
 
@@ -376,20 +379,22 @@ Optional data/processing variants inside the GPU path include:
 - occlusion passes and Hi-Z support
 - GPU-driven batching and instancing
 
-Fallback policy when GPU dispatch is enabled:
+Fallback policy when GPU mesh submission is enabled:
 
 - mesh commands marked `ExcludeFromGpuIndirect` are not silently rendered on the CPU anymore during GPU mesh passes; the pass now warns and skips them so hidden per-submesh CPU reversion is visible
-- the old full-pass CPU mesh safety-net is now treated as an explicit diagnostics-only path; it only runs when GPU CPU fallback diagnostics are enabled and it emits a warning when triggered
+- the old full-pass CPU mesh safety-net is an explicit diagnostics-only path; it only runs for `GpuIndirectInstrumented` when GPU CPU fallback diagnostics are enabled and it emits a warning when triggered
+- the zero-readback path must not call CPU count, batch, per-view draw count, or indirect command dump readbacks
 - GPU culling-stage CPU recovery remains a separate diagnostics path controlled by the existing fallback/debug settings and profile policy
 
 #### Meshlet draw path intent
 
 The codebase has a path split for `Traditional` versus `Meshlet` mesh rendering intent.
 
-However, the dedicated meshlet render command path is not yet implemented as a production path:
+The dedicated meshlet render command path is still experimental:
 
 - `VPRC_RenderMeshesPassShared` can route to `Traditional` or `Meshlet` intent.
-- `VPRC_RenderMeshesPassMeshlet` currently logs a warning and falls back to `Traditional`.
+- `GpuMeshlet` requires `SupportsMeshletDispatch()` from the active renderer.
+- unsupported meshlet dispatch logs a warning and falls back to traditional GPU indirect submission.
 
 There is real meshlet infrastructure in the repository:
 
@@ -417,16 +422,18 @@ That means "GPU dispatch enabled" does not automatically mean "BVH enabled." BVH
 
 ## Settings and Policy That Influence Path Selection
 
-### `GPURenderDispatch`
+### `EMeshSubmissionStrategy`
 
-This is the primary toggle for whether mesh passes attempt the GPU-driven path.
+This is the effective strategy for mesh pass submission. It is resolved by `Engine.Rendering.ResolveMeshSubmissionStrategy()` from profile, settings, and renderer capability probes.
 
 Effects:
 
 - changes `VisualScene3D` behavior between CPU octree collection and GPU-scene-oriented collection
-- changes mesh pass execution between CPU traditional and GPU-driven traditional indirect
+- changes mesh pass execution between CPU traditional, instrumented GPU indirect, zero-readback GPU indirect, and meshlet submission
 - is propagated into render pipelines by rendering settings helpers
 - suppresses silent per-submesh CPU draw fallback in GPU mesh passes; skipped opt-out meshes are warned instead
+
+`GPURenderDispatch` remains as a compatibility input. Boolean call sites that pass `true` preserve the legacy instrumented GPU indirect behavior.
 
 ### `UseGpuBvh`
 
@@ -448,7 +455,7 @@ Requested settings are not the final word. Rendering settings flow through profi
 
 For example:
 
-- `Engine.Rendering.ResolveGpuRenderDispatchPreference(...)`
+- `Engine.Rendering.ResolveMeshSubmissionStrategy(...)`
 - Vulkan feature profile rules
 - debug/diagnostic profiles that allow or suppress CPU safety nets
 
@@ -517,7 +524,7 @@ World responsibilities:
 Viewport responsibilities:
 
 - execute the command chain
-- route mesh passes to CPU or GPU dispatch
+- route mesh passes to the resolved mesh submission strategy
 - submit final draws
 
 ## Current-State Summary
@@ -529,7 +536,7 @@ If you need the practical, non-aspirational summary of the engine as it exists t
 - GPU-driven rendering uses `GPUScene` plus `GPURenderPassCollection` for later GPU culling and indirect generation.
 - GPU BVH exists and is wired for GPU command culling, but it is optional and not the same thing as replacing the CPU octree scene tree.
 - Per-mesh CPU BVHs exist for picking/raycast/skinned-mesh work.
-- Meshlet infrastructure exists, but the explicit meshlet mesh-pass router currently falls back to the traditional path.
+- Meshlet infrastructure exists, but `GpuMeshlet` is experimental and falls back to traditional GPU indirect submission when the active renderer does not expose meshlet dispatch support.
 
 ## Source Code Guide
 

@@ -69,6 +69,11 @@ namespace XREngine.Rendering.Commands
         public const int MaterialScatterDrawCounts = 6;
         public const int MaterialScatterOverflow = 7;
         public const int MaterialScatterLodTransitions = 8;
+
+        // Compute GPURenderBuildActiveMaterialBuckets.comp bindings
+        public const int ActiveMaterialBucketDrawCounts = 0;
+        public const int ActiveMaterialBucketIndices = 1;
+        public const int ActiveMaterialBucketCount = 2;
     }
 
     public static class GPUBatchingLayout

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine
@@ -243,6 +244,55 @@ namespace XREngine
                     Rendering.Settings.EnableZeroReadbackMaterialScatter,
                     GameSettings?.EnableZeroReadbackMaterialScatterOverride,
                     UserSettings?.EnableZeroReadbackMaterialScatterOverride);
+
+            /// <summary>
+            /// Gets the active zero-readback material draw path.
+            /// </summary>
+            public static EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath
+                => ResolveZeroReadbackMaterialDrawPath();
+
+            private static EZeroReadbackMaterialDrawPath ResolveZeroReadbackMaterialDrawPath()
+            {
+                string? raw = Environment.GetEnvironmentVariable("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH");
+                if (!string.IsNullOrWhiteSpace(raw) &&
+                    Enum.TryParse(raw.Trim(), ignoreCase: true, out EZeroReadbackMaterialDrawPath parsed))
+                {
+                    return parsed;
+                }
+
+                EZeroReadbackMaterialDrawPath cascaded = OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.ZeroReadbackMaterialDrawPath,
+                    GameSettings?.ZeroReadbackMaterialDrawPathOverride,
+                    UserSettings?.ZeroReadbackMaterialDrawPathOverride);
+
+                EditorDebugOptions? editorDebug = EditorPreferences?.Debug;
+                if (editorDebug is not null &&
+                    (editorDebug.EnableZeroReadbackMaterialScatter ||
+                     editorDebug.ZeroReadbackMaterialDrawPath != EZeroReadbackMaterialDrawPath.FullBucketScan))
+                {
+                    return editorDebug.ZeroReadbackMaterialDrawPath;
+                }
+
+                return cascaded;
+            }
+
+            /// <summary>
+            /// Gets the optional forced mesh submission strategy for diagnostics and local bring-up.
+            /// </summary>
+            public static EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
+                => ResolveForcedMeshSubmissionStrategy();
+
+            private static EMeshSubmissionStrategy? ResolveForcedMeshSubmissionStrategy()
+            {
+                string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
+                if (!string.IsNullOrWhiteSpace(raw) &&
+                    Enum.TryParse(raw.Trim(), ignoreCase: true, out EMeshSubmissionStrategy parsed))
+                {
+                    return parsed;
+                }
+
+                return Rendering.Settings.ForceMeshSubmissionStrategy;
+            }
 
             /// <summary>
             /// Gets the effective anti-aliasing mode.

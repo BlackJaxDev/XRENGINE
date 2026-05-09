@@ -174,6 +174,22 @@ Many albedo textures carry non-transparency data in alpha (smoothness, AO, paddi
 
 ---
 
+## 11. Mesh Submission Strategy
+
+**Rule:** Default mesh passes must request `Engine.Rendering.ResolveMeshSubmissionStrategy()` through `MeshSubmissionStrategy`, while `PreRender` and `PostRender` stay CPU-only.
+
+The strategy contract is documented in [Mesh Submission Strategies](mesh-submission-strategies.md). In short, `GpuIndirectInstrumented` is the only GPU path that may perform CPU readbacks or CPU mesh safety-net fallback. `GpuIndirectZeroReadback` is the production path and must not call count, batch, or indirect-buffer readback helpers during steady-state render submission.
+
+When adding a mesh pass to `DefaultRenderPipeline` or `DefaultRenderPipeline2`, use:
+
+```csharp
+c.Add<VPRC_RenderMeshesPass>().SetOptions(renderPass, MeshSubmissionStrategy);
+```
+
+Use `false` only for known CPU-only passes such as `PreRender` and `PostRender`.
+
+---
+
 ## 11. Volumetric Fog: Separated Half-Res Temporal Chain
 
 **Rule:** In the active `DefaultRenderPipeline` path, volumetric fog is not part of `PostProcess.fs`. Keep the stage ordering as:

@@ -359,6 +359,7 @@ namespace XREngine
         private OverrideableSetting<bool> _enableGpuIndirectCpuFallbackOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectValidationLoggingOverride = new();
         private OverrideableSetting<bool> _enableZeroReadbackMaterialScatterOverride = new();
+        private OverrideableSetting<EZeroReadbackMaterialDrawPath> _zeroReadbackMaterialDrawPathOverride = new();
         private OverrideableSetting<bool> _useGpuBvhOverride = new();
         private OverrideableSetting<uint> _bvhLeafMaxPrimsOverride = new();
         private OverrideableSetting<EBvhMode> _bvhModeOverride = new();
@@ -513,6 +514,19 @@ namespace XREngine
         {
             get => _enableZeroReadbackMaterialScatterOverride;
             set => SetField(ref _enableZeroReadbackMaterialScatterOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the zero-readback material draw path.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Can be further overridden by user settings.
+        /// </summary>
+        [Category("Debug Overrides")]
+        [Description("Project override for the zero-readback material draw path.")]
+        public OverrideableSetting<EZeroReadbackMaterialDrawPath> ZeroReadbackMaterialDrawPathOverride
+        {
+            get => _zeroReadbackMaterialDrawPathOverride;
+            set => SetField(ref _zeroReadbackMaterialDrawPathOverride, value ?? new());
         }
 
         /// <summary>

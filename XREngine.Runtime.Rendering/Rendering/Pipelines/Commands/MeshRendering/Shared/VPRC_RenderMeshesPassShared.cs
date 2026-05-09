@@ -27,11 +27,25 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         GPUDispatch = gpuDispatch;
     }
 
-    private bool _gpuDispatch;
+    public VPRC_RenderMeshesPassShared(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
+    {
+        RenderPass = renderPass;
+        MeshSubmissionStrategy = meshSubmissionStrategy;
+    }
+
+    private EMeshSubmissionStrategy _meshSubmissionStrategy = EMeshSubmissionStrategy.CpuDirect;
+    public EMeshSubmissionStrategy MeshSubmissionStrategy
+    {
+        get => _meshSubmissionStrategy;
+        set => SetField(ref _meshSubmissionStrategy, value);
+    }
+
     public bool GPUDispatch
     {
-        get => _gpuDispatch;
-        set => SetField(ref _gpuDispatch, value);
+        get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
+        set => MeshSubmissionStrategy = value
+            ? EMeshSubmissionStrategy.GpuIndirectInstrumented
+            : EMeshSubmissionStrategy.CpuDirect;
     }
 
     private int _renderPass;
@@ -54,6 +68,12 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         GPUDispatch = gpuDispatch;
     }
 
+    public void SetOptions(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
+    {
+        RenderPass = renderPass;
+        MeshSubmissionStrategy = meshSubmissionStrategy;
+    }
+
     public void SetOptions(int renderPass, bool gpuDispatch, EMeshRenderingPathIntent pathIntent)
     {
         RenderPass = renderPass;
@@ -61,8 +81,15 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         PathIntent = pathIntent;
     }
 
+    public void SetOptions(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy, EMeshRenderingPathIntent pathIntent)
+    {
+        RenderPass = renderPass;
+        MeshSubmissionStrategy = meshSubmissionStrategy;
+        PathIntent = pathIntent;
+    }
+
     public override string GpuProfilingName
-        => $"VPRC_RenderMeshesPass[{FormatRenderPassName(RenderPass)};{(GPUDispatch ? "GPU" : "CPU")};{PathIntent}]";
+        => $"VPRC_RenderMeshesPass[{FormatRenderPassName(RenderPass)};{MeshSubmissionStrategy};{PathIntent}]";
 
     protected override bool ShouldExecuteThisFrame()
     {
@@ -72,11 +99,24 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     protected override void Execute()
     {
+        if (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet ||
+            PathIntent == EMeshRenderingPathIntent.Meshlet)
+        {
+            if (AbstractRenderer.Current?.SupportsMeshletDispatch() == true)
+            {
+                VPRC_RenderMeshesPassMeshlet.Execute(this);
+                return;
+            }
+
+            XREngine.Debug.RenderingWarningEvery(
+                $"RenderMeshesPass.MeshletUnsupported.{RenderPass}",
+                TimeSpan.FromSeconds(5),
+                "[RenderDispatch] Meshlet submission requested for pass {0}, but the active renderer does not support meshlet dispatch. Falling back to traditional GPU indirect submission.",
+                RenderPass);
+        }
+
         switch (PathIntent)
         {
-            case EMeshRenderingPathIntent.Meshlet:
-                VPRC_RenderMeshesPassMeshlet.Execute(this);
-                break;
             case EMeshRenderingPathIntent.Traditional:
             default:
                 VPRC_RenderMeshesPassTraditional.Execute(this);
@@ -92,8 +132,8 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
         string passName = PathIntent switch
         {
-            EMeshRenderingPathIntent.Meshlet => $"RenderMeshesMeshlet_{RenderPass}",
-            _ => $"RenderMeshesTraditional_{RenderPass}",
+            EMeshRenderingPathIntent.Meshlet => $"RenderMeshesMeshlet_{RenderPass}_{MeshSubmissionStrategy}",
+            _ => $"RenderMeshesTraditional_{RenderPass}_{MeshSubmissionStrategy}",
         };
 
         var builder = context.Metadata.ForPass(RenderPass, passName, ERenderGraphPassStage.Graphics);

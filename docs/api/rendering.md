@@ -11,7 +11,7 @@ XRENGINE renders each world through a staged pipeline that separates scene updat
 
 ## Scene Visibility Collection
 - Every world owns a `VisualScene` (usually `VisualScene3D`) that tracks renderable proxies (`RenderInfo3D`). It exposes both an octree (`RenderTree`) for CPU collection and a GPU-friendly command buffer (`GPUCommands`).
-- The engine toggles between the CPU tree and GPU-driven path via `Engine.UserSettings.GPURenderDispatch`. When disabled the octree performs frustum tests per renderable; when enabled the same data is mirrored into `GPUScene` buffers so the GPU can cull and sort.
+- The engine toggles between the CPU tree and GPU-driven path via `Engine.Rendering.ResolveMeshSubmissionStrategy()`. `GPURenderDispatch` is still accepted as a compatibility input, but the effective strategy decides whether the same data is mirrored into `GPUScene` buffers for GPU cull and sort.
 - `CollectRenderedItems` is invoked per camera to filter objects against the view volume, assemble `RenderCommand` entries, and enqueue them into the `RenderCommandCollection`. Mirrors and other secondary views plug in through the same call.
 - `GlobalSwapBuffers` double-buffers the render tree and command queues so update and render threads never race. `RenderCommandCollection.SwapBuffers` swaps the CPU/GPU command sets and clears the update-side containers for the next frame.
 
@@ -24,6 +24,14 @@ XRENGINE renders each world through a staged pipeline that separates scene updat
   - Builds the indirect draw buffer (`DrawElementsIndirectCommand` records) per pass and material.
   - Hands the prepared buffers to `HybridRenderingManager`, which issues `glMultiDrawElementsIndirect` calls or falls back to CPU submission when debug flags request it.
 - Extensive diagnostics (`IndirectDebugSettings`) allow forcing CPU rebuilds, reading back counts, or dumping command samples without modifying runtime code.
+
+## Mesh Submission Strategies
+- Mesh pass submission is selected with `EMeshSubmissionStrategy`: `CpuDirect`, `GpuIndirectInstrumented`, `GpuIndirectZeroReadback`, or `GpuMeshlet`.
+- `Engine.Rendering.ResolveMeshSubmissionStrategy()` maps settings, Vulkan GPU-driven profile, and renderer capability probes into the effective strategy. `ForceMeshSubmissionStrategy` or `XRE_FORCE_MESH_SUBMISSION_STRATEGY` can override it for local triage.
+- `GpuIndirectInstrumented` is the only GPU strategy that may read GPU buffers back to the CPU or run explicit CPU mesh fallback diagnostics. `GpuIndirectZeroReadback` is the production strategy and consumes GPU-written count and material-tier buffers without hot-path readbacks.
+- Zero-readback material submission is selected with `EZeroReadbackMaterialDrawPath` through `Engine.Rendering.Settings.ZeroReadbackMaterialDrawPath`, user/project overrides, the ImGui debug preference, or `XRE_ZERO_READBACK_MATERIAL_DRAW_PATH`. The options are `FullBucketScan`, `ActiveBucketList`, `MaterialTable`, and `BindlessMaterialTable`.
+- `FullBucketScan` preserves the original per-material/per-atlas-tier bucket loop. `ActiveBucketList` adds a GPU compaction pass and reads back only active bucket IDs for profiling the empty-bucket overhead. `MaterialTable` and `BindlessMaterialTable` use the active bucket list with a shared material-table shader; bindless is gated on `GL_ARB_bindless_texture` and `GL_ARB_gpu_shader_int64` and currently falls back to material-table debug coloring until real bindless texture handles are populated.
+- See [Mesh Submission Strategies](../architecture/rendering/mesh-submission-strategies.md) for the strategy table and pass contract.
 
 ## Render Pipelines and Passes
 - A render pipeline is expressed by a `RenderPipeline` subclass. It defines a `ViewportRenderCommandContainer` chain that pushes commands such as visibility collection, shadow pass preparation, main pass rendering, post processing, and UI composition.
