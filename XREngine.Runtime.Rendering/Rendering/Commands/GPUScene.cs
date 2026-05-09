@@ -2190,10 +2190,23 @@ namespace XREngine.Rendering.Commands
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
             };
-            buffer.Generate();
-            buffer.PushSubData();
-            buffer.MapBufferData();
+            InitializeLodTransitionBuffer(buffer);
             return buffer;
+        }
+
+        private static void InitializeLodTransitionBuffer(XRDataBuffer buffer)
+        {
+            void Initialize()
+            {
+                buffer.Generate();
+                buffer.PushSubData();
+                buffer.MapBufferData();
+            }
+
+            if (Engine.IsRenderThread)
+                Initialize();
+            else
+                Engine.EnqueueMainThreadTask(Initialize, "GPUScene.LodTransitionBuffer.Initialize");
         }
 
         private void EnsureLodTransitionBufferCapacity(uint requiredSize)

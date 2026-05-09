@@ -292,6 +292,7 @@ public static partial class EditorUnitTests
         public bool AllowBinaryProgramCaching { get; set; } = true; //Allows linked OpenGL shader programs to be cached as driver binaries.
         public bool AsyncProgramBinaryUpload { get; set; } = true; //Uploads cached OpenGL program binaries on a shared GL context thread when possible.
         public bool AsyncProgramCompilation { get; set; } = true; //Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it.
+        public bool AllowSkinning { get; set; } = true; //Enables skeletal skinning for bounds updates and rendering. Import still preserves skinning data so this can be toggled live.
         public int OpenGLProgramCompileLinkWorkerCount { get; set; } = 1; //Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. Values above one require XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1.
         public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16; //Maximum number of pending async OpenGL shader programs to advance per render frame.
         public int OpenGLShaderCompilerThreadCount { get; set; } = -1; //Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.

@@ -126,8 +126,10 @@ namespace XREngine.Rendering.OpenGL
                 using (Engine.Profiler.Start("GLMaterial.SetUniforms.BeginBindingBatch", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     materialProgram.BeginBindingBatch();
 
+                XRMaterialBase uniformSource = shadowBindingPlan is not null ? shadowBindingSource! : Data;
                 bool forceUniformUpdate = !ReferenceEquals(_lastUniformProgram, materialProgram.Data) ||
-                    _lastUniformProgramBindingId != materialProgram.BindingId;
+                    _lastUniformProgramBindingId != materialProgram.BindingId ||
+                    materialProgram.MarkSharedMaterialUniformSource(uniformSource);
 
                 _lastUniformProgram = materialProgram.Data;
                 _lastUniformProgramBindingId = materialProgram.BindingId;
@@ -142,7 +144,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                     else
                     {
-                        foreach (ShaderVar param in Data.Parameters)
+                        foreach (ShaderVar param in uniformSource.Parameters)
                             param.SetUniform(materialProgram.Data, forceUpdate: forceUniformUpdate);
                     }
                 }

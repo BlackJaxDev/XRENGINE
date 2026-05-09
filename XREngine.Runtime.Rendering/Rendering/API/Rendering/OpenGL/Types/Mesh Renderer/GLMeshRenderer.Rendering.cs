@@ -319,11 +319,13 @@ namespace XREngine.Rendering.OpenGL
             {
                 Dbg($"Render request (instances={instances}, billboard={billboardMode})", "Render");
                 LogBatchedTextDraw("Render request", instances, $"billboard={billboardMode}");
+                LogModelDrawDiagnostic("Render request", instances, $"billboard={billboardMode}");
 
                 if (Data is null || !Renderer.Active)
                 {
                     Dbg("Render early-out: Data null or renderer inactive", "Render");
                     LogBatchedTextDraw("Render inactive", instances, $"dataNull={Data is null}, rendererActive={Renderer.Active}");
+                    LogModelDrawDiagnostic("Render inactive", instances, $"dataNull={Data is null}, rendererActive={Renderer.Active}");
                     return;
                 }
 
@@ -349,6 +351,7 @@ namespace XREngine.Rendering.OpenGL
                                 ? "Not generated yet - startup throttling queued render-pipeline generation"
                                 : "Not generated yet - queued for deferred generation", "Render");
                         LogBatchedTextDraw("Render queued-generation", instances, $"shadow={shadowPass}, priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
+                        LogModelDrawDiagnostic("Render queued-generation", instances, $"shadow={shadowPass}, priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
                         return; // Skip rendering until generated
                     }
 
@@ -379,9 +382,9 @@ namespace XREngine.Rendering.OpenGL
                     if (Renderer.MeshGenerationQueue.Enabled && (!isRenderPipelinePriority || throttleRenderPipelineGeneration))
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
-                        Dbg("Generated but not render-ready - queued for deferred preparation", "Render");
-                        LogBatchedTextDraw("Render queued-preparation", instances, $"priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
-                        return;
+                        Dbg("Generated but not render-ready - queued for deferred preparation while continuing direct draw attempt", "Render");
+                        LogBatchedTextDraw("Render queued-preparation", instances, $"priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}, continueDirect=True");
+                        LogModelDrawDiagnostic("Render queued-preparation", instances, $"priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}, continueDirect=True");
                     }
                 }
 
@@ -409,6 +412,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         BuffersBound = false;
                         LogBatchedTextDraw("Render vao-stale-rebind", instances);
+                        LogModelDrawDiagnostic("Render vao-stale-rebind", instances);
                     }
 
                     if (!BuffersBound)
@@ -418,6 +422,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                         LogBatchedTextDraw("Render buffers-not-bound", instances);
+                        LogModelDrawDiagnostic("Render buffers-not-bound", instances);
                         return;
                     }
 
@@ -454,6 +459,7 @@ namespace XREngine.Rendering.OpenGL
                         using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw", ProfilerScopeKind.AlwaysOnHotPathLoop))
                         {
                             LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
+                            LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
                             Renderer.RenderMesh(this, false, drawInstances);
                         }
                     }
@@ -468,6 +474,7 @@ namespace XREngine.Rendering.OpenGL
                     Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                     Dbg("GetPrograms failed - render skipped", "Render");
                     LogBatchedTextDraw("Render programs-missing", instances);
+                    LogModelDrawDiagnostic("Render programs-missing", instances);
                 }
             }
 

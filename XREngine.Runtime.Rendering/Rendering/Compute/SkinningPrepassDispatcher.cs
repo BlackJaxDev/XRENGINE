@@ -104,6 +104,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         if (!doSkinning && !doBlendshapes)
             return;
 
+        if (doSkinning && !renderer.HasExternalBoneMatrixSource)
+            renderer.EnsureSkinningBuffers(logWarnings: false);
+        if (doBlendshapes)
+            renderer.EnsureBlendshapeBuffers(logWarnings: false);
+
         bool useExternalBoneSource = doSkinning && renderer.HasExternalBoneMatrixSource;
         bool usePackedGlobalBones = doSkinning
             && !useExternalBoneSource

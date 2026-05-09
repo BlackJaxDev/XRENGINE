@@ -212,6 +212,7 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.FixedFramesPerSecond) => "Performance",
 
             nameof(Engine.EffectiveSettings.AllowShaderPipelines) or
+            nameof(Engine.EffectiveSettings.AllowSkinning) or
             nameof(Engine.EffectiveSettings.UseIntegerWeightingIds) or
             nameof(Engine.EffectiveSettings.RecalcChildMatricesLoopType) or
             nameof(Engine.EffectiveSettings.SkinnedBoundsRecomputePolicy) or

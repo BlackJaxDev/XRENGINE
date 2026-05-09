@@ -229,6 +229,7 @@ namespace XREngine.Rendering.OpenGL
             private void Reset()
             {
                 IsLinked = false;
+                _sharedLinkedProgram = null;
                 _replacementProgramId = 0;
                 _replacementProgramPending = false;
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
@@ -280,6 +281,25 @@ namespace XREngine.Rendering.OpenGL
                 Reset();
             }
 
+            protected override void DeleteObject()
+            {
+                if (_sharedLinkedProgram is null)
+                {
+                    base.DeleteObject();
+                    return;
+                }
+
+                if (!IsGenerated)
+                    return;
+
+                uint bindingId = _bindingId!.Value;
+                PreDeleted();
+                RemoveCacheEntry(bindingId);
+                ReleaseSharedLinkedProgramReference();
+                _bindingId = null;
+                PostDeleted();
+            }
+
             public bool HasUniform(string name)
             {
                 if (string.IsNullOrWhiteSpace(name))
@@ -306,11 +326,22 @@ namespace XREngine.Rendering.OpenGL
                     0,
                     () => handle = Api.CreateProgram(),
                     $"separable={Data.Separable}");
-                MeasureRenderingProgramGlCall(
-                    "glProgramParameteri(GL_PROGRAM_BINARY_RETRIEVABLE_HINT)",
-                    handle,
-                    () => Api.ProgramParameter(handle, GLEnum.ProgramBinaryRetrievableHint, 1),
-                    "value=1");
+                if (ShouldSetProgramBinaryRetrievableHintOnCreate())
+                {
+                    MeasureRenderingProgramGlCall(
+                        "glProgramParameteri(GL_PROGRAM_BINARY_RETRIEVABLE_HINT)",
+                        handle,
+                        () => Api.ProgramParameter(handle, GLEnum.ProgramBinaryRetrievableHint, 1),
+                        "value=1 phase=create");
+                }
+                else
+                {
+                    LogRenderingProgramBuildEvent(
+                        "PROGRAM_BINARY_RETRIEVABLE_HINT_DEFERRED",
+                        "HandleCreate",
+                        $"mode={BinaryRetrievableHintMode}; hint will be set before source links only",
+                        programId: handle);
+                }
                 MeasureRenderingProgramGlCall(
                     "glProgramParameteri(GL_PROGRAM_SEPARABLE)",
                     handle,

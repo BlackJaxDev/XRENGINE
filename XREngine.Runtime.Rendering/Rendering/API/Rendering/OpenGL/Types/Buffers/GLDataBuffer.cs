@@ -3,6 +3,7 @@ using Silk.NET.OpenGL;
 using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using System.Buffers;
 using System.Linq;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
@@ -339,31 +340,35 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                if (!TryBeginQueuedUpload())
+                    return;
+
                 void* srcPtr = sourceAddress.Pointer;
-                bool disposeOnPush = Data.DisposeOnPush;
-                var dataRef = Data;
 
                 void EnqueueCopy()
                 {
-                    // Copy data to managed array - no GL calls needed
-                    byte[] dataCopy = new byte[dataLength];
-                    fixed (byte* dest = dataCopy)
+                    byte[]? dataCopy = null;
+                    try
                     {
-                        System.Buffer.MemoryCopy(srcPtr, dest, dataLength, dataLength);
-                    }
-
-                    // Enqueue for frame-budgeted upload
-                    Renderer.UploadQueue.EnqueueUpload(this, dataCopy, dataLength);
-
-                    // Handle disposal separately if needed
-                    if (disposeOnPush)
-                    {
-                        Engine.EnqueueMainThreadTask(() =>
+                        // Copy data to a managed snapshot; no GL calls are made off the render thread.
+                        dataCopy = ArrayPool<byte>.Shared.Rent(checked((int)dataLength));
+                        fixed (byte* dest = dataCopy)
                         {
-                            // Only dispose after upload completes
-                            if (_lastPushedLength >= dataLength)
-                                dataRef.Dispose();
-                        }, "GLDataBuffer.PushDataQueued.Dispose");
+                            System.Buffer.MemoryCopy(srcPtr, dest, dataLength, dataLength);
+                        }
+
+                        Renderer.UploadQueue.EnqueueUpload(this, dataCopy, dataLength, returnDataToPool: true);
+                        CompleteQueuedCopy();
+                        dataCopy = null;
+                    }
+                    catch (Exception ex)
+                    {
+                        if (dataCopy is not null)
+                            ArrayPool<byte>.Shared.Return(dataCopy);
+
+                        CancelQueuedUpload();
+                        Debug.OpenGLWarning($"[GLDataBuffer] Failed to snapshot queued upload for '{GetDescribingName()}' ({dataLength} bytes): {ex.GetType().Name}: {ex.Message}. Falling back to immediate upload.");
+                        Engine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushDataQueued.Fallback");
                     }
                 }
 
@@ -468,6 +473,70 @@ namespace XREngine.Rendering.OpenGL
             internal void SetLastPushedLength(uint length)
             {
                 _lastPushedLength = length;
+            }
+
+            private readonly object _queuedUploadSync = new();
+            private bool _queuedCopyInFlight;
+            private bool _queuedUploadDirty;
+
+            private bool TryBeginQueuedUpload()
+            {
+                lock (_queuedUploadSync)
+                {
+                    if (_queuedCopyInFlight || _hasPendingUpload)
+                    {
+                        _queuedUploadDirty = true;
+                        return false;
+                    }
+
+                    _queuedCopyInFlight = true;
+                    _hasPendingUpload = true;
+                    return true;
+                }
+            }
+
+            private void CompleteQueuedCopy()
+            {
+                lock (_queuedUploadSync)
+                    _queuedCopyInFlight = false;
+            }
+
+            private void CancelQueuedUpload()
+            {
+                lock (_queuedUploadSync)
+                {
+                    _queuedCopyInFlight = false;
+                    _queuedUploadDirty = false;
+                    _hasPendingUpload = false;
+                }
+            }
+
+            internal void CompleteQueuedUpload(uint length)
+            {
+                bool uploadAgain;
+                lock (_queuedUploadSync)
+                {
+                    _lastPushedLength = length;
+                    _hasPendingUpload = false;
+                    uploadAgain = _queuedUploadDirty;
+                    _queuedUploadDirty = false;
+                }
+
+                if (Data.DisposeOnPush && !uploadAgain)
+                    Data.Dispose();
+
+                if (uploadAgain)
+                    PushDataQueued();
+            }
+
+            internal void FailQueuedUpload()
+            {
+                lock (_queuedUploadSync)
+                {
+                    _hasPendingUpload = false;
+                    _queuedCopyInFlight = false;
+                    _queuedUploadDirty = false;
+                }
             }
 
             /// <summary>
@@ -818,7 +887,7 @@ namespace XREngine.Rendering.OpenGL
                 UnmapBufferData();
                 _immutableStorageSet = false;
                 _lastPushedLength = 0;
-                _hasPendingUpload = false;
+                FailQueuedUpload();
 
                 // Track VRAM deallocation
                 if (_allocatedVRAMBytes > 0)

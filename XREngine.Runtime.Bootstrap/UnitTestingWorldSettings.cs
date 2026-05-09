@@ -248,6 +248,7 @@ public class UnitTestingWorldSettings
     public float StartupMaxShadowRenderMilliseconds { get; set; } = 0.5f;
 
     public bool AllowShaderPipelines = false;
+    public bool AllowSkinning { get; set; } = true;
     public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy { get; set; } = EOpenGLShaderLinkStrategy.Auto;
     public bool AllowBinaryProgramCaching { get; set; } = true;
     public bool AsyncProgramBinaryUpload { get; set; } = true;

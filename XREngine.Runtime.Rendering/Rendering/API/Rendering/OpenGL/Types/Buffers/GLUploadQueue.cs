@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
@@ -54,12 +55,13 @@ namespace XREngine.Rendering.OpenGL
                 public required uint DataLength { get; init; }
                 public uint Offset { get; init; }
                 public bool StorageAllocated { get; init; }
+                public bool ReturnDataToPool { get; init; }
             }
 
             /// <summary>
             /// Enqueues a buffer upload to be processed during the frame budget.
             /// </summary>
-            public void EnqueueUpload(GLDataBuffer buffer, byte[] data, uint dataLength)
+            public void EnqueueUpload(GLDataBuffer buffer, byte[] data, uint dataLength, bool returnDataToPool = false)
             {
                 buffer._hasPendingUpload = true;
                 _pendingBuffers.TryAdd(buffer, 0);
@@ -69,7 +71,8 @@ namespace XREngine.Rendering.OpenGL
                     Data = data,
                     DataLength = dataLength,
                     Offset = 0,
-                    StorageAllocated = false
+                    StorageAllocated = false,
+                    ReturnDataToPool = returnDataToPool
                 });
             }
 
@@ -137,16 +140,18 @@ namespace XREngine.Rendering.OpenGL
                 uint targetBufferId = buffer.BindingId;
                 if (targetBufferId == GLObjectBase.InvalidBindingId)
                 {
-                    buffer._hasPendingUpload = false;
+                    buffer.FailQueuedUpload();
                     _pendingBuffers.TryRemove(buffer, out _);
+                    ReturnUploadData(upload);
                     Debug.OpenGLWarning("GLUploadQueue: Failed to generate buffer for upload.");
                     return;
                 }
 
                 if (!Engine.Rendering.Stats.CanAllocateVram(dataLength, buffer.AllocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
                 {
-                    buffer._hasPendingUpload = false;
+                    buffer.FailQueuedUpload();
                     _pendingBuffers.TryRemove(buffer, out _);
+                    ReturnUploadData(upload);
                     Debug.OpenGLWarning($"[VRAM Budget] Skipping queued buffer upload for '{buffer.GetDescribingName()}' ({dataLength} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
                     return;
                 }
@@ -182,8 +187,15 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 buffer.SetLastPushedLength(dataLength);
-                buffer._hasPendingUpload = false;
                 _pendingBuffers.TryRemove(buffer, out _);
+                ReturnUploadData(upload);
+                buffer.CompleteQueuedUpload(dataLength);
+            }
+
+            private static void ReturnUploadData(PendingUpload upload)
+            {
+                if (upload.ReturnDataToPool)
+                    ArrayPool<byte>.Shared.Return(upload.Data);
             }
 
             /// <summary>

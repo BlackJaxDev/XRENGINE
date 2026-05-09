@@ -23,6 +23,9 @@ namespace XREngine.Rendering.OpenGL
         private static long s_failedHashSkips;
         private static long s_slowLinkPreparations;
         private static long s_sharedContextSourceQueued;
+        private static long s_sharedProgramCreates;
+        private static long s_sharedProgramReuses;
+        private static long s_sharedProgramDeletes;
 
         public static long BinaryCacheHits => Interlocked.Read(ref s_binaryCacheHits);
         public static long BinaryCacheMisses => Interlocked.Read(ref s_binaryCacheMisses);
@@ -31,6 +34,9 @@ namespace XREngine.Rendering.OpenGL
         public static long FailedHashSkips => Interlocked.Read(ref s_failedHashSkips);
         public static long SlowLinkPreparations => Interlocked.Read(ref s_slowLinkPreparations);
         public static long SharedContextSourceQueued => Interlocked.Read(ref s_sharedContextSourceQueued);
+        public static long SharedProgramCreates => Interlocked.Read(ref s_sharedProgramCreates);
+        public static long SharedProgramReuses => Interlocked.Read(ref s_sharedProgramReuses);
+        public static long SharedProgramDeletes => Interlocked.Read(ref s_sharedProgramDeletes);
 
         public static void RecordBinaryCacheHit()
             => Interlocked.Increment(ref s_binaryCacheHits);
@@ -52,6 +58,15 @@ namespace XREngine.Rendering.OpenGL
 
         public static void RecordSharedContextSourceQueued()
             => Interlocked.Increment(ref s_sharedContextSourceQueued);
+
+        public static void RecordSharedProgramCreate()
+            => Interlocked.Increment(ref s_sharedProgramCreates);
+
+        public static void RecordSharedProgramReuse()
+            => Interlocked.Increment(ref s_sharedProgramReuses);
+
+        public static void RecordSharedProgramDelete()
+            => Interlocked.Increment(ref s_sharedProgramDeletes);
 
         /// <summary>
         /// Emits one <c>[ShaderProgramSummary]</c> log line with all lifecycle counters
@@ -75,6 +90,8 @@ namespace XREngine.Rendering.OpenGL
                 $"binaryHitRatio={hitRatio:F3} sourceBuilds={SourceBuilds} sourceFailures={SourceFailures} " +
                 $"failedHashSkips={FailedHashSkips} slowLinkPreps={SlowLinkPreparations} " +
                 $"sharedContextSourceQueued={SharedContextSourceQueued} " +
+                $"sharedProgramCreates={SharedProgramCreates} sharedProgramReuses={SharedProgramReuses} " +
+                $"sharedProgramDeletes={SharedProgramDeletes} " +
                 $"asyncUploadCompleted={uploadCompleted} asyncUploadFailed={uploadFailed} " +
                 $"asyncUploadBackpressure={uploadBackpressure} asyncUploadCoalesced={uploadCoalesced}.");
         }
@@ -89,6 +106,9 @@ namespace XREngine.Rendering.OpenGL
             Interlocked.Exchange(ref s_failedHashSkips, 0);
             Interlocked.Exchange(ref s_slowLinkPreparations, 0);
             Interlocked.Exchange(ref s_sharedContextSourceQueued, 0);
+            Interlocked.Exchange(ref s_sharedProgramCreates, 0);
+            Interlocked.Exchange(ref s_sharedProgramReuses, 0);
+            Interlocked.Exchange(ref s_sharedProgramDeletes, 0);
         }
     }
 }

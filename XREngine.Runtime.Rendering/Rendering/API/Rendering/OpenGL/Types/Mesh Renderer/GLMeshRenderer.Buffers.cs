@@ -140,46 +140,87 @@ namespace XREngine.Rendering.OpenGL
                 var rendBuffers = (IEventDictionary<string, XRDataBuffer>)MeshRenderer.Buffers;
 
                 if (meshBuffers is not null)
-                {
                     foreach (var pair in meshBuffers)
-                    {
-                        var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
-                        _bufferCache[pair.Key] = glBuffer;
-                        _allBuffersList.Add(glBuffer);
-                        if (pair.Value.Target == EBufferTarget.ShaderStorageBuffer)
-                            _ssboBufferCache.Add(glBuffer);
-                    }
-                }
+                        AddCollectedBuffer(pair.Key, pair.Value);
 
                 foreach (var pair in rendBuffers)
-                {
-                    var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
-                    _bufferCache[pair.Key] = glBuffer;
-                    _allBuffersList.Add(glBuffer);
-                    if (pair.Value.Target == EBufferTarget.ShaderStorageBuffer)
-                        _ssboBufferCache.Add(glBuffer);
-                }
+                    AddCollectedBuffer(pair.Key, pair.Value);
 
-                bool useComputeSkinning = Mesh?.HasSkinning == true
-                    && Engine.Rendering.Settings.AllowSkinning
+                XRMesh? mesh = Mesh;
+                bool allowSkinning = Engine.Rendering.Settings.AllowSkinning;
+                bool allowBlendshapes = Engine.Rendering.Settings.AllowBlendshapes;
+                bool hasSkinning = mesh?.HasSkinning == true;
+                bool hasBlendshapes = mesh?.BlendshapeCount > 0;
+                bool useComputeSkinning = hasSkinning
+                    && allowSkinning
                     && Engine.Rendering.Settings.CalculateSkinningInComputeShader;
-                bool useComputeBlendshapes = Mesh?.BlendshapeCount > 0
-                    && Engine.Rendering.Settings.AllowBlendshapes
+                bool useVertexSkinning = hasSkinning && allowSkinning && !useComputeSkinning;
+                bool optimizeSkinningTo4Weights = useVertexSkinning
+                    && (Engine.Rendering.Settings.OptimizeSkinningTo4Weights
+                        || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && (mesh?.MaxWeightCount ?? int.MaxValue) <= 4));
+                bool useComputeBlendshapes = hasBlendshapes
+                    && allowBlendshapes
                     && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+                bool useVertexBlendshapes = hasBlendshapes && allowBlendshapes && !useComputeBlendshapes;
 
-                if (useComputeSkinning)
+                if (!useVertexSkinning)
                 {
-                    _bufferCache.Remove(ECommonBufferType.BoneMatrixOffset.ToString());
-                    _bufferCache.Remove(ECommonBufferType.BoneMatrixCount.ToString());
+                    RemoveCollectedBuffer(ECommonBufferType.BoneMatrixOffset.ToString());
+                    RemoveCollectedBuffer(ECommonBufferType.BoneMatrixCount.ToString());
+                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrixIndices}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrices}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
+                }
+                else if (optimizeSkinningTo4Weights)
+                {
+                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrixIndices}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrixWeights}Buffer");
                 }
 
-                bool needsVertexBlendshapeAttribute = Mesh?.BlendshapeCount > 0
-                    && !useComputeBlendshapes
-                    && Engine.Rendering.Settings.AllowBlendshapes;
-                if (!needsVertexBlendshapeAttribute)
-                    _bufferCache.Remove(ECommonBufferType.BlendshapeCount.ToString());
+                if (!useVertexBlendshapes)
+                {
+                    RemoveCollectedBuffer(ECommonBufferType.BlendshapeCount.ToString());
+                    RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeIndices}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeWeights}Buffer");
+                }
 
                 Dbg($"CollectBuffers end. Total={_bufferCache.Count}, SSBOs={_ssboBufferCache.Count}", "Buffers");
+            }
+
+            private void AddCollectedBuffer(string key, XRDataBuffer xrBuffer)
+            {
+                var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(xrBuffer)!;
+                if (_bufferCache.TryGetValue(key, out var previous))
+                {
+                    _bufferCache.Remove(key);
+                    RemoveCollectedBufferValue(previous);
+                }
+
+                _bufferCache[key] = glBuffer;
+                if (!_allBuffersList.Contains(glBuffer))
+                    _allBuffersList.Add(glBuffer);
+                if (xrBuffer.Target == EBufferTarget.ShaderStorageBuffer && !_ssboBufferCache.Contains(glBuffer))
+                    _ssboBufferCache.Add(glBuffer);
+            }
+
+            private void RemoveCollectedBuffer(string key)
+            {
+                if (!_bufferCache.Remove(key, out var glBuffer))
+                    return;
+
+                RemoveCollectedBufferValue(glBuffer);
+            }
+
+            private void RemoveCollectedBufferValue(GLDataBuffer glBuffer)
+            {
+                if (_bufferCache.ContainsValue(glBuffer))
+                    return;
+
+                _allBuffersList.Remove(glBuffer);
+                if (glBuffer.Data.Target == EBufferTarget.ShaderStorageBuffer)
+                    _ssboBufferCache.Remove(glBuffer);
             }
 
             private void Buffers_Removed(string key, XRDataBuffer value)
@@ -187,20 +228,14 @@ namespace XREngine.Rendering.OpenGL
                 if (_bufferCache.TryGetValue(key, out var glBuffer))
                 {
                     _bufferCache.Remove(key);
-                    _allBuffersList.Remove(glBuffer);
-                    if (value.Target == EBufferTarget.ShaderStorageBuffer)
-                        _ssboBufferCache.Remove(glBuffer);
+                    RemoveCollectedBufferValue(glBuffer);
                     BuffersBound = false;
                 }
             }
 
             private void Buffers_Added(string key, XRDataBuffer value)
             {
-                var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(value)!;
-                _bufferCache[key] = glBuffer;
-                _allBuffersList.Add(glBuffer);
-                if (value.Target == EBufferTarget.ShaderStorageBuffer)
-                    _ssboBufferCache.Add(glBuffer);
+                AddCollectedBuffer(key, value);
                 BuffersBound = false;
             }
 

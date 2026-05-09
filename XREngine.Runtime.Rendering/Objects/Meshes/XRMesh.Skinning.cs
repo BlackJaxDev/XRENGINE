@@ -218,7 +218,7 @@ public partial class XRMesh
     {
         using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
-        boneCount = RuntimeRenderingHostServices.Current.AllowSkinning ? mesh.BoneCount : 0;
+        boneCount = mesh.BoneCount;
         int vertexCount = VertexCount;
         var weightsPerVertex2 = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[vertexCount];
 

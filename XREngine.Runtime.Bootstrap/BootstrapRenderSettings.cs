@@ -48,7 +48,9 @@ public static class BootstrapRenderSettings
         renderSettings.TickGroupedItemsInParallel = settings.TickGroupedItemsInParallel;
         renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR;
         renderSettings.AllowShaderPipelines = settings.AllowShaderPipelines;
+        renderSettings.AllowSkinning = settings.AllowSkinning;
         renderSettings.RenderVRSinglePassStereo = settings.SinglePassStereoVR;
+        Debug.Out($"[BootstrapRenderSettings] Applied AllowSkinning={renderSettings.AllowSkinning} AllowShaderPipelines={renderSettings.AllowShaderPipelines}");
         if (settings.RenderPhysicsDebug)
             renderSettings.PhysicsVisualizeSettings.SetAllTrue();
 

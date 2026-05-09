@@ -1,5 +1,7 @@
+using System;
 using XREngine.Extensions;
 using Silk.NET.OpenGL;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
@@ -99,6 +101,7 @@ namespace XREngine.Rendering.OpenGL
             private static int s_batchedTextDrawDiagCount;
             private static int s_batchedTextSsboBindDiagCount;
             private static int s_batchedTextSamplesDiagCount;
+            private static int s_modelDrawDiagCount;
             private XRRenderQuery? _batchedTextSamplesQuery;
 
             private IndexSize _trianglesElementType;
@@ -213,6 +216,141 @@ namespace XREngine.Rendering.OpenGL
                     detail ?? string.Empty,
                     GetBufferReadinessSummary());
             }
+
+            private const int ModelDrawDiagMaxLogs = 2000;
+            private const int ModelDrawDiagMaxLogsPerPhase = 12;
+            private const int ModelDrawDiagMaxEarlyPhaseLogs = 3;
+            private static readonly ConcurrentDictionary<string, int> s_modelDrawDiagPhaseCounts = new();
+            private static readonly string[] ModelDrawDiagDefaultFilters =
+            [
+                "Body",
+                "Face",
+                "Glass",
+                "Glasses",
+                "Sunglass",
+                "Sunglasses"
+            ];
+
+            private static readonly string[] ModelDrawDiagFilters = BuildModelDrawDiagFilters();
+
+            private static string[] BuildModelDrawDiagFilters()
+            {
+                string? env = Environment.GetEnvironmentVariable("XRE_MODEL_DRAW_DIAG_FILTER");
+                if (string.IsNullOrWhiteSpace(env))
+                    return ModelDrawDiagDefaultFilters;
+
+                string trimmed = env.Trim();
+                if (trimmed.Equals("0", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.Equals("off", StringComparison.OrdinalIgnoreCase))
+                {
+                    return [];
+                }
+
+                return trimmed
+                    .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            }
+
+            private bool IsModelDrawDiagnosticMesh()
+            {
+                if (ModelDrawDiagFilters.Length == 0)
+                    return false;
+
+                var meshRenderer = Data?.Parent;
+                string? materialName = meshRenderer?.Material?.Name;
+                string? meshName = meshRenderer?.Mesh?.Name;
+                string? rendererName = meshRenderer?.Name;
+
+                for (int i = 0; i < ModelDrawDiagFilters.Length; i++)
+                {
+                    string filter = ModelDrawDiagFilters[i];
+                    if (filter == "*")
+                        return true;
+
+                    if (ContainsDiagnosticFilter(materialName, filter) ||
+                        ContainsDiagnosticFilter(meshName, filter) ||
+                        ContainsDiagnosticFilter(rendererName, filter))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            private static bool ContainsDiagnosticFilter(string? value, string filter)
+                => !string.IsNullOrWhiteSpace(value) &&
+                   value.Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+            internal void LogModelDrawDiagnostic(string phase, uint instances, string? detail = null)
+            {
+                if (s_modelDrawDiagCount >= ModelDrawDiagMaxLogs || !IsModelDrawDiagnosticMesh())
+                    return;
+
+                string phaseKey = string.Concat(_instanceId.ToString(), ":", phase);
+                int phaseCount = s_modelDrawDiagPhaseCounts.AddOrUpdate(phaseKey, 1, static (_, current) => current + 1);
+                int phaseLimit = phase is "Render request" or "Render queued-generation"
+                    ? ModelDrawDiagMaxEarlyPhaseLogs
+                    : ModelDrawDiagMaxLogsPerPhase;
+                if (phaseCount > phaseLimit)
+                    return;
+
+                int count = System.Threading.Interlocked.Increment(ref s_modelDrawDiagCount);
+                if (count > ModelDrawDiagMaxLogs)
+                    return;
+
+                var meshRenderer = Data?.Parent;
+                XRMesh? mesh = meshRenderer?.Mesh;
+                bool buffersReady = AreBuffersReadyForRendering();
+                bool allowSkinning = Engine.Rendering.Settings.AllowSkinning;
+                bool computeSkinningSetting = Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+                bool computeSkinning = (mesh?.HasSkinning ?? false) && allowSkinning && computeSkinningSetting;
+                Debug.OpenGL(
+                    $"[ModelDrawDiag.GL] phase={phase} #{count} phaseLog={phaseCount} glRenderer={_instanceId} renderer='{meshRenderer?.Name ?? "<null>"}' " +
+                    $"mesh='{mesh?.Name ?? "<null>"}' material='{meshRenderer?.Material?.Name ?? "<null>"}' instances={instances} " +
+                    $"generated={IsGenerated} prepared={IsPreparedForRendering} lastPrepare={LastPrepareResult} " +
+                    $"lastPrepareDetail='{LastPrepareDetail}' buffersBound={BuffersBound} buffersReady={buffersReady} " +
+                    $"vao={(TryGetBindingId(out uint vaoId) ? vaoId : 0u)} triCount={TriangleIndicesBuffer?.Data?.ElementCount ?? 0u} " +
+                    $"triReady={TriangleIndicesBuffer?.IsReadyForRendering ?? false} triGenerated={TriangleIndicesBuffer?.IsGenerated ?? false} " +
+                    $"triId={GetBufferBindingId(TriangleIndicesBuffer)} hasSkinning={mesh?.HasSkinning ?? false} " +
+                    $"allowSkinning={allowSkinning} computeSkinning={computeSkinning} computeSkinningSetting={computeSkinningSetting} " +
+                    $"blendShapes={mesh?.BlendshapeCount ?? 0} bones={mesh?.UtilizedBones?.Length ?? 0} verts={mesh?.VertexCount ?? 0} " +
+                    $"detail='{detail ?? string.Empty}' firstUnready='{GetFirstUnreadyBufferSummary()}' buffers=[{GetBufferReadinessSummary()}]");
+            }
+
+            private string GetFirstUnreadyBufferSummary()
+            {
+                if (!BuffersBound)
+                    return "BuffersBound=false";
+
+                for (int i = 0; i < _allBuffersList.Count; i++)
+                {
+                    GLDataBuffer buffer = _allBuffersList[i];
+                    if (!buffer.IsReadyForRendering)
+                        return GetBufferDiagnosticSummary(buffer);
+                }
+
+                if (_triangleIndicesBuffer is not null && !_triangleIndicesBuffer.IsReadyForRendering)
+                    return GetBufferDiagnosticSummary(_triangleIndicesBuffer);
+                if (_lineIndicesBuffer is not null && !_lineIndicesBuffer.IsReadyForRendering)
+                    return GetBufferDiagnosticSummary(_lineIndicesBuffer);
+                if (_pointIndicesBuffer is not null && !_pointIndicesBuffer.IsReadyForRendering)
+                    return GetBufferDiagnosticSummary(_pointIndicesBuffer);
+
+                return "<none>";
+            }
+
+            private static string GetBufferDiagnosticSummary(GLDataBuffer buffer)
+                => string.Concat(
+                    buffer.Data.AttributeName ?? buffer.Data.Target.ToString(),
+                    ":target=", buffer.Data.Target.ToString(),
+                    ",gen=", buffer.IsGenerated.ToString(),
+                    ",ready=", buffer.IsReadyForRendering.ToString(),
+                    ",pending=", buffer._hasPendingUpload.ToString(),
+                    ",id=", GetBufferBindingId(buffer).ToString(),
+                    ",len=", buffer.Data.Length.ToString(),
+                    ",elements=", buffer.Data.ElementCount.ToString(),
+                    ",vram=", buffer.AllocatedVRAMBytes.ToString());
 
             private string GetBufferReadinessSummary()
             {
@@ -450,12 +588,14 @@ namespace XREngine.Rendering.OpenGL
             if (SuppressDrawsForOomRecovery)
             {
                 ActiveMeshRenderer?.LogBatchedTextDraw("RenderCurrentMesh suppressed-oom", instances);
+                ActiveMeshRenderer?.LogModelDrawDiagnostic("RenderCurrentMesh suppressed-oom", instances);
                 return;
             }
 
             if (ActiveMeshRenderer?.Mesh is null)
             {
                 ActiveMeshRenderer?.LogBatchedTextDraw("RenderCurrentMesh no-mesh", instances);
+                ActiveMeshRenderer?.LogModelDrawDiagnostic("RenderCurrentMesh no-mesh", instances);
                 return;
             }
 
@@ -463,16 +603,19 @@ namespace XREngine.Rendering.OpenGL
             if (!ActiveMeshRenderer.IsGenerated)
             {
                 ActiveMeshRenderer.LogBatchedTextDraw("RenderCurrentMesh vao-not-generated", instances);
+                ActiveMeshRenderer.LogModelDrawDiagnostic("RenderCurrentMesh vao-not-generated", instances);
                 return;
             }
 
             if (!ActiveMeshRenderer.AreBuffersReadyForRendering())
             {
                 ActiveMeshRenderer.LogBatchedTextDraw("RenderCurrentMesh buffers-not-ready", instances);
+                ActiveMeshRenderer.LogModelDrawDiagnostic("RenderCurrentMesh buffers-not-ready", instances);
                 return;
             }
 
             ActiveMeshRenderer.LogBatchedTextDraw("RenderCurrentMesh ready", instances);
+            ActiveMeshRenderer.LogModelDrawDiagnostic("RenderCurrentMesh ready", instances);
 
             // Skip rendering if index buffer data hasn't been uploaded yet
             var triBuffer = ActiveMeshRenderer.TriangleIndicesBuffer;
@@ -510,6 +653,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, triEbo);
                 ActiveMeshRenderer.LogBatchedTextDraw("DrawElementsInstanced triangles", instances, $"ebo={triEbo}");
+                ActiveMeshRenderer.LogModelDrawDiagnostic("DrawElementsInstanced triangles", instances, $"ebo={triEbo}");
                 GLRenderQuery? samplesProbe = ActiveMeshRenderer.BeginBatchedTextSamplesProbe();
                 Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
                 ActiveMeshRenderer.EndBatchedTextSamplesProbe(samplesProbe, instances, triangles);
@@ -519,6 +663,7 @@ namespace XREngine.Rendering.OpenGL
             else
             {
                 ActiveMeshRenderer.LogBatchedTextDraw("DrawElementsInstanced triangles-skipped", instances);
+                ActiveMeshRenderer.LogModelDrawDiagnostic("DrawElementsInstanced triangles-skipped", instances);
             }
 
             if (ActiveMeshRenderer.RequiresTriangleOnlyDrawsForCurrentPass())

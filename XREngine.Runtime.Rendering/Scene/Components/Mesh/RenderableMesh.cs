@@ -71,6 +71,7 @@ namespace XREngine.Components.Scene.Mesh
         private AABB _bindPoseBounds;
         private Matrix4x4 _skinnedRootRenderMatrix = Matrix4x4.Identity;
         private Matrix4x4 _skinnedRootRenderMatrixInverse = Matrix4x4.Identity;
+        private bool _lastRenderSkinningEnabled;
 
         /// <summary>
         /// Minimum interval (in seconds) between expensive skinned bounds recomputations.
@@ -273,6 +274,9 @@ namespace XREngine.Components.Scene.Mesh
                 _rc.WorldMatrix = Component.Transform.RenderMatrix;
                 RenderInfo.CullingOffsetMatrix = Component.Transform.WorldMatrix;
             }
+
+            _lastRenderSkinningEnabled = IsSkinned;
+            Engine.Rendering.SettingsChanged += Rendering_SettingsChanged;
         }
 
         internal RenderableLOD[] GetLodSnapshot()
@@ -1409,6 +1413,7 @@ namespace XREngine.Components.Scene.Mesh
 
         public void Dispose()
         {
+            Engine.Rendering.SettingsChanged -= Rendering_SettingsChanged;
             UntrackAllBones();
             RenderableLOD[] lods;
             lock (_lodsLock)
@@ -1493,6 +1498,27 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             mesh.Destroy(now: true);
+        }
+
+        private void Rendering_SettingsChanged()
+        {
+            bool isSkinned = IsSkinned;
+            if (isSkinned == _lastRenderSkinningEnabled)
+                return;
+
+            _lastRenderSkinningEnabled = isSkinned;
+            if (isSkinned)
+            {
+                CurrentLODRenderer?.EnsureSkinningBuffers(logWarnings: false);
+                MarkSkinnedDataDirty();
+
+                if (RootBone is not null)
+                    MarkPendingRootBoneRenderMatrix(RootBone.RenderMatrix);
+                else
+                    SetSkinnedRootRenderMatrix(Component.Transform.RenderMatrix);
+            }
+
+            MarkPendingComponentRenderMatrix(Component.Transform.RenderMatrix);
         }
 
         private TransformBase? DetermineRootBoneFromRenderers()
@@ -1636,6 +1662,7 @@ namespace XREngine.Components.Scene.Mesh
                     {
                         var rend = CurrentLODRenderer;
                         bool skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+                        _lastRenderSkinningEnabled = skinned;
                         _rc.WorldMatrix = skinned ? Matrix4x4.Identity : Component.Transform.RenderMatrix;
                     }
                     break;
@@ -1705,6 +1732,7 @@ namespace XREngine.Components.Scene.Mesh
                     ? componentMatrix ?? Component.Transform.RenderMatrix
                     : rootMatrix ?? RootBone.RenderMatrix;
 
+                _rc.WorldMatrix = Matrix4x4.Identity;
                 SetSkinnedRootRenderMatrix(basis);
                 if (RenderInfo is not null)
                     RenderInfo.CullingOffsetMatrix = basis;
@@ -1766,6 +1794,8 @@ namespace XREngine.Components.Scene.Mesh
             if (hasSkinning)
             {
                 Matrix4x4 basis = RootBone is null ? componentMatrix : rootMatrix;
+                if (_rc is not null)
+                    _rc.WorldMatrix = Matrix4x4.Identity;
                 SetSkinnedRootRenderMatrix(basis);
                 if (RenderInfo is not null)
                     RenderInfo.CullingOffsetMatrix = basis;
