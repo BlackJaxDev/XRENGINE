@@ -43,15 +43,22 @@ uvec4 LoadKey(uint index)
         sortKeys[base + 3u]);
 }
 
-void StoreDrawCommand(uint bucketIndex, uint drawIndexInBucket, uint count, uint instanceCount, uint firstIndex, uint baseVertex, uint baseInstance)
+bool StoreDrawCommand(uint bucketIndex, uint drawIndexInBucket, uint count, uint instanceCount, uint firstIndex, uint baseVertex, uint baseInstance)
 {
     uint globalDrawIndex = bucketIndex * uint(MaxIndirectDrawsPerBucket) + drawIndexInBucket;
     uint base = globalDrawIndex * DRAW_UINTS;
+    if (base + 4u >= uint(indirectDraws.length()))
+    {
+        overflowFlag = 1u;
+        return false;
+    }
+
     indirectDraws[base + 0u] = count;
     indirectDraws[base + 1u] = instanceCount;
     indirectDraws[base + 2u] = firstIndex;
     indirectDraws[base + 3u] = baseVertex;
     indirectDraws[base + 4u] = baseInstance;
+    return true;
 }
 
 void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandIndex, bool previousLod)

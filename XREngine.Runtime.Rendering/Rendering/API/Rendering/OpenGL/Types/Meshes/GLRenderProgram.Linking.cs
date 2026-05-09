@@ -143,6 +143,9 @@ namespace XREngine.Rendering.OpenGL
                 if (glObj is not GLDataBuffer glBuf)
                     return;
 
+                if (!glBuf.IsReadyForRendering)
+                    glBuf.EnsureStorageAllocatedForGpuCopy();
+
                 Api.BindBufferBase(GLEnum.ShaderStorageBuffer, index, glBuf.BindingId);
             }
 
@@ -362,6 +365,7 @@ namespace XREngine.Rendering.OpenGL
             // indefinitely on NVIDIA's threaded driver when the parallel-link worker is stuck.
             private const double AsyncShaderHardAbandonSeconds = 30.0;
             private const double SlowLinkPreparationWarningMilliseconds = 25.0;
+            private const int DriverParallelLargeSourceSharedContextThresholdBytes = 256 * 1024;
 
             /// <summary>
             /// Pre-computes the shader source hash and binary cache lookup.
@@ -489,6 +493,27 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 return inputs;
+            }
+
+            private static bool ShouldPreferSharedContextForLargeSource(GLProgramCompileLinkQueue.ShaderInput[]? inputs)
+            {
+                if (inputs is not { Length: > 1 })
+                    return false;
+
+                long sourceBytes = 0;
+                bool hasGraphicsStage = false;
+                for (int index = 0; index < inputs.Length; index++)
+                {
+                    ShaderType type = inputs[index].Type;
+                    if (type != ShaderType.ComputeShader)
+                        hasGraphicsStage = true;
+
+                    sourceBytes += CountUtf8Bytes(inputs[index].ResolvedSource);
+                    if (hasGraphicsStage && sourceBytes >= DriverParallelLargeSourceSharedContextThresholdBytes)
+                        return true;
+                }
+
+                return false;
             }
 
             private bool IsLinkPreparationPending
@@ -2175,7 +2200,8 @@ namespace XREngine.Rendering.OpenGL
                             SharedContextCompileAvailable: Renderer.ProgramCompileLinkQueue is { IsAvailable: true },
                             SharedContextCompileCanEnqueue: Renderer.ProgramCompileLinkQueue is { CanEnqueue: true },
                             CompileInputsReady: _preparedCompileInputs is { Length: > 0 },
-                            IsKnownAsyncLinkHazard,
+                            IsKnownAsyncLinkHazard: IsKnownAsyncLinkHazard,
+                            PreferSharedContextForLargeSource: false,
                             HashPreviouslyFailed: false,
                             AllowSynchronousSourceLink: false));
 
@@ -2422,16 +2448,16 @@ namespace XREngine.Rendering.OpenGL
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
                     bool isKnownAsyncLinkHazard = IsKnownAsyncLinkHazard;
                     GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs;
-                    // Hazardous graphics programs (single-stage separable) are
-                    // routed to the shared-context lane by the selector when the
-                    // queue is available, even under Auto strategy, to keep the
-                    // (potentially huge) cold link off the render thread. Prepare
-                    // their inputs unconditionally so the selector can choose the
-                    // shared-context lane. The queue still rejects compute hazards,
-                    // which fall through to the synchronous path below.
+                    // Hazardous graphics programs (single-stage separable), and
+                    // oversized generated graphics programs, are routed to the
+                    // shared-context lane by the selector when the queue is available.
+                    // Prepare their inputs unconditionally so the selector can make
+                    // that decision from source size. The queue still rejects compute
+                    // hazards, which fall through to the synchronous path below.
                     bool wantsSharedSourceInputs = compileQueue is { IsAvailable: true } &&
                         (Renderer.UseSharedContextProgramCompileLinkQueue ||
                          Engine.Rendering.Settings.OpenGLShaderLinkStrategy == EOpenGLShaderLinkStrategy.SharedContext ||
+                         Renderer.UseDriverParallelShaderCompile ||
                          isKnownAsyncLinkHazard);
                     if (wantsSharedSourceInputs && inputs is null)
                     {
@@ -2449,6 +2475,9 @@ namespace XREngine.Rendering.OpenGL
                         }
                         inputs = PrepareCompileInputs();
                     }
+                    bool preferSharedContextForLargeSource = Renderer.UseDriverParallelShaderCompile &&
+                        compileQueue is { IsAvailable: true } &&
+                        ShouldPreferSharedContextForLargeSource(inputs);
 
                     OpenGLShaderLinkBackendSelection sourceSelection = OpenGLShaderLinkBackendSelector.Select(new OpenGLShaderLinkBackendContext(
                         Engine.Rendering.Settings.OpenGLShaderLinkStrategy,
@@ -2462,7 +2491,8 @@ namespace XREngine.Rendering.OpenGL
                         SharedContextCompileAvailable: compileQueue is { IsAvailable: true },
                         SharedContextCompileCanEnqueue: compileQueue is { CanEnqueue: true },
                         CompileInputsReady: inputs is { Length: > 0 },
-                        isKnownAsyncLinkHazard,
+                        IsKnownAsyncLinkHazard: isKnownAsyncLinkHazard,
+                        PreferSharedContextForLargeSource: preferSharedContextForLargeSource,
                         HashPreviouslyFailed: false,
                         AllowSynchronousSourceLink: false));
                     LogRenderingProgramBuildEvent(

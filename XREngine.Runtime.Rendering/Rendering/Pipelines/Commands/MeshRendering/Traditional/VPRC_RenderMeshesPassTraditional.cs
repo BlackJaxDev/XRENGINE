@@ -1,4 +1,5 @@
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using System;
 using System.Threading;
@@ -44,13 +45,13 @@ internal static class VPRC_RenderMeshesPassTraditional
 
         if (activeInstance.MeshRenderCommands.TryGetGpuPass(command.RenderPass, out var gpuPass) && gpuPass.VisibleCommandCount == 0)
         {
-            bool allowCpuSafetyNet = command.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented
-                && IsExplicitCpuFallbackAllowed();
+            bool shaderWarmupFallback = ShouldUseOpenGLShaderWarmupFallback(command.MeshSubmissionStrategy);
+            bool allowCpuSafetyNet = shaderWarmupFallback || IsExplicitCpuFallbackAllowed();
 
             if (allowCpuSafetyNet)
             {
                 Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
-                WarnCpuSafetyNetFallback(command.RenderPass);
+                WarnCpuSafetyNetFallback(command.RenderPass, shaderWarmupFallback);
                 activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
             }
             else
@@ -59,7 +60,7 @@ internal static class VPRC_RenderMeshesPassTraditional
                 if (Interlocked.Decrement(ref _forbiddenFallbackLogBudget) >= 0)
                 {
                     XREngine.Debug.LogWarning(
-                        $"[GPU-PIPELINE] Render pass {command.RenderPass} produced zero visible GPU commands; CPU mesh safety-net suppressed for profile {VulkanFeatureProfile.ActiveProfile}.");
+                        $"[GPU-PIPELINE] Render pass {command.RenderPass} produced zero visible GPU commands; CPU mesh safety-net suppressed for policy {GetCpuSafetyNetPolicyName()}.");
                 }
             }
         }
@@ -95,10 +96,38 @@ internal static class VPRC_RenderMeshesPassTraditional
         bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
             || (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
 
-        return fallbackRequested
-            && !VulkanFeatureProfile.EnforceStrictNoFallbacks
+        if (!fallbackRequested)
+            return false;
+
+        if (!IsActiveRendererVulkan())
+            return true;
+
+        return !VulkanFeatureProfile.EnforceStrictNoFallbacks
             && (!VulkanFeatureProfile.IsActive ||
                 VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
+    }
+
+    private static bool ShouldUseOpenGLShaderWarmupFallback(EMeshSubmissionStrategy strategy)
+        => strategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
+           && IsActiveRendererOpenGL()
+           && OpenGLRenderer.GLRenderProgram.HasPendingAsyncPrograms;
+
+    private static bool IsActiveRendererOpenGL()
+        => AbstractRenderer.Current is OpenGLRenderer
+           || Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is OpenGLRenderer;
+
+    private static bool IsActiveRendererVulkan()
+        => AbstractRenderer.Current is VulkanRenderer
+           || Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is VulkanRenderer;
+
+    private static string GetCpuSafetyNetPolicyName()
+    {
+        if (IsActiveRendererVulkan())
+            return VulkanFeatureProfile.ActiveProfile.ToString();
+
+        return IsActiveRendererOpenGL()
+            ? "OpenGL"
+            : "current renderer";
     }
 
     private static void WarnExcludedGpuFallback(int renderPass, IRenderCommandMesh meshCmd)
@@ -112,12 +141,16 @@ internal static class VPRC_RenderMeshesPassTraditional
             $"[GPU-PIPELINE] Render pass {renderPass} skipped CPU fallback for mesh '{meshName}' with material '{materialName}' because GPU render dispatch is enabled and ExcludeFromGpuIndirect is set.");
     }
 
-    private static void WarnCpuSafetyNetFallback(int renderPass)
+    private static void WarnCpuSafetyNetFallback(int renderPass, bool shaderWarmupFallback)
     {
         if (Interlocked.Decrement(ref _cpuSafetyNetLogBudget) < 0)
             return;
 
+        string reason = shaderWarmupFallback
+            ? "OpenGL shader/program warmup is still pending"
+            : "GPU CPU fallback diagnostics are enabled";
+
         XREngine.Debug.LogWarning(
-            $"[GPU-PIPELINE] Render pass {renderPass} produced zero visible GPU commands; explicit CPU mesh safety-net fallback is running because GPU CPU fallback diagnostics are enabled.");
+            $"[GPU-PIPELINE] Render pass {renderPass} produced zero visible GPU commands; CPU mesh safety-net fallback is running because {reason}.");
     }
 }

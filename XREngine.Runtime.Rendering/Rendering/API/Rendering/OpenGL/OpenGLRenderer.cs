@@ -4413,6 +4413,7 @@ void main()
                 return false;
 
             glMesh.SetTriangleIndexBuffer(glIndexBuffer, elementSize);
+            Api.VertexArrayElementBuffer(glMesh.BindingId, glIndexBuffer.BindingId);
             return true;
         }
 
@@ -4436,6 +4437,9 @@ void main()
             var glBuf = GenericToAPI<GLDataBuffer>(buffer);
             if (glBuf is null)
                 return;
+
+            glBuf.EnsureStorageAllocatedForGpuCopy();
+
             const GLEnum GL_PARAMETER_BUFFER = (GLEnum)0x80EE;
             Api.BindBuffer(GL_PARAMETER_BUFFER, glBuf.BindingId);
         }
@@ -5240,6 +5244,10 @@ void main()
                     glBuf?.BindToRenderer(glProgram, glMesh);
                 }
             }
+
+            GLDataBuffer? elementBuffer = glMesh.GetActiveElementBuffer();
+            if (elementBuffer is not null)
+                Api.VertexArrayElementBuffer(glMesh.BindingId, elementBuffer.BindingId);
         }
 
         public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera)

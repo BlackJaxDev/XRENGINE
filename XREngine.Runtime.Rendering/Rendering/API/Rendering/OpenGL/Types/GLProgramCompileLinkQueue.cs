@@ -34,6 +34,9 @@ namespace XREngine.Rendering.OpenGL
             private long _failedCount;
             private long _rejectedCount;
             private long _backpressureCount;
+            private const int WorkerCompletionFastPollIterations = 64;
+            private const double WorkerCompletionStuckFlushMilliseconds = 5000.0;
+            private const double WorkerCompletionHardAbandonMilliseconds = 30000.0;
             private static readonly bool SuppressParallelCompileForSingleStageWorkerPrograms =
                 string.Equals(
                     Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL"),
@@ -283,8 +286,28 @@ namespace XREngine.Rendering.OpenGL
                             sid,
                             shaderType,
                             isShader: true,
-                            phase: "worker=source-compile-completion-poll"))
+                            phase: "worker=source-compile-completion-poll",
+                            out string? compilePollFailure))
                         {
+                            double compileMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - compileStartTimestamp);
+                            errorLog = compilePollFailure ?? "Shared-context shader compile completion poll aborted.";
+                            LogRenderingQueueEvent(
+                                "WORKER_COMPILE_ABANDONED",
+                                programId,
+                                summary,
+                                $"compileMs={compileMilliseconds:F2} error={errorLog}");
+                            _completed[programId] = new CompileResult(
+                                CompileStatus.CompileFailed,
+                                errorLog,
+                                compileMilliseconds,
+                                0.0);
+                            Interlocked.Increment(ref _failedCount);
+
+                            if (hazardArbExt is not null)
+                            {
+                                try { hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu); }
+                                catch { /* best-effort restore */ }
+                            }
                             return;
                         }
 
@@ -384,8 +407,28 @@ namespace XREngine.Rendering.OpenGL
                         0,
                         null,
                         isShader: false,
-                        phase: "worker=source-link-completion-poll"))
+                        phase: "worker=source-link-completion-poll",
+                        out string? linkPollFailure))
                     {
+                        double linkMillisecondsAbandoned = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp);
+                        string abandonedLinkError = linkPollFailure ?? "Shared-context program link completion poll aborted.";
+                        LogRenderingQueueEvent(
+                            "WORKER_LINK_ABANDONED",
+                            programId,
+                            summary,
+                            $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMillisecondsAbandoned:F2} error={abandonedLinkError}");
+                        _completed[programId] = new CompileResult(
+                            CompileStatus.LinkFailed,
+                            abandonedLinkError,
+                            compileMillisecondsCompleted,
+                            linkMillisecondsAbandoned);
+                        Interlocked.Increment(ref _failedCount);
+
+                        if (hazardArbExt is not null)
+                        {
+                            try { hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu); }
+                            catch { /* best-effort restore */ }
+                        }
                         return;
                     }
 
@@ -485,17 +528,24 @@ namespace XREngine.Rendering.OpenGL
                 uint shaderId,
                 ShaderType? shaderType,
                 bool isShader,
-                string phase)
+                string phase,
+                out string? failureReason)
             {
+                failureReason = null;
                 // Initial fast-poll burst — most binary cache hits and warm links
                 // complete in microseconds. After the burst, back off to a 1 ms
                 // sleep to avoid spinning during long cold compiles.
-                const int FastPollIterations = 64;
                 int iterations = 0;
+                bool flushIssued = false;
+                long startTimestamp = Stopwatch.GetTimestamp();
+                string operation = isShader ? "shader compile" : "program link";
                 while (true)
                 {
                     if (worker.IsDisposeRequested)
+                    {
+                        failureReason = $"Shared-context {operation} completion poll aborted because worker disposal was requested.";
                         return false;
+                    }
 
                     int complete = 0;
                     if (isShader)
@@ -523,10 +573,39 @@ namespace XREngine.Rendering.OpenGL
                         return true;
 
                     if (worker.IsDisposeRequested)
+                    {
+                        failureReason = $"Shared-context {operation} completion poll aborted because worker disposal was requested.";
                         return false;
+                    }
+
+                    double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
+                    if (!flushIssued && elapsedMilliseconds >= WorkerCompletionStuckFlushMilliseconds)
+                    {
+                        flushIssued = true;
+                        Debug.OpenGLWarning(
+                            $"[ShaderLinkQueue] Worker {operation} programId={programId} still reports COMPLETION_STATUS=false " +
+                            $"after {elapsedMilliseconds / 1000.0:F2}s; issuing glFlush() and continuing non-blocking poll.");
+                        MeasureRenderingWorkerGlCall(
+                            "glFlush",
+                            programId,
+                            shaderId,
+                            shaderType,
+                            () => gl.Flush(),
+                            phase + "-stuck-nudge");
+                    }
+
+                    if (elapsedMilliseconds >= WorkerCompletionHardAbandonMilliseconds)
+                    {
+                        failureReason =
+                            $"Shared-context {operation} did not report completion after {elapsedMilliseconds / 1000.0:F2}s; abandoned to keep the async link queue moving.";
+                        Debug.OpenGLWarning(
+                            $"[ShaderLinkQueue] Worker {operation} programId={programId} stuck with COMPLETION_STATUS=false " +
+                            $"after {elapsedMilliseconds / 1000.0:F2}s; publishing a failed async result without querying final status.");
+                        return false;
+                    }
 
                     iterations++;
-                    if (iterations < FastPollIterations)
+                    if (iterations < WorkerCompletionFastPollIterations)
                         Thread.Yield();
                     else
                         Thread.Sleep(1);
