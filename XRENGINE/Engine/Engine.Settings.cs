@@ -439,6 +439,7 @@ namespace XREngine
 
             // ── Technical / compute overrides (GameStartup → Engine push) ──
             h[nameof(GameStartupSettings.AllowShaderPipelinesOverride)] = Rendering.ApplyAllowShaderPipelinesPreference;
+            h[nameof(GameStartupSettings.AllowSkinningOverride)] = Rendering.ApplyAllowSkinningPreference;
             h[nameof(GameStartupSettings.RecalcChildMatricesLoopTypeOverride)] = Rendering.ApplyRecalcChildMatricesLoopTypePreference;
             Action applyCompute = Rendering.ApplyComputeRenderingPreference;
             h[nameof(GameStartupSettings.CalculateSkinningInComputeShaderOverride)] = applyCompute;
@@ -462,6 +463,7 @@ namespace XREngine
             Rendering.ApplyIntelXessPreference();
             Rendering.ApplyTickGroupedItemsInParallelPreference();
             Rendering.ApplyAllowShaderPipelinesPreference();
+            Rendering.ApplyAllowSkinningPreference();
             Rendering.ApplyRecalcChildMatricesLoopTypePreference();
             Rendering.ApplyComputeRenderingPreference();
             ApplyTimerSettings();

@@ -40,6 +40,7 @@ namespace XREngine.Rendering.OpenGL
 
                 bool hasNoVertexShaders = (material.Data.VertexShaders.Count) == 0;
 
+                EnsureRuntimeDeformationBuffers();
                 CollectBuffers();
                 Dbg($"Collected {_bufferCache.Count} buffer(s)", "Buffers");
 
@@ -73,6 +74,19 @@ namespace XREngine.Rendering.OpenGL
 
                     Dbg("GenProgramsAndBuffers: combined program initiated", "Programs");
                 }
+            }
+
+            private void EnsureRuntimeDeformationBuffers()
+            {
+                XRMesh? mesh = Mesh;
+                if (mesh is null)
+                    return;
+
+                if (mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
+                    MeshRenderer.EnsureSkinningBuffers(logWarnings: false);
+
+                if (mesh.HasBlendshapes && Engine.Rendering.Settings.AllowBlendshapes)
+                    MeshRenderer.EnsureBlendshapeBuffers(logWarnings: false);
             }
 
             private void EnsureProgramsMatchRenderSettings()

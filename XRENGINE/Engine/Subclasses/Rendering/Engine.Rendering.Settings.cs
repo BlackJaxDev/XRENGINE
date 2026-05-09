@@ -110,6 +110,8 @@ namespace XREngine
                 }
 
                 ApplyEngineSettingChange(e.PropertyName);
+                if (e.PropertyName == nameof(EngineSettings.AllowSkinning))
+                    XREngine.Debug.Rendering($"[RenderSettings] AllowSkinning changed to {_settings.AllowSkinning}; ShaderConfigVersion={_settings.ShaderConfigVersion}");
                 SettingsChanged?.Invoke();
             }
 
@@ -854,7 +856,7 @@ namespace XREngine
                 public bool AllowShaderPipelines
                 {
                     get => _allowShaderPipelines;
-                    set => SetField(ref _allowShaderPipelines, value);
+                    set => SetField(ref _allowShaderPipelines, value, null, _ => BumpShaderConfigVersion());
                 }
 
                 /// <summary>
@@ -865,7 +867,7 @@ namespace XREngine
                 public bool UseIntegerUniformsInShaders
                 {
                     get => _useIntegerUniformsInShaders;
-                    set => SetField(ref _useIntegerUniformsInShaders, value);
+                    set => SetField(ref _useIntegerUniformsInShaders, value, null, _ => BumpShaderConfigVersion());
                 }
 
                 /// <summary>
@@ -877,7 +879,7 @@ namespace XREngine
                 public bool OptimizeSkinningTo4Weights
                 {
                     get => _optimizeTo4Weights;
-                    set => SetField(ref _optimizeTo4Weights, value);
+                    set => SetField(ref _optimizeTo4Weights, value, null, _ => BumpShaderConfigVersion());
                 }
 
                 /// <summary>
@@ -889,7 +891,7 @@ namespace XREngine
                 public bool OptimizeSkinningWeightsIfPossible
                 {
                     get => _optimizeWeightsIfPossible;
-                    set => SetField(ref _optimizeWeightsIfPossible, value);
+                    set => SetField(ref _optimizeWeightsIfPossible, value, null, _ => BumpShaderConfigVersion());
                 }
 
                 /// <summary>
@@ -1392,7 +1394,7 @@ namespace XREngine
                 public bool AllowSkinning
                 {
                     get => _allowSkinning;
-                    set => SetField(ref _allowSkinning, value);
+                    set => SetField(ref _allowSkinning, value, _ => BumpShaderConfigVersion());
                 }
 
                 /// <summary>
@@ -1403,7 +1405,7 @@ namespace XREngine
                 public bool AllowBlendshapes
                 {
                     get => _allowBlendshapes;
-                    set => SetField(ref _allowBlendshapes, value);
+                    set => SetField(ref _allowBlendshapes, value, null, _ => BumpShaderConfigVersion());
                 }
 
                 /// <summary>
@@ -1425,7 +1427,7 @@ namespace XREngine
                 public bool UseAbsoluteBlendshapePositions
                 {
                     get => _useAbsoluteBlendshapePositions;
-                    set => SetField(ref _useAbsoluteBlendshapePositions, value);
+                    set => SetField(ref _useAbsoluteBlendshapePositions, value, null, _ => BumpShaderConfigVersion());
                 }
 
                 /// <summary>

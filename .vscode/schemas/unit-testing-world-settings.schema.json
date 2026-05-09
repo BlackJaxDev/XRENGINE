@@ -393,6 +393,10 @@
       "type": "boolean",
       "description": "Compiles and links uncached OpenGL shader programs asynchronously when the selected strategy supports it."
     },
+    "AllowSkinning": {
+      "type": "boolean",
+      "description": "Enables skeletal skinning for bounds updates and rendering. Import still preserves skinning data so this can be toggled live."
+    },
     "OpenGLProgramCompileLinkWorkerCount": {
       "type": "integer",
       "description": "Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. Values above one require XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1."

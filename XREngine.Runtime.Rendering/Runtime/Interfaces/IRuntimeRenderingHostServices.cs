@@ -87,6 +87,41 @@ public interface IRuntimeRenderingHostServices
     /// </summary>
     bool OptimizeSkinningWeightsIfPossible { get; }
 
+    /// <summary>
+    /// Gets whether skeletal skinning should be evaluated by the compute pre-pass.
+    /// </summary>
+    bool CalculateSkinningInComputeShader { get; }
+
+    /// <summary>
+    /// Gets whether blendshapes should be evaluated by the compute pre-pass.
+    /// </summary>
+    bool CalculateBlendshapesInComputeShader { get; }
+
+    /// <summary>
+    /// Gets the host shader configuration revision used to invalidate runtime render programs.
+    /// </summary>
+    int ShaderConfigVersion { get; }
+
+    /// <summary>
+    /// Subscribes a callback to host rendering setting changes.
+    /// </summary>
+    void SubscribeRenderingSettingsChanged(Action callback);
+
+    /// <summary>
+    /// Unsubscribes a callback from host rendering setting changes.
+    /// </summary>
+    void UnsubscribeRenderingSettingsChanged(Action callback);
+
+    /// <summary>
+    /// Subscribes a callback to host anti-aliasing setting changes.
+    /// </summary>
+    void SubscribeAntiAliasingSettingsChanged(Action callback);
+
+    /// <summary>
+    /// Unsubscribes a callback from host anti-aliasing setting changes.
+    /// </summary>
+    void UnsubscribeAntiAliasingSettingsChanged(Action callback);
+
     #endregion
 
     #region Frame and render state

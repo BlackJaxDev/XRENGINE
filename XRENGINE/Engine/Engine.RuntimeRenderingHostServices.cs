@@ -47,6 +47,22 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool AllowSkinning => Engine.Rendering.Settings.AllowSkinning;
     public bool OptimizeSkinningTo4Weights => Engine.Rendering.Settings.OptimizeSkinningTo4Weights;
     public bool OptimizeSkinningWeightsIfPossible => Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible;
+    public bool CalculateSkinningInComputeShader => Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+    public bool CalculateBlendshapesInComputeShader => Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
+    public int ShaderConfigVersion => Engine.Rendering.Settings.ShaderConfigVersion;
+
+    public void SubscribeRenderingSettingsChanged(Action callback)
+        => Engine.Rendering.SettingsChanged += callback;
+
+    public void UnsubscribeRenderingSettingsChanged(Action callback)
+        => Engine.Rendering.SettingsChanged -= callback;
+
+    public void SubscribeAntiAliasingSettingsChanged(Action callback)
+        => Engine.Rendering.AntiAliasingSettingsChanged += callback;
+
+    public void UnsubscribeAntiAliasingSettingsChanged(Action callback)
+        => Engine.Rendering.AntiAliasingSettingsChanged -= callback;
+
     public bool IsRenderThread => Engine.IsRenderThread;
     public bool IsRendererActive => AbstractRenderer.Current?.Active ?? false;
     public bool IsShadowPass => Engine.Rendering.State.IsShadowPass;

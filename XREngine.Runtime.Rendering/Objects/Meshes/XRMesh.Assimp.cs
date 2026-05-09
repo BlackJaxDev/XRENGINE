@@ -93,7 +93,7 @@ public partial class XRMesh
 
     private unsafe void PopulateAssimpBlendshapeData(Mesh mesh, Vertex[] sourceList)
     {
-        if (!RuntimeRenderingHostServices.Current.AllowBlendshapes || !mesh.HasMeshAnimationAttachments)
+        if (!mesh.HasMeshAnimationAttachments)
             return;
 
         string[] names = new string[mesh.MeshAnimationAttachmentCount];

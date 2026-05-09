@@ -587,10 +587,10 @@ namespace XREngine.Rendering.Shaders.Generator
         }
 
         private bool NeedsSkinningCalc()
-            => Mesh.HasSkinning && !Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+            => Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !Engine.Rendering.Settings.CalculateSkinningInComputeShader;
 
         private bool NeedsBlendshapeCalc()
-            => Mesh.BlendshapeCount > 0 && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
+            => Mesh.BlendshapeCount > 0 && Engine.Rendering.Settings.AllowBlendshapes && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
 
         private bool WriteSkinningCalc()
         {

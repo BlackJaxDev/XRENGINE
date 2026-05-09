@@ -338,6 +338,12 @@ namespace XREngine
                 => Settings.AllowShaderPipelines = Engine.EffectiveSettings.AllowShaderPipelines;
 
             /// <summary>
+            /// Pushes the effective skeletal skinning setting into the engine rendering settings.
+            /// </summary>
+            public static void ApplyAllowSkinningPreference()
+                => Settings.AllowSkinning = Engine.EffectiveSettings.AllowSkinning;
+
+            /// <summary>
             /// Pushes the effective child matrix recalc loop type into the engine rendering settings.
             /// </summary>
             public static void ApplyRecalcChildMatricesLoopTypePreference()

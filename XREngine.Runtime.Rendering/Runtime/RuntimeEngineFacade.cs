@@ -110,8 +110,48 @@ internal static partial class Engine
         public static RuntimeRenderSettings Settings { get; } = new();
         private static RuntimeRenderingState StateData { get; } = new();
         public static RuntimeBvhStats BvhStats { get; } = new();
-        public static event Action? SettingsChanged;
-        public static event Action? AntiAliasingSettingsChanged;
+        private static event Action? SettingsChangedHandlers;
+        private static event Action? AntiAliasingSettingsChangedHandlers;
+
+        public static event Action? SettingsChanged
+        {
+            add
+            {
+                if (value is null)
+                    return;
+
+                SettingsChangedHandlers += value;
+                RuntimeRenderingHostServices.Current.SubscribeRenderingSettingsChanged(value);
+            }
+            remove
+            {
+                if (value is null)
+                    return;
+
+                SettingsChangedHandlers -= value;
+                RuntimeRenderingHostServices.Current.UnsubscribeRenderingSettingsChanged(value);
+            }
+        }
+
+        public static event Action? AntiAliasingSettingsChanged
+        {
+            add
+            {
+                if (value is null)
+                    return;
+
+                AntiAliasingSettingsChangedHandlers += value;
+                RuntimeRenderingHostServices.Current.SubscribeAntiAliasingSettingsChanged(value);
+            }
+            remove
+            {
+                if (value is null)
+                    return;
+
+                AntiAliasingSettingsChangedHandlers -= value;
+                RuntimeRenderingHostServices.Current.UnsubscribeAntiAliasingSettingsChanged(value);
+            }
+        }
 
         public static string VulkanUpscaleBridgeEnvVar => "XRE_ENABLE_VULKAN_UPSCALE_BRIDGE";
         public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);
@@ -226,8 +266,8 @@ internal static partial class Engine
         public static bool ResolveGpuRenderDispatchPreference(bool requested)
             => VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(requested);
 
-        internal static void RaiseSettingsChanged() => SettingsChanged?.Invoke();
-        internal static void RaiseAntiAliasingSettingsChanged() => AntiAliasingSettingsChanged?.Invoke();
+        internal static void RaiseSettingsChanged() => SettingsChangedHandlers?.Invoke();
+        internal static void RaiseAntiAliasingSettingsChanged() => AntiAliasingSettingsChangedHandlers?.Invoke();
 
         public static class Debug
         {
@@ -687,6 +727,14 @@ internal static partial class Engine
 
 internal sealed class RuntimeRenderSettings
 {
+    private bool _allowBlendshapes = RuntimeRenderingHostServiceDefaults.AllowBlendshapes;
+    private bool _allowShaderPipelines = RuntimeRenderingHostServiceDefaults.AllowShaderPipelines;
+    private bool _allowSkinning = RuntimeRenderingHostServiceDefaults.AllowSkinning;
+    private bool _calculateBlendshapesInComputeShader = RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
+    private bool _calculateSkinningInComputeShader = RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
+    private bool _optimizeSkinningTo4Weights = RuntimeRenderingHostServiceDefaults.OptimizeSkinningTo4Weights;
+    private bool _optimizeSkinningWeightsIfPossible = RuntimeRenderingHostServiceDefaults.OptimizeSkinningWeightsIfPossible;
+    private bool _useIntegerUniformsInShaders = RuntimeRenderingHostServiceDefaults.UseIntegerUniformsInShaders;
     private bool _useSpotShadowAtlas = true;
     private bool _useDirectionalShadowAtlas = true;
     private bool _usePointShadowAtlas = true;
@@ -697,11 +745,30 @@ internal sealed class RuntimeRenderSettings
     private float _maxShadowRenderMilliseconds = 2.0f;
     private uint _minShadowAtlasTileResolution = 128u;
     private uint _maxShadowAtlasTileResolution = 4096u;
+    private int _shaderConfigVersion = RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
 
     public bool AllowBinaryProgramCaching { get; set; } = true;
-    public bool AllowBlendshapes { get; set; } = true;
-    public bool AllowShaderPipelines { get; set; } = true;
-    public bool AllowSkinning { get; set; } = true;
+    public bool AllowBlendshapes
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.AllowBlendshapes
+            : _allowBlendshapes;
+        set => SetShaderSetting(ref _allowBlendshapes, value);
+    }
+    public bool AllowShaderPipelines
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.AllowShaderPipelines
+            : _allowShaderPipelines;
+        set => SetShaderSetting(ref _allowShaderPipelines, value);
+    }
+    public bool AllowSkinning
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.AllowSkinning
+            : _allowSkinning;
+        set => SetShaderSetting(ref _allowSkinning, value);
+    }
     public bool AsyncProgramBinaryUpload { get; set; } = true;
     public bool AsyncProgramCompilation { get; set; } = true;
     private int _openGLProgramCompileLinkWorkerCount = 1;
@@ -711,9 +778,21 @@ internal sealed class RuntimeRenderSettings
         set => _openGLProgramCompileLinkWorkerCount = Math.Clamp(value, 1, 16);
     }
     public bool CacheGpuHiZOcclusionOncePerFrame { get; set; } = true;
-    public bool CalculateBlendshapesInComputeShader { get; set; }
+    public bool CalculateBlendshapesInComputeShader
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.CalculateBlendshapesInComputeShader
+            : _calculateBlendshapesInComputeShader;
+        set => SetShaderSetting(ref _calculateBlendshapesInComputeShader, value);
+    }
     public bool CalculateSkinnedBoundsInComputeShader { get; set; }
-    public bool CalculateSkinningInComputeShader { get; set; }
+    public bool CalculateSkinningInComputeShader
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.CalculateSkinningInComputeShader
+            : _calculateSkinningInComputeShader;
+        set => SetShaderSetting(ref _calculateSkinningInComputeShader, value);
+    }
     public bool CullShadowCollectionByCameraFrusta { get; set; } = true;
     public Vector3 DefaultLuminance { get; set; } = new(0.299f, 0.587f, 0.114f);
     public float DlssCustomScale { get; set; } = 1.0f;
@@ -784,13 +863,38 @@ internal sealed class RuntimeRenderSettings
     public bool OpenXrDebugGl { get; set; }
     public bool OpenXrDebugLifecycle { get; set; }
     public bool OpenXrDebugRenderRightThenLeft { get; set; }
-    public bool OptimizeSkinningTo4Weights { get; set; } = true;
-    public bool OptimizeSkinningWeightsIfPossible { get; set; } = true;
+    public bool OptimizeSkinningTo4Weights
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OptimizeSkinningTo4Weights
+            : _optimizeSkinningTo4Weights;
+        set => SetShaderSetting(ref _optimizeSkinningTo4Weights, value);
+    }
+    public bool OptimizeSkinningWeightsIfPossible
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OptimizeSkinningWeightsIfPossible
+            : _optimizeSkinningWeightsIfPossible;
+        set => SetShaderSetting(ref _optimizeSkinningWeightsIfPossible, value);
+    }
     public bool OutputHDR { get; set; } = true;
     public bool PreferNVStereo { get; set; }
     public bool ProcessMeshImportsAsynchronously { get; set; } = true;
     public bool RenderVRSinglePassStereo { get; set; } = true;
-    public int ShaderConfigVersion { get; set; }
+    public int ShaderConfigVersion
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.ShaderConfigVersion
+            : _shaderConfigVersion;
+        set
+        {
+            if (_shaderConfigVersion == value)
+                return;
+
+            _shaderConfigVersion = value;
+            Engine.Rendering.RaiseSettingsChanged();
+        }
+    }
     public uint ShadowAtlasPageSize
     {
         get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
@@ -812,7 +916,13 @@ internal sealed class RuntimeRenderSettings
 
     public bool UseGlobalBlendshapeWeightsBufferForComputeSkinning { get; set; } = true;
     public bool UseGlobalBoneMatricesBufferForComputeSkinning { get; set; } = true;
-    public bool UseIntegerUniformsInShaders { get; set; } = true;
+    public bool UseIntegerUniformsInShaders
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.UseIntegerUniformsInShaders
+            : _useIntegerUniformsInShaders;
+        set => SetShaderSetting(ref _useIntegerUniformsInShaders, value);
+    }
     public bool UsePointShadowAtlas
     {
         get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
@@ -838,6 +948,25 @@ internal sealed class RuntimeRenderSettings
     {
         services = RuntimeRenderingHostServices.Current;
         return services.ProvidesShadowAtlasSettings;
+    }
+
+    private static bool TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    {
+        services = RuntimeRenderingHostServices.Current;
+        return RuntimeRenderingHostServices.HasConcreteHost;
+    }
+
+    private void SetShaderSetting(ref bool field, bool value)
+    {
+        if (field == value)
+            return;
+
+        field = value;
+        unchecked
+        {
+            _shaderConfigVersion++;
+        }
+        Engine.Rendering.RaiseSettingsChanged();
     }
 }
 

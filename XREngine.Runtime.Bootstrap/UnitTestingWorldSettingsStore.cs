@@ -31,6 +31,7 @@ public static class UnitTestingWorldSettingsStore
 
         RuntimeBootstrapState.Settings = settings;
         BootstrapRenderSettings.ApplyOpenGLShaderLinkSettings(settings);
+        Debug.Out($"[UnitTestingWorldSettings] Loaded '{filePath}' AllowSkinning={settings.AllowSkinning} AllowShaderPipelines={settings.AllowShaderPipelines} Models={settings.ModelsToImport?.Count ?? 0}");
         return settings;
     }
 

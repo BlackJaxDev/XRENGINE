@@ -381,6 +381,7 @@ namespace XREngine
 
         // Project > Engine only (technical, not user-facing)
         private OverrideableSetting<bool> _allowShaderPipelinesOverride = new();
+        private OverrideableSetting<bool> _allowSkinningOverride = new();
         private OverrideableSetting<bool> _useIntegerWeightingIdsOverride = new();
         private OverrideableSetting<ELoopType> _recalcChildMatricesLoopTypeOverride = new();
         private OverrideableSetting<ESkinnedBoundsRecomputePolicy> _skinnedBoundsRecomputePolicyOverride = new();
@@ -764,6 +765,19 @@ namespace XREngine
         {
             get => _allowShaderPipelinesOverride;
             set => SetField(ref _allowShaderPipelinesOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for skeletal skinning.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Technical setting not typically exposed to end users.
+        /// </summary>
+        [Category("Technical Overrides")]
+        [Description("Project override for skeletal skinning (technical).")]
+        public OverrideableSetting<bool> AllowSkinningOverride
+        {
+            get => _allowSkinningOverride;
+            set => SetField(ref _allowSkinningOverride, value ?? new());
         }
 
         /// <summary>

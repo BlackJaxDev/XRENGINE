@@ -29,6 +29,8 @@ public static class RuntimeRenderingHostServices
         set => _current = value ?? new DefaultRuntimeRenderingHostServices();
     }
 
+    internal static bool HasConcreteHost => _current is not DefaultRuntimeRenderingHostServices;
+
     /// <summary>
     /// Absolute path to the game-level cache directory.  Set by the host engine
     /// during initialization.  Used by <c>BvhDiskCache</c> and similar caches
@@ -60,6 +62,25 @@ public static class RuntimeRenderingHostServices
         public bool AllowSkinning => RuntimeRenderingHostServiceDefaults.AllowSkinning;
         public bool OptimizeSkinningTo4Weights => RuntimeRenderingHostServiceDefaults.OptimizeSkinningTo4Weights;
         public bool OptimizeSkinningWeightsIfPossible => RuntimeRenderingHostServiceDefaults.OptimizeSkinningWeightsIfPossible;
+        public bool CalculateSkinningInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
+        public bool CalculateBlendshapesInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
+        public int ShaderConfigVersion => RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
+
+        public void SubscribeRenderingSettingsChanged(Action callback)
+        {
+        }
+
+        public void UnsubscribeRenderingSettingsChanged(Action callback)
+        {
+        }
+
+        public void SubscribeAntiAliasingSettingsChanged(Action callback)
+        {
+        }
+
+        public void UnsubscribeAntiAliasingSettingsChanged(Action callback)
+        {
+        }
 
         #endregion
 

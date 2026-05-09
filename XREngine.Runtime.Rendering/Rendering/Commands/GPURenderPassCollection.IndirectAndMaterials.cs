@@ -122,7 +122,14 @@ namespace XREngine.Rendering.Commands
                 CurrentBatches = batches;
                 _gpuBatchingPreparedThisFrame = batches is not null;
 
-                if (!_zeroReadbackMaterialScatterPreparedThisFrame && (batches is null || batches.Count == 0))
+                bool canSubmitGpuCountOnly =
+                    IsCpuReadbackCountDisabledForPass() &&
+                    _drawCountBuffer is not null &&
+                    _indirectDrawBuffer is not null;
+
+                if (!_zeroReadbackMaterialScatterPreparedThisFrame &&
+                    (batches is null || batches.Count == 0) &&
+                    !canSubmitGpuCountOnly)
                 {
                     if (scene.TotalCommandCount > 0)
                     {

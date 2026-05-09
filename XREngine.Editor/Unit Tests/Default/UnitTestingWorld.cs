@@ -73,6 +73,8 @@ public static partial class EditorUnitTests
         s.AllowBinaryProgramCaching = Toggles.AllowBinaryProgramCaching;
         s.AsyncProgramBinaryUpload = Toggles.AsyncProgramBinaryUpload;
         s.AsyncProgramCompilation = Toggles.AsyncProgramCompilation;
+        s.AllowSkinning = Toggles.AllowSkinning;
+        Debug.Out($"[UnitTestingWorld] Applied render toggles AllowSkinning={s.AllowSkinning} AllowShaderPipelines={s.AllowShaderPipelines}");
         s.OpenGLProgramCompileLinkWorkerCount = Toggles.OpenGLProgramCompileLinkWorkerCount;
         s.MaxAsyncShaderProgramsPerFrame = Toggles.MaxAsyncShaderProgramsPerFrame;
         s.OpenGLShaderLinkStrategy = Toggles.OpenGLShaderLinkStrategy;

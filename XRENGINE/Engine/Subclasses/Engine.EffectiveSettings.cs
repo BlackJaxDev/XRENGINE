@@ -410,6 +410,15 @@ namespace XREngine
                     : Rendering.Settings.AllowShaderPipelines;
 
             /// <summary>
+            /// Gets the effective skeletal skinning setting.
+            /// Resolved from: Project Override > Engine Default (not user-overridable)
+            /// </summary>
+            public static bool AllowSkinning
+                => GameSettings?.AllowSkinningOverride is { HasOverride: true } projectOverride
+                    ? projectOverride.Value
+                    : Rendering.Settings.AllowSkinning;
+
+            /// <summary>
             /// Gets the effective integer weighting IDs setting.
             /// Resolved from: Project Override > Engine Default (not user-overridable)
             /// </summary>

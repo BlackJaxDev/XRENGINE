@@ -966,39 +966,86 @@ namespace XREngine.Rendering
         /// the buffers weren't created during renderer construction.
         /// </summary>
         /// <returns>True if BoneMatricesBuffer is available after this call; false otherwise.</returns>
-        public bool EnsureSkinningBuffers()
+        public bool EnsureSkinningBuffers(bool logWarnings = true)
         {
-            if (BoneMatricesBuffer is not null)
+            if (BoneMatricesBuffer is not null && BoneInvBindMatricesBuffer is not null)
                 return true;
+
+            if (BoneMatricesBuffer is not null || BoneInvBindMatricesBuffer is not null)
+            {
+                RemoveMeshDeformBuffer(BoneMatricesBuffer);
+                BoneMatricesBuffer?.Destroy();
+                BoneMatricesBuffer = null;
+
+                RemoveMeshDeformBuffer(BoneInvBindMatricesBuffer);
+                BoneInvBindMatricesBuffer?.Destroy();
+                BoneInvBindMatricesBuffer = null;
+            }
 
             if (Mesh is null)
             {
-                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh is null, cannot initialize skinning buffers. Renderer={GetHashCode():X}");
+                if (logWarnings)
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh is null, cannot initialize skinning buffers. Renderer={GetHashCode():X}");
                 return false;
             }
 
             if (!Mesh.HasSkinning)
             {
-                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh '{Mesh.Name}' has no skinning data. Renderer={GetHashCode():X}");
+                if (logWarnings)
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh '{Mesh.Name}' has no skinning data. Renderer={GetHashCode():X}");
                 return false;
             }
 
             if (!Engine.Rendering.Settings.AllowSkinning)
             {
-                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Skinning is disabled in render settings. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
+                if (logWarnings)
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Skinning is disabled in render settings. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
                 return false;
             }
 
-            Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: BoneMatricesBuffer was null, initializing late. This may indicate a timing issue with mesh/renderer creation. Mesh='{Mesh.Name}', UtilizedBones={Mesh.UtilizedBones?.Length ?? 0}, Renderer={GetHashCode():X}");
+            if (logWarnings)
+                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: BoneMatricesBuffer was null, initializing late. This may indicate a timing issue with mesh/renderer creation. Mesh='{Mesh.Name}', UtilizedBones={Mesh.UtilizedBones?.Length ?? 0}, Renderer={GetHashCode():X}");
+
             PopulateBoneMatrixBuffers();
 
-            if (BoneMatricesBuffer is null)
+            if (BoneMatricesBuffer is null || BoneInvBindMatricesBuffer is null)
             {
-                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: PopulateBoneMatrixBuffers did not create buffer. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
+                if (logWarnings)
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: PopulateBoneMatrixBuffers did not create buffer. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
                 return false;
             }
 
             return true;
+        }
+
+        public bool EnsureBlendshapeBuffers(bool logWarnings = true)
+        {
+            if (BlendshapeWeights is not null)
+                return true;
+
+            if (Mesh is null)
+            {
+                if (logWarnings)
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureBlendshapeBuffers: Mesh is null, cannot initialize blendshape buffers. Renderer={GetHashCode():X}");
+                return false;
+            }
+
+            if (!Mesh.HasBlendshapes)
+            {
+                if (logWarnings)
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureBlendshapeBuffers: Mesh '{Mesh.Name}' has no blendshape data. Renderer={GetHashCode():X}");
+                return false;
+            }
+
+            if (!Engine.Rendering.Settings.AllowBlendshapes)
+            {
+                if (logWarnings)
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureBlendshapeBuffers: Blendshapes are disabled in render settings. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
+                return false;
+            }
+
+            PopulateBlendshapeWeightsBuffer();
+            return BlendshapeWeights is not null;
         }
 
         private void PopulateBlendshapeWeightsBuffer()
