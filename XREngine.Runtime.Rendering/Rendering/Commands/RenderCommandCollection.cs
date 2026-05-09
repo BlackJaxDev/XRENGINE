@@ -2,6 +2,7 @@ using XREngine.Extensions;
 using System;
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
@@ -380,6 +381,9 @@ namespace XREngine.Rendering.Commands
         }
 
         public void RenderGPU(int renderPass)
+            => RenderGPU(renderPass, EMeshSubmissionStrategy.GpuIndirectInstrumented);
+
+        public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
         {
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;
@@ -399,6 +403,7 @@ namespace XREngine.Rendering.Commands
             if (scene is null)
                 return;
 
+            gpuPass.MeshSubmissionStrategy = meshSubmissionStrategy;
             ConfigureGpuViewSet(gpuPass, renderState, camera);
 
             scene.RenderGpuPass(gpuPass);
@@ -406,7 +411,8 @@ namespace XREngine.Rendering.Commands
             gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
             scene.RecordGpuVisibility(draws, instances);
 
-            bool allowPerViewReadback = RuntimeRenderingHostServices.Current.EnableGpuIndirectDebugLogging;
+            bool allowPerViewReadback = meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+                RuntimeRenderingHostServices.Current.EnableGpuIndirectDebugLogging;
             if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
             {
                 uint leftDraws = gpuPass.ReadPerViewDrawCount(0u);

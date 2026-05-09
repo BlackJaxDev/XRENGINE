@@ -1,0 +1,35 @@
+#version 460 core
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer DrawCountBuffer
+{
+    uint drawCounts[];
+};
+
+layout(std430, binding = 1) buffer ActiveBucketIndexBuffer
+{
+    uint activeBuckets[];
+};
+
+layout(std430, binding = 2) buffer ActiveBucketCountBuffer
+{
+    uint activeBucketCount;
+};
+
+uniform int MaxBucketCount;
+
+void main()
+{
+    uint bucket = gl_GlobalInvocationID.x;
+    uint bucketCount = uint(max(MaxBucketCount, 0));
+    if (bucket >= bucketCount || bucket >= uint(drawCounts.length()))
+        return;
+
+    if (drawCounts[bucket] == 0u)
+        return;
+
+    uint activeIndex = atomicAdd(activeBucketCount, 1u);
+    if (activeIndex < uint(activeBuckets.length()))
+        activeBuckets[activeIndex] = bucket;
+}

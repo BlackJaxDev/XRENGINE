@@ -27,7 +27,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool ClearStencil { get; set; } = true;
         public bool CullWithFrustum { get; set; } = true;
         public bool CollectMirrors { get; set; }
-        public bool GPUDispatch { get; set; }
+        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = Engine.Rendering.ResolveMeshSubmissionStrategy();
+        public bool GPUDispatch
+        {
+            get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
+            set => MeshSubmissionStrategy = value
+                ? EMeshSubmissionStrategy.GpuIndirectInstrumented
+                : EMeshSubmissionStrategy.CpuDirect;
+        }
 
         public override bool NeedsCollecVisible => true;
 
@@ -49,7 +56,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Engine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
 
             RenderCommandCollection commands = _faceCommands ?? instance.MeshRenderCommands;
-            VPRCRenderTargetHelpers.RenderPass(instance, commands, faceCamera, RenderPass, extent, extent, GPUDispatch);
+            VPRCRenderTargetHelpers.RenderPass(instance, commands, faceCamera, RenderPass, extent, extent, MeshSubmissionStrategy);
         }
 
         public override void CollectVisible()

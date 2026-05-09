@@ -176,7 +176,8 @@ namespace XREngine
             {
                 static void Apply()
                 {
-                    bool useGpu = ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+                    EMeshSubmissionStrategy strategy = ResolveMeshSubmissionStrategy();
+                    bool useGpu = strategy != EMeshSubmissionStrategy.CpuDirect;
                     
                     foreach (var worldInstance in Engine.WorldInstances)
                         worldInstance?.ApplyRenderDispatchPreference(useGpu);
@@ -188,9 +189,9 @@ namespace XREngine
                             continue;
 
                         if (pipeline is DebugOpaqueRenderPipeline debugPipeline)
-                            debugPipeline.GpuRenderDispatch = useGpu;
+                            debugPipeline.MeshSubmissionStrategy = strategy;
                         else
-                            ApplyGpuRenderDispatchToPipeline(pipeline, useGpu);
+                            ApplyMeshSubmissionStrategyToPipeline(pipeline, strategy);
                     }
                 }
 
@@ -213,6 +214,66 @@ namespace XREngine
                 return false;
             }
 
+            public readonly record struct MeshSubmissionStrategyResolverInputs(
+                bool RequestedGpuDispatch,
+                EMeshSubmissionStrategy? ForcedStrategy,
+                bool EnableGpuIndirectDebugLogging,
+                bool EnableGpuIndirectValidationLogging,
+                bool EnableGpuIndirectCpuFallback,
+                bool EnableZeroReadbackMaterialScatter,
+                bool EnableEditorZeroReadbackMaterialScatter,
+                bool VulkanFeatureProfileActive,
+                EVulkanGpuDrivenProfile ActiveVulkanProfile,
+                bool EnforceStrictNoFallbacks,
+                bool SupportsIndirectCountDraw,
+                bool SupportsMeshletDispatch);
+
+            public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(bool? requestedGpuDispatch = null)
+            {
+                MeshSubmissionStrategyResolverInputs inputs = CreateMeshSubmissionStrategyResolverInputs(requestedGpuDispatch);
+                EMeshSubmissionStrategy strategy = ResolveMeshSubmissionStrategy(inputs);
+                WarnIfMeshSubmissionStrategyDowngraded(inputs, strategy);
+                return strategy;
+            }
+
+            public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(MeshSubmissionStrategyResolverInputs inputs)
+            {
+                if (inputs.ForcedStrategy.HasValue)
+                    return inputs.ForcedStrategy.Value;
+
+                if (!inputs.RequestedGpuDispatch)
+                    return EMeshSubmissionStrategy.CpuDirect;
+
+                bool diagnosticsProfile = inputs.VulkanFeatureProfileActive &&
+                    inputs.ActiveVulkanProfile == EVulkanGpuDrivenProfile.Diagnostics;
+                bool shippingFastProfile = inputs.VulkanFeatureProfileActive &&
+                    inputs.ActiveVulkanProfile == EVulkanGpuDrivenProfile.ShippingFast;
+                bool instrumentationRequested = diagnosticsProfile
+                    || inputs.EnableGpuIndirectDebugLogging
+                    || inputs.EnableGpuIndirectValidationLogging
+                    || inputs.EnableGpuIndirectCpuFallback;
+                bool zeroReadbackRequested = shippingFastProfile
+                    || inputs.EnableZeroReadbackMaterialScatter
+                    || inputs.EnableEditorZeroReadbackMaterialScatter;
+
+                if (zeroReadbackRequested)
+                {
+                    if (inputs.SupportsIndirectCountDraw)
+                        return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
+                    return inputs.EnforceStrictNoFallbacks
+                        ? EMeshSubmissionStrategy.CpuDirect
+                        : EMeshSubmissionStrategy.GpuIndirectInstrumented;
+                }
+
+                if (instrumentationRequested)
+                    return EMeshSubmissionStrategy.GpuIndirectInstrumented;
+
+                return inputs.SupportsIndirectCountDraw
+                    ? EMeshSubmissionStrategy.GpuIndirectInstrumented
+                    : EMeshSubmissionStrategy.CpuDirect;
+            }
+
             public static bool ResolveGpuRenderDispatchPreference(bool requestedGpuDispatch)
             {
                 bool resolved = VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(requestedGpuDispatch);
@@ -226,6 +287,80 @@ namespace XREngine
                 }
 
                 return resolved;
+            }
+
+            private static MeshSubmissionStrategyResolverInputs CreateMeshSubmissionStrategyResolverInputs(bool? requestedGpuDispatch)
+            {
+                AbstractRenderer? renderer = GetActiveRenderer();
+                bool rendererKnown = renderer is not null;
+                bool supportsIndirectCount = renderer?.SupportsIndirectCountDraw() ?? true;
+                bool supportsMeshletDispatch = renderer?.SupportsMeshletDispatch() ?? false;
+
+                return new MeshSubmissionStrategyResolverInputs(
+                    RequestedGpuDispatch: requestedGpuDispatch ?? Engine.EffectiveSettings.GPURenderDispatch,
+                    ForcedStrategy: Engine.EffectiveSettings.ForceMeshSubmissionStrategy,
+                    EnableGpuIndirectDebugLogging: Engine.EffectiveSettings.EnableGpuIndirectDebugLogging,
+                    EnableGpuIndirectValidationLogging: Engine.EffectiveSettings.EnableGpuIndirectValidationLogging,
+                    EnableGpuIndirectCpuFallback: Engine.EffectiveSettings.EnableGpuIndirectCpuFallback,
+                    EnableZeroReadbackMaterialScatter: Engine.EffectiveSettings.EnableZeroReadbackMaterialScatter,
+                    EnableEditorZeroReadbackMaterialScatter: Engine.EditorPreferences?.Debug?.EnableZeroReadbackMaterialScatter == true,
+                    VulkanFeatureProfileActive: VulkanFeatureProfile.IsActive,
+                    ActiveVulkanProfile: VulkanFeatureProfile.ActiveProfile,
+                    EnforceStrictNoFallbacks: VulkanFeatureProfile.EnforceStrictNoFallbacks,
+                    SupportsIndirectCountDraw: rendererKnown ? supportsIndirectCount : true,
+                    SupportsMeshletDispatch: supportsMeshletDispatch);
+            }
+
+            private static AbstractRenderer? GetActiveRenderer()
+            {
+                if (State.RenderingViewport?.Window?.Renderer is { } viewportRenderer)
+                    return viewportRenderer;
+
+                if (AbstractRenderer.Current is { } currentRenderer)
+                    return currentRenderer;
+
+                foreach (XRWindow window in Engine.Windows)
+                    if (window.Renderer is { } renderer)
+                        return renderer;
+
+                return null;
+            }
+
+            private static void WarnIfMeshSubmissionStrategyDowngraded(
+                MeshSubmissionStrategyResolverInputs inputs,
+                EMeshSubmissionStrategy strategy)
+            {
+                if (!inputs.RequestedGpuDispatch || inputs.ForcedStrategy.HasValue)
+                    return;
+
+                bool wantedZeroReadback = (inputs.VulkanFeatureProfileActive &&
+                        inputs.ActiveVulkanProfile == EVulkanGpuDrivenProfile.ShippingFast)
+                    || inputs.EnableZeroReadbackMaterialScatter
+                    || inputs.EnableEditorZeroReadbackMaterialScatter;
+
+                if (wantedZeroReadback &&
+                    !inputs.SupportsIndirectCountDraw &&
+                    strategy != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                {
+                    XREngine.Debug.RenderingWarningEvery(
+                        "RenderDispatch.MeshSubmissionStrategy.UnsupportedZeroReadback",
+                        TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] Mesh submission strategy downgraded from {0} because the active renderer does not support indirect-count draws. Effective={1}.",
+                        EMeshSubmissionStrategy.GpuIndirectZeroReadback,
+                        strategy);
+                }
+
+                if (strategy == EMeshSubmissionStrategy.CpuDirect && inputs.SupportsIndirectCountDraw)
+                    return;
+
+                if (strategy == EMeshSubmissionStrategy.CpuDirect && !inputs.SupportsIndirectCountDraw)
+                {
+                    XREngine.Debug.RenderingWarningEvery(
+                        "RenderDispatch.MeshSubmissionStrategy.UnsupportedGpuDispatch",
+                        TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] GPU mesh submission requested but the active renderer cannot satisfy the selected profile without CPU fallback. Effective={0}.",
+                        strategy);
+                }
             }
 
             public static void ApplyGpuBvhPreference()
@@ -250,7 +385,8 @@ namespace XREngine
                 var activeProfile = VulkanFeatureProfile.ActiveProfile;
 
                 bool requestedGpuDispatch = Engine.EffectiveSettings.GPURenderDispatch;
-                bool effectiveGpuDispatch = VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(requestedGpuDispatch);
+                EMeshSubmissionStrategy meshSubmissionStrategy = ResolveMeshSubmissionStrategy(requestedGpuDispatch);
+                bool effectiveGpuDispatch = meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
 
                 bool requestedGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
                 bool effectiveGpuBvh = VulkanFeatureProfile.ResolveGpuBvhPreference(requestedGpuBvh);
@@ -258,21 +394,27 @@ namespace XREngine
                 EOcclusionCullingMode requestedOcclusion = Engine.EffectiveSettings.GpuOcclusionCullingMode;
                 EOcclusionCullingMode effectiveOcclusion = VulkanFeatureProfile.ResolveOcclusionCullingMode(requestedOcclusion);
                 EGpuSortDomainPolicy sortPolicy = Engine.Rendering.Settings.GpuSortDomainPolicy;
+                EZeroReadbackMaterialDrawPath zeroReadbackDrawPath = Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath;
                 EVulkanQueueOverlapMode requestedQueueOverlap = Engine.EffectiveSettings.VulkanQueueOverlapMode;
                 EVulkanQueueOverlapMode effectiveQueueOverlap = VulkanFeatureProfile.ResolveQueueOverlapMode(requestedQueueOverlap);
 
                 bool effectiveComputePasses = VulkanFeatureProfile.ResolveComputeDependentPassesPreference(true);
                 bool effectiveImGui = VulkanFeatureProfile.ResolveImGuiPreference(true);
-                bool supportsIndirectCount = AbstractRenderer.Current?.SupportsIndirectCountDraw() == true;
-                string dispatchPath = effectiveGpuDispatch ? "GPUDriven" : "CPUFallback";
+                AbstractRenderer? renderer = GetActiveRenderer();
+                bool supportsIndirectCount = renderer?.SupportsIndirectCountDraw() == true;
+                bool supportsMeshletDispatch = renderer?.SupportsMeshletDispatch() == true;
+                string dispatchPath = meshSubmissionStrategy.ToString();
 
                 string fingerprint = string.Format(
-                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) GpuBvh={5}(requested={6}) Occlusion={7}->{8} SortPolicy={9} QueueOverlap={10}(requested={11}) ImGui={12} DrawIndirectCountExt={13} DispatchPath={14}",
+                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) MeshStrategy={5} ForceMeshStrategy={6} ZeroReadbackDrawPath={7} GpuBvh={8}(requested={9}) Occlusion={10}->{11} SortPolicy={12} QueueOverlap={13}(requested={14}) ImGui={15} DrawIndirectCountExt={16} MeshletDispatch={17} DispatchPath={18}",
                     configuredProfile,
                     activeProfile,
                     effectiveComputePasses,
                     effectiveGpuDispatch,
                     requestedGpuDispatch,
+                    meshSubmissionStrategy,
+                    Engine.EffectiveSettings.ForceMeshSubmissionStrategy?.ToString() ?? "<auto>",
+                    zeroReadbackDrawPath,
                     effectiveGpuBvh,
                     requestedGpuBvh,
                     requestedOcclusion,
@@ -282,6 +424,7 @@ namespace XREngine
                     requestedQueueOverlap,
                     effectiveImGui,
                     supportsIndirectCount,
+                    supportsMeshletDispatch,
                     dispatchPath);
 
                 if (!force && string.Equals(_lastVulkanFeatureFingerprint, fingerprint, StringComparison.Ordinal))
@@ -354,13 +497,28 @@ namespace XREngine
             }
 
             internal static void ApplyGpuRenderDispatchToPipeline(RenderPipeline pipeline, bool useGpu)
+                => ApplyMeshSubmissionStrategyToPipeline(
+                    pipeline,
+                    useGpu ? ResolveMeshSubmissionStrategy(true) : EMeshSubmissionStrategy.CpuDirect);
+
+            internal static void ApplyMeshSubmissionStrategyToPipeline(RenderPipeline pipeline, EMeshSubmissionStrategy strategy)
             {
+                bool useGpu = strategy != EMeshSubmissionStrategy.CpuDirect;
                 foreach (ViewportRenderCommand command in EnumerateCommands(pipeline.CommandChain))
                 {
                     switch (command)
                     {
                         case VPRC_RenderMeshesPass renderPass:
-                            renderPass.GPUDispatch = useGpu;
+                            renderPass.MeshSubmissionStrategy = strategy;
+                            break;
+                        case VPRC_RenderCubemap cubemapPass:
+                            cubemapPass.MeshSubmissionStrategy = strategy;
+                            break;
+                        case VPRC_RenderToCubemapFace cubemapFacePass:
+                            cubemapFacePass.MeshSubmissionStrategy = strategy;
+                            break;
+                        case VPRC_RenderToTextureArray textureArrayPass:
+                            textureArrayPass.MeshSubmissionStrategy = strategy;
                             break;
                         case VPRC_VoxelConeTracingPass voxelPass:
                             voxelPass.GpuDispatch = useGpu;

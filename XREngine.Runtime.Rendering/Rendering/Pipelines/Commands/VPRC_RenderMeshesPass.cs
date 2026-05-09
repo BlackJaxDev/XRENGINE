@@ -15,5 +15,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             : base(renderPass, gpuDispatch)
         {
         }
+
+        public VPRC_RenderMeshesPass(int renderPass, XREngine.Data.Rendering.EMeshSubmissionStrategy meshSubmissionStrategy)
+            : base(renderPass, meshSubmissionStrategy)
+        {
+        }
     }
 } 

@@ -4421,6 +4421,8 @@ void main()
             var glBuf = GenericToAPI<GLDataBuffer>(buffer);
             if (glBuf is null)
                 return;
+
+            glBuf.EnsureStorageAllocatedForGpuCopy();
             Api.BindBuffer(GLEnum.DrawIndirectBuffer, glBuf.BindingId);
         }
 

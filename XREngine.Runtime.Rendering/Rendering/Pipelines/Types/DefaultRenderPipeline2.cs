@@ -91,6 +91,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     protected static bool GPURenderDispatch
         => Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
 
+    protected static EMeshSubmissionStrategy MeshSubmissionStrategy
+        => Engine.Rendering.ResolveMeshSubmissionStrategy();
+
     private static bool UseVulkanSafeFeatureProfile
         => VulkanFeatureProfile.IsActive;
 

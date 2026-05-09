@@ -836,6 +836,12 @@ namespace XREngine.Rendering
         public abstract bool SupportsIndirectCountDraw();
 
         /// <summary>
+        /// Returns whether the current API supports task/mesh shader dispatch for meshlet rendering.
+        /// </summary>
+        public virtual bool SupportsMeshletDispatch()
+            => false;
+
+        /// <summary>
         /// Blocks the CPU until all GPU commands have completed.
         /// </summary>
         public abstract void WaitForGpu();

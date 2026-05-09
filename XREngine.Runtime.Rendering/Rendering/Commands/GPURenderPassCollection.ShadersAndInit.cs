@@ -159,6 +159,7 @@ namespace XREngine.Rendering.Commands
             _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildKeys.comp", EShaderType.Compute));
             _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildBatches.comp", EShaderType.Compute));
             _materialScatterComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderMaterialScatter.comp", EShaderType.Compute));
+            _buildActiveMaterialBucketsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildActiveMaterialBuckets.comp", EShaderType.Compute));
             _classifyTransparencyComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClassifyTransparencyDomains.comp", EShaderType.Compute));
             _lodSelectComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderLODSelect.comp", EShaderType.Compute));
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Sorting/GPURenderRadixIndexSort.comp", EShaderType.Compute));
@@ -950,6 +951,64 @@ namespace XREngine.Rendering.Commands
 
             _materialTierBucketCount = bucketCount;
             _maxDrawsPerMaterialTier = maxDrawsPerBucket;
+            EnsureActiveMaterialBucketBuffers(bucketCount);
+        }
+
+        private void EnsureActiveMaterialBucketBuffers(uint bucketCount)
+        {
+            uint capacity = Math.Max(bucketCount, 1u);
+
+            if (_materialTierActiveBucketBuffer is null ||
+                _materialTierActiveBucketBuffer.ComponentType != EComponentType.UInt ||
+                _materialTierActiveBucketBuffer.ComponentCount != 1u)
+            {
+                _materialTierActiveBucketBuffer?.Destroy();
+                _materialTierActiveBucketBuffer = new XRDataBuffer(
+                    "MaterialTierActiveBuckets",
+                    EBufferTarget.ShaderStorageBuffer,
+                    capacity,
+                    EComponentType.UInt,
+                    1u,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.ActiveMaterialBucketIndices
+                };
+                _materialTierActiveBucketBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
+                _materialTierActiveBucketBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
+                _materialTierActiveBucketBuffer.Generate();
+            }
+            else if (_materialTierActiveBucketBuffer.ElementCount < capacity)
+            {
+                _materialTierActiveBucketBuffer.Resize(capacity);
+            }
+
+            if (_materialTierActiveBucketCountBuffer is null ||
+                _materialTierActiveBucketCountBuffer.ComponentType != EComponentType.UInt ||
+                _materialTierActiveBucketCountBuffer.ComponentCount != 1u)
+            {
+                _materialTierActiveBucketCountBuffer?.Destroy();
+                _materialTierActiveBucketCountBuffer = new XRDataBuffer(
+                    "MaterialTierActiveBucketCount",
+                    EBufferTarget.ShaderStorageBuffer,
+                    1u,
+                    EComponentType.UInt,
+                    1u,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = false,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.ActiveMaterialBucketCount
+                };
+                _materialTierActiveBucketCountBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
+                _materialTierActiveBucketCountBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
+                _materialTierActiveBucketCountBuffer.Generate();
+            }
         }
 
         private void EnsureTransparencyDomainBuffers(uint capacity)

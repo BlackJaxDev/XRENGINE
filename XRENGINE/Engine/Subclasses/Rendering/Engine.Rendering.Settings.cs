@@ -151,6 +151,8 @@ namespace XREngine
                 private bool _enableGpuIndirectCpuFallback = false;
                 private bool _enableGpuIndirectValidationLogging = false;
                 private bool _enableZeroReadbackMaterialScatter = false;
+                private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
+                private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy = null;
                 private TextureRuntimeLogMode _textureLogMode = TextureRuntimeLogMode.Summary;
                 private double _textureSlowCpuDecodeResizeMilliseconds = 5.0;
                 private double _textureSlowMipBuildMilliseconds = 5.0;
@@ -292,6 +294,29 @@ namespace XREngine
                 {
                     get => _enableZeroReadbackMaterialScatter;
                     set => SetField(ref _enableZeroReadbackMaterialScatter, value);
+                }
+
+                /// <summary>
+                /// Selects how zero-readback GPU indirect material draws are submitted.
+                /// </summary>
+                [Category("GPU Rendering")]
+                [Description("Selects the material draw path used by GpuIndirectZeroReadback.")]
+                public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath
+                {
+                    get => _zeroReadbackMaterialDrawPath;
+                    set => SetField(ref _zeroReadbackMaterialDrawPath, value);
+                }
+
+                /// <summary>
+                /// Optional diagnostic override for the resolved mesh submission strategy.
+                /// Leave null for profile and capability based resolution.
+                /// </summary>
+                [Category("GPU Rendering")]
+                [Description("Optional diagnostic override for the resolved mesh submission strategy. Leave null for profile and capability based resolution.")]
+                public EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
+                {
+                    get => _forceMeshSubmissionStrategy;
+                    set => SetField(ref _forceMeshSubmissionStrategy, value);
                 }
 
                 #endregion
@@ -1743,7 +1768,13 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
                     Engine.Rendering.ApplyGpuBvhPreference();
 
-                if (applyAll || propertyName == nameof(EngineSettings.VulkanGpuDrivenProfile))
+                if (applyAll || propertyName == nameof(EngineSettings.VulkanGpuDrivenProfile)
+                    || propertyName == nameof(EngineSettings.EnableZeroReadbackMaterialScatter)
+                    || propertyName == nameof(EngineSettings.ZeroReadbackMaterialDrawPath)
+                    || propertyName == nameof(EngineSettings.EnableGpuIndirectDebugLogging)
+                    || propertyName == nameof(EngineSettings.EnableGpuIndirectValidationLogging)
+                    || propertyName == nameof(EngineSettings.EnableGpuIndirectCpuFallback)
+                    || propertyName == nameof(EngineSettings.ForceMeshSubmissionStrategy))
                 {
                     Engine.Rendering.ApplyGpuRenderDispatchPreference();
                     Engine.Rendering.ApplyGpuBvhPreference();
@@ -1796,6 +1827,14 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EditorDebugOptions.UseDebugOpaquePipeline))
                     ApplyRenderPipelinePreference();
+
+                if (applyAll ||
+                    propertyName == nameof(EditorDebugOptions.EnableZeroReadbackMaterialScatter) ||
+                    propertyName == nameof(EditorDebugOptions.ZeroReadbackMaterialDrawPath))
+                {
+                    ApplyGpuRenderDispatchPreference();
+                    LogVulkanFeatureProfileFingerprint();
+                }
 
                 if (applyAll || propertyName == nameof(EditorPreferences.ViewportPresentationMode))
                 {
