@@ -350,6 +350,36 @@ namespace XREngine.Components
             }
         }
 
+        [Category("Debug (Forward+)")]
+        [DisplayName("Show Empty Tiles")]
+        [Description("If on, paints zero-count tiles with a faint dark fill so the entire culling grid extent is visible. If off, empty tiles are transparent.")]
+        public bool ForwardPlusDebugShowEmptyTiles
+        {
+            get => Camera.ForwardPlusDebugShowEmptyTiles;
+            set
+            {
+                if (Camera.ForwardPlusDebugShowEmptyTiles == value)
+                    return;
+                Camera.ForwardPlusDebugShowEmptyTiles = value;
+                OnPropertyChanged(nameof(ForwardPlusDebugShowEmptyTiles), Camera.ForwardPlusDebugShowEmptyTiles, value);
+            }
+        }
+
+        [Category("Debug (Forward+)")]
+        [DisplayName("Show Per-Tile Count Bar")]
+        [Description("If on, populated tiles render a small horizontal bar (length = count / MaxCount) so the per-tile light count is quantitatively readable.")]
+        public bool ForwardPlusDebugShowCountBar
+        {
+            get => Camera.ForwardPlusDebugShowCountBar;
+            set
+            {
+                if (Camera.ForwardPlusDebugShowCountBar == value)
+                    return;
+                Camera.ForwardPlusDebugShowCountBar = value;
+                OnPropertyChanged(nameof(ForwardPlusDebugShowCountBar), Camera.ForwardPlusDebugShowCountBar, value);
+            }
+        }
+
         private Func<IRuntimeCullingCamera>? _cullingCameraOverride = null;
         /// <summary>
         /// When CullWithFrustum is true and this property is not null, this method retrieves the camera frustum to cull with.

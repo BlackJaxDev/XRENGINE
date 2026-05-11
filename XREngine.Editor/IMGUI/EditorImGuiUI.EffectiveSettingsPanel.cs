@@ -1,22 +1,32 @@
 using ImGuiNET;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using XREngine;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
-    private const string RuntimeEngineDefaultsInspectorTitle = "Runtime Engine Defaults (Session)";
+    private const string GlobalEngineDefaultsInspectorTitle = "Global Engine Defaults";
+    private const string ProjectEngineDefaultsInspectorTitle = "Project Engine Defaults";
     private static readonly EffectiveSettingsInspectorTarget EffectiveSettingsTarget = new();
-    private static PropertyInfo[]? _effectiveSettingsProperties;
+    private static EffectiveSettingsRow[]? _effectiveSettingsRows;
 
     private sealed class EffectiveSettingsInspectorTarget { }
+    private sealed record EffectiveSettingsRow(string Name, PropertyInfo? EffectiveProperty, PropertyInfo? EngineSettingsProperty);
+    private readonly record struct EffectiveSettingCascadeValues(
+        string GlobalDefault,
+        string ProjectDefault,
+        string GameSetting,
+        string UserSetting,
+        string EditorOverride);
 
     private static void OpenEffectiveSettingsInInspector()
     {
@@ -25,23 +35,41 @@ public static partial class EditorImGuiUI
         SetInspectorStandaloneTarget(EffectiveSettingsTarget, "Effective Settings");
     }
 
-    private static bool IsRuntimeEngineDefaultsTarget(object? target)
+    private static bool IsEngineDefaultsTarget(object? target)
         => target is Engine.Rendering.EngineSettings;
 
-    private static void DrawRuntimeEngineDefaultsInspectorNote()
+    private static void DrawEngineDefaultsInspectorNote(Engine.Rendering.EngineSettings settings)
     {
-        ImGui.TextDisabled("Runtime baseline. Not saved.");
-        ImGui.TextDisabled("Persist project/user overrides in Game Settings and User Settings; editor-only project overrides live in Editor Preferences Overrides.");
+        if (ReferenceEquals(settings, Engine.Rendering.ProjectDefaultSettings) && Engine.CurrentProject is not null)
+        {
+            ImGui.TextDisabled("Project engine defaults override the global engine defaults for this project.");
+            if (ImGui.Button("Save Project Engine Defaults"))
+                Engine.SaveProjectEngineDefaults();
+            ImGui.SameLine();
+            ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
+        }
+        else if (ReferenceEquals(settings, Engine.Rendering.GlobalDefaultSettings))
+        {
+            ImGui.TextDisabled("Global engine defaults are saved outside any project and seed new project defaults.");
+            if (ImGui.Button("Save Global Engine Defaults"))
+                Engine.SaveGlobalEngineDefaults();
+        }
+        else
+        {
+            ImGui.TextDisabled("Engine defaults asset.");
+        }
+
+        ImGui.TextDisabled("Game Settings and User Settings can still override the effective values that use the cascading settings layer.");
         ImGui.Separator();
     }
 
     private static void DrawEffectiveSettingsInspector()
     {
-        ImGui.TextDisabled("Read-only resolved runtime values after applying editor, user, project, and engine-default layers.");
+        ImGui.TextDisabled("Read-only resolved runtime values after applying editor, user, game, project-default, and global-default layers.");
         ImGui.TextDisabled("Change the owning source asset to persist a value.");
         ImGui.Separator();
 
-        PropertyInfo[] properties = GetEffectiveSettingsProperties();
+        EffectiveSettingsRow[] rows = GetEffectiveSettingsRows();
         string search = _inspectorPropertySearch ?? string.Empty;
         bool hasSearch = !string.IsNullOrWhiteSpace(search);
 
@@ -49,32 +77,44 @@ public static partial class EditorImGuiUI
             ImGuiTableFlags.Borders |
             ImGuiTableFlags.RowBg |
             ImGuiTableFlags.Resizable |
+            ImGuiTableFlags.ScrollX |
             ImGuiTableFlags.SizingStretchProp;
 
-        if (!ImGui.BeginTable("EffectiveSettingsTable", 4, flags))
+        if (!ImGui.BeginTable("EffectiveSettingsTable", 9, flags))
             return;
 
-        ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 130.0f);
-        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthStretch, 0.34f);
-        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.36f);
-        ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 145.0f);
+        ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 110.0f);
+        ImGui.TableSetupColumn("Setting", ImGuiTableColumnFlags.WidthFixed, 230.0f);
+        ImGui.TableSetupColumn("Effective", ImGuiTableColumnFlags.WidthFixed, 160.0f);
+        ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 150.0f);
+        ImGui.TableSetupColumn("Global Default", ImGuiTableColumnFlags.WidthFixed, 160.0f);
+        ImGui.TableSetupColumn("Project Default", ImGuiTableColumnFlags.WidthFixed, 160.0f);
+        ImGui.TableSetupColumn("Game Settings", ImGuiTableColumnFlags.WidthFixed, 170.0f);
+        ImGui.TableSetupColumn("User Settings", ImGuiTableColumnFlags.WidthFixed, 190.0f);
+        ImGui.TableSetupColumn("Editor Override", ImGuiTableColumnFlags.WidthFixed, 170.0f);
         ImGui.TableHeadersRow();
 
-        foreach (PropertyInfo property in properties)
+        foreach (EffectiveSettingsRow row in rows)
         {
-            string category = GetEffectiveSettingCategory(property.Name);
-            string displayName = FormatEffectiveSettingName(property.Name);
-            string source = ResolveEffectiveSettingSource(property.Name);
-            string valueText = TryReadEffectiveSettingValue(property, out object? value)
+            string category = GetEffectiveSettingCategory(row);
+            string displayName = FormatEffectiveSettingName(row.Name);
+            string source = ResolveEffectiveSettingSource(row);
+            EffectiveSettingCascadeValues cascade = ResolveEffectiveSettingCascade(row.Name);
+            string valueText = TryReadEffectiveSettingValue(row, out object? value)
                 ? FormatEffectiveSettingValue(value)
                 : "<error>";
 
             if (hasSearch &&
                 !ContainsIgnoreCase(category, search) &&
                 !ContainsIgnoreCase(displayName, search) &&
-                !ContainsIgnoreCase(property.Name, search) &&
+                !ContainsIgnoreCase(row.Name, search) &&
                 !ContainsIgnoreCase(valueText, search) &&
-                !ContainsIgnoreCase(source, search))
+                !ContainsIgnoreCase(source, search) &&
+                !ContainsIgnoreCase(cascade.GlobalDefault, search) &&
+                !ContainsIgnoreCase(cascade.ProjectDefault, search) &&
+                !ContainsIgnoreCase(cascade.GameSetting, search) &&
+                !ContainsIgnoreCase(cascade.UserSetting, search) &&
+                !ContainsIgnoreCase(cascade.EditorOverride, search))
             {
                 continue;
             }
@@ -88,26 +128,77 @@ public static partial class EditorImGuiUI
             ImGui.TextUnformatted(valueText);
             ImGui.TableSetColumnIndex(3);
             ImGui.TextUnformatted(source);
+            ImGui.TableSetColumnIndex(4);
+            DrawEffectiveSettingsTableCell(cascade.GlobalDefault);
+            ImGui.TableSetColumnIndex(5);
+            DrawEffectiveSettingsTableCell(cascade.ProjectDefault);
+            ImGui.TableSetColumnIndex(6);
+            DrawEffectiveSettingsTableCell(cascade.GameSetting);
+            ImGui.TableSetColumnIndex(7);
+            DrawEffectiveSettingsTableCell(cascade.UserSetting);
+            ImGui.TableSetColumnIndex(8);
+            DrawEffectiveSettingsTableCell(cascade.EditorOverride);
         }
 
         ImGui.EndTable();
     }
 
-    private static PropertyInfo[] GetEffectiveSettingsProperties()
+    private static void DrawEffectiveSettingsTableCell(string value)
     {
-        return _effectiveSettingsProperties ??= typeof(Engine.EffectiveSettings)
-            .GetProperties(BindingFlags.Public | BindingFlags.Static)
-            .Where(static p => p.GetMethod is not null && p.GetIndexParameters().Length == 0)
-            .OrderBy(static p => GetEffectiveSettingCategoryOrder(p.Name))
-            .ThenBy(static p => p.Name, StringComparer.Ordinal)
-            .ToArray();
+        ImGui.TextUnformatted(value);
+        if (ImGui.IsItemHovered() && value.Length > 0)
+            ImGui.SetTooltip(value);
     }
 
-    private static bool TryReadEffectiveSettingValue(PropertyInfo property, out object? value)
+    private static EffectiveSettingsRow[] GetEffectiveSettingsRows()
+    {
+        if (_effectiveSettingsRows is not null)
+            return _effectiveSettingsRows;
+
+        Dictionary<string, PropertyInfo> effectiveProperties = typeof(Engine.EffectiveSettings)
+            .GetProperties(BindingFlags.Public | BindingFlags.Static)
+            .Where(static p => p.GetMethod is not null && p.GetIndexParameters().Length == 0)
+            .ToDictionary(static p => p.Name, StringComparer.Ordinal);
+
+        Dictionary<string, PropertyInfo> engineSettingsProperties = typeof(Engine.Rendering.EngineSettings)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(static p => p.DeclaringType == typeof(Engine.Rendering.EngineSettings))
+            .Where(static p => p.GetMethod is not null && p.GetIndexParameters().Length == 0)
+            .ToDictionary(static p => p.Name, StringComparer.Ordinal);
+
+        _effectiveSettingsRows = effectiveProperties.Keys
+            .Concat(engineSettingsProperties.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .Select(name =>
+            {
+                effectiveProperties.TryGetValue(name, out PropertyInfo? effectiveProperty);
+                engineSettingsProperties.TryGetValue(name, out PropertyInfo? engineSettingsProperty);
+                return new EffectiveSettingsRow(name, effectiveProperty, engineSettingsProperty);
+            })
+            .OrderBy(static row => GetEffectiveSettingCategoryOrder(row))
+            .ThenBy(static row => row.Name, StringComparer.Ordinal)
+            .ToArray();
+
+        return _effectiveSettingsRows;
+    }
+
+    private static bool TryReadEffectiveSettingValue(EffectiveSettingsRow row, out object? value)
+    {
+        if (row.EffectiveProperty is not null)
+            return TryReadPropertyValue(row.EffectiveProperty, null, out value);
+
+        if (row.EngineSettingsProperty is not null)
+            return TryReadPropertyValue(row.EngineSettingsProperty, Engine.Rendering.Settings, out value);
+
+        value = null;
+        return false;
+    }
+
+    private static bool TryReadPropertyValue(PropertyInfo property, object? owner, out object? value)
     {
         try
         {
-            value = property.GetValue(null);
+            value = property.GetValue(owner);
             return true;
         }
         catch (Exception ex)
@@ -117,9 +208,23 @@ public static partial class EditorImGuiUI
         }
     }
 
+    private static string ResolveEffectiveSettingSource(EffectiveSettingsRow row)
+    {
+        if (row.EffectiveProperty is null && row.EngineSettingsProperty is not null)
+            return EngineDefaultSourceName();
+
+        return ResolveEffectiveSettingSource(row.Name);
+    }
+
     private static string ResolveEffectiveSettingSource(string settingName)
     {
         string overridePropertyName = settingName + "Override";
+
+        if (TryResolveEnvironmentSettingSource(settingName, out string environmentSource))
+            return environmentSource;
+
+        if (IsZeroReadbackEditorDebugSource(settingName))
+            return "Editor Preferences";
 
         if (TryGetActiveOverride(Engine.EditorPreferencesOverrides, overridePropertyName))
             return "Editor Override";
@@ -128,19 +233,22 @@ public static partial class EditorImGuiUI
             return "User Settings";
 
         if (TryGetActiveOverride(Engine.GameSettings, overridePropertyName))
-            return "Project Settings";
+            return "Game Settings";
 
         return settingName switch
         {
-            nameof(Engine.EffectiveSettings.GPURenderDispatch) => "Project Settings",
-            nameof(Engine.EffectiveSettings.TargetUpdatesPerSecond) => Engine.GameSettings is null ? "Engine Default" : "Project Settings",
-            nameof(Engine.EffectiveSettings.TargetFramesPerSecond) => Engine.GameSettings is null ? "Engine Default" : "Project Settings",
-            nameof(Engine.EffectiveSettings.FixedFramesPerSecond) => Engine.GameSettings is null ? "Engine Default" : "Project Settings",
+            nameof(Engine.EffectiveSettings.GPURenderDispatch) => Engine.GameSettings is null ? "Built-in Default" : "Game Settings",
+            nameof(Engine.EffectiveSettings.TargetUpdatesPerSecond) => Engine.GameSettings is null ? "No Project Value" : "Game Settings",
+            nameof(Engine.EffectiveSettings.TargetFramesPerSecond) => Engine.GameSettings is null ? "No Project Value" : "Game Settings",
+            nameof(Engine.EffectiveSettings.FixedFramesPerSecond) => Engine.GameSettings is null ? "Built-in Default" : "Game Settings",
             nameof(Engine.EffectiveSettings.UnfocusedTargetFramesPerSecond) => ResolveUnfocusedTargetFrameSource(),
             _ when IsUserPrimaryEffectiveSetting(settingName) && HasReadableProperty(Engine.UserSettings, settingName) => "User Settings",
-            _ => "Engine Default",
+            _ => EngineDefaultSourceName(),
         };
     }
+
+    private static string EngineDefaultSourceName()
+        => Engine.Rendering.ProjectDefaultSettings is not null ? "Project Engine Defaults" : "Global Engine Defaults";
 
     private static string ResolveUnfocusedTargetFrameSource()
     {
@@ -150,10 +258,132 @@ public static partial class EditorImGuiUI
         if (TryGetPropertyValue(Engine.GameSettings, nameof(GameStartupSettings.UnfocusedTargetFramesPerSecond), out object? projectValue) &&
             projectValue is not null)
         {
-            return "Project Settings";
+            return "Game Settings";
         }
 
         return ResolveEffectiveSettingSource(nameof(Engine.EffectiveSettings.TargetFramesPerSecond));
+    }
+
+    private static EffectiveSettingCascadeValues ResolveEffectiveSettingCascade(string settingName)
+    {
+        string overridePropertyName = settingName + "Override";
+
+        return new EffectiveSettingCascadeValues(
+            GlobalDefault: ResolveGlobalEngineDefaultValue(settingName),
+            ProjectDefault: ResolveProjectEngineDefaultValue(settingName),
+            GameSetting: ResolveGameSettingValue(settingName, overridePropertyName),
+            UserSetting: ResolveUserSettingValue(settingName, overridePropertyName),
+            EditorOverride: ResolveEditorOverrideValue(settingName, overridePropertyName));
+    }
+
+    private static string ResolveGlobalEngineDefaultValue(string settingName)
+        => TryFormatReadablePropertyValue(Engine.Rendering.GlobalDefaultSettings, settingName, out string value)
+            ? value
+            : "-";
+
+    private static string ResolveProjectEngineDefaultValue(string settingName)
+    {
+        Engine.Rendering.EngineSettings? projectDefaults = Engine.Rendering.ProjectDefaultSettings;
+        if (projectDefaults is null)
+            return "<none>";
+
+        return TryFormatReadablePropertyValue(projectDefaults, settingName, out string value)
+            ? value
+            : "-";
+    }
+
+    private static string ResolveGameSettingValue(string settingName, string overridePropertyName)
+    {
+        if (TryFormatOverrideableSettingValue(Engine.GameSettings, overridePropertyName, out string overrideValue))
+            return overrideValue;
+
+        return TryFormatReadablePropertyValue(Engine.GameSettings, settingName, out string value)
+            ? value
+            : "-";
+    }
+
+    private static string ResolveUserSettingValue(string settingName, string overridePropertyName)
+    {
+        bool hasOverrideProperty = TryFormatOverrideableSettingValue(Engine.UserSettings, overridePropertyName, out string overrideValue);
+
+        if (IsUserPrimaryEffectiveSetting(settingName) &&
+            TryFormatReadablePropertyValue(Engine.UserSettings, settingName, out string primaryValue))
+        {
+            return hasOverrideProperty
+                ? $"Preference: {primaryValue}; {overrideValue}"
+                : primaryValue;
+        }
+
+        return hasOverrideProperty ? overrideValue : "-";
+    }
+
+    private static string ResolveEditorOverrideValue(string settingName, string overridePropertyName)
+    {
+        if (TryFormatOverrideableSettingValue(Engine.EditorPreferencesOverrides, overridePropertyName, out string overrideValue))
+            return overrideValue;
+
+        if (TryFormatZeroReadbackEditorDebugValue(settingName, out string debugValue))
+            return debugValue;
+
+        return "-";
+    }
+
+    private static bool TryFormatZeroReadbackEditorDebugValue(string settingName, out string value)
+    {
+        value = string.Empty;
+
+        if (!IsZeroReadbackEditorDebugSource(settingName))
+            return false;
+
+        if (!TryFormatReadablePropertyValue(Engine.EditorPreferences?.Debug, settingName, out string debugValue))
+            return false;
+
+        value = $"Debug: {debugValue}";
+        return true;
+    }
+
+    private static bool TryResolveEnvironmentSettingSource(string settingName, out string source)
+    {
+        return settingName switch
+        {
+            nameof(Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath)
+                => TryResolveEnvironmentEnumSource<EZeroReadbackMaterialDrawPath>("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH", out source),
+            nameof(Engine.EffectiveSettings.ForceMeshSubmissionStrategy)
+                => TryResolveEnvironmentEnumSource<EMeshSubmissionStrategy>("XRE_FORCE_MESH_SUBMISSION_STRATEGY", out source),
+            _ => NoEnvironmentSource(out source),
+        };
+    }
+
+    private static bool TryResolveEnvironmentEnumSource<TEnum>(string variableName, out string source)
+        where TEnum : struct, Enum
+    {
+        source = string.Empty;
+        string? raw = Environment.GetEnvironmentVariable(variableName);
+        if (string.IsNullOrWhiteSpace(raw) ||
+            !Enum.TryParse(raw.Trim(), ignoreCase: true, out TEnum _))
+        {
+            return false;
+        }
+
+        source = "Environment";
+        return true;
+    }
+
+    private static bool NoEnvironmentSource(out string source)
+    {
+        source = string.Empty;
+        return false;
+    }
+
+    private static bool IsZeroReadbackEditorDebugSource(string settingName)
+    {
+        if (settingName != nameof(Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath))
+            return false;
+
+        EditorDebugOptions? editorDebug = Engine.EditorPreferences?.Debug;
+        return editorDebug is not null &&
+            (editorDebug.EnableZeroReadbackMaterialScatter ||
+             editorDebug.ZeroReadbackMaterialDrawPath != EZeroReadbackMaterialDrawPath.FullBucketScan);
     }
 
     private static bool IsUserPrimaryEffectiveSetting(string settingName)
@@ -171,6 +401,28 @@ public static partial class EditorImGuiUI
             return false;
 
         return candidate is IOverrideableSetting { HasOverride: true };
+    }
+
+    private static bool TryFormatOverrideableSettingValue(object? owner, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (!TryGetPropertyValue(owner, propertyName, out object? candidate) || candidate is not IOverrideableSetting setting)
+            return false;
+
+        value = setting.HasOverride
+            ? $"Override: {FormatEffectiveSettingValue(setting.BoxedValue)}"
+            : "No override";
+        return true;
+    }
+
+    private static bool TryFormatReadablePropertyValue(object? owner, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (!TryGetPropertyValue(owner, propertyName, out object? candidate))
+            return false;
+
+        value = FormatEffectiveSettingValue(candidate);
+        return true;
     }
 
     private static bool HasReadableProperty(object? owner, string propertyName)
@@ -195,6 +447,17 @@ public static partial class EditorImGuiUI
         {
             return false;
         }
+    }
+
+    private static string GetEffectiveSettingCategory(EffectiveSettingsRow row)
+    {
+        if (row.EffectiveProperty is not null)
+            return GetEffectiveSettingCategory(row.Name);
+
+        CategoryAttribute? category = row.EngineSettingsProperty?.GetCustomAttribute<CategoryAttribute>(true);
+        return string.IsNullOrWhiteSpace(category?.Category)
+            ? "Engine Defaults"
+            : category.Category;
     }
 
     private static string GetEffectiveSettingCategory(string settingName)
@@ -233,8 +496,11 @@ public static partial class EditorImGuiUI
             _ => "Rendering",
         };
 
-    private static int GetEffectiveSettingCategoryOrder(string settingName)
-        => GetEffectiveSettingCategory(settingName) switch
+    private static int GetEffectiveSettingCategoryOrder(EffectiveSettingsRow row)
+        => GetCategoryOrder(GetEffectiveSettingCategory(row));
+
+    private static int GetCategoryOrder(string category)
+        => category switch
         {
             "Threading" => 0,
             "Rendering" => 1,
@@ -243,7 +509,11 @@ public static partial class EditorImGuiUI
             "Networking" => 4,
             "Debug" => 5,
             "Audio" => 6,
-            _ => 10,
+            "GPU Rendering" => 7,
+            "Vulkan" => 8,
+            "VR" => 9,
+            "Physics" => 10,
+            _ => 20,
         };
 
     private static string FormatEffectiveSettingValue(object? value)

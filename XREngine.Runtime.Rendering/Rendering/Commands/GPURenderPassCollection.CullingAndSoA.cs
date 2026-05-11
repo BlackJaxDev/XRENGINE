@@ -320,10 +320,13 @@ namespace XREngine.Rendering.Commands
             if (IsCpuReadbackCountDisabledForPass())
             {
                 // GPU-driven path: the count buffer is consumed directly by GPU dispatches.
-                // Set VisibleCommandCount to buffer capacity as a conservative upper bound
-                // so CPU-side batch clamping doesn't discard valid GPU-generated ranges.
-                VisibleCommandCount = CommandCapacity;
-                VisibleInstanceCount = CommandCapacity;
+                // Keep a CPU-side upper bound for dispatch sizing without falling back to the
+                // full allocated capacity; the real count remains in the GPU count buffer.
+                uint upperBound = _visibleCommandUpperBoundValid
+                    ? Math.Min(_visibleCommandUpperBound, CommandCapacity)
+                    : CommandCapacity;
+                VisibleCommandCount = upperBound;
+                VisibleInstanceCount = upperBound;
                 return;
             }
 
@@ -485,6 +488,8 @@ namespace XREngine.Rendering.Commands
 
             //Early out if no commands
             uint numCommands = gpuCommands.TotalCommandCount;
+            _visibleCommandUpperBound = Math.Min(numCommands, CommandCapacity);
+            _visibleCommandUpperBoundValid = true;
             if (numCommands == 0)
             {
                 VisibleCommandCount = 0;
@@ -744,7 +749,7 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader.Uniform("InputCommandCount", (int)inputCount);
             _cullingComputeShader.Uniform("MaxCulledCommands", (int)capacity);
             _cullingComputeShader.Uniform("DisabledFlagsMask", 0u);
-            _cullingComputeShader.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? System.Numerics.Vector3.Zero);
+            _cullingComputeShader.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? System.Numerics.Vector3.Zero);
             _cullingComputeShader.Uniform("ActiveViewCount", (int)activeViewCount);
 
             bool requireHotCommands = IsHotCommandLayoutRequired();
@@ -989,7 +994,7 @@ namespace XREngine.Rendering.Commands
             _bvhFrustumCullProgram.Uniform("InputCommandCount", (int)inputCount);
             _bvhFrustumCullProgram.Uniform("MaxCulledCommands", (int)capacity);
             _bvhFrustumCullProgram.Uniform("DisabledFlagsMask", 0u);
-            _bvhFrustumCullProgram.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? Vector3.Zero);
+            _bvhFrustumCullProgram.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? Vector3.Zero);
             _bvhFrustumCullProgram.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
             _bvhFrustumCullProgram.Uniform("OverflowDebugEnabled", 0u);
             _bvhFrustumCullProgram.Uniform("ENABLE_CPU_GPU_COMPARE", 0u); // OpenGL-compatible uniform (was Vulkan specialization constant)
@@ -1679,7 +1684,7 @@ namespace XREngine.Rendering.Commands
             GPUIndirectRenderCommand[] sample = scene.AllLoadedCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)sampleCount);
             Frustum frustum = camera.WorldFrustum();
             uint cameraMask = unchecked((uint)camera.CullingMask.Value);
-            Vector3 cameraPosition = camera.Transform?.WorldTranslation ?? Vector3.Zero;
+            Vector3 cameraPosition = camera.Transform?.RenderTranslation ?? Vector3.Zero;
             float maxDistanceSq = camera.FarZ > 0.0f ? camera.FarZ * camera.FarZ : float.PositiveInfinity;
 
             var sb = new StringBuilder(512);

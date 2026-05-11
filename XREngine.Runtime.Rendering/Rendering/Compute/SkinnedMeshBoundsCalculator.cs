@@ -1,14 +1,11 @@
-using System;
-using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading;
 using XREngine.Components.Scene.Mesh;
-using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Compute;
@@ -16,6 +13,7 @@ namespace XREngine.Rendering.Compute;
 internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 {
     private const string ShaderPath = "Compute/Animation/SkinnedBounds.comp";
+    private const string ReduceShaderPath = "Compute/Animation/SkinnedBoundsReduce.comp";
     private static readonly Lazy<SkinnedMeshBoundsCalculator> _instance = new(() => new SkinnedMeshBoundsCalculator());
 
     public static SkinnedMeshBoundsCalculator Instance => _instance.Value;
@@ -24,8 +22,18 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     private readonly ConditionalWeakTable<XRMesh, MeshResources> _resourceCache = [];
     private readonly List<MeshResources> _resourceList = [];
 
+    // Registry of skinned RenderableMeshes that have been processed via the GPU bounds path.
+    // Used by VPRC_BuildAccelerationStructure to refresh their command-AABBs into the BVH
+    // leaf buffer every frame when SkinnedBoundsGpuDirectAabbWrite is enabled.
+    private readonly object _registrySync = new();
+    private readonly HashSet<RenderableMesh> _registeredSkinnedMeshes = [];
+    // Re-used scratch list for Path A dispatch to avoid per-frame allocations.
+    private readonly List<uint> _pathAScratchIndices = new(16);
+
     private XRShader? _shader;
     private XRRenderProgram? _program;
+    private XRShader? _reduceShader;
+    private XRRenderProgram? _reduceProgram;
 
     private SkinnedMeshBoundsCalculator()
     {
@@ -59,6 +67,12 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 
         if (!MeshSupportsGpuSkinning(xrMesh))
             return false;
+
+        // Fast path: if SkinningPrepass already produced skinned positions for this renderer
+        // this frame, reduce over them rather than re-running the full skin pass and reading
+        // back every vertex. Costs ~32 bytes of readback (the bounds quads) instead of N*16.
+        if (TryComputeFromPrepassOutput(mesh, renderer, xrMesh, out result))
+            return true;
 
         if (renderer.ActiveBoneMatricesBuffer is null || renderer.ActiveBoneInvBindMatricesBuffer is null)
             return false;
@@ -118,6 +132,222 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         _program = new XRRenderProgram(true, false, _shader);
     }
 
+    private void EnsureReduceInitialized()
+    {
+        if (_reduceProgram is not null)
+            return;
+
+        _reduceShader ??= ShaderHelper.LoadEngineShader(ReduceShaderPath, EShaderType.Compute);
+        _reduceProgram = new XRRenderProgram(true, false, _reduceShader);
+    }
+
+    /// <summary>
+    /// Path A/B fast path: when <see cref="SkinningPrepassDispatcher"/> already produced
+    /// skinned positions for this renderer this frame, dispatch the lightweight reduce
+    /// shader over those positions to obtain the root-local AABB without redoing the
+    /// (expensive) skinning work or reading every vertex back to the CPU.
+    /// </summary>
+    private bool TryComputeFromPrepassOutput(RenderableMesh mesh, XRMeshRenderer renderer, XRMesh xrMesh, out Result result)
+    {
+        result = default;
+
+        if (xrMesh.Interleaved)
+            return false; // SkinningPrepass disables compute skinning for interleaved meshes.
+
+        var (positionsOut, _, _, _) = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
+        if (positionsOut is null)
+            return false;
+
+        lock (_syncRoot)
+        {
+            EnsureReduceInitialized();
+            if (_reduceProgram is null)
+                return false;
+
+            var resources = GetOrCreateResources(xrMesh);
+            if (!resources.IsValid)
+                return false;
+
+            uint vertexCount = (uint)xrMesh.VertexCount;
+            resources.ResetBoundsBuffer();
+
+            // Bind PositionsIn at slot 0 and the per-mesh bounds buffer at slot 1.
+            positionsOut.SetBlockIndex(0);
+            resources.BindBoundsBufferForReduce(1);
+
+            _reduceProgram.Uniform("vertexCount", vertexCount);
+            _reduceProgram.Uniform("slotIndex", 0u);
+            _reduceProgram.Uniform("transformToWorld", 0); // produce root-local bounds
+            _reduceProgram.Uniform("worldMatrix", Matrix4x4.Identity);
+
+            const uint groupSize = 256;
+            uint groupsX = Math.Max(1u, (vertexCount + groupSize - 1u) / groupSize);
+            _reduceProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+            AbstractRenderer.Current?.WaitForGpu();
+
+            if (!resources.TryReadBounds(out AABB localBounds))
+                return false;
+
+            // Bounds are already in root-bone-local space (SkinningPrepass output convention).
+            Matrix4x4 basis = mesh.RootBone?.RenderMatrix ?? mesh.Component.Transform.RenderMatrix;
+            // Empty positions array signals "GPU-only fast path": consumers that need
+            // CPU triangle data (e.g. SkinnedMeshBvhScheduler with cooked CPU BVH) must
+            // fall back via Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader.
+            result = new Result(Array.Empty<Vector3>(), localBounds, basis);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Path A direct write: dispatch the reduce shader over the prepass-skinned
+    /// positions and write world-space AABBs straight into <paramref name="targetScene"/>'s
+    /// <see cref="GPUScene.CommandAabbBuffer"/> for every command owned by the renderer.
+    /// This bypasses the CPU 8-corner transform performed by
+    /// <c>GPUScene.WriteTightCommandAabb</c>; the renderer is registered as GPU-AABB
+    /// owner so future calls to that method seed the +inf/-inf sentinel instead.
+    /// </summary>
+    /// <remarks>
+    /// Caller must be on the render thread. Returns false if there is no prepass
+    /// output for the renderer, no commands registered for it, or the BVH leaf
+    /// buffer cannot be acquired.
+    /// </remarks>
+    public bool DispatchPathADirectWrite(RenderableMesh mesh, GPUScene targetScene, List<uint> scratchIndices)
+    {
+        if (mesh is null || targetScene is null || scratchIndices is null)
+            return false;
+        if (!Engine.IsRenderThread)
+            return false;
+
+        var renderer = mesh.CurrentLODRenderer;
+        var xrMesh = renderer?.Mesh;
+        if (renderer is null || xrMesh is null || xrMesh.Interleaved)
+            return false;
+        if (!MeshSupportsGpuSkinning(xrMesh))
+            return false;
+
+        var (positionsOut, _, _, _) = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
+        if (positionsOut is null)
+            return false;
+
+        if (!targetScene.TryGetCommandIndicesForRenderer(renderer, scratchIndices) || scratchIndices.Count == 0)
+            return false;
+
+        // Mark renderer as GPU-AABB owner so any CPU-side WriteTightCommandAabb
+        // calls (insert/update paths) seed the sentinel instead of doing the
+        // 8-corner transform that would be immediately overwritten anyway.
+        targetScene.SetRendererOwnsGpuAabb(renderer, true);
+
+        // Ensure capacity for the highest slot we're about to write.
+        uint maxIndex = 0u;
+        for (int i = 0; i < scratchIndices.Count; i++)
+        {
+            uint idx = scratchIndices[i];
+            if (idx > maxIndex) maxIndex = idx;
+        }
+        targetScene.EnsureCommandAabbCapacity(maxIndex + 1u);
+
+        var commandAabbBuffer = targetScene.CommandAabbBuffer;
+        if (commandAabbBuffer is null)
+            return false;
+
+        Matrix4x4 basis = mesh.RootBone?.RenderMatrix ?? mesh.Component.Transform.RenderMatrix;
+        uint vertexCount = (uint)xrMesh.VertexCount;
+        if (vertexCount == 0u)
+            return false;
+
+        lock (_syncRoot)
+        {
+            EnsureReduceInitialized();
+            if (_reduceProgram is null)
+                return false;
+
+            // Bind positions at slot 0 and the scene's command-AABB SSBO at slot 1
+            // for the reducer's BoundsBits binding.
+            positionsOut.SetBlockIndex(0);
+            commandAabbBuffer.SetBlockIndex(1);
+
+            _reduceProgram.Uniform("vertexCount", vertexCount);
+            _reduceProgram.Uniform("transformToWorld", 1);
+            _reduceProgram.Uniform("worldMatrix", basis);
+
+            const uint groupSize = 256u;
+            uint groupsX = Math.Max(1u, (vertexCount + groupSize - 1u) / groupSize);
+
+            for (int i = 0; i < scratchIndices.Count; i++)
+            {
+                uint slot = scratchIndices[i];
+                // Seed sentinel so atomic min/max produces correct envelope.
+                targetScene.WriteCommandAabbSentinel(slot);
+
+                _reduceProgram.Uniform("slotIndex", slot);
+                _reduceProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Register a skinned mesh that should have its command-AABBs refreshed via Path A
+    /// every frame the BVH is rebuilt. Call from <see cref="RenderableMesh"/> after a
+    /// successful GPU bounds compute.
+    /// </summary>
+    public void RegisterSkinnedMesh(RenderableMesh mesh)
+    {
+        if (mesh is null)
+            return;
+        lock (_registrySync)
+            _registeredSkinnedMeshes.Add(mesh);
+    }
+
+    /// <summary>
+    /// Unregister a skinned mesh. Also clears its GPU-AABB ownership on the supplied
+    /// scene so subsequent CPU writes go back through the 8-corner path.
+    /// </summary>
+    public void UnregisterSkinnedMesh(RenderableMesh mesh, GPUScene? scene = null)
+    {
+        if (mesh is null)
+            return;
+        lock (_registrySync)
+            _registeredSkinnedMeshes.Remove(mesh);
+
+        var renderer = mesh.CurrentLODRenderer;
+        if (renderer is not null)
+            scene?.SetRendererOwnsGpuAabb(renderer, false);
+    }
+
+    /// <summary>
+    /// Render-thread per-frame entry point: for every registered skinned mesh whose
+    /// VisualScene matches <paramref name="targetScene"/>, dispatch Path A so its
+    /// world-space command AABBs land in the BVH leaf buffer before the BVH is built.
+    /// </summary>
+    public void RefreshAllSkinnedAabbs(GPUScene targetScene)
+    {
+        if (targetScene is null || !Engine.IsRenderThread)
+            return;
+
+        RenderableMesh[] snapshot;
+        lock (_registrySync)
+        {
+            if (_registeredSkinnedMeshes.Count == 0)
+                return;
+            snapshot = new RenderableMesh[_registeredSkinnedMeshes.Count];
+            _registeredSkinnedMeshes.CopyTo(snapshot);
+        }
+
+        for (int i = 0; i < snapshot.Length; i++)
+        {
+            var mesh = snapshot[i];
+            // Only refresh meshes belonging to the same VisualScene as targetScene.
+            var visualScene = mesh.World?.VisualScene;
+            if (visualScene is null || !ReferenceEquals(visualScene.GPUCommands, targetScene))
+                continue;
+
+            DispatchPathADirectWrite(mesh, targetScene, _pathAScratchIndices);
+        }
+    }
+
     private MeshResources GetOrCreateResources(XRMesh mesh)
     {
         if (_resourceCache.TryGetValue(mesh, out MeshResources? existing) && existing is not null)
@@ -166,6 +396,11 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _shader?.Destroy();
             _program = null;
             _shader = null;
+
+            _reduceProgram?.Destroy();
+            _reduceShader?.Destroy();
+            _reduceProgram = null;
+            _reduceShader = null;
         }
     }
 
@@ -303,6 +538,11 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _bounds.SetDataRawAtIndex(0u, PositiveInfinityPacked);
             _bounds.SetDataRawAtIndex(1u, NegativeInfinityPacked);
             _bounds.PushSubData();
+        }
+
+        public void BindBoundsBufferForReduce(uint binding)
+        {
+            _bounds?.SetBlockIndex(binding);
         }
 
         public bool TryReadBounds(out AABB bounds)

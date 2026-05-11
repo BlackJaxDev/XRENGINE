@@ -443,6 +443,81 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             component.DefaultRenderTarget = asset;
         });
+
+        ImGui.Separator();
+        DrawForwardPlusDebugSection(component);
+    }
+
+    private static readonly string[] ForwardPlusDebugModeNames =
+    [
+        "None",
+        "Heatmap",
+        "Heatmap + Grid",
+        "Overflow Only",
+        "Grid Only",
+    ];
+
+    private static void DrawForwardPlusDebugSection(CameraComponent component)
+    {
+        if (!ImGui.CollapsingHeader("Forward+ Debug Visualization"))
+            return;
+
+        var cam = component.Camera;
+        int totalLights = Engine.Rendering.State.ForwardPlusLocalLightCount;
+        int tilesX = Engine.Rendering.State.ForwardPlusTileCountX;
+        int tilesY = Engine.Rendering.State.ForwardPlusTileCountY;
+        int maxPerTile = Engine.Rendering.State.ForwardPlusMaxLightsPerTile;
+        int tileSize = Engine.Rendering.State.ForwardPlusTileSize;
+
+        ImGui.TextDisabled($"Tiles: {tilesX} x {tilesY} ({tileSize}px)   MaxLightsPerTile: {maxPerTile}");
+        if (totalLights <= 0)
+        {
+            ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.2f, 1.0f),
+                "No point/spot lights submitted to Forward+. Heatmap will be empty.");
+            ImGui.TextDisabled("Forward+ only culls dynamic point and spot lights; directional lights are unaffected.");
+        }
+        else
+        {
+            ImGui.TextDisabled($"Local lights submitted this frame: {totalLights}");
+        }
+        ImGui.Separator();
+
+        int mode = (int)cam.ForwardPlusDebugMode;
+        ImGui.SetNextItemWidth(200.0f);
+        if (ImGui.Combo("Mode##ForwardPlusDebug", ref mode, ForwardPlusDebugModeNames, ForwardPlusDebugModeNames.Length))
+            component.ForwardPlusDebugMode = (XRCamera.EForwardPlusDebugMode)mode;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Selects the Forward+ tile-light-culling overlay style.");
+
+        float opacity = cam.ForwardPlusDebugOpacity;
+        ImGui.SetNextItemWidth(200.0f);
+        if (ImGui.SliderFloat("Opacity##ForwardPlusDebug", ref opacity, 0.0f, 1.0f))
+            component.ForwardPlusDebugOpacity = opacity;
+
+        int maxCount = cam.ForwardPlusDebugMaxCount;
+        ImGui.SetNextItemWidth(200.0f);
+        if (ImGui.SliderInt("Heatmap Max Count##ForwardPlusDebug", ref maxCount, 1, 64))
+            component.ForwardPlusDebugMaxCount = maxCount;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Per-tile visible-light count that saturates the heatmap. Lower = more sensitive.");
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Auto##ForwardPlusDebug"))
+            component.ForwardPlusDebugMaxCount = Math.Max(1, Math.Min(maxPerTile > 0 ? maxPerTile : 32, Math.Max(4, totalLights)));
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Pick a sensible Max Count from the current scene (clamped to total light count or MaxLightsPerTile).");
+
+        bool showEmpty = cam.ForwardPlusDebugShowEmptyTiles;
+        if (ImGui.Checkbox("Show Empty Tiles##ForwardPlusDebug", ref showEmpty))
+            component.ForwardPlusDebugShowEmptyTiles = showEmpty;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("If on, paints zero-count tiles faintly so the entire culling grid is visible. If off, only populated tiles draw.");
+
+        bool showBar = cam.ForwardPlusDebugShowCountBar;
+        if (ImGui.Checkbox("Per-Tile Count Bar##ForwardPlusDebug", ref showBar))
+            component.ForwardPlusDebugShowCountBar = showBar;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Draw a small horizontal bar in each populated tile whose length equals (count / Max Count) for a quantitative readout.");
     }
 
     private static readonly string[] AntiAliasingModeNames =

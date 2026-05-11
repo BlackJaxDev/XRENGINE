@@ -67,7 +67,9 @@ public partial class DefaultRenderPipeline
         DescribeLensDistortionStage(builder.Stage(LensDistortionStageKey, "Lens Distortion").BackedBy<LensDistortionSettings>());
         DescribeChromaticAberrationStage(builder.Stage(ChromaticAberrationStageKey, "Chromatic Aberration").BackedBy<ChromaticAberrationSettings>());
         DescribeFogStage(builder.Stage(FogStageKey, "Depth Fog").BackedBy<FogSettings>());
+        DescribeAtmosphericScatteringStage(builder.Stage(AtmosphericScatteringStageKey, "Atmospheric Scattering").BackedBy<AtmosphericScatteringSettings>());
         DescribeVolumetricFogStage(builder.Stage(VolumetricFogStageKey, "Volumetric Fog").BackedBy<VolumetricFogSettings>());
+        DescribeGpuBvhDebugStage(builder.Stage(GpuBvhDebugStageKey, "GPU BVH Debug").BackedBy<GpuBvhDebugSettings>());
 
         builder.Category("imaging", "Imaging")
             .IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);
@@ -88,7 +90,10 @@ public partial class DefaultRenderPipeline
             .IncludeStages(LensDistortionStageKey, ChromaticAberrationStageKey, DepthOfFieldStageKey);
 
         builder.Category("atmosphere", "Atmosphere")
-            .IncludeStages(FogStageKey, VolumetricFogStageKey);
+            .IncludeStages(FogStageKey, AtmosphericScatteringStageKey, VolumetricFogStageKey);
+
+        builder.Category("debug", "Debug")
+            .IncludeStage(GpuBvhDebugStageKey);
     }
 
     private static void DescribeTonemappingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -1472,6 +1477,94 @@ public partial class DefaultRenderPipeline
             isColor: true);
     }
 
+    private static void DescribeAtmosphericScatteringStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.Enabled),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Enabled");
+
+        bool IsEnabled(object o) => ((AtmosphericScatteringSettings)o).Enabled;
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.RenderSky),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Render Sky",
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.AerialPerspective),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Aerial Perspective",
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.Quality),
+            PostProcessParameterKind.Int,
+            (int)AtmosphericScatteringSettings.EQualityMode.Balanced,
+            displayName: "Quality",
+            enumOptions: BuildEnumOptions<AtmosphericScatteringSettings.EQualityMode>(),
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.ViewSamples),
+            PostProcessParameterKind.Int,
+            8,
+            displayName: "View Samples",
+            min: 1.0f,
+            max: 64.0f,
+            step: 1.0f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.OpticalDepthSamples),
+            PostProcessParameterKind.Int,
+            0,
+            displayName: "Optical Depth Samples",
+            min: 0.0f,
+            max: 32.0f,
+            step: 1.0f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.MaxDistance),
+            PostProcessParameterKind.Float,
+            200000.0f,
+            displayName: "Max Distance",
+            min: 0.0f,
+            max: 10000000.0f,
+            step: 100.0f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.JitterStrength),
+            PostProcessParameterKind.Float,
+            0.5f,
+            displayName: "Jitter Strength",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.TemporalEnabled),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Temporal",
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(AtmosphericScatteringSettings.DebugMode),
+            PostProcessParameterKind.Int,
+            (int)AtmosphericScatteringSettings.EDebugMode.Off,
+            displayName: "Debug Mode",
+            enumOptions: BuildEnumOptions<AtmosphericScatteringSettings.EDebugMode>(),
+            visibilityCondition: IsEnabled);
+    }
+
     private static void DescribeVolumetricFogStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
         stage.AddParameter(
@@ -1528,6 +1621,61 @@ public partial class DefaultRenderPipeline
             (int)VolumetricFogSettings.EDebugMode.Off,
             displayName: "Debug Mode",
             enumOptions: BuildEnumOptions<VolumetricFogSettings.EDebugMode>(),
+            visibilityCondition: IsEnabled);
+    }
+
+    private static void DescribeGpuBvhDebugStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.Enabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Enabled");
+
+        bool IsEnabled(object o) => ((GpuBvhDebugSettings)o).Enabled;
+
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.Filter),
+            PostProcessParameterKind.Int,
+            (int)GpuBvhDebugSettings.NodeFilter.All,
+            displayName: "Node Filter",
+            enumOptions: BuildEnumOptions<GpuBvhDebugSettings.NodeFilter>(),
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.MaxNodes),
+            PostProcessParameterKind.Int,
+            16384,
+            displayName: "Max Nodes",
+            min: 1,
+            max: 1048576,
+            step: 256,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.LineWidth),
+            PostProcessParameterKind.Float,
+            0.0015f,
+            displayName: "Line Width",
+            min: 0.0001f,
+            max: 0.05f,
+            step: 0.0001f,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.LeafColor),
+            PostProcessParameterKind.Vector4,
+            new Vector4(0.20f, 1.00f, 0.40f, 1.00f),
+            displayName: "Leaf Color",
+            isColor: true,
+            visibilityCondition: IsEnabled);
+
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.InternalColor),
+            PostProcessParameterKind.Vector4,
+            new Vector4(1.00f, 0.65f, 0.10f, 0.55f),
+            displayName: "Internal Color",
+            isColor: true,
             visibilityCondition: IsEnabled);
     }
 
@@ -1629,6 +1777,9 @@ public partial class DefaultRenderPipeline
         var fog = GetSettings<FogSettings>(state);
         (fog ?? new FogSettings()).SetUniforms(program);
 
+        var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
+        (atmosphere ?? AtmosphericScatteringSettings.Default).SetUniforms(program);
+
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
         (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(program);
 
@@ -1710,6 +1861,71 @@ public partial class DefaultRenderPipeline
         materialProgram.Uniform(EEngineUniform.ProjMatrix.ToStringFast(), temporalData.CurrProjection);
         materialProgram.Uniform(EEngineUniform.InverseProjMatrix.ToStringFast(), temporalData.CurrInverseProjection);
         materialProgram.Uniform(EEngineUniform.ViewProjectionMatrix.ToStringFast(), temporalData.CurrViewProjection);
+    }
+
+    private void Atmosphere_SetFragmentCameraUniforms(XRRenderProgram materialProgram)
+    {
+        var renderState = RenderingPipelineState;
+        renderState?.SceneCamera?.SetUniforms(materialProgram, true);
+        renderState?.StereoRightEyeCamera?.SetUniforms(materialProgram, false);
+
+        if (!VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            return;
+
+        materialProgram.Uniform(EEngineUniform.ProjMatrix.ToStringFast(), temporalData.CurrProjection);
+        materialProgram.Uniform(EEngineUniform.InverseProjMatrix.ToStringFast(), temporalData.CurrInverseProjection);
+        materialProgram.Uniform(EEngineUniform.ViewProjectionMatrix.ToStringFast(), temporalData.CurrViewProjection);
+    }
+
+    private void AtmosphereHalfScatterFBO_SettingUniforms(XRRenderProgram materialProgram)
+    {
+        Atmosphere_SetFragmentCameraUniforms(materialProgram);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
+        (atmosphere ?? AtmosphericScatteringSettings.Default).SetUniforms(materialProgram);
+    }
+
+    private void AtmosphereUpscaleFBO_SettingUniforms(XRRenderProgram materialProgram)
+    {
+        Atmosphere_SetFragmentCameraUniforms(materialProgram);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
+        (atmosphere ?? AtmosphericScatteringSettings.Default).SetUniforms(materialProgram);
+    }
+
+    private void AtmosphereReprojectFBO_SettingUniforms(XRRenderProgram materialProgram)
+    {
+        Atmosphere_SetFragmentCameraUniforms(materialProgram);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
+        float maxDistance = atmosphere is not null && atmosphere.Enabled && atmosphere.AerialPerspective
+            ? atmosphere.MaxDistance
+            : 0.0f;
+        int debugMode = atmosphere is null ? 0 : (int)atmosphere.DebugMode;
+
+        bool historyReady = false;
+        Matrix4x4 previousViewProjection = Matrix4x4.Identity;
+        uint historyWidth = 1u;
+        uint historyHeight = 1u;
+        if (VPRC_AtmosphereHistoryPass.TryGetTemporalUniformData(out var temporalData))
+        {
+            bool temporalEnabled = atmosphere is null || atmosphere.TemporalEnabled;
+            historyReady = temporalData.HistoryReady && maxDistance > 0.0f && debugMode == 0 && temporalEnabled;
+            previousViewProjection = temporalData.PreviousViewProjection;
+            historyWidth = Math.Max(1u, temporalData.Width);
+            historyHeight = Math.Max(1u, temporalData.Height);
+        }
+
+        materialProgram.Uniform("AtmosphereHistoryReady", historyReady);
+        materialProgram.Uniform("AtmospherePreviousViewProjection", previousViewProjection);
+        materialProgram.Uniform("AtmosphereHistoryTexelSize", new Vector2(1.0f / historyWidth, 1.0f / historyHeight));
+        materialProgram.Uniform("AtmosphereMaxDistance", maxDistance);
+        materialProgram.Uniform("AtmosphereTemporalAlpha", 0.92f);
+        materialProgram.Uniform("AtmosphereDepthRejectThreshold", 10.0f);
+        materialProgram.Uniform("AtmosphereDebugMode", debugMode);
     }
 
     /// <summary>

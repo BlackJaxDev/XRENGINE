@@ -1,0 +1,115 @@
+#version 460 core
+
+// GPU-driven debug visualization for the scene-level GPU BVH.
+// One thread per BVH node; each node emits 12 line segments
+// (one per AABB edge) directly into a debug-line SSBO that is then
+// rendered via the engine's instanced debug-line geometry shader.
+//
+// Buffer layout matches LineInstance.gs: 3 vec4 per line (start, end, color).
+// No CPU readback is required: the upper bound on visualized nodes is
+// supplied as a uniform from the C# side based on the BVH node count
+// already known when the BVH is built.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "bvh_nodes.glslinc"
+
+layout(std430, binding = 0) readonly buffer BvhNodes
+{
+    uint nodeCount;
+    uint rootIndex;
+    uint nodeStrideScalars;
+    uint maxLeafPrimitives;
+    BvhNode nodes[];
+};
+
+layout(std430, binding = 1) writeonly buffer DebugLines
+{
+    vec4 Lines[];
+};
+
+uniform uint MaxNodes;
+uniform vec4 LeafColor;
+uniform vec4 InternalColor;
+// 0 = all nodes, 1 = leaves only, 2 = internal nodes only.
+uniform uint ShowFilter;
+
+const uint LINES_PER_BOX = 12u;
+const uint VEC4_PER_LINE = 3u;
+
+void writeLine(uint baseIdx, vec3 a, vec3 b, vec4 color)
+{
+    Lines[baseIdx + 0u] = vec4(a, 1.0);
+    Lines[baseIdx + 1u] = vec4(b, 1.0);
+    Lines[baseIdx + 2u] = color;
+}
+
+void writeDegenerate(uint baseIdx)
+{
+    Lines[baseIdx + 0u] = vec4(0.0);
+    Lines[baseIdx + 1u] = vec4(0.0);
+    Lines[baseIdx + 2u] = vec4(0.0);
+}
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint cap = min(nodeCount, MaxNodes);
+    if (i >= cap)
+        return;
+
+    uint baseLine = i * LINES_PER_BOX * VEC4_PER_LINE;
+
+    BvhNode n = nodes[i];
+    bool isLeaf = (n.flags & BVH_FLAG_LEAF) != 0u;
+
+    bool keep =
+        (ShowFilter == 0u) ||
+        (ShowFilter == 1u && isLeaf) ||
+        (ShowFilter == 2u && !isLeaf);
+
+    if (!keep)
+    {
+        for (uint e = 0u; e < LINES_PER_BOX; ++e)
+            writeDegenerate(baseLine + e * VEC4_PER_LINE);
+        return;
+    }
+
+    vec4 color = isLeaf ? LeafColor : InternalColor;
+    vec3 mn = n.minBounds;
+    vec3 mx = n.maxBounds;
+
+    // Reject degenerate / uninitialized nodes (min > max) so we don't
+    // splatter the screen with garbage geometry while the BVH is warming up.
+    if (any(greaterThan(mn, mx)))
+    {
+        for (uint e = 0u; e < LINES_PER_BOX; ++e)
+            writeDegenerate(baseLine + e * VEC4_PER_LINE);
+        return;
+    }
+
+    vec3 c000 = vec3(mn.x, mn.y, mn.z);
+    vec3 c100 = vec3(mx.x, mn.y, mn.z);
+    vec3 c010 = vec3(mn.x, mx.y, mn.z);
+    vec3 c110 = vec3(mx.x, mx.y, mn.z);
+    vec3 c001 = vec3(mn.x, mn.y, mx.z);
+    vec3 c101 = vec3(mx.x, mn.y, mx.z);
+    vec3 c011 = vec3(mn.x, mx.y, mx.z);
+    vec3 c111 = vec3(mx.x, mx.y, mx.z);
+
+    // -Z face (bottom rect)
+    writeLine(baseLine + 0u  * VEC4_PER_LINE, c000, c100, color);
+    writeLine(baseLine + 1u  * VEC4_PER_LINE, c100, c110, color);
+    writeLine(baseLine + 2u  * VEC4_PER_LINE, c110, c010, color);
+    writeLine(baseLine + 3u  * VEC4_PER_LINE, c010, c000, color);
+    // +Z face (top rect)
+    writeLine(baseLine + 4u  * VEC4_PER_LINE, c001, c101, color);
+    writeLine(baseLine + 5u  * VEC4_PER_LINE, c101, c111, color);
+    writeLine(baseLine + 6u  * VEC4_PER_LINE, c111, c011, color);
+    writeLine(baseLine + 7u  * VEC4_PER_LINE, c011, c001, color);
+    // Vertical edges
+    writeLine(baseLine + 8u  * VEC4_PER_LINE, c000, c001, color);
+    writeLine(baseLine + 9u  * VEC4_PER_LINE, c100, c101, color);
+    writeLine(baseLine + 10u * VEC4_PER_LINE, c110, c111, color);
+    writeLine(baseLine + 11u * VEC4_PER_LINE, c010, c011, color);
+}

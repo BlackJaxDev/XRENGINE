@@ -180,7 +180,7 @@ namespace XREngine.Rendering
             set => SetField(ref _forwardPlusDebugOpacity, Math.Clamp(value, 0.0f, 1.0f));
         }
 
-        private int _forwardPlusDebugMaxCount = 32;
+        private int _forwardPlusDebugMaxCount = 8;
         /// <summary>
         /// Light count that maps to the top of the heatmap ramp.
         /// Tile counts at or above this saturate to "hot".
@@ -189,6 +189,30 @@ namespace XREngine.Rendering
         {
             get => _forwardPlusDebugMaxCount;
             set => SetField(ref _forwardPlusDebugMaxCount, Math.Max(1, value));
+        }
+
+        private bool _forwardPlusDebugShowEmptyTiles = false;
+        /// <summary>
+        /// When true, tiles with zero visible lights are painted with a faint dark fill so the
+        /// culling extent is fully visible. When false (default) empty tiles are discarded so the
+        /// underlying scene shows through and only populated tiles draw the heatmap.
+        /// </summary>
+        public bool ForwardPlusDebugShowEmptyTiles
+        {
+            get => _forwardPlusDebugShowEmptyTiles;
+            set => SetField(ref _forwardPlusDebugShowEmptyTiles, value);
+        }
+
+        private bool _forwardPlusDebugShowCountBar = true;
+        /// <summary>
+        /// When true (default), populated tiles render a horizontal bar along the bottom edge whose
+        /// length is proportional to (count / MaxCount), giving a quantitative readout the heatmap
+        /// color cannot.
+        /// </summary>
+        public bool ForwardPlusDebugShowCountBar
+        {
+            get => _forwardPlusDebugShowCountBar;
+            set => SetField(ref _forwardPlusDebugShowCountBar, value);
         }
 
         /// <summary>

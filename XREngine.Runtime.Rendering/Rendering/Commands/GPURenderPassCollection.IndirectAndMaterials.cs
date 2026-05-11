@@ -72,6 +72,7 @@ namespace XREngine.Rendering.Commands
             _gpuBatchingPreparedThisFrame = false;
             _zeroReadbackMaterialScatterPreparedThisFrame = false;
             _zeroReadbackActiveBucketListPreparedThisFrame = false;
+            ResetZeroReadbackProgramPendingState();
             Stopwatch resetStopwatch = Stopwatch.StartNew();
             ResetCounters();
             resetStopwatch.Stop();
@@ -263,8 +264,7 @@ namespace XREngine.Rendering.Commands
             uint dispatchCommands = VisibleCommandCount;
             if (IsCpuReadbackCountDisabledForPass())
             {
-                // When we don't read counts back, conservatively dispatch for the max indirect capacity.
-                dispatchCommands = _indirectDrawBuffer!.ElementCount;
+                dispatchCommands = Math.Min(dispatchCommands, _indirectDrawBuffer!.ElementCount);
             }
 
             uint dispatchGroups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
@@ -285,12 +285,12 @@ namespace XREngine.Rendering.Commands
 
             uint dispatchCommands = VisibleCommandCount;
             if (IsCpuReadbackCountDisabledForPass())
-                dispatchCommands = _culledSceneToRenderBuffer.ElementCount;
+                dispatchCommands = Math.Min(dispatchCommands, _culledSceneToRenderBuffer.ElementCount);
 
             if (dispatchCommands == 0)
                 return;
 
-            _lodSelectComputeShader.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? Vector3.Zero);
+            _lodSelectComputeShader.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? Vector3.Zero);
             _lodSelectComputeShader.Uniform("InputCommandCount", (int)dispatchCommands);
             _lodSelectComputeShader.Uniform("TransitionFrameStep", 1.0f / Math.Max(LodTransitionFrameCount, 1u));
 
@@ -357,7 +357,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             uint inputCount = IsCpuReadbackCountDisabledForPass()
-                ? maxInput
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), maxInput)
                 : Math.Max(VisibleCommandCount, 1u);
 
             _buildHotCommandsProgram.Uniform("InputCount", (int)inputCount);
@@ -412,8 +412,8 @@ namespace XREngine.Rendering.Commands
             if (_zeroReadbackMaterialScatterPreparedThisFrame)
                 return null;
 
-            // When readback is disabled (shipping / zero-readback mode), skip batch readback entirely
-            // even if scatter wasn't prepared this frame — fall back to CommandCapacity-based draw.
+            // When readback is disabled (shipping / zero-readback mode), skip batch readback entirely.
+            // The draw submission consumes GPU count buffers rather than CPU material batch ranges.
             if (IsCpuReadbackCountDisabledForPass())
                 return null;
 
@@ -458,7 +458,7 @@ namespace XREngine.Rendering.Commands
             scene.LodTransitionBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterLodTransitions);
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
-                ? _keyIndexBufferA.ElementCount
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
                 : Math.Max(VisibleCommandCount, 1u);
             uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u), MaterialScatterLocalSizeX).Item1);
             _materialScatterComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
@@ -598,7 +598,7 @@ namespace XREngine.Rendering.Commands
             _transparencyDomainCountBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyDomainCounts);
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
-                ? CommandCapacity
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), CommandCapacity)
                 : Math.Max(VisibleCommandCount, 1u);
             uint groups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
             _classifyTransparencyComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
@@ -634,7 +634,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
-                ? _keyIndexBufferA.ElementCount
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
                 : Math.Max(VisibleCommandCount, 1u);
 
             _buildKeysComputeShader.Uniform("CurrentRenderPass", RenderPass);
@@ -829,6 +829,17 @@ namespace XREngine.Rendering.Commands
             activeCount = Math.Min(activeCount, _materialTierBucketCount);
             if (activeCount == 0u)
                 return null;
+
+            if (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.ZeroReadbackActiveBucketReadback.{RenderPass}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Zero-readback draw path {0} is reading back {1} active material buckets for pass {2}. Use FullBucketScan for strict no-readback diagnostics, or treat ActiveBucketList/MaterialTable as readback-assisted modes.",
+                    ZeroReadbackMaterialDrawPath,
+                    activeCount,
+                    RenderPass);
+            }
 
             bool mappedHere = false;
 

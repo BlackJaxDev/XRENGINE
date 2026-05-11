@@ -33,7 +33,11 @@ namespace XREngine
             public static Func<global::XREngine.Rendering.XRWindow, global::XREngine.Data.Geometry.BoundingRectangle?>? ScenePanelRenderRegionProvider { get; set; }
 
             /// <summary>
+            /// Active engine-default settings used by rendering and effective settings.
+            /// </summary>
             private static EngineSettings _settings = new();
+            private static EngineSettings _globalDefaultSettings = _settings;
+            private static EngineSettings? _projectDefaultSettings;
             static Rendering()
             {
                 _settings.PropertyChanged += HandleSettingsPropertyChanged;
@@ -42,7 +46,7 @@ namespace XREngine
                 _settings.VulkanRobustnessSettings.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
             }
             /// <summary>
-            /// The global rendering settings for the engine.
+            /// The active rendering settings for the engine.
             /// </summary>
             public static EngineSettings Settings
             {
@@ -65,14 +69,57 @@ namespace XREngine
                     _settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
                     _settings.PhysicsGpuMemorySettings.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
                     _settings.VulkanRobustnessSettings.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
+
+                    if (_projectDefaultSettings is not null)
+                        _projectDefaultSettings = _settings;
+                    else
+                        _globalDefaultSettings = _settings;
+
                     ApplyEngineSettingChange(null);
                     SettingsChanged?.Invoke();
                 }
             }
 
             /// <summary>
-            /// Runtime baseline used as the engine-default layer for resolved settings.
-            /// Project and user settings may override these values at runtime.
+            /// Global baseline persisted outside any project. Projects can replace the active
+            /// <see cref="Settings"/> object with their own defaults while preserving this source.
+            /// </summary>
+            public static EngineSettings GlobalDefaultSettings
+            {
+                get => _globalDefaultSettings;
+                set
+                {
+                    if (ReferenceEquals(_globalDefaultSettings, value) && value is not null)
+                        return;
+
+                    _globalDefaultSettings = value ?? new EngineSettings();
+
+                    if (_projectDefaultSettings is null)
+                        Settings = _globalDefaultSettings;
+                }
+            }
+
+            /// <summary>
+            /// Project-local engine defaults. When present, this object is the active
+            /// <see cref="Settings"/> source and overrides <see cref="GlobalDefaultSettings"/>.
+            /// </summary>
+            public static EngineSettings? ProjectDefaultSettings
+            {
+                get => _projectDefaultSettings;
+                set
+                {
+                    if (ReferenceEquals(_projectDefaultSettings, value))
+                        return;
+
+                    _projectDefaultSettings = value;
+                    Settings = _projectDefaultSettings ?? _globalDefaultSettings;
+                }
+            }
+
+            /// <summary>
+            /// Active baseline used as the engine-default layer for resolved settings.
+            /// This is the project default asset when a project override is loaded, otherwise
+            /// it is the global default asset.
             /// </summary>
             public static EngineSettings DefaultSettings
             {
@@ -437,7 +484,7 @@ namespace XREngine
                 private ESkinnedBoundsRecomputePolicy _skinnedBoundsRecomputePolicy = ESkinnedBoundsRecomputePolicy.Never;
                 private bool _allowInitialSkinnedBoundsBuildWhenNever = true;
                 private int _shaderConfigVersion = 0;
-                private bool _useGpuBvh = false;
+                private bool _useGpuBvh = true;
                 private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Diagnostics;
                 private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
                 private bool _enableVulkanDescriptorIndexing = true;
@@ -461,6 +508,7 @@ namespace XREngine
                 private void BumpShaderConfigVersion()
                     => Interlocked.Increment(ref _shaderConfigVersion);
                 private bool _calculateSkinnedBoundsInComputeShader = false;
+                private bool _skinnedBoundsGpuDirectAabbWrite = false;
                 private string _defaultFontFolder = "Roboto";
                 private string _defaultFontFileName = "Roboto-Medium.ttf";
 
@@ -1152,6 +1200,20 @@ namespace XREngine
                 {
                     get => _calculateSkinnedBoundsInComputeShader;
                     set => SetField(ref _calculateSkinnedBoundsInComputeShader, value);
+                }
+
+                /// <summary>
+                /// When true (and <see cref="CalculateSkinnedBoundsInComputeShader"/> is also true),
+                /// the engine writes skinned mesh world-space AABBs directly into the GPU command
+                /// AABB buffer (BVH leaf bounds) via the reduce shader, bypassing the CPU 8-corner
+                /// transform performed by GPUScene.WriteTightCommandAabb. Requires the internal BVH.
+                /// </summary>
+                [Category("Performance")]
+                [Description("When true (and CalculateSkinnedBoundsInComputeShader is also true), the engine writes skinned mesh world-space AABBs directly into the GPU command AABB buffer via the reduce shader, bypassing the CPU 8-corner transform.")]
+                public bool SkinnedBoundsGpuDirectAabbWrite
+                {
+                    get => _skinnedBoundsGpuDirectAabbWrite;
+                    set => SetField(ref _skinnedBoundsGpuDirectAabbWrite, value);
                 }
 
                 /// <summary>

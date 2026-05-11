@@ -56,12 +56,43 @@ public sealed class GpuIndirectProgramContractTests
     }
 
     [Test]
+    public void ZeroReadbackProgramWarmup_UsesCpuSafetyNetWithoutForcedOpenGlLinks()
+    {
+        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+        string gpuPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Core.cs");
+        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
+
+        managerSource.ShouldContain("EnsureZeroReadbackMaterialSlotProgramsReady(");
+        managerSource.ShouldContain("EnsureZeroReadbackActiveBucketProgramsReady(");
+        managerSource.ShouldContain("renderPasses.RecordZeroReadbackProgramPending();");
+        managerSource.ShouldContain("WarnZeroReadbackProgramWarmup(");
+        managerSource.ShouldNotContain("TryForceSynchronousOpenGLProgramLink");
+        managerSource.ShouldNotContain("forceSynchronousLink");
+        gpuPassSource.ShouldContain("ZeroReadbackProgramPendingThisFrame");
+        commandSource.ShouldContain("ShouldUseOpenGLZeroReadbackProgramWarmupFallback");
+        commandSource.ShouldContain("RenderCPUMeshOnly(command.RenderPass)");
+    }
+
+    [Test]
     public void IndirectVertexShaders_EmitWorldSpaceFragPos_ForForwardUberLighting()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
         source.ShouldContain("FragPos = worldPos.xyz;");
         source.ShouldNotContain("FragPos = clipPos.xyz / max(clipPos.w, 1e-6);");
+    }
+
+    [Test]
+    public void IndirectVertexShaders_ReconstructCpuMatricesLikeUniformUpload()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+
+        source.ShouldContain("vec4 c0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);");
+        source.ShouldContain("vec4 c3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);");
+        source.ShouldContain("vec4 c0 = vec4(instanceWorld[base+0],  instanceWorld[base+1],  instanceWorld[base+2],  instanceWorld[base+3]);");
+        source.ShouldContain("vec4 c3 = vec4(instanceWorld[base+12], instanceWorld[base+13], instanceWorld[base+14], instanceWorld[base+15]);");
+        source.ShouldNotContain("vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);");
+        source.ShouldNotContain("vec4 c0 = vec4(instanceWorld[base+0], instanceWorld[base+4], instanceWorld[base+8],  instanceWorld[base+12]);");
     }
 
     [Test]

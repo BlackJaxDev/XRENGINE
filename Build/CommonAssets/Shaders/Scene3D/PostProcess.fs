@@ -10,6 +10,10 @@ uniform usampler2D StencilView; //Stencil
 
 // 1x1 R32F texture containing the current exposure value (GPU-driven auto exposure)
 uniform sampler2D AutoExposureTex;
+// Atmospheric aerial-perspective texture. rgb = in-scattered radiance, a = transmittance.
+// Produced by the separated atmospheric scattering chain and cleared to (0,0,0,1)
+// for disabled/no-active frames so the composite becomes a no-op.
+uniform sampler2D AtmosphereColor;
 // Volumetric fog scatter texture. rgb = in-scattered radiance, a = transmittance.
 // Produced by VolumetricFogScatter.fs; early-outs to (0,0,0,1) when the effect
 // is disabled so the composite becomes a no-op.
@@ -411,6 +415,19 @@ void main()
         hdrSceneColor += SampleBloom(uv, float(lod)) * w * BloomStrength;
     }
   }
+
+  // Atmosphere composites before local volumetric fog because it represents
+  // long-distance planetary air. Skip the composite when the upscale wrote a
+  // neutral (rgb=0, a=1) frame, or when the texture has not been written this
+  // frame at all (rgba=0). Without these gates a (0,0,0,0) sample multiplies
+  // the entire HDR scene by zero, producing a black screen, and a (0,0,0,1)
+  // sample is a no-op we can skip outright. Any genuinely non-neutral
+  // atmosphere output still composites normally.
+  vec4 atmosphere = texture(AtmosphereColor, sceneUv);
+  bool atmosphereNeutral = atmosphere.a >= 0.9999f && all(lessThanEqual(abs(atmosphere.rgb), vec3(1e-5f)));
+  bool atmosphereUnwritten = atmosphere.a <= 1e-5f && all(lessThanEqual(abs(atmosphere.rgb), vec3(1e-5f)));
+  if (!atmosphereNeutral && !atmosphereUnwritten)
+    hdrSceneColor = hdrSceneColor * atmosphere.a + atmosphere.rgb;
 
   // Safe composite: when the fog scatter pass is disabled, skipped, or has not yet written
   // a frame, the texture clears to (0,0,0,0). A literal `hdrSceneColor * 0 + 0` would zero out

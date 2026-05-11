@@ -272,6 +272,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
         => VPRC_VolumetricFogHistoryPass.ResetHistory(camera);
 
     /// <summary>
+    /// Invalidates the separated atmospheric-scattering temporal history for a camera.
+    /// Call this after teleports, scene loads, or other discontinuous camera cuts.
+    /// </summary>
+    public static void InvalidateAtmosphereHistory(XRCamera? camera)
+        => VPRC_AtmosphereHistoryPass.ResetHistory(camera);
+
+    /// <summary>
     /// True when MSAA should be active for the current rendering camera.
     /// Evaluated at render time so per-camera overrides take effect.
     /// </summary>
@@ -670,7 +677,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return true;
 
         var textures = material.Textures;
-        int expectedCount = Stereo ? 5 : 6;
+        int expectedCount = Stereo ? 5 : 7;
         if (textures.Count != expectedCount)
             return true;
 
@@ -681,7 +688,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(AutoExposureTextureName)))
             return true;
 
-        if (!Stereo && !ReferenceEquals(textures[5], GetTexture<XRTexture>(VolumetricFogColorTextureName)))
+        if (!Stereo && (!ReferenceEquals(textures[5], GetTexture<XRTexture>(AtmosphereColorTextureName))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(VolumetricFogColorTextureName))))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -692,6 +700,187 @@ public partial class DefaultRenderPipeline : RenderPipeline
             Path.Combine(SceneShaderPath, PostProcessShaderName()),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereHalfDepthQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(DepthViewTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereHalfDepthDownsample.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereHalfDepthFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereHalfDepthTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateAtmosphereHalfScatterQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(AtmosphereHalfDepthTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereAerialPerspective.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereHalfScatterFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereHalfScatterTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateAtmosphereReprojectQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 3)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(AtmosphereHalfScatterTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(AtmosphereHalfHistoryTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(AtmosphereHalfDepthTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereReproject.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereReprojectFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereHalfTemporalTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateAtmosphereHistoryFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereHalfHistoryTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateAtmosphereUpscaleQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 3)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(AtmosphereHalfTemporalTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(AtmosphereHalfDepthTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereUpscale.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereUpscaleFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereColorTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
     }
 
     private bool NeedsRecreateVolumetricFogHalfDepthQuadFbo(XRFrameBuffer fbo)
@@ -1016,6 +1205,20 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
+    public const string AtmosphereColorTextureName = "AtmosphereColor";
+    public const string AtmosphereHalfDepthTextureName = "AtmosphereHalfDepth";
+    public const string AtmosphereHalfScatterTextureName = "AtmosphereHalfScatter";
+    public const string AtmosphereHalfTemporalTextureName = "AtmosphereHalfTemporal";
+    public const string AtmosphereHalfHistoryTextureName = "AtmosphereHalfHistory";
+    public const string AtmosphereHalfDepthQuadFBOName = "AtmosphereHalfDepthQuadFBO";
+    public const string AtmosphereHalfDepthFBOName = "AtmosphereHalfDepthFBO";
+    public const string AtmosphereHalfScatterQuadFBOName = "AtmosphereHalfScatterQuadFBO";
+    public const string AtmosphereHalfScatterFBOName = "AtmosphereHalfScatterFBO";
+    public const string AtmosphereReprojectQuadFBOName = "AtmosphereReprojectQuadFBO";
+    public const string AtmosphereReprojectFBOName = "AtmosphereReprojectFBO";
+    public const string AtmosphereHistoryFBOName = "AtmosphereHistoryFBO";
+    public const string AtmosphereUpscaleQuadFBOName = "AtmosphereUpscaleQuadFBO";
+    public const string AtmosphereUpscaleFBOName = "AtmosphereUpscaleFBO";
     public const string VolumetricFogColorTextureName = "VolumetricFogColor";
     public const string VolumetricFogHalfDepthTextureName = "VolumetricFogHalfDepth";
     public const string VolumetricFogHalfScatterTextureName = "VolumetricFogHalfScatter";
@@ -1141,7 +1344,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private const string LensDistortionStageKey = "lensDistortion";
     private const string ChromaticAberrationStageKey = "chromaticAberration";
     private const string FogStageKey = "fog";
+    private const string AtmosphericScatteringStageKey = "atmosphericScattering";
     private const string VolumetricFogStageKey = "volumetricFog";
+    private const string GpuBvhDebugStageKey = "gpuBvhDebug";
 
     private static readonly string[] AntiAliasingTextureDependencies = RenderPipelineAntiAliasingResources.AntiAliasingTextureDependencies;
     private static readonly string[] AntiAliasingFrameBufferDependencies = RenderPipelineAntiAliasingResources.AntiAliasingFrameBufferDependencies;

@@ -103,11 +103,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            // Resolve once per execution so the motion-vectors pass uses the same culling/draw
+            // strategy as the lit pass on the same gpuPass instance. Otherwise RenderGPU(pass)
+            // defaults to GpuIndirectInstrumented and thrashes gpuPass.MeshSubmissionStrategy
+            // mid-frame, producing mismatched cull results between motion vectors and shading.
+            var motionStrategy = _gpuDispatch
+                ? Engine.Rendering.ResolveMeshSubmissionStrategy(true)
+                : EMeshSubmissionStrategy.CpuDirect;
             foreach (int pass in RenderPasses)
             {
                 //Debug.Out($"[Velocity] Rendering motion vectors for pass {pass} (GPUDispatch={GPUDispatch}).");
                 if (_gpuDispatch)
-                    commands.RenderGPU(pass);
+                    commands.RenderGPU(pass, motionStrategy);
                 else
                     commands.RenderCPU(pass);
             }

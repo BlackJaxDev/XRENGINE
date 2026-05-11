@@ -40,17 +40,29 @@ uniform float OverlayAlpha;
 uniform vec3 GridColor;
 uniform float GridThickness;    // pixels
 uniform vec3 OverflowColor;
+uniform int TotalLightCount;    // total point+spot lights submitted to Forward+ this frame
+uniform int ShowEmptyTiles;     // 0 = discard count==0 tiles, 1 = paint faint empty fill
+uniform int ShowCountBar;       // 0 = no bar, 1 = draw per-tile bar/dots
+uniform float Time;             // for animated "no lights" warning stripes
 
 vec3 HeatRamp(float t)
 {
     t = clamp(t, 0.0, 1.0);
     if (t < 0.25)
-        return mix(vec3(0.0, 0.0, 0.25), vec3(0.0, 0.55, 1.0), t / 0.25);
+        return mix(vec3(0.05, 0.05, 0.5), vec3(0.0, 0.7, 1.0), t / 0.25);
     if (t < 0.5)
-        return mix(vec3(0.0, 0.55, 1.0), vec3(0.0, 1.0, 0.3), (t - 0.25) / 0.25);
+        return mix(vec3(0.0, 0.7, 1.0), vec3(0.1, 1.0, 0.3), (t - 0.25) / 0.25);
     if (t < 0.75)
-        return mix(vec3(0.0, 1.0, 0.3), vec3(1.0, 0.92, 0.0), (t - 0.5) / 0.25);
+        return mix(vec3(0.1, 1.0, 0.3), vec3(1.0, 0.92, 0.0), (t - 0.5) / 0.25);
     return mix(vec3(1.0, 0.92, 0.0), vec3(1.0, 0.08, 0.0), (t - 0.75) / 0.25);
+}
+
+// Map raw count onto the [0,1] ramp with a sqrt curve so a single light is already clearly visible.
+float CountToHeat(uint count)
+{
+    float denom = max(float(MaxCount), 1.0);
+    float linearT = clamp(float(count) / denom, 0.0, 1.0);
+    return sqrt(linearT);
 }
 
 void main()
@@ -75,43 +87,105 @@ void main()
     float edge = min(distToEdge.x, distToEdge.y);
     bool onGrid = edge < max(GridThickness, 0.5);
 
+    // Per-tile inline count bar: a horizontal bar along the bottom row of each tile,
+    // length proportional to count/MaxCount. Emits a quantitative readout the heat color cannot.
+    bool inBar = false;
+    bool barFilled = false;
+    if (ShowCountBar != 0 && count > 0u && TileSize >= 6)
+    {
+        float barHeight = max(2.0, float(TileSize) * 0.12);
+        float barMargin = 1.0;
+        if (inTile.y >= float(TileSize) - barHeight - barMargin && inTile.y < float(TileSize) - barMargin)
+        {
+            float available = float(TileSize) - 2.0 * barMargin;
+            if (inTile.x >= barMargin && inTile.x < float(TileSize) - barMargin)
+            {
+                inBar = true;
+                float fill = clamp(float(count) / max(float(MaxCount), 1.0), 0.0, 1.0);
+                float pos = (inTile.x - barMargin) / available;
+                barFilled = pos <= fill;
+            }
+        }
+    }
+
     vec3 color = vec3(0.0);
     float alpha = OverlayAlpha;
+    bool wrote = false;
 
     if (DebugMode == 4) // GridOnly
     {
         if (!onGrid)
             discard;
         color = GridColor;
+        wrote = true;
     }
     else if (DebugMode == 3) // OverflowOnly
     {
         if (!overflowed)
             discard;
         color = OverflowColor;
+        wrote = true;
     }
     else // Heatmap or HeatmapWithGrid
     {
-        float denom = max(float(MaxCount), 1.0);
-        float t = clamp(float(count) / denom, 0.0, 1.0);
-
         if (count == 0u)
         {
-            // Faintly mark empty tiles so the user can still see culling extent.
-            color = vec3(0.05, 0.05, 0.08);
-            alpha *= 0.45;
+            if (ShowEmptyTiles == 0 && !(DebugMode == 2 && onGrid))
+            {
+                // Show animated "no lights at all" warning stripes so the user can distinguish
+                // "Forward+ ran but produced 0 visible lights" from "Forward+ overlay disabled".
+                if (TotalLightCount <= 0)
+                {
+                    float stripe = sin((pixel.x + pixel.y) * 0.08 + Time * 2.0);
+                    if (stripe > 0.7)
+                    {
+                        color = OverflowColor;
+                        alpha = OverlayAlpha * 0.35;
+                        wrote = true;
+                    }
+                    else
+                    {
+                        discard;
+                    }
+                }
+                else
+                {
+                    discard;
+                }
+            }
+            else
+            {
+                color = vec3(0.05, 0.05, 0.08);
+                alpha *= 0.45;
+                wrote = true;
+            }
         }
         else
         {
-            color = HeatRamp(t);
+            color = HeatRamp(CountToHeat(count));
+            wrote = true;
         }
 
         if (overflowed)
             color = mix(color, OverflowColor, 0.6);
 
+        if (inBar)
+        {
+            color = barFilled ? vec3(1.0) : vec3(0.0);
+            alpha = max(alpha, OverlayAlpha * 0.85);
+            wrote = true;
+        }
+
         if (DebugMode == 2 && onGrid) // HeatmapWithGrid
+        {
             color = GridColor;
+            alpha = max(alpha, OverlayAlpha * 0.85);
+            wrote = true;
+        }
     }
+
+    if (!wrote)
+        discard;
 
     OutColor = vec4(color, alpha);
 }
@@ -258,6 +332,10 @@ void main()
         program.Uniform("GridColor", new System.Numerics.Vector3(0.0f, 0.95f, 1.0f));
         program.Uniform("GridThickness", 1.0f);
         program.Uniform("OverflowColor", new System.Numerics.Vector3(1.0f, 0.0f, 1.0f));
+        program.Uniform("TotalLightCount", Engine.Rendering.State.ForwardPlusLocalLightCount);
+        program.Uniform("ShowEmptyTiles", cam.ForwardPlusDebugShowEmptyTiles ? 1 : 0);
+        program.Uniform("ShowCountBar", cam.ForwardPlusDebugShowCountBar ? 1 : 0);
+        program.Uniform("Time", (float)Engine.ElapsedTime);
     }
 
     private static XRCamera? ResolveDebugCamera()
