@@ -31,6 +31,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private RenderResourceSizePolicy? _sizePolicyOverride;
         private RenderResourceLifetime _lifetime = RenderResourceLifetime.Persistent;
 
+        public override string GpuProfilingName
+            => string.IsNullOrWhiteSpace(Name) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Name}]";
+
         public VPRC_CacheOrCreateTexture SetOptions(string name, Func<XRTexture> factory, Func<XRTexture, bool>? needsRecreate, Action<XRTexture>? resize)
         {
             Name = name;

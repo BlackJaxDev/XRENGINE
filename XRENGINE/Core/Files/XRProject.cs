@@ -20,6 +20,7 @@ namespace XREngine
         public const string EditorPreferencesFileName = "editor_preferences.asset";
         public const string EditorPreferencesOverridesFileName = "editor_preferences_overrides.asset";
         public const string LegacyEngineSettingsFileName = "engine_settings.asset";
+        public const string EngineDefaultsFileName = "engine_defaults.asset";
         public const string GameSettingsFileName = "game_settings.asset";
         public const string UserSettingsFileName = "user_settings.asset";
         public const string BuildSettingsFileName = "build_settings.asset";
@@ -181,6 +182,13 @@ namespace XREngine
         public string? LegacyEngineSettingsPath => ConfigDirectory is null
             ? null
             : Path.Combine(ConfigDirectory, LegacyEngineSettingsFileName);
+
+        /// <summary>
+        /// Gets the path to the project engine-default overrides.
+        /// </summary>
+        public string? EngineDefaultsPath => ConfigDirectory is null
+            ? null
+            : Path.Combine(ConfigDirectory, EngineDefaultsFileName);
 
         /// <summary>
         /// Gets the path to the game settings file for this project.

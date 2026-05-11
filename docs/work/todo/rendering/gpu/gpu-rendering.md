@@ -1,7 +1,11 @@
 # GPU-Driven Rendering Pipeline — Zero-Readback Architecture TODO
 
-Last Updated: 2026-03-22
-Status: Active development — core pipeline functional, LOD system and zero-readback completion remain.
+Last Updated: 2026-05-08
+Status: Active development - core pipeline functional, LOD system and zero-readback completion remain.
+
+Update 2026-05-08: default mesh passes now resolve an explicit `EMeshSubmissionStrategy`. `GpuIndirectInstrumented` owns diagnostic readbacks and CPU safety-net fallback; `GpuIndirectZeroReadback` owns the production material-tier scatter path and must not perform steady-state CPU readbacks. See [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md).
+
+Update 2026-05-08: zero-readback material dispatch now exposes `EZeroReadbackMaterialDrawPath` as a setting/env-var controlled selector: `FullBucketScan`, `ActiveBucketList`, `MaterialTable`, and `BindlessMaterialTable`. The active-list and material-table paths intentionally read back compact active bucket IDs so they can be profiled separately from the original full bucket scan; the bindless path is capability-gated and still needs real GL texture handle population before it can become texture-correct.
 
 ## Executive Summary
 

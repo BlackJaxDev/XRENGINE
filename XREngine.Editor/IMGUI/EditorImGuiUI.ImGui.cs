@@ -1254,27 +1254,10 @@ public static partial class EditorImGuiUI
                     ImGui.EndMenu();
                 }
 
-                ImGui.Separator();
-                if (ImGui.MenuItem("Global Editor Preferences"))
-                    OpenSettingsInInspector(Engine.GlobalEditorPreferences, "Global Editor Preferences");
-
-                if (ImGui.MenuItem("Editor Preferences Overrides"))
-                    OpenSettingsInInspector(Engine.EditorPreferencesOverrides, "Editor Preferences Overrides");
-
-                if (ImGui.MenuItem("User Settings"))
-                    OpenSettingsInInspector(Engine.UserSettings, "User Settings");
-
-                if (ImGui.MenuItem("Runtime Engine Defaults"))
-                    OpenSettingsInInspector(Engine.Rendering.DefaultSettings, RuntimeEngineDefaultsInspectorTitle);
-
-                if (ImGui.MenuItem("Effective Settings"))
-                    OpenEffectiveSettingsInInspector();
-
-                if (ImGui.MenuItem("Game Settings"))
-                    OpenSettingsInInspector(Engine.GameSettings, "Game Settings");
-
                 ImGui.EndMenu();
             }
+
+            DrawSettingsMainMenu();
 
             if (ImGui.BeginMenu("View"))
             {
@@ -1333,6 +1316,52 @@ public static partial class EditorImGuiUI
             DrawProjectStatusIndicator();
             DrawJobProgressIndicator();
             ImGui.EndMainMenuBar();
+        }
+
+        private static void DrawSettingsMainMenu()
+        {
+            if (!ImGui.BeginMenu("Settings"))
+                return;
+
+            if (ImGui.MenuItem("Effective Settings"))
+                OpenEffectiveSettingsInInspector();
+
+            ImGui.Separator();
+
+            if (ImGui.BeginMenu("Engine Defaults"))
+            {
+                if (ImGui.MenuItem("Global Engine Defaults"))
+                    OpenSettingsInInspector(Engine.Rendering.GlobalDefaultSettings, GlobalEngineDefaultsInspectorTitle);
+
+                if (ImGui.MenuItem("Project Engine Defaults", null, false, Engine.CurrentProject is not null))
+                    OpenSettingsInInspector(Engine.Rendering.ProjectDefaultSettings ?? Engine.Rendering.DefaultSettings, ProjectEngineDefaultsInspectorTitle);
+
+                ImGui.EndMenu();
+            }
+
+            if (ImGui.BeginMenu("Game Project"))
+            {
+                if (ImGui.MenuItem("Game Settings", null, false, Engine.GameSettings is not null))
+                    OpenSettingsInInspector(Engine.GameSettings, "Game Settings");
+
+                if (ImGui.MenuItem("User Settings", null, false, Engine.UserSettings is not null))
+                    OpenSettingsInInspector(Engine.UserSettings, "User Settings");
+
+                ImGui.EndMenu();
+            }
+
+            if (ImGui.BeginMenu("Editor"))
+            {
+                if (ImGui.MenuItem("Global Editor Preferences"))
+                    OpenSettingsInInspector(Engine.GlobalEditorPreferences, "Global Editor Preferences");
+
+                if (ImGui.MenuItem("Project Editor Overrides"))
+                    OpenSettingsInInspector(Engine.EditorPreferencesOverrides, "Editor Preferences Overrides");
+
+                ImGui.EndMenu();
+            }
+
+            ImGui.EndMenu();
         }
 
 
@@ -2034,7 +2063,7 @@ public static partial class EditorImGuiUI
 
         /// <summary>
         /// Synchronously flushes the current ImGui layout (dock nodes, window state) and
-        /// editor panel visibility to disk, bypassing the normal debounce window.
+        /// editor panel visibility to disk when no async layout write is already running.
         ///
         /// This must only be called from live ImGui close paths before the native ImGui
         /// context is torn down. Calling it from process-exit or other late shutdown hooks
@@ -2047,13 +2076,8 @@ public static partial class EditorImGuiUI
             if (string.IsNullOrWhiteSpace(iniFilename))
                 return;
 
-            // Wait briefly for any in-flight async write to finish so we don't race with it.
-            for (int i = 0; i < 200; i++)
-            {
-                if (Interlocked.CompareExchange(ref _iniSaveInFlight, 1, 0) == 0)
-                    break;
-                Thread.Sleep(10);
-            }
+            if (Interlocked.CompareExchange(ref _iniSaveInFlight, 1, 0) != 0)
+                return;
 
             try
             {
@@ -2275,18 +2299,16 @@ public static partial class EditorImGuiUI
                 if (Engine.CurrentProject is not null)
                 {
                     // Build Settings has a dedicated persisted asset file.
-                    // Game Settings also persist per project, separate from runtime engine defaults.
-                    // Runtime engine defaults are a session baseline. Project/user/editor override
-                    // assets own persisted changes above this layer.
+                    // Game Settings and Project Engine Defaults persist per project.
                     if (title == "Build Settings" && Engine.CurrentProject.BuildSettingsPath is string buildSettingsPath)
                         asset.FilePath = buildSettingsPath;
                     else if (title == "Game Settings" && Engine.CurrentProject.GameSettingsPath is string gameSettingsPath)
                         asset.FilePath = gameSettingsPath;
+                    else if (ReferenceEquals(asset, Engine.Rendering.ProjectDefaultSettings) && Engine.CurrentProject.EngineDefaultsPath is string engineDefaultsPath)
+                        asset.FilePath = engineDefaultsPath;
                 }
 
-                // Runtime engine defaults are not saved as a project asset.
-                if (!IsRuntimeEngineDefaultsTarget(asset))
-                    TryEnsureSettingsAssetTracked(asset, title);
+                TryEnsureSettingsAssetTracked(asset, title);
             }
 
             _showInspector = true;

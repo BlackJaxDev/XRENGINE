@@ -126,6 +126,10 @@
       "type": "boolean",
       "description": "Adds a demo volumetric fog volume to the default unit-testing world and enables volumetric fog on the unit-test camera(s)."
     },
+    "InitializeAtmosphericScattering": {
+      "type": "boolean",
+      "description": "Adds a demo atmosphere component and enables atmospheric scattering on the unit-test camera(s)."
+    },
     "ForceDebugOpaquePipeline": {
       "type": "boolean",
       "description": "Forces the debug opaque render pipeline instead of the default pipeline."
@@ -498,6 +502,10 @@
     "VolumetricFog": {
       "$ref": "#/definitions/VolumetricFogVolumeInitSettings",
       "description": "Generated from VolumetricFog on Settings."
+    },
+    "AtmosphericScattering": {
+      "$ref": "#/definitions/AtmosphericScatteringInitSettings",
+      "description": "Generated from AtmosphericScattering on Settings."
     }
   },
   "required": [],
@@ -880,6 +888,84 @@
         "B": {
           "type": "number",
           "description": "Generated from B on ColorRgb."
+        }
+      }
+    },
+    "AtmosphericScatteringInitSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Translation": {
+          "$ref": "#/definitions/TranslationXYZ",
+          "description": "Generated from Translation on AtmosphericScatteringInitSettings."
+        },
+        "GroundRadius": {
+          "type": "number",
+          "description": "Generated from GroundRadius on AtmosphericScatteringInitSettings."
+        },
+        "AtmosphereHeight": {
+          "type": "number",
+          "description": "Generated from AtmosphereHeight on AtmosphericScatteringInitSettings."
+        },
+        "GroundLevelOffset": {
+          "type": "number",
+          "description": "Generated from GroundLevelOffset on AtmosphericScatteringInitSettings."
+        },
+        "SunIntensity": {
+          "type": "number",
+          "description": "Generated from SunIntensity on AtmosphericScatteringInitSettings."
+        },
+        "SunColor": {
+          "$ref": "#/definitions/ColorRgb",
+          "description": "Generated from SunColor on AtmosphericScatteringInitSettings."
+        },
+        "RayleighScaleHeight": {
+          "type": "number",
+          "description": "Generated from RayleighScaleHeight on AtmosphericScatteringInitSettings."
+        },
+        "MieScaleHeight": {
+          "type": "number",
+          "description": "Generated from MieScaleHeight on AtmosphericScatteringInitSettings."
+        },
+        "RayleighScattering": {
+          "$ref": "#/definitions/ColorRgb",
+          "description": "Generated from RayleighScattering on AtmosphericScatteringInitSettings."
+        },
+        "MieScattering": {
+          "$ref": "#/definitions/ColorRgb",
+          "description": "Generated from MieScattering on AtmosphericScatteringInitSettings."
+        },
+        "MieAnisotropy": {
+          "type": "number",
+          "description": "Generated from MieAnisotropy on AtmosphericScatteringInitSettings."
+        },
+        "ExposureScale": {
+          "type": "number",
+          "description": "Generated from ExposureScale on AtmosphericScatteringInitSettings."
+        },
+        "GroundAlbedo": {
+          "type": "number",
+          "description": "Generated from GroundAlbedo on AtmosphericScatteringInitSettings."
+        },
+        "MaxDistance": {
+          "type": "number",
+          "description": "Generated from MaxDistance on AtmosphericScatteringInitSettings."
+        },
+        "ViewSamples": {
+          "type": "integer",
+          "description": "Generated from ViewSamples on AtmosphericScatteringInitSettings."
+        },
+        "OpticalDepthSamples": {
+          "type": "integer",
+          "description": "Generated from OpticalDepthSamples on AtmosphericScatteringInitSettings."
+        },
+        "JitterStrength": {
+          "type": "number",
+          "description": "Generated from JitterStrength on AtmosphericScatteringInitSettings."
+        },
+        "TemporalEnabled": {
+          "type": "boolean",
+          "description": "Enables or disables TemporalEnabled."
         }
       }
     }

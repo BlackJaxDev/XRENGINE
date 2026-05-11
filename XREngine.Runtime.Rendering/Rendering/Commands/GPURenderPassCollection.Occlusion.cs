@@ -145,18 +145,15 @@ namespace XREngine.Rendering.Commands
             }
 
             // Pass-awareness: keep shadow/depth contributors out of occlusion hiding to avoid missing required passes.
-            if (Engine.Rendering.State.IsShadowPass)
+            if (Engine.Rendering.State.IsShadowPass ||
+                (Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false))
             {
                 RecordOcclusionFrameStats(0u, 0u, 0u, 0u);
                 RecordOcclusionTiming();
                 return;
             }
 
-            // In shipping mode we often avoid CPU readback of VisibleCommandCount.
-            // When readback is disabled, run occlusion using buffer capacity; the compute shader gates on GPU count.
             uint candidates = VisibleCommandCount;
-            if (candidates == 0u && IsCpuReadbackCountDisabledForPass())
-                candidates = CulledSceneToRenderBuffer?.ElementCount ?? 0u;
 
             if (candidates == 0u)
             {
@@ -526,9 +523,8 @@ namespace XREngine.Rendering.Commands
             if (_statsBuffer is not null)
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
 
-            // Dispatch: conservatively for capacity when CPU readback is disabled.
             uint dispatchCount = IsCpuReadbackCountDisabledForPass()
-                ? CulledSceneToRenderBuffer!.ElementCount
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), CulledSceneToRenderBuffer!.ElementCount)
                 : VisibleCommandCount;
 
             uint groups = Math.Max(1u, (dispatchCount + 255u) / 256u);

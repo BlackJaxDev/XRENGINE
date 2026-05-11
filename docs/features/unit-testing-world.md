@@ -74,6 +74,7 @@ You do not need to understand every property up front. These are the ones that u
 - `AddPhysics`, `PhysicsBallCount`, `PhysicsChain`: enable physics-focused scenarios
 - `ModelsToImport`: imports test assets into the world at startup
 - `DynamicPointLightCount`, `DynamicSpotLightCount`, `DynamicLightSeed`: add repeatable animated local-light stress rigs
+- `InitializeAtmosphericScattering`: spawns the default planetary atmosphere and enables the matching camera post-process stage
 - `GPURenderDispatch`: switches rendering dispatch mode
 - `StartInPlayModeWithoutTransitions`: skips the usual edit-to-play transition
 - `EnableProfilerLogging`: turns on profiler logging even without ImGui
@@ -121,6 +122,10 @@ This is the fastest way to spin up repeatable import tests without hand-building
 
 Use `DynamicPointLightCount` and `DynamicSpotLightCount` to spawn smooth animated debug lights with random colors. `DynamicLightSeed` keeps the generated colors and motion repeatable. `DynamicLightsCastShadows` is enabled by default; when `DynamicLightsForceShadowAtlas` is also enabled, the bootstrap turns on the matching point and spot shadow atlas paths before adding the generated lights.
 
+### Test atmospheric scattering
+
+Set `InitializeAtmosphericScattering` to `true` to spawn a default `AtmosphericScatteringComponent` and configure the active camera with `AtmosphericScatteringSettings`. Use the generated `AtmosphericScattering` object to tune ground radius, atmosphere height, sun source, scattering coefficients, aerial perspective distance, and quality/debug modes.
+
 ### Test XR startup
 
 Use:
@@ -161,6 +166,12 @@ If the settings type changes in code, regenerate the schema and JSONC outputs:
 pwsh Tools/Generate-UnitTestingWorldSettings.ps1
 ```
 
+If PowerShell 7 is not installed, use Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Tools\Generate-UnitTestingWorldSettings.ps1
+```
+
 Or run the VS Code task:
 
 ```text
@@ -179,7 +190,7 @@ If you launch the editor some other way, make sure the working directory is the 
 
 ### I changed the settings type and now the JSONC file looks stale
 
-Run `pwsh Tools/Generate-UnitTestingWorldSettings.ps1` or the `Generate-UnitTestingWorldSettings` task.
+Run `pwsh Tools/Generate-UnitTestingWorldSettings.ps1`, `powershell -ExecutionPolicy Bypass -File Tools\Generate-UnitTestingWorldSettings.ps1`, or the `Generate-UnitTestingWorldSettings` task.
 
 ### I want hover docs and enum completion in VS Code
 

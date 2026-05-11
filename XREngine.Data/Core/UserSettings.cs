@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 
 namespace XREngine
@@ -212,6 +213,7 @@ namespace XREngine
         private OverrideableSetting<bool> _enableGpuIndirectCpuFallbackOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectValidationLoggingOverride = new();
         private OverrideableSetting<bool> _enableZeroReadbackMaterialScatterOverride = new();
+        private OverrideableSetting<EZeroReadbackMaterialDrawPath> _zeroReadbackMaterialDrawPathOverride = new();
 
         // Full cascade settings (User > Project > Engine)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
@@ -348,6 +350,18 @@ namespace XREngine
         {
             get => _enableZeroReadbackMaterialScatterOverride;
             set => SetField(ref _enableZeroReadbackMaterialScatterOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for the zero-readback material draw path.
+        /// Takes precedence over project and engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Debug Overrides")]
+        [Description("User override for the zero-readback material draw path.")]
+        public OverrideableSetting<EZeroReadbackMaterialDrawPath> ZeroReadbackMaterialDrawPathOverride
+        {
+            get => _zeroReadbackMaterialDrawPathOverride;
+            set => SetField(ref _zeroReadbackMaterialDrawPathOverride, value ?? new());
         }
 
         /// <summary>

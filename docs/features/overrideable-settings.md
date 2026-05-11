@@ -97,26 +97,31 @@ These walk the cascade in correct priority order and return the effective value.
 
 | Layer | Example Classes | Scope | Typical Location |
 |-------|-----------------|-------|------------------|
-| **Runtime Engine Defaults** | `EngineSettings` | Session baseline for all projects | Engine code/runtime state |
+| **Global Engine Defaults** | `EngineSettings` | Persisted baseline outside any project | `%LOCALAPPDATA%/XREngine/Global/Config/engine_defaults.asset` |
+| **Project Engine Defaults** | `EngineSettings` | Per-project engine-default baseline seeded from global defaults | `Config/engine_defaults.asset` |
 | **Project** | `GameStartupSettings`, `EditorPreferencesOverrides` | Per-project configuration | Project assets folder |
 | **User** | `UserSettings` | Per-user preferences | User's app data |
 
 ### Layer Details
 
-**Runtime engine defaults** - The baseline configuration shipped with the engine. These provide reasonable out-of-the-box behavior and are not saved by the editor settings inspector.
+**Global engine defaults** - The persisted baseline configuration shared outside any project. These provide reasonable out-of-the-box behavior, are editable from the ImGui editor, and are saved as `engine_defaults.asset` in the global config folder.
+
+**Project engine defaults** - A project's full `EngineSettings` asset. When a project is loaded, `Config/engine_defaults.asset` becomes the current `Engine.Rendering.Settings` object and can override any value from the global engine defaults. If the file does not exist yet, the editor creates an in-memory project copy seeded from the current global defaults; saving project settings writes that copy to disk.
 
 **Project overrides** – Stored in the project's assets. A game project can:
+- Override any global engine default via `Config/engine_defaults.asset`
 - Override startup settings via `GameStartupSettings`
 - Override editor preferences via `EditorPreferencesOverrides` (theme, debug options, scene depth mode, etc.)
 - Define project-specific defaults that all team members share
 
 Project config assets now live under the project's `Config/` folder:
+- `engine_defaults.asset` stores persisted project `EngineSettings`
 - `game_settings.asset` stores persisted `GameStartupSettings`
 - `user_settings.asset` stores persisted per-user overrides for that project
 - `build_settings.asset` stores build/publish settings
 - `editor_preferences_overrides.asset` stores `EditorPreferencesOverrides` for that project
 
-The ImGui editor exposes `Runtime Engine Defaults` as the session baseline and `Effective Settings` as a read-only resolved view with the active source for each value.
+The ImGui editor exposes a dedicated `Settings` menu. `Effective Settings` is a read-only resolved view that shows the winning value plus the global-default, project-default, game, user, and editor layers that participate in the cascade. The editable source assets live under `Settings > Engine Defaults`, `Settings > Game Project`, and `Settings > Editor`.
 Existing projects with the older `engine_settings.asset` override file are still loaded as a legacy fallback and save back to `editor_preferences_overrides.asset`.
 
 Example camera-depth cascade:

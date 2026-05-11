@@ -263,8 +263,52 @@ internal static partial class Engine
         {
         }
 
+        public static void ApplyMeshSubmissionStrategyToPipeline(object? pipeline, EMeshSubmissionStrategy strategy)
+        {
+        }
+
         public static bool ResolveGpuRenderDispatchPreference(bool requested)
             => VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(requested);
+
+        public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(bool? requestedGpuDispatch = null)
+        {
+            EMeshSubmissionStrategy? forced = Engine.EffectiveSettings.ForceMeshSubmissionStrategy;
+            if (forced.HasValue)
+                return forced.Value;
+
+            if (!(requestedGpuDispatch ?? Engine.EffectiveSettings.GPURenderDispatch))
+                return EMeshSubmissionStrategy.CpuDirect;
+
+            bool diagnosticsProfile = VulkanFeatureProfile.IsActive &&
+                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
+            bool shippingFastProfile = VulkanFeatureProfile.IsActive &&
+                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.ShippingFast;
+            bool zeroReadbackRequested = shippingFastProfile
+                || Engine.EffectiveSettings.EnableZeroReadbackMaterialScatter
+                || Engine.EditorPreferences.Debug.EnableZeroReadbackMaterialScatter;
+            bool instrumentationRequested = diagnosticsProfile
+                || Engine.EffectiveSettings.EnableGpuIndirectDebugLogging
+                || Engine.EffectiveSettings.EnableGpuIndirectValidationLogging
+                || Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
+
+            bool supportsIndirectCount = AbstractRenderer.Current?.SupportsIndirectCountDraw() ?? true;
+            if (zeroReadbackRequested)
+            {
+                if (supportsIndirectCount)
+                    return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
+                return VulkanFeatureProfile.EnforceStrictNoFallbacks
+                    ? EMeshSubmissionStrategy.CpuDirect
+                    : EMeshSubmissionStrategy.GpuIndirectInstrumented;
+            }
+
+            if (instrumentationRequested)
+                return EMeshSubmissionStrategy.GpuIndirectInstrumented;
+
+            return supportsIndirectCount
+                ? EMeshSubmissionStrategy.GpuIndirectInstrumented
+                : EMeshSubmissionStrategy.CpuDirect;
+        }
 
         internal static void RaiseSettingsChanged() => SettingsChangedHandlers?.Invoke();
         internal static void RaiseAntiAliasingSettingsChanged() => AntiAliasingSettingsChangedHandlers?.Invoke();
@@ -636,7 +680,7 @@ internal static partial class Engine
             private bool _isIntel;
             private bool _isVulkan;
 
-                public ulong RenderFrameId { get; private set; }
+                public ulong RenderFrameId => RuntimeRenderingHostServices.Current.CurrentRenderFrameId;
                 public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
             public XRRenderPipelineInstance? CurrentRenderingPipeline
                 => PipelineOverrideStack.Count != 0
@@ -689,10 +733,7 @@ internal static partial class Engine
 
             public void BeginRenderFrame()
             {
-                unchecked
-                {
-                    RenderFrameId++;
-                }
+                // RenderFrameId is now sourced from the host bridge; no-op retained for legacy callers.
             }
 
             public IDisposable PushRenderGraphPassIndex(int passIndex)
@@ -793,6 +834,7 @@ internal sealed class RuntimeRenderSettings
             : _calculateSkinningInComputeShader;
         set => SetShaderSetting(ref _calculateSkinningInComputeShader, value);
     }
+    public bool SkinnedBoundsGpuDirectAabbWrite { get; set; }
     public bool CullShadowCollectionByCameraFrusta { get; set; } = true;
     public Vector3 DefaultLuminance { get; set; } = new(0.299f, 0.587f, 0.114f);
     public float DlssCustomScale { get; set; } = 1.0f;
@@ -986,9 +1028,39 @@ internal sealed class RuntimeEffectiveSettings
     public bool EnableVulkanBindlessMaterialTable { get; set; }
     public bool EnableVulkanDescriptorIndexing { get; set; }
     public bool EnableZeroReadbackMaterialScatter { get; set; }
+    public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath
+    {
+        get
+        {
+            string? raw = Environment.GetEnvironmentVariable("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH");
+            if (!string.IsNullOrWhiteSpace(raw) &&
+                Enum.TryParse(raw.Trim(), ignoreCase: true, out EZeroReadbackMaterialDrawPath parsed))
+            {
+                return parsed;
+            }
+
+            return _zeroReadbackMaterialDrawPath;
+        }
+        set => _zeroReadbackMaterialDrawPath = value;
+    }
     public EGpuCullingDataLayout GpuCullingDataLayout { get; set; } = EGpuCullingDataLayout.AoSHot;
     public EOcclusionCullingMode GpuOcclusionCullingMode { get; set; } = EOcclusionCullingMode.Disabled;
     public bool GPURenderDispatch { get; set; }
+    public EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
+    {
+        get
+        {
+            string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
+            if (!string.IsNullOrWhiteSpace(raw) &&
+                Enum.TryParse(raw.Trim(), ignoreCase: true, out EMeshSubmissionStrategy parsed))
+            {
+                return parsed;
+            }
+
+            return _forceMeshSubmissionStrategy;
+        }
+        set => _forceMeshSubmissionStrategy = value;
+    }
     public uint MsaaSampleCount { get; set; } = 1u;
     public ESkinnedBoundsRecomputePolicy SkinnedBoundsRecomputePolicy { get; set; } = ESkinnedBoundsRecomputePolicy.Selective;
     public bool UseGpuBvh { get; set; }
@@ -997,6 +1069,9 @@ internal sealed class RuntimeEffectiveSettings
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile { get; set; } = EVulkanGpuDrivenProfile.Auto;
     public EVulkanQueueOverlapMode VulkanQueueOverlapMode { get; set; } = EVulkanQueueOverlapMode.Auto;
     public EXessQualityMode XessQuality { get; set; } = EXessQualityMode.Quality;
+
+    private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy;
+    private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
 }
 
 internal sealed class RuntimeVulkanRobustnessSettings
@@ -1160,6 +1235,7 @@ internal sealed class RuntimeDebugPreferences
     public bool VisualizeTransparencyModeOverlay { get; set; }
     public bool VisualizeTransparencyClassificationOverlay { get; set; }
     public bool EnableZeroReadbackMaterialScatter { get; set; }
+    public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath { get; set; } = EZeroReadbackMaterialDrawPath.FullBucketScan;
     public bool ForceGpuPassthroughCulling { get; set; }
 }
 

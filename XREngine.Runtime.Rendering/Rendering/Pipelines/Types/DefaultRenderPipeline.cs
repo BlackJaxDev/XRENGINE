@@ -81,6 +81,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
     protected static bool GPURenderDispatch
         => Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
 
+    protected static EMeshSubmissionStrategy MeshSubmissionStrategy
+        => Engine.Rendering.ResolveMeshSubmissionStrategy();
+
     private static bool UseVulkanSafeFeatureProfile
         => VulkanFeatureProfile.IsActive;
 
@@ -267,6 +270,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
     /// </summary>
     public static void InvalidateVolumetricFogHistory(XRCamera? camera)
         => VPRC_VolumetricFogHistoryPass.ResetHistory(camera);
+
+    /// <summary>
+    /// Invalidates the separated atmospheric-scattering temporal history for a camera.
+    /// Call this after teleports, scene loads, or other discontinuous camera cuts.
+    /// </summary>
+    public static void InvalidateAtmosphereHistory(XRCamera? camera)
+        => VPRC_AtmosphereHistoryPass.ResetHistory(camera);
 
     /// <summary>
     /// True when MSAA should be active for the current rendering camera.
@@ -667,7 +677,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return true;
 
         var textures = material.Textures;
-        int expectedCount = Stereo ? 5 : 6;
+        int expectedCount = Stereo ? 5 : 7;
         if (textures.Count != expectedCount)
             return true;
 
@@ -678,7 +688,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(AutoExposureTextureName)))
             return true;
 
-        if (!Stereo && !ReferenceEquals(textures[5], GetTexture<XRTexture>(VolumetricFogColorTextureName)))
+        if (!Stereo && (!ReferenceEquals(textures[5], GetTexture<XRTexture>(AtmosphereColorTextureName))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(VolumetricFogColorTextureName))))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -689,6 +700,187 @@ public partial class DefaultRenderPipeline : RenderPipeline
             Path.Combine(SceneShaderPath, PostProcessShaderName()),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereHalfDepthQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(DepthViewTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereHalfDepthDownsample.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereHalfDepthFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereHalfDepthTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateAtmosphereHalfScatterQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 1)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(AtmosphereHalfDepthTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereAerialPerspective.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereHalfScatterFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereHalfScatterTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateAtmosphereReprojectQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 3)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(AtmosphereHalfScatterTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(AtmosphereHalfHistoryTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(AtmosphereHalfDepthTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereReproject.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereReprojectFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereHalfTemporalTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateAtmosphereHistoryFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereHalfHistoryTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
+    }
+
+    private bool NeedsRecreateAtmosphereUpscaleQuadFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
+            return true;
+
+        if (quadFbo.DeriveRenderTargetsFromMaterial)
+            return true;
+
+        var textures = material.Textures;
+        if (textures.Count != 3)
+            return true;
+
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(AtmosphereHalfTemporalTextureName))
+            || !ReferenceEquals(textures[1], GetTexture<XRTexture>(AtmosphereHalfDepthTextureName))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName)))
+            return true;
+
+        var fragmentShaders = material.FragmentShaders;
+        if (fragmentShaders.Count != 1)
+            return true;
+
+        XRShader expectedShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereUpscale.fs"),
+            EShaderType.Fragment);
+        return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateAtmosphereUpscaleFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length != 1)
+            return true;
+
+        return !ReferenceEquals(targets[0].Target, GetTexture<XRTexture>(AtmosphereColorTextureName))
+            || targets[0].Attachment != EFrameBufferAttachment.ColorAttachment0;
     }
 
     private bool NeedsRecreateVolumetricFogHalfDepthQuadFbo(XRFrameBuffer fbo)
@@ -1013,6 +1205,20 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
+    public const string AtmosphereColorTextureName = "AtmosphereColor";
+    public const string AtmosphereHalfDepthTextureName = "AtmosphereHalfDepth";
+    public const string AtmosphereHalfScatterTextureName = "AtmosphereHalfScatter";
+    public const string AtmosphereHalfTemporalTextureName = "AtmosphereHalfTemporal";
+    public const string AtmosphereHalfHistoryTextureName = "AtmosphereHalfHistory";
+    public const string AtmosphereHalfDepthQuadFBOName = "AtmosphereHalfDepthQuadFBO";
+    public const string AtmosphereHalfDepthFBOName = "AtmosphereHalfDepthFBO";
+    public const string AtmosphereHalfScatterQuadFBOName = "AtmosphereHalfScatterQuadFBO";
+    public const string AtmosphereHalfScatterFBOName = "AtmosphereHalfScatterFBO";
+    public const string AtmosphereReprojectQuadFBOName = "AtmosphereReprojectQuadFBO";
+    public const string AtmosphereReprojectFBOName = "AtmosphereReprojectFBO";
+    public const string AtmosphereHistoryFBOName = "AtmosphereHistoryFBO";
+    public const string AtmosphereUpscaleQuadFBOName = "AtmosphereUpscaleQuadFBO";
+    public const string AtmosphereUpscaleFBOName = "AtmosphereUpscaleFBO";
     public const string VolumetricFogColorTextureName = "VolumetricFogColor";
     public const string VolumetricFogHalfDepthTextureName = "VolumetricFogHalfDepth";
     public const string VolumetricFogHalfScatterTextureName = "VolumetricFogHalfScatter";
@@ -1138,7 +1344,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private const string LensDistortionStageKey = "lensDistortion";
     private const string ChromaticAberrationStageKey = "chromaticAberration";
     private const string FogStageKey = "fog";
+    private const string AtmosphericScatteringStageKey = "atmosphericScattering";
     private const string VolumetricFogStageKey = "volumetricFog";
+    private const string GpuBvhDebugStageKey = "gpuBvhDebug";
 
     private static readonly string[] AntiAliasingTextureDependencies = RenderPipelineAntiAliasingResources.AntiAliasingTextureDependencies;
     private static readonly string[] AntiAliasingFrameBufferDependencies = RenderPipelineAntiAliasingResources.AntiAliasingFrameBufferDependencies;
@@ -1369,6 +1577,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
+        ifElse.Label = "WindowViewportTarget";
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
         ifElse.TrueCommands = CreateViewportTargetCommandsLegacy();
         ifElse.FalseCommands = CreateFBOTargetCommandsLegacy();
@@ -1416,24 +1625,24 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_ClearByBoundFBO>();
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
                 if (enableComputePasses)
                     c.Add<VPRC_ForwardPlusLightCullingPass>();
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
             }
         }
-        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, GPURenderDispatch);
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         c.Add<VPRC_RenderScreenSpaceUI>();
         return c;
     }
@@ -1475,6 +1684,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             {
                 // Render to the ambient occlusion FBO using a switch to select the active AO implementation.
                 var aoSwitch = c.Add<VPRC_Switch>();
+                aoSwitch.Label = "Ambient Occlusion Mode";
                 aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
                 aoSwitch.Cases = new()
                 {
@@ -1491,6 +1701,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             else
             {
                 var aoSwitch = c.Add<VPRC_Switch>();
+                aoSwitch.Label = "Ambient Occlusion Mode";
                 aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
                 aoSwitch.Cases = new()
                 {
@@ -1538,14 +1749,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
             {
                 c.Add<VPRC_StencilMask>().Set(~0u);
                     c.Add<VPRC_DepthTest>().Enable = true;
-                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
-                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, GPURenderDispatch);
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, MeshSubmissionStrategy);
             }
 
             // When MSAA deferred is active, also resolve geometry into the non-MSAA GBuffer FBO
             // so that the AO pass has correct GBuffer data (SSAO doesn't support MSAA textures).
             {
                 var msaaGBufferBranch = c.Add<VPRC_IfElse>();
+                msaaGBufferBranch.Label = "MSAA Deferred GBuffer Resolve";
                 msaaGBufferBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                 {
                     var msaaGeomCmds = new ViewportRenderCommandContainer(this);
@@ -1561,12 +1773,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
             // Forward depth+normal pre-pass
             var prePassChoice = c.Add<VPRC_IfElse>();
+            prePassChoice.Label = "Forward Depth Normal PrePass";
             prePassChoice.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
             {
                 // When sharing GBuffer targets, skip the dedicated forward-only FBO
                 // and render only into the merged GBuffer attachments.
                 var shareChoice = new ViewportRenderCommandContainer(this);
                 var shareIfElse = shareChoice.Add<VPRC_IfElse>();
+                shareIfElse.Label = "Forward PrePass Shares GBuffer Targets";
                 shareIfElse.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
                 shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
                 shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
@@ -1576,6 +1790,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_DepthTest>().Enable = false;
 
             var aoResolveSwitch = c.Add<VPRC_Switch>();
+            aoResolveSwitch.Label = "Ambient Occlusion Resolve";
             aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
             aoResolveSwitch.Cases = new()
             {
@@ -1597,6 +1812,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // MSAA deferred: mark complex pixels in the MSAA depth-stencil before lighting
             {
                 var msaaMarkBranch = c.Add<VPRC_IfElse>();
+                msaaMarkBranch.Label = "MSAA Deferred Complex Pixel Mark";
                 msaaMarkBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                 {
                     var markCmds = new ViewportRenderCommandContainer(this);
@@ -1620,6 +1836,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // Otherwise, light volumes render into the standard LightCombine FBO.
             {
                 var msaaLightingBranch = c.Add<VPRC_IfElse>();
+                msaaLightingBranch.Label = "MSAA Deferred Lighting";
                 msaaLightingBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                 {
                     // MSAA path: render lights into MSAA Lighting FBO, then resolve to DiffuseTexture
@@ -1783,6 +2000,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             {
                 // Depth preload is only needed for MSAA.
                 var msaaPreload = c.Add<VPRC_IfElse>();
+                msaaPreload.Label = "MSAA Forward Depth Preload";
                 msaaPreload.ConditionEvaluator = () => RuntimeEnableMsaa;
                 {
                     var preloadCmds = new ViewportRenderCommandContainer(this);
@@ -1792,6 +2010,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     // depth at silhouette edges so the skybox can render at actual sky samples
                     // and forward meshes get correct per-sample depth testing.
                     var deferredChoice = preloadCmds.Add<VPRC_IfElse>();
+                    deferredChoice.Label = "MSAA Deferred Depth Source";
                     deferredChoice.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                     {
                         var blitCmds = new ViewportRenderCommandContainer(this);
@@ -1827,15 +2046,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
 
                 //Enable depth testing and writing for forward passes
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 if (enableComputePasses)
                     c.Add<VPRC_ForwardPlusLightCullingPass>();
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
 
                 if (enableComputePasses)
                 {
@@ -1857,6 +2076,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // for subsequent transparent passes and post-processing.
             {
                 var msaaResolve = c.Add<VPRC_IfElse>();
+                msaaResolve.Label = "MSAA Forward Resolve";
                 msaaResolve.ConditionEvaluator = () => RuntimeEnableMsaa;
                 {
                     var resolveCmds = new ViewportRenderCommandContainer(this);
@@ -1879,7 +2099,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
             }
             c.Add<VPRC_RenderQuadFBO>().FrameBufferName = TransparentResolveFBOName;
 
@@ -1932,6 +2152,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_DepthTest>().Enable = false;
 
             var bloomChoice = c.Add<VPRC_IfElse>();
+            bloomChoice.Label = "Bloom";
             bloomChoice.ConditionEvaluator = ShouldUseBloom;
             {
                 var bloomCommands = new ViewportRenderCommandContainer(this);
@@ -1943,10 +2164,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
 
             var motionBlurChoice = c.Add<VPRC_IfElse>();
+            motionBlurChoice.Label = "Motion Blur";
             motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
             motionBlurChoice.TrueCommands = CreateMotionBlurPassCommands();
 
             var dofChoice = c.Add<VPRC_IfElse>();
+            dofChoice.Label = "Depth Of Field";
             dofChoice.ConditionEvaluator = ShouldUseDepthOfField;
             dofChoice.TrueCommands = CreateDepthOfFieldPassCommands();
 
@@ -1972,9 +2195,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
@@ -2092,15 +2315,17 @@ public partial class DefaultRenderPipeline : RenderPipeline
         // resolves from internal resolution and writes a full-resolution result.
         {
             var upscaleChoice = c.Add<VPRC_IfElse>();
-                upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
+            upscaleChoice.Label = "Post AA Upscale";
+            upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
             {
                 var upscaleCmds = new ViewportRenderCommandContainer(this);
 
                 // Apply the selected anti-aliasing path.
                 using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
                 {
-                        var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
-                        tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+                    var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
+                    tsrOrPostAa.Label = "TSR Or Post AA";
+                    tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
                     {
                             var tsrUpscale = new ViewportRenderCommandContainer(this);
                             tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
@@ -2117,6 +2342,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     {
                             var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
                             var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
+                            postAaChoice.Label = "FXAA Or SMAA";
                             postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
                             {
                                 var fxaaUpscale = new ViewportRenderCommandContainer(this);

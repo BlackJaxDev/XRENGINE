@@ -154,6 +154,32 @@ public sealed class GpuBvhTree : IDisposable
     }
 
     /// <summary>
+    /// Ensures the compute programs needed by the requested build path have linked.
+    /// </summary>
+    public bool EnsureProgramsReady(uint primitiveCount)
+    {
+        EnsurePrograms();
+
+        bool ready = EnsureProgramReady(_mortonProgram) &&
+            EnsureProgramReady(_buildProgram) &&
+            EnsureProgramReady(_refitProgram);
+
+        if (primitiveCount > 1u)
+        {
+            ready &= primitiveCount <= 1024u
+                ? EnsureProgramReady(_smallSortProgram)
+                : EnsureProgramReady(_padProgram) &&
+                    EnsureProgramReady(_tileSortProgram) &&
+                    EnsureProgramReady(_mergeProgram);
+        }
+
+        if (_buildMode == BvhBuildMode.MortonPlusSah)
+            ready &= EnsureProgramReady(_refineProgram);
+
+        return ready;
+    }
+
+    /// <summary>
     /// Builds or rebuilds the BVH from the provided AABB data.
     /// </summary>
     /// <param name="aabbBuffer">Buffer containing AABB data (vec4 min, vec4 max pairs).</param>
@@ -520,7 +546,7 @@ public sealed class GpuBvhTree : IDisposable
         program.Uniform("numPrimitives", primitiveCount);
         program.Uniform("nodeScalarCapacity", _nodeBuffer.ElementCount);
         program.Uniform("rangeScalarCapacity", _rangeBuffer.ElementCount);
-        program.Uniform("mortonCapacity", _mortonBuffer?.ElementCount ?? 0u);
+        program.Uniform("mortonCapacity", GetMortonCapacity());
         
         // Set BVH configuration uniforms (OpenGL-compatible replacement for Vulkan specialization constants)
         program.Uniform("MAX_LEAF_PRIMITIVES", _maxLeafPrimitives);
@@ -604,6 +630,20 @@ public sealed class GpuBvhTree : IDisposable
     {
         shader ??= ShaderHelper.LoadEngineShader(path, EShaderType.Compute);
         return new XRRenderProgram(true, false, shader);
+    }
+
+    private static bool EnsureProgramReady(XRRenderProgram? program)
+    {
+        if (program is null)
+            return false;
+
+        if (program.IsLinked)
+            return true;
+
+        if (!program.LinkReady)
+            program.Link();
+
+        return false;
     }
 
     public void Dispose()

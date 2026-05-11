@@ -4,6 +4,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Models;
 
 namespace XREngine
@@ -576,6 +577,7 @@ namespace XREngine
         private OverrideableSetting<bool> _forceGpuPassthroughCullingOverride = new();
         private OverrideableSetting<bool> _allowGpuCpuFallbackOverride = new();
         private OverrideableSetting<bool> _enableZeroReadbackMaterialScatterOverride = new();
+        private OverrideableSetting<EZeroReadbackMaterialDrawPath> _zeroReadbackMaterialDrawPathOverride = new();
         private OverrideableSetting<bool> _enableProfilerFrameLoggingOverride = new();
         private OverrideableSetting<bool> _enableProfilerComponentTimingOverride = new();
         private OverrideableSetting<bool> _enableRenderStatisticsTrackingOverride = new();
@@ -774,6 +776,12 @@ namespace XREngine
         {
             get => _enableZeroReadbackMaterialScatterOverride;
             set => SetField(ref _enableZeroReadbackMaterialScatterOverride, value ?? new());
+        }
+
+        public OverrideableSetting<EZeroReadbackMaterialDrawPath> ZeroReadbackMaterialDrawPathOverride
+        {
+            get => _zeroReadbackMaterialDrawPathOverride;
+            set => SetField(ref _zeroReadbackMaterialDrawPathOverride, value ?? new());
         }
 
         public OverrideableSetting<bool> EnableProfilerFrameLoggingOverride

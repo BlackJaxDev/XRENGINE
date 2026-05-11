@@ -33,7 +33,11 @@ namespace XREngine
             public static Func<global::XREngine.Rendering.XRWindow, global::XREngine.Data.Geometry.BoundingRectangle?>? ScenePanelRenderRegionProvider { get; set; }
 
             /// <summary>
+            /// Active engine-default settings used by rendering and effective settings.
+            /// </summary>
             private static EngineSettings _settings = new();
+            private static EngineSettings _globalDefaultSettings = _settings;
+            private static EngineSettings? _projectDefaultSettings;
             static Rendering()
             {
                 _settings.PropertyChanged += HandleSettingsPropertyChanged;
@@ -42,7 +46,7 @@ namespace XREngine
                 _settings.VulkanRobustnessSettings.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
             }
             /// <summary>
-            /// The global rendering settings for the engine.
+            /// The active rendering settings for the engine.
             /// </summary>
             public static EngineSettings Settings
             {
@@ -65,14 +69,57 @@ namespace XREngine
                     _settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
                     _settings.PhysicsGpuMemorySettings.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
                     _settings.VulkanRobustnessSettings.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
+
+                    if (_projectDefaultSettings is not null)
+                        _projectDefaultSettings = _settings;
+                    else
+                        _globalDefaultSettings = _settings;
+
                     ApplyEngineSettingChange(null);
                     SettingsChanged?.Invoke();
                 }
             }
 
             /// <summary>
-            /// Runtime baseline used as the engine-default layer for resolved settings.
-            /// Project and user settings may override these values at runtime.
+            /// Global baseline persisted outside any project. Projects can replace the active
+            /// <see cref="Settings"/> object with their own defaults while preserving this source.
+            /// </summary>
+            public static EngineSettings GlobalDefaultSettings
+            {
+                get => _globalDefaultSettings;
+                set
+                {
+                    if (ReferenceEquals(_globalDefaultSettings, value) && value is not null)
+                        return;
+
+                    _globalDefaultSettings = value ?? new EngineSettings();
+
+                    if (_projectDefaultSettings is null)
+                        Settings = _globalDefaultSettings;
+                }
+            }
+
+            /// <summary>
+            /// Project-local engine defaults. When present, this object is the active
+            /// <see cref="Settings"/> source and overrides <see cref="GlobalDefaultSettings"/>.
+            /// </summary>
+            public static EngineSettings? ProjectDefaultSettings
+            {
+                get => _projectDefaultSettings;
+                set
+                {
+                    if (ReferenceEquals(_projectDefaultSettings, value))
+                        return;
+
+                    _projectDefaultSettings = value;
+                    Settings = _projectDefaultSettings ?? _globalDefaultSettings;
+                }
+            }
+
+            /// <summary>
+            /// Active baseline used as the engine-default layer for resolved settings.
+            /// This is the project default asset when a project override is loaded, otherwise
+            /// it is the global default asset.
             /// </summary>
             public static EngineSettings DefaultSettings
             {
@@ -153,6 +200,8 @@ namespace XREngine
                 private bool _enableGpuIndirectCpuFallback = false;
                 private bool _enableGpuIndirectValidationLogging = false;
                 private bool _enableZeroReadbackMaterialScatter = false;
+                private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
+                private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy = null;
                 private TextureRuntimeLogMode _textureLogMode = TextureRuntimeLogMode.Summary;
                 private double _textureSlowCpuDecodeResizeMilliseconds = 5.0;
                 private double _textureSlowMipBuildMilliseconds = 5.0;
@@ -296,6 +345,29 @@ namespace XREngine
                     set => SetField(ref _enableZeroReadbackMaterialScatter, value);
                 }
 
+                /// <summary>
+                /// Selects how zero-readback GPU indirect material draws are submitted.
+                /// </summary>
+                [Category("GPU Rendering")]
+                [Description("Selects the material draw path used by GpuIndirectZeroReadback.")]
+                public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath
+                {
+                    get => _zeroReadbackMaterialDrawPath;
+                    set => SetField(ref _zeroReadbackMaterialDrawPath, value);
+                }
+
+                /// <summary>
+                /// Optional diagnostic override for the resolved mesh submission strategy.
+                /// Leave null for profile and capability based resolution.
+                /// </summary>
+                [Category("GPU Rendering")]
+                [Description("Optional diagnostic override for the resolved mesh submission strategy. Leave null for profile and capability based resolution.")]
+                public EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
+                {
+                    get => _forceMeshSubmissionStrategy;
+                    set => SetField(ref _forceMeshSubmissionStrategy, value);
+                }
+
                 #endregion
 
                 #region Job Manager Settings (moved from GameStartupSettings)
@@ -414,7 +486,7 @@ namespace XREngine
                 private ESkinnedBoundsRecomputePolicy _skinnedBoundsRecomputePolicy = ESkinnedBoundsRecomputePolicy.Never;
                 private bool _allowInitialSkinnedBoundsBuildWhenNever = true;
                 private int _shaderConfigVersion = 0;
-                private bool _useGpuBvh = false;
+                private bool _useGpuBvh = true;
                 private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Diagnostics;
                 private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
                 private bool _enableVulkanDescriptorIndexing = true;
@@ -438,6 +510,7 @@ namespace XREngine
                 private void BumpShaderConfigVersion()
                     => Interlocked.Increment(ref _shaderConfigVersion);
                 private bool _calculateSkinnedBoundsInComputeShader = false;
+                private bool _skinnedBoundsGpuDirectAabbWrite = false;
                 private string _defaultFontFolder = "Roboto";
                 private string _defaultFontFileName = "Roboto-Medium.ttf";
 
@@ -1132,6 +1205,20 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// When true (and <see cref="CalculateSkinnedBoundsInComputeShader"/> is also true),
+                /// the engine writes skinned mesh world-space AABBs directly into the GPU command
+                /// AABB buffer (BVH leaf bounds) via the reduce shader, bypassing the CPU 8-corner
+                /// transform performed by GPUScene.WriteTightCommandAabb. Requires the internal BVH.
+                /// </summary>
+                [Category("Performance")]
+                [Description("When true (and CalculateSkinnedBoundsInComputeShader is also true), the engine writes skinned mesh world-space AABBs directly into the GPU command AABB buffer via the reduce shader, bypassing the CPU 8-corner transform.")]
+                public bool SkinnedBoundsGpuDirectAabbWrite
+                {
+                    get => _skinnedBoundsGpuDirectAabbWrite;
+                    set => SetField(ref _skinnedBoundsGpuDirectAabbWrite, value);
+                }
+
+                /// <summary>
                 /// Controls when skinned mesh bounds are recomputed at runtime.
                 /// Never uses bind-pose or cached bounds only, Selective refreshes on a throttled cadence,
                 /// and Always refreshes whenever skinned data changes.
@@ -1745,7 +1832,13 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
                     Engine.Rendering.ApplyGpuBvhPreference();
 
-                if (applyAll || propertyName == nameof(EngineSettings.VulkanGpuDrivenProfile))
+                if (applyAll || propertyName == nameof(EngineSettings.VulkanGpuDrivenProfile)
+                    || propertyName == nameof(EngineSettings.EnableZeroReadbackMaterialScatter)
+                    || propertyName == nameof(EngineSettings.ZeroReadbackMaterialDrawPath)
+                    || propertyName == nameof(EngineSettings.EnableGpuIndirectDebugLogging)
+                    || propertyName == nameof(EngineSettings.EnableGpuIndirectValidationLogging)
+                    || propertyName == nameof(EngineSettings.EnableGpuIndirectCpuFallback)
+                    || propertyName == nameof(EngineSettings.ForceMeshSubmissionStrategy))
                 {
                     Engine.Rendering.ApplyGpuRenderDispatchPreference();
                     Engine.Rendering.ApplyGpuBvhPreference();
@@ -1798,6 +1891,14 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EditorDebugOptions.UseDebugOpaquePipeline))
                     ApplyRenderPipelinePreference();
+
+                if (applyAll ||
+                    propertyName == nameof(EditorDebugOptions.EnableZeroReadbackMaterialScatter) ||
+                    propertyName == nameof(EditorDebugOptions.ZeroReadbackMaterialDrawPath))
+                {
+                    ApplyGpuRenderDispatchPreference();
+                    LogVulkanFeatureProfileFingerprint();
+                }
 
                 if (applyAll || propertyName == nameof(EditorPreferences.ViewportPresentationMode))
                 {

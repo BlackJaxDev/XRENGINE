@@ -19,7 +19,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
 | Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
-| Atmospheric scattering | Active | [todo/atmospheric-scattering-component-todo.md](todo/atmospheric-scattering-component-todo.md), [design/atmospheric-scattering-component-design.md](design/atmospheric-scattering-component-design.md) | Phased implementation tracker for the new world-scoped atmosphere component and aerial perspective pipeline. |
+| Atmospheric scattering | Implemented + validation | [../features/components/atmospheric-scattering.md](../features/components/atmospheric-scattering.md), [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md), [design/atmospheric-scattering-component-design.md](design/atmospheric-scattering-component-design.md) | OpenGL mono implementation is in place; visual screenshot/profiler validation and stereo/platform parity remain follow-up validation work. |
 | Forward depth-normal TransformId | Active | [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md) | Shared forward prepass follow-up so depth, normal, and transform ID describe the same surface. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
 | Physics-chain performance | Stable doc + testing | [../features/physics-chain-performance.md](../features/physics-chain-performance.md) | Remaining validation lives in [testing/physics-chain-performance.md](testing/physics-chain-performance.md). |
@@ -54,7 +54,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 ## Active TODOs
 
 - [todo/aot-final-game-builds.md](todo/aot-final-game-builds.md)
-- [todo/atmospheric-scattering-component-todo.md](todo/atmospheric-scattering-component-todo.md)
+- [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md)
 - [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md)
 - [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
 - [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)

@@ -181,10 +181,12 @@ namespace XREngine
             UdpProfilerSender.Stop();
 #endif
 
+            ShutdownNetworking();
+
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
             Rendering.SecondaryContext.Dispose();
             Time.Timer.Stop();
-            Jobs.Shutdown();
+            Jobs.Shutdown(waitForWorkers: false);
             Assets.Dispose();
         }
 

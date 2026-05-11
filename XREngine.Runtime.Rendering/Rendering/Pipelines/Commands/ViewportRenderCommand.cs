@@ -46,6 +46,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// Executes the command.
         /// </summary>
         protected abstract void Execute();
+
+        /// <summary>
+        /// Allows commands to skip the profiler scope and execution when they can prove
+        /// they have no work for the current frame.
+        /// </summary>
+        protected virtual bool ShouldExecuteThisFrame() => true;
+
         public virtual void CollectVisible()
         {
 
@@ -86,7 +93,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     }
         public void ExecuteIfShould()
         {
-            if (ShouldExecute)
+            if (ShouldExecute && ShouldExecuteThisFrame())
             {
                 using var gpuScope = RenderPipelineGpuProfiler.Instance.StartScope(this);
                 Execute();

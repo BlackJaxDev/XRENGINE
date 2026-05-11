@@ -597,6 +597,101 @@ namespace XREngine.Rendering.OpenGL
                 _ => throw new ArgumentOutOfRangeException(nameof(usage), usage, null),
             };
 
+            // ----- PushSubData breakdown (env-gated 1 Hz dump) -----
+            // Enable with `XRE_PUSHSUBDATA_BREAKDOWN=1`. When enabled, aggregates per-buffer
+            // (call count, bytes requested) and dumps a sorted snapshot to log_rendering.txt
+            // approximately once per second. Used to attribute render-thread PushSubData
+            // queue floods (see docs/work/design/rendering/render-submission-perf-debug-plan.md §5.4).
+            private static readonly bool _pushSubDataBreakdownEnabled =
+                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_PUSHSUBDATA_BREAKDOWN"));
+            private static readonly ConcurrentDictionary<string, long[]> _pushSubDataBreakdown = new();
+            private static long _pushSubDataLastFlushMs = 0;
+            private static int _pushSubDataFlushBusy = 0;
+
+            // long[] layout per label:
+            //   [0] calls, [1] totalBytes, [2] minBytes, [3] maxBytes
+            // minBytes initialised to long.MaxValue via GetOrAdd factory.
+            private const int BD_CALLS = 0;
+            private const int BD_BYTES = 1;
+            private const int BD_MIN = 2;
+            private const int BD_MAX = 3;
+
+            private static void RecordPushSubData(string label, uint length)
+            {
+                var entry = _pushSubDataBreakdown.GetOrAdd(label, static _ => new long[4] { 0, 0, long.MaxValue, 0 });
+                Interlocked.Increment(ref entry[BD_CALLS]);
+                Interlocked.Add(ref entry[BD_BYTES], (long)length);
+
+                long len = (long)length;
+                long oldMin;
+                do
+                {
+                    oldMin = Interlocked.Read(ref entry[BD_MIN]);
+                    if (len >= oldMin) break;
+                } while (Interlocked.CompareExchange(ref entry[BD_MIN], len, oldMin) != oldMin);
+
+                long oldMax;
+                do
+                {
+                    oldMax = Interlocked.Read(ref entry[BD_MAX]);
+                    if (len <= oldMax) break;
+                } while (Interlocked.CompareExchange(ref entry[BD_MAX], len, oldMax) != oldMax);
+
+                long now = Environment.TickCount64;
+                long last = Interlocked.Read(ref _pushSubDataLastFlushMs);
+                if (now - last < 1000)
+                    return;
+                if (Interlocked.CompareExchange(ref _pushSubDataFlushBusy, 1, 0) != 0)
+                    return;
+                try
+                {
+                    if (Interlocked.Read(ref _pushSubDataLastFlushMs) != last)
+                        return;
+                    Interlocked.Exchange(ref _pushSubDataLastFlushMs, now);
+
+                    var snap = _pushSubDataBreakdown.ToArray();
+                    _pushSubDataBreakdown.Clear();
+                    Array.Sort(snap, static (a, b) => b.Value[BD_BYTES].CompareTo(a.Value[BD_BYTES]));
+                    var sb = new System.Text.StringBuilder(256 + snap.Length * 96);
+                    sb.Append("[PushSubDataBreakdown] 1Hz dump entries=").Append(snap.Length).AppendLine();
+                    long totalCalls = 0;
+                    long totalBytes = 0;
+                    foreach (var kv in snap)
+                    {
+                        long c = kv.Value[BD_CALLS];
+                        long b = kv.Value[BD_BYTES];
+                        long mn = kv.Value[BD_MIN] == long.MaxValue ? 0 : kv.Value[BD_MIN];
+                        long mx = kv.Value[BD_MAX];
+                        long avg = c > 0 ? b / c : 0;
+                        totalCalls += c;
+                        totalBytes += b;
+                        sb.Append("  calls=").Append(c)
+                          .Append(" bytes=").Append(b)
+                          .Append(" min=").Append(mn)
+                          .Append(" max=").Append(mx)
+                          .Append(" avg=").Append(avg)
+                          .Append(" label=").AppendLine(kv.Key);
+                    }
+                    sb.Append("  TOTAL calls=").Append(totalCalls).Append(" bytes=").Append(totalBytes);
+                    Debug.OpenGL(sb.ToString());
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _pushSubDataFlushBusy, 0);
+                }
+            }
+
+            private string PushSubDataLabel()
+            {
+                string attr = Data.AttributeName;
+                if (string.IsNullOrEmpty(attr))
+                    attr = "<unnamed-attr>";
+                string name = Data.Name;
+                if (string.IsNullOrWhiteSpace(name))
+                    name = $"id={Data.GetCacheIndex()}";
+                return $"{attr}|{name}|target={Data.Target}";
+            }
+
             /// <summary>
             /// Pushes the entire buffer to the GPU. Assumes the buffer has already been allocated using PushData.
             /// </summary>
@@ -613,6 +708,9 @@ namespace XREngine.Rendering.OpenGL
 
                 if (Engine.InvokeOnMainThread(() => PushSubData(offset, length), "GLDataBuffer.PushSubData"))
                     return;
+
+                if (_pushSubDataBreakdownEnabled)
+                    RecordPushSubData(PushSubDataLabel(), length);
                 
                 if (!IsGenerated)
                     Generate();
@@ -929,6 +1027,12 @@ namespace XREngine.Rendering.OpenGL
                     Debug.OpenGLWarning($"Failed to bind SSBO {GetDescribingName()} to program {program?.GetDescribingName() ?? "null"}.");
                     return;
                 }
+
+                // Draw-indirect buffers are often GPU-written in the same frame they are created.
+                // Do not leave their first allocation in the frame-budgeted upload queue, or
+                // glMultiDrawElementsIndirect* can see a zero/undersized buffer.
+                if (Data.Target == EBufferTarget.DrawIndirectBuffer && !IsReadyForRendering)
+                    EnsureStorageAllocatedForGpuCopy();
 
                 uint resourceIndex;
                 if (bindindIndexOverride.HasValue)

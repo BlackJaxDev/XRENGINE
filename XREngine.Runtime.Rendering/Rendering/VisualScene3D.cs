@@ -28,7 +28,7 @@ namespace XREngine.Scene
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
-        private bool _isGpuDispatchActive = Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+        private bool _isGpuDispatchActive = Engine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect;
         private bool _isCpuGpuCommandMirrorActive = false;
         private bool _useGpuBvhActive = Engine.EffectiveSettings.UseGpuBvh;
         public BvhRaycastDispatcher BvhRaycasts { get; } = new();
@@ -255,10 +255,9 @@ namespace XREngine.Scene
 
         public void ApplyRenderDispatchPreference(bool useGpu)
         {
-            // Always re-resolve through the central preference so Vulkan-active state
-            // overrides any stale caller value. This closes the propagation gap where
-            // the field initialiser ran before the Vulkan renderer was created.
-            useGpu = Engine.Rendering.ResolveGpuRenderDispatchPreference(useGpu);
+            // Always re-resolve through the central strategy so backend capability changes
+            // override any stale caller value.
+            useGpu = Engine.Rendering.ResolveMeshSubmissionStrategy(useGpu) != EMeshSubmissionStrategy.CpuDirect;
 
             if (useGpu == _isGpuDispatchActive)
                 return;
@@ -407,12 +406,20 @@ namespace XREngine.Scene
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
             int visibleRenderables = 0;
 
+            // GPU dispatch path: the GPU performs the authoritative frustum/BVH cull on its own
+            // command buffers. Doing a redundant CPU frustum-vs-box test on every renderable here
+            // is pure CPU overhead that scales O(N) and was a major contributor to GPU-path
+            // perf regressions vs. CpuDirect on Sponza-class scenes. We still need the layer,
+            // shadow, and mirror filters from AllowRender, so we pass cullingVolume=null which
+            // short-circuits the Intersects test to "contained".
+            IVolume? allowRenderVolume = modelDiagActive ? collectionVolume : null;
+
             // Iterate by index to avoid per-frame ToArray() allocation.
             // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.
             for (int i = 0; i < _renderables.Count; i++)
             {
                 var renderable = _renderables[i];
-                bool allowed = renderable.AllowRender(collectionVolume, commands, camera, false, collectMirrors);
+                bool allowed = renderable.AllowRender(allowRenderVolume, commands, camera, false, collectMirrors);
                 if (!allowed)
                 {
                     if (modelDiagActive)

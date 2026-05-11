@@ -1,0 +1,164 @@
+#version 450
+
+// Reduces an already-skinned vec4 position buffer (e.g. SkinningPrepass output)
+// into a tight AABB for a single command/mesh slot, written via atomic CAS into
+// a packed bounds buffer.
+//
+// Intentionally tiny: 2 SSBO bindings + a few uniforms. Designed to run
+// piggy-backed on SkinningPrepass.comp output without touching its 16-binding
+// layout, and also to drive the per-mesh bounds buffer used by
+// SkinnedMeshBoundsCalculator (eliminates the redundant skin pass + readback).
+//
+// Bounds buffer layout (vec-quad indexed):
+//     uvec4 BoundsBits[ 2*slotIndex + 0 ]    // .xyz = min.xyz floatBits, .w unused
+//     uvec4 BoundsBits[ 2*slotIndex + 1 ]    // .xyz = max.xyz floatBits, .w unused
+// The CPU is expected to seed both quads with +inf/-inf bit patterns before
+// each dispatch so the atomic min/max produces a correct envelope.
+//
+// When transformToWorld != 0, each input position is multiplied by
+// worldMatrix before reduction. This is the path used by Path A
+// (write directly into GPUScene._commandAabbBuffer with rootBoneRenderMatrix).
+// Path B (per-mesh bounds in root-local space) sets transformToWorld = 0.
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer PositionsInBuffer
+{
+    vec4 PositionsIn[];
+};
+
+layout(std430, binding = 1) buffer BoundsBuffer
+{
+    uvec4 BoundsBits[];
+};
+
+uniform uint vertexCount;
+uniform uint slotIndex;
+uniform int transformToWorld;
+uniform mat4 worldMatrix;
+
+shared vec3 sharedMin[gl_WorkGroupSize.x];
+shared vec3 sharedMax[gl_WorkGroupSize.x];
+
+#define ATOMIC_MIN_X(quad, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint old = BoundsBits[quad].x; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) >= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(BoundsBits[quad].x, expected, enc); \
+    } while (expected != old); \
+}
+
+#define ATOMIC_MIN_Y(quad, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint old = BoundsBits[quad].y; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) >= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(BoundsBits[quad].y, expected, enc); \
+    } while (expected != old); \
+}
+
+#define ATOMIC_MIN_Z(quad, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint old = BoundsBits[quad].z; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) >= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(BoundsBits[quad].z, expected, enc); \
+    } while (expected != old); \
+}
+
+#define ATOMIC_MAX_X(quad, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint old = BoundsBits[quad].x; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) <= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(BoundsBits[quad].x, expected, enc); \
+    } while (expected != old); \
+}
+
+#define ATOMIC_MAX_Y(quad, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint old = BoundsBits[quad].y; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) <= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(BoundsBits[quad].y, expected, enc); \
+    } while (expected != old); \
+}
+
+#define ATOMIC_MAX_Z(quad, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint old = BoundsBits[quad].z; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) <= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(BoundsBits[quad].z, expected, enc); \
+    } while (expected != old); \
+}
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    uint local = gl_LocalInvocationID.x;
+
+    const float FLT_MAX = 3.402823466e+38;
+    vec3 localMin = vec3(FLT_MAX);
+    vec3 localMax = vec3(-FLT_MAX);
+
+    if (idx < vertexCount)
+    {
+        vec3 p = PositionsIn[idx].xyz;
+        if (transformToWorld != 0)
+            p = (worldMatrix * vec4(p, 1.0)).xyz;
+        localMin = p;
+        localMax = p;
+    }
+
+    sharedMin[local] = localMin;
+    sharedMax[local] = localMax;
+    barrier();
+
+    // Workgroup-shared parallel reduction.
+    for (uint stride = gl_WorkGroupSize.x / 2u; stride > 0u; stride >>= 1u)
+    {
+        if (local < stride)
+        {
+            sharedMin[local] = min(sharedMin[local], sharedMin[local + stride]);
+            sharedMax[local] = max(sharedMax[local], sharedMax[local + stride]);
+        }
+        barrier();
+    }
+
+    if (local != 0u)
+        return;
+
+    uint minQ = slotIndex * 2u;
+    uint maxQ = minQ + 1u;
+
+    vec3 wgMin = sharedMin[0];
+    vec3 wgMax = sharedMax[0];
+
+    ATOMIC_MIN_X(minQ, wgMin.x);
+    ATOMIC_MIN_Y(minQ, wgMin.y);
+    ATOMIC_MIN_Z(minQ, wgMin.z);
+
+    ATOMIC_MAX_X(maxQ, wgMax.x);
+    ATOMIC_MAX_Y(maxQ, wgMax.y);
+    ATOMIC_MAX_Z(maxQ, wgMax.z);
+}

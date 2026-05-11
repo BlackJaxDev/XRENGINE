@@ -19,19 +19,23 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 {
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
 
-    private bool _gpuRenderDispatch = Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+    private EMeshSubmissionStrategy _meshSubmissionStrategy = Engine.Rendering.ResolveMeshSubmissionStrategy();
 
     /// <summary>
     /// When true, the pipeline dispatches opaque passes using GPU-driven rendering.
     /// </summary>
     public bool GpuRenderDispatch
     {
-        get => _gpuRenderDispatch;
-        set
-        {
-            bool resolved = Engine.Rendering.ResolveGpuRenderDispatchPreference(value);
-            SetField(ref _gpuRenderDispatch, resolved);
-        }
+        get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
+        set => MeshSubmissionStrategy = value
+            ? Engine.Rendering.ResolveMeshSubmissionStrategy(true)
+            : EMeshSubmissionStrategy.CpuDirect;
+    }
+
+    public EMeshSubmissionStrategy MeshSubmissionStrategy
+    {
+        get => _meshSubmissionStrategy;
+        set => SetField(ref _meshSubmissionStrategy, value);
     }
 
     protected override Lazy<XRMaterial> InvalidMaterialFactory
@@ -92,13 +96,13 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 // Skybox renders at maximum depth (1.0). Use Lequal so fragments at
                 // the cleared depth value still pass (1.0 <= 1.0 vs 1.0 < 1.0 = fail).
                 commands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GpuRenderDispatch);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
 
                 commands.Add<VPRC_DepthFunc>().Comp = EComparison.Less;
                 commands.Add<VPRC_DepthWrite>().Allow = true;
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GpuRenderDispatch);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
 
                 // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
                 commands.Add<VPRC_DepthWrite>().Allow = false;
@@ -135,13 +139,13 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 commands.Add<VPRC_DepthWrite>().Allow = false;
                 // Same Lequal fix for FBO target path.
                 commands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GpuRenderDispatch);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
 
                 commands.Add<VPRC_DepthFunc>().Comp = EComparison.Less;
                 commands.Add<VPRC_DepthWrite>().Allow = true;
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
-                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GpuRenderDispatch);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
 
                 // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
                 commands.Add<VPRC_DepthWrite>().Allow = false;
@@ -164,7 +168,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
     {
         base.OnPropertyChanged(propName, prev, field);
 
-        if (propName == nameof(GpuRenderDispatch))
-            Engine.Rendering.ApplyGpuRenderDispatchToPipeline(this, GpuRenderDispatch);
+        if (propName == nameof(GpuRenderDispatch) || propName == nameof(MeshSubmissionStrategy))
+            Engine.Rendering.ApplyMeshSubmissionStrategyToPipeline(this, MeshSubmissionStrategy);
     }
 }

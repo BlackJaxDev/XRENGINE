@@ -195,6 +195,9 @@ namespace XREngine.Rendering.Commands
 
         public uint ReadPerViewDrawCount(uint viewId)
         {
+            if (MeshSubmissionStrategy != EMeshSubmissionStrategy.GpuIndirectInstrumented)
+                return 0u;
+
             if (_perViewDrawCountBuffer is null || viewId >= _perViewDrawCountBuffer.ElementCount)
                 return 0u;
 

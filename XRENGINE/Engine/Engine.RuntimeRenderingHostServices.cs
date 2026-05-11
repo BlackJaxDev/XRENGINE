@@ -118,6 +118,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public float DefaultTsrRenderScale => Engine.Rendering.Settings.TsrRenderScale;
     public bool ForwardDepthPrePassEnabled => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
     public bool ForwardPrePassSharesGBufferTargets => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
+    public bool EnableRenderStatisticsTracking => Engine.Rendering.Stats.EnableTracking;
+    public bool EnableGpuRenderPipelineProfiling => Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+    public ulong CurrentRenderFrameId => Engine.Rendering.State.RenderFrameId;
     public bool ProvidesShadowAtlasSettings => true;
     public bool UseSpotShadowAtlas => Engine.Rendering.Settings.UseSpotShadowAtlas;
     public bool UseDirectionalShadowAtlas => Engine.Rendering.Settings.UseDirectionalShadowAtlas;

@@ -133,7 +133,7 @@ THIS IS NOT VALID GLSL;";
     {
         RunWithGLContext((gl, window) =>
         {
-            var (ctx, sharedWindow) = CreateTestSharedContext(window);
+            var (ctx, _) = CreateTestSharedContext(window);
             if (ctx is null)
             {
                 Assert.Inconclusive("Failed to create shared context.");
@@ -142,6 +142,48 @@ THIS IS NOT VALID GLSL;";
 
             ctx.Dispose();
             ctx.IsRunning.ShouldBeFalse();
+        });
+    }
+
+    [Test]
+    public void SharedContext_DisposeForShutdown_DoesNotWaitForActiveJob()
+    {
+        RunWithGLContext((gl, window) =>
+        {
+            var (ctx, _) = CreateTestSharedContext(window);
+            if (ctx is null)
+            {
+                Assert.Inconclusive("Failed to create shared context.");
+                return;
+            }
+
+            using var started = new ManualResetEventSlim(false);
+            using var release = new ManualResetEventSlim(false);
+
+            ctx.Enqueue(_ =>
+            {
+                started.Set();
+                release.Wait(TimeSpan.FromSeconds(5));
+            });
+
+            started.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue("Background job did not start in time.");
+
+            try
+            {
+                var stopwatch = Stopwatch.StartNew();
+                ctx.DisposeForShutdown();
+                stopwatch.Stop();
+
+                stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(500));
+                ctx.IsRunning.ShouldBeFalse();
+            }
+            finally
+            {
+                release.Set();
+            }
+
+            SpinWait.SpinUntil(() => !ctx.IsThreadAlive, TimeSpan.FromSeconds(3))
+                .ShouldBeTrue("Background worker did not exit after the test released it.");
         });
     }
 

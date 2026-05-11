@@ -44,6 +44,9 @@ public static class RuntimeRenderingHostServiceDefaults
     public const float DefaultTsrRenderScale = 1.0f;
     public const bool ForwardDepthPrePassEnabled = true;
     public const bool ForwardPrePassSharesGBufferTargets = true;
+    public const bool EnableRenderStatisticsTracking = true;
+    public const bool EnableGpuRenderPipelineProfiling = true;
+    public const ulong CurrentRenderFrameId = 0UL;
     public const ETwoPlayerPreference TwoPlayerViewportPreference = ETwoPlayerPreference.SplitHorizontally;
     public const EThreePlayerPreference ThreePlayerViewportPreference = EThreePlayerPreference.PreferFirstPlayer;
     public const RuntimeGraphicsApiKind CurrentRenderBackend = RuntimeGraphicsApiKind.Unknown;

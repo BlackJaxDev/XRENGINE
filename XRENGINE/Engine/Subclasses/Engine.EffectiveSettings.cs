@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine
@@ -8,14 +9,15 @@ namespace XREngine
     {
         /// <summary>
         /// Provides resolved effective settings values using the cascading override system.
-        /// Resolution order: User Settings > Project Settings > Runtime Engine Defaults
+        /// Resolution order: User Settings > Game Settings > Project Engine Defaults > Global Engine Defaults.
         /// </summary>
         /// <remarks>
         /// This class resolves settings from three levels:
         /// <list type="number">
         ///     <item><description>User Settings - End-user preferences (highest priority)</description></item>
-        ///     <item><description>Project Settings - Game/project configuration</description></item>
-        ///     <item><description>Runtime Engine Defaults - session baseline values (lowest priority)</description></item>
+        ///     <item><description>Game Settings - game/project configuration</description></item>
+        ///     <item><description>Project Engine Defaults - project-local engine baseline when loaded</description></item>
+        ///     <item><description>Global Engine Defaults - shared engine baseline outside any project (lowest priority)</description></item>
         /// </list>
         /// Each level can optionally override the next level down using <see cref="OverrideableSetting{T}"/>.
         /// </remarks>
@@ -243,6 +245,55 @@ namespace XREngine
                     Rendering.Settings.EnableZeroReadbackMaterialScatter,
                     GameSettings?.EnableZeroReadbackMaterialScatterOverride,
                     UserSettings?.EnableZeroReadbackMaterialScatterOverride);
+
+            /// <summary>
+            /// Gets the active zero-readback material draw path.
+            /// </summary>
+            public static EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath
+                => ResolveZeroReadbackMaterialDrawPath();
+
+            private static EZeroReadbackMaterialDrawPath ResolveZeroReadbackMaterialDrawPath()
+            {
+                string? raw = Environment.GetEnvironmentVariable("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH");
+                if (!string.IsNullOrWhiteSpace(raw) &&
+                    Enum.TryParse(raw.Trim(), ignoreCase: true, out EZeroReadbackMaterialDrawPath parsed))
+                {
+                    return parsed;
+                }
+
+                EZeroReadbackMaterialDrawPath cascaded = OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.ZeroReadbackMaterialDrawPath,
+                    GameSettings?.ZeroReadbackMaterialDrawPathOverride,
+                    UserSettings?.ZeroReadbackMaterialDrawPathOverride);
+
+                EditorDebugOptions? editorDebug = EditorPreferences?.Debug;
+                if (editorDebug is not null &&
+                    (editorDebug.EnableZeroReadbackMaterialScatter ||
+                     editorDebug.ZeroReadbackMaterialDrawPath != EZeroReadbackMaterialDrawPath.FullBucketScan))
+                {
+                    return editorDebug.ZeroReadbackMaterialDrawPath;
+                }
+
+                return cascaded;
+            }
+
+            /// <summary>
+            /// Gets the optional forced mesh submission strategy for diagnostics and local bring-up.
+            /// </summary>
+            public static EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
+                => ResolveForcedMeshSubmissionStrategy();
+
+            private static EMeshSubmissionStrategy? ResolveForcedMeshSubmissionStrategy()
+            {
+                string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
+                if (!string.IsNullOrWhiteSpace(raw) &&
+                    Enum.TryParse(raw.Trim(), ignoreCase: true, out EMeshSubmissionStrategy parsed))
+                {
+                    return parsed;
+                }
+
+                return Rendering.Settings.ForceMeshSubmissionStrategy;
+            }
 
             /// <summary>
             /// Gets the effective anti-aliasing mode.
@@ -571,7 +622,7 @@ namespace XREngine
             /// </summary>
             public enum SettingSource
             {
-                /// <summary>Value comes from runtime engine defaults.</summary>
+                /// <summary>Value comes from the engine-default baseline.</summary>
                 Engine,
                 /// <summary>Value comes from project settings.</summary>
                 Project,

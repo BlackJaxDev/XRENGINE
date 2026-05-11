@@ -5,4 +5,13 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRuntimeRendererHost
 {
+    /// <summary>
+    /// Returns whether this renderer can consume a GPU-written indirect draw-count buffer directly.
+    /// </summary>
+    bool SupportsIndirectCountDraw();
+
+    /// <summary>
+    /// Returns whether this renderer can submit the meshlet/task-mesh path.
+    /// </summary>
+    bool SupportsMeshletDispatch();
 }

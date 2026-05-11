@@ -40,6 +40,7 @@ XRENGINE is a Windows-first C# XR engine and editor. It has not shipped v1, so t
 - `ExecTool.bat` - interactive launcher for scripts under `Tools/`.
 - `docs/` - architecture, API guides, rendering notes, backlog/design docs.
 - `docs/architecture/rendering/default-render-pipeline-notes.md` - DefaultRenderPipeline invariants and known issues.
+- `docs/architecture/rendering/mesh-submission-strategies.md` - CPU/GPU mesh submission strategy contract and resolver rules.
 - `docs/features/mcp-server.md` - MCP server documentation.
 
 ## Editor UI

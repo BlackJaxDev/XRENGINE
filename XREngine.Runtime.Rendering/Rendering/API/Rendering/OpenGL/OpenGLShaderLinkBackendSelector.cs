@@ -33,6 +33,7 @@ internal readonly record struct OpenGLShaderLinkBackendContext(
     bool SharedContextCompileCanEnqueue,
     bool CompileInputsReady,
     bool IsKnownAsyncLinkHazard,
+    bool PreferSharedContextForLargeSource,
     bool HashPreviouslyFailed,
     bool AllowSynchronousSourceLink);
 
@@ -98,6 +99,15 @@ internal static class OpenGLShaderLinkBackendSelector
             return SelectSynchronousSource(
                 context,
                 "known async-link hazard; no shared-context lane available");
+        }
+
+        if (context.PreferSharedContextForLargeSource &&
+            context.SharedContextCompileAvailable &&
+            context.CompileInputsReady)
+        {
+            return SelectSharedContextSource(
+                context,
+                "large source program routed to shared-context lane to avoid driver-parallel timeout");
         }
 
         return context.Strategy switch

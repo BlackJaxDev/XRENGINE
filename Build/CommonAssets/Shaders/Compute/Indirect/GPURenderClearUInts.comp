@@ -1,0 +1,20 @@
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer UIntBuffer
+{
+    uint values[];
+};
+
+uniform int ElementCount;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    uint count = uint(max(ElementCount, 0));
+    if (index >= count || index >= uint(values.length()))
+        return;
+
+    values[index] = 0u;
+}

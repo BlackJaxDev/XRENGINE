@@ -74,6 +74,7 @@ namespace XREngine.Rendering
 
         public abstract void Initialize();
         public abstract void CleanUp();
+        public virtual bool ShouldSkipNativeWindowDisposeForShutdown => false;
 
         protected abstract void WindowRenderCallback(double delta);
 
@@ -833,6 +834,12 @@ namespace XREngine.Rendering
         /// Returns whether the current API supports the Count variant for MultiDrawElementsIndirect.
         /// </summary>
         public abstract bool SupportsIndirectCountDraw();
+
+        /// <summary>
+        /// Returns whether the current API supports task/mesh shader dispatch for meshlet rendering.
+        /// </summary>
+        public virtual bool SupportsMeshletDispatch()
+            => false;
 
         /// <summary>
         /// Blocks the CPU until all GPU commands have completed.

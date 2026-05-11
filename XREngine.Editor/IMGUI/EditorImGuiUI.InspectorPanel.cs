@@ -595,8 +595,8 @@ public static partial class EditorImGuiUI
 
             if (target is XRAsset asset)
             {
-                if (IsRuntimeEngineDefaultsTarget(asset))
-                    DrawRuntimeEngineDefaultsInspectorNote();
+                if (asset is Engine.Rendering.EngineSettings engineSettings)
+                    DrawEngineDefaultsInspectorNote(engineSettings);
 
                 DrawThirdPartyImportSettings(asset, visited);
                 if (TryDrawAssetInspector(new InspectorTargetSet(new[] { asset }, asset.GetType()), visited))

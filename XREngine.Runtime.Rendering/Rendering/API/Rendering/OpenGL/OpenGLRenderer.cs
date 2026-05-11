@@ -23,6 +23,7 @@ using PixelFormat = Silk.NET.OpenGL.PixelFormat;
 using XREngine.Components;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -31,6 +32,9 @@ namespace XREngine.Rendering.OpenGL
         private sealed record BoundTextureDebugState(IGLTexture Texture, string Name, uint BindingId);
 
         public GL RawGL => Api; // public accessor for underlying GL instance
+        private bool _shutdownAbandonedAsyncShaderWork;
+        private int _asyncShaderProgramShutdownDisposeRequested;
+        public override bool ShouldSkipNativeWindowDisposeForShutdown => _shutdownAbandonedAsyncShaderWork;
 
         private enum FrontLuminanceReadbackMode
         {
@@ -544,7 +548,46 @@ namespace XREngine.Rendering.OpenGL
 
         public override void WaitForGpu()
         {
+            if (ShouldSkipGpuWaitForShutdown(
+                out int pendingBinaryUploads,
+                out int pendingSourceLinks,
+                out bool pendingAsyncPrograms))
+            {
+                _shutdownAbandonedAsyncShaderWork = true;
+                Debug.OpenGL(
+                    "[OpenGLShutdown] Skipped glFinish because async shader program work is still active during window shutdown; " +
+                    $"pendingSourceLinks={pendingSourceLinks} pendingBinaryUploads={pendingBinaryUploads} " +
+                    $"pendingAsyncPrograms={pendingAsyncPrograms}.");
+                DisposeAsyncShaderProgramWorkForShutdown();
+                return;
+            }
+
             Api.Finish();
+        }
+
+        private bool ShouldSkipGpuWaitForShutdown(
+            out int pendingBinaryUploads,
+            out int pendingSourceLinks,
+            out bool pendingAsyncPrograms)
+        {
+            pendingBinaryUploads = 0;
+            pendingSourceLinks = 0;
+            pendingAsyncPrograms = false;
+
+            bool windowClosing = XRWindow.IsDisposing || XRWindow.IsDisposed;
+            try
+            {
+                windowClosing |= Window.IsClosing;
+            }
+            catch
+            {
+            }
+
+            return windowClosing &&
+                   HasPendingShaderProgramShutdownWork(
+                       out pendingBinaryUploads,
+                       out pendingSourceLinks,
+                       out pendingAsyncPrograms);
         }
 
         public override void ColorMask(bool red, bool green, bool blue, bool alpha)
@@ -853,20 +896,9 @@ namespace XREngine.Rendering.OpenGL
             _imguiFontValidationCountdown = 0;
             ResetImGuiFrameMarker();
 
-            // Clean up shared contexts and async queues
-            ShaderProgramLifecycleDiagnostics.LogSummary(_programBinaryUploadQueue);
-            _programBinaryUploadQueue = null;
-            _programCompileLinkQueue = null;
-            _programBinarySharedContext?.Dispose();
-            if (_programCompileLinkSharedContexts is { Length: > 0 } compileLinkContexts)
-            {
-                for (int i = 0; i < compileLinkContexts.Length; i++)
-                    compileLinkContexts[i]?.Dispose();
-            }
-            _sharedContext?.Dispose();
-            _programBinarySharedContext = null;
-            _programCompileLinkSharedContexts = null;
-            _sharedContext = null;
+            // Clean up shared contexts and async queues.
+            LogShaderProgramLifecycleSummaryForShutdown();
+            DisposeAsyncShaderProgramWorkForShutdown();
 
             CancelPendingFrontLuminanceReadback();
 
@@ -901,6 +933,62 @@ namespace XREngine.Rendering.OpenGL
             _luminanceComputeProgram?.Destroy();
             _luminanceComputeProgram = null;
             _luminanceComputeInitialized = false;
+        }
+
+        private void LogShaderProgramLifecycleSummaryForShutdown()
+        {
+            if (Volatile.Read(ref _asyncShaderProgramShutdownDisposeRequested) != 0)
+            {
+                Debug.OpenGL("[ShaderProgramShutdown] Skipped shader program summary because async shader work was already abandoned during window shutdown.");
+                return;
+            }
+
+            if (HasPendingShaderProgramShutdownWork(
+                out int pendingBinaryUploads,
+                out int pendingSourceLinks,
+                out bool pendingAsyncPrograms))
+            {
+                _shutdownAbandonedAsyncShaderWork = true;
+                Debug.OpenGL(
+                    $"[ShaderProgramShutdown] Skipped shader program summary because async shader work is still active; " +
+                    $"pendingSourceLinks={pendingSourceLinks} pendingBinaryUploads={pendingBinaryUploads} " +
+                    $"pendingAsyncPrograms={pendingAsyncPrograms}.");
+                return;
+            }
+
+            ShaderProgramLifecycleDiagnostics.LogSummary(_programBinaryUploadQueue);
+        }
+
+        private void DisposeAsyncShaderProgramWorkForShutdown()
+        {
+            if (Interlocked.Exchange(ref _asyncShaderProgramShutdownDisposeRequested, 1) != 0)
+                return;
+
+            _programBinaryUploadQueue = null;
+            _programCompileLinkQueue = null;
+
+            _programBinarySharedContext?.DisposeForShutdown();
+            if (_programCompileLinkSharedContexts is { Length: > 0 } compileLinkContexts)
+            {
+                for (int i = 0; i < compileLinkContexts.Length; i++)
+                    compileLinkContexts[i]?.DisposeForShutdown();
+            }
+            _sharedContext?.DisposeForShutdown();
+
+            _programBinarySharedContext = null;
+            _programCompileLinkSharedContexts = null;
+            _sharedContext = null;
+        }
+
+        private bool HasPendingShaderProgramShutdownWork(
+            out int pendingBinaryUploads,
+            out int pendingSourceLinks,
+            out bool pendingAsyncPrograms)
+        {
+            pendingBinaryUploads = _programBinaryUploadQueue?.InFlightCount ?? 0;
+            pendingSourceLinks = _programCompileLinkQueue?.InFlightCount ?? 0;
+            pendingAsyncPrograms = GLRenderProgram.HasPendingAsyncPrograms;
+            return pendingBinaryUploads > 0 || pendingSourceLinks > 0 || pendingAsyncPrograms;
         }
 
         /// <summary>
@@ -4325,6 +4413,7 @@ void main()
                 return false;
 
             glMesh.SetTriangleIndexBuffer(glIndexBuffer, elementSize);
+            Api.VertexArrayElementBuffer(glMesh.BindingId, glIndexBuffer.BindingId);
             return true;
         }
 
@@ -4333,6 +4422,8 @@ void main()
             var glBuf = GenericToAPI<GLDataBuffer>(buffer);
             if (glBuf is null)
                 return;
+
+            glBuf.EnsureStorageAllocatedForGpuCopy();
             Api.BindBuffer(GLEnum.DrawIndirectBuffer, glBuf.BindingId);
         }
 
@@ -4346,6 +4437,9 @@ void main()
             var glBuf = GenericToAPI<GLDataBuffer>(buffer);
             if (glBuf is null)
                 return;
+
+            glBuf.EnsureStorageAllocatedForGpuCopy();
+
             const GLEnum GL_PARAMETER_BUFFER = (GLEnum)0x80EE;
             Api.BindBuffer(GL_PARAMETER_BUFFER, glBuf.BindingId);
         }
@@ -5150,6 +5244,10 @@ void main()
                     glBuf?.BindToRenderer(glProgram, glMesh);
                 }
             }
+
+            GLDataBuffer? elementBuffer = glMesh.GetActiveElementBuffer();
+            if (elementBuffer is not null)
+                Api.VertexArrayElementBuffer(glMesh.BindingId, elementBuffer.BindingId);
         }
 
         public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera)

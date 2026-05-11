@@ -3,6 +3,7 @@ using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using XREngine;
@@ -141,6 +142,9 @@ namespace XREngine.Rendering.OpenGL
                 var glObj = Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true);
                 if (glObj is not GLDataBuffer glBuf)
                     return;
+
+                if (!glBuf.IsReadyForRendering)
+                    glBuf.EnsureStorageAllocatedForGpuCopy();
 
                 Api.BindBufferBase(GLEnum.ShaderStorageBuffer, index, glBuf.BindingId);
             }
@@ -456,6 +460,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool ShouldSetProgramBinaryRetrievableHintForSourceBuild()
                 => BinaryRetrievableHintMode is ProgramBinaryRetrievableHintMode.Always or ProgramBinaryRetrievableHintMode.SourceBuildOnly;
+            private const int DriverParallelLargeSourceSharedContextThresholdBytes = 256 * 1024;
 
             /// <summary>
             /// Pre-computes the shader source hash and binary cache lookup.
@@ -583,6 +588,27 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 return inputs;
+            }
+
+            private static bool ShouldPreferSharedContextForLargeSource(GLProgramCompileLinkQueue.ShaderInput[]? inputs)
+            {
+                if (inputs is not { Length: > 1 })
+                    return false;
+
+                long sourceBytes = 0;
+                bool hasGraphicsStage = false;
+                for (int index = 0; index < inputs.Length; index++)
+                {
+                    ShaderType type = inputs[index].Type;
+                    if (type != ShaderType.ComputeShader)
+                        hasGraphicsStage = true;
+
+                    sourceBytes += CountUtf8Bytes(inputs[index].ResolvedSource);
+                    if (hasGraphicsStage && sourceBytes >= DriverParallelLargeSourceSharedContextThresholdBytes)
+                        return true;
+                }
+
+                return false;
             }
 
             private bool IsLinkPreparationPending
@@ -747,7 +773,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 _lastAsyncPendingWarningTimestamp = now;
-                Debug.OpenGLWarning($"[ShaderAsync] Program '{Data.Name ?? "<unnamed>"}' hash={Hash} phase={phase} still pending after {elapsedSeconds:F2}s; continuing non-blocking poll.");
+                Debug.OpenGLWarning($"[ShaderAsync] Program '{GetProgramDebugName()}' hash={Hash} phase={phase} still pending after {elapsedSeconds:F2}s; continuing non-blocking poll.");
             }
 
             // Soft time budget for synchronous link work performed inline by
@@ -1085,7 +1111,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     _asyncLinkStuckFlushIssued = true;
                     Debug.OpenGLWarning(
-                        $"[ShaderAsync] Program '{Data.Name ?? "<unnamed>"}' hash={Hash} still reports COMPLETION_STATUS=false " +
+                        $"[ShaderAsync] Program '{GetProgramDebugName()}' hash={Hash} still reports COMPLETION_STATUS=false " +
                         $"after {elapsedSeconds:F2}s; issuing glFlush() to nudge the driver. Continuing non-blocking poll.");
                     MeasureRenderingProgramGlCall(
                         "glFlush",
@@ -1099,7 +1125,7 @@ namespace XREngine.Rendering.OpenGL
                     return false;
 
                 Debug.OpenGLWarning(
-                    $"[ShaderAsync] Program '{Data.Name ?? "<unnamed>"}' hash={Hash} stuck with COMPLETION_STATUS=false " +
+                    $"[ShaderAsync] Program '{GetProgramDebugName()}' hash={Hash} stuck with COMPLETION_STATUS=false " +
                     $"after {elapsedSeconds:F2}s; abandoning link without querying GL_LINK_STATUS to avoid a driver hang.");
 
                 AbandonStuckAsyncLink(linkedProgramId);
@@ -1119,7 +1145,7 @@ namespace XREngine.Rendering.OpenGL
             private void AbandonStuckAsyncLink(uint linkedProgramId)
             {
                 Debug.OpenGLWarning(
-                    $"Abandoning async link for program '{Data.Name ?? "<unnamed>"}' hash={Hash}: programId={linkedProgramId} " +
+                    $"Abandoning async link for program '{GetProgramDebugName()}' hash={Hash}: programId={linkedProgramId} " +
                     $"and {(_asyncAttachedShaderIds?.Length ?? 0)} shader(s) leaked to avoid blocking GL calls.");
 
                 MarkHashFailed("Async link timed out (driver never reported completion).");
@@ -1289,13 +1315,35 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
+            private bool TryDeferSharedContextBuildCleanupForDestroy()
+            {
+                if (!_asyncCompileLinkPending && !_asyncBinaryUploadPending)
+                    return false;
+
+                if (!TryGetBindingId(out uint programId))
+                    return false;
+
+                // glDeleteProgram can serialize with another shared context while
+                // that context is still linking or loading the same program handle.
+                // Orphan the handle now and let the normal deferred cleanup pump
+                // delete it after the driver reports completion.
+                OrphanForDeferredDelete();
+                DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, programId, []));
+                foreach (GLShader shader in _shaderCache.Values)
+                    shader.Destroy();
+                return true;
+            }
+
             private void ReleaseAsyncLinkState()
             {
                 if (Hash != 0)
                     InFlightCompilations.TryRemove(Hash, out _);
 
-                if (!TryDeferAsyncLinkCleanupForDestroy())
+                if (!TryDeferAsyncLinkCleanupForDestroy() &&
+                    !TryDeferSharedContextBuildCleanupForDestroy())
+                {
                     CleanupAsyncLink();
+                }
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
@@ -1458,6 +1506,25 @@ namespace XREngine.Rendering.OpenGL
                 _activeBuildQueueTimestamp = Stopwatch.GetTimestamp();
             }
 
+            private string GetProgramDebugName()
+            {
+                if (!string.IsNullOrWhiteSpace(Data.Name))
+                    return Data.Name!;
+
+                string stageTopology = GetShaderStageTopology();
+                ShaderProgramVariantMetadata variant = Data.ShaderMetadata.Variant;
+                string variantSegment = variant.HasVariant
+                    ? string.Concat(
+                        string.IsNullOrWhiteSpace(variant.Kind) ? "variant" : variant.Kind,
+                        ":",
+                        variant.VariantHash.ToString("x16", CultureInfo.InvariantCulture))
+                    : "no-variant";
+
+                return string.IsNullOrWhiteSpace(stageTopology)
+                    ? string.Concat("<unnamed ", variantSegment, " hash=", Hash.ToString(CultureInfo.InvariantCulture), ">")
+                    : string.Concat("<unnamed ", stageTopology, " ", variantSegment, " hash=", Hash.ToString(CultureInfo.InvariantCulture), ">");
+            }
+
             private void CompleteBuildTelemetry(
                 bool success,
                 double compileMilliseconds = 0.0,
@@ -1471,7 +1538,7 @@ namespace XREngine.Rendering.OpenGL
                     : StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - _activeBuildQueueTimestamp);
 
                 Data.SetShaderBuildTelemetry(new ShaderProgramBuildTelemetry(
-                    Data.Name,
+                    GetProgramDebugName(),
                     _activeBuildFingerprint,
                     GetShaderStageTopology(),
                     Data.Separable,
@@ -1484,8 +1551,9 @@ namespace XREngine.Rendering.OpenGL
                     failureReason));
 
                 string result = success ? "READY" : "FAILED";
+                string programDebugName = GetProgramDebugName();
                 Debug.OpenGL(
-                    $"[ShaderBackend] {result} program='{Data.Name ?? "<unnamed>"}' hash={Hash} " +
+                    $"[ShaderBackend] {result} program='{programDebugName}' hash={Hash} " +
                     $"backend={_activeBuildBackend ?? "<unknown>"} fingerprint={_activeBuildFingerprint ?? "<none>"} " +
                     $"queueMs={queueLatencyMilliseconds:F2} compileMs={compileMilliseconds:F2} linkMs={linkMilliseconds:F2} " +
                     $"binaryMs={binaryLoadMilliseconds:F2} reflectionMs={reflectionMilliseconds:F2}" +
@@ -1497,9 +1565,9 @@ namespace XREngine.Rendering.OpenGL
                     Debug.Rendering(
                         EOutputVerbosity.Verbose,
                         false,
-                        "[ShaderBackend] {0} program='{1}' hash={2} backend={3} fingerprint={4} separable={5} hazard={6} shaderCount={7} shaderTypes={8} sourceBytes={9} sourceLines={10} queueMs={11:F2} compileMs={12:F2} linkMs={13:F2} binaryMs={14:F2} reflectionMs={15:F2}{16}.",
+                        "[ShaderBackend] {0} program='{1}' hash={2} backend={3} fingerprint={4} separable={5} hazard={6} shaderCount={7} shaderTypes={8} sourceBytes={9} sourceLines={10} shaderSources={11} queueMs={12:F2} compileMs={13:F2} linkMs={14:F2} binaryMs={15:F2} reflectionMs={16:F2}{17}.",
                         result,
-                        Data.Name ?? "<unnamed>",
+                        programDebugName,
                         Hash,
                         _activeBuildBackend ?? "<unknown>",
                         _activeBuildFingerprint ?? "<none>",
@@ -1509,6 +1577,7 @@ namespace XREngine.Rendering.OpenGL
                         sourceSummary.StageList,
                         sourceSummary.SourceBytes,
                         sourceSummary.SourceLines,
+                        sourceSummary.SourceLabels,
                         queueLatencyMilliseconds,
                         compileMilliseconds,
                         linkMilliseconds,
@@ -1580,7 +1649,8 @@ namespace XREngine.Rendering.OpenGL
                 int ShaderCount,
                 long SourceBytes,
                 int SourceLines,
-                string StageList);
+                string StageList,
+                string SourceLabels);
 
             private void LogRenderingProgramBuildEvent(
                 string eventName,
@@ -1602,9 +1672,9 @@ namespace XREngine.Rendering.OpenGL
                 Debug.Rendering(
                     EOutputVerbosity.Verbose,
                     false,
-                    "[ShaderLink] {0} program='{1}' hash={2} programId={3} backend={4} separable={5} hazard={6} shaderCount={7} shaderTypes={8} sourceBytes={9} sourceLines={10} binaryBytes={11} binaryFormat={12} fingerprint={13} frame={14} renderThread={15}{16}.",
+                    "[ShaderLink] {0} program='{1}' hash={2} programId={3} backend={4} separable={5} hazard={6} shaderCount={7} shaderTypes={8} sourceBytes={9} sourceLines={10} shaderSources={11} binaryBytes={12} binaryFormat={13} fingerprint={14} frame={15} renderThread={16}{17}.",
                     eventName,
-                    Data.Name ?? "<unnamed>",
+                    GetProgramDebugName(),
                     Hash,
                     programId,
                     backend ?? "<unknown>",
@@ -1614,6 +1684,7 @@ namespace XREngine.Rendering.OpenGL
                     sourceSummary.StageList,
                     sourceSummary.SourceBytes,
                     sourceSummary.SourceLines,
+                    sourceSummary.SourceLabels,
                     binaryBytes,
                     binaryFormat ?? "<none>",
                     fingerprint ?? _activeBuildFingerprint ?? "<none>",
@@ -1639,23 +1710,32 @@ namespace XREngine.Rendering.OpenGL
                         inputLines += CountLines(inputs[i].ResolvedSource);
                     }
 
-                    return new ShaderProgramSourceSummary(inputs.Length, inputBytes, inputLines, inputStages.ToString());
+                    return new ShaderProgramSourceSummary(inputs.Length, inputBytes, inputLines, inputStages.ToString(), "<prepared-inputs>");
                 }
 
                 int shaderCount = Data.Shaders.Count;
                 if (shaderCount == 0)
-                    return new ShaderProgramSourceSummary(0, 0, 0, "<none>");
+                    return new ShaderProgramSourceSummary(0, 0, 0, "<none>", "<none>");
 
                 long bytes = 0;
                 int lines = 0;
                 var stages = new StringBuilder(shaderCount * 16);
+                var sourceLabels = new StringBuilder(shaderCount * 48);
                 for (int index = 0; index < shaderCount; index++)
                 {
                     if (index > 0)
+                    {
                         stages.Append('|');
+                        sourceLabels.Append('|');
+                    }
 
                     XRShader shaderData = Data.Shaders[index];
                     stages.Append(shaderData.Type);
+                    sourceLabels.Append(shaderData.Type)
+                        .Append(':')
+                        .Append(string.IsNullOrWhiteSpace(shaderData.Source?.FilePath)
+                            ? "<inline>"
+                            : shaderData.Source.FilePath);
                     string? source = null;
                     if (_shaderCache.TryGetValue(shaderData, out GLShader? shader) && shader is not null)
                     {
@@ -1670,7 +1750,7 @@ namespace XREngine.Rendering.OpenGL
                     lines += CountLines(source);
                 }
 
-                return new ShaderProgramSourceSummary(shaderCount, bytes, lines, stages.ToString());
+                return new ShaderProgramSourceSummary(shaderCount, bytes, lines, stages.ToString(), sourceLabels.ToString());
             }
 
             private double MeasureRenderingProgramGlCall(string callName, uint programId, Action action, string? detail = null)
@@ -1696,7 +1776,7 @@ namespace XREngine.Rendering.OpenGL
                     false,
                     "[ShaderGLCall] call={0} program='{1}' hash={2} programId={3} separable={4} elapsedMs={5:F3} renderThread={6} renderThreadStallMs={7:F3}{8}.",
                     callName,
-                    Data.Name ?? "<unnamed>",
+                    GetProgramDebugName(),
                     Hash,
                     programId,
                     Data.Separable,
@@ -2063,7 +2143,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Failed.TryAdd(Hash, 0);
                 long now = Stopwatch.GetTimestamp();
-                string label = Data.Name ?? "<unnamed>";
+                string label = GetProgramDebugName();
                 string stageList = BuildFailedHashStageListSnapshot();
                 bool separable = Data.Separable;
                 FailedHashDiagnostics.AddOrUpdate(
@@ -2116,7 +2196,7 @@ namespace XREngine.Rendering.OpenGL
                     _ =>
                     {
                         emit = true;
-                        snapshot = new FailedHashRecord(now, now, 1, null, Data.Name ?? "<unnamed>", BuildFailedHashStageListSnapshot(), Data.Separable);
+                        snapshot = new FailedHashRecord(now, now, 1, null, GetProgramDebugName(), BuildFailedHashStageListSnapshot(), Data.Separable);
                         return snapshot;
                     },
                     (_, existing) =>
@@ -2140,7 +2220,7 @@ namespace XREngine.Rendering.OpenGL
                 long start = snapshot.FirstFailureTicks > 0L ? snapshot.FirstFailureTicks : now;
                 double elapsedMs = StopwatchTicksToMilliseconds(now - start);
                 Debug.OpenGLWarning(
-                    $"[ShaderLink] SOURCE_FAILED_SKIPPED hash={Hash} label='{snapshot.Label ?? Data.Name ?? "<unnamed>"}' " +
+                    $"[ShaderLink] SOURCE_FAILED_SKIPPED hash={Hash} label='{snapshot.Label ?? GetProgramDebugName()}' " +
                     $"separable={snapshot.Separable} stages={snapshot.StageList ?? "<none>"} skipCount={snapshot.SkipCount} " +
                     $"elapsedMs={elapsedMs:F0} reason='{snapshot.Reason ?? "<unknown>"}' " +
                     $"fingerprint={cacheKey ?? "<none>"} programId={bindingId}.");
@@ -2179,7 +2259,7 @@ namespace XREngine.Rendering.OpenGL
                 bool linkPreparationFailed = linkPreparationException is not null;
                 if (linkPreparationException is not null)
                 {
-                    Debug.OpenGLWarning($"GLRenderProgram link preparation failed for '{Data.Name ?? "unnamed"}': {linkPreparationException.Message}");
+                    Debug.OpenGLWarning($"GLRenderProgram link preparation failed for '{GetProgramDebugName()}': {linkPreparationException.Message}");
                     _linkPreparationFailure = null;
                 }
 
@@ -2433,7 +2513,8 @@ namespace XREngine.Rendering.OpenGL
                             SharedContextCompileAvailable: Renderer.ProgramCompileLinkQueue is { IsAvailable: true },
                             SharedContextCompileCanEnqueue: Renderer.ProgramCompileLinkQueue is { CanEnqueue: true },
                             CompileInputsReady: _preparedCompileInputs is { Length: > 0 },
-                            IsKnownAsyncLinkHazard,
+                            IsKnownAsyncLinkHazard: IsKnownAsyncLinkHazard,
+                            PreferSharedContextForLargeSource: false,
                             HashPreviouslyFailed: false,
                             AllowSynchronousSourceLink: false));
 
@@ -2681,16 +2762,16 @@ namespace XREngine.Rendering.OpenGL
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
                     bool isKnownAsyncLinkHazard = IsKnownAsyncLinkHazard;
                     GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs;
-                    // Hazardous graphics programs (single-stage separable) are
-                    // routed to the shared-context lane by the selector when the
-                    // queue is available, even under Auto strategy, to keep the
-                    // (potentially huge) cold link off the render thread. Prepare
-                    // their inputs unconditionally so the selector can choose the
-                    // shared-context lane. The queue still rejects compute hazards,
-                    // which fall through to the synchronous path below.
+                    // Hazardous graphics programs (single-stage separable), and
+                    // oversized generated graphics programs, are routed to the
+                    // shared-context lane by the selector when the queue is available.
+                    // Prepare their inputs unconditionally so the selector can make
+                    // that decision from source size. The queue still rejects compute
+                    // hazards, which fall through to the synchronous path below.
                     bool wantsSharedSourceInputs = compileQueue is { IsAvailable: true } &&
                         (Renderer.UseSharedContextProgramCompileLinkQueue ||
                          Engine.Rendering.Settings.OpenGLShaderLinkStrategy == EOpenGLShaderLinkStrategy.SharedContext ||
+                         Renderer.UseDriverParallelShaderCompile ||
                          isKnownAsyncLinkHazard);
                     if (wantsSharedSourceInputs && inputs is null)
                     {
@@ -2708,6 +2789,9 @@ namespace XREngine.Rendering.OpenGL
                         }
                         inputs = PrepareCompileInputs();
                     }
+                    bool preferSharedContextForLargeSource = Renderer.UseDriverParallelShaderCompile &&
+                        compileQueue is { IsAvailable: true } &&
+                        ShouldPreferSharedContextForLargeSource(inputs);
 
                     OpenGLShaderLinkBackendSelection sourceSelection = OpenGLShaderLinkBackendSelector.Select(new OpenGLShaderLinkBackendContext(
                         Engine.Rendering.Settings.OpenGLShaderLinkStrategy,
@@ -2721,7 +2805,8 @@ namespace XREngine.Rendering.OpenGL
                         SharedContextCompileAvailable: compileQueue is { IsAvailable: true },
                         SharedContextCompileCanEnqueue: compileQueue is { CanEnqueue: true },
                         CompileInputsReady: inputs is { Length: > 0 },
-                        isKnownAsyncLinkHazard,
+                        IsKnownAsyncLinkHazard: isKnownAsyncLinkHazard,
+                        PreferSharedContextForLargeSource: preferSharedContextForLargeSource,
                         HashPreviouslyFailed: false,
                         AllowSynchronousSourceLink: false));
                     LogRenderingProgramBuildEvent(
@@ -3176,7 +3261,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void PrintLinkDebug(uint bindingId, string? info, string? failureKind)
             {
-                string programName = string.IsNullOrWhiteSpace(Data.Name) ? "<unnamed>" : Data.Name;
+                string programName = GetProgramDebugName();
                 var builder = new StringBuilder();
                 builder
                     .Append("GLRenderProgram ")

@@ -39,6 +39,24 @@ namespace XREngine.Rendering.Pipelines.Commands
                 RenderPasses = [.. renderPasses];
         }
 
+        protected override bool ShouldExecuteThisFrame()
+        {
+            if (Engine.Rendering.State.IsSceneCapturePass || RenderPasses.Length == 0)
+                return false;
+
+            XRRenderPipelineInstance? activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+            if (activeInstance is null)
+                return false;
+
+            for (int i = 0; i < RenderPasses.Length; i++)
+            {
+                if (activeInstance.MeshRenderCommands.HasRenderingCommands(RenderPasses[i]))
+                    return true;
+            }
+
+            return false;
+        }
+
         protected override void Execute()
         {
             // Scene captures (light probes, reflection probes) don't need motion vectors.
@@ -85,11 +103,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            // Resolve once per execution so the motion-vectors pass uses the same culling/draw
+            // strategy as the lit pass on the same gpuPass instance. Otherwise RenderGPU(pass)
+            // defaults to GpuIndirectInstrumented and thrashes gpuPass.MeshSubmissionStrategy
+            // mid-frame, producing mismatched cull results between motion vectors and shading.
+            var motionStrategy = _gpuDispatch
+                ? Engine.Rendering.ResolveMeshSubmissionStrategy(true)
+                : EMeshSubmissionStrategy.CpuDirect;
             foreach (int pass in RenderPasses)
             {
                 //Debug.Out($"[Velocity] Rendering motion vectors for pass {pass} (GPUDispatch={GPUDispatch}).");
                 if (_gpuDispatch)
-                    commands.RenderGPU(pass);
+                    commands.RenderGPU(pass, motionStrategy);
                 else
                     commands.RenderCPU(pass);
             }

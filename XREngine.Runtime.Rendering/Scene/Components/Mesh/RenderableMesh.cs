@@ -62,6 +62,8 @@ namespace XREngine.Components.Scene.Mesh
         private AABB _skinnedLocalBounds;
         private Vector3[]? _skinnedVertexPositions;
         private int _skinnedVertexCount;
+        // Scratch buffer for Path A GPU-AABB direct-write dispatch; sized lazily.
+        private readonly List<uint> _pathAScratchIndices = new(8);
         private Task<SkinnedBoundsRefreshResult>? _skinnedBoundsRefreshTask;
         private int _skinnedBoundsRevision;
         private BVH<Triangle>? _skinnedBvh;
@@ -1273,6 +1275,21 @@ namespace XREngine.Components.Scene.Mesh
                                 long applyTicks = Math.Max(0L, Stopwatch.GetTimestamp() - applyStartTicks);
                                 long gpuTicks = Math.Max(0L, applyStartTicks - gpuStartTicks);
                                 Engine.Rendering.Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
+
+                                // Path A: also push world-space AABBs straight into the GPU
+                                // command-AABB buffer (BVH leaf bounds) when enabled. Registers
+                                // this mesh so VPRC_BuildAccelerationStructure can re-dispatch
+                                // it every frame the BVH is rebuilt.
+                                if (Engine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite)
+                                {
+                                    var visualScene = World?.VisualScene;
+                                    if (visualScene is not null)
+                                    {
+                                        SkinnedMeshBoundsCalculator.Instance.RegisterSkinnedMesh(this);
+                                        SkinnedMeshBoundsCalculator.Instance.DispatchPathADirectWrite(
+                                            this, visualScene.GPUCommands, _pathAScratchIndices);
+                                    }
+                                }
                             }
                             else if (!_hasSkinnedBounds)
                             {
@@ -1415,6 +1432,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             Engine.Rendering.SettingsChanged -= Rendering_SettingsChanged;
             UntrackAllBones();
+            SkinnedMeshBoundsCalculator.Instance.UnregisterSkinnedMesh(this, World?.VisualScene?.GPUCommands);
             RenderableLOD[] lods;
             lock (_lodsLock)
             {

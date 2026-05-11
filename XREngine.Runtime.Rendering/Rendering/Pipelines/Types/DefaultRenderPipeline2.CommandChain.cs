@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -58,21 +58,25 @@ public partial class DefaultRenderPipeline2
                 c.Add<VPRC_ClearByBoundFBO>();
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
                 if (enableComputePasses)
                     c.Add<VPRC_ForwardPlusLightCullingPass>();
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+                c.Add<VPRC_BuildAccelerationStructure>();
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
+                // GPU BVH wireframe overlay; no-op unless toggled via the
+                // GpuBvhDebugSettings post-process stage on the active camera.
+                c.Add<VPRC_RenderDebugGpuBvh>();
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
@@ -80,7 +84,7 @@ public partial class DefaultRenderPipeline2
                     c.Add<VPRC_ForwardPlusDebugOverlay>();
             }
         }
-        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, GPURenderDispatch);
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         c.Add<VPRC_RenderScreenSpaceUI>();
         return c;
     }
@@ -134,18 +138,21 @@ public partial class DefaultRenderPipeline2
             AppendBloomPass(c);
             AppendMotionBlurAndDoF(c);
             AppendTemporalAccumulation(c);
+            // Build the GPU BVH so debug overlays (and any zero-readback consumers)
+            // have an up-to-date acceleration structure published into pipeline
+            // variables before the on-top forward passes run.
+            c.Add<VPRC_BuildAccelerationStructure>();
             AppendPostTemporalForwardPasses(c);
             c.Add<VPRC_DepthTest>().Enable = false;
+            if (!Stereo)
+            {
+                AppendAtmosphericScattering(c);
+                AppendVolumetricFog(c);
+            }
             AppendPostProcessResourceCaching(c);
             AppendDebugVisualizationCaching(c);
             AppendAntiAliasingResourceCaching(c);
         }
-
-        // Volumetric fog scatter runs once at internal resolution, writing an
-        // RGBA16F texture that the post-process composite samples. Skipped in
-        // stereo (no stereo scatter variant yet).
-        if (!Stereo)
-            AppendVolumetricFog(c);
 
         // Compute exposure BEFORE the post-process quad so the 1x1 exposure
         // texture and _gpuAutoExposureReadyThisFrame flag are current when
@@ -276,8 +283,8 @@ public partial class DefaultRenderPipeline2
         {
             c.Add<VPRC_StencilMask>().Set(~0u);
                 c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, MeshSubmissionStrategy);
         }
         EndGpuScope(c, "Deferred GBuffer");
 
@@ -682,15 +689,15 @@ public partial class DefaultRenderPipeline2
             //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = false;
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
 
             //Enable depth testing and writing for forward passes
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = true;
             if (enableComputePasses)
                 c.Add<VPRC_ForwardPlusLightCullingPass>();
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
 
             if (enableComputePasses)
             {
@@ -747,7 +754,7 @@ public partial class DefaultRenderPipeline2
         {
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = false;
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
         }
         using (c.AddUsing<VPRC_BindTexture>(x =>
         {
@@ -886,9 +893,12 @@ public partial class DefaultRenderPipeline2
         {
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = false;
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
+            // GPU BVH wireframe overlay; no-op unless toggled via the
+            // GpuBvhDebugSettings post-process stage on the active camera.
+            c.Add<VPRC_RenderDebugGpuBvh>();
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
             c.Add<VPRC_DepthWrite>().Allow = true;
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
@@ -2253,6 +2263,136 @@ public partial class DefaultRenderPipeline2
             AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion => (int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion,
             _ => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
         };
+
+    /// <summary>
+    /// Appends the half-resolution atmospheric-scattering chain.
+    /// </summary>
+    private void AppendAtmosphericScattering(ViewportRenderCommandContainer c)
+    {
+        BeginGpuScope(c, "Atmospheric Scattering");
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AtmosphereHalfDepthTextureName,
+            CreateAtmosphereHalfDepthTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereHalfDepthQuadFBOName,
+            CreateAtmosphereHalfDepthQuadFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateAtmosphereHalfDepthQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereHalfDepthFBOName,
+            CreateAtmosphereHalfDepthFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateAtmosphereHalfDepthFbo);
+
+        c.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AtmosphereHalfDepthQuadFBOName, AtmosphereHalfDepthFBOName, matchDestinationRenderArea: true);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AtmosphereHalfScatterTextureName,
+            CreateAtmosphereHalfScatterTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereHalfScatterQuadFBOName,
+            CreateAtmosphereHalfScatterQuadFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateAtmosphereHalfScatterQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereHalfScatterFBOName,
+            CreateAtmosphereHalfScatterFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateAtmosphereHalfScatterFbo);
+
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyAtmosphereHalfScatterProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(AtmosphereHalfScatterQuadFBOName, AtmosphereHalfScatterFBOName, matchDestinationRenderArea: true);
+        }
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AtmosphereHalfTemporalTextureName,
+            CreateAtmosphereHalfTemporalTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AtmosphereHalfHistoryTextureName,
+            CreateAtmosphereHalfHistoryTexture,
+            NeedsRecreateTextureHalfInternalSize,
+            ResizeTextureHalfInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereReprojectQuadFBOName,
+            CreateAtmosphereReprojectQuadFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateAtmosphereReprojectQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereReprojectFBOName,
+            CreateAtmosphereReprojectFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateAtmosphereReprojectFbo);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereHistoryFBOName,
+            CreateAtmosphereHistoryFBO,
+            GetDesiredFBOSizeHalfInternal,
+            NeedsRecreateAtmosphereHistoryFbo);
+
+        c.Add<VPRC_AtmosphereHistoryPass>().Phase = VPRC_AtmosphereHistoryPass.EPhase.Begin;
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyAtmosphereReprojectProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(AtmosphereReprojectQuadFBOName, AtmosphereReprojectFBOName, matchDestinationRenderArea: true);
+        }
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AtmosphereColorTextureName,
+            CreateAtmosphereColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereUpscaleQuadFBOName,
+            CreateAtmosphereUpscaleQuadFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateAtmosphereUpscaleQuadFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereUpscaleFBOName,
+            CreateAtmosphereUpscaleFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateAtmosphereUpscaleFbo);
+
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyAtmosphereUpscaleProgramBindings))
+        {
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(AtmosphereUpscaleQuadFBOName, AtmosphereUpscaleFBOName, matchDestinationRenderArea: true);
+        }
+
+        c.Add<VPRC_BlitFrameBuffer>().SetOptions(
+            AtmosphereReprojectFBOName,
+            AtmosphereHistoryFBOName,
+            EReadBufferMode.ColorAttachment0,
+            blitColor: true,
+            blitDepth: false,
+            blitStencil: false,
+            linearFilter: false);
+
+        c.Add<VPRC_AtmosphereHistoryPass>().Phase = VPRC_AtmosphereHistoryPass.EPhase.Commit;
+        EndGpuScope(c, "Atmospheric Scattering");
+    }
 
     /// <summary>
     /// Appends the half-resolution volumetric fog chain:

@@ -71,6 +71,8 @@ namespace XREngine.Rendering.Commands
 
             _gpuBatchingPreparedThisFrame = false;
             _zeroReadbackMaterialScatterPreparedThisFrame = false;
+            _zeroReadbackActiveBucketListPreparedThisFrame = false;
+            ResetZeroReadbackProgramPendingState();
             Stopwatch resetStopwatch = Stopwatch.StartNew();
             ResetCounters();
             resetStopwatch.Stop();
@@ -279,8 +281,7 @@ namespace XREngine.Rendering.Commands
             uint dispatchCommands = VisibleCommandCount;
             if (IsCpuReadbackCountDisabledForPass())
             {
-                // When we don't read counts back, conservatively dispatch for the max indirect capacity.
-                dispatchCommands = _indirectDrawBuffer!.ElementCount;
+                dispatchCommands = Math.Min(dispatchCommands, _indirectDrawBuffer!.ElementCount);
             }
 
             uint dispatchGroups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
@@ -301,12 +302,12 @@ namespace XREngine.Rendering.Commands
 
             uint dispatchCommands = VisibleCommandCount;
             if (IsCpuReadbackCountDisabledForPass())
-                dispatchCommands = _culledSceneToRenderBuffer.ElementCount;
+                dispatchCommands = Math.Min(dispatchCommands, _culledSceneToRenderBuffer.ElementCount);
 
             if (dispatchCommands == 0)
                 return;
 
-            _lodSelectComputeShader.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? Vector3.Zero);
+            _lodSelectComputeShader.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? Vector3.Zero);
             _lodSelectComputeShader.Uniform("InputCommandCount", (int)dispatchCommands);
             _lodSelectComputeShader.Uniform("TransitionFrameStep", 1.0f / Math.Max(LodTransitionFrameCount, 1u));
 
@@ -373,7 +374,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             uint inputCount = IsCpuReadbackCountDisabledForPass()
-                ? maxInput
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), maxInput)
                 : Math.Max(VisibleCommandCount, 1u);
 
             _buildHotCommandsProgram.Uniform("InputCount", (int)inputCount);
@@ -416,14 +417,20 @@ namespace XREngine.Rendering.Commands
                     _materialTierDrawCountBuffer is not null &&
                     _materialSlotLookupBuffer is not null &&
                     _materialSlotIds.Count > 0;
+
+                if (_zeroReadbackMaterialScatterPreparedThisFrame &&
+                    RequiresActiveMaterialBucketList(ZeroReadbackMaterialDrawPath))
+                {
+                    DispatchBuildActiveMaterialBuckets();
+                }
             }
             UpdateVisibleCountersFromBuffer();
 
             if (_zeroReadbackMaterialScatterPreparedThisFrame)
                 return null;
 
-            // When readback is disabled (shipping / zero-readback mode), skip batch readback entirely
-            // even if scatter wasn't prepared this frame — fall back to CommandCapacity-based draw.
+            // When readback is disabled (shipping / zero-readback mode), skip batch readback entirely.
+            // The draw submission consumes GPU count buffers rather than CPU material batch ranges.
             if (IsCpuReadbackCountDisabledForPass())
                 return null;
 
@@ -449,7 +456,8 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            ResetMaterialScatterCounts();
+            if (!ResetMaterialScatterBuffersOnGpu())
+                return;
 
             _materialScatterComputeShader.Uniform("CurrentRenderPass", RenderPass);
             _materialScatterComputeShader.Uniform("MaxMaterialSlotLookup", (int)_materialSlotLookupBuffer.ElementCount);
@@ -467,11 +475,43 @@ namespace XREngine.Rendering.Commands
             scene.LodTransitionBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterLodTransitions);
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
-                ? _keyIndexBufferA.ElementCount
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
                 : Math.Max(VisibleCommandCount, 1u);
-            uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
+            uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u), MaterialScatterLocalSizeX).Item1);
             _materialScatterComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+        }
+
+        private static bool RequiresActiveMaterialBucketList(EZeroReadbackMaterialDrawPath path)
+            => path is EZeroReadbackMaterialDrawPath.ActiveBucketList
+                or EZeroReadbackMaterialDrawPath.MaterialTable
+                or EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+
+        private void DispatchBuildActiveMaterialBuckets()
+        {
+            _zeroReadbackActiveBucketListPreparedThisFrame = false;
+
+            if (_buildActiveMaterialBucketsComputeShader is null ||
+                _materialTierDrawCountBuffer is null ||
+                _materialTierActiveBucketBuffer is null ||
+                _materialTierActiveBucketCountBuffer is null ||
+                _materialTierBucketCount == 0u)
+            {
+                return;
+            }
+
+            if (!ClearUIntBufferOnGpu(_materialTierActiveBucketCountBuffer, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command))
+                return;
+
+            _buildActiveMaterialBucketsComputeShader.Uniform("MaxBucketCount", (int)_materialTierBucketCount);
+            _materialTierDrawCountBuffer.BindTo(_buildActiveMaterialBucketsComputeShader, GPUBatchingBindings.ActiveMaterialBucketDrawCounts);
+            _materialTierActiveBucketBuffer.BindTo(_buildActiveMaterialBucketsComputeShader, GPUBatchingBindings.ActiveMaterialBucketIndices);
+            _materialTierActiveBucketCountBuffer.BindTo(_buildActiveMaterialBucketsComputeShader, GPUBatchingBindings.ActiveMaterialBucketCount);
+
+            uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(_materialTierBucketCount, MaterialScatterLocalSizeX).Item1);
+            _buildActiveMaterialBucketsComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            _zeroReadbackActiveBucketListPreparedThisFrame = true;
         }
 
         private void PopulateMaterialSlotLookup(GPUScene scene)
@@ -505,15 +545,45 @@ namespace XREngine.Rendering.Commands
             _materialSlotLookupBuffer.PushSubData();
         }
 
-        private void ResetMaterialScatterCounts()
+        private bool ResetMaterialScatterBuffersOnGpu()
         {
-            if (_materialTierDrawCountBuffer is null)
-                return;
+            if (_materialTierDrawCountBuffer is null || _materialTierIndirectDrawBuffer is null)
+                return false;
 
-            for (uint i = 0; i < _materialTierDrawCountBuffer.ElementCount; ++i)
-                _materialTierDrawCountBuffer.SetDataRawAtIndex(i, 0u);
+            bool countsCleared = ClearUIntBufferOnGpu(
+                _materialTierDrawCountBuffer,
+                _materialTierDrawCountBuffer.ElementCount,
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
-            _materialTierDrawCountBuffer.PushSubData();
+            ulong indirectUIntCount = (ulong)_materialTierIndirectDrawBuffer.ElementCount * _materialTierIndirectDrawBuffer.ComponentCount;
+            bool commandsCleared = ClearUIntBufferOnGpu(
+                _materialTierIndirectDrawBuffer,
+                indirectUIntCount,
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            return countsCleared && commandsCleared;
+        }
+
+        private bool ClearUIntBufferOnGpu(XRDataBuffer buffer, ulong uintCount, EMemoryBarrierMask barrierMask)
+        {
+            if (_clearUIntsComputeShader is null || uintCount == 0ul)
+                return false;
+
+            if (!_clearUIntsComputeShader.IsLinked)
+            {
+                _clearUIntsComputeShader.Link();
+                if (!_clearUIntsComputeShader.IsLinked)
+                    return false;
+            }
+
+            uint boundedCount = uintCount > int.MaxValue ? (uint)int.MaxValue : (uint)uintCount;
+            _clearUIntsComputeShader.Uniform("ElementCount", (int)boundedCount);
+            buffer.BindTo(_clearUIntsComputeShader, 0);
+
+            (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(boundedCount, GpuClearUIntsLocalSizeX);
+            _clearUIntsComputeShader.DispatchCompute(x, y, z, barrierMask);
+            AbstractRenderer.Current?.MemoryBarrier(barrierMask);
+            return true;
         }
 
         private void ClassifyTransparencyDomains(GPUScene scene)
@@ -545,7 +615,7 @@ namespace XREngine.Rendering.Commands
             _transparencyDomainCountBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyDomainCounts);
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
-                ? CommandCapacity
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), CommandCapacity)
                 : Math.Max(VisibleCommandCount, 1u);
             uint groups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
             _classifyTransparencyComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
@@ -581,7 +651,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
-                ? _keyIndexBufferA.ElementCount
+                ? Math.Min(Math.Max(VisibleCommandCount, 1u), _keyIndexBufferA.ElementCount)
                 : Math.Max(VisibleCommandCount, 1u);
 
             _buildKeysComputeShader.Uniform("CurrentRenderPass", RenderPass);
@@ -762,13 +832,84 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        public List<uint>? ReadActiveMaterialTierBuckets()
+        {
+            if (_materialTierActiveBucketBuffer is null ||
+                _materialTierActiveBucketCountBuffer is null ||
+                _materialTierBucketCount == 0u)
+            {
+                return null;
+            }
+
+            uint activeCount = ReadUIntAt(_materialTierActiveBucketCountBuffer, 0u);
+            activeCount = Math.Min(activeCount, _materialTierActiveBucketBuffer.ElementCount);
+            activeCount = Math.Min(activeCount, _materialTierBucketCount);
+            if (activeCount == 0u)
+                return null;
+
+            if (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.ZeroReadbackActiveBucketReadback.{RenderPass}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Zero-readback draw path {0} is reading back {1} active material buckets for pass {2}. Use FullBucketScan for strict no-readback diagnostics, or treat ActiveBucketList/MaterialTable as readback-assisted modes.",
+                    ZeroReadbackMaterialDrawPath,
+                    activeCount,
+                    RenderPass);
+            }
+
+            bool mappedHere = false;
+
+            try
+            {
+                if (_materialTierActiveBucketBuffer.ActivelyMapping.Count == 0)
+                {
+                    _materialTierActiveBucketBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
+                    _materialTierActiveBucketBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
+                    _materialTierActiveBucketBuffer.MapBufferData();
+                    mappedHere = true;
+                    Engine.Rendering.Stats.RecordGpuBufferMapped();
+                }
+
+                VoidPtr mapped = _materialTierActiveBucketBuffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
+                if (!mapped.IsValid)
+                    return null;
+
+                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                Engine.Rendering.Stats.RecordGpuReadbackBytes((int)(activeCount * sizeof(uint)));
+
+                var buckets = new List<uint>((int)activeCount);
+                unsafe
+                {
+                    uint* basePtr = (uint*)mapped.Pointer;
+                    for (uint i = 0; i < activeCount; ++i)
+                    {
+                        uint bucketIndex = basePtr[i];
+                        if (bucketIndex < _materialTierBucketCount)
+                            buckets.Add(bucketIndex);
+                    }
+                }
+
+                return buckets.Count == 0 ? null : buckets;
+            }
+            finally
+            {
+                if (mappedHere)
+                    _materialTierActiveBucketBuffer.UnmapBufferData();
+            }
+        }
+
         #endregion
 
         #region Material ID Management
 
         private bool PrepareMaterialTableAndValidateResidency(GPUScene scene, IReadOnlyList<HybridRenderingManager.DrawBatch>? batches)
         {
-            if (!VulkanFeatureProfile.EnableBindlessMaterialTable)
+            bool materialTableRequired = MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+                ZeroReadbackMaterialDrawPath is EZeroReadbackMaterialDrawPath.MaterialTable
+                    or EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+
+            if (!VulkanFeatureProfile.EnableBindlessMaterialTable && !materialTableRequired)
                 return true;
 
             _materialTable ??= new GPUMaterialTable(128);
@@ -1466,6 +1607,8 @@ namespace XREngine.Rendering.Commands
             _materialSlotLookupBuffer?.Dispose();
             _materialTierIndirectDrawBuffer?.Dispose();
             _materialTierDrawCountBuffer?.Dispose();
+            _materialTierActiveBucketBuffer?.Dispose();
+            _materialTierActiveBucketCountBuffer?.Dispose();
             _instanceTransformBuffer?.Dispose();
             _instanceSourceIndexBuffer?.Dispose();
             _materialAggregationBuffer?.Dispose();
@@ -1480,6 +1623,7 @@ namespace XREngine.Rendering.Commands
             _occlusionCulledHotBuffer?.Dispose();
             _passFilterDebugBuffer?.Dispose();
             _materialIDsBuffer?.Dispose();
+            _materialTable?.Dispose();
             _keyIndexScratchBuffer?.Dispose();
             DisposeViewSetBuffers();
 
@@ -1494,10 +1638,12 @@ namespace XREngine.Rendering.Commands
             _buildKeysComputeShader?.Destroy();
             _buildGpuBatchesComputeShader?.Destroy();
             _materialScatterComputeShader?.Destroy();
+            _buildActiveMaterialBucketsComputeShader?.Destroy();
             _classifyTransparencyComputeShader?.Destroy();
             _lodSelectComputeShader?.Destroy();
             _indirectRenderTaskShader?.Destroy();
             _buildHotCommandsProgram?.Destroy();
+            _clearUIntsComputeShader?.Destroy();
             _indirectRenderer?.Destroy();
 
             _hiZInitProgram?.Destroy();
