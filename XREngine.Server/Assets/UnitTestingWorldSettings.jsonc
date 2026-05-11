@@ -65,6 +65,8 @@
   "DynamicWaterQuad": false,
   // Adds a demo volumetric fog volume to the default unit-testing world and enables volumetric fog on the unit-test camera(s).
   "InitializeVolumetricFog": false,
+  // Adds a demo atmosphere component and enables atmospheric scattering on the unit-test camera(s).
+  "InitializeAtmosphericScattering": false,
   // Forces the debug opaque render pipeline instead of the default pipeline.
   "ForceDebugOpaquePipeline": false,
 
@@ -373,5 +375,72 @@
     "StepSize": 4.0,
     // Generated from JitterStrength on VolumetricFogVolumeInitSettings.
     "JitterStrength": 0.25
+  },
+  // Generated from AtmosphericScattering on Settings.
+  "AtmosphericScattering": {
+    // Generated from Translation on AtmosphericScatteringInitSettings.
+    "Translation": {
+      // Generated from X on TranslationXYZ.
+      "X": 0.0,
+      // Generated from Y on TranslationXYZ.
+      "Y": 0.0,
+      // Generated from Z on TranslationXYZ.
+      "Z": 0.0
+    },
+    // Generated from GroundRadius on AtmosphericScatteringInitSettings.
+    "GroundRadius": 6371000.0,
+    // Generated from AtmosphereHeight on AtmosphericScatteringInitSettings.
+    "AtmosphereHeight": 100000.0,
+    // Generated from GroundLevelOffset on AtmosphericScatteringInitSettings.
+    "GroundLevelOffset": 0.0,
+    // Generated from SunIntensity on AtmosphericScatteringInitSettings.
+    "SunIntensity": 20.0,
+    // Generated from SunColor on AtmosphericScatteringInitSettings.
+    "SunColor": {
+      // Generated from R on ColorRgb.
+      "R": 1.0,
+      // Generated from G on ColorRgb.
+      "G": 1.0,
+      // Generated from B on ColorRgb.
+      "B": 1.0
+    },
+    // Generated from RayleighScaleHeight on AtmosphericScatteringInitSettings.
+    "RayleighScaleHeight": 8000.0,
+    // Generated from MieScaleHeight on AtmosphericScatteringInitSettings.
+    "MieScaleHeight": 1200.0,
+    // Generated from RayleighScattering on AtmosphericScatteringInitSettings.
+    "RayleighScattering": {
+      // Generated from R on ColorRgb.
+      "R": 5.802E-06,
+      // Generated from G on ColorRgb.
+      "G": 1.3558E-05,
+      // Generated from B on ColorRgb.
+      "B": 3.31E-05
+    },
+    // Generated from MieScattering on AtmosphericScatteringInitSettings.
+    "MieScattering": {
+      // Generated from R on ColorRgb.
+      "R": 3.996E-06,
+      // Generated from G on ColorRgb.
+      "G": 3.996E-06,
+      // Generated from B on ColorRgb.
+      "B": 3.996E-06
+    },
+    // Generated from MieAnisotropy on AtmosphericScatteringInitSettings.
+    "MieAnisotropy": 0.76,
+    // Generated from ExposureScale on AtmosphericScatteringInitSettings.
+    "ExposureScale": 1.0,
+    // Generated from GroundAlbedo on AtmosphericScatteringInitSettings.
+    "GroundAlbedo": 0.3,
+    // Generated from MaxDistance on AtmosphericScatteringInitSettings.
+    "MaxDistance": 200000.0,
+    // Generated from ViewSamples on AtmosphericScatteringInitSettings.
+    "ViewSamples": 8,
+    // Generated from OpticalDepthSamples on AtmosphericScatteringInitSettings.
+    "OpticalDepthSamples": 0,
+    // Generated from JitterStrength on AtmosphericScatteringInitSettings.
+    "JitterStrength": 0.5,
+    // Enables or disables TemporalEnabled.
+    "TemporalEnabled": true
   }
 }

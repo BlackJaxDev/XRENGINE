@@ -11,6 +11,8 @@ namespace XREngine.Profiler.UI;
 /// </summary>
 public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 {
+    public readonly record struct GpuPipelineTimingDumpResult(bool Success, string Message);
+
     private readonly IProfilerDataSource _source = source;
 
     // ──────────────── Root method aggregation cache ────────────────
@@ -111,6 +113,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private string _gpuPipelineDisplayStatusMessage = string.Empty;
     private double _gpuPipelineDisplayFrameMs;
     private GpuPipelineTimingNodeData[] _gpuPipelineDisplayRoots = [];
+    private string _gpuPipelineDumpStatusMessage = string.Empty;
+    private bool _gpuPipelineDumpStatusSuccess;
     private readonly Dictionary<string, TimingGraphInterpolationState> _cpuTimingInterpolationStates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TimingGraphInterpolationState> _cpuRootMethodHzInterpolationStates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TimingGraphInterpolationState> _gpuTimingInterpolationStates = new(StringComparer.Ordinal);
@@ -215,6 +219,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         get => _gpuTimingDisplayMode;
         set => _gpuTimingDisplayMode = value;
     }
+
+    public Func<string, GpuPipelineTimingDumpResult>? GpuPipelineTimingDumpRequested { get; set; }
 
     /// <summary>Process the latest data from the source (call once per frame).</summary>
     public void ProcessLatestData()
@@ -814,6 +820,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"Resolved Frame: {_gpuPipelineDisplayFrameMs:F3} ms");
         if (!string.IsNullOrWhiteSpace(_gpuPipelineDisplayStatusMessage))
             ImGui.TextDisabled(_gpuPipelineDisplayStatusMessage);
+        if (!string.IsNullOrWhiteSpace(_gpuPipelineDumpStatusMessage))
+        {
+            Vector4 statusColor = _gpuPipelineDumpStatusSuccess
+                ? new Vector4(0.45f, 0.95f, 0.55f, 1.0f)
+                : new Vector4(1.00f, 0.45f, 0.40f, 1.0f);
+            ImGui.TextColored(statusColor, _gpuPipelineDumpStatusMessage);
+        }
 
         if (_gpuPipelineRootHistory.Count > 0 && ImGui.CollapsingHeader("Root History", ImGuiTreeNodeFlags.DefaultOpen))
         {
@@ -831,6 +844,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 if (sampleCount <= 0)
                     continue;
 
+                DrawGpuPipelineDumpButton(root, i);
                 DrawTimingHistoryPlot(
                     root.Name,
                     $"##GpuPipeline_{i}",
@@ -871,6 +885,32 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         ImGui.End();
     }
+
+    private void DrawGpuPipelineDumpButton(GpuPipelineTimingNodeData root, int index)
+    {
+        if (!IsGpuPipelineDumpCandidate(root))
+            return;
+
+        Func<string, GpuPipelineTimingDumpResult>? dumpHandler = GpuPipelineTimingDumpRequested;
+        if (dumpHandler is null)
+            return;
+
+        if (ImGui.SmallButton($"Dump##GpuPipelineTimingDump_{index}"))
+        {
+            GpuPipelineTimingDumpResult result = dumpHandler(root.Name);
+            _gpuPipelineDumpStatusSuccess = result.Success;
+            _gpuPipelineDumpStatusMessage = result.Message;
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Write a unique LLM-oriented log for this render pipeline's retained GPU timing history.");
+
+        ImGui.SameLine();
+    }
+
+    private static bool IsGpuPipelineDumpCandidate(GpuPipelineTimingNodeData root)
+        => root.Children is { Length: > 0 } &&
+           !string.Equals(root.Name, "Render Thread (CPU+Present)", StringComparison.Ordinal);
 
     public void DrawThreadAllocationsPanel(ref bool open, bool allowClose = true)
     {

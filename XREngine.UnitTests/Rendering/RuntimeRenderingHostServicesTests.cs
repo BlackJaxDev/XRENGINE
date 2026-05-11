@@ -250,6 +250,9 @@ public sealed class RuntimeRenderingHostServicesTests
         public float DefaultTsrRenderScale => 1.0f;
         public bool ForwardDepthPrePassEnabled => true;
         public bool ForwardPrePassSharesGBufferTargets => true;
+        public bool EnableRenderStatisticsTracking => true;
+        public bool EnableGpuRenderPipelineProfiling => true;
+        public ulong CurrentRenderFrameId => 0UL;
         public bool ProvidesShadowAtlasSettings => false;
         public bool UseSpotShadowAtlas => true;
         public bool UseDirectionalShadowAtlas => true;

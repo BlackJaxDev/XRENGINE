@@ -13,6 +13,9 @@ namespace XREngine
         [ThreadStatic]
         private static bool _isJobWorkerThread;
 
+        [ThreadStatic]
+        private static Job? _currentExecutingJob;
+
         /// <summary>
         /// True when executing on any JobManager worker thread (including remote dispatch worker).
         /// </summary>
@@ -107,6 +110,7 @@ namespace XREngine
         private readonly object _deferredWorkerLock = new();
         private Task? _deferredWorkerTask;
         private int _shutdownState;
+        private int _shutdownSynchronizationDisposed;
 
         public int WorkerCount => _workers.Length;
         public IRemoteJobTransport? RemoteTransport { get; set; }
@@ -787,46 +791,55 @@ namespace XREngine
             const int MaxStepsPerDispatch = 64;
             int steps = 0;
 
-            while (true)
+            Job? previousJob = _currentExecutingJob;
+            _currentExecutingJob = job;
+            try
             {
-                JobStepResult result;
-                try
+                while (true)
                 {
-                    result = job.Step();
-                }
-                catch (Exception ex)
-                {
-                    job.Fail(ex);
-                    RemoveActive(job);
-                    return;
-                }
-
-                switch (result)
-                {
-                    case JobStepResult.Completed:
+                    JobStepResult result;
+                    try
+                    {
+                        result = job.Step();
+                    }
+                    catch (Exception ex)
+                    {
+                        job.Fail(ex);
                         RemoveActive(job);
                         return;
-                    case JobStepResult.Waiting:
-                        if (job.PendingTask is { IsCompleted: false } pending)
-                        {
-                            pending.ContinueWith(_ => Requeue(job), TaskContinuationOptions.ExecuteSynchronously);
+                    }
+
+                    switch (result)
+                    {
+                        case JobStepResult.Completed:
+                            RemoveActive(job);
                             return;
-                        }
-                        Requeue(job);
-                        return;
-                    case JobStepResult.Progressed:
-                        steps++;
-                        if (steps >= MaxStepsPerDispatch)
-                        {
+                        case JobStepResult.Waiting:
+                            if (job.PendingTask is { IsCompleted: false } pending)
+                            {
+                                pending.ContinueWith(_ => Requeue(job), TaskContinuationOptions.ExecuteSynchronously);
+                                return;
+                            }
                             Requeue(job);
                             return;
-                        }
-                        continue;
-                    case JobStepResult.Idle:
-                    default:
-                        Requeue(job);
-                        return;
+                        case JobStepResult.Progressed:
+                            steps++;
+                            if (steps >= MaxStepsPerDispatch)
+                            {
+                                Requeue(job);
+                                return;
+                            }
+                            continue;
+                        case JobStepResult.Idle:
+                        default:
+                            Requeue(job);
+                            return;
+                    }
                 }
+            }
+            finally
+            {
+                _currentExecutingJob = previousJob;
             }
         }
 
@@ -837,17 +850,7 @@ namespace XREngine
                 _active.Remove(job);
             }
 
-            if (job.UsesQueueSlot && _queueSlots != null)
-            {
-                try
-                {
-                    _queueSlots.Release();
-                }
-                catch (ObjectDisposedException)
-                {
-                    // Shutdown already disposed the semaphore — slot release is moot.
-                }
-            }
+            ReleaseQueueSlot(job);
         }
 
         private void Requeue(Job job)
@@ -1021,12 +1024,12 @@ namespace XREngine
             }
         }
 
-        public void Shutdown()
+        public void Shutdown(bool waitForWorkers = true)
         {
             if (Interlocked.Exchange(ref _shutdownState, 1) != 0)
                 return;
 
-            Log($"JobManager shutdown requested. {CreateShutdownSummary()}");
+            Log($"JobManager shutdown requested. waitForWorkers={waitForWorkers}. {CreateShutdownSummary()}");
             CancelOutstandingJobsForShutdown();
 
             try
@@ -1068,6 +1071,12 @@ namespace XREngine
             }
             catch (ObjectDisposedException)
             {
+            }
+
+            if (!waitForWorkers)
+            {
+                Log($"JobManager fast shutdown signaled workers and is returning without joins. {CreateShutdownSummary()}");
+                return;
             }
 
             List<string> timedOutWorkers = [];
@@ -1116,6 +1125,7 @@ namespace XREngine
                 return;
             }
 
+            Interlocked.Exchange(ref _shutdownSynchronizationDisposed, 1);
             _readySignal.Dispose();
             _remoteReadySignal.Dispose();
             _deferredReadySignal.Dispose();
@@ -1129,8 +1139,14 @@ namespace XREngine
             lock (_activeLock)
                 activeJobs = [.. _active];
 
+            Job? currentJob = _currentExecutingJob;
             foreach (Job job in activeJobs)
+            {
+                if (ReferenceEquals(job, currentJob))
+                    continue;
+
                 job.Cancel();
+            }
 
             CancelQueuedJobsForShutdown(_pendingByPriority);
             CancelQueuedJobsForShutdown(_pendingMainThreadByPriority);
@@ -1183,7 +1199,10 @@ namespace XREngine
 
         private void ReleaseQueueSlot(Job job)
         {
-            if (!job.UsesQueueSlot || _queueSlots is null)
+            if (_queueSlots is null || !job.TryClearQueueSlot())
+                return;
+
+            if (Volatile.Read(ref _shutdownSynchronizationDisposed) != 0)
                 return;
 
             try

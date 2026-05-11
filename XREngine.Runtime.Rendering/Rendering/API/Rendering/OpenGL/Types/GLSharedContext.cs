@@ -26,6 +26,9 @@ namespace XREngine.Rendering.OpenGL
             private CancellationTokenSource? _cts;
             private Thread? _thread;
             private IWindow? _window;
+            private int _disposeRequested;
+            private int _disposeResourcesOnWorkerExit;
+            private int _resourcesReleased;
             private volatile bool _running;
             private long _currentJobStartTimestamp;
             private string? _currentJobName;
@@ -58,7 +61,8 @@ namespace XREngine.Rendering.OpenGL
             }
 
             public bool IsRunning => _running && !IsWorkerUnhealthy;
-            public bool IsThreadAlive => _running;
+            public bool IsThreadAlive => _thread is { IsAlive: true };
+            public bool IsDisposeRequested => Volatile.Read(ref _disposeRequested) != 0;
             public bool IsWorkerUnhealthy => _workerUnhealthy || CurrentJobElapsedSeconds >= _workerUnhealthySeconds;
             public double WorkerUnhealthySeconds => _workerUnhealthySeconds;
             public int PendingCount => _jobs.Count;
@@ -188,28 +192,77 @@ namespace XREngine.Rendering.OpenGL
 
             public void Enqueue(Action<GL> job, string? name)
             {
+                if (Volatile.Read(ref _disposeRequested) != 0)
+                    return;
+
                 long now = Stopwatch.GetTimestamp();
                 if (_jobs.IsEmpty)
                     Interlocked.Exchange(ref _oldestQueuedTimestamp, now);
 
                 _jobs.Enqueue(new SharedContextJob(job, name, now));
-                _signal.Set();
+                try
+                {
+                    _signal.Set();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
             }
 
             public void Dispose()
+                => Dispose(TimeSpan.FromSeconds(2));
+
+            /// <summary>
+            /// Requests worker shutdown without waiting for active GL work to finish.
+            /// Used from renderer/window shutdown so an in-flight driver shader link
+            /// cannot turn application close into a multi-second join chain.
+            /// </summary>
+            public void DisposeForShutdown()
+                => Dispose(TimeSpan.Zero);
+
+            private void Dispose(TimeSpan joinTimeout)
             {
-                _cts?.Cancel();
-                _signal.Set();
-                _thread?.Join(TimeSpan.FromSeconds(2));
-                _cts?.Dispose();
+                if (Interlocked.Exchange(ref _disposeRequested, 1) != 0)
+                    return;
+
+                Interlocked.Exchange(ref _disposeResourcesOnWorkerExit, 1);
+
+                try
+                {
+                    _cts?.Cancel();
+                    _signal.Set();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+
+                Thread? thread = _thread;
+                bool joined = thread is null || !thread.IsAlive;
+                if (!joined && joinTimeout > TimeSpan.Zero && thread != Thread.CurrentThread)
+                    joined = thread.Join(joinTimeout);
+
+                if (!joined && thread is not null && !thread.IsAlive)
+                    joined = true;
+
+                if (joined)
+                {
+                    ReleaseStoppedResources();
+                    return;
+                }
+
                 _running = false;
-
-                // IWindow.Dispose should be safe to call from any thread for headless GLFW windows.
-                _window?.Dispose();
-
-                _thread = null;
-                _cts = null;
-                _window = null;
+                string? currentJobName = CurrentJobName;
+                int pendingCount = PendingCount;
+                double currentJobElapsedSeconds = CurrentJobElapsedSeconds;
+                if (currentJobName is not null || pendingCount > 0 || currentJobElapsedSeconds > 0.0)
+                {
+                    Debug.RenderingWarning(
+                        "[SharedContext] Abandoning active worker '{0}' during shutdown; currentJob={1} elapsedSeconds={2:F1} pendingJobs={3}.",
+                        _threadName,
+                        currentJobName ?? "<none>",
+                        currentJobElapsedSeconds,
+                        pendingCount);
+                }
             }
 
             private void Run(IWindow window, CancellationToken token)
@@ -262,7 +315,43 @@ namespace XREngine.Rendering.OpenGL
                 finally
                 {
                     _running = false;
+                    if (Volatile.Read(ref _disposeResourcesOnWorkerExit) != 0)
+                        ReleaseStoppedResources(window);
                 }
+            }
+
+            private void ReleaseStoppedResources(IWindow? workerWindow = null)
+            {
+                if (Interlocked.Exchange(ref _resourcesReleased, 1) != 0)
+                    return;
+
+                try
+                {
+                    _cts?.Dispose();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    (workerWindow ?? _window)?.Dispose();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    _signal.Dispose();
+                }
+                catch
+                {
+                }
+
+                _thread = null;
+                _cts = null;
+                _window = null;
             }
 
             private static double StopwatchTicksToSeconds(long ticks)

@@ -2,6 +2,7 @@ using XREngine.Extensions;
 using System;
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
@@ -367,6 +368,37 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
+        /// Renders only the commands in the specified pass that the GPU indirect dispatch path
+        /// cannot handle on its own: non-mesh commands (debug overlays, UI, etc.) and mesh commands
+        /// explicitly marked as ExcludeFromGpuIndirect / ForceCpuRendering. This is the preferred
+        /// prefilter for GPU-driven render passes (zero-readback, instrumented indirect, meshlet)
+        /// because it skips the full RenderCPU pipeline — no CPU-occlusion BeginPass allocation,
+        /// no per-mesh skip iteration accounting, and no excluded-fallback warning machinery — all
+        /// of which are wasted CPU work when the GPU owns mesh dispatch.
+        /// </summary>
+        public void RenderCPUNonMeshAndExcluded(int renderPass)
+        {
+            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
+                return;
+
+            foreach (var cmd in list)
+            {
+                if (cmd is null)
+                    continue;
+
+                if (cmd is IRenderCommandMesh meshCmd)
+                {
+                    var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
+                    bool excludedFromGpuIndirect = meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;
+                    if (!excludedFromGpuIndirect)
+                        continue;
+                }
+
+                cmd.Render();
+            }
+        }
+
+        /// <summary>
         /// Renders only commands in the specified pass that satisfy the given predicate.
         /// </summary>
         public void RenderCPUFiltered(int renderPass, Predicate<RenderCommand> filter)
@@ -380,6 +412,9 @@ namespace XREngine.Rendering.Commands
         }
 
         public void RenderGPU(int renderPass)
+            => RenderGPU(renderPass, Engine.Rendering.ResolveMeshSubmissionStrategy(true));
+
+        public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
         {
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;
@@ -399,6 +434,7 @@ namespace XREngine.Rendering.Commands
             if (scene is null)
                 return;
 
+            gpuPass.MeshSubmissionStrategy = meshSubmissionStrategy;
             ConfigureGpuViewSet(gpuPass, renderState, camera);
 
             scene.RenderGpuPass(gpuPass);
@@ -406,7 +442,8 @@ namespace XREngine.Rendering.Commands
             gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
             scene.RecordGpuVisibility(draws, instances);
 
-            bool allowPerViewReadback = RuntimeRenderingHostServices.Current.EnableGpuIndirectDebugLogging;
+            bool allowPerViewReadback = meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+                RuntimeRenderingHostServices.Current.EnableGpuIndirectDebugLogging;
             if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
             {
                 uint leftDraws = gpuPass.ReadPerViewDrawCount(0u);
@@ -417,7 +454,16 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private bool HasGpuEligibleMeshCommands(int renderPass)
+        public bool HasRenderingCommands(int renderPass)
+        {
+            using (_lock.EnterScope())
+            {
+                return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
+                    list.Count > 0;
+            }
+        }
+
+        public bool HasGpuEligibleMeshCommands(int renderPass)
         {
             using (_lock.EnterScope())
             {

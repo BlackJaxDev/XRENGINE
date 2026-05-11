@@ -89,6 +89,7 @@ namespace XREngine.Rendering
 
         private bool _isDisposing;
         private bool _isDisposed;
+        private bool _approvedNativeCloseInProgress;
         private int _pendingCloseRequested;
         private int _pendingFramebufferResize;
         private int _pendingFramebufferResizeWidth;
@@ -159,6 +160,7 @@ namespace XREngine.Rendering
         #endregion
 
         public bool IsDisposed => _isDisposed;
+        public bool IsDisposing => _isDisposing;
 
         public Exception? LastRenderException => _lastRenderException;
 
@@ -618,6 +620,7 @@ namespace XREngine.Rendering
 
             try
             {
+                _approvedNativeCloseInProgress = true;
                 Dispose();
             }
             finally
@@ -995,43 +998,60 @@ namespace XREngine.Rendering
                 return;
 
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.RenderFrame");
+            ulong renderFrameId = Engine.Rendering.State.RenderFrameId;
 
+            long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
             {
                 using var eventsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.DoEvents");
                 Window.DoEvents();
             }
+            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.DoEvents", phaseStart);
 
             // Re-check after DoEvents in case window was closed
             if (_isDisposed || _isDisposing)
                 return;
 
+            phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
             ProcessPendingFramebufferResize();
+            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ProcessPendingFramebufferResize", phaseStart);
 
             if (_isDisposed || _isDisposing)
                 return;
 
+            phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
             {
                 using var doRenderSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.DoRender");
                 Window.DoRender();
             }
+            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.DoRender", phaseStart);
 
             if (_isDisposed || _isDisposing)
                 return;
 
+            phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
             using (var mainThreadJobsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.PostRenderMainThreadJobs"))
             {
                 // Draw the frame first, then spend a small budget on queued GPU work.
                 // This keeps texture uploads and property updates from delaying visible rendering.
                 Engine.ProcessMainThreadTasks();
             }
+            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PostRenderMainThreadJobs", phaseStart);
 
             if (_isDisposed || _isDisposing)
                 return;
 
             // Window.Close must not run inside the active DoRender callback or the render-thread
             // job pump for the current frame; defer it until the frame boundary is complete.
+            phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
             ProcessDeferredCloseRequest();
+            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ProcessDeferredCloseRequest", phaseStart);
         }
+
+        private static void RecordRenderThreadCpuTiming(ulong frameId, string name, long startTimestamp)
+            => RenderPipelineGpuProfiler.Instance.RecordRenderThreadCpuTiming(
+                frameId,
+                name,
+                System.Diagnostics.Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds);
 
         private bool ShouldBeRendering()
             => !_isDisposed && !_isDisposing && Viewports.Count > 0 && TargetWorldInstance is not null;
@@ -1529,8 +1549,20 @@ namespace XREngine.Rendering
                     _rendererInitialized = false;
                 }
 
-                // Free dockable scene-panel GPU resources.
-                _scenePanelAdapter.Dispose();
+                bool skipNativeWindowDispose = _approvedNativeCloseInProgress &&
+                    Renderer.ShouldSkipNativeWindowDisposeForShutdown;
+
+                if (skipNativeWindowDispose)
+                {
+                    Debug.Rendering(
+                        "[XRWindow] Fast shutdown skipping scene-panel/native window dispose because renderer abandoned async shutdown work. hash={0}",
+                        GetHashCode());
+                }
+                else
+                {
+                    // Free dockable scene-panel GPU resources.
+                    _scenePanelAdapter.Dispose();
+                }
 
                 // Unhook input.
                 if (Input is not null)
@@ -1564,18 +1596,22 @@ namespace XREngine.Rendering
                 {
                 }
 
-                // Finally, release the window itself if possible.
-                try
+                if (!skipNativeWindowDispose)
                 {
-                    (Window as IDisposable)?.Dispose();
-                }
-                catch
-                {
+                    // Finally, release the window itself if possible.
+                    try
+                    {
+                        (Window as IDisposable)?.Dispose();
+                    }
+                    catch
+                    {
+                    }
                 }
             }
             finally
             {
                 Interlocked.Exchange(ref _pendingCloseRequested, 0);
+                _approvedNativeCloseInProgress = false;
                 _isDisposed = true;
                 _isDisposing = false;
                 GC.SuppressFinalize(this);

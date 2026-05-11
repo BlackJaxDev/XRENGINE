@@ -1431,6 +1431,120 @@ public partial class DefaultRenderPipeline2
     }
 
     /// <summary>
+    /// RGBA16F full-internal-resolution texture that the atmospheric upscale writes
+    /// and PostProcess.fs composites from. rgb = in-scattered radiance, a = transmittance.
+    /// </summary>
+    private XRTexture CreateAtmosphereColorTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MinFilter = ETexMinFilter.Linear;
+        t.MagFilter = ETexMagFilter.Linear;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = AtmosphereColorTextureName;
+        t.Name = AtmosphereColorTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// R32F half-internal-resolution depth view used by the atmospheric aerial-perspective pass.
+    /// </summary>
+    private XRTexture CreateAtmosphereHalfDepthTexture()
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            w, h,
+            EPixelInternalFormat.R32f,
+            EPixelFormat.Red,
+            EPixelType.Float,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.R32f;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = AtmosphereHalfDepthTextureName;
+        t.Name = AtmosphereHalfDepthTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution target that the aerial-perspective raymarch writes.
+    /// </summary>
+    private XRTexture CreateAtmosphereHalfScatterTexture()
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            w, h,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MinFilter = ETexMinFilter.Linear;
+        t.MagFilter = ETexMagFilter.Linear;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = AtmosphereHalfScatterTextureName;
+        t.Name = AtmosphereHalfScatterTextureName;
+        return t;
+    }
+
+    private XRTexture CreateAtmosphereHalfTemporalTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = AtmosphereHalfTemporalTextureName;
+        texture.Name = AtmosphereHalfTemporalTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateAtmosphereHalfHistoryTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = AtmosphereHalfHistoryTextureName;
+        texture.Name = AtmosphereHalfHistoryTextureName;
+        return texture;
+    }
+
+    /// <summary>
     /// RGBA16F full-internal-resolution texture that the bilateral upscale writes
     /// and PostProcess.fs composites from (sampler name <c>VolumetricFogColor</c>).
     /// rgb = in-scattered radiance, a = transmittance. Mono only; stereo skips the

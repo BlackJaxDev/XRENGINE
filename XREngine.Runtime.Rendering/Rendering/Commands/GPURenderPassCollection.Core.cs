@@ -25,6 +25,8 @@ namespace XREngine.Rendering.Commands
         /// This must match the OpenGL spec and the shader's DRAW_COMMAND_UINTS.
         /// </summary>
         private const uint ExpectedIndirectCommandStride = 20;
+        private const uint GpuClearUIntsLocalSizeX = 256u;
+        private const uint MaterialScatterLocalSizeX = 64u;
         
         private static readonly uint _indirectCommandStride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
         private static readonly uint _indirectCommandComponentCount = _indirectCommandStride / sizeof(uint);
@@ -163,6 +165,8 @@ namespace XREngine.Rendering.Commands
         private bool _passAllowCpuFallback;
         private bool _passDiagnosticReadbacksEnabled;
         private bool _passEnableZeroReadbackMaterialScatter;
+        private EZeroReadbackMaterialDrawPath _passZeroReadbackMaterialDrawPath;
+        private int _zeroReadbackProgramPendingCountThisFrame;
         private int _forbiddenFallbackLogBudget = 8;
 
         public static void ConfigureIndirectDebug(Action<IndirectDebugSettings> configure)
@@ -186,22 +190,22 @@ namespace XREngine.Rendering.Commands
         private bool IsCpuReadbackCountDisabledForPass()
             => _passPolicySnapshotValid
                 ? _passDisableCpuReadbackCount
-                : (IsShippingHotOnlyProfile() || IndirectDebug.DisableCpuReadbackCount);
+                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback || IndirectDebug.DisableCpuReadbackCount);
 
         private bool IsCpuBatchingEnabledForPass()
             => _passPolicySnapshotValid
                 ? _passEnableCpuBatching
-                : (!IsShippingHotOnlyProfile() && IndirectDebug.EnableCpuBatching);
+                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented && IndirectDebug.EnableCpuBatching);
 
         private bool IsSourceCommandProbeEnabledForPass()
             => _passPolicySnapshotValid
                 ? _passProbeSourceCommands
-                : (!IsShippingHotOnlyProfile() && IndirectDebug.ProbeSourceCommandsBeforeCopy);
+                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented && IndirectDebug.ProbeSourceCommandsBeforeCopy);
 
         private bool IsCountBufferWriteLoggingEnabledForPass()
             => _passPolicySnapshotValid
                 ? _passLogCountBufferWrites
-                : (!IsShippingHotOnlyProfile() && IndirectDebug.LogCountBufferWrites && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging);
+                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented && IndirectDebug.LogCountBufferWrites && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging);
 
         private bool IsCopyBoundsValidationEnabledForPass()
             => _passPolicySnapshotValid
@@ -211,7 +215,7 @@ namespace XREngine.Rendering.Commands
         private bool ShouldCaptureDiagnosticReadbacksForPass()
             => _passPolicySnapshotValid
                 ? _passDiagnosticReadbacksEnabled
-                : (!IsShippingHotOnlyProfile() &&
+                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
                     (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
                      Engine.EffectiveSettings.EnableGpuIndirectValidationLogging ||
                      !IndirectDebug.DisableCpuReadbackCount ||
@@ -222,6 +226,18 @@ namespace XREngine.Rendering.Commands
                 ? _passDebugLoggingEnabled
                 : Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
+        public bool ZeroReadbackProgramPendingThisFrame
+            => _zeroReadbackProgramPendingCountThisFrame > 0;
+
+        public int ZeroReadbackProgramPendingCountThisFrame
+            => _zeroReadbackProgramPendingCountThisFrame;
+
+        internal void ResetZeroReadbackProgramPendingState()
+            => _zeroReadbackProgramPendingCountThisFrame = 0;
+
+        internal void RecordZeroReadbackProgramPending()
+            => _zeroReadbackProgramPendingCountThisFrame++;
+
         private bool IsValidationLoggingEnabledForPass()
             => _passPolicySnapshotValid
                 ? _passValidationLoggingEnabled
@@ -229,31 +245,32 @@ namespace XREngine.Rendering.Commands
 
         private void CapturePassPolicySnapshot()
         {
-            _passDebugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
-            _passValidationLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectValidationLogging;
+            EMeshSubmissionStrategy strategy = MeshSubmissionStrategy;
+            bool instrumented = strategy == EMeshSubmissionStrategy.GpuIndirectInstrumented;
+            bool zeroReadback = strategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback;
 
-            bool shippingFast = IsShippingHotOnlyProfile();
+            _passDebugLoggingEnabled = instrumented && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+            _passValidationLoggingEnabled = instrumented && Engine.EffectiveSettings.EnableGpuIndirectValidationLogging;
+            _passZeroReadbackMaterialDrawPath = Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath;
 
-            _passEnableZeroReadbackMaterialScatter = shippingFast
-                || (Engine.EditorPreferences?.Debug?.EnableZeroReadbackMaterialScatter == true)
-                || Engine.EffectiveSettings.EnableZeroReadbackMaterialScatter;
+            _passEnableZeroReadbackMaterialScatter = zeroReadback;
             EnableZeroReadbackMaterialScatter = _passEnableZeroReadbackMaterialScatter;
 
-            // When zero-readback scatter is active, all CPU count readbacks are redundant.
-            _passDisableCpuReadbackCount = shippingFast || IndirectDebug.DisableCpuReadbackCount || _passEnableZeroReadbackMaterialScatter;
-            _passEnableCpuBatching = !shippingFast && !_passEnableZeroReadbackMaterialScatter && IndirectDebug.EnableCpuBatching;
-            _passProbeSourceCommands = !shippingFast && IndirectDebug.ProbeSourceCommandsBeforeCopy;
-            _passLogCountBufferWrites = !shippingFast && IndirectDebug.LogCountBufferWrites && _passDebugLoggingEnabled;
+            // Zero-readback and non-instrumented strategies must not map GPU count buffers on the render path.
+            _passDisableCpuReadbackCount = !instrumented || IndirectDebug.DisableCpuReadbackCount;
+            _passEnableCpuBatching = instrumented && IndirectDebug.EnableCpuBatching;
+            _passProbeSourceCommands = instrumented && IndirectDebug.ProbeSourceCommandsBeforeCopy;
+            _passLogCountBufferWrites = instrumented && IndirectDebug.LogCountBufferWrites && _passDebugLoggingEnabled;
             _passValidateCopyCommandAtomicBounds = IndirectDebug.ValidateCopyCommandAtomicBounds;
 
             bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
                 || (_passDebugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
-            _passAllowCpuFallback = !VulkanFeatureProfile.EnforceStrictNoFallbacks
+            _passAllowCpuFallback = instrumented
+                && !VulkanFeatureProfile.EnforceStrictNoFallbacks
                 && fallbackRequested
                 && (!VulkanFeatureProfile.IsActive || VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
 
-            _passDiagnosticReadbacksEnabled = !shippingFast
-                && !_passEnableZeroReadbackMaterialScatter
+            _passDiagnosticReadbacksEnabled = instrumented
                 && (_passDebugLoggingEnabled
                     || _passValidationLoggingEnabled
                     || !_passDisableCpuReadbackCount
@@ -490,11 +507,13 @@ namespace XREngine.Rendering.Commands
         public XRRenderProgram? _buildKeysComputeShader;
         public XRRenderProgram? _buildGpuBatchesComputeShader;
         public XRRenderProgram? _materialScatterComputeShader;
+        public XRRenderProgram? _buildActiveMaterialBucketsComputeShader;
         //public XRRenderProgram? RadixIndexSortComputeShader;
         private XRRenderProgram? _lodSelectComputeShader;
         public XRRenderProgram? _indirectRenderTaskShader;
         public XRRenderProgram? _buildHotCommandsProgram;
         public XRRenderProgram? _resetCountersComputeShader;
+        private XRRenderProgram? _clearUIntsComputeShader;
         public XRRenderProgram? _debugDrawProgram;
         private XRRenderProgram? _copyCommandsProgram; // new: passthrough copy
         private XRRenderProgram? _bvhFrustumCullProgram; // BVH-accelerated frustum culling
@@ -520,6 +539,8 @@ namespace XREngine.Rendering.Commands
         public XRMeshRenderer? _indirectRenderer;
 
         // Visible count read-back
+        private uint _visibleCommandUpperBound = 0;
+        private bool _visibleCommandUpperBoundValid;
         private uint _visibleCommandCount = 0;
         public uint VisibleCommandCount
         {
@@ -585,6 +606,8 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _materialSlotLookupBuffer;
         private XRDataBuffer? _materialTierIndirectDrawBuffer;
         private XRDataBuffer? _materialTierDrawCountBuffer;
+        private XRDataBuffer? _materialTierActiveBucketBuffer;
+        private XRDataBuffer? _materialTierActiveBucketCountBuffer;
         private XRDataBuffer? _instanceTransformBuffer;
         private XRDataBuffer? _instanceSourceIndexBuffer;
         private XRDataBuffer? _materialAggregationBuffer;
@@ -594,13 +617,18 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _transparencyDomainCountBuffer;
         private bool _gpuBatchingPreparedThisFrame;
         private bool _zeroReadbackMaterialScatterPreparedThisFrame;
+        private bool _zeroReadbackActiveBucketListPreparedThisFrame;
         private readonly List<uint> _materialSlotIds = [];
         private uint _materialTierBucketCount;
         private uint _maxDrawsPerMaterialTier;
         public bool EnableGpuDrivenBatching { get; set; } = true;
         public bool EnableGpuDrivenInstancing { get; set; } = true;
         public bool EnableZeroReadbackMaterialScatter { get; set; } = false;
-    public uint LodTransitionFrameCount { get; set; } = 8u;
+        public EZeroReadbackMaterialDrawPath ZeroReadbackMaterialDrawPath => _passPolicySnapshotValid
+            ? _passZeroReadbackMaterialDrawPath
+            : Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath;
+        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = EMeshSubmissionStrategy.GpuIndirectInstrumented;
+        public uint LodTransitionFrameCount { get; set; } = 8u;
 
         /// <summary>
         /// If true, the material ID is included in the sorting key to reduce overdraw.
@@ -666,6 +694,8 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? MaterialTierIndirectDrawBuffer => _materialTierIndirectDrawBuffer;
         public XRDataBuffer? MaterialTierDrawCountBuffer => _materialTierDrawCountBuffer;
         public XRDataBuffer? MaterialSlotLookupBuffer => _materialSlotLookupBuffer;
+        public XRDataBuffer? MaterialTierActiveBucketBuffer => _materialTierActiveBucketBuffer;
+        public XRDataBuffer? MaterialTierActiveBucketCountBuffer => _materialTierActiveBucketCountBuffer;
         public XRDataBuffer? IndirectOverflowFlagBuffer => _indirectOverflowFlagBuffer;
         public XRDataBuffer? TruncationFlagBuffer => _truncationFlagBuffer;
         public XRDataBuffer? StatsBuffer => _statsBuffer;
@@ -677,8 +707,9 @@ namespace XREngine.Rendering.Commands
         public uint MaterialTierBucketCount => _materialTierBucketCount;
         public uint MaxDrawsPerMaterialTier => _maxDrawsPerMaterialTier;
         public bool ZeroReadbackMaterialScatterPreparedThisFrame => _zeroReadbackMaterialScatterPreparedThisFrame;
+        public bool ZeroReadbackActiveBucketListPreparedThisFrame => _zeroReadbackActiveBucketListPreparedThisFrame;
         public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
-    public uint MaxIndirectDrawCapacity => Math.Max(CommandCapacity * 2u, 1u);
+        public uint MaxIndirectDrawCapacity => Math.Max(CommandCapacity * 2u, 1u);
 
         // Returns the current scene material map (ID -> XRMaterial)
         public IReadOnlyDictionary<uint, XRMaterial> GetMaterialMap(GPUScene scene)

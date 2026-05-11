@@ -4,6 +4,7 @@ using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Components.Scene.Environment;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Components.Scene;
 using XREngine.Data.Core;
@@ -110,6 +111,12 @@ public static partial class EditorUnitTests
         if (Toggles.DirLight2)
             moonDirectionalLight = Lighting.AddDirLight2(rootNode);
 
+        if (Toggles.SpotLight)
+            Lighting.AddSpotLight(rootNode);
+
+        if (Toggles.PointLight)
+            Lighting.AddPointLight(rootNode);
+
         // IBL environment: without a light probe the Uber PBR shader renders near-black.
         // Use realtime progressive capture so the probe converges over several frames,
         // then auto-disables after 5 seconds once the scene is stable.
@@ -131,6 +138,9 @@ public static partial class EditorUnitTests
                     LoadSkyboxTextureAsync(skyboxComp, "Textures", $"{names[0]}.exr");
             }
         }
+
+        if (Toggles.InitializeAtmosphericScattering)
+            AddAtmosphericScattering(rootNode, sunDirectionalLight);
 
         AddUberShaderPreviewGrid(rootNode);
         AddUberShaderReferenceGrid(rootNode);
@@ -161,6 +171,38 @@ public static partial class EditorUnitTests
                 Debug.LogException(ex, "[UnitTestingWorld] Failed to load skybox texture.");
             }
         }
+    }
+
+    private static void AddAtmosphericScattering(SceneNode rootNode, DirectionalLightComponent? sunDirectionalLight)
+    {
+        var settings = Toggles.AtmosphericScattering;
+        SceneNode atmosphereNode = rootNode.NewChild("AtmosphericScattering");
+        var atmosphereTransform = atmosphereNode.SetTransform<Transform>();
+        atmosphereTransform.Translation = new Vector3(settings.Translation.X, settings.Translation.Y, settings.Translation.Z);
+
+        var atmosphere = atmosphereNode.AddComponent<AtmosphericScatteringComponent>()!;
+        atmosphere.GroundRadius = settings.GroundRadius;
+        atmosphere.AtmosphereHeight = settings.AtmosphereHeight;
+        atmosphere.GroundLevelOffset = settings.GroundLevelOffset;
+        atmosphere.SunIntensity = settings.SunIntensity;
+        atmosphere.SunColor = new ColorF3(settings.SunColor.R, settings.SunColor.G, settings.SunColor.B);
+        atmosphere.RayleighScaleHeight = settings.RayleighScaleHeight;
+        atmosphere.MieScaleHeight = settings.MieScaleHeight;
+        atmosphere.RayleighScattering = new Vector3(
+            settings.RayleighScattering.R,
+            settings.RayleighScattering.G,
+            settings.RayleighScattering.B);
+        atmosphere.MieScattering = new Vector3(
+            settings.MieScattering.R,
+            settings.MieScattering.G,
+            settings.MieScattering.B);
+        atmosphere.MieAnisotropy = settings.MieAnisotropy;
+        atmosphere.ExposureScale = settings.ExposureScale;
+        atmosphere.GroundAlbedo = settings.GroundAlbedo;
+        atmosphere.SunDirectionalLight = sunDirectionalLight;
+        atmosphere.SunSource = sunDirectionalLight is null
+            ? AtmosphericScatteringComponent.ESunSource.DirectionOverride
+            : AtmosphericScatteringComponent.ESunSource.ExplicitDirectionalLight;
     }
 
     //private static void AddPBRTestOrbs(SceneNode rootNode, float y)

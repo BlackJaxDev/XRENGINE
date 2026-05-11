@@ -1,7 +1,5 @@
 #version 460
 
-#define MAX_OBJECTS 1024
-#define MAX_OCTREE_NODES (MAX_OBJECTS * 2 - 1)
 #define OVERFLOW_MORTON 1u
 #define OVERFLOW_NODE 2u
 #define OVERFLOW_QUEUE 4u
@@ -28,7 +26,7 @@ struct MortonObject
 
 layout(std430, binding = 1) buffer MortonCodes
 {
-    MortonObject mortonObjects[MAX_OBJECTS];
+    MortonObject mortonObjects[];
 };
 
 layout(std430, binding = 8) buffer OverflowFlags
@@ -70,12 +68,12 @@ layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 void main()
 {
     uint gid = gl_GlobalInvocationID.x;
-    uint capacity = (mortonCapacity == 0u) ? MAX_OBJECTS : mortonCapacity;
+    uint capacity = mortonCapacity;
 
-    if (gid == 0u && (numObjects > MAX_OBJECTS || numObjects > capacity))
+    if (gid == 0u && (capacity == 0u || numObjects > capacity))
         atomicOr(overflowFlags, OVERFLOW_MORTON);
 
-    if (gid >= numObjects || gid >= capacity || numObjects == 0u || numObjects > MAX_OBJECTS)
+    if (gid >= numObjects || gid >= capacity || numObjects == 0u)
     {
         return;
     }

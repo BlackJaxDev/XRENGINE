@@ -153,6 +153,221 @@ namespace XREngine.Rendering.Commands
             cmd.SetBoundingSphere(worldCenter, worldRadius);
         }
 
+        // Tight world-space AABB for a single command, written into _commandAabbBuffer.
+        // Layout matches the shader-side Aabb struct in bvh_nodes.glslinc / bvh_build.comp:
+        //   vec4 minBounds; vec4 maxBounds;   (8 floats, 32 bytes)
+        // The W components are unused and kept at 0.0 for alignment.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CommandWorldAabb
+        {
+            public Vector4 Min;
+            public Vector4 Max;
+        }
+
+        /// <summary>
+        /// Computes a tight world-space AABB from <paramref name="renderInfo"/>'s culling
+        /// volume + basis matrix (falling back to <paramref name="fallbackLocal"/> +
+        /// <paramref name="fallbackMatrix"/> when the renderable hasn't yet populated those),
+        /// and writes it into <see cref="_commandAabbBuffer"/> at <paramref name="commandIndex"/>.
+        /// Only meaningful when the internal BVH is active; callers must gate accordingly.
+        ///
+        /// When the renderer owning this command has been registered via
+        /// <see cref="SetRendererOwnsGpuAabb"/>, this method writes a +inf/-inf sentinel
+        /// instead so the GPU reducer (<c>SkinnedBoundsReduce.comp</c>) can monotonically
+        /// fill in the actual world-space bounds via atomic min/max each frame.
+        /// </summary>
+        private void WriteTightCommandAabb(
+            uint commandIndex,
+            RenderInfo? renderInfo,
+            in AABB fallbackLocal,
+            in Matrix4x4 fallbackMatrix)
+        {
+            // Path A: GPU owns this slot. Seed with +inf/-inf so the per-frame atomic
+            // reduce produces the correct envelope. Do not perform the CPU 8-corner
+            // transform, which would just be overwritten by the reducer.
+            if (IsCommandOwnedByGpuAabb(commandIndex))
+            {
+                WriteCommandAabbSentinel(commandIndex);
+                return;
+            }
+
+            AABB localBounds = fallbackLocal;
+            Matrix4x4 basis = fallbackMatrix;
+
+            if (renderInfo is RenderInfo3D info3d)
+            {
+                if (info3d.LocalCullingVolume is AABB localOverride)
+                    localBounds = localOverride;
+                basis = info3d.CullingOffsetMatrix;
+            }
+
+            // 8-corner AABB transform (handles arbitrary rotation/scale tightly).
+            localBounds.GetCorners(
+                out Vector3 c0,
+                out Vector3 c1,
+                out Vector3 c2,
+                out Vector3 c3,
+                out Vector3 c4,
+                out Vector3 c5,
+                out Vector3 c6,
+                out Vector3 c7);
+
+            Vector3 w0, w1, w2, w3, w4, w5, w6, w7;
+            if (AffineMatrix4x3.TryFromMatrix4x4(basis, out AffineMatrix4x3 affine))
+            {
+                w0 = affine.TransformPosition(c0);
+                w1 = affine.TransformPosition(c1);
+                w2 = affine.TransformPosition(c2);
+                w3 = affine.TransformPosition(c3);
+                w4 = affine.TransformPosition(c4);
+                w5 = affine.TransformPosition(c5);
+                w6 = affine.TransformPosition(c6);
+                w7 = affine.TransformPosition(c7);
+            }
+            else
+            {
+                Matrix4x4 m = basis;
+                w0 = Vector3.Transform(c0, m);
+                w1 = Vector3.Transform(c1, m);
+                w2 = Vector3.Transform(c2, m);
+                w3 = Vector3.Transform(c3, m);
+                w4 = Vector3.Transform(c4, m);
+                w5 = Vector3.Transform(c5, m);
+                w6 = Vector3.Transform(c6, m);
+                w7 = Vector3.Transform(c7, m);
+            }
+
+            Vector3 min = Vector3.Min(Vector3.Min(Vector3.Min(w0, w1), Vector3.Min(w2, w3)),
+                                      Vector3.Min(Vector3.Min(w4, w5), Vector3.Min(w6, w7)));
+            Vector3 max = Vector3.Max(Vector3.Max(Vector3.Max(w0, w1), Vector3.Max(w2, w3)),
+                                      Vector3.Max(Vector3.Max(w4, w5), Vector3.Max(w6, w7)));
+
+            EnsureCommandAabbBuffer(Math.Max(commandIndex + 1u, UpdatingCommandCount));
+            var buffer = _commandAabbBuffer;
+            if (buffer is null)
+                return;
+
+            var entry = new CommandWorldAabb
+            {
+                Min = new Vector4(min, 0f),
+                Max = new Vector4(max, 0f),
+            };
+            buffer.SetDataRawAtIndex(commandIndex, entry);
+
+            const int CommandAabbStrideBytes = 32; // 8 floats
+            buffer.PushSubData((int)(commandIndex * CommandAabbStrideBytes), CommandAabbStrideBytes);
+        }
+
+        // -------------------------------------------------------------------------
+        // Path A (GPU-direct skinned-recompute bounds) public API
+        // -------------------------------------------------------------------------
+        // Renderers that produce their world-space leaf AABB via the GPU reducer
+        // (SkinnedBoundsReduce.comp running on SkinningPrepass output) opt in by
+        // calling SetRendererOwnsGpuAabb(renderer, true). All commands for that
+        // renderer then bypass the CPU 8-corner transform in WriteTightCommandAabb
+        // and receive a +inf/-inf sentinel instead, which the reducer fills in
+        // via atomic min/max each frame.
+        //
+        // The reducer expects the bounds buffer to be a packed uvec4[] where
+        //     slot N stores: BoundsBits[2*N+0] = (min.x|y|z bits, _),
+        //                    BoundsBits[2*N+1] = (max.x|y|z bits, _).
+        // _commandAabbBuffer already matches this layout (Vector4 Min; Vector4 Max
+        // per element = 32 bytes), so slotIndex == commandIndex directly.
+
+        private readonly HashSet<XRMeshRenderer> _gpuAabbRenderers = [];
+        private static readonly Vector4 _gpuAabbSentinelMin = new(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity, 0f);
+        private static readonly Vector4 _gpuAabbSentinelMax = new(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity, 0f);
+
+        /// <summary>
+        /// The raw command-AABB SSBO used as BVH leaf bounds. May be null until the
+        /// first command has been registered while the internal BVH is enabled.
+        /// </summary>
+        public XRDataBuffer? CommandAabbBuffer => _commandAabbBuffer;
+
+        /// <summary>
+        /// Ensures <see cref="CommandAabbBuffer"/> has at least <paramref name="minCount"/>
+        /// slots allocated.
+        /// </summary>
+        public void EnsureCommandAabbCapacity(uint minCount)
+            => EnsureCommandAabbBuffer(Math.Max(minCount, UpdatingCommandCount));
+
+        /// <summary>
+        /// Writes a +inf/-inf sentinel into the supplied slot so a subsequent atomic
+        /// reduce produces the correct envelope. Pushes the 32-byte subrange.
+        /// </summary>
+        public void WriteCommandAabbSentinel(uint commandIndex)
+        {
+            EnsureCommandAabbBuffer(Math.Max(commandIndex + 1u, UpdatingCommandCount));
+            var buffer = _commandAabbBuffer;
+            if (buffer is null)
+                return;
+
+            var entry = new CommandWorldAabb
+            {
+                Min = _gpuAabbSentinelMin,
+                Max = _gpuAabbSentinelMax,
+            };
+            buffer.SetDataRawAtIndex(commandIndex, entry);
+
+            const int CommandAabbStrideBytes = 32;
+            buffer.PushSubData((int)(commandIndex * CommandAabbStrideBytes), CommandAabbStrideBytes);
+        }
+
+        /// <summary>
+        /// Mark or unmark a renderer as owner of its world-space command AABBs.
+        /// When marked, <see cref="WriteTightCommandAabb"/> writes sentinels for the
+        /// renderer's commands instead of the CPU 8-corner transform.
+        /// </summary>
+        public void SetRendererOwnsGpuAabb(XRMeshRenderer renderer, bool enabled)
+        {
+            if (renderer is null)
+                return;
+
+            if (enabled)
+                _gpuAabbRenderers.Add(renderer);
+            else
+                _gpuAabbRenderers.Remove(renderer);
+        }
+
+        /// <summary>True when the given renderer's command AABBs are produced on the GPU.</summary>
+        public bool IsRendererOwnsGpuAabb(XRMeshRenderer renderer)
+            => renderer is not null && _gpuAabbRenderers.Contains(renderer);
+
+        private bool IsCommandOwnedByGpuAabb(uint commandIndex)
+        {
+            if (_gpuAabbRenderers.Count == 0)
+                return false;
+            if (!_commandIndexLookup.TryGetValue(commandIndex, out var entry))
+                return false;
+            var renderer = entry.command?.Mesh;
+            return renderer is not null && _gpuAabbRenderers.Contains(renderer);
+        }
+
+        /// <summary>
+        /// Fills <paramref name="output"/> with every active GPU command index that
+        /// belongs to <paramref name="renderer"/>. Returns true if at least one was found.
+        /// </summary>
+        public bool TryGetCommandIndicesForRenderer(XRMeshRenderer renderer, List<uint> output)
+        {
+            output?.Clear();
+            if (renderer is null || output is null || _commandIndicesPerMeshCommand.Count == 0)
+                return false;
+
+            bool any = false;
+            foreach (var kvp in _commandIndicesPerMeshCommand)
+            {
+                if (!ReferenceEquals(kvp.Key.Mesh, renderer))
+                    continue;
+
+                var list = kvp.Value;
+                for (int i = 0; i < list.Count; i++)
+                    output.Add(list[i]);
+
+                any |= list.Count > 0;
+            }
+            return any;
+        }
+
         #endregion
 
         #region Mesh Atlas State
@@ -274,6 +489,14 @@ namespace XREngine.Rendering.Commands
             public IndexSize IndexElementSize = IndexSize.FourBytes;
             public readonly Dictionary<XRMesh, AtlasAllocation> MeshOffsets = [];
             public readonly List<IndexTriangle> IndirectFaceIndices = [];
+
+            // Tracks how much of the client-side atlas has been pushed to the GPU,
+            // so RebuildAtlasIfDirty can issue subrange PushSubData calls instead of
+            // re-uploading the entire SoA arrays on every rebuild.
+            // Invalidated (reset to 0) whenever the underlying GPU buffer must be
+            // fully re-allocated (Resize beyond current GPU capacity).
+            public int LastUploadedVertexCount;
+            public int LastUploadedIndexCount;
         }
 
         private readonly AtlasTierState _staticAtlas = new(EAtlasTier.Static);
@@ -1732,14 +1955,48 @@ namespace XREngine.Rendering.Commands
 
         private void VerifyBufferLengths(AtlasTierState state, int needed)
         {
+            bool grew = false;
             if (state.Positions!.ElementCount < needed)
+            {
                 state.Positions.Resize((uint)XRMath.NextPowerOfTwo(needed));
+                grew = true;
+            }
             if (state.Normals!.ElementCount < needed)
+            {
                 state.Normals.Resize((uint)XRMath.NextPowerOfTwo(needed));
+                grew = true;
+            }
             if (state.Tangents!.ElementCount < needed)
+            {
                 state.Tangents.Resize((uint)XRMath.NextPowerOfTwo(needed));
+                grew = true;
+            }
             if (state.UV0!.ElementCount < needed)
+            {
                 state.UV0.Resize((uint)XRMath.NextPowerOfTwo(needed));
+                grew = true;
+            }
+
+            // A Resize invalidates GPU-side storage on next push (PushSubData will
+            // fall back to a full PushData when dataLength > _lastPushedLength).
+            // Force a full re-upload by resetting our high-water mark so the next
+            // rebuild pushes the full appended range and the GPU PushData covers it.
+            if (grew)
+                state.LastUploadedVertexCount = 0;
+        }
+
+        private static void PushVertexRange(XRDataBuffer buffer, int firstVertex, int newVertexCount)
+        {
+            if (newVertexCount <= firstVertex)
+                return;
+            uint elemSize = buffer.ElementSize;
+            int offset = firstVertex * (int)elemSize;
+            uint length = (uint)(newVertexCount - firstVertex) * elemSize;
+            // When firstVertex == 0 and the buffer grew, GLDataBuffer.PushSubData
+            // detects dataLength > _lastPushedLength and falls back to a full PushData,
+            // which is the correct realloc+upload. For subsequent stable-capacity
+            // rebuilds, NamedBufferSubData uploads only the appended tail.
+            buffer.PushSubData(offset, length);
         }
 
         private static bool TryPrepareAtlasIndexBuffer(AtlasTierState state, int requiredIndices)
@@ -1787,23 +2044,49 @@ namespace XREngine.Rendering.Commands
 
             EnsureAtlasBuffers(tier);
 
-            // Grow buffers to required counts (no shrinking to avoid churn)
+            // Grow buffers to required counts (no shrinking to avoid churn).
+            // If any buffer must grow, the LastUploadedVertexCount high-water mark
+            // is reset so the next push covers the entire range. The GPU-side
+            // GLDataBuffer.PushSubData falls back to a full PushData when
+            // dataLength > _lastPushedLength, so this is correct.
+            bool grew = false;
             if (state.Positions!.ElementCount < state.VertexCount)
+            {
                 state.Positions.Resize((uint)state.VertexCount);
-
+                grew = true;
+            }
             if (state.Normals!.ElementCount < state.VertexCount)
+            {
                 state.Normals.Resize((uint)state.VertexCount);
-
+                grew = true;
+            }
             if (state.Tangents!.ElementCount < state.VertexCount)
+            {
                 state.Tangents.Resize((uint)state.VertexCount);
-
+                grew = true;
+            }
             if (state.UV0!.ElementCount < state.VertexCount)
+            {
                 state.UV0.Resize((uint)state.VertexCount);
+                grew = true;
+            }
+            if (grew)
+                state.LastUploadedVertexCount = 0;
 
-            state.Positions.PushSubData();
-            state.Normals.PushSubData();
-            state.Tangents.PushSubData();
-            state.UV0.PushSubData();
+            // Push only the appended vertex range. Per-attribute subrange push:
+            //   offset = lastUploaded * elementSize, length = (newCount - lastUploaded) * elementSize
+            // After a grow, lastUploaded was reset to 0 so the full buffer is pushed
+            // (which inside GLDataBuffer becomes a single full PushData realloc + upload).
+            int lastV = state.LastUploadedVertexCount;
+            int newV = state.VertexCount;
+            if (newV > lastV)
+            {
+                PushVertexRange(state.Positions, lastV, newV);
+                PushVertexRange(state.Normals, lastV, newV);
+                PushVertexRange(state.Tangents, lastV, newV);
+                PushVertexRange(state.UV0, lastV, newV);
+                state.LastUploadedVertexCount = newV;
+            }
 
             if (state.Indices is not null)
             {
@@ -1821,20 +2104,31 @@ namespace XREngine.Rendering.Commands
                     // Future optimization: use u16 when state.VertexCount < 65536
                     state.IndexElementSize = IndexSize.FourBytes;
 
+                    uint priorIndexCapacity = state.Indices.ElementCount;
                     if (!TryPrepareAtlasIndexBuffer(state, requiredIndices))
                     {
                         Debug.MeshesWarning($"[GPUScene] Failed to prepare {GetTierLabel(tier)} atlas index buffer; skipping atlas upload to avoid memory corruption.");
                         return;
                     }
+                    if (state.Indices.ElementCount > priorIndexCapacity)
+                    {
+                        // Buffer grew; GPU storage must be reallocated on next push.
+                        // Force full re-upload of all triangles.
+                        state.LastUploadedIndexCount = 0;
+                    }
 
                     uint capacity = state.Indices.ElementCount;
-                    uint writeIndex = 0;
+                    int lastIdxCount = state.LastUploadedIndexCount;
+                    int firstTriangle = lastIdxCount / 3;
+                    uint writeIndex = (uint)lastIdxCount;
+                    bool overflow = false;
 
-                    for (int i = 0; i < faceSnapshot.Length; ++i)
+                    for (int i = firstTriangle; i < faceSnapshot.Length; ++i)
                     {
                         if (writeIndex + 2 >= capacity)
                         {
                             Debug.MeshesWarning($"[GPUScene] Atlas index buffer overflow when rebuilding atlas (capacity={capacity}, required={requiredIndices}).");
+                            overflow = true;
                             break;
                         }
 
@@ -1845,12 +2139,21 @@ namespace XREngine.Rendering.Commands
                     }
 
                     state.IndexCount = (int)writeIndex;
-                    uint byteLength = writeIndex * (uint)sizeof(uint);
-                    state.Indices.PushSubData(0, byteLength);
+
+                    // Push only the appended index range. After a grow, lastIdxCount==0
+                    // and PushSubData(0, byteLength) becomes a full PushData (correct).
+                    uint pushOffset = (uint)lastIdxCount * (uint)sizeof(uint);
+                    uint pushLength = (writeIndex - (uint)lastIdxCount) * (uint)sizeof(uint);
+                    if (pushLength > 0)
+                        state.Indices.PushSubData((int)pushOffset, pushLength);
+
+                    if (!overflow)
+                        state.LastUploadedIndexCount = (int)writeIndex;
                 }
                 else
                 {
                     state.IndexCount = 0;
+                    state.LastUploadedIndexCount = 0;
                     state.Indices.PushSubData(0, 0);
                 }
             }
@@ -1952,6 +2255,8 @@ namespace XREngine.Rendering.Commands
                 state.Dirty = false;
                 state.VertexCount = 0;
                 state.IndexCount = 0;
+                state.LastUploadedVertexCount = 0;
+                state.LastUploadedIndexCount = 0;
                 state.Version = 0;
                 state.IndexElementSize = IndexSize.FourBytes;
                 state.MeshOffsets.Clear();
@@ -2610,6 +2915,8 @@ namespace XREngine.Rendering.Commands
                         commandValue.Reserved1 = index;
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
+                        if (_useInternalBvh)
+                            WriteTightCommandAabb(index, renderInfo, mesh.Bounds, commandValue.WorldMatrix);
                                                 LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
                         AcquireLogicalMeshResidency(commandValue.LogicalMeshID);
 
@@ -2772,6 +3079,13 @@ namespace XREngine.Rendering.Commands
                 state.VertexCount = 0;
             if (state.IndexCount < 0)
                 state.IndexCount = 0;
+
+            // Compaction slid later vertices forward over the removed span, rewriting the front
+            // of the buffer. Invalidate the upload high-water marks so the next rebuild
+            // re-pushes the full (now smaller) atlas. This is correct but pessimal; future work
+            // could push only [vertexOffset .. state.VertexCount).
+            state.LastUploadedVertexCount = 0;
+            state.LastUploadedIndexCount = 0;
 
             MarkAtlasDirty(tier);
             SyncLegacyDynamicAtlasState();
@@ -3484,6 +3798,8 @@ namespace XREngine.Rendering.Commands
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, updated);
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
                             LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
+                        if (_useInternalBvh)
+                            WriteTightCommandAabb(index, renderInfo, mesh.Bounds, updated.WorldMatrix);
                         anyChanged = true;
                         minIndex = Math.Min(minIndex, index);
                         maxIndex = Math.Max(maxIndex, index);
@@ -3790,11 +4106,11 @@ namespace XREngine.Rendering.Commands
             if (!_useInternalBvh || !_bvhDirty)
                 return;
 
-            RebuildInternalBvh();
-            _bvhDirty = false;
+            if (RebuildInternalBvh())
+                _bvhDirty = false;
         }
 
-        private void RebuildInternalBvh()
+        private bool RebuildInternalBvh()
         {
             uint commandCount = _totalCommandCount;
             if (commandCount == 0 || _allLoadedCommandsBuffer is null)
@@ -3803,11 +4119,22 @@ namespace XREngine.Rendering.Commands
                 _bvhNodeCount = 0;
                 _bvhPrimitiveCount = 0;
                 _gpuBvhTree?.Clear();
-                return;
+                return true;
             }
 
             EnsureGpuBvhResources(commandCount);
-            DispatchCommandAabbBuild(commandCount);
+            if (!EnsureBvhProgramsReady(commandCount))
+            {
+                _bvhReady = false;
+                return false;
+            }
+
+            // Tight per-command world AABBs are populated CPU-side at command insert/update
+            // time via WriteTightCommandAabb (see #region Bounds Helpers). The legacy
+            // sphere-derived GPU AABB build pass (bvh_aabb_from_commands.comp) is no longer
+            // dispatched: it inflated each AABB by ~sqrt(3) per axis (cube of the bounding
+            // sphere), which compounded up the BVH and produced loose visualization /
+            // suboptimal cull bounds.
 
             _gpuBvhTree!.Build(_commandAabbBuffer!, commandCount, _bounds);
 
@@ -3817,22 +4144,35 @@ namespace XREngine.Rendering.Commands
 
             if (IsGpuSceneLoggingEnabled())
                 SceneLog($"[GPUScene] Built internal BVH with {_bvhNodeCount} nodes for {commandCount} commands");
+
+            return true;
         }
 
-        private void RefitInternalBvh(uint commandCount)
+        private bool RefitInternalBvh(uint commandCount)
         {
             if (_gpuBvhTree is null || _allLoadedCommandsBuffer is null || _commandAabbBuffer is null)
-                return;
+            {
+                _bvhReady = false;
+                return false;
+            }
 
             if (commandCount == 0 || _bvhPrimitiveCount == 0)
-                return;
+                return true;
 
-            DispatchCommandAabbBuild(commandCount);
+            if (!EnsureBvhProgramsReady(commandCount))
+            {
+                _bvhReady = false;
+                return false;
+            }
+
+            // Tight per-command world AABBs are maintained via WriteTightCommandAabb on
+            // every insert/update; nothing to refresh here.
             _gpuBvhTree.Refit();
 
             _bvhNodeCount = _gpuBvhTree.NodeCount;
             _bvhPrimitiveCount = _gpuBvhTree.PrimitiveCount;
             _bvhReady = _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
+            return true;
         }
 
         public void PrepareBvhForCulling(uint commandCount)
@@ -3851,16 +4191,18 @@ namespace XREngine.Rendering.Commands
 
             if (_bvhDirty || !_bvhReady || _bvhPrimitiveCount != commandCount || _gpuBvhTree is null)
             {
-                RebuildInternalBvh();
-                _bvhDirty = false;
-                _bvhRefitPending = false;
+                if (RebuildInternalBvh())
+                {
+                    _bvhDirty = false;
+                    _bvhRefitPending = false;
+                }
                 return;
             }
 
             if (_bvhRefitPending)
             {
-                RefitInternalBvh(commandCount);
-                _bvhRefitPending = false;
+                if (RefitInternalBvh(commandCount))
+                    _bvhRefitPending = false;
             }
         }
 
@@ -3868,7 +4210,34 @@ namespace XREngine.Rendering.Commands
         {
             _gpuBvhTree ??= new GpuBvhTree();
             EnsureCommandAabbBuffer(commandCount);
-            EnsureCommandAabbProgram();
+            // The legacy GPU AABB build program (EnsureCommandAabbProgram) is intentionally
+            // not initialized here: per-command world AABBs are now CPU-populated tight
+            // bounds via WriteTightCommandAabb. The program/shader remain on disk only as
+            // a fallback for future paths that want a GPU-only path.
+        }
+
+        private bool EnsureBvhProgramsReady(uint commandCount)
+        {
+            // _commandAabbProgram is no longer required (see EnsureGpuBvhResources).
+            bool ready = true;
+            if (_gpuBvhTree is not null)
+                ready &= _gpuBvhTree.EnsureProgramsReady(commandCount);
+
+            return ready;
+        }
+
+        private static bool EnsureProgramReady(XRRenderProgram? program)
+        {
+            if (program is null)
+                return false;
+
+            if (program.IsLinked)
+                return true;
+
+            if (!program.LinkReady)
+                program.Link();
+
+            return false;
         }
 
         private void EnsureCommandAabbBuffer(uint commandCount)

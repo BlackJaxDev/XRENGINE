@@ -232,6 +232,7 @@ namespace XREngine.Scene.Components.Editing
 
             _screenMat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.LightGray);
             _screenMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            _screenMat.RenderOptions.ExcludeFromGpuIndirect = true;
             //_screenMat.RenderOptions.LineWidth = 1.0f;
 
             GetSphere(rotationMeshes);
@@ -373,6 +374,7 @@ namespace XREngine.Scene.Components.Editing
             axisMat = XRMaterial.CreateUnlitColorMaterialForward(unit);
             axisMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
             axisMat.RenderOptions.CullMode = ECullMode.None;
+            axisMat.RenderOptions.ExcludeFromGpuIndirect = true;
             //axisMat.RenderOptions.LineWidth = 1.0f;
             _axisMat[normalAxis] = axisMat;
 
@@ -382,20 +384,24 @@ namespace XREngine.Scene.Components.Editing
             rotationAxisMat.RenderOptions.DepthTest.UpdateDepth = false;
             rotationAxisMat.RenderOptions.DepthTest.Function = Rendering.Models.Materials.EComparison.Lequal;
             rotationAxisMat.RenderOptions.CullMode = ECullMode.None;
+            rotationAxisMat.RenderOptions.ExcludeFromGpuIndirect = true;
             _rotationAxisMat[normalAxis] = rotationAxisMat;
 
             planeMat1 = XRMaterial.CreateUnlitColorMaterialForward(unit1);
             planeMat1.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            planeMat1.RenderOptions.ExcludeFromGpuIndirect = true;
             //planeMat1.RenderOptions.LineWidth = 1.0f;
             _transPlaneMat[(normalAxis << 1) + 0] = planeMat1;
 
             planeMat2 = XRMaterial.CreateUnlitColorMaterialForward(unit2);
             planeMat2.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            planeMat2.RenderOptions.ExcludeFromGpuIndirect = true;
             //planeMat2.RenderOptions.LineWidth = 1.0f;
             _transPlaneMat[(normalAxis << 1) + 1] = planeMat2;
 
             scalePlaneMat = XRMaterial.CreateUnlitColorMaterialForward(unit);
             scalePlaneMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            scalePlaneMat.RenderOptions.ExcludeFromGpuIndirect = true;
             //scalePlaneMat.RenderOptions.LineWidth = 1.0f;
             _scalePlaneMat[normalAxis] = scalePlaneMat;
         }
@@ -427,6 +433,7 @@ namespace XREngine.Scene.Components.Editing
             sphereMat.RenderOptions.WriteGreen = false;
             sphereMat.RenderOptions.WriteBlue = false;
             sphereMat.RenderOptions.WriteAlpha = false;
+            sphereMat.RenderOptions.ExcludeFromGpuIndirect = true;
 
             XRMesh spherePrim = XRMesh.Shapes.SolidSphere(Vector3.Zero, _orbRadius, 10, 10);
             //isRotate = true

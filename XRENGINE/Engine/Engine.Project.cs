@@ -74,6 +74,10 @@ namespace XREngine
 
             using (SuppressSettingsCascades())
             {
+                // Load global engine defaults first, then project-local defaults that can replace them.
+                LoadGlobalEngineDefaults();
+                LoadProjectEngineDefaults();
+
                 // Load global editor preferences + project overrides
                 LoadGlobalEditorPreferences();
                 LoadProjectEditorPreferencesOverrides();
@@ -101,6 +105,8 @@ namespace XREngine
         /// </summary>
         public static void UnloadProject()
         {
+            Rendering.ProjectDefaultSettings = null;
+
             if (CurrentProject is null)
                 return;
 
@@ -119,6 +125,7 @@ namespace XREngine
 
             using (SuppressSettingsCascades())
             {
+                LoadGlobalEngineDefaults();
                 LoadGlobalEditorPreferences();
                 LoadSandboxEditorPreferencesOverrides();
                 LoadSandboxGameSettings();
@@ -140,6 +147,8 @@ namespace XREngine
         {
             _globalEditorPreferences?.ClearDirty();
             _editorPreferencesOverrides?.ClearDirty();
+            Rendering.GlobalDefaultSettings.ClearDirty();
+            Rendering.ProjectDefaultSettings?.ClearDirty();
             _userSettings?.ClearDirty();
             _gameSettings?.ClearDirty();
             _gameSettings?.BuildSettings?.ClearDirty();
@@ -175,6 +184,16 @@ namespace XREngine
 
             string configDir = Path.Combine(baseDir, "XREngine", "Global", SandboxConfigFolderName);
             return Path.Combine(configDir, "editor_preferences_global.asset");
+        }
+
+        private static string? GetGlobalEngineDefaultsPath()
+        {
+            string? baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrWhiteSpace(baseDir))
+                return null;
+
+            string configDir = Path.Combine(baseDir, "XREngine", "Global", SandboxConfigFolderName);
+            return Path.Combine(configDir, XRProject.EngineDefaultsFileName);
         }
 
         private static string? GetSandboxUserSettingsPath()
@@ -275,6 +294,114 @@ namespace XREngine
             {
                 Debug.LogWarning($"Failed to quarantine invalid settings asset '{settingsPath}': {ex}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Loads the globally persisted engine defaults from the user profile.
+        /// </summary>
+        private static void LoadGlobalEngineDefaults()
+        {
+            if (Assets is null)
+                return;
+
+            string? settingsPath = GetGlobalEngineDefaultsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<EngineSettings>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Global Engine Defaults";
+                    Assets.EnsureTracked(settings);
+                    Rendering.GlobalDefaultSettings = settings;
+                    Debug.Out("Loaded global engine defaults.");
+                }
+                return;
+            }
+
+            var created = Rendering.GlobalDefaultSettings;
+            created.FilePath = settingsPath;
+            created.Name = "Global Engine Defaults";
+            Assets.EnsureTracked(created);
+            Rendering.GlobalDefaultSettings = created;
+        }
+
+        /// <summary>
+        /// Loads project-local engine defaults that override the globally persisted defaults.
+        /// </summary>
+        private static void LoadProjectEngineDefaults()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.EngineDefaultsPath is null)
+            {
+                Rendering.ProjectDefaultSettings = null;
+                return;
+            }
+
+            string settingsPath = CurrentProject.EngineDefaultsPath;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = LoadFreshSettingsAsset<EngineSettings>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Project Engine Defaults";
+                    Assets.EnsureTracked(settings);
+                    Rendering.ProjectDefaultSettings = settings;
+                    Debug.Out("Loaded project engine defaults.");
+                }
+                return;
+            }
+
+            var created = CloneEngineSettings(Rendering.GlobalDefaultSettings);
+            created.FilePath = settingsPath;
+            created.Name = "Project Engine Defaults";
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(created);
+            Rendering.ProjectDefaultSettings = created;
+        }
+
+        private static EngineSettings CloneEngineSettings(EngineSettings source)
+        {
+            try
+            {
+                XRAssetGraphUtility.RefreshAssetGraph(source);
+                string yaml = AssetManager.Serializer.Serialize(source);
+                var clone = AssetManager.Deserializer.Deserialize<EngineSettings>(yaml) ?? new EngineSettings();
+                RegenerateAssetIds(clone);
+                clone.FilePath = null;
+                clone.Name = null;
+                clone.ClearDirty();
+                return clone;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to clone global engine defaults for project overrides. Using built-in defaults instead.{Environment.NewLine}{ex}");
+                return new EngineSettings();
+            }
+        }
+
+        private static void RegenerateAssetIds(XRAsset root)
+        {
+            XRAssetGraphUtility.RefreshAssetGraph(root);
+            root.Generate();
+            root.ClearDirty();
+
+            foreach (XRAsset embedded in root.EmbeddedAssets)
+            {
+                embedded.Generate();
+                embedded.ClearDirty();
             }
         }
 
@@ -616,6 +743,65 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Saves the global engine defaults to the user profile.
+        /// </summary>
+        public static void SaveGlobalEngineDefaults()
+        {
+            if (Assets is null)
+                return;
+
+            var settings = Rendering.GlobalDefaultSettings;
+            if (settings is null)
+                return;
+
+            string? settingsPath = GetGlobalEngineDefaultsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Global Engine Defaults";
+            Assets.EnsureTracked(settings);
+            Assets.Save(settings);
+            Debug.Out("Saved global engine defaults.");
+        }
+
+        /// <summary>
+        /// Saves project-local engine defaults, or the global defaults when no project is loaded.
+        /// </summary>
+        public static void SaveProjectEngineDefaults()
+        {
+            if (Assets is null)
+                return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveGlobalEngineDefaults();
+                return;
+            }
+
+            if (CurrentProject.EngineDefaultsPath is null)
+                return;
+
+            string settingsPath = CurrentProject.EngineDefaultsPath;
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            var settings = Rendering.ProjectDefaultSettings ?? CloneEngineSettings(Rendering.GlobalDefaultSettings);
+            settings.FilePath = settingsPath;
+            settings.Name = "Project Engine Defaults";
+            Assets.EnsureTracked(settings);
+            Rendering.ProjectDefaultSettings = settings;
+
+            Assets.Save(settings);
+            Debug.Out("Saved project engine defaults.");
+        }
+
+        /// <summary>
         /// Saves the editor preference overrides to the current project directory.
         /// </summary>
         public static void SaveProjectEditorPreferencesOverrides()
@@ -779,6 +965,7 @@ namespace XREngine
         /// </summary>
         public static void SaveProjectSettings()
         {
+            SaveProjectEngineDefaults();
             SaveProjectEditorPreferencesOverrides();
             SaveProjectGameSettings();
             SaveProjectUserSettings();

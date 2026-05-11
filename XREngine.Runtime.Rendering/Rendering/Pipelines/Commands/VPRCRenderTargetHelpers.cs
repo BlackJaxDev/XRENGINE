@@ -1,5 +1,6 @@
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Scene;
 
@@ -40,6 +41,23 @@ namespace XREngine.Rendering.Pipelines.Commands
             int width,
             int height,
             bool gpuDispatch = false)
+            => RenderPass(
+                pipeline,
+                collection,
+                camera,
+                renderPass,
+                width,
+                height,
+                gpuDispatch ? EMeshSubmissionStrategy.GpuIndirectInstrumented : EMeshSubmissionStrategy.CpuDirect);
+
+        internal static void RenderPass(
+            XRRenderPipelineInstance pipeline,
+            RenderCommandCollection collection,
+            XRCamera camera,
+            int renderPass,
+            int width,
+            int height,
+            EMeshSubmissionStrategy meshSubmissionStrategy)
         {
             BoundingRectangle previousCrop = pipeline.RenderState.CurrentCropRegion;
             bool hadCrop = previousCrop.Width > 0 && previousCrop.Height > 0;
@@ -50,8 +68,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 using var areaScope = pipeline.RenderState.PushRenderArea(width, height);
                 using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(renderPass);
                 using var cameraScope = pipeline.RenderState.PushRenderingCamera(camera);
-                if (gpuDispatch)
-                    collection.RenderGPU(renderPass);
+                if (meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
+                    collection.RenderGPU(renderPass, meshSubmissionStrategy);
                 else
                     collection.RenderCPU(renderPass, false, camera);
             }

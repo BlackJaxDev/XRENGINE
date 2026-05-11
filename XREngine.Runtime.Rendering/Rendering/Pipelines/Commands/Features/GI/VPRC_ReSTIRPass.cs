@@ -45,6 +45,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string CompositeQuadFBOName { get; set; } = DefaultRenderPipeline.RestirCompositeFBOName;
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
+        protected override bool ShouldExecuteThisFrame()
+            => Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
+            {
+                DefaultRenderPipeline pipeline => pipeline.UsesRestirGI,
+                DefaultRenderPipeline2 pipeline => pipeline.UsesRestirGI,
+                _ => false,
+            };
+
         protected override void Execute()
         {
             bool usesRestirGI = ActivePipelineInstance.Pipeline switch

@@ -261,6 +261,17 @@ public static partial class EditorImGuiUI
         if (_engineProfilerDataSource is not null) return;
         _engineProfilerDataSource = new EngineProfilerDataSource();
         _engineProfilerRenderer = new ProfilerPanelRenderer(_engineProfilerDataSource);
+        _engineProfilerRenderer.GpuPipelineTimingDumpRequested = DumpGpuPipelineTimingHistory;
+    }
+
+    private static ProfilerPanelRenderer.GpuPipelineTimingDumpResult DumpGpuPipelineTimingHistory(string pipelineName)
+    {
+        if (Engine.Rendering.Stats.TryDumpGpuRenderPipelineTimingHistory(pipelineName, out string fileName, out string? error))
+            return new ProfilerPanelRenderer.GpuPipelineTimingDumpResult(true, $"GPU timing dump written: {fileName}");
+
+        return new ProfilerPanelRenderer.GpuPipelineTimingDumpResult(
+            false,
+            string.IsNullOrWhiteSpace(error) ? $"GPU timing dump failed for '{pipelineName}'." : error);
     }
 
     /// <summary>

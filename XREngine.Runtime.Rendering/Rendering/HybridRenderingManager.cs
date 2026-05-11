@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -24,6 +25,7 @@ namespace XREngine.Rendering
         private const uint IndirectCommandSsboBinding = 7;
         private const uint InstanceTransformSsboBinding = GPUBatchingBindings.InstanceTransformBuffer;
         private const uint InstanceSourceIndexSsboBinding = GPUBatchingBindings.InstanceSourceIndexBuffer;
+        private const uint MaterialTableSsboBinding = 11;
         private const uint LodTransitionSsboBinding = 16;
         private const int IndirectCommandFloatCount = 48;
         private const int IndirectTextGlyphOffsetFloatIndex = 46;
@@ -35,6 +37,7 @@ namespace XREngine.Rendering
         private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
         private const string GlyphTexCoordsBufferName = "GlyphTexCoordsBuffer";
         private const string GlyphRotationsBufferName = "GlyphRotationsBuffer";
+        private const int ZeroReadbackPendingProgramSampleLimit = 6;
         private XRRenderProgram? _indirectCompProgram;
 
         private bool _useMeshletPipeline = false;
@@ -52,17 +55,28 @@ namespace XREngine.Rendering
         public readonly long ShaderStateRevision = shaderStateRevision;
         }
 
+        private readonly struct MaterialTableProgramCache(XRRenderProgram program, XRShader? generatedVertexShader, XRShader fragmentShader)
+        {
+            public readonly XRRenderProgram Program = program;
+            public readonly XRShader? GeneratedVertexShader = generatedVertexShader;
+            public readonly XRShader FragmentShader = fragmentShader;
+        }
+
         private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _pendingMaterialPrograms = [];
+        private readonly Dictionary<(bool bindless, int rendererKey), MaterialTableProgramCache> _materialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
         private XRDataBuffer? _indirectTextRotationsBuffer;
         private bool _indirectTextBuffersNeedFullPush = true;
+        private int _bindlessMaterialTableUnsupportedLogBudget = 4;
 
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
     private static readonly HashSet<uint> _warnedMultiVertexMaterials = [];
     private static bool IsGpuIndirectLoggingEnabled()
         => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+    private static bool IsInstrumentedStrategy(GPURenderPassCollection renderPasses)
+        => renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented;
 
     /// <summary>
     /// Logs a GPU indirect debugging message using the new structured logger.
@@ -276,18 +290,62 @@ namespace XREngine.Rendering
             if (camera is null || scene is null || (_useMeshletPipeline && scene.Meshlets.Render(camera, currentRenderPass)))
                 return;
 
+            if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+                !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
+            {
+                Engine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.ZeroReadbackScatterMissing.{currentRenderPass}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Zero-readback mesh submission for pass {0} could not prepare material-tier scatter. Skipping CPU fallback.",
+                    currentRenderPass);
+                return;
+            }
+
             // Material map from scene (ID -> XRMaterial)
             var materialMap = renderPasses.GetMaterialMap(scene);
 
             if (renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
-                RenderZeroReadbackMaterialTiers(
-                    renderPasses,
-                    camera,
-                    scene,
-                    vaoRenderer,
-                    currentRenderPass,
-                    materialMap);
+                switch (renderPasses.ZeroReadbackMaterialDrawPath)
+                {
+                    case EZeroReadbackMaterialDrawPath.ActiveBucketList:
+                        RenderZeroReadbackActiveMaterialBuckets(
+                            renderPasses,
+                            camera,
+                            scene,
+                            vaoRenderer,
+                            currentRenderPass,
+                            materialMap);
+                        break;
+                    case EZeroReadbackMaterialDrawPath.MaterialTable:
+                        RenderZeroReadbackMaterialTableBuckets(
+                            renderPasses,
+                            camera,
+                            scene,
+                            vaoRenderer,
+                            currentRenderPass,
+                            bindless: false);
+                        break;
+                    case EZeroReadbackMaterialDrawPath.BindlessMaterialTable:
+                        RenderZeroReadbackMaterialTableBuckets(
+                            renderPasses,
+                            camera,
+                            scene,
+                            vaoRenderer,
+                            currentRenderPass,
+                            bindless: true);
+                        break;
+                    default:
+                        RenderZeroReadbackMaterialTiers(
+                            renderPasses,
+                            camera,
+                            scene,
+                            vaoRenderer,
+                            currentRenderPass,
+                            materialMap);
+                        break;
+                }
                 return;
             }
 
@@ -406,6 +464,7 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             XRRenderProgram? graphicsProgram,
             XRCamera? camera,
+            bool allowDrawCountReadback,
             Matrix4x4 modelMatrix)
         {
             using var timing = BeginTiming("DispatchRenderIndirect");
@@ -434,7 +493,8 @@ namespace XREngine.Rendering
             if (graphicsProgram is not null)
             {
                 LogShaderBind(graphicsProgram.GetType().Name);
-                graphicsProgram.Use();
+                if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirect"))
+                    return;
 
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader.
                 // Use a dedicated binding to avoid colliding with material SSBOs (for example text glyph buffers).
@@ -514,6 +574,15 @@ namespace XREngine.Rendering
                 LogIndirectBufferValidation(indirectDrawBuffer, maxCommands, stride);
             }
 
+            if (!useCount && !allowDrawCountReadback && parameterBuffer is not null)
+            {
+                Warn(LogCategory.Draw, "Indirect draw skipped: zero-readback GPU submission requires a count-draw path; refusing to draw a stale indirect-buffer tail.");
+                LogBufferUnbind("IndirectDrawBuffer", "DrawIndirect");
+                renderer.UnbindDrawIndirectBuffer();
+                renderer.BindVAOForRenderer(null);
+                return;
+            }
+
             try
             {
                 if (useCount)
@@ -529,7 +598,7 @@ namespace XREngine.Rendering
                 }
                 else
                 {
-                    if (drawCount == 0 && TryReadDrawCount(parameterBuffer, out uint gpuDrawCount))
+                    if (drawCount == 0 && allowDrawCountReadback && TryReadDrawCount(parameterBuffer, out uint gpuDrawCount))
                         drawCount = gpuDrawCount;
 
                     if (drawCount == 0)
@@ -654,6 +723,9 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             uint visibleCount)
         {
+            if (!IsInstrumentedStrategy(renderPasses))
+                return;
+
             if (!IsEnabled(LogCategory.Buffers, LogLevel.Debug))
                 return;
 
@@ -837,6 +909,9 @@ namespace XREngine.Rendering
             GPUScene scene,
             uint visibleCount)
         {
+            if (!IsInstrumentedStrategy(renderPasses))
+                return;
+
             if (!IsEnabled(LogCategory.Culling, LogLevel.Debug) || !DebugSettings.DumpIndirectArguments || visibleCount == 0)
                 return;
 
@@ -979,7 +1054,8 @@ namespace XREngine.Rendering
             // Bind graphics program for rendering
             if (graphicsProgram is not null)
             {
-                graphicsProgram.Use();
+                if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectRange"))
+                    return;
 
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader
                 culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
@@ -993,6 +1069,11 @@ namespace XREngine.Rendering
                     renderer.SetEngineUniforms(graphicsProgram, camera);
                 // Legacy materials might still reference ModelMatrix; set a sensible default.
                 graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
+            }
+            else
+            {
+                Debug.MeshesWarning("Indirect range draw aborted: no graphics program was provided.");
+                return;
             }
 
             // Bind VAO
@@ -1223,9 +1304,10 @@ namespace XREngine.Rendering
                 Debug.MeshesWarning("No default material available!");
             }
 
-            DumpCulledCommandData(renderPasses, scene, visibleCount);
+            if (IsInstrumentedStrategy(renderPasses))
+                DumpCulledCommandData(renderPasses, scene, visibleCount);
 
-            if (DebugSettings.ForceCpuIndirectBuild)
+            if (IsInstrumentedStrategy(renderPasses) && DebugSettings.ForceCpuIndirectBuild)
             {
                 if (logGpu)
                     GpuDebug("Using CPU indirect build path");
@@ -1266,6 +1348,7 @@ namespace XREngine.Rendering
                     null,
                     renderProgram,
                     camera,
+                    allowDrawCountReadback: false,
                     modelMatrix);
 
                 if (logGpu)
@@ -1399,7 +1482,7 @@ namespace XREngine.Rendering
                 EMemoryBarrierMask.BufferUpdate);
             //Debug.Meshes("Memory barrier issued");
 
-            if (DebugSettings.DumpIndirectArguments && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            if (IsInstrumentedStrategy(renderPasses) && DebugSettings.DumpIndirectArguments && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 DumpGpuIndirectArguments(renderPasses, indirectDrawBuffer, maxDrawAllowed, parameterBuffer, visibleCount);
 
             //ClearIndirectTail(indirectDrawBuffer, parameterBuffer, maxDrawAllowed);
@@ -1421,6 +1504,7 @@ namespace XREngine.Rendering
                 parameterBuffer,
                 renderProgram,
                 camera,
+                allowDrawCountReadback: IsInstrumentedStrategy(renderPasses),
                 modelMatrix);
 
             if (logGpu)
@@ -1710,17 +1794,346 @@ namespace XREngine.Rendering
             if (AbstractRenderer.Current is not OpenGLRenderer glRenderer)
                 return true;
 
-            OpenGLRenderer.GLRenderProgram? glProgram = program.APIWrappers
-                .OfType<OpenGLRenderer.GLRenderProgram>()
-                .FirstOrDefault(wrapper => ReferenceEquals(wrapper.Owner, glRenderer));
+            OpenGLRenderer.GLRenderProgram? glProgram = FindProgramForCurrentOpenGLRenderer(program, glRenderer);
 
             return glProgram?.IsLinked == true;
         }
+
+        private static OpenGLRenderer.GLRenderProgram? FindProgramForCurrentOpenGLRenderer(
+            XRRenderProgram program,
+            OpenGLRenderer glRenderer)
+        {
+            foreach (var wrapper in program.APIWrappers)
+            {
+                if (wrapper is OpenGLRenderer.GLRenderProgram glProgram &&
+                    ReferenceEquals(glProgram.Owner, glRenderer))
+                {
+                    return glProgram;
+                }
+            }
+
+            return null;
+        }
+
+        private bool EnsureZeroReadbackMaterialSlotProgramsReady(
+            GPURenderPassCollection renderPasses,
+            int currentRenderPass,
+            IReadOnlyDictionary<uint, XRMaterial> materialMap,
+            IReadOnlyList<uint> materialSlotIds,
+            XRMeshRenderer? vaoRenderer,
+            string context)
+        {
+            int pendingCount = 0;
+            int sampleCount = 0;
+            StringBuilder? pendingSamples = null;
+
+            for (int slotIndex = 0; slotIndex < materialSlotIds.Count; ++slotIndex)
+            {
+                uint materialId = materialSlotIds[slotIndex];
+                if (!TryResolveZeroReadbackMaterialForSlot(materialId, currentRenderPass, materialMap, out XRMaterial? material) ||
+                    material is null ||
+                    TryDetectTextVertexShader(material.Shaders, out _))
+                {
+                    continue;
+                }
+
+                uint effectiveMaterialId = (uint)material.GetHashCode();
+                XRRenderProgram? program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
+                if (program is null || IsProgramReadyForCurrentRenderer(program))
+                    continue;
+
+                pendingCount++;
+                renderPasses.RecordZeroReadbackProgramPending();
+                AppendZeroReadbackPendingProgramSample(
+                    ref pendingSamples,
+                    ref sampleCount,
+                    slotIndex,
+                    materialId,
+                    bucketIndex: null,
+                    tier: null,
+                    material,
+                    program);
+            }
+
+            if (pendingCount == 0)
+                return true;
+
+            WarnZeroReadbackProgramWarmup(context, currentRenderPass, pendingCount, pendingSamples?.ToString());
+            return false;
+        }
+
+        private bool EnsureZeroReadbackActiveBucketProgramsReady(
+            GPURenderPassCollection renderPasses,
+            int currentRenderPass,
+            IReadOnlyDictionary<uint, XRMaterial> materialMap,
+            IReadOnlyList<uint> materialSlotIds,
+            IReadOnlyList<uint> activeBuckets,
+            XRMeshRenderer? vaoRenderer,
+            string context)
+        {
+            int pendingCount = 0;
+            int sampleCount = 0;
+            StringBuilder? pendingSamples = null;
+
+            for (int bucketListIndex = 0; bucketListIndex < activeBuckets.Count; ++bucketListIndex)
+            {
+                uint bucketIndex = activeBuckets[bucketListIndex];
+                uint slotIndex = bucketIndex / GPUBatchingBindings.MaterialTierCount;
+                if (slotIndex >= (uint)materialSlotIds.Count)
+                    continue;
+
+                uint materialId = materialSlotIds[(int)slotIndex];
+                if (!TryResolveZeroReadbackMaterialForSlot(materialId, currentRenderPass, materialMap, out XRMaterial? material) ||
+                    material is null ||
+                    TryDetectTextVertexShader(material.Shaders, out _))
+                {
+                    continue;
+                }
+
+                uint effectiveMaterialId = (uint)material.GetHashCode();
+                XRRenderProgram? program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
+                if (program is null || IsProgramReadyForCurrentRenderer(program))
+                    continue;
+
+                pendingCount++;
+                renderPasses.RecordZeroReadbackProgramPending();
+                AppendZeroReadbackPendingProgramSample(
+                    ref pendingSamples,
+                    ref sampleCount,
+                    (int)slotIndex,
+                    materialId,
+                    bucketIndex,
+                    bucketIndex % GPUBatchingBindings.MaterialTierCount,
+                    material,
+                    program);
+            }
+
+            if (pendingCount == 0)
+                return true;
+
+            WarnZeroReadbackProgramWarmup(context, currentRenderPass, pendingCount, pendingSamples?.ToString());
+            return false;
+        }
+
+        private static bool TryResolveZeroReadbackMaterialForSlot(
+            uint materialId,
+            int currentRenderPass,
+            IReadOnlyDictionary<uint, XRMaterial> materialMap,
+            out XRMaterial? material)
+        {
+            XRMaterial? sourceMaterial = null;
+            if (materialId != 0)
+                materialMap.TryGetValue(materialId, out sourceMaterial);
+
+            if (sourceMaterial is not null && sourceMaterial.RenderPass != currentRenderPass)
+            {
+                material = null;
+                return false;
+            }
+
+            material = ResolveEffectiveGpuMaterial(sourceMaterial, Engine.Rendering.State.OverrideMaterial)
+                ?? XRMaterial.InvalidMaterial;
+            return material is not null;
+        }
+
+        private static void AppendZeroReadbackPendingProgramSample(
+            ref StringBuilder? builder,
+            ref int sampleCount,
+            int slotIndex,
+            uint materialId,
+            uint? bucketIndex,
+            uint? tier,
+            XRMaterial material,
+            XRRenderProgram program)
+        {
+            if (sampleCount >= ZeroReadbackPendingProgramSampleLimit)
+                return;
+
+            sampleCount++;
+            builder ??= new StringBuilder(512);
+            if (builder.Length > 0)
+                builder.Append(" | ");
+
+            var backend = program.ShaderMetadata.Backend;
+            string materialName = TrimDiagnosticName(material.Name, 64);
+            string programName = TrimDiagnosticName(program.Name, 64);
+            string glLinkedText = "n/a";
+            if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
+            {
+                OpenGLRenderer.GLRenderProgram? glProgram = FindProgramForCurrentOpenGLRenderer(program, glRenderer);
+                glLinkedText = glProgram?.IsLinked.ToString() ?? "missing-wrapper";
+            }
+
+            builder
+                .Append('#').Append(sampleCount)
+                .Append(" slot=").Append(slotIndex)
+                .Append(" materialId=").Append(materialId);
+
+            if (bucketIndex.HasValue)
+                builder.Append(" bucket=").Append(bucketIndex.Value);
+            if (tier.HasValue)
+                builder.Append(" tier=").Append(tier.Value);
+
+            builder
+                .Append(" material='").Append(materialName).Append('\'')
+                .Append(" program='").Append(programName).Append('\'')
+                .Append(" programLinked=").Append(program.IsLinked)
+                .Append(" glLinked=").Append(glLinkedText)
+                .Append(" wrappers=").Append(program.APIWrappers.Count)
+                .Append(" stage=").Append(backend.Stage)
+                .Append(" backend=").Append(backend.Backend ?? "<none>")
+                .Append(" detail='").Append(TrimDiagnosticName(backend.Detail, 96)).Append('\'')
+                .Append(" failure='").Append(TrimDiagnosticName(backend.FailureReason, 96)).Append('\'');
+        }
+
+        private static string TrimDiagnosticName(string? text, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "<none>";
+
+            string sanitized = text.Replace('|', '/').Replace('\r', ' ').Replace('\n', ' ');
+            return sanitized.Length <= maxLength
+                ? sanitized
+                : sanitized[..Math.Max(0, maxLength - 3)] + "...";
+        }
+
+        private static void WarnZeroReadbackProgramWarmup(
+            string context,
+            int currentRenderPass,
+            int pendingCount,
+            string? pendingSamples = null)
+            => XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.ZeroReadbackProgramWarmup.{context}.{currentRenderPass}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] {0} deferred for pass {1}: {2} graphics program(s) are still warming asynchronously; CPU mesh safety-net will render this pass. Samples: {3}",
+                context,
+                currentRenderPass,
+                pendingCount,
+                string.IsNullOrWhiteSpace(pendingSamples) ? "<none>" : pendingSamples);
 
         private static void DestroyMaterialProgramCache(MaterialProgramCache cache)
         {
             cache.Program.Destroy();
             cache.GeneratedVertexShader?.Destroy();
+        }
+
+        private static void DestroyMaterialTableProgramCache(MaterialTableProgramCache cache)
+        {
+            cache.Program.Destroy();
+            cache.GeneratedVertexShader?.Destroy();
+            cache.FragmentShader.Destroy();
+        }
+
+        private XRRenderProgram? EnsureMaterialTableDrawProgram(XRMeshRenderer? vaoRenderer, bool bindless)
+        {
+            int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
+            (bool bindless, int rendererKey) cacheKey = (bindless, rendererKey);
+
+            if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
+            {
+                existing.Program.Link();
+                return existing.Program;
+            }
+
+            XRShader? generatedVertexShader = CreateGpuIndirectVertexShader(
+                vaoRenderer,
+                emitTransformId: true,
+                emitLodTransitionRole: false);
+            if (generatedVertexShader is null)
+                return null;
+
+            XRShader fragmentShader = CreateMaterialTableFragmentShader(bindless);
+            var shaderList = new List<XRShader> { fragmentShader, generatedVertexShader };
+            var program = new XRRenderProgram(false, false, shaderList);
+            program.AllowLink();
+            program.Link();
+
+            var cacheEntry = new MaterialTableProgramCache(program, generatedVertexShader, fragmentShader);
+            _materialTablePrograms[cacheKey] = cacheEntry;
+            return program;
+        }
+
+        private static bool SupportsOpenGLBindlessMaterialTable()
+        {
+            if (AbstractRenderer.Current is not OpenGLRenderer)
+                return false;
+
+            string[]? extensions = Engine.Rendering.State.OpenGLExtensions;
+            if (extensions is null || extensions.Length == 0)
+                return false;
+
+            return extensions.Contains("GL_ARB_bindless_texture", StringComparer.Ordinal) &&
+                extensions.Contains("GL_ARB_gpu_shader_int64", StringComparer.Ordinal);
+        }
+
+        private static XRShader CreateMaterialTableFragmentShader(bool bindless)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("#version 460 core");
+            if (bindless)
+            {
+                sb.AppendLine("#extension GL_ARB_gpu_shader_int64 : require");
+                sb.AppendLine("#extension GL_ARB_bindless_texture : require");
+            }
+            sb.AppendLine();
+            sb.AppendLine("layout(location=1) in vec3 FragNorm;");
+            sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine("layout(location=0) out vec4 FragColor;");
+            sb.AppendLine();
+            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
+            sb.AppendLine("struct MaterialEntry");
+            sb.AppendLine("{");
+            sb.AppendLine("    uvec2 AlbedoHandle;");
+            sb.AppendLine("    uvec2 NormalHandle;");
+            sb.AppendLine("    uvec2 RMHandle;");
+            sb.AppendLine("    uint Flags;");
+            sb.AppendLine("    uint Padding0;");
+            sb.AppendLine("    uint Padding1;");
+            sb.AppendLine("    uint Padding2;");
+            sb.AppendLine("    uint Padding3;");
+            sb.AppendLine("    uint Padding4;");
+            sb.AppendLine("};");
+            sb.AppendLine($"layout(std430, binding = {MaterialTableSsboBinding}) readonly buffer MaterialTableBuffer {{ MaterialEntry MaterialTable[]; }};");
+            sb.AppendLine($"const uint COMMAND_FLOATS = {IndirectCommandFloatCount}u;");
+            sb.AppendLine();
+            sb.AppendLine("uint LoadMaterialId(uint commandIndex)");
+            sb.AppendLine("{");
+            sb.AppendLine("    uint baseIndex = commandIndex * COMMAND_FLOATS;");
+            sb.AppendLine("    if (baseIndex + COMMAND_FLOATS > uint(culled.length()))");
+            sb.AppendLine("        return 0u;");
+            sb.AppendLine("    return floatBitsToUint(culled[baseIndex + 38u]);");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("vec3 HashMaterialColor(uint materialId)");
+            sb.AppendLine("{");
+            sb.AppendLine("    uint x = materialId * 747796405u + 2891336453u;");
+            sb.AppendLine("    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;");
+            sb.AppendLine("    x = (x >> 22u) ^ x;");
+            sb.AppendLine("    return vec3(");
+            sb.AppendLine("        float((x >>  0u) & 255u) / 255.0,");
+            sb.AppendLine("        float((x >>  8u) & 255u) / 255.0,");
+            sb.AppendLine("        float((x >> 16u) & 255u) / 255.0) * 0.75 + vec3(0.18);");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("void main()");
+            sb.AppendLine("{");
+            sb.AppendLine($"    uint commandIndex = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
+            sb.AppendLine("    uint materialId = LoadMaterialId(commandIndex);");
+            sb.AppendLine("    uint flags = 0u;");
+            sb.AppendLine("    if (materialId < uint(MaterialTable.length()))");
+            sb.AppendLine("        flags = MaterialTable[materialId].Flags;");
+            sb.AppendLine("    vec3 baseColor = HashMaterialColor(materialId);");
+            sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
+            sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
+            sb.AppendLine("    vec3 normal = normalize(FragNorm);");
+            sb.AppendLine("    float light = clamp(dot(normal, normalize(vec3(0.35, 0.65, 0.7))) * 0.5 + 0.5, 0.25, 1.0);");
+            sb.AppendLine("    FragColor = vec4(baseColor * light, 1.0);");
+            sb.AppendLine("}");
+
+            return new XRShader(EShaderType.Fragment, sb.ToString())
+            {
+                Name = bindless ? "GPUIndirect_BindlessMaterialTableFS" : "GPUIndirect_MaterialTableFS"
+            };
         }
 
         private XRShader? CreateGpuIndirectVertexShader(XRMeshRenderer? vaoRenderer, bool emitTransformId, bool emitLodTransitionRole)
@@ -1792,21 +2205,21 @@ namespace XREngine.Rendering
             sb.AppendLine("mat4 LoadWorldMatrixFromCommands(uint commandIndex)");
             sb.AppendLine("{");
             sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
-            sb.AppendLine("    // Matrix4x4 is row-major in CPU memory; construct GLSL mat4 by columns.");
-            sb.AppendLine("    vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);");
-            sb.AppendLine("    vec4 c1 = vec4(culled[base+1], culled[base+5], culled[base+9],  culled[base+13]);");
-            sb.AppendLine("    vec4 c2 = vec4(culled[base+2], culled[base+6], culled[base+10], culled[base+14]);");
-            sb.AppendLine("    vec4 c3 = vec4(culled[base+3], culled[base+7], culled[base+11], culled[base+15]);");
+            sb.AppendLine("    // CPU Matrix4x4 rows are intentionally reinterpreted as GLSL columns, matching uniform upload.");
+            sb.AppendLine("    vec4 c0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);");
+            sb.AppendLine("    vec4 c1 = vec4(culled[base+4],  culled[base+5],  culled[base+6],  culled[base+7]);");
+            sb.AppendLine("    vec4 c2 = vec4(culled[base+8],  culled[base+9],  culled[base+10], culled[base+11]);");
+            sb.AppendLine("    vec4 c3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);");
             sb.AppendLine("    return mat4(c0, c1, c2, c3);");
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("mat4 LoadWorldMatrixFromInstances(uint instanceIndex)");
             sb.AppendLine("{");
             sb.AppendLine("    int base = int(instanceIndex) * INSTANCE_MATRIX_FLOATS;");
-            sb.AppendLine("    vec4 c0 = vec4(instanceWorld[base+0], instanceWorld[base+4], instanceWorld[base+8],  instanceWorld[base+12]);");
-            sb.AppendLine("    vec4 c1 = vec4(instanceWorld[base+1], instanceWorld[base+5], instanceWorld[base+9],  instanceWorld[base+13]);");
-            sb.AppendLine("    vec4 c2 = vec4(instanceWorld[base+2], instanceWorld[base+6], instanceWorld[base+10], instanceWorld[base+14]);");
-            sb.AppendLine("    vec4 c3 = vec4(instanceWorld[base+3], instanceWorld[base+7], instanceWorld[base+11], instanceWorld[base+15]);");
+            sb.AppendLine("    vec4 c0 = vec4(instanceWorld[base+0],  instanceWorld[base+1],  instanceWorld[base+2],  instanceWorld[base+3]);");
+            sb.AppendLine("    vec4 c1 = vec4(instanceWorld[base+4],  instanceWorld[base+5],  instanceWorld[base+6],  instanceWorld[base+7]);");
+            sb.AppendLine("    vec4 c2 = vec4(instanceWorld[base+8],  instanceWorld[base+9],  instanceWorld[base+10], instanceWorld[base+11]);");
+            sb.AppendLine("    vec4 c3 = vec4(instanceWorld[base+12], instanceWorld[base+13], instanceWorld[base+14], instanceWorld[base+15]);");
             sb.AppendLine("    return mat4(c0, c1, c2, c3);");
             sb.AppendLine("}");
             sb.AppendLine();
@@ -1845,8 +2258,18 @@ namespace XREngine.Rendering
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            sb.AppendLine($"    mat4 projMatrix = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            // CRITICAL: compose MVP in the same order as DefaultVertexShaderGenerator.DeclareMVP:
+            //   mvMatrix  = viewMatrix * ModelMatrix
+            //   mvpMatrix = projMatrix * mvMatrix
+            //   clipPos   = mvpMatrix * localPos
+            // FP matrix multiplication is non-associative, so the bracketing must match the CPU
+            // path exactly to produce identical depth values. Otherwise the depth pre-pass and
+            // the lit pass disagree at sub-ULP precision -> z-fight striping in the lit output.
+            sb.AppendLine("    mat4 mvMatrix = viewMatrix * ModelMatrix;");
+            sb.AppendLine("    mat4 mvpMatrix = projMatrix * mvMatrix;");
             sb.AppendLine("    vec4 worldPos = ModelMatrix * localPos;");
-            sb.AppendLine($"    vec4 clipPos = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} * viewMatrix * worldPos;");
+            sb.AppendLine("    vec4 clipPos = mvpMatrix * localPos;");
             sb.AppendLine("    FragPos = worldPos.xyz;");
             sb.AppendLine();
 
@@ -1922,10 +2345,10 @@ namespace XREngine.Rendering
             sb.AppendLine("mat4 LoadWorldMatrix(uint commandIndex)");
             sb.AppendLine("{");
             sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
-            sb.AppendLine("    vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);");
-            sb.AppendLine("    vec4 c1 = vec4(culled[base+1], culled[base+5], culled[base+9],  culled[base+13]);");
-            sb.AppendLine("    vec4 c2 = vec4(culled[base+2], culled[base+6], culled[base+10], culled[base+14]);");
-            sb.AppendLine("    vec4 c3 = vec4(culled[base+3], culled[base+7], culled[base+11], culled[base+15]);");
+            sb.AppendLine("    vec4 c0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);");
+            sb.AppendLine("    vec4 c1 = vec4(culled[base+4],  culled[base+5],  culled[base+6],  culled[base+7]);");
+            sb.AppendLine("    vec4 c2 = vec4(culled[base+8],  culled[base+9],  culled[base+10], culled[base+11]);");
+            sb.AppendLine("    vec4 c3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);");
             sb.AppendLine("    return mat4(c0, c1, c2, c3);");
             sb.AppendLine("}");
             sb.AppendLine();
@@ -2029,9 +2452,7 @@ namespace XREngine.Rendering
                 if (string.IsNullOrEmpty(source))
                     continue;
 
-                if (source.Contains(DefaultVertexShaderGenerator.FragTransformIdName, StringComparison.Ordinal) ||
-                    source.Contains("location = 21", StringComparison.Ordinal) ||
-                    source.Contains("location=21", StringComparison.Ordinal))
+                if (SourceContainsGlslIdentifier(source, DefaultVertexShaderGenerator.FragTransformIdName))
                     return true;
             }
 
@@ -2065,23 +2486,22 @@ namespace XREngine.Rendering
             const string mainSignature = "void main";
             augmentedSource = source;
 
-            int versionLineEnd = source.IndexOf('\n');
-            if (versionLineEnd < 0)
+            int versionInsertIndex = FindGlslVersionInsertIndex(source);
+            if (versionInsertIndex < 0)
                 return false;
-
-            bool hasTransformId = source.Contains(DefaultVertexShaderGenerator.FragTransformIdName, StringComparison.Ordinal) ||
-                source.Contains("location = 21", StringComparison.Ordinal) ||
-                source.Contains("location=21", StringComparison.Ordinal);
-            bool hasRole = source.Contains(FragLodTransitionRoleName, StringComparison.Ordinal) ||
-                source.Contains($"location = {FragLodTransitionRoleLocation}", StringComparison.Ordinal) ||
-                source.Contains($"location={FragLodTransitionRoleLocation}", StringComparison.Ordinal);
 
             var helper = new StringBuilder();
             helper.AppendLine();
-            if (!hasTransformId)
-                helper.AppendLine($"layout(location = 21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
-            if (!hasRole)
-                helper.AppendLine($"layout(location = {FragLodTransitionRoleLocation}) flat in uint {FragLodTransitionRoleName};");
+            AppendGlslVariableDeclarationIfNeeded(
+                helper,
+                source,
+                DefaultVertexShaderGenerator.FragTransformIdName,
+                $"layout(location = 21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            AppendGlslVariableDeclarationIfNeeded(
+                helper,
+                source,
+                FragLodTransitionRoleName,
+                $"layout(location = {FragLodTransitionRoleLocation}) flat in uint {FragLodTransitionRoleName};");
             helper.AppendLine($"layout(std430, binding = {LodTransitionSsboBinding}) readonly buffer XreLodTransitionBuffer {{ uint xreLodTransitions[]; }};");
             helper.AppendLine("const uint XRE_LOD_TRANSITION_ACTIVE = 1u;");
             helper.AppendLine("const uint XRE_LOD_TRANSITION_UINTS = 4u;");
@@ -2116,7 +2536,7 @@ namespace XREngine.Rendering
             helper.AppendLine("        discard;");
             helper.AppendLine("}");
 
-            augmentedSource = source.Insert(versionLineEnd, helper.ToString());
+            augmentedSource = source.Insert(versionInsertIndex, helper.ToString());
 
             int mainIndex = augmentedSource.IndexOf(mainSignature, StringComparison.Ordinal);
             if (mainIndex < 0)
@@ -2128,6 +2548,236 @@ namespace XREngine.Rendering
 
             augmentedSource = augmentedSource.Insert(braceIndex + 1, "\n    XRE_ApplyLodTransitionDither();");
             return true;
+        }
+
+        private static bool SourceContainsGlslIdentifier(string source, string identifier)
+            => Regex.IsMatch(
+                source,
+                $@"(?<![A-Za-z0-9_]){Regex.Escape(identifier)}(?![A-Za-z0-9_])",
+                RegexOptions.CultureInvariant);
+
+        private static bool SourceDeclaresGlslVariable(string source, string identifier)
+            => Regex.IsMatch(
+                source,
+                $@"(?:^|[;\r\n])\s*(?:layout\s*\([^)]*\)\s*)?(?:(?:flat|smooth|noperspective|centroid|sample|patch|invariant|precise|highp|mediump|lowp)\s+)*(?:in|out|uniform|varying)\s+[A-Za-z_][A-Za-z0-9_]*\s+{Regex.Escape(identifier)}\b",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        private static void AppendGlslVariableDeclarationIfNeeded(
+            StringBuilder helper,
+            string source,
+            string identifier,
+            string declaration)
+        {
+            if (SourceDeclaresUnconditionalGlslVariable(source, identifier, out string conditionalDeclarationExpression))
+                return;
+
+            if (conditionalDeclarationExpression.Length == 0)
+            {
+                helper.AppendLine(declaration);
+                return;
+            }
+
+            helper.AppendLine($"#if !({conditionalDeclarationExpression})");
+            helper.AppendLine(declaration);
+            helper.AppendLine("#endif");
+        }
+
+        private static bool SourceDeclaresUnconditionalGlslVariable(
+            string source,
+            string identifier,
+            out string conditionalDeclarationExpression)
+        {
+            conditionalDeclarationExpression = string.Empty;
+            var conditionalDeclarations = new List<string>();
+            var conditionStack = new List<GlslPreprocessorCondition>();
+
+            int index = 0;
+            while (index < source.Length)
+            {
+                int lineBreak = source.IndexOf('\n', index);
+                int lineEnd = lineBreak >= 0 ? lineBreak : source.Length;
+                int lineEndExclusive = lineEnd > index && source[lineEnd - 1] == '\r'
+                    ? lineEnd - 1
+                    : lineEnd;
+                string line = source[index..lineEndExclusive].TrimStart();
+
+                if (TryReadGlslPreprocessorDirective(line, out string directive, out string argument))
+                {
+                    UpdateGlslConditionStack(conditionStack, directive, argument);
+                }
+                else if (SourceDeclaresGlslVariable(line, identifier))
+                {
+                    if (conditionStack.Count == 0)
+                        return true;
+
+                    conditionalDeclarations.Add(BuildEffectiveGlslCondition(conditionStack));
+                }
+
+                if (lineBreak < 0)
+                    break;
+
+                index = lineBreak + 1;
+            }
+
+            conditionalDeclarationExpression = CombineGlslConditions(conditionalDeclarations, "||");
+            return false;
+        }
+
+        private static bool TryReadGlslPreprocessorDirective(string trimmedLine, out string directive, out string argument)
+        {
+            directive = string.Empty;
+            argument = string.Empty;
+
+            if (trimmedLine.Length == 0 || trimmedLine[0] != '#')
+                return false;
+
+            int index = 1;
+            while (index < trimmedLine.Length && char.IsWhiteSpace(trimmedLine[index]))
+                ++index;
+
+            int directiveStart = index;
+            while (index < trimmedLine.Length && char.IsLetter(trimmedLine[index]))
+                ++index;
+
+            if (index == directiveStart)
+                return false;
+
+            directive = trimmedLine[directiveStart..index];
+            argument = TrimGlslLineComment(trimmedLine[index..].Trim());
+            return true;
+        }
+
+        private static string TrimGlslLineComment(string text)
+        {
+            int commentIndex = text.IndexOf("//", StringComparison.Ordinal);
+            return commentIndex < 0 ? text : text[..commentIndex].TrimEnd();
+        }
+
+        private static void UpdateGlslConditionStack(
+            List<GlslPreprocessorCondition> conditionStack,
+            string directive,
+            string argument)
+        {
+            switch (directive)
+            {
+                case "if":
+                    conditionStack.Add(new GlslPreprocessorCondition(NormalizeGlslCondition(argument), NormalizeGlslCondition(argument)));
+                    break;
+                case "ifdef":
+                    {
+                        string condition = $"defined({ReadGlslMacroIdentifier(argument)})";
+                        conditionStack.Add(new GlslPreprocessorCondition(condition, condition));
+                        break;
+                    }
+                case "ifndef":
+                    {
+                        string condition = $"!defined({ReadGlslMacroIdentifier(argument)})";
+                        conditionStack.Add(new GlslPreprocessorCondition(condition, condition));
+                        break;
+                    }
+                case "elif":
+                    if (conditionStack.Count == 0)
+                        break;
+
+                    GlslPreprocessorCondition elifCondition = conditionStack[^1];
+                    string elifArgument = NormalizeGlslCondition(argument);
+                    string elifBranchCondition = CombineGlslConditions(
+                        [NegateGlslCondition(elifCondition.CoveredCondition), elifArgument],
+                        "&&");
+                    conditionStack[^1] = new GlslPreprocessorCondition(
+                        elifBranchCondition,
+                        CombineGlslConditions([elifCondition.CoveredCondition, elifArgument], "||"));
+                    break;
+                case "else":
+                    if (conditionStack.Count == 0)
+                        break;
+
+                    GlslPreprocessorCondition elseCondition = conditionStack[^1];
+                    conditionStack[^1] = new GlslPreprocessorCondition(
+                        NegateGlslCondition(elseCondition.CoveredCondition),
+                        "1");
+                    break;
+                case "endif":
+                    if (conditionStack.Count > 0)
+                        conditionStack.RemoveAt(conditionStack.Count - 1);
+                    break;
+            }
+        }
+
+        private static string NormalizeGlslCondition(string condition)
+            => condition.Length == 0 ? "0" : condition;
+
+        private static string ReadGlslMacroIdentifier(string argument)
+        {
+            int index = 0;
+            while (index < argument.Length && char.IsWhiteSpace(argument[index]))
+                ++index;
+
+            int start = index;
+            while (index < argument.Length && (char.IsLetterOrDigit(argument[index]) || argument[index] == '_'))
+                ++index;
+
+            return index == start ? "0" : argument[start..index];
+        }
+
+        private static string BuildEffectiveGlslCondition(List<GlslPreprocessorCondition> conditionStack)
+        {
+            var activeConditions = new List<string>(conditionStack.Count);
+            for (int i = 0; i < conditionStack.Count; ++i)
+                activeConditions.Add(conditionStack[i].CurrentCondition);
+
+            return CombineGlslConditions(activeConditions, "&&");
+        }
+
+        private static string CombineGlslConditions(IReadOnlyList<string> conditions, string op)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < conditions.Count; ++i)
+            {
+                string condition = conditions[i];
+                if (condition.Length == 0)
+                    continue;
+
+                if (sb.Length > 0)
+                    sb.Append(' ').Append(op).Append(' ');
+
+                sb.Append('(').Append(condition).Append(')');
+            }
+
+            return sb.Length == 0 ? "0" : sb.ToString();
+        }
+
+        private static string NegateGlslCondition(string condition)
+            => $"!({NormalizeGlslCondition(condition)})";
+
+        private readonly struct GlslPreprocessorCondition(string currentCondition, string coveredCondition)
+        {
+            public readonly string CurrentCondition = currentCondition;
+            public readonly string CoveredCondition = coveredCondition;
+        }
+
+        private static int FindGlslVersionInsertIndex(string source)
+        {
+            int index = 0;
+            while (index < source.Length)
+            {
+                int lineBreak = source.IndexOf('\n', index);
+                int lineEnd = lineBreak >= 0 ? lineBreak : source.Length;
+                int lineEndExclusive = lineEnd > index && source[lineEnd - 1] == '\r'
+                    ? lineEnd - 1
+                    : lineEnd;
+                string line = source[index..lineEndExclusive].TrimStart();
+
+                if (line.StartsWith("#version", StringComparison.Ordinal))
+                    return lineBreak >= 0 ? lineBreak + 1 : source.Length;
+
+                if (lineBreak < 0)
+                    break;
+
+                index = lineBreak + 1;
+            }
+
+            return -1;
         }
 
         private void DetachIndirectTextBatchBuffers(XRMeshRenderer? vaoRenderer)
@@ -2659,7 +3309,8 @@ namespace XREngine.Rendering
                 instanceTransformBuffer is not null &&
                 instanceSourceIndexBuffer is not null;
 
-            if (materialMap.Count > 0)
+            bool instrumentedStrategy = IsInstrumentedStrategy(renderPasses);
+            if (instrumentedStrategy && DebugSettings.DumpIndirectArguments && materialMap.Count > 0)
             {
                 string[] sample = materialMap
                     .Select(kvp => $"{kvp.Key}:{kvp.Value?.Name ?? "<null>"}")
@@ -2667,12 +3318,12 @@ namespace XREngine.Rendering
                     .ToArray();
                 GpuDebug($"MaterialMap snapshot ({materialMap.Count} entries){(materialMap.Count > sample.Length ? " (truncated)" : string.Empty)}: {string.Join(", ", sample)}");
             }
-            else
+            else if (instrumentedStrategy && DebugSettings.DumpIndirectArguments)
             {
                 GpuDebug("MaterialMap snapshot: empty");
             }
 
-            if (DebugSettings.DumpIndirectArguments)
+            if (instrumentedStrategy && DebugSettings.DumpIndirectArguments)
             {
                 AbstractRenderer.Current?.MemoryBarrier(
                     EMemoryBarrierMask.ShaderStorage |
@@ -2695,7 +3346,8 @@ namespace XREngine.Rendering
             }
 
             // === One-shot diagnostic: dump first N indirect draw commands to verify GPU data ===
-            DumpIndirectCommandsOneShot(indirectDrawBuffer, activeBatches, currentRenderPass);
+            if (instrumentedStrategy)
+                DumpIndirectCommandsOneShot(indirectDrawBuffer, activeBatches, currentRenderPass);
 
             bool textBatchBuffersAttached = false;
             foreach (var batch in activeBatches)
@@ -2856,6 +3508,17 @@ namespace XREngine.Rendering
             if (materialSlotIds.Count == 0)
                 return;
 
+            if (!EnsureZeroReadbackMaterialSlotProgramsReady(
+                renderPasses,
+                currentRenderPass,
+                materialMap,
+                materialSlotIds,
+                vaoRenderer,
+                "ZeroReadbackMaterialTier"))
+            {
+                return;
+            }
+
             XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
             XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
             bool useGpuInstanceTransforms =
@@ -2876,6 +3539,9 @@ namespace XREngine.Rendering
                 if (materialId != 0)
                     materialMap.TryGetValue(materialId, out sourceMaterial);
 
+                if (sourceMaterial is not null && sourceMaterial.RenderPass != currentRenderPass)
+                    continue;
+
                 XRMaterial? material = ResolveEffectiveGpuMaterial(sourceMaterial, overrideMaterial);
                 if (material is null)
                 {
@@ -2895,6 +3561,8 @@ namespace XREngine.Rendering
                 uint effectiveMaterialId = (uint)material.GetHashCode();
                 var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
                 if (program is null)
+                    continue;
+                if (!TryUseIndirectGraphicsProgram(program, "ZeroReadbackMaterialTier"))
                     continue;
 
                 renderer.SetMaterialUniforms(material, program);
@@ -2923,8 +3591,266 @@ namespace XREngine.Rendering
                         countByteOffset,
                         program,
                         camera,
-                        defaultModelMatrix);
+                        defaultModelMatrix,
+                        allowMaxDrawFallback: true);
                 }
+            }
+        }
+
+        private void RenderZeroReadbackActiveMaterialBuckets(
+            GPURenderPassCollection renderPasses,
+            XRCamera camera,
+            GPUScene scene,
+            XRMeshRenderer? vaoRenderer,
+            int currentRenderPass,
+            IReadOnlyDictionary<uint, XRMaterial> materialMap)
+        {
+            if (!renderPasses.ZeroReadbackActiveBucketListPreparedThisFrame)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.ActiveBucketsMissing.{currentRenderPass}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Active material bucket list was not prepared for pass {0}; falling back to full bucket scan.",
+                    currentRenderPass);
+                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                return;
+            }
+
+            var renderer = AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                Debug.MeshesWarning("No active renderer for active-bucket indirect path.");
+                return;
+            }
+
+            XRDataBuffer? indirectDrawBuffer = renderPasses.MaterialTierIndirectDrawBuffer;
+            XRDataBuffer? parameterBuffer = renderPasses.MaterialTierDrawCountBuffer;
+            XRDataBuffer? culledCommandsBuffer = renderPasses.CulledSceneToRenderBuffer;
+            if (indirectDrawBuffer is null || parameterBuffer is null || culledCommandsBuffer is null)
+            {
+                Debug.MeshesWarning("Active-bucket indirect path missing material-tier buffers.");
+                return;
+            }
+
+            List<uint>? activeBuckets = renderPasses.ReadActiveMaterialTierBuckets();
+            if (activeBuckets is null || activeBuckets.Count == 0)
+                return;
+
+            IReadOnlyList<uint> materialSlotIds = renderPasses.MaterialSlotIds;
+            if (!EnsureZeroReadbackActiveBucketProgramsReady(
+                renderPasses,
+                currentRenderPass,
+                materialMap,
+                materialSlotIds,
+                activeBuckets,
+                vaoRenderer,
+                "ZeroReadbackActiveBucket"))
+            {
+                return;
+            }
+
+            XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
+            XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
+            bool useGpuInstanceTransforms =
+                renderPasses.GpuBatchingPreparedThisFrame &&
+                instanceTransformBuffer is not null &&
+                instanceSourceIndexBuffer is not null;
+
+            Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
+            uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
+            uint maxDrawsPerBucket = Math.Max(renderPasses.MaxDrawsPerMaterialTier, 1u);
+
+            foreach (uint bucketIndex in activeBuckets)
+            {
+                uint slotIndex = bucketIndex / GPUBatchingBindings.MaterialTierCount;
+                uint tier = bucketIndex % GPUBatchingBindings.MaterialTierCount;
+                if (slotIndex >= (uint)materialSlotIds.Count)
+                    continue;
+
+                uint materialId = materialSlotIds[(int)slotIndex];
+                XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
+
+                XRMaterial? sourceMaterial = null;
+                if (materialId != 0)
+                    materialMap.TryGetValue(materialId, out sourceMaterial);
+
+                if (sourceMaterial is not null && sourceMaterial.RenderPass != currentRenderPass)
+                    continue;
+
+                XRMaterial? material = ResolveEffectiveGpuMaterial(sourceMaterial, overrideMaterial) ?? XRMaterial.InvalidMaterial;
+                if (material is null)
+                    continue;
+
+                if (TryDetectTextVertexShader(material.Shaders, out _))
+                {
+                    GpuWarn(LogCategory.Draw, "Skipping active-bucket material slot {0} (MaterialID={1}) because text-material support still requires CPU-prepared glyph buffers.", slotIndex, materialId);
+                    continue;
+                }
+
+                uint effectiveMaterialId = (uint)material.GetHashCode();
+                var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
+                if (program is null)
+                    continue;
+                if (!TryUseIndirectGraphicsProgram(program, "ZeroReadbackActiveBucket"))
+                    continue;
+
+                renderer.SetMaterialUniforms(material, program);
+                renderer.ApplyRenderParameters(material.RenderOptions);
+
+                if (!ConfigureIndirectRendererForTier(scene, vaoRenderer, (EAtlasTier)tier))
+                    continue;
+
+                nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
+                nuint countByteOffset = (nuint)(bucketIndex * sizeof(uint));
+
+                DispatchRenderIndirectCountBucket(
+                    indirectDrawBuffer,
+                    vaoRenderer,
+                    culledCommandsBuffer,
+                    scene.LodTransitionBuffer,
+                    instanceTransformBuffer,
+                    instanceSourceIndexBuffer,
+                    useGpuInstanceTransforms,
+                    maxDrawsPerBucket,
+                    indirectByteOffset,
+                    parameterBuffer,
+                    countByteOffset,
+                    program,
+                    camera,
+                    defaultModelMatrix,
+                    allowMaxDrawFallback: true);
+            }
+        }
+
+        private void RenderZeroReadbackMaterialTableBuckets(
+            GPURenderPassCollection renderPasses,
+            XRCamera camera,
+            GPUScene scene,
+            XRMeshRenderer? vaoRenderer,
+            int currentRenderPass,
+            bool bindless)
+        {
+            IReadOnlyDictionary<uint, XRMaterial> materialMap = renderPasses.GetMaterialMap(scene);
+
+            // The packed material-table fragment program selects materials by DrawID and bypasses
+            // the per-XRMaterial program path. That means it cannot honor a pushed override material
+            // or per-material DepthNormalPrePassVariant. Forward depth/normal pre-passes and similar
+            // override-driven passes need the per-material tier path to ensure the override or
+            // depth-normal variant program is actually used.
+            var renderState = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            bool overrideActive = Engine.Rendering.State.OverrideMaterial is not null
+                || (renderState is not null && renderState.UseDepthNormalMaterialVariants);
+            if (overrideActive)
+            {
+                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                return;
+            }
+
+            if (!renderPasses.ZeroReadbackActiveBucketListPreparedThisFrame)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.MaterialTableActiveBucketsMissing.{currentRenderPass}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Material-table draw path needs active bucket compaction for pass {0}; falling back to per-material bucket draw.",
+                    currentRenderPass);
+                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                return;
+            }
+
+            XRDataBuffer? materialTableBuffer = renderPasses.MaterialTableBuffer;
+            if (materialTableBuffer is null)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.MaterialTableMissing.{currentRenderPass}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Material-table draw path was selected for pass {0}, but no material table was prepared; falling back to per-material bucket draw.",
+                    currentRenderPass);
+                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                return;
+            }
+
+            bool useBindless = bindless && SupportsOpenGLBindlessMaterialTable();
+            if (bindless && !useBindless && _bindlessMaterialTableUnsupportedLogBudget > 0)
+            {
+                _bindlessMaterialTableUnsupportedLogBudget--;
+                Debug.MeshesWarning("[RenderDispatch] Bindless material-table draw path requested, but the active OpenGL renderer does not expose GL_ARB_bindless_texture + GL_ARB_gpu_shader_int64. Falling back to material-table shader.");
+            }
+
+            XRRenderProgram? program = EnsureMaterialTableDrawProgram(vaoRenderer, useBindless);
+            if (program is null)
+            {
+                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                return;
+            }
+
+            if (!IsProgramReadyForCurrentRenderer(program))
+            {
+                renderPasses.RecordZeroReadbackProgramPending();
+                WarnZeroReadbackProgramWarmup(
+                    useBindless ? "ZeroReadbackBindlessMaterialTable" : "ZeroReadbackMaterialTable",
+                    currentRenderPass,
+                    pendingCount: 1);
+                return;
+            }
+
+            XRDataBuffer? indirectDrawBuffer = renderPasses.MaterialTierIndirectDrawBuffer;
+            XRDataBuffer? parameterBuffer = renderPasses.MaterialTierDrawCountBuffer;
+            XRDataBuffer? culledCommandsBuffer = renderPasses.CulledSceneToRenderBuffer;
+            if (indirectDrawBuffer is null || parameterBuffer is null || culledCommandsBuffer is null)
+            {
+                Debug.MeshesWarning("Material-table indirect path missing material-tier buffers.");
+                return;
+            }
+
+            List<uint>? activeBuckets = renderPasses.ReadActiveMaterialTierBuckets();
+            if (activeBuckets is null || activeBuckets.Count == 0)
+                return;
+
+            XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
+            XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
+            bool useGpuInstanceTransforms =
+                renderPasses.GpuBatchingPreparedThisFrame &&
+                instanceTransformBuffer is not null &&
+                instanceSourceIndexBuffer is not null;
+
+            Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
+            uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
+            uint maxDrawsPerBucket = Math.Max(renderPasses.MaxDrawsPerMaterialTier, 1u);
+
+            var renderer = AbstractRenderer.Current;
+            XRMaterial? invalidMaterial = XRMaterial.InvalidMaterial;
+            if (renderer is not null && invalidMaterial is not null)
+                renderer.ApplyRenderParameters(invalidMaterial.RenderOptions);
+
+            if (!TryUseIndirectGraphicsProgram(program, bindless ? "ZeroReadbackBindlessMaterialTable" : "ZeroReadbackMaterialTable"))
+                return;
+
+            foreach (uint bucketIndex in activeBuckets)
+            {
+                uint tier = bucketIndex % GPUBatchingBindings.MaterialTierCount;
+                if (!ConfigureIndirectRendererForTier(scene, vaoRenderer, (EAtlasTier)tier))
+                    continue;
+
+                nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
+                nuint countByteOffset = (nuint)(bucketIndex * sizeof(uint));
+
+                DispatchRenderIndirectCountBucket(
+                    indirectDrawBuffer,
+                    vaoRenderer,
+                    culledCommandsBuffer,
+                    scene.LodTransitionBuffer,
+                    instanceTransformBuffer,
+                    instanceSourceIndexBuffer,
+                    useGpuInstanceTransforms,
+                    maxDrawsPerBucket,
+                    indirectByteOffset,
+                    parameterBuffer,
+                    countByteOffset,
+                    program,
+                    camera,
+                    defaultModelMatrix,
+                    materialTableBuffer,
+                    allowMaxDrawFallback: true);
             }
         }
 
@@ -2976,17 +3902,22 @@ namespace XREngine.Rendering
             nuint countByteOffset,
             XRRenderProgram graphicsProgram,
             XRCamera camera,
-            Matrix4x4 modelMatrix)
+            Matrix4x4 modelMatrix,
+            XRDataBuffer? materialTableBuffer = null,
+            bool allowMaxDrawFallback = false)
         {
             var renderer = AbstractRenderer.Current;
             if (renderer is null || maxDrawCount == 0)
                 return;
 
-            graphicsProgram.Use();
+            if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectCountBucket"))
+                return;
+
             culledCommandsBuffer.BindTo(graphicsProgram, IndirectCommandSsboBinding);
             lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
             instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
             instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
+            materialTableBuffer?.BindTo(graphicsProgram, MaterialTableSsboBinding);
             graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
             renderer.SetEngineUniforms(graphicsProgram, camera);
             graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
@@ -2996,8 +3927,70 @@ namespace XREngine.Rendering
             if (vaoRenderer is not null)
                 renderer.ConfigureVAOAttributesForProgram(graphicsProgram, version);
 
+            uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             IndirectParityChecklist parity = BuildIndirectParityChecklist(renderer, indirectDrawBuffer, parameterBuffer, version);
+            // Use the GPU count buffer to cap draws whenever the backend supports it. OpenGL 4.6 / ARB_indirect_parameters
+            // is a fully supported path; falling back to MaxDrawCount-shaped indirect draws here would force every
+            // bucket to dispatch MaxDrawsPerMaterialTier no-op commands, producing a large per-frame CPU/GPU overhead
+            // that scales with material count and dwarfs the savings from zero-readback dispatch.
+            bool useMaxDrawFallback = allowMaxDrawFallback && !parity.UsesCountDrawPath;
+            if (useMaxDrawFallback)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    "RenderDispatch.ZeroReadback.MaxDrawFallback",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Zero-readback material bucket draw is using max-draw fallback (maxDrawsPerBucket={0}). This can be slower than CPU direct; enable indirect-count draws or avoid DebugSettings.DisableCountDrawPath.",
+                    maxDrawCount);
+
+                if (!parity.IsSubmissionReady)
+                {
+                    renderer.BindVAOForRenderer(null);
+                    return;
+                }
+
+                if (!ValidateIndirectDrawRange(
+                    indirectDrawBuffer,
+                    maxDrawCount,
+                    stride,
+                    indirectByteOffset,
+                    "RenderIndirectCountBucketFallback"))
+                {
+                    renderer.BindVAOForRenderer(null);
+                    return;
+                }
+
+                renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
+                try
+                {
+                    renderer.MemoryBarrier(
+                        EMemoryBarrierMask.ShaderStorage |
+                        EMemoryBarrierMask.ClientMappedBuffer |
+                        EMemoryBarrierMask.Command);
+                    renderer.MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, indirectByteOffset);
+                }
+                finally
+                {
+                    renderer.UnbindDrawIndirectBuffer();
+                    renderer.BindVAOForRenderer(null);
+                }
+
+                return;
+            }
+
             if (!parity.UsesCountDrawPath)
+            {
+                renderer.BindVAOForRenderer(null);
+                return;
+            }
+
+            if (!ValidateIndirectCountDrawRange(
+                indirectDrawBuffer,
+                parameterBuffer,
+                maxDrawCount,
+                stride,
+                indirectByteOffset,
+                countByteOffset,
+                "RenderIndirectCountBucket"))
             {
                 renderer.BindVAOForRenderer(null);
                 return;
@@ -3007,8 +4000,11 @@ namespace XREngine.Rendering
             renderer.BindParameterBuffer(parameterBuffer);
             try
             {
-                renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
-                renderer.MultiDrawElementsIndirectCount(maxDrawCount, (uint)Marshal.SizeOf<DrawElementsIndirectCommand>(), indirectByteOffset, countByteOffset);
+                renderer.MemoryBarrier(
+                    EMemoryBarrierMask.ShaderStorage |
+                    EMemoryBarrierMask.ClientMappedBuffer |
+                    EMemoryBarrierMask.Command);
+                renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
             }
             finally
             {
@@ -3016,6 +4012,103 @@ namespace XREngine.Rendering
                 renderer.UnbindDrawIndirectBuffer();
                 renderer.BindVAOForRenderer(null);
             }
+        }
+
+        private static bool ValidateIndirectDrawRange(
+            XRDataBuffer indirectDrawBuffer,
+            uint maxDrawCount,
+            uint stride,
+            nuint indirectByteOffset,
+            string context)
+        {
+            if (maxDrawCount == 0 || stride == 0)
+                return false;
+
+            ulong indirectOffset = indirectByteOffset;
+            ulong indirectBytes = indirectDrawBuffer.Length;
+            ulong requestedIndirectBytes = indirectOffset + ((ulong)maxDrawCount * stride);
+
+            if (indirectOffset % stride != 0 || requestedIndirectBytes > indirectBytes)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.IndirectDrawRange.{context}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] {0} skipped invalid indirect draw range: indirectOffset={1} maxDrawCount={2} stride={3} indirectBytes={4}.",
+                    context,
+                    indirectOffset,
+                    maxDrawCount,
+                    stride,
+                    indirectBytes);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool ValidateIndirectCountDrawRange(
+            XRDataBuffer indirectDrawBuffer,
+            XRDataBuffer parameterBuffer,
+            uint maxDrawCount,
+            uint stride,
+            nuint indirectByteOffset,
+            nuint countByteOffset,
+            string context)
+        {
+            if (maxDrawCount == 0 || stride == 0)
+                return false;
+
+            ulong indirectOffset = indirectByteOffset;
+            ulong countOffset = countByteOffset;
+            ulong indirectBytes = indirectDrawBuffer.Length;
+            ulong parameterBytes = parameterBuffer.Length;
+            ulong requestedIndirectBytes = indirectOffset + ((ulong)maxDrawCount * stride);
+            ulong requestedCountBytes = countOffset + sizeof(uint);
+
+            if (indirectOffset % stride != 0 ||
+                requestedIndirectBytes > indirectBytes ||
+                requestedCountBytes > parameterBytes)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.IndirectCountRange.{context}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] {0} skipped invalid indirect-count draw range: indirectOffset={1} maxDrawCount={2} stride={3} indirectBytes={4} countOffset={5} parameterBytes={6}.",
+                    context,
+                    indirectOffset,
+                    maxDrawCount,
+                    stride,
+                    indirectBytes,
+                    countOffset,
+                    parameterBytes);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryUseIndirectGraphicsProgram(XRRenderProgram graphicsProgram, string context)
+        {
+            if (!graphicsProgram.IsLinked)
+                graphicsProgram.Link();
+
+            if (graphicsProgram.IsLinked)
+            {
+                graphicsProgram.Use();
+                return true;
+            }
+
+            Engine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+            var backend = graphicsProgram.ShaderMetadata.Backend;
+            XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.ProgramNotReady.{context}.{RuntimeHelpers.GetHashCode(graphicsProgram)}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] {0} skipped because graphics program '{1}' is not linked yet. BackendStage={2} Backend={3} Detail='{4}' Failure='{5}'. Avoiding stale-program indirect draw.",
+                context,
+                graphicsProgram.Name ?? "<unnamed>",
+                backend.Stage,
+                backend.Backend ?? "<none>",
+                backend.Detail ?? "<none>",
+                backend.FailureReason ?? "<none>");
+            return false;
         }
 
         public struct RenderingStats
@@ -3034,6 +4127,9 @@ namespace XREngine.Rendering
             foreach (var cache in _pendingMaterialPrograms.Values)
                 DestroyMaterialProgramCache(cache);
             _pendingMaterialPrograms.Clear();
+            foreach (var cache in _materialTablePrograms.Values)
+                DestroyMaterialTableProgramCache(cache);
+            _materialTablePrograms.Clear();
             _indirectTextTransformsBuffer?.Destroy();
             _indirectTextTexCoordsBuffer?.Destroy();
             _indirectTextRotationsBuffer?.Destroy();

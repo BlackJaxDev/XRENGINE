@@ -131,6 +131,12 @@ namespace XREngine.Rendering.OpenGL
                 _sharedContext.Enqueue(gl =>
                 {
                     LogRenderingUploadEvent("WORKER_BEGIN", programId, hash, cacheKey, format, length, null);
+                    if (_sharedContext.IsDisposeRequested)
+                    {
+                        _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                        return;
+                    }
+
                     long start = Stopwatch.GetTimestamp();
                     GLEnum error;
                     int linkStatus = 0;
@@ -152,6 +158,12 @@ namespace XREngine.Rendering.OpenGL
                         }
                     }
 
+                    if (_sharedContext.IsDisposeRequested)
+                    {
+                        _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                        return;
+                    }
+
                     error = GLEnum.NoError;
                     MeasureRenderingWorkerGlCall(
                         "glGetError",
@@ -171,6 +183,12 @@ namespace XREngine.Rendering.OpenGL
                             "phase=binary-upload-link-status");
                         if (linkStatus == 0)
                         {
+                            if (_sharedContext.IsDisposeRequested)
+                            {
+                                _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                                return;
+                            }
+
                             MeasureRenderingWorkerGlCall(
                                 "glGetProgramInfoLog",
                                 programId,
@@ -188,6 +206,12 @@ namespace XREngine.Rendering.OpenGL
                     // glFinish ensures the binary is fully uploaded and validated before
                     // signaling completion. This is the recommended synchronization for
                     // shared-context resource uploads.
+                    if (_sharedContext.IsDisposeRequested)
+                    {
+                        _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                        return;
+                    }
+
                     MeasureRenderingWorkerGlCall(
                         "glFinish",
                         programId,

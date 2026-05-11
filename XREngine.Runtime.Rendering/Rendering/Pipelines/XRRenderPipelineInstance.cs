@@ -21,6 +21,15 @@ namespace XREngine.Rendering;
 /// </summary>
 public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPipelineDebugContext, IRuntimeRenderPipelineFrameContext
 {
+    private static int s_nextInstanceId = 0;
+
+    /// <summary>
+    /// Stable, monotonically increasing identifier assigned at construction. Used by
+    /// per-instance diagnostics (GPU profiler hierarchies, logging) so multiple
+    /// instances of the same pipeline type are not aggregated into a single bucket.
+    /// </summary>
+    public int InstanceId { get; } = System.Threading.Interlocked.Increment(ref s_nextInstanceId);
+
     public XRRenderPipelineInstance()
     {
         MeshRenderCommands.SetOwnerPipeline(this);
@@ -79,6 +88,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     public string DebugName
         => _pipeline?.DebugName ?? _pipeline?.GetType().Name ?? "UnknownPipeline";
+
+    /// <summary>
+    /// Profiler-stable identifier for this pipeline instance. Combines <see cref="DebugName"/>
+    /// with <see cref="InstanceId"/> so the GPU profiler keeps separate graphs/hierarchies
+    /// per instantiation rather than collapsing all instances of the same pipeline type into
+    /// a single bucket (which artificially inflates per-frame totals).
+    /// </summary>
+    public string ProfilerKey => $"{DebugName}#{InstanceId}";
 
     /// <summary>
     /// Builds a human-readable descriptor for debugging the active pipeline state.

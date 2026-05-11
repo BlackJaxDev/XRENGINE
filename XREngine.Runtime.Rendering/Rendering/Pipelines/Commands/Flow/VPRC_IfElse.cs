@@ -7,7 +7,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_IfElse : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
+        public string? Label { get; set; }
+
         public Func<bool>? ConditionEvaluator { get; set; }
+
+        public override string GpuProfilingName
+            => string.IsNullOrWhiteSpace(Label) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Label}]";
 
         private sealed class BranchState
         {
