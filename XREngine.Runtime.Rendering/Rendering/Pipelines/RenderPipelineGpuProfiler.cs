@@ -415,7 +415,7 @@ internal sealed class RenderPipelineGpuProfiler
 
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
         ulong frameId = Engine.Rendering.State.RenderFrameId;
-        string pipelineName = instance.DebugName;
+        string pipelineName = instance.ProfilerKey;
         string commandName = command.GpuProfilingName;
 
         List<string> commandStack = _commandScopeStack ??= [];
@@ -465,7 +465,7 @@ internal sealed class RenderPipelineGpuProfiler
 
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
         ulong frameId = Engine.Rendering.State.RenderFrameId;
-        string pipelineName = instance.DebugName;
+        string pipelineName = instance.ProfilerKey;
 
         List<string> userStack = _userScopeStack ??= [];
         Stack<UserScopeHandle> openScopes = _openUserScopes ??= [];

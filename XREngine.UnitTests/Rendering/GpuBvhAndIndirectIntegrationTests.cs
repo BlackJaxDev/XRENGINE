@@ -216,6 +216,37 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
     }
 
     [Test]
+    public void BvhRefitShader_UsesWorldSpaceAabbs_DoesNotRequireTransformBuffer()
+    {
+        string shaderPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "bvh_refit.comp");
+        File.Exists(shaderPath).ShouldBeTrue($"BVH refit shader not found: {shaderPath}");
+
+        string source = File.ReadAllText(shaderPath);
+
+        source.ShouldContain("minB = combineMin(minB, aabbs[primIndex].minBounds.xyz);");
+        source.ShouldContain("maxB = combineMax(maxB, aabbs[primIndex].maxBounds.xyz);");
+        source.ShouldNotContain("buffer Transforms");
+        source.ShouldNotContain("transforms[primIndex]");
+    }
+
+    [Test]
+    public void BvhBuildShaders_DoNotClampSceneBvhTo1024Objects()
+    {
+        string buildPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "bvh_build.comp");
+        string mortonPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "OctreeGeneration", "morton_codes.comp");
+        File.Exists(buildPath).ShouldBeTrue($"BVH build shader not found: {buildPath}");
+        File.Exists(mortonPath).ShouldBeTrue($"Morton shader not found: {mortonPath}");
+
+        string buildSource = File.ReadAllText(buildPath);
+        string mortonSource = File.ReadAllText(mortonPath);
+
+        buildSource.ShouldNotContain("MAX_OBJECTS");
+        buildSource.ShouldContain("uint mortonCap = mortonCapacity;");
+        mortonSource.ShouldNotContain("MAX_OBJECTS");
+        mortonSource.ShouldContain("MortonObject mortonObjects[];");
+    }
+
+    [Test]
     public unsafe void BvhBuildAndRefit_ProducesExpectedRootBounds()
     {
         var (gl, window) = CreateGLContext();
@@ -291,23 +322,11 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             // Refit counters: nodeCount uints
             uint[] counters = new uint[nodeCount];
 
-            // Transforms: mat4 per primitive (identity)
-            float[] transforms = new float[numPrimitives * 16u];
-            for (int i = 0; i < (int)numPrimitives; i++)
-            {
-                int baseIdx = i * 16;
-                transforms[baseIdx + 0] = 1f;
-                transforms[baseIdx + 5] = 1f;
-                transforms[baseIdx + 10] = 1f;
-                transforms[baseIdx + 15] = 1f;
-            }
-
             uint aabbBuf = gl.GenBuffer();
             uint mortonBuf = gl.GenBuffer();
             uint nodeBuf = gl.GenBuffer();
             uint rangeBuf = gl.GenBuffer();
             uint overflowBuf = gl.GenBuffer();
-            uint transformBuf = gl.GenBuffer();
             uint counterBuf = gl.GenBuffer();
 
             // Upload and bind buffers for build
@@ -422,11 +441,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
             gl.UnmapBuffer(BufferTargetARB.ShaderStorageBuffer);
             leaf0Parent.ShouldNotBe(uint.MaxValue);
 
-            // Upload and bind extra buffers for refit
-            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, transformBuf);
-            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, transforms.AsSpan(), BufferUsageARB.DynamicCopy);
-            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 4, transformBuf);
-
+            // Upload and bind extra buffers for refit.
+            // Refit consumes world-space AABBs directly; no transform buffer is bound.
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, counterBuf);
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, counters.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 11, counterBuf);
@@ -517,7 +533,6 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
             // Cleanup
             gl.DeleteBuffer(counterBuf);
-            gl.DeleteBuffer(transformBuf);
             gl.DeleteBuffer(overflowBuf);
             gl.DeleteBuffer(rangeBuf);
             gl.DeleteBuffer(nodeBuf);

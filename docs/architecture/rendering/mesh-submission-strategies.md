@@ -34,10 +34,10 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 
 | Draw path | Purpose |
 |-----------|---------|
-| `FullBucketScan` | Original path. The GPU scatters commands into material/tier buckets and the CPU loops over every bucket while using GPU-written counts. |
-| `ActiveBucketList` | Adds a compute compaction pass that writes only non-empty bucket IDs, then submits those buckets. Useful for measuring empty-bucket overhead. |
-| `MaterialTable` | Uses active buckets with a shared material-table shader instead of per-material shader programs. Current OpenGL implementation renders material-table debug colors. |
-| `BindlessMaterialTable` | Same as `MaterialTable`, but requires `GL_ARB_bindless_texture` and `GL_ARB_gpu_shader_int64`; falls back to `MaterialTable` when unavailable. Texture-correct bindless still requires backend texture handle population. |
+| `FullBucketScan` | Strict no-readback path. The GPU scatters commands into material/tier buckets and the CPU loops over every bucket while using GPU-written counts. |
+| `ActiveBucketList` | Readback-assisted diagnostic path. Adds a compute compaction pass that writes only non-empty bucket IDs, maps that compact ID list on the CPU, then submits those buckets. Useful for measuring empty-bucket overhead. |
+| `MaterialTable` | Readback-assisted diagnostic path. Uses active buckets with a shared material-table shader instead of per-material shader programs. Current OpenGL implementation renders material-table debug colors. |
+| `BindlessMaterialTable` | Readback-assisted diagnostic path. Same as `MaterialTable`, but requires `GL_ARB_bindless_texture` and `GL_ARB_gpu_shader_int64`; falls back to `MaterialTable` when unavailable. Texture-correct bindless still requires backend texture handle population. |
 
 ## Pass Contract
 
@@ -45,7 +45,7 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 
 `GPURenderPassCollection` snapshots the strategy at pass execution:
 
-- `GpuIndirectZeroReadback` enables material-tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts.
+- `GpuIndirectZeroReadback` enables material-tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts. Use `FullBucketScan` when validating the strict no-readback material path; the active-bucket and material-table variants intentionally read back the compact active bucket list for diagnostics.
 - `GpuIndirectInstrumented` is the only strategy allowed to read back batch ranges, count buffers, per-view draw counts, or indirect command dumps.
 - CPU safety-net mesh fallback is only available for `GpuIndirectInstrumented` and only when fallback diagnostics are explicitly enabled.
 

@@ -546,7 +546,7 @@ public sealed class GpuBvhTree : IDisposable
         program.Uniform("numPrimitives", primitiveCount);
         program.Uniform("nodeScalarCapacity", _nodeBuffer.ElementCount);
         program.Uniform("rangeScalarCapacity", _rangeBuffer.ElementCount);
-        program.Uniform("mortonCapacity", _mortonBuffer?.ElementCount ?? 0u);
+        program.Uniform("mortonCapacity", GetMortonCapacity());
         
         // Set BVH configuration uniforms (OpenGL-compatible replacement for Vulkan specialization constants)
         program.Uniform("MAX_LEAF_PRIMITIVES", _maxLeafPrimitives);

@@ -482,6 +482,66 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Measurement-Baseline-CpuDirect",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect && set XRE_WINDOW_TITLE=XRE Editor (Measure CpuDirect) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Measurement-Baseline-GpuIndirectInstrumented",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectInstrumented && set XRE_WINDOW_TITLE=XRE Editor (Measure GpuIndirectInstrumented) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Measurement-Baseline-GpuIndirectZeroReadback",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback && set XRE_WINDOW_TITLE=XRE Editor (Measure GpuIndirectZeroReadback) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Measurement-PushSubDataBreakdown-GpuIndirectInstrumented",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectInstrumented && set XRE_PUSHSUBDATA_BREAKDOWN=1 && set XRE_WINDOW_TITLE=XRE Editor (PushSubData Breakdown) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Cook-CommonAssets-Archive (Manual Slow)",
 			"type": "shell",
 			"command": "powershell",

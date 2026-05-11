@@ -754,6 +754,7 @@ internal sealed class RuntimeRenderSettings
     public bool CacheGpuHiZOcclusionOncePerFrame { get; set; } = true;
     public bool CalculateBlendshapesInComputeShader { get; set; }
     public bool CalculateSkinnedBoundsInComputeShader { get; set; }
+    public bool SkinnedBoundsGpuDirectAabbWrite { get; set; }
     public bool CalculateSkinningInComputeShader { get; set; }
     public bool CullShadowCollectionByCameraFrusta { get; set; } = true;
     public Vector3 DefaultLuminance { get; set; } = new(0.299f, 0.587f, 0.114f);

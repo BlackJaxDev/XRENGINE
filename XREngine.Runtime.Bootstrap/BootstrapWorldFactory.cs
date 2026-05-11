@@ -5,6 +5,7 @@ using XREngine.Components.Animation;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene;
+using XREngine.Components.Scene.Environment;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Data.Core;
@@ -111,6 +112,9 @@ public static class BootstrapWorldFactory
         Debug.Out($"[VolumetricFog] BootstrapWorldFactory.CreateUnitTestWorld InitializeVolumetricFog = {settings.InitializeVolumetricFog}");
         if (settings.InitializeVolumetricFog)
             AddVolumetricFogVolume(rootNode, settings);
+
+        if (settings.InitializeAtmosphericScattering)
+            AddAtmosphericScattering(rootNode, settings, sunDirectionalLight);
 
         if (settings.DynamicWaterQuad)
             BootstrapWaterBuilder.AddDynamicWaterPreview(rootNode);
@@ -307,6 +311,50 @@ public static class BootstrapWorldFactory
             $"BoundsY=({boundsMinY}, {boundsMaxY}), " +
             $"Density={fogSettings.Density}, EdgeFade={fogSettings.EdgeFade}, " +
             $"NoiseScale={fogSettings.NoiseScale}, NoiseThreshold={fogSettings.NoiseThreshold}, NoiseAmount={fogSettings.NoiseAmount}");
+    }
+
+    private static void AddAtmosphericScattering(
+        SceneNode rootNode,
+        UnitTestingWorldSettings settings,
+        DirectionalLightComponent? sunDirectionalLight)
+    {
+        var atmosphereSettings = settings.AtmosphericScattering;
+
+        SceneNode atmosphereNode = rootNode.NewChild("AtmosphericScattering");
+        var atmosphereTransform = atmosphereNode.SetTransform<Transform>();
+        atmosphereTransform.Translation = new Vector3(
+            atmosphereSettings.Translation.X,
+            atmosphereSettings.Translation.Y,
+            atmosphereSettings.Translation.Z);
+
+        var atmosphere = atmosphereNode.AddComponent<AtmosphericScatteringComponent>()!;
+        atmosphere.GroundRadius = atmosphereSettings.GroundRadius;
+        atmosphere.AtmosphereHeight = atmosphereSettings.AtmosphereHeight;
+        atmosphere.GroundLevelOffset = atmosphereSettings.GroundLevelOffset;
+        atmosphere.SunIntensity = atmosphereSettings.SunIntensity;
+        atmosphere.SunColor = new ColorF3(atmosphereSettings.SunColor.R, atmosphereSettings.SunColor.G, atmosphereSettings.SunColor.B);
+        atmosphere.RayleighScaleHeight = atmosphereSettings.RayleighScaleHeight;
+        atmosphere.MieScaleHeight = atmosphereSettings.MieScaleHeight;
+        atmosphere.RayleighScattering = new Vector3(
+            atmosphereSettings.RayleighScattering.R,
+            atmosphereSettings.RayleighScattering.G,
+            atmosphereSettings.RayleighScattering.B);
+        atmosphere.MieScattering = new Vector3(
+            atmosphereSettings.MieScattering.R,
+            atmosphereSettings.MieScattering.G,
+            atmosphereSettings.MieScattering.B);
+        atmosphere.MieAnisotropy = atmosphereSettings.MieAnisotropy;
+        atmosphere.ExposureScale = atmosphereSettings.ExposureScale;
+        atmosphere.GroundAlbedo = atmosphereSettings.GroundAlbedo;
+        atmosphere.SunDirectionalLight = sunDirectionalLight;
+        atmosphere.SunSource = sunDirectionalLight is null
+            ? AtmosphericScatteringComponent.ESunSource.DirectionOverride
+            : AtmosphericScatteringComponent.ESunSource.ExplicitDirectionalLight;
+
+        Debug.Out(
+            $"[Atmosphere] BootstrapWorldFactory created atmosphere: " +
+            $"GroundRadius={atmosphere.GroundRadius}, AtmosphereHeight={atmosphere.AtmosphereHeight}, " +
+            $"SunSource={atmosphere.SunSource}, MaxDistance={atmosphereSettings.MaxDistance}");
     }
 
     private static void AddDeferredDecal(SceneNode rootNode)

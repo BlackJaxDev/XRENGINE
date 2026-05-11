@@ -366,33 +366,58 @@ public static class BootstrapPawnFactory
     private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)
     {
         var settings = RuntimeBootstrapState.Settings;
-        Debug.Out($"[VolumetricFog] BootstrapPawnFactory.ConfigureCameraPostProcessing InitializeVolumetricFog = {settings.InitializeVolumetricFog}");
-        if (!settings.InitializeVolumetricFog)
+        Debug.Out($"[BootstrapPawnFactory] ConfigureCameraPostProcessing Atmosphere={settings.InitializeAtmosphericScattering} VolumetricFog={settings.InitializeVolumetricFog}");
+        if (!settings.InitializeVolumetricFog && !settings.InitializeAtmosphericScattering)
             return;
 
         var camera = cameraComponent.Camera;
         if (!camera.RenderPipeline.OverrideProtected)
             camera.RenderPipeline.OverrideProtected = true;
 
-        var stage = camera.GetPostProcessStageState<VolumetricFogSettings>();
-        if (stage is null)
+        if (settings.InitializeAtmosphericScattering)
         {
-            Debug.Out("[VolumetricFog] Runtime camera is missing VolumetricFogSettings post-process stage.");
-            return;
+            var atmosphereStage = camera.GetPostProcessStageState<AtmosphericScatteringSettings>();
+            if (atmosphereStage is null)
+                Debug.Out("[Atmosphere] Runtime camera is missing AtmosphericScatteringSettings post-process stage.");
+            else if (atmosphereStage.TryGetBacking(out AtmosphericScatteringSettings? atmosphereSettings) != true || atmosphereSettings is null)
+                Debug.Out("[Atmosphere] Runtime camera found AtmosphericScatteringSettings stage but backing instance is null.");
+            else
+            {
+                var init = settings.AtmosphericScattering;
+                atmosphereSettings.Enabled = true;
+                atmosphereSettings.RenderSky = true;
+                atmosphereSettings.AerialPerspective = true;
+                atmosphereSettings.MaxDistance = init.MaxDistance;
+                atmosphereSettings.ViewSamples = init.ViewSamples;
+                atmosphereSettings.OpticalDepthSamples = init.OpticalDepthSamples;
+                atmosphereSettings.JitterStrength = init.JitterStrength;
+                atmosphereSettings.TemporalEnabled = init.TemporalEnabled;
+                Debug.Out($"[Atmosphere] Runtime camera configured: Enabled=true, MaxDistance={atmosphereSettings.MaxDistance}, ViewSamples={atmosphereSettings.ViewSamples}");
+            }
         }
 
-        if (stage.TryGetBacking(out VolumetricFogSettings? fogSettings) != true || fogSettings is null)
+        if (settings.InitializeVolumetricFog)
         {
-            Debug.Out("[VolumetricFog] Runtime camera found VolumetricFogSettings stage but backing instance is null.");
-            return;
+            var stage = camera.GetPostProcessStageState<VolumetricFogSettings>();
+            if (stage is null)
+            {
+                Debug.Out("[VolumetricFog] Runtime camera is missing VolumetricFogSettings post-process stage.");
+                return;
+            }
+
+            if (stage.TryGetBacking(out VolumetricFogSettings? fogSettings) != true || fogSettings is null)
+            {
+                Debug.Out("[VolumetricFog] Runtime camera found VolumetricFogSettings stage but backing instance is null.");
+                return;
+            }
+
+            fogSettings.Enabled = true;
+            fogSettings.Intensity = settings.VolumetricFog.Intensity;
+            fogSettings.MaxDistance = settings.VolumetricFog.MaxDistance;
+            fogSettings.StepSize = settings.VolumetricFog.StepSize;
+            fogSettings.JitterStrength = settings.VolumetricFog.JitterStrength;
+
+            Debug.Out($"[VolumetricFog] Runtime camera configured: Enabled=true, Intensity={fogSettings.Intensity}, MaxDistance={fogSettings.MaxDistance}, StepSize={fogSettings.StepSize}, JitterStrength={fogSettings.JitterStrength}");
         }
-
-        fogSettings.Enabled = true;
-        fogSettings.Intensity = settings.VolumetricFog.Intensity;
-        fogSettings.MaxDistance = settings.VolumetricFog.MaxDistance;
-        fogSettings.StepSize = settings.VolumetricFog.StepSize;
-        fogSettings.JitterStrength = settings.VolumetricFog.JitterStrength;
-
-        Debug.Out($"[VolumetricFog] Runtime camera configured: Enabled=true, Intensity={fogSettings.Intensity}, MaxDistance={fogSettings.MaxDistance}, StepSize={fogSettings.StepSize}, JitterStrength={fogSettings.JitterStrength}");
     }
 }

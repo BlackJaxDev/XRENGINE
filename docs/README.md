@@ -49,6 +49,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Features
 - [Audio2Face-3D Component](features/audio2face-3d.md)
 - [Audio2Face-3D Engine Setup](features/audio2face-3d-engine-setup.md)
+- [Atmospheric Scattering Component](features/components/atmospheric-scattering.md)
 - [Bootstrap And First-Time Setup](features/bootstrap.md)
 - [Default Render Pipeline Script Export](features/default-render-pipeline.xrs)
 - [Ambient Occlusion](features/gi/ambient-occlusion.md)

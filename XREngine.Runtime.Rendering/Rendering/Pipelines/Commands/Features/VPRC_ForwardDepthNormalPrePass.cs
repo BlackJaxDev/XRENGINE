@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -22,10 +23,18 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (ParentPipeline is not DefaultRenderPipeline pipeline || _renderPasses.Count == 0)
+            if (_renderPasses.Count == 0)
                 return;
-            
-            var material = pipeline.GetDepthNormalPrePassMaterial();
+
+            XRMaterial? material = ParentPipeline switch
+            {
+                DefaultRenderPipeline p => p.GetDepthNormalPrePassMaterial(),
+                DefaultRenderPipeline2 p2 => p2.GetDepthNormalPrePassMaterial(),
+                _ => null,
+            };
+            if (material is null)
+                return;
+
             var rs = ActivePipelineInstance.RenderState;
 
             using var overrideTicket = rs.PushOverrideMaterial(material);
@@ -38,12 +47,51 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             var camera = rs.SceneCamera;
+            // Resolve the active mesh submission strategy once per execution so the prepass
+            // uses the same culling/draw path the lit pass will use later this frame. Otherwise
+            // RenderGPU(pass) would default to GpuIndirectInstrumented while the lit pass runs
+            // ZeroReadback (or vice versa), producing different cull results and AO inputs that
+            // do not match the shaded geometry.
+            //
+            // CRITICAL: When the main mesh pass runs on GPU indirect, the prepass MUST also run
+            // on GPU indirect. The GPU indirect path generates its own vertex shader that fetches
+            // per-draw world matrices from the culled-commands buffer (gl_BaseInstance-indexed)
+            // while the CPU path uses per-object uniform matrices. Floating-point MVP composition
+            // differences between the two paths cause depth-test mismatch (regular striping /
+            // missing coverage) on the lit pass. ResolveEffectiveGpuMaterial honors the pushed
+            // override material AND per-material DepthNormalPrePassVariant when
+            // UseDepthNormalMaterialVariants is set; the same generated vertex shader is reused
+            // (cached per variant material hash) so depth values match exactly.
+            //
+            // Materials that cannot live in the GPU indirect path (transient editor gizmos,
+            // dynamically-created materials without bindless registration) MUST set
+            // RenderOptions.ExcludeFromGpuIndirect = true so RenderCPUNonMeshAndExcluded picks
+            // them up; otherwise they will fault the GPU side of this dispatch.
+            var strategy = _gpuDispatch
+                ? Engine.Rendering.ResolveMeshSubmissionStrategy(true)
+                : EMeshSubmissionStrategy.CpuDirect;
             foreach (int pass in _renderPasses)
             {
-                // This pre-pass relies on override materials, generated vertex programs,
-                // and per-material depth-normal variants. Those are honored by the CPU
-                // draw path; the GPU-indirect path does not reliably preserve this state.
-                commands.RenderCPU(pass, false, camera);
+                if (_gpuDispatch)
+                {
+                    // Mirror VPRC_RenderMeshesPassTraditional.RenderGPU exactly: CPU first
+                    // with skipGpuCommands=true and allowExcludedGpuFallbackMeshes=false so the
+                    // prepass walks the same set of commands the lit pass will (non-mesh CPU
+                    // commands + nothing for GPU-eligible/excluded meshes — those are owned by
+                    // the GPU indirect draw). This guarantees prepass coverage matches lit
+                    // coverage, which is what AO/depth sampling relies on.
+                    commands.RenderCPU(
+                        pass,
+                        skipGpuCommands: true,
+                        camera,
+                        allowExcludedGpuFallbackMeshes: false);
+
+                    commands.RenderGPU(pass, strategy);
+                }
+                else
+                {
+                    commands.RenderCPU(pass, false, camera);
+                }
             }
         }
     }

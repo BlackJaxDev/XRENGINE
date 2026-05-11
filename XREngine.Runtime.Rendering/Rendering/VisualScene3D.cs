@@ -406,12 +406,20 @@ namespace XREngine.Scene
             using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
             int visibleRenderables = 0;
 
+            // GPU dispatch path: the GPU performs the authoritative frustum/BVH cull on its own
+            // command buffers. Doing a redundant CPU frustum-vs-box test on every renderable here
+            // is pure CPU overhead that scales O(N) and was a major contributor to GPU-path
+            // perf regressions vs. CpuDirect on Sponza-class scenes. We still need the layer,
+            // shadow, and mirror filters from AllowRender, so we pass cullingVolume=null which
+            // short-circuits the Intersects test to "contained".
+            IVolume? allowRenderVolume = modelDiagActive ? collectionVolume : null;
+
             // Iterate by index to avoid per-frame ToArray() allocation.
             // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.
             for (int i = 0; i < _renderables.Count; i++)
             {
                 var renderable = _renderables[i];
-                bool allowed = renderable.AllowRender(collectionVolume, commands, camera, false, collectMirrors);
+                bool allowed = renderable.AllowRender(allowRenderVolume, commands, camera, false, collectMirrors);
                 if (!allowed)
                 {
                     if (modelDiagActive)

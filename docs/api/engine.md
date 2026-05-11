@@ -192,6 +192,9 @@ Manages rendering state and pipeline.
 public static partial class Rendering
 {
     public static EngineSettings Settings { get; set; }
+    public static EngineSettings GlobalDefaultSettings { get; set; }
+    public static EngineSettings? ProjectDefaultSettings { get; set; }
+    public static EngineSettings DefaultSettings { get; set; }
     public static event Action? SettingsChanged;
     
     public enum ELoopType
@@ -202,6 +205,10 @@ public static partial class Rendering
     }
 }
 ```
+
+`GlobalDefaultSettings` is saved outside any project as `engine_defaults.asset`.
+When a project is loaded, `ProjectDefaultSettings` points at `Config/engine_defaults.asset`
+and becomes the current `Settings` object.
 
 ### Settings
 ```csharp

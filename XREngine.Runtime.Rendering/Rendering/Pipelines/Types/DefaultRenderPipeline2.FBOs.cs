@@ -40,8 +40,8 @@ public partial class DefaultRenderPipeline2
     {
         // Texture array order must match the shader's sampler declaration order in PostProcess.fs,
         // because Vulkan binds by index (binding N → Textures[N]), not by name.
-        // The VolumetricFogColor binding is mono-only; stereo PostProcessStereo.fs does
-        // not declare that sampler and omits the slot to keep Vulkan binding indices aligned.
+        // Atmospheric and volumetric bindings are mono-only; stereo PostProcessStereo.fs
+        // does not declare those samplers and omits the slots to keep Vulkan binding indices aligned.
         XRTexture[] postProcessRefs = Stereo
             ?
             [
@@ -58,7 +58,8 @@ public partial class DefaultRenderPipeline2
                 GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2D DepthView
                 GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2D StencilView
                 GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
-                GetTexture<XRTexture>(VolumetricFogColorTextureName)!, // binding 5: sampler2D VolumetricFogColor
+                GetTexture<XRTexture>(AtmosphereColorTextureName)!, // binding 5: sampler2D AtmosphereColor
+                GetTexture<XRTexture>(VolumetricFogColorTextureName)!, // binding 6: sampler2D VolumetricFogColor
             ];
         XRShader postProcessShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, PostProcessShaderName()), EShaderType.Fragment);
         XRMaterial postProcessMat = new(postProcessRefs, postProcessShader)
@@ -85,6 +86,164 @@ public partial class DefaultRenderPipeline2
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
             Name = PostProcessOutputFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereHalfDepthQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(DepthViewTextureName)!,
+        ];
+        XRShader downsampleShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereHalfDepthDownsample.fs"),
+            EShaderType.Fragment);
+        XRMaterial mat = new(refs, downsampleShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+        return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = AtmosphereHalfDepthQuadFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereHalfDepthFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereHalfDepthTextureName, CreateAtmosphereHalfDepthTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = AtmosphereHalfDepthFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereHalfScatterQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(AtmosphereHalfDepthTextureName)!,
+        ];
+        XRShader scatterShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereAerialPerspective.fs"),
+            EShaderType.Fragment);
+        XRMaterial scatterMat = new(refs, scatterShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                RequiredEngineUniforms = EUniformRequirements.RenderTime,
+            }
+        };
+        return new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = AtmosphereHalfScatterQuadFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereHalfScatterFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereHalfScatterTextureName, CreateAtmosphereHalfScatterTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = AtmosphereHalfScatterFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereReprojectQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(AtmosphereHalfScatterTextureName)!,
+            GetTexture<XRTexture>(AtmosphereHalfHistoryTextureName)!,
+            GetTexture<XRTexture>(AtmosphereHalfDepthTextureName)!,
+        ];
+        XRShader reprojectShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereReproject.fs"),
+            EShaderType.Fragment);
+        XRMaterial reprojectMat = new(refs, reprojectShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+        return new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = AtmosphereReprojectQuadFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereReprojectFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereHalfTemporalTextureName, CreateAtmosphereHalfTemporalTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = AtmosphereReprojectFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereHistoryFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereHalfHistoryTextureName, CreateAtmosphereHalfHistoryTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = AtmosphereHistoryFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereUpscaleQuadFBO()
+    {
+        XRTexture[] refs =
+        [
+            GetTexture<XRTexture>(AtmosphereHalfTemporalTextureName)!,
+            GetTexture<XRTexture>(AtmosphereHalfDepthTextureName)!,
+            GetTexture<XRTexture>(DepthViewTextureName)!,
+        ];
+        XRShader upscaleShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereUpscale.fs"),
+            EShaderType.Fragment);
+        XRMaterial upscaleMat = new(refs, upscaleShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+        return new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = AtmosphereUpscaleQuadFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAtmosphereUpscaleFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereColorTextureName, CreateAtmosphereColorTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = AtmosphereUpscaleFBOName
         };
     }
 

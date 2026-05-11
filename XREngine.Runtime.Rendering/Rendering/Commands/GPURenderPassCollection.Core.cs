@@ -166,6 +166,7 @@ namespace XREngine.Rendering.Commands
         private bool _passDiagnosticReadbacksEnabled;
         private bool _passEnableZeroReadbackMaterialScatter;
         private EZeroReadbackMaterialDrawPath _passZeroReadbackMaterialDrawPath;
+        private int _zeroReadbackProgramPendingCountThisFrame;
         private int _forbiddenFallbackLogBudget = 8;
 
         public static void ConfigureIndirectDebug(Action<IndirectDebugSettings> configure)
@@ -224,6 +225,18 @@ namespace XREngine.Rendering.Commands
             => _passPolicySnapshotValid
                 ? _passDebugLoggingEnabled
                 : Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+
+        public bool ZeroReadbackProgramPendingThisFrame
+            => _zeroReadbackProgramPendingCountThisFrame > 0;
+
+        public int ZeroReadbackProgramPendingCountThisFrame
+            => _zeroReadbackProgramPendingCountThisFrame;
+
+        internal void ResetZeroReadbackProgramPendingState()
+            => _zeroReadbackProgramPendingCountThisFrame = 0;
+
+        internal void RecordZeroReadbackProgramPending()
+            => _zeroReadbackProgramPendingCountThisFrame++;
 
         private bool IsValidationLoggingEnabledForPass()
             => _passPolicySnapshotValid
@@ -526,6 +539,8 @@ namespace XREngine.Rendering.Commands
         public XRMeshRenderer? _indirectRenderer;
 
         // Visible count read-back
+        private uint _visibleCommandUpperBound = 0;
+        private bool _visibleCommandUpperBoundValid;
         private uint _visibleCommandCount = 0;
         public uint VisibleCommandCount
         {
@@ -694,7 +709,7 @@ namespace XREngine.Rendering.Commands
         public bool ZeroReadbackMaterialScatterPreparedThisFrame => _zeroReadbackMaterialScatterPreparedThisFrame;
         public bool ZeroReadbackActiveBucketListPreparedThisFrame => _zeroReadbackActiveBucketListPreparedThisFrame;
         public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
-    public uint MaxIndirectDrawCapacity => Math.Max(CommandCapacity * 2u, 1u);
+        public uint MaxIndirectDrawCapacity => Math.Max(CommandCapacity * 2u, 1u);
 
         // Returns the current scene material map (ID -> XRMaterial)
         public IReadOnlyDictionary<uint, XRMaterial> GetMaterialMap(GPUScene scene)

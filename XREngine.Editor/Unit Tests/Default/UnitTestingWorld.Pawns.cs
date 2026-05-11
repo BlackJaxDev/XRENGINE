@@ -454,33 +454,58 @@ public static partial class EditorUnitTests
 
         private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)
         {
-            Debug.Rendering($"[VolumetricFog] ConfigureCameraPostProcessing called, InitializeVolumetricFog = {Toggles.InitializeVolumetricFog}");
-            if (!Toggles.InitializeVolumetricFog)
+            Debug.Rendering($"[UnitTestingWorld] ConfigureCameraPostProcessing Atmosphere={Toggles.InitializeAtmosphericScattering} VolumetricFog={Toggles.InitializeVolumetricFog}");
+            if (!Toggles.InitializeVolumetricFog && !Toggles.InitializeAtmosphericScattering)
                 return;
 
             var camera = cameraComponent.Camera;
             if (!camera.RenderPipeline.OverrideProtected)
                 camera.RenderPipeline.OverrideProtected = true;
 
-            var stage = camera.GetPostProcessStageState<VolumetricFogSettings>();
-            if (stage is null)
+            if (Toggles.InitializeAtmosphericScattering)
             {
-                Debug.Rendering("[VolumetricFog] Could not find VolumetricFogSettings post-process stage on camera.");
-                return;
+                var atmosphereStage = camera.GetPostProcessStageState<AtmosphericScatteringSettings>();
+                if (atmosphereStage is null)
+                    Debug.Rendering("[Atmosphere] Could not find AtmosphericScatteringSettings post-process stage on camera.");
+                else if (atmosphereStage.TryGetBacking(out AtmosphericScatteringSettings? atmosphereSettings) != true || atmosphereSettings is null)
+                    Debug.Rendering("[Atmosphere] AtmosphericScatteringSettings stage found but backing instance is null.");
+                else
+                {
+                    var init = Toggles.AtmosphericScattering;
+                    atmosphereSettings.Enabled = true;
+                    atmosphereSettings.RenderSky = true;
+                    atmosphereSettings.AerialPerspective = true;
+                    atmosphereSettings.MaxDistance = init.MaxDistance;
+                    atmosphereSettings.ViewSamples = init.ViewSamples;
+                    atmosphereSettings.OpticalDepthSamples = init.OpticalDepthSamples;
+                    atmosphereSettings.JitterStrength = init.JitterStrength;
+                    atmosphereSettings.TemporalEnabled = init.TemporalEnabled;
+                    Debug.Rendering($"[Atmosphere] Camera post-process configured: Enabled=true, MaxDistance={atmosphereSettings.MaxDistance}, ViewSamples={atmosphereSettings.ViewSamples}");
+                }
             }
 
-            if (stage.TryGetBacking(out VolumetricFogSettings? settings) != true || settings is null)
+            if (Toggles.InitializeVolumetricFog)
             {
-                Debug.Rendering("[VolumetricFog] VolumetricFogSettings stage found but backing instance is null.");
-                return;
-            }
+                var stage = camera.GetPostProcessStageState<VolumetricFogSettings>();
+                if (stage is null)
+                {
+                    Debug.Rendering("[VolumetricFog] Could not find VolumetricFogSettings post-process stage on camera.");
+                    return;
+                }
 
-            settings.Enabled = true;
-            settings.Intensity = Toggles.VolumetricFog.Intensity;
-            settings.MaxDistance = Toggles.VolumetricFog.MaxDistance;
-            settings.StepSize = Toggles.VolumetricFog.StepSize;
-            settings.JitterStrength = Toggles.VolumetricFog.JitterStrength;
-            Debug.Rendering($"[VolumetricFog] Camera post-process configured: Enabled=true, Intensity={settings.Intensity}, MaxDistance={settings.MaxDistance}, StepSize={settings.StepSize}");
+                if (stage.TryGetBacking(out VolumetricFogSettings? settings) != true || settings is null)
+                {
+                    Debug.Rendering("[VolumetricFog] VolumetricFogSettings stage found but backing instance is null.");
+                    return;
+                }
+
+                settings.Enabled = true;
+                settings.Intensity = Toggles.VolumetricFog.Intensity;
+                settings.MaxDistance = Toggles.VolumetricFog.MaxDistance;
+                settings.StepSize = Toggles.VolumetricFog.StepSize;
+                settings.JitterStrength = Toggles.VolumetricFog.JitterStrength;
+                Debug.Rendering($"[VolumetricFog] Camera post-process configured: Enabled=true, Intensity={settings.Intensity}, MaxDistance={settings.MaxDistance}, StepSize={settings.StepSize}");
+            }
         }
 
         public static void InitializeLocomotion(

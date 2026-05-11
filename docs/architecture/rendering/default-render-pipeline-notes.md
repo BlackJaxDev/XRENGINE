@@ -215,6 +215,33 @@ The shared `VolumetricFogSettings` constructor defaults and both pipeline schema
 
 ---
 
+## 11. Atmospheric Scattering: Sky And Aerial Perspective Chain
+
+**Rule:** Planetary atmosphere is a separated sky/background and aerial-perspective path. `PostProcess.fs` only composites the precomputed `AtmosphereColor` texture and must not contain atmosphere raymarching math.
+
+The mono OpenGL path runs before local volumetric fog and before exposure:
+
+`half-depth downsample -> half-res atmosphere scatter -> half-res temporal reprojection -> full-res bilateral upscale -> PostProcess atmosphere composite -> VolumetricFogColor composite`.
+
+### Invariants
+
+- `AtmosphericScatteringComponent` owns sky-background rendering in `EDefaultRenderPass.Background` and selects one active atmosphere per camera.
+- `AtmosphericScatteringSettings` is exposed through the `atmosphericScattering` post-process stage in both `DefaultRenderPipeline` and `DefaultRenderPipeline2`.
+- `AtmosphereAerialPerspective.fs` writes raw scatter/transmittance to `AtmosphereHalfScatter`.
+- `AtmosphereReproject.fs` samples `AtmosphereHalfScatter`, `AtmosphereHalfHistory`, and `AtmosphereHalfDepth`, then writes `AtmosphereHalfTemporal`.
+- `AtmosphereUpscale.fs` samples `AtmosphereHalfTemporal`, not raw scatter, so temporal filtering is included before the full-resolution composite.
+- Disabled, no-active, and far-depth/sky pixels must output neutral `(0,0,0,1)` so the composite is a no-op and sky pixels are not double-atmosphered.
+- `PostProcess.fs` composites atmosphere before local volumetric fog with `hdrSceneColor = hdrSceneColor * atmosphere.a + atmosphere.rgb`.
+- FBO recreation predicates must verify attachment texture identity for all atmosphere FBOs, not only size.
+- `VPRC_AtmosphereHistoryPass` resets history on first frame, size change, camera cut, active atmosphere switch, atmosphere revision changes, and AA resource invalidation.
+- The public camera-cut hook is `DefaultRenderPipeline.InvalidateAtmosphereHistory(camera)`.
+
+### Defaults
+
+The component uses SI-like Earth defaults (`GroundRadius = 6,371,000`, `AtmosphereHeight = 100,000`) while treating the component origin as the local ground point. This keeps authoring convenient without requiring the whole scene to be placed at planet-center coordinates.
+
+---
+
 ## 11. Transparency Scene Copy
 
 **Rule:** `ForwardPassFBO` often has a bright-pass shader attached as its quad material. Do **not** use it as the source for transparency background copies. Use a dedicated `SceneCopyFBO` sampling `HDRSceneTex`.
