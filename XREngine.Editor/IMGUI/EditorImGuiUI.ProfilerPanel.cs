@@ -82,6 +82,18 @@ public static partial class EditorImGuiUI
     private static bool _profilerDockLayoutInitialized;
     private static bool _profilerDockLayoutRequested;
 
+    // Throttled engine-data collection: collecting deep profiler trees + a ~100-field render-stats
+    // packet every frame was the #1 in-editor stall source (~7s total / 644ms max in
+    // session 2026-05-11 22:55:55). CollectFromEngine now runs on the app thread
+    // (Engine.Time.Timer.UpdateFrame) at ~10Hz - the same collectors are already invoked from the
+    // BelowNormal UdpProfilerSender background thread, so off-render-thread collection is safe.
+    // ProcessLatestData stays on the render thread because it mutates display state that the
+    // panel draw calls read directly; it self-skips when no new frame has been collected.
+    private const long ProfilerCollectMinIntervalMs = 100;
+    private static readonly Stopwatch _profilerCollectClock = Stopwatch.StartNew();
+    private static long _lastProfilerCollectMs = long.MinValue;
+    private static bool _profilerAppThreadHooked;
+
     /// <summary>Whether UDP profiler sending is active (disables in-editor panels).</summary>
     private static bool _profilerUdpEnabled;
 
@@ -262,6 +274,33 @@ public static partial class EditorImGuiUI
         _engineProfilerDataSource = new EngineProfilerDataSource();
         _engineProfilerRenderer = new ProfilerPanelRenderer(_engineProfilerDataSource);
         _engineProfilerRenderer.GpuPipelineTimingDumpRequested = DumpGpuPipelineTimingHistory;
+
+        if (!_profilerAppThreadHooked)
+        {
+            // Subscribe once. UpdateFrame fires on the app thread; the handler is cheap when the
+            // panel is hidden or UDP sending is active.
+            Engine.Time.Timer.UpdateFrame += CollectProfilerDataOnAppThread;
+            _profilerAppThreadHooked = true;
+        }
+    }
+
+    /// <summary>
+    /// App-thread tick: throttled deep-snapshot of engine telemetry into the data source.
+    /// Keeps CollectFromEngine off the render thread (it used to dominate UI.DrawProfilerPanel
+    /// stalls). Safe because the same collectors are used by the BelowNormal UDP profiler thread.
+    /// </summary>
+    private static void CollectProfilerDataOnAppThread()
+    {
+        if (!_showProfiler) return;
+        if (_profilerUdpEnabled) return;
+        if (_engineProfilerDataSource is null) return;
+
+        long nowMs = _profilerCollectClock.ElapsedMilliseconds;
+        if (_lastProfilerCollectMs != long.MinValue && (nowMs - _lastProfilerCollectMs) < ProfilerCollectMinIntervalMs)
+            return;
+
+        _engineProfilerDataSource.CollectFromEngine();
+        _lastProfilerCollectMs = nowMs;
     }
 
     private static ProfilerPanelRenderer.GpuPipelineTimingDumpResult DumpGpuPipelineTimingHistory(string pipelineName)
@@ -323,8 +362,10 @@ public static partial class EditorImGuiUI
 
         // ── Normal in-editor profiler ──
 
-        // Collect fresh data from engine statics
-        _engineProfilerDataSource!.CollectFromEngine();
+        // CollectFromEngine runs on the app thread (see CollectProfilerDataOnAppThread).
+        // ProcessLatestData stays here because it mutates renderer display state that the
+        // subsequent Draw* calls read; it self-skips when no new frame has been collected, so the
+        // per-frame cost on this thread is small.
         _engineProfilerRenderer!.ProcessLatestData();
 
         // Controls / toggles window

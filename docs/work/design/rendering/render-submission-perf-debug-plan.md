@@ -355,6 +355,60 @@ promoted in §7. Item 4 absorbs the residual §5.5 SSBO churn note.
 | --- | --- | --- | --- |
 | I1 | `GPUScene.LodTransitionBuffer.Initialize` runs on the render thread via `MainThreadJobs.Dispatch` during startup. Recovered render hot path = 4729 ms. | `GPUScene` `LodTransitionBuffer` initialization | One-shot per session, but observable as a multi-second render stall. Should be split off the render thread or pre-warmed before the editor presents the first frame. |
 
+### 5.9 P2.5 post-O-12/O-13/O-14 findings (2026-05-11, GpuIndirectZeroReadback)
+
+After O-12, O-13, O-14 and the profiler-panel app-thread move (collector
+hoisted to `Engine.Time.Timer.UpdateFrame` at 10 Hz; `ProcessLatestData`
+remains on the render thread but self-skips when the frame timestamp is
+unchanged), session
+`xrengine_2026-05-11_23-30-38_pid28032` shows:
+
+- `UI.DrawProfilerPanel` gone from the top 12 leaves (was 7127 ms total /
+  644 ms max in the prior session — confirms the panel collector was the
+  measurement noise, not engine work).
+- `UI.DrawWorldHierarchyTab` reduced to 132 entries / 3191 ms total /
+  144 ms max (was 753 ms max — confirms O-13).
+- Top non-UI leaves:
+
+  | Leaf | Count | Total ms | Max ms |
+  | --- | ---: | ---: | ---: |
+  | `RenderCommand.Render` (bare; no nested scope) | 187 | 4636.2 | 541.6 |
+  | `XRWindow.ProcessPendingUploads` | 46 | 820.4 | 184.2 |
+  | `XRWindow.Timer.DoRender` (root, no nested leaf) | 4 | 232.5 | 184.9 |
+  | `MainThreadJobs.Normal.CoroutineJob:UploadProgressive\|2` | 7 | 224.7 | 63.9 |
+  | `XRWindow.Timer.DoEvents` | 28 | 138.1 | 122.2 |
+
+User-reported behaviour: **80 fps on CpuDirect vs 10 fps on
+GpuIndirectZeroReadback with the same static two-Sponza scene, no lights,
+ImGui editor hidden**. The 8x delta is invariant to scene change, so the
+defect is per-frame work the GPU-indirect path does that CpuDirect does
+not, not a throughput drain.
+
+Sub-finding: bare `RenderCommand.Render` ms tracks `QueuedRenderJobsNow`
+≈ 1:1 (542 jobs → 541 ms, 123 → 122 ms, 92 → 91 ms, …). This is **not** a
+job-drain problem — the queue *grows* because the render thread stalls;
+draining ~1 ms per job is the throughput symptom of whatever is blocking
+the thread, not the cause. Confirmed by zero GPU-indirect prep scopes
+(`GPUScene.SwapCommandBuffers`, indirect-build compute dispatch, scatter
+prep) appearing as recovered leaves — the stall lives **inside an
+unprofiled region** of `RenderCommand.Render`.
+
+Working hypothesis: the GPU-indirect path mutates SSBOs (indirect
+commands, culled-commands, parameter/count buffer, scatter tables) from
+the render thread every frame and the GL driver inserts an implicit sync
+on the still-in-flight previous frame's read. CpuDirect does not touch
+these buffers and therefore does not pay the wait. Confirms the new
+P2.6 priority below: audit per-frame writes to GPU-indirect SSBOs for
+double/ring-buffering and fence-gating before designing further
+optimizations.
+
+This **supersedes** the §5.6 conclusion that O-7 was the next priority.
+The bare `RenderCommand.Render` block is invariant to the per-draw
+`MemoryBarrier` cost (compute-bucket loops already issue one coalesced
+barrier per the O-7 partial landing in
+`HybridRenderingManager.RenderZeroReadbackMaterialTiers /
+RenderZeroReadbackActiveMaterialBuckets`).
+
 ## 6. Optimization Plan
 
 Each item lists: predicted win (qualitative), prerequisites, change summary, validation.
@@ -447,6 +501,91 @@ Each item lists: predicted win (qualitative), prerequisites, change summary, val
 
 - Replace CPU sentinel writes entirely with a tiny compute kernel that writes the sentinel pattern to the slots in `_commandAabbBuffer` for registered Path A renderers. One dispatch per acceleration-structure refresh max.
 
+#### O-13. Hierarchy panel off-screen leaf fast-skip (LANDED 2026-05-11)
+
+- **Win:** targets the 752 ms `UI.DrawWorldHierarchyTab` stall recovered as
+  the new #1 hot path in profiler session `xrengine_2026-05-11_22-41-19`
+  (§5.7 H1). Eliminates per-row `TreeNodeEx` / `IsItemHovered` /
+  `BeginDragDropSource` / `BeginDragDropTarget` / `OpenPopupOnItemClick`
+  / `Checkbox` calls for off-screen leaves and collapsed parents, which
+  dominate two-Sponza hierarchies (~6000 mostly-leaf `SceneNode`s).
+- **Root cause:** the recursive `DrawSceneNodeTree` →
+  `DrawSceneNodeEntry` path calls a dozen+ ImGui native FFI probes per
+  node every frame even when the row is fully clipped by the scroll
+  region. Existing optimizations (label cache, scratch sets,
+  auto-collapse at 64 children, index iteration) reduce allocations and
+  arithmetic but cannot shrink ImGui's per-row cost.
+- **Change:**
+  [`EditorImGuiUI.HierarchyPanel`](../../../../XREngine.Editor/IMGUI/EditorImGuiUI.HierarchyPanel.cs)
+  `DrawSceneNodeTree` now computes `willRecurse` and passes a new
+  `canFastSkipWhenClipped` flag to `DrawSceneNodeEntry`. When set and
+  the row is neither being renamed nor the scroll-into-view target,
+  the entry emits only `PushID + TableNextRow + TableSetColumnIndex +
+  IsRectVisible`, then `Dummy(rowHeight) + PopID + return false` for
+  off-screen rows. Interior nodes whose subtree is currently expanded
+  still pay full per-row cost so children render correctly.
+- **Validation:** re-run `Measurement-Baseline-GpuIndirectZeroReadback`
+  with both Sponzas. `UI.DrawWorldHierarchyTab` should no longer recover
+  > 100 ms when the hierarchy is scrolled or partially out-of-view.
+  Functional check: keyboard navigation, drag/drop, rename, context
+  menu, and "Focus Selected" still work for off-screen rows
+  (`_pendingHierarchyScrollNode` and `_nodePendingRename` bypass the
+  fast-skip).
+
+#### O-14. MeshDataBuffer dirty-range tracker (LANDED 2026-05-11)
+
+- **Win:** extends the O-11 tail-append pattern to the scattered
+  `MeshDataBuffer.Set(meshID, ...)` + full-buffer `PushSubData()` sites,
+  replacing the recurring 86-115 ms `XRWindow.ProcessPendingUploads`
+  hot paths with single contiguous subrange uploads.
+- **Root cause:** every Set site flipped `_meshDataDirty = true` and the
+  six flush sites each did `if (_meshDataDirty) MeshDataBuffer.PushSubData()`,
+  uploading the entire MeshDataBuffer even when only a few meshIDs
+  changed.
+- **Change:**
+  [`GPUScene`](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene.cs)
+  now tracks `_meshDataDirtyMinIndex` / `_meshDataDirtyMaxIndexExclusive`
+  alongside the existing bool. New helpers `MarkMeshDataDirty(meshID)`
+  and `FlushMeshDataDirtyRange()` populate and drain the range. Every
+  `Set(meshID, ...)` site that previously flipped the bool now calls
+  `MarkMeshDataDirty(meshID)`; every conditional flush now calls
+  `FlushMeshDataDirtyRange()`. `UpdateMeshDataBufferFromAtlas` marks each
+  touched meshID and flushes via the same path. The flush falls back to
+  a full `PushSubData()` when the bool was flipped without a populated
+  range (defensive — covers the `LoadStaticMeshBatch` gate-flag path).
+- **Validation:** re-run two-Sponza ZeroReadback and inspect
+  `profiler-render-stalls.log`. Recurring `XRWindow.ProcessPendingUploads`
+  entries should drop below 50 ms / occurrence (was 86-115 ms x 3+).
+  Functional check: dynamic mesh streaming, mesh removal, atlas
+  migration, and mesh-command updates still render correctly with no
+  black/missing geometry.
+
+#### O-12. Drop redundant LodTransitionBuffer eager PushSubData / MapBufferData (LANDED 2026-05-11)
+
+- **Win:** eliminates the 4729 ms render-thread stall recovered as
+  `MainThreadJobs.Normal.Invoke:GPUScene.LodTransitionBuffer.Initialize`
+  (§5.8 I1).
+- **Root cause:** `InitializeLodTransitionBuffer` called `Generate()` +
+  `PushSubData()` + `MapBufferData()` eagerly on a 128-byte
+  persistent-coherent-read SSBO. The explicit `PushSubData()` was redundant
+  because `XRDataBuffer.Generate() → PostGenerated()` already invokes
+  `PushData()` to allocate GL storage for resizable buffers — so the second
+  upload uploaded zeros nobody reads. The eager `MapBufferData()` forced a
+  driver sync on the just-allocated persistent map; `SyncLodTransitionBufferFromGpu`
+  already lazy-maps on first CPU read, so the eager map was also redundant.
+- **Change:**
+  [`GPUScene.InitializeLodTransitionBuffer`](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene.cs)
+  now just calls `buffer.Generate()` (inline on render thread, or queued
+  via `EnqueueMainThreadTask` under the same scope label otherwise). The
+  consumers — `GPURenderLODSelect.comp` writes the buffer before any
+  reader, and `SyncLodTransitionBufferFromGpu` lazy-maps on first CPU
+  readback — remain correct.
+- **Validation:** re-run two-Sponza ZeroReadback and inspect
+  `profiler-render-stalls.log`. `GPUScene.LodTransitionBuffer.Initialize`
+  should no longer appear as a recovered render hot path. Functional check:
+  LOD transitions render correctly (no flicker on LOD swap) and shaders
+  that read `LODTransitionBuffer` produce expected output.
+
 #### O-11. MeshAtlas subrange-append push (LANDED 2026-05-10)
 
 - **Win:** eliminates 2–3 GB/s of redundant vertex SoA re-uploads during mesh
@@ -472,6 +611,68 @@ Each item lists: predicted win (qualitative), prerequisites, change summary, val
   atlas size. Two-Sponza GPU paths should no longer freeze under streaming
   load.
 
+#### O-15. Audit GPU-indirect per-frame SSBO writes for double-buffering / fence-gating
+
+- **Win:** identifies the per-frame implicit-sync source responsible for
+  the 8x CpuDirect→GpuIndirect fps delta in static scenes (§5.9). Pure
+  audit task; no behavior change.
+- **Change:** enumerate every SSBO written from the render thread between
+  `XRViewport.Render` start and `MultiDrawElementsIndirectCount` issue
+  under `GpuIndirectZeroReadback`. For each, classify:
+  - Is the buffer persistent-mapped + coherent, or `glBufferSubData`-pushed?
+  - Is it ring-buffered (N copies indexed by frame slot) or single-instance?
+  - Is the previous frame's GPU read fenced before the next CPU write?
+  - Is the write conditional on a dirty flag, or unconditional every frame?
+
+  Candidate targets per §5.9: `MaterialTierIndirectDrawBuffer`,
+  `MaterialTierDrawCountBuffer` (parameter buffer),
+  `CulledSceneToRenderBuffer`, `LodTransitionBuffer`,
+  `InstanceTransformBuffer`, `InstanceSourceIndexBuffer`,
+  `MaterialSlotBuffer`, scatter tables, plus the indirect-build compute
+  output buffer.
+- **Validation:** produce a table mapping each buffer → (mapping mode,
+  ring slots, fence gate, dirty gate). Any row missing both ring slots
+  and a fence gate is a candidate for the per-frame implicit-sync stall.
+- **Risk:** none — read-only audit.
+
+#### O-16. Add narrow profiler scopes inside `RenderCommand.Render` for indirect prep + draw
+
+- **Win:** attributes the bare 100–541 ms `RenderCommand.Render` stall to
+  a specific sub-step. Required to confirm O-15 hypothesis or redirect.
+- **Change:** add `using var _ = StartProfileScope("…")` scopes around:
+  - `GPUScene.SwapCommandBuffers`
+  - the indirect-build compute dispatch
+  - each scatter / culled-commands push
+  - `MultiDrawElementsIndirectCount` (or `MultiDrawElementsIndirect`) call
+  - the parameter-buffer bind/push and the indirect-buffer bind/push
+- **Validation:** re-run `Measurement-Baseline-GpuIndirectZeroReadback`
+  with both Sponzas, no lights, editor UI hidden. Recovered-stall leaves
+  must now resolve to one or more of the new scopes instead of bare
+  `RenderCommand.Render`.
+- **Risk:** profiler scope cost itself; mitigated because scope cost is
+  ~µs and the target stalls are ~100 ms.
+
+#### O-17. Fix per-frame implicit-sync source identified by O-15 / O-16
+
+- **Win:** removes the 8x CpuDirect→GpuIndirect fps gap. Predicted to
+  lift two-Sponza ZeroReadback from 10 fps to within 20% of CpuDirect.
+- **Change:** TBD pending O-15 / O-16 output. Likely options per common
+  GL driver behaviour:
+  - Promote single-instance SSBOs that the CPU writes every frame to
+    N-slot ring buffers (N = max in-flight frames + 1) indexed by the
+    existing frame-id, with a fence per slot.
+  - Replace unconditional `glBufferSubData` with a dirty-gated subrange
+    push (extends the O-11 / O-14 pattern to the GPU-indirect path).
+  - Move CPU writes to a worker thread + persistent-coherent map and
+    publish via fence rather than `glBufferSubData`.
+- **Validation:** `Measurement-Baseline-GpuIndirectZeroReadback`
+  two-Sponza fps within 20% of `Measurement-Baseline-CpuDirect`; bare
+  `RenderCommand.Render` no longer in the top-5 recovered leaves.
+- **Risk:** ring-buffering correctness — readers (compute shaders) must
+  read the same slot the CPU wrote in the matching frame. Mitigation:
+  centralise slot selection in `GPUScene` and bind by slot index, not
+  by buffer handle.
+
 ## 7. Phased Execution
 
 | Phase | Items | Gate |
@@ -480,7 +681,8 @@ Each item lists: predicted win (qualitative), prerequisites, change summary, val
 | P1 — Instrument & measure | §4 setup, capture B1+B2+B2-paused baselines for all 3 strategies. | Baseline numbers committed to a `docs/work/audit/render-perf-<date>.md`. **Partial 2026-05-10: GPU paths freeze above ~28 commands due to PushSubData flood — see §5.4.** |
 | P1.5 — PushSubData attribution | Add gated per-buffer PushSubData breakdown (caller, buffer label, bytes, count, dumped 1 Hz when `XRE_PUSHSUBDATA_BREAKDOWN=1`). Re-run GpuIndirectInstrumented with both Sponzas. | Single dominant buffer (or pair) identified; numbers committed to audit doc. **Done 2026-05-10: see §5.5; root cause = MeshAtlas full re-upload.** |
 | P2 — GPU indirect unblock | **O-11** (MeshAtlas subrange-append push) **landed and validated 2026-05-11 per §5.6**. **Dirty-delta `RenderCommandCollection`** also landed (per-command `_dirty`/`_swapQueued` gate). Re-measure: GPU swap is no longer the bottleneck. Real residuals per §5.6: editor ImGui hierarchy panel (§5.7 H1), per-draw barrier stalls (O-7), render-thread one-shot init (§5.8 I1), large-range PushSubData (extend O-11 to growing SSBOs). | GPU paths run both Sponzas without 5 Hz cap. |
-| P2.5 — Editor hierarchy + render-thread unblocks | §5.7 H1 (virtualize hierarchy / move enumeration off render thread), §5.8 I1 (`LodTransitionBuffer.Initialize` off render thread), **O-7** (coalesce per-draw `MemoryBarrier`), extend O-11 tail-append pattern to `RenderCommandsBuffer`/`MeshDataBuffer`/`LodTableBuffer` resize uploads. Re-measure after each. | `profiler-render-stalls.log` no longer recovers > 100 ms on any of these scopes; ZeroReadback fps off floor. |
+| P2.5 — Editor hierarchy + render-thread unblocks | **O-12 (§5.8 I1) LANDED 2026-05-11**, **O-13 (§5.7 H1 hierarchy fast-skip) LANDED 2026-05-11**, **O-14 (MeshDataBuffer dirty-range tracker, extends O-11 to scattered Set sites) LANDED 2026-05-11**, **profiler-panel collector moved to app thread 2026-05-11**. Remaining: extend tail-append to `RenderCommandsBuffer` resize uploads and `LodTableBuffer` scattered writes. **O-7 deprioritised** — partial coalescing already landed in `RenderZeroReadbackMaterialTiers` / `RenderZeroReadbackActiveMaterialBuckets`, and §5.9 evidence shows bare `RenderCommand.Render` is invariant to per-draw barriers. | `profiler-render-stalls.log` no longer recovers > 100 ms on any of these scopes; ZeroReadback fps off floor. |
+| P2.6 — GPU-indirect static-scene stall (§5.9) | **O-15** SSBO write audit → **O-16** narrow profiler scopes → **O-17** fix (likely ring-buffering or dirty-gated subrange push on the offending buffer). Triggered by user-reported 80 fps CpuDirect vs 10 fps GpuIndirectZeroReadback on static two-Sponza scene with no lights and no UI — defect is per-frame implementation work the GPU-indirect path does that CpuDirect does not. | Two-Sponza GpuIndirectZeroReadback within 20% of CpuDirect fps; bare `RenderCommand.Render` falls out of top-5 recovered stalls. |
 | P3 — Path A cleanup | O-1, O-2, O-3, then O-4/O-5 if counters justify. Only meaningful once skinned/B2 scene runs cleanly. | B2/B2-paused Path A overhead removed or quantified. |
 | P4 — CPU-direct/larger design | O-8, then O-10 if Path A still needs it. | Both paths pass perf bar on B1+B2. |
 

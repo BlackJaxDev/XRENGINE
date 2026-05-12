@@ -117,30 +117,6 @@ namespace XREngine.Rendering
 
             protected abstract string? GenerateVertexShaderSource();
 
-            protected bool FragmentConsumesTransformId()
-            {
-                var material = Parent?.Material;
-                if (material?.Shaders is null)
-                    return false;
-
-                foreach (var shader in material.Shaders)
-                {
-                    if (shader is null || shader.Type != EShaderType.Fragment)
-                        continue;
-
-                    string? source = shader.Source?.Text;
-                    if (string.IsNullOrEmpty(source))
-                        continue;
-
-                    if (source.Contains(DefaultVertexShaderGenerator.FragTransformIdName, StringComparison.Ordinal) ||
-                        source.Contains("location = 21", StringComparison.Ordinal) ||
-                        source.Contains("location=21", StringComparison.Ordinal))
-                        return true;
-                }
-
-                return false;
-            }
-
             public delegate void DelRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode);
             /// <summary>
             /// Tells all renderers to render this mesh.
@@ -166,18 +142,7 @@ namespace XREngine.Rendering
                 if (m is null)
                     return null;
 
-                var gen = (T)Activator.CreateInstance(typeof(T), m)!;
-
-                // Strip the FragTransformId output (location 21) when no paired fragment
-                // shader declares it, avoiding SPIR-V interface mismatch validation warnings.
-                if (gen is DefaultVertexShaderGenerator dvsg && !FragmentConsumesTransformId())
-                {
-                    dvsg.EmitTransformId = false;
-                    dvsg.OutputVars.Remove(DefaultVertexShaderGenerator.FragTransformIdName);
-                    dvsg.UniformNames.Remove("TransformId");
-                }
-
-                return gen.Generate();
+                return ((T)Activator.CreateInstance(typeof(T), m)!).Generate();
             }
         }
 
@@ -368,13 +333,6 @@ namespace XREngine.Rendering
                     generator = new NVStereoMeshDeformVertexShaderGenerator(m, maxInfluences, optimizeToVec4);
                 else
                     generator = new MeshDeformVertexShaderGenerator(m, maxInfluences, optimizeToVec4);
-
-                if (!FragmentConsumesTransformId())
-                {
-                    generator.EmitTransformId = false;
-                    generator.OutputVars.Remove(MeshDeformVertexShaderGenerator.FragTransformIdName);
-                    generator.UniformNames.Remove("TransformId");
-                }
 
                 return generator.Generate();
             }

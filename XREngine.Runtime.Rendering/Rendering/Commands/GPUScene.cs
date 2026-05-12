@@ -1719,7 +1719,7 @@ namespace XREngine.Rendering.Commands
                 FirstVertex = (uint)_streamingAtlases[_streamingRenderSlot].MeshOffsets[mesh].FirstVertex,
                 Flags = ComposeMeshDataFlags(EAtlasTier.Streaming)
             });
-            _meshDataDirty = true;
+            MarkMeshDataDirty(meshID);
             return true;
         }
 
@@ -1787,11 +1787,7 @@ namespace XREngine.Rendering.Commands
                 if (!ReserveMeshInStreamingAtlas(mesh, meshID, meshLabel, maxVertexCount, maxIndexCount, out failureReason))
                     return false;
 
-                if (_meshDataDirty)
-                {
-                    MeshDataBuffer.PushSubData();
-                    _meshDataDirty = false;
-                }
+                FlushMeshDataDirtyRange();
 
                 RebuildAtlasIfDirty(EAtlasTier.Streaming);
                 return true;
@@ -2211,8 +2207,9 @@ namespace XREngine.Rendering.Commands
                     Flags = ComposeMeshDataFlags(tier)
                 };
                 MeshDataBuffer.Set(meshID, entry);
+                MarkMeshDataDirty(meshID);
             }
-            MeshDataBuffer.PushSubData();
+            FlushMeshDataDirtyRange();
         }
 
         #endregion
@@ -2343,6 +2340,8 @@ namespace XREngine.Rendering.Commands
             _bvhNodeCount = 0;
             _bvhPrimitiveCount = 0;
             _bvhRefitPending = false;
+            _bvhBuildSuppressed = false;
+            _bvhSuppressedCommandCount = 0;
             _meshletsDirty = true;
         }
 
@@ -2508,17 +2507,17 @@ namespace XREngine.Rendering.Commands
 
         private static void InitializeLodTransitionBuffer(XRDataBuffer buffer)
         {
-            void Initialize()
-            {
-                buffer.Generate();
-                buffer.PushSubData();
-                buffer.MapBufferData();
-            }
-
+            // Generate() -> PostGenerated() already allocates GL storage and runs the initial
+            // PushData() for resizable buffers, so an explicit PushSubData() here is a redundant
+            // second upload. MapBufferData() is lazy-called by SyncLodTransitionBufferFromGpu()
+            // the first time a CPU read is needed, so eager mapping just forces a driver sync on
+            // the persistent-coherent allocation. Both were responsible for the multi-second
+            // render-thread stall recovered as `MainThreadJobs.Normal.Invoke:GPUScene.LodTransitionBuffer.Initialize`
+            // (see render-submission-perf-debug-plan.md §5.8 I1).
             if (Engine.IsRenderThread)
-                Initialize();
+                buffer.Generate();
             else
-                Engine.EnqueueMainThreadTask(Initialize, "GPUScene.LodTransitionBuffer.Initialize");
+                Engine.EnqueueMainThreadTask(buffer.Generate, "GPUScene.LodTransitionBuffer.Initialize");
         }
 
         private void EnsureLodTransitionBufferCapacity(uint requiredSize)
@@ -2981,11 +2980,7 @@ namespace XREngine.Rendering.Commands
                         // _meshlets.AddMesh(mesh, meshID, materialID, Matrix4x4.Identity);
                     }
                 }
-                if (_meshDataDirty)
-                {
-                    MeshDataBuffer.PushSubData();
-                    _meshDataDirty = false;
-                }
+                FlushMeshDataDirtyRange();
                 if (anyAdded)
                 {
                     // Upload only the newly appended command range.
@@ -3140,7 +3135,7 @@ namespace XREngine.Rendering.Commands
             {
                 EnsureMeshDataCapacity(meshID + 1);
                 MeshDataBuffer.Set(meshID, default(MeshDataEntry));
-                _meshDataDirty = true;
+                MarkMeshDataDirty(meshID);
                 return false;
             }
 
@@ -3150,7 +3145,7 @@ namespace XREngine.Rendering.Commands
                 failureReason = "did not produce atlas offsets";
                 EnsureMeshDataCapacity(meshID + 1);
                 MeshDataBuffer.Set(meshID, default(MeshDataEntry));
-                _meshDataDirty = true;
+                MarkMeshDataDirty(meshID);
                 return false;
             }
 
@@ -3163,7 +3158,7 @@ namespace XREngine.Rendering.Commands
             {
                 failureReason = "produced zero indices after atlas packing";
                 MeshDataBuffer.Set(meshID, default(MeshDataEntry));
-                _meshDataDirty = true;
+                MarkMeshDataDirty(meshID);
                 return false;
             }
 
@@ -3176,7 +3171,7 @@ namespace XREngine.Rendering.Commands
             };
             MeshDataBuffer.Set(meshID, entry);
 
-            _meshDataDirty = true;
+            MarkMeshDataDirty(meshID);
             return true;
         }
 
@@ -3243,7 +3238,7 @@ namespace XREngine.Rendering.Commands
             // Clear MeshData entry for safety (prevents stale atlas offsets from being consumed).
             EnsureMeshDataCapacity(meshID + 1);
             MeshDataBuffer.Set(meshID, default(MeshDataEntry));
-            _meshDataDirty = true;
+            MarkMeshDataDirty(meshID);
 
             // Remove atlas geometry only when no commands reference it.
             RemoveSubmeshFromAtlas(mesh);
@@ -3263,6 +3258,52 @@ namespace XREngine.Rendering.Commands
         private readonly Dictionary<uint, (IRenderCommandMesh command, int subMeshIndex)> _commandIndexLookup = [];
         private readonly Dictionary<XRMesh, uint> _meshToIndexRemap = []; // retained for future reverse lookups (unused by atlas sizing)
         private bool _meshDataDirty = false; // tracks pending GPU upload for mesh metadata
+        // Dirty-range tracker for MeshDataBuffer. Updated by MarkMeshDataDirty and drained by
+        // FlushMeshDataDirtyRange so the full-buffer PushSubData() pattern collapses to a
+        // single contiguous range upload (extends O-11 tail-append to scattered Set sites).
+        private uint _meshDataDirtyMinIndex = uint.MaxValue;
+        private uint _meshDataDirtyMaxIndexExclusive = 0u;
+
+        private void MarkMeshDataDirty(uint meshID)
+        {
+            if (meshID < _meshDataDirtyMinIndex)
+                _meshDataDirtyMinIndex = meshID;
+            uint upper = meshID + 1;
+            if (upper > _meshDataDirtyMaxIndexExclusive)
+                _meshDataDirtyMaxIndexExclusive = upper;
+            _meshDataDirty = true;
+        }
+
+        private void FlushMeshDataDirtyRange()
+        {
+            if (!_meshDataDirty)
+                return;
+
+            var buffer = MeshDataBuffer;
+            uint count = buffer.ElementCount;
+            uint min = _meshDataDirtyMinIndex;
+            uint maxExclusive = _meshDataDirtyMaxIndexExclusive;
+            if (count > 0 && min < maxExclusive)
+            {
+                if (maxExclusive > count)
+                    maxExclusive = count;
+                if (min < maxExclusive)
+                {
+                    uint elementSize = buffer.ElementSize;
+                    buffer.PushSubData((int)(min * elementSize), (maxExclusive - min) * elementSize);
+                }
+            }
+            else if (count > 0)
+            {
+                // Range was never narrowed (e.g. atlas-wide rebuild path). Fall back to full push
+                // so callers that flipped `_meshDataDirty` without populating a range still upload.
+                buffer.PushSubData();
+            }
+
+            _meshDataDirtyMinIndex = uint.MaxValue;
+            _meshDataDirtyMaxIndexExclusive = 0u;
+            _meshDataDirty = false;
+        }
 
         /// <summary>
         /// Attempts to get the mesh data entry for a given mesh ID.
@@ -3311,11 +3352,7 @@ namespace XREngine.Rendering.Commands
                     RecordUnsupportedMesh(mesh, meshLabel, hydrationFailure);
                     return false;
                 }
-                if (_meshDataDirty)
-                {
-                    MeshDataBuffer.PushSubData();
-                    _meshDataDirty = false;
-                }
+                FlushMeshDataDirtyRange();
 
                 // Re-check CPU-side cache after hydration
                 if (TryGetActiveAtlasAllocation(mesh, out tier, out allocation) && allocation.IndexCount > 0)
@@ -3394,11 +3431,7 @@ namespace XREngine.Rendering.Commands
                     UpdatingCommandsBuffer.PushSubData();
                     LodTransitionBuffer.PushSubData();
 
-                    if (_meshDataDirty)
-                    {
-                        MeshDataBuffer.PushSubData();
-                        _meshDataDirty = false;
-                    }
+                    FlushMeshDataDirtyRange();
 
                     // Mark BVH dirty so it gets rebuilt before next cull pass
                     if (_useInternalBvh)
@@ -3852,11 +3885,7 @@ namespace XREngine.Rendering.Commands
                     UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
                     LodTransitionBuffer.PushSubData((int)(minIndex * LodTransitionBuffer.ElementSize), (maxIndex - minIndex + 1) * LodTransitionBuffer.ElementSize);
 
-                    if (_meshDataDirty)
-                    {
-                        MeshDataBuffer.PushSubData();
-                        _meshDataDirty = false;
-                    }
+                    FlushMeshDataDirtyRange();
 
                     if (_useInternalBvh)
                     {
@@ -4106,6 +4135,12 @@ namespace XREngine.Rendering.Commands
         /// <summary>Flag indicating a BVH refit is pending on the render thread.</summary>
         private volatile bool _bvhRefitPending = false;
 
+        /// <summary>True after a failed BVH build until scene command data changes.</summary>
+        private bool _bvhBuildSuppressed = false;
+
+        /// <summary>Command count represented by the suppressed failed BVH build.</summary>
+        private uint _bvhSuppressedCommandCount = 0;
+
         /// <inheritdoc/>
         XRDataBuffer? IGpuBvhProvider.BvhNodeBuffer => _useInternalBvh ? _gpuBvhTree?.NodeBuffer : null;
 
@@ -4127,6 +4162,8 @@ namespace XREngine.Rendering.Commands
         public void MarkBvhDirty()
         {
             _bvhDirty = true;
+            _bvhBuildSuppressed = false;
+            _bvhSuppressedCommandCount = 0;
         }
 
         /// <summary>
@@ -4150,6 +4187,8 @@ namespace XREngine.Rendering.Commands
                 _bvhReady = false;
                 _bvhNodeCount = 0;
                 _bvhPrimitiveCount = 0;
+                _bvhBuildSuppressed = false;
+                _bvhSuppressedCommandCount = 0;
                 _gpuBvhTree?.Clear();
                 return true;
             }
@@ -4173,9 +4212,16 @@ namespace XREngine.Rendering.Commands
             _bvhNodeCount = _gpuBvhTree.NodeCount;
             _bvhPrimitiveCount = _gpuBvhTree.PrimitiveCount;
             _bvhReady = _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
+            _bvhBuildSuppressed = !_bvhReady;
+            _bvhSuppressedCommandCount = _bvhBuildSuppressed ? commandCount : 0u;
 
             if (IsGpuSceneLoggingEnabled())
-                SceneLog($"[GPUScene] Built internal BVH with {_bvhNodeCount} nodes for {commandCount} commands");
+            {
+                if (_bvhReady)
+                    SceneLog($"[GPUScene] Built internal BVH with {_bvhNodeCount} nodes for {commandCount} commands");
+                else
+                    SceneLog($"[GPUScene] Internal BVH build failed for {commandCount} commands; suppressing rebuilds until command data changes.");
+            }
 
             return true;
         }
@@ -4217,8 +4263,19 @@ namespace XREngine.Rendering.Commands
                 _bvhReady = false;
                 _bvhNodeCount = 0;
                 _bvhPrimitiveCount = 0;
+                _bvhBuildSuppressed = false;
+                _bvhSuppressedCommandCount = 0;
                 _gpuBvhTree?.Clear();
                 return;
+            }
+
+            if (_bvhBuildSuppressed && !_bvhDirty)
+            {
+                if (_bvhSuppressedCommandCount == commandCount)
+                    return;
+
+                _bvhBuildSuppressed = false;
+                _bvhSuppressedCommandCount = 0;
             }
 
             if (_bvhDirty || !_bvhReady || _bvhPrimitiveCount != commandCount || _gpuBvhTree is null)

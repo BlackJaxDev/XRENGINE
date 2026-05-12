@@ -519,10 +519,10 @@ public sealed class GpuBvhTree : IDisposable
         if ((flags & OverflowQueueBit) != 0)
             reasons.Add("queue capacity exceeded");
         if ((flags & OverflowBvhBit) != 0)
-            reasons.Add("BVH build overflow");
+            reasons.Add($"BVH build overflow (primitives={primitiveCount}, nodes={nodeCount})");
 
         return reasons.Count == 0
-            ? "unknown overflow"
+            ? $"unknown overflow (flags=0x{flags:X})"
             : string.Join(", ", reasons);
     }
 
