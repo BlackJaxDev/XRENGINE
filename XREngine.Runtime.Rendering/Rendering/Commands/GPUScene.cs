@@ -1131,17 +1131,24 @@ namespace XREngine.Rendering.Commands
 
         public void EnsureAtlasBuffers(EAtlasTier tier)
         {
-            if (tier == EAtlasTier.Streaming)
+            // Self-locking: external callers (e.g. GPURenderPassCollection.MakeIndirectRenderer)
+            // race with Add(RenderInfo) on the legacy mirror state mutated by
+            // SyncLegacyDynamicAtlasState. _lock is reentrant so internal callers already
+            // holding it are unaffected.
+            using (_lock.EnterScope())
             {
-                foreach (AtlasTierState streamingState in _streamingAtlases)
-                    EnsureTierBuffers(streamingState);
-            }
-            else
-            {
-                EnsureTierBuffers(GetTierState(tier));
-            }
+                if (tier == EAtlasTier.Streaming)
+                {
+                    foreach (AtlasTierState streamingState in _streamingAtlases)
+                        EnsureTierBuffers(streamingState);
+                }
+                else
+                {
+                    EnsureTierBuffers(GetTierState(tier));
+                }
 
-            SyncLegacyDynamicAtlasState();
+                SyncLegacyDynamicAtlasState();
+            }
         }
 
         private static XRDataBuffer MakeLodTableBuffer()
@@ -1213,7 +1220,14 @@ namespace XREngine.Rendering.Commands
             EnsureLodTableCapacity(state.LogicalMeshId + 1);
             EnsureLodRequestCapacity(state.LogicalMeshId + 1);
             LODTableBuffer.SetDataRawAtIndex(state.LogicalMeshId, state.ToEntry());
-            LODTableBuffer.PushSubData();
+            // Push only the single touched entry, not the whole buffer.
+            // LodTableBuffer is touched once per logical-mesh-state update; pushing the
+            // entire buffer here was the post-O-11 dominant PushSubData offender
+            // (450 calls/sec × full 3072-byte upload = ~1.4 MB/sec of redundant traffic).
+            // GLDataBuffer.PushSubData falls back to a full PushData when the buffer
+            // just grew, so this is safe after EnsureLodTableCapacity.
+            uint elementSize = LODTableBuffer.ElementSize;
+            LODTableBuffer.PushSubData((int)(state.LogicalMeshId * elementSize), elementSize);
         }
 
         private bool TryGetLogicalMeshState(uint logicalMeshId, int lodLevel, out LogicalMeshState? state, out string? failureReason)
@@ -1858,7 +1872,12 @@ namespace XREngine.Rendering.Commands
                 FirstVertex = (uint)_streamingAtlases[_streamingRenderSlot].MeshOffsets[mesh].FirstVertex,
                 Flags = ComposeMeshDataFlags(EAtlasTier.Streaming)
             });
-            MeshDataBuffer.PushSubData();
+            // Push only the single touched entry. Full-buffer push here was a
+            // streaming-residency-rate PushSubData offender post-O-11.
+            // GLDataBuffer.PushSubData falls back to a full PushData when the
+            // buffer just grew, so this is safe after EnsureMeshDataCapacity.
+            uint mdbEntrySize = MeshDataBuffer.ElementSize;
+            MeshDataBuffer.PushSubData((int)(meshID * mdbEntrySize), mdbEntrySize);
             return true;
         }
 
@@ -1883,7 +1902,9 @@ namespace XREngine.Rendering.Commands
                 _activeAtlasTiers.Remove(mesh);
 
             MeshDataBuffer.Set(meshID, default(MeshDataEntry));
-            MeshDataBuffer.PushSubData();
+            // Push only the single touched entry; see note in UpdateStreamingMesh.
+            uint mdbEntrySizeU = MeshDataBuffer.ElementSize;
+            MeshDataBuffer.PushSubData((int)(meshID * mdbEntrySizeU), mdbEntrySizeU);
             return true;
         }
 
@@ -2031,47 +2052,35 @@ namespace XREngine.Rendering.Commands
 
         public void RebuildAllAtlasesIfDirty()
         {
-            RebuildAtlasIfDirty(EAtlasTier.Static);
-            RebuildAtlasIfDirty(EAtlasTier.Dynamic);
-            RebuildAtlasIfDirty(EAtlasTier.Streaming);
+            using (_lock.EnterScope())
+            {
+                RebuildAtlasIfDirty(EAtlasTier.Static);
+                RebuildAtlasIfDirty(EAtlasTier.Dynamic);
+                RebuildAtlasIfDirty(EAtlasTier.Streaming);
+            }
         }
 
         public void RebuildAtlasIfDirty(EAtlasTier tier)
         {
+            // Self-locking for the same reason as EnsureAtlasBuffers. Reentrant.
+            using (_lock.EnterScope())
+            {
             AtlasTierState state = GetTierState(tier);
             if (!state.Dirty)
                 return;
 
             EnsureAtlasBuffers(tier);
 
-            // Grow buffers to required counts (no shrinking to avoid churn).
-            // If any buffer must grow, the LastUploadedVertexCount high-water mark
-            // is reset so the next push covers the entire range. The GPU-side
-            // GLDataBuffer.PushSubData falls back to a full PushData when
-            // dataLength > _lastPushedLength, so this is correct.
-            bool grew = false;
-            if (state.Positions!.ElementCount < state.VertexCount)
-            {
-                state.Positions.Resize((uint)state.VertexCount);
-                grew = true;
-            }
-            if (state.Normals!.ElementCount < state.VertexCount)
-            {
-                state.Normals.Resize((uint)state.VertexCount);
-                grew = true;
-            }
-            if (state.Tangents!.ElementCount < state.VertexCount)
-            {
-                state.Tangents.Resize((uint)state.VertexCount);
-                grew = true;
-            }
-            if (state.UV0!.ElementCount < state.VertexCount)
-            {
-                state.UV0.Resize((uint)state.VertexCount);
-                grew = true;
-            }
-            if (grew)
-                state.LastUploadedVertexCount = 0;
+            // Grow buffers to required counts using power-of-two capacity so that
+            // routine append (next submesh added to atlas) does NOT re-grow every
+            // frame. Resizing to an exact count would invalidate GPU storage on
+            // every append (PushSubData falls back to a full PushData when
+            // dataLength > _lastPushedLength), turning the per-frame appended-tail
+            // upload into a per-frame full-atlas re-upload — the root cause of the
+            // PushSubData flood identified in §5.5 of the perf-debug plan.
+            // VerifyBufferLengths/EnsureAtlasBuffers already use NextPowerOfTwo;
+            // this path must agree with them.
+            VerifyBufferLengths(state, state.VertexCount);
 
             // Push only the appended vertex range. Per-attribute subrange push:
             //   offset = lastUploaded * elementSize, length = (newCount - lastUploaded) * elementSize
@@ -2175,6 +2184,7 @@ namespace XREngine.Rendering.Commands
             catch (Exception ex)
             {
                 Debug.MeshesWarning($"[GPUScene] AtlasRebuilt event handler failed: {ex.Message}");
+            }
             }
         }
 
@@ -2423,9 +2433,6 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
-
-                if (_meshletsDirty)
-                    RebuildMeshletsFromUpdatingCommands();
 
                 // Update BVH
                 if (_useInternalBvh)
@@ -2704,6 +2711,31 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Gets the meshlet collection for this scene.</summary>
         public MeshletCollection Meshlets => _meshlets;
+
+        /// <summary>
+        /// Rebuilds and renders meshlet data on demand. Traditional GPU indirect and zero-readback
+        /// paths never call this, so meshoptimizer work stays out of their swap/update path.
+        /// </summary>
+        public bool RenderMeshlets(XRCamera camera, int renderPass)
+        {
+            if (camera is null)
+                return false;
+
+            EnsureMeshletsReadyForRender();
+            return _meshlets.Render(camera, renderPass);
+        }
+
+        private void EnsureMeshletsReadyForRender()
+        {
+            if (!_meshletsDirty)
+                return;
+
+            using (_lock.EnterScope())
+            {
+                if (_meshletsDirty)
+                    RebuildMeshletsFromUpdatingCommands();
+            }
+        }
 
         private void RebuildMeshletsFromUpdatingCommands()
         {

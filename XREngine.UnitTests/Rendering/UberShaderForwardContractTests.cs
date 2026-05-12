@@ -387,6 +387,18 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void CpuDirectUberMainPass_UsesSeparableOpenGlPrograms()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+
+        source.ShouldContain("ShouldForceSeparableUberProgram");
+        source.ShouldContain("monolithic Uber fragment + generated vertex programs");
+        source.ShouldContain("!xrMaterial.ActiveUberVariant.IsEmpty");
+        source.ShouldContain("|| forceSeparableUber");
+        source.ShouldContain("Path.GetFileName(path), \"UberShader.frag\"");
+    }
+
+    [Test]
     public void DefaultUberMaterialContract_RequestsForwardEngineUniforms_AndFeatureDefaults()
     {
         ShaderVar[] parameters = ModelImporter.CreateDefaultForwardPlusUberShaderParameters();

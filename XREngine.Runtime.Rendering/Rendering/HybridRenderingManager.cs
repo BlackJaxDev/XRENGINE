@@ -287,7 +287,10 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             IReadOnlyList<DrawBatch>? batches = null)
         {
-            if (camera is null || scene is null || (_useMeshletPipeline && scene.Meshlets.Render(camera, currentRenderPass)))
+            if (camera is null || scene is null)
+                return;
+
+            if (_useMeshletPipeline && scene.RenderMeshlets(camera, currentRenderPass))
                 return;
 
             if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
@@ -1039,7 +1042,8 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             XRRenderProgram? graphicsProgram,
             XRCamera? camera,
-            Matrix4x4 modelMatrix)
+            Matrix4x4 modelMatrix,
+            bool emitBarrier = true)
         {
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
@@ -1124,7 +1128,11 @@ namespace XREngine.Rendering
 
                 LogIndirectPath(usingCountPath, effectiveDrawCount, stride, (uint)byteOffset);
 
-                if (parameterBuffer is not null)
+                // O-7: per-batch MemoryBarrier coalescing.
+                // The batch dispatch loop in RenderIndirectBatches issues a single coalesced
+                // barrier covering the entire batch loop, so we skip the per-range barrier when
+                // emitBarrier=false. Standalone callers still get the original semantics.
+                if (emitBarrier && parameterBuffer is not null)
                     renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
 
                 if (DebugSettings.ValidateBufferLayouts)
@@ -3349,6 +3357,17 @@ namespace XREngine.Rendering
             if (instrumentedStrategy)
                 DumpIndirectCommandsOneShot(indirectDrawBuffer, activeBatches, currentRenderPass);
 
+            // O-7: issue ONE coalesced MemoryBarrier covering the entire indirect batch loop
+            // instead of one per DispatchRenderIndirectRange call. The compute pass that builds
+            // the indirect/parameter buffers already completed earlier this frame, so a single
+            // barrier ahead of the draw loop is sufficient for correctness. Per-batch
+            // emitBarrier=false suppresses the redundant per-range barriers.
+            if (dispatchParameterBuffer is not null && activeBatches.Count > 0)
+            {
+                var batchLoopRenderer = AbstractRenderer.Current;
+                batchLoopRenderer?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+            }
+
             bool textBatchBuffersAttached = false;
             foreach (var batch in activeBatches)
             {
@@ -3473,7 +3492,8 @@ namespace XREngine.Rendering
                     dispatchParameterBuffer,
                     program,
                     camera,
-                        defaultModelMatrix);
+                        defaultModelMatrix,
+                        emitBarrier: false);
             }
 
             if (textBatchBuffersAttached)
@@ -3529,6 +3549,13 @@ namespace XREngine.Rendering
             Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             uint maxDrawsPerBucket = Math.Max(renderPasses.MaxDrawsPerMaterialTier, 1u);
+
+            // O-7: one coalesced barrier ahead of the per-material-tier bucket loop instead of
+            // one barrier per DispatchRenderIndirectCountBucket.
+            renderer.MemoryBarrier(
+                EMemoryBarrierMask.ShaderStorage |
+                EMemoryBarrierMask.ClientMappedBuffer |
+                EMemoryBarrierMask.Command);
 
             for (int slotIndex = 0; slotIndex < materialSlotIds.Count; ++slotIndex)
             {
@@ -3592,7 +3619,8 @@ namespace XREngine.Rendering
                         program,
                         camera,
                         defaultModelMatrix,
-                        allowMaxDrawFallback: true);
+                        allowMaxDrawFallback: true,
+                        emitBarrier: false);
                 }
             }
         }
@@ -3660,6 +3688,12 @@ namespace XREngine.Rendering
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             uint maxDrawsPerBucket = Math.Max(renderPasses.MaxDrawsPerMaterialTier, 1u);
 
+            // O-7: one coalesced barrier ahead of the active-bucket loop.
+            renderer.MemoryBarrier(
+                EMemoryBarrierMask.ShaderStorage |
+                EMemoryBarrierMask.ClientMappedBuffer |
+                EMemoryBarrierMask.Command);
+
             foreach (uint bucketIndex in activeBuckets)
             {
                 uint slotIndex = bucketIndex / GPUBatchingBindings.MaterialTierCount;
@@ -3718,7 +3752,8 @@ namespace XREngine.Rendering
                     program,
                     camera,
                     defaultModelMatrix,
-                    allowMaxDrawFallback: true);
+                    allowMaxDrawFallback: true,
+                    emitBarrier: false);
             }
         }
 
@@ -3825,6 +3860,12 @@ namespace XREngine.Rendering
             if (!TryUseIndirectGraphicsProgram(program, bindless ? "ZeroReadbackBindlessMaterialTable" : "ZeroReadbackMaterialTable"))
                 return;
 
+            // O-7: one coalesced barrier ahead of the material-table bucket loop.
+            renderer?.MemoryBarrier(
+                EMemoryBarrierMask.ShaderStorage |
+                EMemoryBarrierMask.ClientMappedBuffer |
+                EMemoryBarrierMask.Command);
+
             foreach (uint bucketIndex in activeBuckets)
             {
                 uint tier = bucketIndex % GPUBatchingBindings.MaterialTierCount;
@@ -3850,7 +3891,8 @@ namespace XREngine.Rendering
                     camera,
                     defaultModelMatrix,
                     materialTableBuffer,
-                    allowMaxDrawFallback: true);
+                    allowMaxDrawFallback: true,
+                    emitBarrier: false);
             }
         }
 
@@ -3904,7 +3946,8 @@ namespace XREngine.Rendering
             XRCamera camera,
             Matrix4x4 modelMatrix,
             XRDataBuffer? materialTableBuffer = null,
-            bool allowMaxDrawFallback = false)
+            bool allowMaxDrawFallback = false,
+            bool emitBarrier = true)
         {
             var renderer = AbstractRenderer.Current;
             if (renderer is null || maxDrawCount == 0)
@@ -3962,10 +4005,11 @@ namespace XREngine.Rendering
                 renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
                 try
                 {
-                    renderer.MemoryBarrier(
-                        EMemoryBarrierMask.ShaderStorage |
-                        EMemoryBarrierMask.ClientMappedBuffer |
-                        EMemoryBarrierMask.Command);
+                    if (emitBarrier)
+                        renderer.MemoryBarrier(
+                            EMemoryBarrierMask.ShaderStorage |
+                            EMemoryBarrierMask.ClientMappedBuffer |
+                            EMemoryBarrierMask.Command);
                     renderer.MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, indirectByteOffset);
                 }
                 finally
@@ -4000,10 +4044,11 @@ namespace XREngine.Rendering
             renderer.BindParameterBuffer(parameterBuffer);
             try
             {
-                renderer.MemoryBarrier(
-                    EMemoryBarrierMask.ShaderStorage |
-                    EMemoryBarrierMask.ClientMappedBuffer |
-                    EMemoryBarrierMask.Command);
+                if (emitBarrier)
+                    renderer.MemoryBarrier(
+                        EMemoryBarrierMask.ShaderStorage |
+                        EMemoryBarrierMask.ClientMappedBuffer |
+                        EMemoryBarrierMask.Command);
                 renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
             }
             finally

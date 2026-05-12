@@ -183,6 +183,14 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
         private IRuntimeRenderPipelineDebugContext? _ownerPipeline;
 
+        // Dirty-delta swap queue. AddCPU enqueues a command only when the command is dirty AND has
+        // not already been queued for this swap cycle (RenderCommand._swapQueued). SwapBuffers
+        // walks _renderingSwapQueue exclusively and skips the per-pass walk, which previously cost
+        // up to 240 ms/frame on dense scenes. The lists keep their capacity across Clear() calls,
+        // so steady-state add+swap does not allocate.
+        private List<RenderCommand> _updatingSwapQueue = new(1024);
+        private List<RenderCommand> _renderingSwapQueue = new(1024);
+
         public RenderCommandCollection() { }
         public RenderCommandCollection(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters)
             => SetRenderPasses(passIndicesAndSorters);
@@ -262,6 +270,15 @@ namespace XREngine.Rendering.Commands
                 item.SortOrderKey = GetSortOrderKey(pass);
                 set.Add(item);
                 ++_numCommandsRecentlyAddedToUpdate;
+
+                // Dirty-delta enqueue: only swap commands whose state has actually changed since
+                // the last publish. _swapQueued dedups across multiple AddCPU calls for the same
+                // command this frame (multi-camera, multi-pipeline, multi-pass).
+                if (item._dirty && !item._swapQueued)
+                {
+                    item._swapQueued = true;
+                    _updatingSwapQueue.Add(item);
+                }
             }
         }
 
@@ -737,25 +754,45 @@ namespace XREngine.Rendering.Commands
         {
             using var sample = Engine.Profiler.Start("RenderCommandCollection.SwapBuffers");
 
-            static void Clear(ICollection<RenderCommand> x)
-                => x.Clear();
-            static void Swap(ICollection<RenderCommand> x)
-                => x.ForEach(y => y?.SwapBuffers());
-            
             (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
+            (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
 
             using (Engine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
             {
-                _renderingPasses.Values.ForEach(Swap);
+                // Dirty-delta publish: walk only the commands that mutated since the last swap.
+                // Skip commands whose dirty bit was already cleared by another collection sharing
+                // this command (multi-viewport scenes publish through whichever collection swaps
+                // first; subsequent collections in the same frame are no-ops because the snapshot
+                // fields live on the RenderCommand instance itself).
+                var queue = _renderingSwapQueue;
+                int queueCount = queue.Count;
+                for (int i = 0; i < queueCount; i++)
+                {
+                    var cmd = queue[i];
+                    if (cmd is null)
+                        continue;
+                    if (cmd._dirty)
+                        cmd.SwapBuffers();
+                    else
+                        cmd._swapQueued = false;
+                }
+                queue.Clear();
             }
 
             using (Engine.Profiler.Start("RenderCommandCollection.SwapBuffers.ClearPasses"))
             {
-                _updatingPasses.Values.ForEach(Clear);
+                foreach (var pass in _updatingPasses.Values)
+                    pass.Clear();
             }
 
-            foreach (int passIndex in _updatingPassSortOrderCounters.Keys.ToArray())
-                _updatingPassSortOrderCounters[passIndex] = 0L;
+            // Reset the per-pass sort-order counters. Keys can be added by AddCPU on other
+            // threads in the future, so we snapshot before mutating values. The collection is
+            // typically small (one entry per render pass) so the ToArray() cost is negligible.
+            if (_updatingPassSortOrderCounters.Count > 0)
+            {
+                foreach (int passIndex in _updatingPassSortOrderCounters.Keys.ToArray())
+                    _updatingPassSortOrderCounters[passIndex] = 0L;
+            }
 
             _numCommandsRecentlyAddedToUpdate = 0;
         }

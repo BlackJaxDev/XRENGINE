@@ -247,6 +247,15 @@ void main()
 
     // Stage 3: compute root index by following parent pointers from leaf 0.
     // This avoids relying on internal-node index ordering.
+    //
+    // The climb is bounded by totalNodes iterations to guarantee termination
+    // even if the tree is malformed (e.g. duplicate-Morton scenes producing
+    // overlapping internal-node ranges, or a stage-2 data race overwriting
+    // a parent pointer to form a cycle). Without the bound this single-thread
+    // dispatch can spin forever and trigger a GPU TDR (Windows
+    // VIDEO_TDR_FAILURE 0x141 / nvoglv64 fail-fast). If the bound is hit, the
+    // OVERFLOW_BVH flag is set so the host sees the malformed-tree condition
+    // on its overflow readback and can rebuild or fall back to CPU BVH.
     if (buildStage == 3u && gid == 0u)
     {
         if (totalNodes == 0u)
@@ -257,11 +266,21 @@ void main()
 
         uint current = 0u;
         uint parent = nodes[current].parentIndex;
+        uint guard = totalNodes;
+        bool malformed = false;
         while (parent != uint(-1))
         {
+            if (parent >= totalNodes || guard == 0u)
+            {
+                malformed = true;
+                break;
+            }
             current = parent;
             parent = nodes[current].parentIndex;
+            guard--;
         }
+        if (malformed)
+            atomicOr(overflowFlags, OVERFLOW_BVH);
         rootIndex = current;
     }
 }

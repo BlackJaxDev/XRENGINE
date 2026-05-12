@@ -306,9 +306,21 @@ namespace XREngine
 
         private void HandleSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
+            if (IsSubSettingsMetadataProperty(e.PropertyName))
+                return;
+
             if (!IsDirty)
                 MarkDirty();
         }
+
+        private static bool IsSubSettingsMetadataProperty(string? propertyName)
+            => propertyName is nameof(XRObjectBase.Name)
+                or nameof(XRAsset.FilePath)
+                or nameof(XRAsset.IsDirty)
+                or nameof(XRAsset.SourceAsset)
+                or nameof(XRAsset.EmbeddedAssets)
+                or nameof(XRAsset.OriginalPath)
+                or nameof(XRAsset.OriginalLastWriteTimeUtc);
 
         /// <summary>
         /// The maximum number of times a mirror can reflect another mirror.

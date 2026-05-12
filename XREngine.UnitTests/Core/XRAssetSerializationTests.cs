@@ -2,6 +2,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
 using System.Collections.Generic;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 
 namespace XREngine.UnitTests.Core;
@@ -113,6 +114,46 @@ Child:
         clone.Child.Reference!.Name.ShouldBe("shared-ref");
     }
 
+    [Test]
+    public void YamlSerializer_Emits_ColorScalars()
+    {
+        var original = new ColorYamlContainer
+        {
+            Color4 = new ColorF4(0.25f, 0.5f, 0.75f, 1.0f),
+            Color3 = new ColorF3(0.125f, 0.25f, 0.5f)
+        };
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+
+        yaml.ShouldContain("Color4: 0.25 0.5 0.75 1");
+        yaml.ShouldContain("Color3: 0.125 0.25 0.5");
+        yaml.ShouldNotContain("R:");
+        yaml.ShouldNotContain("G:");
+        yaml.ShouldNotContain("B:");
+        yaml.ShouldNotContain("A:");
+    }
+
+    [Test]
+    public void YamlDeserializer_Reads_Legacy_ColorMappings()
+    {
+        const string yaml = """
+Color4: &o0
+  R: 1
+  G: 0.5
+  A: 1
+Color4Alias: *o0
+Color3:
+  G: 0.25
+  B: 0.75
+""";
+
+        ColorYamlContainer clone = AssetManager.Deserializer.Deserialize<ColorYamlContainer>(yaml).ShouldNotBeNull();
+
+        clone.Color4.ShouldBe(new ColorF4(1.0f, 0.5f, 0.0f, 1.0f));
+        clone.Color4Alias.ShouldBe(clone.Color4);
+        clone.Color3.ShouldBe(new ColorF3(0.0f, 0.25f, 0.75f));
+    }
+
     private sealed class StubAsset : XRAsset
     {
         public string? Payload { get; set; }
@@ -128,6 +169,13 @@ Child:
     {
         public NamedReference? Shared { get; set; }
         public NestedAliasAsset? Child { get; set; }
+    }
+
+    private sealed class ColorYamlContainer
+    {
+        public ColorF4 Color4 { get; set; }
+        public ColorF4 Color4Alias { get; set; }
+        public ColorF3 Color3 { get; set; }
     }
 
     private sealed class NestedAliasAsset : XRAsset

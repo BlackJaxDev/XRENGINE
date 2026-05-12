@@ -91,7 +91,7 @@ namespace XREngine.Rendering.Meshlets
             // Adjust offsets in returned meshlets and append to global lists
             uint baseVertexOffset = (uint)_vertices.Count;
             uint baseVertOffset = (uint)_vertexIndices.Count;
-            uint baseTriOffset = (uint)(_triangleIndices.Count / 3); // 3 indices per triangle
+            uint baseTriOffset = (uint)_triangleIndices.Count;
 
             for (int i = 0; i < build.Meshlets.Length; i++)
             {

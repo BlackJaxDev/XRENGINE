@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
@@ -44,7 +45,9 @@ namespace XREngine.Rendering.OpenGL
                 CollectBuffers();
                 Dbg($"Collected {_bufferCache.Count} buffer(s)", "Buffers");
 
-                if (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
+                bool forceSeparableUber = ShouldForceSeparableUberProgram(material);
+                if ((Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
+                    || forceSeparableUber)
                 {
                     _combinedProgram?.Destroy();
                     _combinedProgram = null;
@@ -451,9 +454,11 @@ namespace XREngine.Rendering.OpenGL
             {
                 bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
                 bool materialDiffers = !ReferenceEquals(material.Data, MeshRenderer.Material);
+                bool forceSeparableUber = ShouldForceSeparableUberProgram(material);
                 bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
                     || forceShaderPipelines
-                    || materialDiffers;
+                    || materialDiffers
+                    || forceSeparableUber;
                 
                 return usePipelines
                     ? GetPipelinePrograms(material, out vertexProgram, out materialProgram)
@@ -492,6 +497,46 @@ namespace XREngine.Rendering.OpenGL
                     : _separatedVertexProgram;
 
                 return vertexProgram?.IsAsyncBuildPending ?? false;
+            }
+
+            private static bool ShouldForceSeparableUberProgram(GLMaterial material)
+            {
+                if (Engine.Rendering.State.IsShadowPass)
+                    return false;
+
+                XRMaterial xrMaterial = material.Data;
+                if (!xrMaterial.ActiveUberVariant.IsEmpty)
+                    return true;
+
+                IReadOnlyList<XRShader> fragmentShaders = xrMaterial.FragmentShaders;
+                bool hasUberFragment = false;
+                for (int i = 0; i < fragmentShaders.Count; i++)
+                {
+                    if (IsUberFragmentShader(fragmentShaders[i]))
+                    {
+                        hasUberFragment = true;
+                        break;
+                    }
+                }
+
+                if (!hasUberFragment)
+                    return false;
+
+                // CPU-direct main passes may have shader pipelines globally disabled, but
+                // monolithic Uber fragment + generated vertex programs are large enough to
+                // wedge shared-context linking on imported scenes. Keep CPU mesh submission;
+                // split the GL programs so the lit pass uses the same stable separable route
+                // already used by prepass and override passes.
+                return true;
+            }
+
+            private static bool IsUberFragmentShader(XRShader shader)
+            {
+                if (shader.Type != EShaderType.Fragment)
+                    return false;
+
+                string? path = shader.Source.FilePath ?? shader.FilePath;
+                return string.Equals(Path.GetFileName(path), "UberShader.frag", StringComparison.OrdinalIgnoreCase);
             }
 
             /// <summary>

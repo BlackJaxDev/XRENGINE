@@ -58,9 +58,9 @@ public static class MeshOptimizerIntegration
             };
         }
 
-        MeshOptimizerNative.MeshoptMeshlet[] meshoptMeshlets = new MeshOptimizerNative.MeshoptMeshlet[(int)maxMeshlets];
-        uint[] meshletVertices = new uint[sourceIndices.Length];
-        byte[] meshletTriangles = new byte[sourceIndices.Length];
+        MeshOptimizerNative.MeshoptMeshlet[] meshoptMeshlets = new MeshOptimizerNative.MeshoptMeshlet[CheckedMeshletCount(maxMeshlets)];
+        uint[] meshletVertices = new uint[CheckedScratchElementCount(maxMeshlets, settings.MaxVertices, "meshletVertices")];
+        byte[] meshletTriangles = new byte[CheckedTriangleScratchByteCount(maxMeshlets, settings.MaxTriangles)];
 
         nuint meshletCount = MeshOptimizerNative.BuildMeshlets(
             settings.BuildMode,
@@ -95,16 +95,17 @@ public static class MeshOptimizerIntegration
             for (int i = 0; i < finalMeshletCount; i++)
             {
                 MeshOptimizerNative.MeshoptMeshlet meshlet = meshoptMeshlets[i];
+                int triangleByteCountForMeshlet = GetTriangleByteCount(meshlet.TriangleCount);
                 MeshOptimizerNative.OptimizeMeshletLevel(
                     meshletVertices.AsSpan((int)meshlet.VertexOffset, (int)meshlet.VertexCount),
-                    meshletTriangles.AsSpan((int)meshlet.TriangleOffset, (int)meshlet.TriangleCount * 3),
+                    meshletTriangles.AsSpan((int)meshlet.TriangleOffset, triangleByteCountForMeshlet),
                     settings.OptimizeLevel);
             }
         }
 
         MeshOptimizerNative.MeshoptMeshlet last = meshoptMeshlets[finalMeshletCount - 1];
         int vertexReferenceCount = (int)(last.VertexOffset + last.VertexCount);
-        int triangleByteCount = (int)(last.TriangleOffset + last.TriangleCount * 3);
+        int triangleByteCount = (int)last.TriangleOffset + GetTriangleByteCount(last.TriangleCount);
 
         Array.Resize(ref meshletVertices, vertexReferenceCount);
         Array.Resize(ref meshletTriangles, triangleByteCount);
@@ -125,7 +126,7 @@ public static class MeshOptimizerIntegration
                 uint[]? encodedVertices = settings.EncodeVertexReferences
                     ? meshletVertices.AsSpan((int)meshlet.VertexOffset, (int)meshlet.VertexCount).ToArray()
                     : null;
-                byte[] encodedTriangles = meshletTriangles.AsSpan((int)meshlet.TriangleOffset, (int)meshlet.TriangleCount * 3).ToArray();
+                byte[] encodedTriangles = meshletTriangles.AsSpan((int)meshlet.TriangleOffset, GetTriangleByteCount(meshlet.TriangleCount)).ToArray();
                 encodedByteCount += MeshOptimizerNative.EncodeMeshlet(encodedVertices, encodedTriangles, (int)settings.MaxVertices, (int)settings.MaxTriangles);
             }
 
@@ -133,7 +134,7 @@ public static class MeshOptimizerIntegration
             {
                 BoundingSphere = sphere,
                 VertexOffset = meshlet.VertexOffset,
-                TriangleOffset = meshlet.TriangleOffset / 3u,
+                TriangleOffset = meshlet.TriangleOffset,
                 VertexCount = meshlet.VertexCount,
                 TriangleCount = meshlet.TriangleCount,
                 MeshID = 0,
@@ -151,6 +152,45 @@ public static class MeshOptimizerIntegration
             Stats = new MeshOptimizerMeshletStats(finalMeshletCount, vertexReferenceCount, triangleByteCount, encodedByteCount),
         };
     }
+
+    private static int CheckedMeshletCount(nuint maxMeshlets)
+    {
+        if (maxMeshlets > (nuint)int.MaxValue)
+            throw new InvalidOperationException($"Meshlet build bound exceeds supported array length: {maxMeshlets}.");
+
+        return (int)maxMeshlets;
+    }
+
+    private static int CheckedScratchElementCount(nuint maxMeshlets, uint maxElementsPerMeshlet, string bufferName)
+    {
+        ulong count = checked((ulong)maxMeshlets * maxElementsPerMeshlet);
+        if (count > int.MaxValue)
+            throw new InvalidOperationException($"Meshlet scratch buffer '{bufferName}' exceeds supported array length: {count}.");
+
+        return (int)count;
+    }
+
+    private static int CheckedTriangleScratchByteCount(nuint maxMeshlets, uint maxTriangles)
+    {
+        ulong bytesPerMeshlet = AlignToFour(checked((ulong)maxTriangles * 3UL));
+        ulong byteCount = checked((ulong)maxMeshlets * bytesPerMeshlet);
+        if (byteCount > int.MaxValue)
+            throw new InvalidOperationException($"Meshlet triangle scratch buffer exceeds supported array length: {byteCount}.");
+
+        return (int)byteCount;
+    }
+
+    private static int GetTriangleByteCount(uint triangleCount)
+    {
+        ulong byteCount = checked((ulong)triangleCount * 3UL);
+        if (byteCount > int.MaxValue)
+            throw new InvalidOperationException($"Meshlet triangle byte count exceeds supported span length: {byteCount}.");
+
+        return (int)byteCount;
+    }
+
+    private static ulong AlignToFour(ulong value)
+        => (value + 3UL) & ~3UL;
 
     public static void RemoveAutoGeneratedLods(SubMesh subMesh)
     {
@@ -404,7 +444,7 @@ public static class MeshOptimizerIntegration
     {
         MeshOptimizerNative.MeshoptBounds bounds = MeshOptimizerNative.ComputeMeshletBounds(
             meshletVertices.AsSpan((int)meshlet.VertexOffset, (int)meshlet.VertexCount),
-            meshletTriangles.AsSpan((int)meshlet.TriangleOffset, (int)meshlet.TriangleCount * 3),
+            meshletTriangles.AsSpan((int)meshlet.TriangleOffset, GetTriangleByteCount(meshlet.TriangleCount)),
             positions,
             vertexCount);
         return new Vector4(bounds.CenterX, bounds.CenterY, bounds.CenterZ, bounds.Radius);

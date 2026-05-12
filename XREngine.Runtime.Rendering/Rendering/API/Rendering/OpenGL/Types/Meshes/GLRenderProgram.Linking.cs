@@ -239,7 +239,94 @@ namespace XREngine.Rendering.OpenGL
                 if (textures is not null)
                     foreach (var (unit, texture, level, layer, access, format) in textures)
                         BindImageTexture(unit, texture, level, layer.HasValue, layer ?? 0, access, format);
-                Api.DispatchCompute(x, y, z);
+
+                // Diagnostic: env-gated per-dispatch trace + optional glFinish + glGetError
+                // to localize TDR-inducing compute dispatches. AutoFlush stream so entries
+                // survive a GPU TDR / driver fail-fast.
+                //   XRE_DISPATCH_TRACE=1   -> log every dispatch (pre+post)
+                //   XRE_DISPATCH_FINISH=1  -> glFinish() after each dispatch (slow; pinpoints TDR)
+                if (_dispatchTraceEnabled)
+                {
+                    string label = ResolveDispatchLabel();
+                    TraceDispatch("pre", label, x, y, z, 0);
+                    Api.DispatchCompute(x, y, z);
+                    if (_dispatchFinishEnabled)
+                    {
+                        Api.Finish();
+                        var err = Api.GetError();
+                        TraceDispatch("post-finish", label, x, y, z, (uint)err);
+                    }
+                    else
+                    {
+                        var err = Api.GetError();
+                        TraceDispatch("post", label, x, y, z, (uint)err);
+                    }
+                }
+                else
+                {
+                    Api.DispatchCompute(x, y, z);
+                }
+            }
+
+            private string ResolveDispatchLabel()
+            {
+                try
+                {
+                    string n = Data?.Name ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(n))
+                        return n;
+                    var sh = Data?.Shaders?.Count > 0 ? Data.Shaders[0] : null;
+                    if (sh is not null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(sh.Name))
+                            return sh.Name!;
+                        var fp = sh.Source?.FilePath;
+                        if (!string.IsNullOrWhiteSpace(fp))
+                            return System.IO.Path.GetFileName(fp);
+                    }
+                }
+                catch { }
+                return $"<prog#{BindingId}>";
+            }
+
+            private static readonly bool _dispatchTraceEnabled =
+                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DISPATCH_TRACE"));
+            private static readonly bool _dispatchFinishEnabled =
+                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DISPATCH_FINISH"));
+            private static readonly object _dispatchTraceLock = new();
+            private static System.IO.StreamWriter? _dispatchTraceWriter;
+
+            private static void TraceDispatch(string stage, string? programName, uint x, uint y, uint z, uint glError)
+            {
+                try
+                {
+                    var w = _dispatchTraceWriter;
+                    if (w is null)
+                    {
+                        lock (_dispatchTraceLock)
+                        {
+                            if (_dispatchTraceWriter is null)
+                            {
+                                string root = AppContext.BaseDirectory;
+                                string logsDir = System.IO.Path.Combine(root, "Build", "Logs");
+                                try { System.IO.Directory.CreateDirectory(logsDir); } catch { }
+                                string path = System.IO.Path.Combine(logsDir, $"dispatch-trace_pid{Environment.ProcessId}.log");
+                                var fs = new System.IO.FileStream(path, System.IO.FileMode.Append, System.IO.FileAccess.Write, System.IO.FileShare.ReadWrite, 4096, System.IO.FileOptions.WriteThrough);
+                                _dispatchTraceWriter = new System.IO.StreamWriter(fs) { AutoFlush = true };
+                                _dispatchTraceWriter.WriteLine($"# Dispatch trace started at {DateTime.UtcNow:O} (finish={_dispatchFinishEnabled})");
+                            }
+                            w = _dispatchTraceWriter;
+                        }
+                    }
+                    lock (_dispatchTraceLock)
+                    {
+                        if (glError != 0)
+                            w.WriteLine($"{DateTime.UtcNow:HH:mm:ss.fff} tid={Environment.CurrentManagedThreadId} stage={stage} program={programName ?? "<null>"} groups=({x},{y},{z}) glError=0x{glError:X}");
+                        else
+                            w.WriteLine($"{DateTime.UtcNow:HH:mm:ss.fff} tid={Environment.CurrentManagedThreadId} stage={stage} program={programName ?? "<null>"} groups=({x},{y},{z})");
+                    }
+                }
+                catch { }
             }
 
             protected override void UnlinkData()
@@ -686,6 +773,9 @@ namespace XREngine.Rendering.OpenGL
             {
                 public bool TryProcess()
                 {
+                    if (renderer.ShouldOrphanGLHandlesForShutdown)
+                        return true;
+
                     GL api = renderer.Api;
 
                     if (programId != 0 && api.IsProgram(programId))
@@ -830,6 +920,9 @@ namespace XREngine.Rendering.OpenGL
                 int remaining = Math.Max(1, maxPrograms);
                 while (remaining-- > 0 && DeferredProgramHandleDeletes.TryDequeue(out var delete))
                 {
+                    if (delete.Renderer.ShouldOrphanGLHandlesForShutdown)
+                        continue;
+
                     if (Engine.Rendering.State.RenderFrameId < delete.EarliestFrameId)
                     {
                         DeferredProgramHandleDeletes.Enqueue(delete);
@@ -856,7 +949,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static void EnqueueDeferredProgramHandleDelete(OpenGLRenderer renderer, uint programId)
             {
-                if (programId == 0)
+                if (programId == 0 || renderer.ShouldOrphanGLHandlesForShutdown)
                     return;
 
                 DeferredProgramHandleDeletes.Enqueue(new DeferredProgramHandleDelete(
@@ -1334,8 +1427,44 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
+            private void AbandonAsyncLinkStateForShutdown()
+            {
+                if (Hash != 0)
+                    InFlightCompilations.TryRemove(Hash, out _);
+
+                ReleaseSharedLinkedProgramReference();
+
+                if (TryGetBindingId(out _))
+                    OrphanForDeferredDelete();
+
+                foreach (GLShader shader in _shaderCache.Values)
+                    shader.OrphanForDeferredDelete();
+
+                _replacementProgramId = 0;
+                _replacementProgramPending = false;
+                _asyncAttachedShaderIds = null;
+                _asyncLinkedProgramId = 0;
+                _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                _asyncBinaryUploadPending = false;
+                _asyncCompileLinkPending = false;
+                _asyncCompileLinkQueueWaitPending = false;
+                _asyncCompileDuplicateHashWaitPending = false;
+                _activeBuildBackend = null;
+                _activeBuildFingerprint = null;
+                _activeBuildQueueTimestamp = 0;
+                InvalidatePreparedLinkData();
+                ResetUberBackendTracking();
+                UnregisterPendingAsyncProgram();
+            }
+
             private void ReleaseAsyncLinkState()
             {
+                if (Renderer.ShouldOrphanGLHandlesForShutdown)
+                {
+                    AbandonAsyncLinkStateForShutdown();
+                    return;
+                }
+
                 if (Hash != 0)
                     InFlightCompilations.TryRemove(Hash, out _);
 
@@ -2101,7 +2230,8 @@ namespace XREngine.Rendering.OpenGL
 
                 SharedLinkedPrograms.TryRemove(new SharedLinkedProgramKey(sharedProgram.Renderer, sharedProgram.CacheKey), out _);
                 Cache.Remove(sharedProgram.ProgramId);
-                EnqueueDeferredProgramHandleDelete(sharedProgram.Renderer, sharedProgram.ProgramId);
+                if (!sharedProgram.Renderer.ShouldOrphanGLHandlesForShutdown)
+                    EnqueueDeferredProgramHandleDelete(sharedProgram.Renderer, sharedProgram.ProgramId);
                 ShaderProgramLifecycleDiagnostics.RecordSharedProgramDelete();
             }
 

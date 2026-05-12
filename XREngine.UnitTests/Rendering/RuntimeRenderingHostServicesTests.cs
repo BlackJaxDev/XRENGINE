@@ -210,6 +210,9 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool AllowSkinning => true;
         public bool OptimizeSkinningTo4Weights => false;
         public bool OptimizeSkinningWeightsIfPossible => false;
+        public bool CalculateSkinningInComputeShader => false;
+        public bool CalculateBlendshapesInComputeShader => false;
+        public int ShaderConfigVersion => 0;
         public bool IsRenderThread => true;
         public bool IsRendererActive => false;
         public bool IsShadowPass => false;
@@ -370,6 +373,22 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public void UnsubscribeViewportCollectVisible(Action collectVisible)
             => ViewportCollectUnsubscribeCount++;
+
+        public void SubscribeRenderingSettingsChanged(Action callback)
+        {
+        }
+
+        public void UnsubscribeRenderingSettingsChanged(Action callback)
+        {
+        }
+
+        public void SubscribeAntiAliasingSettingsChanged(Action callback)
+        {
+        }
+
+        public void UnsubscribeAntiAliasingSettingsChanged(Action callback)
+        {
+        }
 
         public void SubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame)
         {

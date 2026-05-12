@@ -29,6 +29,25 @@ namespace XREngine.Rendering.Commands
         private bool _renderEnabled = true;
         private bool _hasSwappedBuffers = false;
 
+        // Dirty-delta swap support.
+        //
+        // _dirty: any property change marks this true via OnPropertyChanged. Cleared at the end of
+        // SwapBuffers() once the per-command publish has run. The render-side snapshot fields
+        // (RenderEnabled / per-derived-class snapshot copies) are owned by the command instance,
+        // so once a clean publish has run, subsequent collections that share this command can skip
+        // their per-command SwapBuffers without losing data.
+        //
+        // _swapQueued: dedup bit for RenderCommandCollection._updatingSwapQueue. AddCPU may be
+        // called multiple times per frame for the same command (e.g. multiple cameras or shadow
+        // viewports). The queue uses this bit to add each dirty command at most once per swap.
+        // Cleared inside SwapBuffers() after the publish runs.
+        //
+        // Both fields are mutated under the RenderCommandCollection._lock during AddCPU and during
+        // the synchronized SwapBuffers window. They are read without locking by the gate inside
+        // SwapBuffers, so they are marked volatile to keep that read coherent.
+        internal volatile bool _dirty = true;
+        internal volatile bool _swapQueued = false;
+
         /// <summary>
         /// Whether this command should be collected for rendering.
         /// Updated during Tick/Update, swapped to RenderEnabled during SwapBuffers.
@@ -98,6 +117,30 @@ namespace XREngine.Rendering.Commands
             _hasSwappedBuffers = true;
             _renderEnabled = _enabled;
             OnSwapBuffers?.Invoke(this);
+            // Clear after publish so subsequent collections that share this command in the
+            // same frame can short-circuit, and so the next frame only re-publishes if a
+            // property actually mutated in the interim.
+            _dirty = false;
+            _swapQueued = false;
         }
+
+        /// <summary>
+        /// Marks this command dirty for the next CPU swap. Any property change on a
+        /// <see cref="XRBase"/>-derived setter that uses <c>SetField</c> routes through here, so the
+        /// dirty-delta queue picks the command up automatically. Subclasses that mutate state via
+        /// direct field assignment (rare; <see cref="XRBase"/> mutation contract discourages it)
+        /// should call <see cref="MarkDirty"/> explicitly.
+        /// </summary>
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            _dirty = true;
+            base.OnPropertyChanged(propName, prev, field);
+        }
+
+        /// <summary>
+        /// Manual dirty hook for paths that mutate render-command state without using
+        /// <c>SetField</c>. Safe to call from any thread.
+        /// </summary>
+        public void MarkDirty() => _dirty = true;
     }
 }
