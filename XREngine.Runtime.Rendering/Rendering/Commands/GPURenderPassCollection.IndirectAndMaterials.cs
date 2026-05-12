@@ -256,6 +256,8 @@ namespace XREngine.Rendering.Commands
 
         private void BuildIndirectCommandBuffer(GPUScene scene)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.BuildIndirectCommandBuffer");
+
             Dbg("BuildIndirect begin", "Indirect");
 
             if (_indirectRenderTaskShader is null || _indirectDrawBuffer is null)
@@ -292,6 +294,8 @@ namespace XREngine.Rendering.Commands
 
         private void SelectVisibleCommandLods(GPUScene scene, XRCamera camera)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.SelectVisibleCommandLods");
+
             if (_lodSelectComputeShader is null ||
                 _culledSceneToRenderBuffer is null ||
                 _culledCountBuffer is null ||
@@ -360,6 +364,8 @@ namespace XREngine.Rendering.Commands
 
         private void BuildCulledHotCommandBuffer()
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.BuildCulledHotCommandBuffer");
+
             _culledCommandsUseHotLayout = false;
 
             if (!IsHotCommandLayoutEnabled() ||
@@ -390,6 +396,8 @@ namespace XREngine.Rendering.Commands
 
         private List<HybridRenderingManager.DrawBatch>? BuildGpuBatchesAndInstancing(GPUScene scene)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.BuildGpuBatchesAndInstancing");
+
             if (_buildKeysComputeShader is null ||
                 _buildGpuBatchesComputeShader is null ||
                 _keyIndexBufferA is null ||
@@ -439,6 +447,8 @@ namespace XREngine.Rendering.Commands
 
         private void DispatchMaterialScatter(GPUScene scene)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchMaterialScatter");
+
             if (_materialScatterComputeShader is null ||
                 _keyIndexBufferA is null ||
                 _culledCountBuffer is null)
@@ -487,8 +497,82 @@ namespace XREngine.Rendering.Commands
                 or EZeroReadbackMaterialDrawPath.MaterialTable
                 or EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
 
+        private static ulong MixMaterialMapEntry(ulong materialId, ulong value)
+        {
+            unchecked
+            {
+                ulong mixed = materialId + 0x9E3779B97F4A7C15ul;
+                mixed ^= value + 0xBF58476D1CE4E5B9ul + (mixed << 6) + (mixed >> 2);
+                mixed ^= mixed >> 30;
+                mixed *= 0xBF58476D1CE4E5B9ul;
+                mixed ^= mixed >> 27;
+                mixed *= 0x94D049BB133111EBul;
+                mixed ^= mixed >> 31;
+                return mixed;
+            }
+        }
+
+        private static ulong CombineMaterialMapSignature(int materialCount, uint maxMaterialId, ulong entryXor, ulong entrySum)
+        {
+            unchecked
+            {
+                ulong signature = MixMaterialMapEntry((uint)materialCount, maxMaterialId);
+                signature ^= entryXor;
+                signature ^= entrySum * 1099511628211ul;
+                return signature == 0ul ? 1ul : signature;
+            }
+        }
+
+        private static ulong ComputeMaterialSlotLookupSignature(IReadOnlyDictionary<uint, XRMaterial> materialMap, out uint maxMaterialId)
+        {
+            unchecked
+            {
+                ulong entryXor = 0ul;
+                ulong entrySum = 0ul;
+                maxMaterialId = 0u;
+
+                foreach (uint materialId in materialMap.Keys)
+                {
+                    if (materialId > maxMaterialId)
+                        maxMaterialId = materialId;
+
+                    ulong entry = MixMaterialMapEntry(materialId, 0ul);
+                    entryXor ^= entry;
+                    entrySum += entry;
+                }
+
+                return CombineMaterialMapSignature(materialMap.Count, maxMaterialId, entryXor, entrySum);
+            }
+        }
+
+        private static ulong ComputeMaterialAggregationSignature(IReadOnlyDictionary<uint, XRMaterial> materialMap, out uint maxMaterialId)
+        {
+            unchecked
+            {
+                ulong entryXor = 0ul;
+                ulong entrySum = 0ul;
+                maxMaterialId = 0u;
+
+                foreach (KeyValuePair<uint, XRMaterial> pair in materialMap)
+                {
+                    uint materialId = pair.Key;
+                    if (materialId > maxMaterialId)
+                        maxMaterialId = materialId;
+
+                    ulong allow = MaterialSupportsGpuInstanceAggregation(pair.Value) ? 1ul : 0ul;
+                    ulong entry = MixMaterialMapEntry(materialId, allow);
+                    entryXor ^= entry;
+                    entrySum += entry;
+                }
+
+                return CombineMaterialMapSignature(materialMap.Count, maxMaterialId, entryXor, entrySum);
+            }
+        }
+
         private void DispatchBuildActiveMaterialBuckets()
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchBuildActiveMaterialBuckets");
+
             _zeroReadbackActiveBucketListPreparedThisFrame = false;
 
             if (_buildActiveMaterialBucketsComputeShader is null ||
@@ -516,37 +600,49 @@ namespace XREngine.Rendering.Commands
 
         private void PopulateMaterialSlotLookup(GPUScene scene)
         {
-            uint maxMaterialId = 0u;
-            foreach (uint materialId in scene.MaterialMap.Keys)
-            {
-                if (materialId > maxMaterialId)
-                    maxMaterialId = materialId;
-            }
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.PopulateMaterialSlotLookup");
+
+            ulong signature = ComputeMaterialSlotLookupSignature(scene.MaterialMap, out uint maxMaterialId);
 
             EnsureMaterialScatterBuffers(maxMaterialId + 1u, CommandCapacity);
             if (_materialSlotLookupBuffer is null)
                 return;
 
+            if (ReferenceEquals(_materialSlotLookupUploadedBuffer, _materialSlotLookupBuffer) &&
+                _materialSlotLookupSignature == signature &&
+                _materialSlotLookupUploadedElementCount == _materialSlotLookupBuffer.ElementCount &&
+                _materialSlotIds.Count == scene.MaterialMap.Count)
+            {
+                return;
+            }
+
             _materialSlotIds.Clear();
+            _materialSlotSortScratch.Clear();
 
             for (uint i = 0; i < _materialSlotLookupBuffer.ElementCount; ++i)
                 _materialSlotLookupBuffer.SetDataRawAtIndex(i, GPUBatchingBindings.InvalidMaterialSlot);
 
-            List<uint> materialIds = [.. scene.MaterialMap.Keys];
-            materialIds.Sort();
+            foreach (uint materialId in scene.MaterialMap.Keys)
+                _materialSlotSortScratch.Add(materialId);
+            _materialSlotSortScratch.Sort();
 
-            for (int slotIndex = 0; slotIndex < materialIds.Count; ++slotIndex)
+            for (int slotIndex = 0; slotIndex < _materialSlotSortScratch.Count; ++slotIndex)
             {
-                uint materialId = materialIds[slotIndex];
+                uint materialId = _materialSlotSortScratch[slotIndex];
                 _materialSlotLookupBuffer.SetDataRawAtIndex(materialId, (uint)slotIndex);
                 _materialSlotIds.Add(materialId);
             }
 
             _materialSlotLookupBuffer.PushSubData();
+            _materialSlotLookupUploadedBuffer = _materialSlotLookupBuffer;
+            _materialSlotLookupSignature = signature;
+            _materialSlotLookupUploadedElementCount = _materialSlotLookupBuffer.ElementCount;
         }
 
         private bool ResetMaterialScatterBuffersOnGpu()
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ResetMaterialScatterBuffersOnGpu");
+
             if (_materialTierDrawCountBuffer is null || _materialTierIndirectDrawBuffer is null)
                 return false;
 
@@ -566,6 +662,8 @@ namespace XREngine.Rendering.Commands
 
         private bool ClearUIntBufferOnGpu(XRDataBuffer buffer, ulong uintCount, EMemoryBarrierMask barrierMask)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ClearUIntBufferOnGpu");
+
             if (_clearUIntsComputeShader is null || uintCount == 0ul)
                 return false;
 
@@ -647,6 +745,8 @@ namespace XREngine.Rendering.Commands
 
         private void DispatchBuildKeys()
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchBuildKeys");
+
             if (_buildKeysComputeShader is null || _keyIndexBufferA is null || _culledCountBuffer is null)
                 return;
 
@@ -673,6 +773,8 @@ namespace XREngine.Rendering.Commands
 
         private void DispatchBuildGpuBatches(GPUScene scene)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchBuildGpuBatches");
+
             if (_buildGpuBatchesComputeShader is null ||
                 _keyIndexBufferA is null ||
                 _keyIndexScratchBuffer is null ||
@@ -719,31 +821,36 @@ namespace XREngine.Rendering.Commands
 
         private void PopulateMaterialAggregationFlags(GPUScene scene)
         {
-            if (_materialAggregationBuffer is null)
-                return;
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.PopulateMaterialAggregationFlags");
 
-            uint maxMaterialId = 0u;
-            foreach (uint id in scene.MaterialMap.Keys)
-            {
-                if (id > maxMaterialId)
-                    maxMaterialId = id;
-            }
+            ulong signature = ComputeMaterialAggregationSignature(scene.MaterialMap, out uint maxMaterialId);
 
             EnsureMaterialAggregationBuffer(maxMaterialId + 1u);
             if (_materialAggregationBuffer is null)
                 return;
 
+            if (ReferenceEquals(_materialAggregationUploadedBuffer, _materialAggregationBuffer) &&
+                _materialAggregationSignature == signature &&
+                _materialAggregationUploadedElementCount == _materialAggregationBuffer.ElementCount)
+            {
+                return;
+            }
+
             for (uint i = 0; i < _materialAggregationBuffer.ElementCount; ++i)
                 _materialAggregationBuffer.SetDataRawAtIndex(i, 1u);
 
-            foreach (var (materialID, material) in scene.MaterialMap)
+            foreach (KeyValuePair<uint, XRMaterial> pair in scene.MaterialMap)
             {
-                uint allow = MaterialSupportsGpuInstanceAggregation(material) ? 1u : 0u;
+                uint materialID = pair.Key;
+                uint allow = MaterialSupportsGpuInstanceAggregation(pair.Value) ? 1u : 0u;
                 if (materialID < _materialAggregationBuffer.ElementCount)
                     _materialAggregationBuffer.SetDataRawAtIndex(materialID, allow);
             }
 
             _materialAggregationBuffer.PushSubData();
+            _materialAggregationUploadedBuffer = _materialAggregationBuffer;
+            _materialAggregationSignature = signature;
+            _materialAggregationUploadedElementCount = _materialAggregationBuffer.ElementCount;
         }
 
         private static bool MaterialSupportsGpuInstanceAggregation(XRMaterial? material)
@@ -905,6 +1012,8 @@ namespace XREngine.Rendering.Commands
 
         private bool PrepareMaterialTableAndValidateResidency(GPUScene scene, IReadOnlyList<HybridRenderingManager.DrawBatch>? batches)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.PrepareMaterialTableAndValidateResidency");
+
             bool materialTableRequired = MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
                 ZeroReadbackMaterialDrawPath is EZeroReadbackMaterialDrawPath.MaterialTable
                     or EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
@@ -1630,6 +1739,14 @@ namespace XREngine.Rendering.Commands
             _hiZDepthPyramidOwned?.Destroy();
             _hiZDepthPyramidOwned = null;
             _hiZDepthPyramid = null;
+            _materialSlotLookupUploadedBuffer = null;
+            _materialSlotLookupSignature = 0ul;
+            _materialSlotLookupUploadedElementCount = 0u;
+            _materialAggregationUploadedBuffer = null;
+            _materialAggregationSignature = 0ul;
+            _materialAggregationUploadedElementCount = 0u;
+            _materialSlotIds.Clear();
+            _materialSlotSortScratch.Clear();
         }
 
         private void DisposeShaders()
