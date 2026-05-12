@@ -287,6 +287,8 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             IReadOnlyList<DrawBatch>? batches = null)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.HybridRender");
+
             if (camera is null || scene is null)
                 return;
 
@@ -470,6 +472,7 @@ namespace XREngine.Rendering
             bool allowDrawCountReadback,
             Matrix4x4 modelMatrix)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchRenderIndirect");
             using var timing = BeginTiming("DispatchRenderIndirect");
             bool logGpu = IsEnabled(LogCategory.Draw, LogLevel.Debug);
             
@@ -562,7 +565,8 @@ namespace XREngine.Rendering
             }
 
             LogBufferBind("IndirectDrawBuffer", "DrawIndirect");
-            renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
+            using (Engine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
+                renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
 
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             bool useCount = parity.UsesCountDrawPath;
@@ -591,13 +595,16 @@ namespace XREngine.Rendering
                 if (useCount)
                 {
                     LogBufferBind("ParameterBuffer", "Parameter");
-                    renderer.BindParameterBuffer(parameterBuffer!);
+                    using (Engine.Profiler.Start("GpuIndirect.BindParameterBuffer"))
+                        renderer.BindParameterBuffer(parameterBuffer!);
                     
                     GpuDebug(LogCategory.Sync, "Issuing memory barrier (ClientMappedBuffer | Command)");
-                    renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                    using (Engine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier"))
+                        renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
                     
                     LogMultiDrawIndirect(true, maxCommands, stride);
-                    renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
+                    using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
+                        renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
                 }
                 else
                 {
@@ -611,7 +618,8 @@ namespace XREngine.Rendering
                         ClearIndirectTail(indirectDrawBuffer, drawCount, maxCommands);
                     
                     LogMultiDrawIndirect(false, drawCount, stride);
-                    renderer.MultiDrawElementsIndirect(drawCount, stride);
+                    using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirect"))
+                        renderer.MultiDrawElementsIndirect(drawCount, stride);
                 }
 
                 LogGLErrors(renderer, useCount ? "MultiDrawElementsIndirectCount" : "MultiDrawElementsIndirect");
@@ -3482,6 +3490,8 @@ namespace XREngine.Rendering
             int currentRenderPass,
             IReadOnlyDictionary<uint, XRMaterial> materialMap)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTiers");
+
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
             {
@@ -3607,6 +3617,8 @@ namespace XREngine.Rendering
             int currentRenderPass,
             IReadOnlyDictionary<uint, XRMaterial> materialMap)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ZeroReadback.RenderActiveMaterialBuckets");
+
             if (!renderPasses.ZeroReadbackActiveBucketListPreparedThisFrame)
             {
                 XREngine.Debug.RenderingWarningEvery(
@@ -3739,6 +3751,8 @@ namespace XREngine.Rendering
             int currentRenderPass,
             bool bindless)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTableBuckets");
+
             IReadOnlyDictionary<uint, XRMaterial> materialMap = renderPasses.GetMaterialMap(scene);
 
             // The packed material-table fragment program selects materials by DrawID and bypasses
@@ -3923,6 +3937,8 @@ namespace XREngine.Rendering
             bool allowMaxDrawFallback = false,
             bool emitBarrier = true)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchRenderIndirectCountBucket");
+
             var renderer = AbstractRenderer.Current;
             if (renderer is null || maxDrawCount == 0)
                 return;
@@ -3976,15 +3992,21 @@ namespace XREngine.Rendering
                     return;
                 }
 
-                renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
+                using (Engine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
+                    renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
                 try
                 {
                     if (emitBarrier)
+                    {
+                        using var barrierScope = Engine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier");
                         renderer.MemoryBarrier(
                             EMemoryBarrierMask.ShaderStorage |
                             EMemoryBarrierMask.ClientMappedBuffer |
                             EMemoryBarrierMask.Command);
-                    renderer.MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, indirectByteOffset);
+                    }
+
+                    using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectWithOffset"))
+                        renderer.MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, indirectByteOffset);
                 }
                 finally
                 {
@@ -4014,16 +4036,23 @@ namespace XREngine.Rendering
                 return;
             }
 
-            renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
-            renderer.BindParameterBuffer(parameterBuffer);
+            using (Engine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
+                renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
+            using (Engine.Profiler.Start("GpuIndirect.BindParameterBuffer"))
+                renderer.BindParameterBuffer(parameterBuffer);
             try
             {
                 if (emitBarrier)
+                {
+                    using var barrierScope = Engine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier");
                     renderer.MemoryBarrier(
                         EMemoryBarrierMask.ShaderStorage |
                         EMemoryBarrierMask.ClientMappedBuffer |
                         EMemoryBarrierMask.Command);
-                renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
+                }
+
+                using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
+                    renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
             }
             finally
             {

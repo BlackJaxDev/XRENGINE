@@ -619,6 +619,13 @@ namespace XREngine.Rendering.Commands
         private bool _zeroReadbackMaterialScatterPreparedThisFrame;
         private bool _zeroReadbackActiveBucketListPreparedThisFrame;
         private readonly List<uint> _materialSlotIds = [];
+        private readonly List<uint> _materialSlotSortScratch = [];
+        private XRDataBuffer? _materialSlotLookupUploadedBuffer;
+        private ulong _materialSlotLookupSignature;
+        private uint _materialSlotLookupUploadedElementCount;
+        private XRDataBuffer? _materialAggregationUploadedBuffer;
+        private ulong _materialAggregationSignature;
+        private uint _materialAggregationUploadedElementCount;
         private uint _materialTierBucketCount;
         private uint _maxDrawsPerMaterialTier;
         public bool EnableGpuDrivenBatching { get; set; } = true;

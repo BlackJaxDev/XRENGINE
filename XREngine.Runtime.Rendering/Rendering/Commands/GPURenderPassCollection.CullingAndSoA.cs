@@ -302,6 +302,8 @@ namespace XREngine.Rendering.Commands
 
         private void ResetVisibleCounters()
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ResetVisibleCounters");
+
             VisibleCommandCount = 0;
             VisibleInstanceCount = 0;
             if (_culledCountBuffer is null)
@@ -317,6 +319,8 @@ namespace XREngine.Rendering.Commands
 
         private void UpdateVisibleCountersFromBuffer(XRDataBuffer? countBuffer)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.UpdateVisibleCountersFromBuffer");
+
             if (IsCpuReadbackCountDisabledForPass())
             {
                 // GPU-driven path: the count buffer is consumed directly by GPU dispatches.
@@ -689,6 +693,8 @@ namespace XREngine.Rendering.Commands
         /// </remarks>
         private void FrustumCull(GPUScene scene, XRCamera? camera, uint numCommands)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.FrustumCull");
+
             _skipGpuSubmissionThisPass = false;
             _skipGpuSubmissionReason = null;
 
@@ -1126,6 +1132,8 @@ namespace XREngine.Rendering.Commands
         /// <param name="numCommands"></param>
         private void PassthroughCull(GPUScene scene, uint numCommands)
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.PassthroughCull");
+
             _skipGpuSubmissionThisPass = false;
             _skipGpuSubmissionReason = null;
 

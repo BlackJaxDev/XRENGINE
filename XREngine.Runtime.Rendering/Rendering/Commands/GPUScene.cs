@@ -2367,6 +2367,8 @@ namespace XREngine.Rendering.Commands
         /// </remarks>
         public void SwapCommandBuffers()
         {
+            using var profilerScope = Engine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers");
+
             using (_lock.EnterScope())
             {
                 // Copy the updating buffer data to the render buffer
@@ -2440,7 +2442,7 @@ namespace XREngine.Rendering.Commands
                     if (canRefit)
                         _bvhRefitPending = true;
                     else
-                        MarkBvhDirty();
+                        MarkBvhDirtyUnlessSuppressed(_updatingCommandCount);
                 }
             }
         }
@@ -3893,7 +3895,7 @@ namespace XREngine.Rendering.Commands
                         if (canRefit)
                             _bvhRefitPending = true;
                         else
-                            MarkBvhDirty();
+                            MarkBvhDirtyUnlessSuppressed(_updatingCommandCount);
                     }
 
                     _meshletsDirty = true;
@@ -4164,6 +4166,18 @@ namespace XREngine.Rendering.Commands
             _bvhDirty = true;
             _bvhBuildSuppressed = false;
             _bvhSuppressedCommandCount = 0;
+        }
+
+        private void MarkBvhDirtyUnlessSuppressed(uint commandCount)
+        {
+            if (_bvhBuildSuppressed && _bvhSuppressedCommandCount == commandCount)
+            {
+                _bvhReady = false;
+                _bvhRefitPending = false;
+                return;
+            }
+
+            MarkBvhDirty();
         }
 
         /// <summary>
