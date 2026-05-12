@@ -2494,8 +2494,8 @@ namespace XREngine.Rendering
             const string mainSignature = "void main";
             augmentedSource = source;
 
-            int versionInsertIndex = FindGlslVersionInsertIndex(source);
-            if (versionInsertIndex < 0)
+            int mainIndex = source.IndexOf(mainSignature, StringComparison.Ordinal);
+            if (mainIndex < 0)
                 return false;
 
             var helper = new StringBuilder();
@@ -2544,11 +2544,9 @@ namespace XREngine.Rendering
             helper.AppendLine("        discard;");
             helper.AppendLine("}");
 
-            augmentedSource = source.Insert(versionInsertIndex, helper.ToString());
-
-            int mainIndex = augmentedSource.IndexOf(mainSignature, StringComparison.Ordinal);
-            if (mainIndex < 0)
-                return false;
+            string helperSource = helper.ToString();
+            augmentedSource = source.Insert(mainIndex, helperSource);
+            mainIndex += helperSource.Length;
 
             int braceIndex = augmentedSource.IndexOf('{', mainIndex);
             if (braceIndex < 0)
@@ -2762,30 +2760,6 @@ namespace XREngine.Rendering
         {
             public readonly string CurrentCondition = currentCondition;
             public readonly string CoveredCondition = coveredCondition;
-        }
-
-        private static int FindGlslVersionInsertIndex(string source)
-        {
-            int index = 0;
-            while (index < source.Length)
-            {
-                int lineBreak = source.IndexOf('\n', index);
-                int lineEnd = lineBreak >= 0 ? lineBreak : source.Length;
-                int lineEndExclusive = lineEnd > index && source[lineEnd - 1] == '\r'
-                    ? lineEnd - 1
-                    : lineEnd;
-                string line = source[index..lineEndExclusive].TrimStart();
-
-                if (line.StartsWith("#version", StringComparison.Ordinal))
-                    return lineBreak >= 0 ? lineBreak + 1 : source.Length;
-
-                if (lineBreak < 0)
-                    break;
-
-                index = lineBreak + 1;
-            }
-
-            return -1;
         }
 
         private void DetachIndirectTextBatchBuffers(XRMeshRenderer? vaoRenderer)

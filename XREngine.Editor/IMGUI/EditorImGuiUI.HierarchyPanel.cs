@@ -283,7 +283,15 @@ public static partial class EditorImGuiUI
             ? ImGuiTreeNodeFlags.None
             : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen;
 
-        bool nodeOpen = DrawSceneNodeEntry(node, world, nodeLabel, flags, owningScene);
+        // Off-screen fast-skip: if this row has no descendants rendering this frame
+        // (leaf, collapsed by user, or auto-collapsed) we can replace the entire ImGui
+        // per-row work (TreeNodeEx, hover/click probes, drag/drop probes, popup probes,
+        // checkbox, etc.) with TableNextRow + Dummy(rowHeight). This is the dominant
+        // hot path for high-fanout leaf-heavy hierarchies like two-Sponza
+        // (UI.DrawWorldHierarchyTab measured 752ms / frame on 2026-05-11). Interior
+        // nodes whose subtree is currently visible still pay full per-row cost.
+        bool willRecurse = childCount > 0 && isNodeExpanded && !autoCollapseLargeRoot;
+        bool nodeOpen = DrawSceneNodeEntry(node, world, nodeLabel, flags, owningScene, canFastSkipWhenClipped: !willRecurse);
         if (childCount > 0)
             SetHierarchyNodeExpanded(node, childCount, nodeOpen);
 
@@ -305,7 +313,7 @@ public static partial class EditorImGuiUI
         }
     }
 
-    private static bool DrawSceneNodeEntry(SceneNode node, XRWorldInstance world, string displayLabel, ImGuiTreeNodeFlags flags, XRScene? owningScene)
+    private static bool DrawSceneNodeEntry(SceneNode node, XRWorldInstance world, string displayLabel, ImGuiTreeNodeFlags flags, XRScene? owningScene, bool canFastSkipWhenClipped = false)
     {
         bool isRenaming = ReferenceEquals(_nodePendingRename, node);
         bool isSelected = _selectedHierarchyNodesScratch.Contains(node) || ReferenceEquals(_lastSelectedHierarchyNode, node);
@@ -314,6 +322,22 @@ public static partial class EditorImGuiUI
 
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
+
+        // See DrawSceneNodeTree: when this row has no descendants rendering this frame
+        // we can short-circuit clipped rows with a Dummy of the row height. We still
+        // honor pending rename/scroll for the targeted node — never fast-skip those.
+        if (canFastSkipWhenClipped
+            && !isRenaming
+            && !ReferenceEquals(_pendingHierarchyScrollNode, node))
+        {
+            float rowHeight = ImGui.GetFrameHeightWithSpacing();
+            if (!ImGui.IsRectVisible(new Vector2(1f, rowHeight)))
+            {
+                ImGui.Dummy(new Vector2(0f, rowHeight));
+                ImGui.PopID();
+                return false;
+            }
+        }
 
         ImGuiTreeNodeFlags fullFlags = flags
                                         | ImGuiTreeNodeFlags.SpanFullWidth

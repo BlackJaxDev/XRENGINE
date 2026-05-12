@@ -504,7 +504,7 @@ public partial class DefaultRenderPipeline
     private XRFrameBuffer CreateFxaaFBO()
     {
         XRTexture fxaaSource = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
-        XRTexture fxaaOutput = GetTexture<XRTexture>(FxaaOutputTextureName)!;
+        IFrameBufferAttachement fxaaAttach = EnsureTextureAttachment(FxaaOutputTextureName, CreateFxaaOutputTexture);
         XRShader fxaaShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "FXAA.fs"), EShaderType.Fragment);
         XRMaterial fxaaMaterial = new([fxaaSource], fxaaShader)
         {
@@ -522,8 +522,6 @@ public partial class DefaultRenderPipeline
         {
             Name = FxaaFBOName
         };
-        if (fxaaOutput is not IFrameBufferAttachement fxaaAttach)
-            throw new InvalidOperationException("FXAA output texture is not an FBO-attachable texture.");
 
         fxaaFbo.SetRenderTargets((fxaaAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         fxaaFbo.SettingUniforms += FxaaFBO_SettingUniforms;
@@ -542,7 +540,7 @@ public partial class DefaultRenderPipeline
         XRTexture depthTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
         XRTexture historyDepthTexture = GetTexture<XRTexture>(HistoryDepthViewTextureName)!;
         XRTexture historyColorTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
-        XRTexture outputTexture = GetTexture<XRTexture>(FxaaOutputTextureName)!;
+        IFrameBufferAttachement outputAttach = EnsureTextureAttachment(FxaaOutputTextureName, CreateFxaaOutputTexture);
         XRShader upscaleShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"), EShaderType.Fragment);
         XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture], upscaleShader)
         {
@@ -561,8 +559,6 @@ public partial class DefaultRenderPipeline
         {
             Name = TsrUpscaleFBOName
         };
-        if (outputTexture is not IFrameBufferAttachement outputAttach)
-            throw new InvalidOperationException("TSR upscale output texture is not an FBO-attachable texture.");
 
         fbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         fbo.SettingUniforms += TsrUpscaleFBO_SettingUniforms;
@@ -571,9 +567,7 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreateTsrHistoryColorFBO()
     {
-        XRTexture historyTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
-        if (historyTexture is not IFrameBufferAttachement historyAttach)
-            throw new InvalidOperationException("TSR history color texture is not an FBO-attachable texture.");
+        IFrameBufferAttachement historyAttach = EnsureTextureAttachment(TsrHistoryColorTextureName, CreateTsrHistoryColorTexture);
 
         return new XRFrameBuffer((historyAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
