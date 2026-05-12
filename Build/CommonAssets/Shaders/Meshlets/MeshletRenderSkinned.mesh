@@ -101,7 +101,7 @@ void main()
 
     for (uint tri = tid; tri < m.Indices.w; tri += GROUP_SIZE)
     {
-        uint baseByte = (m.Indices.y + tri) * 3u;
+        uint baseByte = m.Indices.y + tri * 3u;
         gl_PrimitiveIndicesNV[tri * 3u + 0u] = ReadTriIndex(baseByte + 0u);
         gl_PrimitiveIndicesNV[tri * 3u + 1u] = ReadTriIndex(baseByte + 1u);
         gl_PrimitiveIndicesNV[tri * 3u + 2u] = ReadTriIndex(baseByte + 2u);

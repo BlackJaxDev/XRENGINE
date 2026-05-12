@@ -266,8 +266,11 @@ public static partial class EditorImGuiUI
         var transform = node.Transform;
         int childCount = transform.Children.Count;
         string nodeLabel = GetOrCreateNodeLabel(node, childCount);
-        bool autoCollapseLargeRoot = depth == 0
-            && childCount >= LargeHierarchyRootAutoCollapseChildCount
+        // Auto-collapse large-fanout subtrees at any depth (was previously root-only).
+        // Two-Sponza ZeroReadback (2026-05-11) measured `UI.DrawWorldHierarchyTab` = 756ms / frame
+        // because nested high-fanout parents weren't auto-collapsed. The scratch set still tracks
+        // user-driven expansion so we don't re-collapse what the user explicitly opened.
+        bool autoCollapseLargeRoot = childCount >= LargeHierarchyRootAutoCollapseChildCount
             && !_expandedLargeHierarchyRootsScratch.Contains(node);
         bool isNodeExpanded = IsHierarchyNodeExpanded(node, childCount, depth, autoCollapseLargeRoot);
         if (autoCollapseLargeRoot)
@@ -552,8 +555,7 @@ public static partial class EditorImGuiUI
     {
         int childCount = node.Transform.Children.Count;
         bool isRoot = node.Transform.Parent is null;
-        bool autoCollapseLargeRoot = isRoot
-            && childCount >= LargeHierarchyRootAutoCollapseChildCount
+        bool autoCollapseLargeRoot = childCount >= LargeHierarchyRootAutoCollapseChildCount
             && !_expandedLargeHierarchyRootsScratch.Contains(node);
         bool isExpanded = IsHierarchyNodeExpanded(node, childCount, isRoot ? 0 : 1, autoCollapseLargeRoot);
 
@@ -642,8 +644,7 @@ public static partial class EditorImGuiUI
         if (childCount == 0)
             return;
 
-        bool autoCollapseLargeRoot = depth == 0
-            && childCount >= LargeHierarchyRootAutoCollapseChildCount
+        bool autoCollapseLargeRoot = childCount >= LargeHierarchyRootAutoCollapseChildCount
             && !_expandedLargeHierarchyRootsScratch.Contains(node);
         if (!IsHierarchyNodeExpanded(node, childCount, depth, autoCollapseLargeRoot))
             return;
@@ -660,7 +661,8 @@ public static partial class EditorImGuiUI
         if (_hierarchyExpandedState.TryGetValue(node, out bool expanded))
             return expanded;
 
-        return !(depth == 0 && autoCollapseLargeRoot);
+        // Default-collapsed when the large-fanout heuristic fires, at any depth.
+        return !autoCollapseLargeRoot;
     }
 
     private static void SetHierarchyNodeExpanded(SceneNode node, int childCount, bool expanded)

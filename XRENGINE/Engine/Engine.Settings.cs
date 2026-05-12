@@ -25,15 +25,15 @@ namespace XREngine
             get => _userSettings;
             set
             {
-                if (ReferenceEquals(_userSettings, value) && value is not null)
+                if (!ReplaceSettingsRoot(
+                    ref _userSettings,
+                    value,
+                    static () => new UserSettings(),
+                    DetachUserSettings,
+                    AttachUserSettings))
+                {
                     return;
-
-                _userSettings?.PropertyChanged -= HandleUserSettingsChanged;
-                _userSettings = value ?? new UserSettings();
-                _userSettings.PropertyChanged += HandleUserSettingsChanged;
-                TrackOverrideableSettings(_userSettings, _trackedUserOverrideableSettings);
-
-                Assets?.EnsureTracked(_userSettings.SourceAsset ?? _userSettings);
+                }
 
                 OnUserSettingsChanged();
             }
@@ -50,22 +50,14 @@ namespace XREngine
             get => _gameSettings;
             set
             {
-                if (ReferenceEquals(_gameSettings, value) && value is not null)
+                if (!ReplaceSettingsRoot(
+                    ref _gameSettings,
+                    value,
+                    static () => new GameStartupSettings(),
+                    DetachGameSettings,
+                    AttachGameSettings))
                     return;
-
-                if (_gameSettings is not null)
-                    _gameSettings.PropertyChanged -= HandleGameSettingsChanged;
-
-                if (_gameSettings?.BuildSettings is not null)
-                    _gameSettings.BuildSettings.PropertyChanged -= HandleBuildSettingsChanged;
-
-                _gameSettings = value ?? new GameStartupSettings();
-
-                _gameSettings.BuildSettings ??= new BuildSettings();
-
-                _gameSettings.BuildSettings.PropertyChanged += HandleBuildSettingsChanged;
-                _gameSettings.PropertyChanged += HandleGameSettingsChanged;
-                TrackOverrideableSettings(_gameSettings, _trackedGameOverrideableSettings);
+                
                 BuildSettingsChanged?.Invoke(_gameSettings.BuildSettings);
 
                 ApplyEffectiveSettingsForProperty(null);
@@ -81,18 +73,7 @@ namespace XREngine
         public static BuildSettings BuildSettings
         {
             get => GameSettings.BuildSettings;
-            set
-            {
-                if (ReferenceEquals(GameSettings.BuildSettings, value) && value is not null)
-                    return;
-
-                if (GameSettings.BuildSettings is not null)
-                    GameSettings.BuildSettings.PropertyChanged -= HandleBuildSettingsChanged;
-
-                GameSettings.BuildSettings = value ?? new BuildSettings();
-                GameSettings.BuildSettings.PropertyChanged += HandleBuildSettingsChanged;
-                BuildSettingsChanged?.Invoke(GameSettings.BuildSettings);
-            }
+            set => SetBuildSettings(value);
         }
 
         /// <summary>
@@ -107,18 +88,14 @@ namespace XREngine
             get => _globalEditorPreferences;
             set
             {
-                if (ReferenceEquals(_globalEditorPreferences, value) && value is not null)
+                if (!ReplaceSettingsRoot(
+                    ref _globalEditorPreferences,
+                    value,
+                    static () => new EditorPreferences(),
+                    DetachGlobalEditorPreferences,
+                    AttachGlobalEditorPreferences))
                     return;
 
-                if (_globalEditorPreferences is not null)
-                {
-                    _globalEditorPreferences.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
-                    DetachEditorPreferencesSubSettings(_globalEditorPreferences);
-                }
-
-                _globalEditorPreferences = value ?? new EditorPreferences();
-                _globalEditorPreferences.PropertyChanged += HandleGlobalEditorPreferencesChanged;
-                AttachEditorPreferencesSubSettings(_globalEditorPreferences);
                 UpdateEffectiveEditorPreferences();
             }
         }
@@ -135,18 +112,14 @@ namespace XREngine
             get => _editorPreferencesOverrides;
             set
             {
-                if (ReferenceEquals(_editorPreferencesOverrides, value) && value is not null)
+                if (!ReplaceSettingsRoot(
+                    ref _editorPreferencesOverrides,
+                    value,
+                    static () => new EditorPreferencesOverrides(),
+                    DetachEditorPreferencesOverrides,
+                    AttachEditorPreferencesOverrides))
                     return;
 
-                if (_editorPreferencesOverrides is not null)
-                {
-                    _editorPreferencesOverrides.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
-                    DetachEditorPreferencesOverridesSubSettings(_editorPreferencesOverrides);
-                }
-
-                _editorPreferencesOverrides = value ?? new EditorPreferencesOverrides();
-                _editorPreferencesOverrides.PropertyChanged += HandleEditorPreferencesOverridesChanged;
-                AttachEditorPreferencesOverridesSubSettings(_editorPreferencesOverrides);
                 UpdateEffectiveEditorPreferences();
             }
         }
@@ -159,6 +132,115 @@ namespace XREngine
         /// with <see cref="EditorPreferencesOverrides"/>. Changes trigger <see cref="EditorPreferencesChanged"/>.
         /// </remarks>
         public static EditorPreferences EditorPreferences => _editorPreferences;
+
+        #endregion
+
+        #region Settings Property Helpers
+
+        private static bool ReplaceSettingsRoot<T>(
+            ref T field,
+            T? value,
+            Func<T> createDefault,
+            Action<T> detach,
+            Action<T> attach)
+            where T : class
+        {
+            if (ReferenceEquals(field, value) && value is not null)
+                return false;
+
+            if (field is not null)
+                detach(field);
+
+            field = value ?? createDefault();
+            attach(field);
+            return true;
+        }
+
+        private static void AttachPropertyChanged(IXRNotifyPropertyChanged source, XRPropertyChangedEventHandler handler)
+        {
+            source.PropertyChanged -= handler;
+            source.PropertyChanged += handler;
+        }
+
+        private static void DetachPropertyChanged(IXRNotifyPropertyChanged source, XRPropertyChangedEventHandler handler)
+            => source.PropertyChanged -= handler;
+
+        private static void AttachUserSettings(UserSettings settings)
+        {
+            AttachPropertyChanged(settings, HandleUserSettingsChanged);
+            TrackOverrideableSettings(settings, _trackedUserOverrideableSettings);
+            Assets?.EnsureTracked(settings.SourceAsset ?? settings);
+        }
+
+        private static void DetachUserSettings(UserSettings settings)
+        {
+            DetachPropertyChanged(settings, HandleUserSettingsChanged);
+            UntrackOverrideableSettings(_trackedUserOverrideableSettings, HandleOverrideableSettingChanged);
+        }
+
+        private static void AttachGameSettings(GameStartupSettings settings)
+        {
+            settings.BuildSettings ??= new BuildSettings();
+            AttachBuildSettings(settings.BuildSettings);
+            AttachPropertyChanged(settings, HandleGameSettingsChanged);
+            TrackOverrideableSettings(settings, _trackedGameOverrideableSettings);
+        }
+
+        private static void DetachGameSettings(GameStartupSettings settings)
+        {
+            DetachPropertyChanged(settings, HandleGameSettingsChanged);
+            DetachBuildSettings(settings.BuildSettings);
+            UntrackOverrideableSettings(_trackedGameOverrideableSettings, HandleOverrideableSettingChanged);
+        }
+
+        private static void SetBuildSettings(BuildSettings? value)
+        {
+            BuildSettings? current = GameSettings.BuildSettings;
+            if (ReferenceEquals(current, value) && value is not null)
+                return;
+
+            if (current is not null)
+                DetachBuildSettings(current);
+
+            GameSettings.BuildSettings = value ?? new BuildSettings();
+            AttachBuildSettings(GameSettings.BuildSettings);
+            BuildSettingsChanged?.Invoke(GameSettings.BuildSettings);
+        }
+
+        private static void AttachBuildSettings(BuildSettings settings)
+            => AttachPropertyChanged(settings, HandleBuildSettingsChanged);
+
+        private static void DetachBuildSettings(BuildSettings? settings)
+        {
+            if (settings is not null)
+                DetachPropertyChanged(settings, HandleBuildSettingsChanged);
+        }
+
+        private static void AttachGlobalEditorPreferences(EditorPreferences preferences)
+        {
+            AttachPropertyChanged(preferences, HandleGlobalEditorPreferencesChanged);
+            AttachEditorPreferencesSubSettings(preferences);
+        }
+
+        private static void DetachGlobalEditorPreferences(EditorPreferences preferences)
+        {
+            DetachPropertyChanged(preferences, HandleGlobalEditorPreferencesChanged);
+            DetachEditorPreferencesSubSettings(preferences);
+        }
+
+        private static void AttachEditorPreferencesOverrides(EditorPreferencesOverrides overrides)
+        {
+            AttachPropertyChanged(overrides, HandleEditorPreferencesOverridesChanged);
+            TrackOverrideableSettings(overrides, _trackedEditorOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+            AttachEditorPreferencesOverridesSubSettings(overrides);
+        }
+
+        private static void DetachEditorPreferencesOverrides(EditorPreferencesOverrides overrides)
+        {
+            DetachPropertyChanged(overrides, HandleEditorPreferencesOverridesChanged);
+            UntrackOverrideableSettings(_trackedEditorOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+            DetachEditorPreferencesOverridesSubSettings(overrides);
+        }
 
         #endregion
 
@@ -181,7 +263,12 @@ namespace XREngine
             if (IsSettingsMetadataProperty(e.PropertyName))
                 return;
 
-            TrackOverrideableSettings(_userSettings, _trackedUserOverrideableSettings);
+            RefreshOverrideableSettingsTracking(
+                e,
+                _userSettings,
+                _trackedUserOverrideableSettings,
+                HandleOverrideableSettingChanged);
+
             ApplyEffectiveSettingsForProperty(e.PropertyName);
         }
 
@@ -201,7 +288,12 @@ namespace XREngine
             if (IsSettingsMetadataProperty(e.PropertyName))
                 return;
 
-            TrackOverrideableSettings(_gameSettings, _trackedGameOverrideableSettings);
+            RefreshOverrideableSettingsTracking(
+                e,
+                _gameSettings,
+                _trackedGameOverrideableSettings,
+                HandleOverrideableSettingChanged);
+
             ApplyEffectiveSettingsForProperty(e.PropertyName);
         }
 
@@ -213,23 +305,15 @@ namespace XREngine
             if (IsSettingsMetadataProperty(e.PropertyName))
                 return;
 
-            if (e.PropertyName == nameof(EditorPreferences.Theme))
-            {
-                if (e.PreviousValue is EditorThemeSettings previous)
-                    previous.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
+            RefreshSubSettingsSubscription<EditorThemeSettings>(
+                e,
+                nameof(EditorPreferences.Theme),
+                HandleGlobalEditorPreferencesChanged);
 
-                if (e.NewValue is EditorThemeSettings current)
-                    current.PropertyChanged += HandleGlobalEditorPreferencesChanged;
-            }
-
-            if (e.PropertyName == nameof(EditorPreferences.Debug))
-            {
-                if (e.PreviousValue is EditorDebugOptions previous)
-                    previous.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
-
-                if (e.NewValue is EditorDebugOptions current)
-                    current.PropertyChanged += HandleGlobalEditorPreferencesChanged;
-            }
+            RefreshSubSettingsSubscription<EditorDebugOptions>(
+                e,
+                nameof(EditorPreferences.Debug),
+                HandleGlobalEditorPreferencesChanged);
 
             UpdateEffectiveEditorPreferences();
         }
@@ -242,35 +326,19 @@ namespace XREngine
             if (IsSettingsMetadataProperty(e.PropertyName))
                 return;
 
-            if (e.PropertyName == nameof(EditorPreferencesOverrides.Theme))
-            {
-                if (e.PreviousValue is EditorThemeOverrides previous)
-                {
-                    previous.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
-                    UntrackOverrideableSettings(_trackedEditorThemeOverrideableSettings, HandleEditorPreferencesOverridesChanged);
-                }
+            RefreshEditorPreferencesOverrideableSettingsTracking(sender, e);
 
-                if (e.NewValue is EditorThemeOverrides current)
-                {
-                    current.PropertyChanged += HandleEditorPreferencesOverridesChanged;
-                    TrackOverrideableSettings(current, _trackedEditorThemeOverrideableSettings, HandleEditorPreferencesOverridesChanged);
-                }
-            }
+            RefreshSubSettingsSubscription<EditorThemeOverrides>(
+                e,
+                nameof(EditorPreferencesOverrides.Theme),
+                HandleEditorPreferencesOverridesChanged,
+                _trackedEditorThemeOverrideableSettings);
 
-            if (e.PropertyName == nameof(EditorPreferencesOverrides.Debug))
-            {
-                if (e.PreviousValue is EditorDebugOverrides previous)
-                {
-                    previous.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
-                    UntrackOverrideableSettings(_trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
-                }
-
-                if (e.NewValue is EditorDebugOverrides current)
-                {
-                    current.PropertyChanged += HandleEditorPreferencesOverridesChanged;
-                    TrackOverrideableSettings(current, _trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
-                }
-            }
+            RefreshSubSettingsSubscription<EditorDebugOverrides>(
+                e,
+                nameof(EditorPreferencesOverrides.Debug),
+                HandleEditorPreferencesOverridesChanged,
+                _trackedEditorDebugOverrideableSettings);
 
             UpdateEffectiveEditorPreferences();
         }
@@ -282,6 +350,41 @@ namespace XREngine
         {
             if (sender is IOverrideableSetting setting && _overrideableSettingPropertyMap.TryGetValue(setting, out var propertyName))
                 ApplyEffectiveSettingsForProperty(propertyName);
+        }
+
+        private static void RefreshEditorPreferencesOverrideableSettingsTracking(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (_editorPreferencesOverrides is null)
+                return;
+
+            if (ReferenceEquals(sender, _editorPreferencesOverrides))
+            {
+                RefreshOverrideableSettingsTracking(
+                    e,
+                    _editorPreferencesOverrides,
+                    _trackedEditorOverrideableSettings,
+                    HandleEditorPreferencesOverridesChanged);
+                return;
+            }
+
+            if (ReferenceEquals(sender, _editorPreferencesOverrides.Theme))
+            {
+                RefreshOverrideableSettingsTracking(
+                    e,
+                    _editorPreferencesOverrides.Theme,
+                    _trackedEditorThemeOverrideableSettings,
+                    HandleEditorPreferencesOverridesChanged);
+                return;
+            }
+
+            if (ReferenceEquals(sender, _editorPreferencesOverrides.Debug))
+            {
+                RefreshOverrideableSettingsTracking(
+                    e,
+                    _editorPreferencesOverrides.Debug,
+                    _trackedEditorDebugOverrideableSettings,
+                    HandleEditorPreferencesOverridesChanged);
+            }
         }
 
         private static bool IsSettingsMetadataProperty(string? propertyName)
@@ -605,6 +708,19 @@ namespace XREngine
 
         #region Overrideable Settings Tracking
 
+        private static void RefreshOverrideableSettingsTracking<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
+            IXRPropertyChangedEventArgs e,
+            T settingsRoot,
+            List<IOverrideableSetting> cache,
+            XRPropertyChangedEventHandler handler)
+        {
+            if (ReferenceEquals(e.PreviousValue, e.NewValue))
+                return;
+
+            if (e.PreviousValue is IOverrideableSetting || e.NewValue is IOverrideableSetting)
+                TrackOverrideableSettings(settingsRoot, cache, handler);
+        }
+
         /// <summary>
         /// Tracks overrideable settings from a settings root object.
         /// </summary>
@@ -642,6 +758,9 @@ namespace XREngine
                 if (overrideable is null)
                     continue;
 
+                if (cache.Contains(overrideable))
+                    continue;
+
                 cache.Add(overrideable);
                 _overrideableSettingPropertyMap[overrideable] = property.Name;
 
@@ -670,16 +789,41 @@ namespace XREngine
 
         #region Editor Preferences Helpers
 
+        private static void RefreshSubSettingsSubscription<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
+            IXRPropertyChangedEventArgs e,
+            string propertyName,
+            XRPropertyChangedEventHandler handler,
+            List<IOverrideableSetting>? trackedOverrideableSettings = null)
+            where T : class, IXRNotifyPropertyChanged
+        {
+            if (e.PropertyName != propertyName)
+                return;
+
+            if (e.PreviousValue is T previous)
+                DetachPropertyChanged(previous, handler);
+
+            if (trackedOverrideableSettings is not null)
+                UntrackOverrideableSettings(trackedOverrideableSettings, handler);
+
+            if (e.NewValue is not T current)
+                return;
+
+            AttachPropertyChanged(current, handler);
+
+            if (trackedOverrideableSettings is not null)
+                TrackOverrideableSettings(current, trackedOverrideableSettings, handler);
+        }
+
         /// <summary>
         /// Attaches change handlers to editor preferences sub-settings.
         /// </summary>
         private static void AttachEditorPreferencesSubSettings(EditorPreferences preferences)
         {
-            if (preferences?.Theme is not null)
-                preferences.Theme.PropertyChanged += HandleGlobalEditorPreferencesChanged;
+            if (preferences.Theme is not null)
+                AttachPropertyChanged(preferences.Theme, HandleGlobalEditorPreferencesChanged);
 
-            if (preferences?.Debug is not null)
-                preferences.Debug.PropertyChanged += HandleGlobalEditorPreferencesChanged;
+            if (preferences.Debug is not null)
+                AttachPropertyChanged(preferences.Debug, HandleGlobalEditorPreferencesChanged);
         }
 
         /// <summary>
@@ -687,11 +831,11 @@ namespace XREngine
         /// </summary>
         private static void DetachEditorPreferencesSubSettings(EditorPreferences preferences)
         {
-            if (preferences?.Theme is not null)
-                preferences.Theme.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
+            if (preferences.Theme is not null)
+                DetachPropertyChanged(preferences.Theme, HandleGlobalEditorPreferencesChanged);
 
-            if (preferences?.Debug is not null)
-                preferences.Debug.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
+            if (preferences.Debug is not null)
+                DetachPropertyChanged(preferences.Debug, HandleGlobalEditorPreferencesChanged);
         }
 
         /// <summary>
@@ -699,19 +843,16 @@ namespace XREngine
         /// </summary>
         private static void AttachEditorPreferencesOverridesSubSettings(EditorPreferencesOverrides overrides)
         {
-            if (overrides?.Theme is not null)
-                overrides.Theme.PropertyChanged += HandleEditorPreferencesOverridesChanged;
+            if (overrides.Theme is not null)
+                AttachPropertyChanged(overrides.Theme, HandleEditorPreferencesOverridesChanged);
 
-            if (overrides?.Debug is not null)
-                overrides.Debug.PropertyChanged += HandleEditorPreferencesOverridesChanged;
+            if (overrides.Debug is not null)
+                AttachPropertyChanged(overrides.Debug, HandleEditorPreferencesOverridesChanged);
 
-            if (overrides is not null)
-                TrackOverrideableSettings(overrides, _trackedEditorOverrideableSettings, HandleEditorPreferencesOverridesChanged);
-
-            if (overrides?.Theme is not null)
+            if (overrides.Theme is not null)
                 TrackOverrideableSettings(overrides.Theme, _trackedEditorThemeOverrideableSettings, HandleEditorPreferencesOverridesChanged);
 
-            if (overrides?.Debug is not null)
+            if (overrides.Debug is not null)
                 TrackOverrideableSettings(overrides.Debug, _trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
         }
 
@@ -720,13 +861,12 @@ namespace XREngine
         /// </summary>
         private static void DetachEditorPreferencesOverridesSubSettings(EditorPreferencesOverrides overrides)
         {
-            if (overrides?.Theme is not null)
-                overrides.Theme.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
+            if (overrides.Theme is not null)
+                DetachPropertyChanged(overrides.Theme, HandleEditorPreferencesOverridesChanged);
 
-            if (overrides?.Debug is not null)
-                overrides.Debug.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
+            if (overrides.Debug is not null)
+                DetachPropertyChanged(overrides.Debug, HandleEditorPreferencesOverridesChanged);
 
-            UntrackOverrideableSettings(_trackedEditorOverrideableSettings, HandleEditorPreferencesOverridesChanged);
             UntrackOverrideableSettings(_trackedEditorThemeOverrideableSettings, HandleEditorPreferencesOverridesChanged);
             UntrackOverrideableSettings(_trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
         }

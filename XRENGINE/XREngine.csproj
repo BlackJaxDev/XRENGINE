@@ -130,6 +130,7 @@
     <PackageReference Include="NVorbis" Version="0.10.5" />
     <PackageReference Include="Raylib-cs" Version="7.0.2" />
     <PackageReference Include="RestSharp" Version="113.1.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
     <PackageReference Include="SharpFont.NetStandard" Version="1.0.5" />
   <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="Silk.NET" Version="2.23.0" />

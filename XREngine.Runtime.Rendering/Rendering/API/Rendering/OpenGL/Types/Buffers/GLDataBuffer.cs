@@ -604,6 +604,49 @@ namespace XREngine.Rendering.OpenGL
             // queue floods (see docs/work/design/rendering/render-submission-perf-debug-plan.md §5.4).
             private static readonly bool _pushSubDataBreakdownEnabled =
                 !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_PUSHSUBDATA_BREAKDOWN"));
+
+            // ----- PushSubData per-call trace (env-gated, AutoFlush) -----
+            // Enable with `XRE_PUSHSUBDATA_TRACE=1`. Writes every PushSubData call and the
+            // post-decision branch (PushData / NamedBufferSubData / clamp / immutable-fallback)
+            // to Build/Logs/pushsubdata-trace.log with AutoFlush so entries survive a process
+            // fail-fast such as the NVIDIA driver `0xc0000409` crash being investigated.
+            // Diagnostic only - do not leave enabled in benchmark runs.
+            private static readonly bool _pushSubDataTraceEnabled =
+                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_PUSHSUBDATA_TRACE"));
+            private static readonly object _pushSubDataTraceLock = new();
+            private static System.IO.StreamWriter? _pushSubDataTraceWriter;
+
+            private static void TracePushSubData(string label, int offset, uint length, uint dataLength, uint lastPushed, bool hasPendingUpload, bool immutableStorageSet, bool isGenerated, string stage)
+            {
+                if (!_pushSubDataTraceEnabled)
+                    return;
+                try
+                {
+                    var w = _pushSubDataTraceWriter;
+                    if (w is null)
+                    {
+                        lock (_pushSubDataTraceLock)
+                        {
+                            if (_pushSubDataTraceWriter is null)
+                            {
+                                string root = AppContext.BaseDirectory;
+                                string logsDir = System.IO.Path.Combine(root, "Build", "Logs");
+                                try { System.IO.Directory.CreateDirectory(logsDir); } catch { }
+                                string path = System.IO.Path.Combine(logsDir, $"pushsubdata-trace_pid{Environment.ProcessId}.log");
+                                var fs = new System.IO.FileStream(path, System.IO.FileMode.Append, System.IO.FileAccess.Write, System.IO.FileShare.ReadWrite, 4096, System.IO.FileOptions.WriteThrough);
+                                _pushSubDataTraceWriter = new System.IO.StreamWriter(fs) { AutoFlush = true };
+                                _pushSubDataTraceWriter.WriteLine($"# PushSubData trace started at {DateTime.UtcNow:O}");
+                            }
+                            w = _pushSubDataTraceWriter;
+                        }
+                    }
+                    lock (_pushSubDataTraceLock)
+                    {
+                        w.WriteLine($"{DateTime.UtcNow:HH:mm:ss.fff} tid={Environment.CurrentManagedThreadId} stage={stage} label={label} off={offset} len={length} dataLen={dataLength} lastPushed={lastPushed} pendingUpload={hasPendingUpload} immutable={immutableStorageSet} generated={isGenerated}");
+                    }
+                }
+                catch { }
+            }
             private static readonly ConcurrentDictionary<string, long[]> _pushSubDataBreakdown = new();
             private static long _pushSubDataLastFlushMs = 0;
             private static int _pushSubDataFlushBusy = 0;
@@ -711,7 +754,11 @@ namespace XREngine.Rendering.OpenGL
 
                 if (_pushSubDataBreakdownEnabled)
                     RecordPushSubData(PushSubDataLabel(), length);
-                
+
+                string traceLabel = _pushSubDataTraceEnabled ? PushSubDataLabel() : string.Empty;
+                if (_pushSubDataTraceEnabled)
+                    TracePushSubData(traceLabel, offset, length, Data.Length, _lastPushedLength, _hasPendingUpload, _immutableStorageSet, IsGenerated, "enter");
+
                 if (!IsGenerated)
                     Generate();
                 else
@@ -724,44 +771,81 @@ namespace XREngine.Rendering.OpenGL
                     if (dataLength > lastPushed)
                     {
                         // Reallocate GPU buffer to match client-side size, then do the sub-data update.
+                        if (_pushSubDataTraceEnabled)
+                            TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "grow-PushData");
                         PushData();
                         lastPushed = _lastPushedLength;
-                        
-                        // After PushData, all data is already on the GPU, so we can return.
-                        // But only if the requested range is within the new buffer.
-                        if (offset + length <= lastPushed)
+
+                        // Large buffers may route the full upload through GLUploadQueue. In that case
+                        // _lastPushedLength still reflects the old GPU allocation until the queued
+                        // upload finishes, but the pending full upload already covers this subrange.
+                        if (_hasPendingUpload)
+                        {
+                            if (_pushSubDataTraceEnabled)
+                                TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, true, _immutableStorageSet, true, "grow-pending-return");
                             return;
+                        }
+
+                        // After a synchronous PushData, all data is already on the GPU, so we can
+                        // return if the requested range is within the newly allocated buffer.
+                        if (RequestedRangeFits(offset, length, lastPushed))
+                        {
+                            if (_pushSubDataTraceEnabled)
+                                TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, false, _immutableStorageSet, true, "grow-fits-return");
+                            return;
+                        }
                     }
 
                     // If resizable buffer was grown and we never (re)allocated on the GPU, fall back to full PushData.
                     // Also do this if caller is pushing the whole buffer starting at 0.
                     if (offset == 0 && (lastPushed == 0 || length > lastPushed))
                     {
+                        if (_pushSubDataTraceEnabled)
+                            TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "full-PushData-fallback");
                         PushData();
                         return;
                     }
 
-                    if (offset + length > lastPushed)
+                    if (!RequestedRangeFits(offset, length, lastPushed))
                     {
                         int clamped = (int)lastPushed - offset;
                         if (clamped <= 0)
                         {
+                            if (_pushSubDataTraceEnabled)
+                                TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "offset-past-end-IGNORED");
                             Debug.OpenGLWarning($"PushSubData called with offset {offset} and length {length}, with an offset that exceeds the last fully-pushed length of {lastPushed}. Ignoring call.");
                             return;
                         }
 
+                        if (_pushSubDataTraceEnabled)
+                            TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, $"clamp len {length}->{clamped}");
                         length = (uint)clamped;
                     }
 
                     void* addr = (Data.Address + (uint)offset).Pointer;
                     if (_immutableStorageSet && !Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
                     {
+                        if (_pushSubDataTraceEnabled)
+                            TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, true, true, "immutable-no-dynstore-PushData");
                         PushData();
                         return;
                     }
 
+                    if (_pushSubDataTraceEnabled)
+                        TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "NamedBufferSubData");
                     Api.NamedBufferSubData(BindingId, offset, length, addr);
+                    if (_pushSubDataTraceEnabled)
+                        TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "NamedBufferSubData-done");
                 }
+            }
+
+            private static bool RequestedRangeFits(int offset, uint length, uint bufferLength)
+            {
+                if (offset < 0)
+                    return false;
+
+                ulong end = (ulong)(uint)offset + length;
+                return end <= bufferLength;
             }
 
             public void Flush()

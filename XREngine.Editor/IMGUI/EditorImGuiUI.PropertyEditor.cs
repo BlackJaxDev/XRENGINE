@@ -3911,7 +3911,10 @@ public static partial class EditorImGuiUI
                     using (new ImGuiDisabledScope(!canWrite))
                     {
                         ImGui.SetNextItemWidth(-1f);
-                        if (ImGui.InputTextWithHint("##Value", hasMixedValues ? "<multiple values>" : string.Empty, ref textValue, 512u, ImGuiInputTextFlags.None) && canWrite)
+                        // Honor [Password]: render secret strings (API keys, bearer tokens) as
+                        // bullets so they don't leak via screenshare / screenshots of the inspector.
+                        ImGuiInputTextFlags textFlags = GetStringInputFlags(property);
+                        if (ImGui.InputTextWithHint("##Value", hasMixedValues ? "<multiple values>" : string.Empty, ref textValue, 512u, textFlags) && canWrite)
                         {
                             if (TryApplyInspectorValue(targets, property, values, textValue))
                             {
@@ -5876,6 +5879,18 @@ public static partial class EditorImGuiUI
             attribute = member.GetCustomAttribute<InspectorPathAttribute>(true)!;
             return attribute is not null;
         }
+
+        /// <summary>
+        /// Returns <see cref="ImGuiInputTextFlags.Password"/> when the member is decorated with
+        /// <see cref="PasswordAttribute"/>, so secret strings (API keys, bearer tokens) render as
+        /// bullets in the inspector instead of plaintext. Returns <see cref="ImGuiInputTextFlags.None"/>
+        /// for any other case (including <c>null</c> member references, which keeps call sites that
+        /// lack member metadata simple).
+        /// </summary>
+        private static ImGuiInputTextFlags GetStringInputFlags(MemberInfo? member)
+            => member is not null && member.GetCustomAttribute<PasswordAttribute>(true) is not null
+                ? ImGuiInputTextFlags.Password
+                : ImGuiInputTextFlags.None;
 
         private static bool TryGetStringOptionsCore(MemberInfo member, StringOptionsProviderAttribute? attr, Type? declaringType, out string[] options)
         {

@@ -552,10 +552,11 @@ upload-queue completed/failed/backpressure/coalesced totals from the bound
 `GLProgramBinaryUploadQueue`. Use this line as the long-session sanity check.
 If shader source links or binary uploads are still in flight during shutdown,
 the OpenGL shutdown path skips the final `glFinish`, skips this summary,
-orphans pending program handles for deferred cleanup, and abandons
-shared-context workers without joining them. If that happens during an approved
-native window close, the XR window also skips synchronous scene-panel and native
-window/context disposal so closing the app stays immediate.
+orphans GL handles instead of calling blocking `glDelete*` entry points, and
+abandons shared-context workers without joining them. If that happens during
+an approved native window close, the XR window also skips synchronous
+scene-panel and native window/context disposal so closing the app stays
+immediate.
 
 ## Render-Thread Stall Mitigations (2026-05)
 

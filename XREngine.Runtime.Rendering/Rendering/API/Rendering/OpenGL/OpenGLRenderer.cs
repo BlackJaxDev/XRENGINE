@@ -35,6 +35,7 @@ namespace XREngine.Rendering.OpenGL
         private bool _shutdownAbandonedAsyncShaderWork;
         private int _asyncShaderProgramShutdownDisposeRequested;
         public override bool ShouldSkipNativeWindowDisposeForShutdown => _shutdownAbandonedAsyncShaderWork;
+        internal bool ShouldOrphanGLHandlesForShutdown => _shutdownAbandonedAsyncShaderWork;
 
         private enum FrontLuminanceReadbackMode
         {
@@ -89,7 +90,8 @@ namespace XREngine.Rendering.OpenGL
             if (_pendingFrontLuminanceReadback is not { } pending)
                 return;
 
-            Api.DeleteSync(pending.Sync);
+            if (!ShouldOrphanGLHandlesForShutdown)
+                Api.DeleteSync(pending.Sync);
             _pendingFrontLuminanceReadback = null;
         }
 
@@ -881,7 +883,10 @@ namespace XREngine.Rendering.OpenGL
 
         public override void CleanUp()
         {
-            _imguiMultiViewportController?.Dispose();
+            bool orphanGLHandles = ShouldOrphanGLHandlesForShutdown;
+
+            if (!orphanGLHandles)
+                _imguiMultiViewportController?.Dispose();
             _imguiMultiViewportController = null;
 
             if (_imguiController is { } controller)
@@ -889,7 +894,8 @@ namespace XREngine.Rendering.OpenGL
                 ImGuiControllerUtilities.DetachInputHandlers(controller);
                 ImGuiControllerUtilities.MarkContextDestroyed(controller.Context);
                 ImGuiContextTracker.Unregister(controller.Context);
-                controller.Dispose();
+                if (!orphanGLHandles)
+                    controller.Dispose();
             }
             _imguiController = null;
             _imguiBackend = null;
@@ -903,32 +909,27 @@ namespace XREngine.Rendering.OpenGL
             CancelPendingFrontLuminanceReadback();
 
             // Clean up cached luminance front resources
-            if (_luminanceFrontTex != 0)
+            if (!ShouldOrphanGLHandlesForShutdown)
             {
-                Api.DeleteTexture(_luminanceFrontTex);
-                _luminanceFrontTex = 0;
+                if (_luminanceFrontTex != 0)
+                    Api.DeleteTexture(_luminanceFrontTex);
+                if (_luminanceFrontFbo != 0)
+                    Api.DeleteFramebuffer(_luminanceFrontFbo);
+                if (_luminanceFrontPbo != 0)
+                    Api.DeleteBuffer(_luminanceFrontPbo);
             }
-            if (_luminanceFrontFbo != 0)
-            {
-                Api.DeleteFramebuffer(_luminanceFrontFbo);
-                _luminanceFrontFbo = 0;
-            }
-            if (_luminanceFrontPbo != 0)
-            {
-                Api.DeleteBuffer(_luminanceFrontPbo);
-                _luminanceFrontPbo = 0;
-            }
+            _luminanceFrontTex = 0;
+            _luminanceFrontFbo = 0;
+            _luminanceFrontPbo = 0;
             _luminanceFrontPboSize = 0;
             _luminanceFrontTexWidth = 0;
             _luminanceFrontTexHeight = 0;
             _luminanceFrontMipLevels = 0;
 
             // Clean up compute shader resources
-            if (_luminanceResultBuffer != 0)
-            {
+            if (_luminanceResultBuffer != 0 && !ShouldOrphanGLHandlesForShutdown)
                 Api.DeleteBuffer(_luminanceResultBuffer);
-                _luminanceResultBuffer = 0;
-            }
+            _luminanceResultBuffer = 0;
             _luminanceResultBufferSize = 0;
             _luminanceComputeProgram?.Destroy();
             _luminanceComputeProgram = null;
@@ -3676,6 +3677,13 @@ void main()
         {
             if (objs.Length == 0)
                 return;
+
+            if (ShouldOrphanGLHandlesForShutdown)
+            {
+                for (int i = 0; i < objs.Length; ++i)
+                    objs[i].OrphanForDeferredDelete();
+                return;
+            }
 
             uint[] bindingIds = new uint[objs.Length];
             bindingIds.Fill(GLObjectBase.InvalidBindingId);

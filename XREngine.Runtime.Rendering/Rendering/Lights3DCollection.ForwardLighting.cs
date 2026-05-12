@@ -34,6 +34,14 @@ namespace XREngine.Scene
         private XRDataBuffer? _forwardPointShadowMetadataBuffer;
         private XRDataBuffer? _forwardSpotShadowMetadataBuffer;
 
+        // Frame tokens used to gate redundant per-material-program re-uploads.
+        // SetForwardLightingUniforms runs once per material program per pass, but
+        // the underlying buffer contents only need to be uploaded once per frame.
+        // We still execute sampler/uniform binding per program; only the host->GPU
+        // Set() writes and PushSubData() calls are skipped on repeat invocations.
+        private long _lightBuffersUploadedFrameTicks = long.MinValue;
+        private long _shadowMetadataUploadedFrameTicks = long.MinValue;
+
         private static readonly IVector4[] _directionalShadowAtlasPacked0 = new IVector4[ForwardDirectionalShadowRecordCount];
         private static readonly Vector4[] _directionalShadowAtlasParams0 = new Vector4[ForwardDirectionalShadowRecordCount];
         private static readonly Vector4[] _directionalShadowAtlasParams1 = new Vector4[ForwardDirectionalShadowRecordCount];
@@ -243,6 +251,13 @@ namespace XREngine.Scene
         private void UploadForwardLightBuffers(int directionalLightCount, int pointLightCount, int spotLightCount)
         {
             EnsureForwardLightBuffers(pointLightCount, spotLightCount);
+
+            // Skip the per-program data refresh + GPU upload when this frame already populated the buffers.
+            // Bind/sampler/uniform calls are still executed by the caller for every program.
+            long frameTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            if (frameTicks == _lightBuffersUploadedFrameTicks)
+                return;
+            _lightBuffersUploadedFrameTicks = frameTicks;
 
             for (int i = 0; i < MaxForwardDirectionalLights; i++)
             {
@@ -1104,8 +1119,16 @@ namespace XREngine.Scene
             for (; spotShadowSlot < maxForwardShadowedSpotLights; ++spotShadowSlot)
                 program.Sampler(_spotShadowMapNames[spotShadowSlot], DummyShadowMap, spotShadowStartUnit + spotShadowSlot);
 
-            PushForwardBufferSubData<ForwardPointShadowGpu>(_forwardPointShadowMetadataBuffer!, pointLightCount);
-            PushForwardBufferSubData<ForwardSpotShadowGpu>(_forwardSpotShadowMetadataBuffer!, spotLightCount);
+            // Gate the host->GPU upload of shadow metadata to once per frame; sampler bindings above
+            // still run per program. Host-side Set() calls remain (cheap) — only the PushSubData traffic
+            // is skipped on repeat invocations within the same frame.
+            long shadowFrameTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            if (shadowFrameTicks != _shadowMetadataUploadedFrameTicks)
+            {
+                _shadowMetadataUploadedFrameTicks = shadowFrameTicks;
+                PushForwardBufferSubData<ForwardPointShadowGpu>(_forwardPointShadowMetadataBuffer!, pointLightCount);
+                PushForwardBufferSubData<ForwardSpotShadowGpu>(_forwardSpotShadowMetadataBuffer!, spotLightCount);
+            }
 
             Array.Clear(_directionalShadowAtlasPacked0);
             Array.Clear(_directionalShadowAtlasParams0);

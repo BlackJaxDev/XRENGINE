@@ -14,7 +14,7 @@ namespace XREngine.Rendering.Meshlets
     {
         public Vector4 BoundingSphere;   // xyz = center, w = radius (object space)
         public uint VertexOffset;        // offset into meshlet vertex index buffer
-        public uint TriangleOffset;      // offset into meshlet triangle buffer (triplets)
+        public uint TriangleOffset;      // byte offset into meshlet triangle buffer
         public uint VertexCount;         // vertices in this meshlet
         public uint TriangleCount;       // triangles in this meshlet
         public uint MeshID;              // lookup into transform buffer

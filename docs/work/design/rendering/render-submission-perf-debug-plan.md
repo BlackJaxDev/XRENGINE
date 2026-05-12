@@ -299,6 +299,62 @@ size is negligible (the GPUScene SSBOs in the steady-state dump sum to
 < 4 MB/s); the GB/s flood is entirely mesh-atlas vertex SoA re-uploads
 during mesh streaming.
 
+### 5.6 P2 post-O-11 findings (2026-05-11, two Sponzas, GpuIndirectZeroReadback)
+
+After landing the `RenderCommandCollection` dirty-delta queue
+(`RenderCommand._dirty` + `_swapQueued` + `AddCPU` enqueue gate) and
+**O-11** (MeshAtlas subrange-append push), the editor still runs at 5 Hz on
+two-Sponza ZeroReadback. Session
+`xrengine_2026-05-11_16-20-15_pid7388`. Two facts establish that the doc's
+existing P2 queue (O-6, SSBO subrange-push, O-7) is no longer the right
+priority order:
+
+- The headline scope `XRViewport.SwapBuffers.MeshCommands` still reports
+  150–393 ms in `profiler-fps-drops.log`, but the same drop entry reports
+  `OctreeStats.EmittedCommands: 0` and zero render-matrix activity. The
+  swap is **not doing work** — it is a barrier wait for the render thread.
+- `profiler-fps-drops.log` `RenderCommandCollection.SwapBuffers.RenderPasses`
+  scope is no longer hot; the dirty-delta queue is converging the static
+  scene to a zero-command publish per frame as designed.
+- Steady-state `[BufferUploadAudit]` rows in `log_opengl.txt` show
+  `MeshAtlas_Dynamic_*` pushes at `min=24..max=128 bytes` and 1–2 calls per
+  dump — O-11 is taking effect and atlas pushes are no longer a flood.
+
+The real costs surface in
+[profiler-render-stalls.log](../../../../Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-05-11_16-20-15_pid7388/profiler-render-stalls.log)
+on the render thread. The recovered hot paths name specific culprits:
+
+| Recovered scope | Recovered ms | Notes |
+| --- | ---: | --- |
+| `UI.DrawWorldHierarchyTab` (under `XRViewport.Render → RenderCommand.Render → EditorImGuiUI.RenderEditor`) | 756.809 | ImGui editor hierarchy panel walking the live scene tree on the render thread every frame. Two-Sponza scene = thousands of nodes; not virtualized. |
+| `RenderCommand.Render` (no nested scope) | 605.948 | Single CPU-path draw blocking 600 ms. Consistent with a `glFinish` / pipeline barrier wait behind one indirect draw under ZeroReadback. Direct evidence for **O-7** (per-draw `MemoryBarrier` coalescing). |
+| `MainThreadJobs.Normal.Invoke:GPUScene.LodTransitionBuffer.Initialize` | 4729.713 | One-shot, but stalls render thread ~5 s during startup. Buffer initialization should not run on the render thread. |
+| `MainThreadJobs.Normal.Invoke:GLDataBuffer.PushSubData` | 1457.028 | Individual PushSubData job, not aggregate. A single push that uploads a large range still blocks the render thread; tail-append pattern from O-11 needs to extend to the SSBOs (RenderCommandsBuffer, MeshDataBuffer, LodTableBuffer) that re-upload contiguous ranges on growth. |
+
+Conclusion: **the swap-side optimizations queued for P2 are landed and
+working**. The real residual costs are (in order):
+
+1. Editor ImGui hierarchy panel cost on the render thread (`UI.DrawWorldHierarchyTab`).
+2. Per-draw `MemoryBarrier` serialization under ZeroReadback (existing **O-7**).
+3. Render-thread-blocking one-shot initializations (`LodTransitionBuffer.Initialize`).
+4. Large single-call PushSubData uploads (extend O-11 tail-append to SSBOs that grow).
+
+Items 1 and 3 were not in the original §5 inventory and become new entries
+**5.5-#1** and **5.5-#2** below; item 2 is already covered by O-7 and is
+promoted in §7. Item 4 absorbs the residual §5.5 SSBO churn note.
+
+### 5.7 Editor ImGui hierarchy hot path
+
+| # | Suspect | Location | Evidence required |
+| --- | --- | --- | --- |
+| H1 | `UI.DrawWorldHierarchyTab` walks the full scene-component tree every frame on the render thread, formats string labels, and rebuilds collapse state. Two Sponzas produce thousands of nodes. | `XREngine.Editor` ImGui editor hierarchy tab implementation | Profiler scope reports 756 ms recovered; `LastCompletedRenderHotPathMs: 33.737` confirms the *previous* hot path was also the hierarchy tab. |
+
+### 5.8 Render-thread-blocking initialization
+
+| # | Suspect | Location | Evidence required |
+| --- | --- | --- | --- |
+| I1 | `GPUScene.LodTransitionBuffer.Initialize` runs on the render thread via `MainThreadJobs.Dispatch` during startup. Recovered render hot path = 4729 ms. | `GPUScene` `LodTransitionBuffer` initialization | One-shot per session, but observable as a multi-second render stall. Should be split off the render thread or pre-warmed before the editor presents the first frame. |
+
 ## 6. Optimization Plan
 
 Each item lists: predicted win (qualitative), prerequisites, change summary, validation.
@@ -423,7 +479,8 @@ Each item lists: predicted win (qualitative), prerequisites, change summary, val
 | P0 — Sanity & tooling | P0-1, P0-2, P0-3. | Path A activation proven or disproven; debug flags/preset logged; counters available. |
 | P1 — Instrument & measure | §4 setup, capture B1+B2+B2-paused baselines for all 3 strategies. | Baseline numbers committed to a `docs/work/audit/render-perf-<date>.md`. **Partial 2026-05-10: GPU paths freeze above ~28 commands due to PushSubData flood — see §5.4.** |
 | P1.5 — PushSubData attribution | Add gated per-buffer PushSubData breakdown (caller, buffer label, bytes, count, dumped 1 Hz when `XRE_PUSHSUBDATA_BREAKDOWN=1`). Re-run GpuIndirectInstrumented with both Sponzas. | Single dominant buffer (or pair) identified; numbers committed to audit doc. **Done 2026-05-10: see §5.5; root cause = MeshAtlas full re-upload.** |
-| P2 — GPU indirect unblock | **O-11** (MeshAtlas subrange-append push) — first based on §5.5; landed 2026-05-10, awaiting validation. Then **O-6** (skip `SwapCommandBuffers` copy when clean), O-9, O-7. Re-measure between each. Investigate residual `LodTableBuffer`/`MeshDataBuffer` per-frame churn (750/441 calls/s) once O-11 is validated. | GPU paths run both Sponzas without queue-saturation freeze. |
+| P2 — GPU indirect unblock | **O-11** (MeshAtlas subrange-append push) **landed and validated 2026-05-11 per §5.6**. **Dirty-delta `RenderCommandCollection`** also landed (per-command `_dirty`/`_swapQueued` gate). Re-measure: GPU swap is no longer the bottleneck. Real residuals per §5.6: editor ImGui hierarchy panel (§5.7 H1), per-draw barrier stalls (O-7), render-thread one-shot init (§5.8 I1), large-range PushSubData (extend O-11 to growing SSBOs). | GPU paths run both Sponzas without 5 Hz cap. |
+| P2.5 — Editor hierarchy + render-thread unblocks | §5.7 H1 (virtualize hierarchy / move enumeration off render thread), §5.8 I1 (`LodTransitionBuffer.Initialize` off render thread), **O-7** (coalesce per-draw `MemoryBarrier`), extend O-11 tail-append pattern to `RenderCommandsBuffer`/`MeshDataBuffer`/`LodTableBuffer` resize uploads. Re-measure after each. | `profiler-render-stalls.log` no longer recovers > 100 ms on any of these scopes; ZeroReadback fps off floor. |
 | P3 — Path A cleanup | O-1, O-2, O-3, then O-4/O-5 if counters justify. Only meaningful once skinned/B2 scene runs cleanly. | B2/B2-paused Path A overhead removed or quantified. |
 | P4 — CPU-direct/larger design | O-8, then O-10 if Path A still needs it. | Both paths pass perf bar on B1+B2. |
 

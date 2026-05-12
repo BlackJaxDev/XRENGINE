@@ -224,6 +224,34 @@ AnimationClip:
         }
     }
 
+    [Test]
+    public void ClearDirty_RemovesTrackedAssetFromDirtyAssets()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        var manager = new AssetManager();
+        manager.MonitorGameAssetsForChanges = false;
+        try
+        {
+            manager.GameAssetsPath = sandbox.AssetsPath;
+            manager.GameCachePath = sandbox.CachePath;
+
+            StubThirdPartyAsset asset = new() { Name = "Dirty Stub" };
+            asset.MarkDirty();
+
+            manager.EnsureTracked(asset);
+            manager.DirtyAssets.ContainsKey(asset.ID).ShouldBeTrue();
+
+            asset.ClearDirty();
+
+            asset.IsDirty.ShouldBeFalse();
+            manager.DirtyAssets.ContainsKey(asset.ID).ShouldBeFalse();
+        }
+        finally
+        {
+            manager.Dispose();
+        }
+    }
+
     private static void ClearAssetCaches(AssetManager manager)
     {
         manager.LoadedAssetsByPathInternal.Clear();

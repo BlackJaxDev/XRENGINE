@@ -666,6 +666,10 @@ namespace XREngine
                             DirtyAssets.TryAdd(asset.ID, asset);
                             AssetMarkedDirty?.Invoke(asset);
                         }
+                        else if (s is XRAsset cleanAsset)
+                        {
+                            DirtyAssets.TryRemove(cleanAsset.ID, out _);
+                        }
                     }
                     break;
             }

@@ -6,6 +6,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models;
+using YamlDotNet.Serialization;
 
 namespace XREngine
 {
@@ -282,9 +283,13 @@ namespace XREngine
         [Category("MCP Server")]
         [DisplayName("MCP Auth Token")]
         [Description("Bearer token for MCP authentication. Ignored unless MCP Require Auth is enabled.")]
+        [YamlIgnore]
+        [Password]
         public string McpServerAuthToken
         {
-            get => _mcpServerAuthToken;
+            get => string.IsNullOrEmpty(_mcpServerAuthTokenEnvVar)
+                ? _mcpServerAuthToken
+                : System.Environment.GetEnvironmentVariable(_mcpServerAuthTokenEnvVar) ?? string.Empty;
             set => SetField(ref _mcpServerAuthToken, value ?? string.Empty);
         }
 
@@ -455,9 +460,13 @@ namespace XREngine
         [Category("MCP Assistant")]
         [DisplayName("OpenAI API Key")]
         [Description("API key for OpenAI / Codex provider.")]
+        [YamlIgnore]
+        [Password]
         public string McpAssistantOpenAiApiKey
         {
-            get => _mcpAssistantOpenAiApiKey;
+            get => string.IsNullOrEmpty(_mcpAssistantOpenAiApiKeyEnvVar)
+                ? _mcpAssistantOpenAiApiKey
+                : System.Environment.GetEnvironmentVariable(_mcpAssistantOpenAiApiKeyEnvVar) ?? string.Empty;
             set => SetField(ref _mcpAssistantOpenAiApiKey, value ?? string.Empty);
         }
 
@@ -467,9 +476,13 @@ namespace XREngine
         [Category("MCP Assistant")]
         [DisplayName("Anthropic API Key")]
         [Description("API key for Anthropic / Claude Code provider.")]
+        [YamlIgnore]
+        [Password]
         public string McpAssistantAnthropicApiKey
         {
-            get => _mcpAssistantAnthropicApiKey;
+            get => string.IsNullOrEmpty(_mcpAssistantAnthropicApiKeyEnvVar)
+                ? _mcpAssistantAnthropicApiKey
+                : System.Environment.GetEnvironmentVariable(_mcpAssistantAnthropicApiKeyEnvVar) ?? string.Empty;
             set => SetField(ref _mcpAssistantAnthropicApiKey, value ?? string.Empty);
         }
 
@@ -649,9 +662,13 @@ namespace XREngine
         [Category("MCP Assistant")]
         [DisplayName("Gemini API Key")]
         [Description("API key for Google Gemini provider (from Google AI Studio).")]
+        [YamlIgnore]
+        [Password]
         public string McpAssistantGeminiApiKey
         {
-            get => _mcpAssistantGeminiApiKey;
+            get => string.IsNullOrEmpty(_mcpAssistantGeminiApiKeyEnvVar)
+                ? _mcpAssistantGeminiApiKey
+                : System.Environment.GetEnvironmentVariable(_mcpAssistantGeminiApiKeyEnvVar) ?? string.Empty;
             set => SetField(ref _mcpAssistantGeminiApiKey, value ?? string.Empty);
         }
 
@@ -674,9 +691,13 @@ namespace XREngine
         [Category("MCP Assistant")]
         [DisplayName("GitHub Models Token")]
         [Description("GitHub PAT with models:read scope for GitHub Models inference API.")]
+        [YamlIgnore]
+        [Password]
         public string McpAssistantGitHubModelsToken
         {
-            get => _mcpAssistantGitHubModelsToken;
+            get => string.IsNullOrEmpty(_mcpAssistantGitHubModelsTokenEnvVar)
+                ? _mcpAssistantGitHubModelsToken
+                : System.Environment.GetEnvironmentVariable(_mcpAssistantGitHubModelsTokenEnvVar) ?? string.Empty;
             set => SetField(ref _mcpAssistantGitHubModelsToken, value ?? string.Empty);
         }
 
@@ -813,6 +834,15 @@ namespace XREngine
             McpAssistantGeminiModel = source.McpAssistantGeminiModel;
             McpAssistantGitHubModelsToken = source.McpAssistantGitHubModelsToken;
             McpAssistantGitHubModelsModel = source.McpAssistantGitHubModelsModel;
+
+            // Secret env-var-name companions: copy the env-var indirection so CopyFrom preserves
+            // the source's persistence mode (file vs. environment variable) rather than baking
+            // the resolved value into the target's plaintext slot.
+            McpServerAuthTokenEnvVar = source.McpServerAuthTokenEnvVar;
+            McpAssistantOpenAiApiKeyEnvVar = source.McpAssistantOpenAiApiKeyEnvVar;
+            McpAssistantAnthropicApiKeyEnvVar = source.McpAssistantAnthropicApiKeyEnvVar;
+            McpAssistantGeminiApiKeyEnvVar = source.McpAssistantGeminiApiKeyEnvVar;
+            McpAssistantGitHubModelsTokenEnvVar = source.McpAssistantGitHubModelsTokenEnvVar;
 
             // Importers
             FbxImporterBackend = source.FbxImporterBackend;

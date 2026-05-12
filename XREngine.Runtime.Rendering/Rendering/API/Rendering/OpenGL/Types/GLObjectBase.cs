@@ -792,6 +792,13 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (!IsGenerated)
                     return;
+
+                if (Renderer.ShouldOrphanGLHandlesForShutdown)
+                {
+                    OrphanForDeferredDelete();
+                    return;
+                }
+
                 //Debug.Out($"Deleting OpenGL object {Type} {BindingId}");
                 PreDeleted();
                 uint id = _bindingId!.Value;

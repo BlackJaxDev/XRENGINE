@@ -65,7 +65,7 @@ namespace XREngine.Rendering.Meshlets
                 if (meshlets.Length == 0 || meshletVerts.Length == 0 || meshletTris.Length == 0)
                     continue;
                 uint vertOffset = (uint)allMeshletVerts.Count;
-                byte triOffset = (byte)(allMeshletTris.Count / 3); //3 indices per triangle
+                uint triOffset = (uint)allMeshletTris.Count;
                 //Adjust offsets
                 for (int i = 0; i < meshlets.Length; i++)
                 {
