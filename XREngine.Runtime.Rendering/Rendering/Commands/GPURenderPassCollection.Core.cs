@@ -277,6 +277,32 @@ namespace XREngine.Rendering.Commands
                     || _passEnableCpuBatching);
 
             _passPolicySnapshotValid = true;
+
+            AssertZeroReadbackProductionInvariantsForPass(strategy);
+        }
+
+        // C-GPU-2: per-pass DEBUG assertion that the diagnostic IndirectDebug switches that would
+        // defeat the zero-readback contract are all OFF when the pass is configured for
+        // GpuIndirectZeroReadback. Compiles out in Release.
+        [System.Diagnostics.Conditional("DEBUG")]
+        private static void AssertZeroReadbackProductionInvariantsForPass(EMeshSubmissionStrategy strategy)
+        {
+            if (strategy != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                return;
+
+            var d = IndirectDebug;
+            System.Diagnostics.Debug.Assert(!d.DisableCountDrawPath,
+                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.DisableCountDrawPath=true under GpuIndirectZeroReadback. " +
+                "Diagnostic switch must be OFF in production.");
+            System.Diagnostics.Debug.Assert(!d.ForceCpuFallbackCount,
+                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.ForceCpuFallbackCount=true under GpuIndirectZeroReadback.");
+            System.Diagnostics.Debug.Assert(!d.ForceCpuIndirectBuild,
+                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.ForceCpuIndirectBuild=true under GpuIndirectZeroReadback.");
+            System.Diagnostics.Debug.Assert(d.DisableCpuReadbackCount,
+                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.DisableCpuReadbackCount=false under GpuIndirectZeroReadback. " +
+                "Zero-readback must suppress GPU count-buffer map/unmap.");
+            System.Diagnostics.Debug.Assert(!d.EnableCpuBatching,
+                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.EnableCpuBatching=true under GpuIndirectZeroReadback.");
         }
 
         private void ClearPassPolicySnapshot()
@@ -416,15 +442,15 @@ namespace XREngine.Rendering.Commands
         /// <summary>
         /// The finalized indirect draw command buffer for this render pass to use in the multi draw indirect command.
         /// </summary>
-    private XRDataBuffer? _indirectDrawBuffer;         // DrawElementsIndirectCommand array
-    private XRDataBuffer? _culledSceneToRenderBuffer;  // Compacted visible commands
-    private XRDataBuffer? _passFilterDebugBuffer;      // Optional GPU pass-filter instrumentation
-    private XRDataBuffer? _sourceHotCommandBuffer;     // Hot source commands (16 uints)
-    private XRDataBuffer? _culledHotCommandBuffer;     // Hot compacted visible commands
-    private XRDataBuffer? _occlusionCulledHotBuffer;   // Hot ping-pong output for occlusion refine
-    private bool _sourceCommandsUseHotLayout;
-    private bool _culledHotCommandsValid;
-    private bool _culledCommandsUseHotLayout;
+        private XRDataBuffer? _indirectDrawBuffer;         // DrawElementsIndirectCommand array
+        private XRDataBuffer? _culledSceneToRenderBuffer;  // Compacted visible commands
+        private XRDataBuffer? _passFilterDebugBuffer;      // Optional GPU pass-filter instrumentation
+        private XRDataBuffer? _sourceHotCommandBuffer;     // Hot source commands (16 uints)
+        private XRDataBuffer? _culledHotCommandBuffer;     // Hot compacted visible commands
+        private XRDataBuffer? _occlusionCulledHotBuffer;   // Hot ping-pong output for occlusion refine
+        private bool _sourceCommandsUseHotLayout;
+        private bool _culledHotCommandsValid;
+        private bool _culledCommandsUseHotLayout;
 
         // Synchronization & lifecycle
         private readonly Lock _lock = new();

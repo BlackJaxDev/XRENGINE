@@ -50,6 +50,7 @@ layout(std430, binding = 13) buffer StatsBuffer
     uint StatsBvhCullTimeHi;
     uint StatsBvhRayTimeLo;
     uint StatsBvhRayTimeHi;
+    uint StatsTriangleCount;
 };
 layout(std430, binding = 14) buffer SortScratchBuffer { uint sortScratch[]; };
 layout(std430, binding = 15) readonly buffer LODTransitionBuffer { uint lodTransitions[]; };
@@ -258,7 +259,10 @@ void main()
     if (total == 0u)
     {
         if (StatsEnabled != 0u)
+        {
             StatsDrawCount = 0u;
+            StatsTriangleCount = 0u;
+        }
         return;
     }
 
@@ -271,6 +275,7 @@ void main()
     uint drawWrite = 0u;
     uint batchWrite = 0u;
     uint instanceWrite = 0u;
+    uint triangleWrite = 0u;
 
     bool hasActiveBatch = false;
     uint currentBatchOffset = 0u;
@@ -372,6 +377,7 @@ void main()
                 uint drawBase = currentDrawIndex * DRAW_UINTS;
                 indirectDraws[drawBase + 1u] += 1u;
                 ++instanceWrite;
+                triangleWrite += indexCount / 3u;
                 continue;
             }
 
@@ -414,6 +420,7 @@ void main()
             indirectDraws[drawBase + 2u] = firstIndex;
             indirectDraws[drawBase + 3u] = baseVertex;
             indirectDraws[drawBase + 4u] = drawBaseInstance;
+            triangleWrite += (indexCount / 3u) * drawInstanceCount;
 
             currentDrawIndex = drawWrite;
             hasActiveDraw = true;
@@ -475,5 +482,8 @@ void main()
     BatchCount = batchWrite;
 
     if (StatsEnabled != 0u)
+    {
         StatsDrawCount = drawWrite;
+        StatsTriangleCount = triangleWrite;
+    }
 }

@@ -2371,6 +2371,23 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
+                // P3: XRE_SKIP_COMMAND_SWAP_IF_CLEAN — short-circuit the Memory.Move + PushSubData
+                // when the updating buffer's tracked content version has not advanced since the
+                // previous swap. This is an env-var bisect for O-6; if it closes most of the
+                // static-scene gap without visual artefacts, swap cost (and the implicit driver
+                // sync it triggers against the previous-frame compute read of RenderCommandsBuffer)
+                // is the dominant remaining cost.
+                long currentVersion = System.Threading.Interlocked.Read(ref _updatingCommandsContentVersion);
+                if (XREngine.Rendering.P3Diagnostics.SkipCommandSwapIfClean
+                    && _lastSwappedCommandsContentVersion == currentVersion
+                    && _updatingCommandCount == _totalCommandCount)
+                {
+                    XREngine.Rendering.P3Diagnostics.IncCommandSwapCleanSkipped();
+                    return;
+                }
+                XREngine.Rendering.P3Diagnostics.IncCommandSwapExecuted();
+                _lastSwappedCommandsContentVersion = currentVersion;
+
                 // Copy the updating buffer data to the render buffer
                 // This ensures the render buffer has the latest commands while keeping
                 // the updating buffer's indices consistent with _commandIndexLookup
@@ -2785,6 +2802,21 @@ namespace XREngine.Rendering.Commands
         private uint _updatingCommandCount = 0;
 
         /// <summary>
+        /// P3 instrumentation: monotonic version of the updating command buffer's content.
+        /// Bumped wherever the updating buffer's bytes are mutated. Compared against
+        /// <see cref="_lastSwappedCommandsContentVersion"/> inside <see cref="SwapCommandBuffers"/>
+        /// when <c>XRE_SKIP_COMMAND_SWAP_IF_CLEAN=1</c> to short-circuit the Memory.Move +
+        /// PushSubData when content has not changed since the last swap.
+        /// Reserved for the O-6 implementation phase; for now the env-var gates it.
+        /// </summary>
+        private long _updatingCommandsContentVersion = 0;
+        private long _lastSwappedCommandsContentVersion = -1;
+
+        /// <summary>Bump the updating-command content version. Called from every mutation site.</summary>
+        internal void MarkUpdatingCommandsDirty()
+            => System.Threading.Interlocked.Increment(ref _updatingCommandsContentVersion);
+
+        /// <summary>
         /// Gets the number of commands currently in the render buffer.
         /// Each command represents one submesh - a single <see cref="IRenderCommandMesh"/> 
         /// may produce multiple commands if it has multiple submeshes.
@@ -2802,7 +2834,11 @@ namespace XREngine.Rendering.Commands
         private uint UpdatingCommandCount
         {
             get => _updatingCommandCount;
-            set => SetField(ref _updatingCommandCount, value);
+            set
+            {
+                if (SetField(ref _updatingCommandCount, value))
+                    MarkUpdatingCommandsDirty();
+            }
         }
 
         /// <summary>Gets the current allocated capacity of the command buffer.</summary>
@@ -2996,6 +3032,7 @@ namespace XREngine.Rendering.Commands
                     uint byteCount = addedCount * elementSize;
                                         LodTransitionBuffer.PushSubData((int)(startCommandCount * LodTransitionBuffer.ElementSize), addedCount * LodTransitionBuffer.ElementSize);
                     UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+                    MarkUpdatingCommandsDirty();
                     SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in UpdatingCommandsBuffer");
 
                     // Mark BVH dirty so it gets rebuilt before next cull pass
@@ -3432,6 +3469,7 @@ namespace XREngine.Rendering.Commands
                 {
                     UpdatingCommandsBuffer.PushSubData();
                     LodTransitionBuffer.PushSubData();
+                    MarkUpdatingCommandsDirty();
 
                     FlushMeshDataDirtyRange();
 
@@ -3548,6 +3586,7 @@ namespace XREngine.Rendering.Commands
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
             UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+            MarkUpdatingCommandsDirty();
 
             if (IsGpuSceneLoggingEnabled())
                 SceneLog($"Zeroed updating command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
@@ -3570,6 +3609,7 @@ namespace XREngine.Rendering.Commands
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
             UpdatingTransparencyMetadataBuffer.PushSubData((int)byteOffset, byteCount);
+            MarkUpdatingCommandsDirty();
         }
 
         //TODO: Optimize to avoid frequent resizes (eg, remove and add right after each other at the boundary)
@@ -3886,6 +3926,7 @@ namespace XREngine.Rendering.Commands
                     uint byteCount = (maxIndex - minIndex + 1) * elementSize;
                     UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
                     LodTransitionBuffer.PushSubData((int)(minIndex * LodTransitionBuffer.ElementSize), (maxIndex - minIndex + 1) * LodTransitionBuffer.ElementSize);
+                    MarkUpdatingCommandsDirty();
 
                     FlushMeshDataDirtyRange();
 
@@ -4290,6 +4331,20 @@ namespace XREngine.Rendering.Commands
 
                 _bvhBuildSuppressed = false;
                 _bvhSuppressedCommandCount = 0;
+            }
+
+            // Even when _bvhDirty was just set (e.g. by Add/Remove that didn't
+            // actually change the post-mutation count), if the last build attempt
+            // overflowed at this exact command count, retrying with the same
+            // primitive count + same node-capacity algorithm will overflow again.
+            // Skip rebuild and let the next *actual* count change unsuppress us.
+            // This stops the per-frame Build -> overflow -> log -> suppress loop
+            // that was costing us ~120 fps of headroom on small scenes.
+            if (_bvhBuildSuppressed && _bvhSuppressedCommandCount == commandCount)
+            {
+                _bvhDirty = false;
+                _bvhRefitPending = false;
+                return;
             }
 
             if (_bvhDirty || !_bvhReady || _bvhPrimitiveCount != commandCount || _gpuBvhTree is null)

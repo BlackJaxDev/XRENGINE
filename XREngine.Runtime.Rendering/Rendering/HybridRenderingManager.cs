@@ -274,6 +274,71 @@ namespace XREngine.Rendering
                 checklist.UsesCountDrawPath ? "CountDraw" : "Fallback");
         }
 
+        // ===== C-GPU-2: Zero-readback production invariant assertions =====
+        // Real flag chain (NOT _isDrawCountAllowedToBeFromGpu as the older notes said):
+        //   IndirectParityChecklist.UsesCountDrawPath
+        //     = DrawIndirectBufferBindingReady
+        //     & ParameterBufferBindingReady
+        //     & IndexedVaoValid
+        //     & SupportsIndirectCountDraw
+        //     & !DebugSettings.DisableCountDrawPath
+        // Under EMeshSubmissionStrategy.GpuIndirectZeroReadback the GPU count-draw path MUST be
+        // active. Any diagnostic flag (DisableCountDrawPath, ForceCpuFallbackCount,
+        // ForceCpuIndirectBuild, !DisableCpuReadbackCount, EnableCpuBatching) that defeats it is a
+        // shipping bug. These asserts compile out of Release.
+
+        [System.Diagnostics.Conditional("DEBUG")]
+        private static void AssertZeroReadbackUsesGpuCountPath(in IndirectParityChecklist parity, string callsite)
+        {
+            if (Engine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                return;
+
+            if (parity.UsesCountDrawPath)
+                return;
+
+            string reason = !parity.HasRenderer ? "no renderer"
+                : !parity.HasIndirectDrawBuffer ? "no indirect-draw buffer"
+                : !parity.HasParameterBuffer ? "no parameter buffer"
+                : !parity.ParameterBufferReady ? "parameter buffer not ready (map state)"
+                : !parity.IndexedVaoValid ? "indexed VAO invalid"
+                : !parity.SupportsIndirectCountDraw ? $"renderer {parity.BackendName} reports SupportsIndirectCountDraw=false"
+                : parity.CountDrawPathDisabled ? "DebugSettings.DisableCountDrawPath=true (diagnostic switch must be OFF in production)"
+                : "unknown";
+
+            System.Diagnostics.Debug.Assert(false,
+                $"[C-GPU-2] {callsite}: GpuIndirectZeroReadback requires UsesCountDrawPath but parity={reason}. " +
+                "Shipping path must consume the GPU-written count buffer via glMultiDrawElementsIndirectCount.");
+        }
+
+        [System.Diagnostics.Conditional("DEBUG")]
+        private static void AssertZeroReadbackProductionInvariants(string callsite)
+        {
+            if (Engine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                return;
+
+            var d = GPURenderPassCollection.IndirectDebug;
+
+            System.Diagnostics.Debug.Assert(!d.DisableCountDrawPath,
+                $"[C-GPU-2] {callsite}: IndirectDebug.DisableCountDrawPath=true while strategy=GpuIndirectZeroReadback. " +
+                "Diagnostic switch must be OFF in production — it forces a CPU-readback fallback that breaks zero-readback.");
+
+            System.Diagnostics.Debug.Assert(!d.ForceCpuFallbackCount,
+                $"[C-GPU-2] {callsite}: IndirectDebug.ForceCpuFallbackCount=true while strategy=GpuIndirectZeroReadback. " +
+                "Diagnostic switch must be OFF in production.");
+
+            System.Diagnostics.Debug.Assert(!d.ForceCpuIndirectBuild,
+                $"[C-GPU-2] {callsite}: IndirectDebug.ForceCpuIndirectBuild=true while strategy=GpuIndirectZeroReadback. " +
+                "Diagnostic switch must be OFF in production.");
+
+            System.Diagnostics.Debug.Assert(d.DisableCpuReadbackCount,
+                $"[C-GPU-2] {callsite}: IndirectDebug.DisableCpuReadbackCount=false while strategy=GpuIndirectZeroReadback. " +
+                "Production zero-readback must suppress map/unmap of the GPU count buffer.");
+
+            System.Diagnostics.Debug.Assert(!d.EnableCpuBatching,
+                $"[C-GPU-2] {callsite}: IndirectDebug.EnableCpuBatching=true while strategy=GpuIndirectZeroReadback. " +
+                "Diagnostic switch must be OFF in production — it forces a CPU map of the culled command buffer.");
+        }
+
         /// <summary>
         /// Render using the selected pipeline
         /// </summary>
@@ -386,6 +451,48 @@ namespace XREngine.Rendering
                 ? $"GPU-Indirect path={path} count/max={drawCountOrMax} stride={stride} byteOffset={offset.Value}"
                 : $"GPU-Indirect path={path} count/max={drawCountOrMax} stride={stride}";
             Log(LogCategory.Draw, LogLevel.Info, msg);
+        }
+
+        // Set by XRE_GL_DEBUG=1 — enables verbose dumps of indirect-draw parameters
+        // immediately before each glMultiDrawElementsIndirect[Count] call. The dump
+        // is the only way to localize an offending pass when the NVIDIA driver
+        // FAST_FAIL_CORRUPT_LIST_ENTRYs without a debug callback message.
+        private static readonly bool s_glDebugTraceEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_GL_DEBUG"), "1", StringComparison.Ordinal);
+
+        private static void LogIndirectDrawSizes(
+            string callsite,
+            uint maxDrawCount,
+            uint stride,
+            XRDataBuffer indirectDrawBuffer,
+            XRDataBuffer? parameterBuffer,
+            nuint indirectByteOffset = 0,
+            nuint countByteOffset = 0)
+        {
+            if (!s_glDebugTraceEnabled)
+                return;
+
+            ulong indirectBytes = indirectDrawBuffer.Length;
+            ulong indirectCapacityDraws = stride > 0 ? indirectBytes / stride : 0UL;
+            ulong requestedIndirectBytes = (ulong)indirectByteOffset + ((ulong)maxDrawCount * stride);
+            ulong paramBytes = parameterBuffer?.Length ?? 0UL;
+            ulong requestedCountBytes = (ulong)countByteOffset + 4UL; // 1 GLuint
+            bool indirectOverflow = requestedIndirectBytes > indirectBytes;
+            bool countOverflow = parameterBuffer is not null && requestedCountBytes > paramBytes;
+
+            Debug.Rendering(
+                "[GLDbg] {0}: maxDraw={1} stride={2} indirect(len={3} cap={4} off={5} need={6}{7}) param(len={8} off={9}{10})",
+                callsite,
+                maxDrawCount,
+                stride,
+                indirectBytes,
+                indirectCapacityDraws,
+                indirectByteOffset,
+                requestedIndirectBytes,
+                indirectOverflow ? " OVERFLOW" : string.Empty,
+                paramBytes,
+                countByteOffset,
+                countOverflow ? " OVERFLOW" : string.Empty);
         }
 
         private static List<DrawBatch> CoalesceContiguousBatches(IReadOnlyList<DrawBatch> batches)
@@ -573,6 +680,10 @@ namespace XREngine.Rendering
 
             LogIndirectParityChecklist(parity);
 
+            // C-GPU-2: production zero-readback must consume the GPU count buffer directly.
+            AssertZeroReadbackProductionInvariants("DispatchRenderIndirect");
+            AssertZeroReadbackUsesGpuCountPath(parity, "DispatchRenderIndirect");
+
             GpuDebug(LogCategory.Draw, "Draw mode: useCount={0}, stride={1}", useCount, stride);
 
             if (DebugSettings.ValidateBufferLayouts)
@@ -603,6 +714,7 @@ namespace XREngine.Rendering
                         renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
                     
                     LogMultiDrawIndirect(true, maxCommands, stride);
+                    LogIndirectDrawSizes("DispatchRenderIndirect", maxCommands, stride, indirectDrawBuffer, parameterBuffer);
                     using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
                         renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
                 }
@@ -1129,6 +1241,11 @@ namespace XREngine.Rendering
 
             bool usingCountPath = parity.UsesCountDrawPath;
             LogIndirectParityChecklist(parity);
+
+            // C-GPU-2: production zero-readback must consume the GPU count buffer directly.
+            AssertZeroReadbackProductionInvariants("DispatchRenderIndirectRange");
+            AssertZeroReadbackUsesGpuCountPath(parity, "DispatchRenderIndirectRange");
+
             try
             {
                 if (usingCountPath)
@@ -1147,7 +1264,10 @@ namespace XREngine.Rendering
                     ValidateIndirectBufferState(indirectDrawBuffer, drawOffset + effectiveDrawCount, stride);
 
                 if (usingCountPath)
+                {
+                    LogIndirectDrawSizes("DispatchRenderIndirectRange", effectiveDrawCount, stride, indirectDrawBuffer, parameterBuffer, byteOffset);
                     renderer.MultiDrawElementsIndirectCount(effectiveDrawCount, stride, byteOffset, 0);
+                }
                 else
                     renderer.MultiDrawElementsIndirectWithOffset(effectiveDrawCount, stride, byteOffset);
 
@@ -3543,6 +3663,7 @@ namespace XREngine.Rendering
 
             for (int slotIndex = 0; slotIndex < materialSlotIds.Count; ++slotIndex)
             {
+                P3Diagnostics.IncSlotIterated();
                 uint materialId = materialSlotIds[slotIndex];
                 XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
 
@@ -3551,14 +3672,20 @@ namespace XREngine.Rendering
                     materialMap.TryGetValue(materialId, out sourceMaterial);
 
                 if (sourceMaterial is not null && sourceMaterial.RenderPass != currentRenderPass)
+                {
+                    P3Diagnostics.IncSlotSkippedPassMismatch();
                     continue;
+                }
 
                 XRMaterial? material = ResolveEffectiveGpuMaterial(sourceMaterial, overrideMaterial);
                 if (material is null)
                 {
                     XRMaterial? invalidMaterial = XRMaterial.InvalidMaterial;
                     if (invalidMaterial is null)
+                    {
+                        P3Diagnostics.IncSlotSkippedNoMaterial();
                         continue;
+                    }
 
                     material = invalidMaterial;
                 }
@@ -3566,23 +3693,34 @@ namespace XREngine.Rendering
                 if (TryDetectTextVertexShader(material.Shaders, out _))
                 {
                     GpuWarn(LogCategory.Draw, "Skipping zero-readback material slot {0} (MaterialID={1}) because text-material support still requires CPU-prepared glyph buffers.", slotIndex, materialId);
+                    P3Diagnostics.IncSlotSkippedTextShader();
                     continue;
                 }
 
                 uint effectiveMaterialId = (uint)material.GetHashCode();
                 var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
                 if (program is null)
+                {
+                    P3Diagnostics.IncSlotSkippedProgram();
                     continue;
+                }
                 if (!TryUseIndirectGraphicsProgram(program, "ZeroReadbackMaterialTier"))
+                {
+                    P3Diagnostics.IncSlotSkippedProgram();
                     continue;
+                }
 
                 renderer.SetMaterialUniforms(material, program);
                 renderer.ApplyRenderParameters(material.RenderOptions);
 
                 for (uint tier = 0; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
                 {
+                    P3Diagnostics.IncTierIterated();
                     if (!ConfigureIndirectRendererForTier(scene, vaoRenderer, (EAtlasTier)tier))
+                    {
+                        P3Diagnostics.IncTierSkippedConfigure();
                         continue;
+                    }
 
                     uint bucketIndex = ((uint)slotIndex * GPUBatchingBindings.MaterialTierCount) + tier;
                     nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
@@ -3607,6 +3745,8 @@ namespace XREngine.Rendering
                         emitBarrier: false);
                 }
             }
+
+            P3Diagnostics.MaybeFlush();
         }
 
         private void RenderZeroReadbackActiveMaterialBuckets(
@@ -3943,6 +4083,17 @@ namespace XREngine.Rendering
             if (renderer is null || maxDrawCount == 0)
                 return;
 
+            // P3: with XRE_BUCKET_LOOP_DRY_RUN=1, skip the entire bucket dispatch (including the
+            // upstream BindTo / SetEngineUniforms / VAO bind that would otherwise still cost CPU
+            // time for an empty bucket). If fps recovers near CpuDirect with this flag set, the
+            // bucket fan-out drives the static-scene perf gap (validates P3-A).
+            if (P3Diagnostics.BucketLoopDryRun)
+            {
+                P3Diagnostics.IncBucketDryRunSkipped();
+                return;
+            }
+            P3Diagnostics.IncBucketDispatched();
+
             if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectCountBucket"))
                 return;
 
@@ -3962,6 +4113,13 @@ namespace XREngine.Rendering
 
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             IndirectParityChecklist parity = BuildIndirectParityChecklist(renderer, indirectDrawBuffer, parameterBuffer, version);
+
+            // C-GPU-2: production zero-readback must consume the GPU count buffer directly.
+            // The bucket dispatcher is invoked exclusively from the zero-readback material-scatter
+            // path, so the production invariant is non-negotiable here.
+            AssertZeroReadbackProductionInvariants("DispatchRenderIndirectCountBucket");
+            AssertZeroReadbackUsesGpuCountPath(parity, "DispatchRenderIndirectCountBucket");
+
             // Use the GPU count buffer to cap draws whenever the backend supports it. OpenGL 4.6 / ARB_indirect_parameters
             // is a fully supported path; falling back to MaxDrawCount-shaped indirect draws here would force every
             // bucket to dispatch MaxDrawsPerMaterialTier no-op commands, producing a large per-frame CPU/GPU overhead
@@ -4052,7 +4210,10 @@ namespace XREngine.Rendering
                 }
 
                 using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
+                {
+                    LogIndirectDrawSizes("DispatchRenderIndirectCountBucket", maxDrawCount, stride, indirectDrawBuffer, parameterBuffer, indirectByteOffset, countByteOffset);
                     renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
+                }
             }
             finally
             {

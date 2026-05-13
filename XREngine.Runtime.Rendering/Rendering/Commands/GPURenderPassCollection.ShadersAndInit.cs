@@ -18,6 +18,12 @@ namespace XREngine.Rendering.Commands
 
         private static void EnsurePersistentReadbackMapping(XRDataBuffer buffer)
         {
+            if (!Engine.IsRenderThread)
+            {
+                Debug.RenderingWarning("Persistent GPU readback mapping requested off the render thread.");
+                return;
+            }
+
             // Never persistently map GL parameter buffers; drivers may stall or misbehave
             if (buffer.Target == EBufferTarget.ParameterBuffer)
                 return;
@@ -35,7 +41,8 @@ namespace XREngine.Rendering.Commands
 
         private void MapBuffers()
         {
-            bool allowReadbackMappings = ShouldCaptureDiagnosticReadbacksForPass();
+            bool allowCountReadbackMappings = !IsCpuReadbackCountDisabledForPass();
+            bool allowDiagnosticReadbackMappings = ShouldCaptureDiagnosticReadbacksForPass();
 
             // Determine if any buffer specifically needs to be remapped
             bool anyFlagged = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap;
@@ -52,27 +59,27 @@ namespace XREngine.Rendering.Commands
             // If nothing is flagged but we haven't mapped yet, perform initial mapping for any existing buffers
             if (!anyFlagged && !_buffersMapped)
             {
-                if (!allowReadbackMappings)
+                if (!allowCountReadbackMappings && !allowDiagnosticReadbackMappings)
                 {
                     _buffersMapped = true;
-                    Dbg("MapBuffers skipped (diagnostic readbacks disabled)", "Buffers");
+                    Dbg("MapBuffers skipped (readbacks disabled)", "Buffers");
                     return;
                 }
 
-                // Map all SSBO buffers (count, flag, stats) for persistent coherent readback
-                if (_culledCountBuffer is not null)
+                if (allowCountReadbackMappings && _culledCountBuffer is not null)
                     EnsurePersistentReadbackMapping(_culledCountBuffer);
-                if (_cullCountScratchBuffer is not null)
+                if (allowCountReadbackMappings && _cullCountScratchBuffer is not null)
                     EnsurePersistentReadbackMapping(_cullCountScratchBuffer);
-                if (_drawCountBuffer is not null)
+                if (allowCountReadbackMappings && _drawCountBuffer is not null)
                     EnsurePersistentReadbackMapping(_drawCountBuffer);
-                if (_cullingOverflowFlagBuffer is not null)
+
+                if (allowDiagnosticReadbackMappings && _cullingOverflowFlagBuffer is not null)
                     EnsurePersistentReadbackMapping(_cullingOverflowFlagBuffer);
-                if (_indirectOverflowFlagBuffer is not null)
+                if (allowDiagnosticReadbackMappings && _indirectOverflowFlagBuffer is not null)
                     EnsurePersistentReadbackMapping(_indirectOverflowFlagBuffer);
-                if (_statsBuffer is not null)
+                if (allowDiagnosticReadbackMappings && _statsBuffer is not null)
                     EnsurePersistentReadbackMapping(_statsBuffer);
-                if (_truncationFlagBuffer is not null)
+                if (allowDiagnosticReadbackMappings && _truncationFlagBuffer is not null)
                     EnsurePersistentReadbackMapping(_truncationFlagBuffer);
 
                 _buffersMapped = true;
@@ -80,28 +87,31 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            // Map count buffers with persistent+coherent readback so GPU atomicAdd writes
-            // are visible to CPU reads.
-            if (_culledCountNeedsMap && _culledCountBuffer is not null)
+            if (!allowCountReadbackMappings)
             {
-                EnsurePersistentReadbackMapping(_culledCountBuffer);
                 _culledCountNeedsMap = false;
+                _drawCountNeedsMap = false;
             }
-
-            if (_drawCountNeedsMap && _drawCountBuffer is not null)
+            else
             {
-                EnsurePersistentReadbackMapping(_drawCountBuffer);
+                if (_culledCountNeedsMap && _culledCountBuffer is not null)
+                    EnsurePersistentReadbackMapping(_culledCountBuffer);
+
+                if (_drawCountNeedsMap && _drawCountBuffer is not null)
+                    EnsurePersistentReadbackMapping(_drawCountBuffer);
+
+                _culledCountNeedsMap = false;
                 _drawCountNeedsMap = false;
             }
 
-            if (!allowReadbackMappings)
+            if (!allowDiagnosticReadbackMappings)
             {
                 _cullingOverflowNeedsMap = false;
                 _indirectOverflowNeedsMap = false;
                 _statsNeedsMap = false;
                 _truncationNeedsMap = false;
                 _buffersMapped = true;
-                Dbg("MapBuffers skipped flagged readback mappings (diagnostic readbacks disabled)", "Buffers");
+                Dbg("MapBuffers skipped flagged diagnostic mappings (diagnostic readbacks disabled)", "Buffers");
                 return;
             }
 
@@ -613,14 +623,15 @@ namespace XREngine.Rendering.Commands
                 buffer.SetDataRawAtIndex(0, 0u);
                 buffer.PushSubData();
 
-                // Map immediately on creation to avoid later stalls when GPU may be using the buffer
-                EnsurePersistentReadbackMapping(buffer);
-                requiresMapping = false; // already mapped
+                if (ShouldCaptureDiagnosticReadbacksForPass())
+                    EnsurePersistentReadbackMapping(buffer);
+
+                requiresMapping = false;
             }
             else
             {
                 // If nothing has been mapped yet and we're still in pre-mapping stage, request mapping
-                if (buffer.ActivelyMapping.Count == 0 && !_buffersMapped)
+                if (ShouldCaptureDiagnosticReadbacksForPass() && buffer.ActivelyMapping.Count == 0 && !_buffersMapped)
                     requiresMapping = true;
             }
 

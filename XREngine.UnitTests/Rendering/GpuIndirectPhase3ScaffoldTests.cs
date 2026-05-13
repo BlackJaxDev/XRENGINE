@@ -8,11 +8,11 @@ namespace XREngine.UnitTests.Rendering;
 public class GpuIndirectPhase3ScaffoldTests
 {
     [Test]
-    public void EngineSettings_OcclusionMode_DefaultsToDisabled()
+    public void EngineSettings_OcclusionMode_DefaultsToGpuHiZ()
     {
         var settings = new XREngine.Engine.Rendering.EngineSettings();
 
-        settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.Disabled);
+        settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.GpuHiZ);
     }
 
     [Test]

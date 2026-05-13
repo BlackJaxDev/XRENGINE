@@ -809,6 +809,24 @@ namespace XREngine.Rendering
         public abstract void UnbindParameterBuffer();
 
         /// <summary>
+        /// Polls pending asynchronous GPU statistics readbacks without waiting for the GPU.
+        /// </summary>
+        public virtual void PollGpuRenderStatsReadbacks() { }
+
+        /// <summary>
+        /// Queues a nonblocking GPU->CPU readback of one or more uint draw-count values.
+        /// Implementations must return immediately and publish the result only after a GPU fence is already signaled.
+        /// </summary>
+        public virtual bool QueueGpuRenderDrawCountReadback(XRDataBuffer drawCountBuffer, uint countByteOffset = 0, uint countElementCount = 1)
+            => false;
+
+        /// <summary>
+        /// Queues a nonblocking readback of the shared GPU render stats buffer.
+        /// </summary>
+        public virtual bool QueueGpuRenderStatsBufferReadback(XRDataBuffer statsBuffer, bool publishDraws, bool publishTriangles)
+            => false;
+
+        /// <summary>
         /// Issue indirect multi-draws.
         /// </summary>
         public abstract void MultiDrawElementsIndirect(uint drawCount, uint stride);

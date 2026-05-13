@@ -62,14 +62,6 @@ public abstract partial class GenericRenderObject : XRAsset
     public override void Destroy(bool now = false)
     {
         base.Destroy(now);
-        if (!now)
-            return;
-
-        lock (_apiWrappers)
-        {
-            foreach (var wrapper in APIWrappers)
-                wrapper.Destroy();
-        }
     }
 
     protected GenericRenderObject()

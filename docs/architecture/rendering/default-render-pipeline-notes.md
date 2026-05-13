@@ -483,3 +483,16 @@ The Default Render Pipeline tonemapping stage now exposes AgX and GT7 in additio
 **Rule:** Runtime ImGui platform viewport close must not call native window disposal from the viewport disposal pump.
 
 Closing a detached ImGui viewport hides and detaches the Silk/GLFW window, releases the managed ImGui viewport handle, and keeps the native window quarantined for process shutdown. This avoids freezes observed inside native `IWindow.Dispose()` when ImGui retires a platform viewport during the frame. Set `XRE_IMGUI_VIEWPORT_DISPOSE_NATIVE=1` only for local diagnostics when testing the underlying Silk/GLFW close path.
+
+---
+
+## 26. Debug Visualization Post-Process Stage
+
+**Rule:** The camera post-process stage key remains `gpuBvhDebug`, but the editor label is `Debug Visualization`.
+
+The stage owns broad render-pipeline diagnostics, not only GPU BVH wireframes. It currently includes:
+
+- `Full Overdraw`: renders all visible mesh render passes into `FullOverdrawCountTex` using additive `1.0` writes with depth disabled, then presents `FullOverdrawDebugFBO` as a heatmap over `PostProcessOutputTexture`.
+- `GPU BVH`: the existing zero-readback BVH wireframe controls.
+
+Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resource caching but before final output. The count pass is intentionally debug-only CPU mesh submission with a forced simple material, so it should not be used for performance numbers except to locate screen regions with repeated pixel coverage.

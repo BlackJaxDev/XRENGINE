@@ -53,7 +53,7 @@ namespace XREngine
             catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
             {
                 Debug.RenderingWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
-                options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
+                options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ResolveOpenGLContextFlags(), new APIVersion(4, 6));
                 window = new XRWindow(options, windowSettings.UseNativeTitleBar, windowSettings.VSync);
             }
 
@@ -127,6 +127,23 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Resolves the OpenGL context flags. Adds <see cref="ContextFlags.Debug"/>
+        /// when the <c>XRE_GL_DEBUG</c> environment variable is set to <c>1</c>, so
+        /// that the GL driver delivers low/medium-severity messages through the
+        /// existing <c>glDebugMessageCallback</c> handler. Without this flag,
+        /// NVIDIA's driver silently filters most diagnostics, which makes
+        /// driver-side faults (e.g. <c>FAST_FAIL_CORRUPT_LIST_ENTRY</c>) impossible
+        /// to trace from the GL callback.
+        /// </summary>
+        private static ContextFlags ResolveOpenGLContextFlags()
+        {
+            var flags = ContextFlags.ForwardCompatible;
+            if (string.Equals(Environment.GetEnvironmentVariable("XRE_GL_DEBUG"), "1", StringComparison.Ordinal))
+                flags |= ContextFlags.Debug;
+            return flags;
+        }
+
+        /// <summary>
         /// Builds window options from startup settings.
         /// </summary>
         private static WindowOptions GetWindowOptions(GameWindowStartupSettings windowSettings, bool preferHdrOutput)
@@ -171,7 +188,7 @@ namespace XREngine
                 0.0,
                 UserSettings.RenderLibrary == ERenderLibrary.Vulkan
                     ? new GraphicsAPI(ContextAPI.Vulkan, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(1, 1))
-                    : new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6)),
+                    : new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ResolveOpenGLContextFlags(), new APIVersion(4, 6)),
                 windowSettings.WindowTitle ?? string.Empty,
                 windowState,
                 windowBorder,

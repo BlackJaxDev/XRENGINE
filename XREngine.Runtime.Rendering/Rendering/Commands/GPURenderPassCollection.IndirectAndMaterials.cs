@@ -174,6 +174,7 @@ namespace XREngine.Rendering.Commands
 
             _useBufferAForRender = !_useBufferAForRender;
 
+            QueueAsyncGpuTriangleStatsReadback();
             PostRenderDiagnostics(scene);
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render end");
@@ -1500,6 +1501,17 @@ namespace XREngine.Rendering.Commands
 
         #region Diagnostics & Logging
 
+        private void QueueAsyncGpuTriangleStatsReadback()
+        {
+            if (_statsBuffer is null)
+                return;
+
+            AbstractRenderer.Current?.QueueGpuRenderStatsBufferReadback(
+                _statsBuffer,
+                publishDraws: false,
+                publishTriangles: true);
+        }
+
         private void PostRenderDiagnostics(GPUScene scene)
         {
             if (!ShouldCaptureDiagnosticReadbacksForPass())
@@ -1602,7 +1614,7 @@ namespace XREngine.Rendering.Commands
             if (IsDebugLoggingEnabledForPass())
             {
                 Debug.Meshes($"{FormatDebugPrefix("Stats")} [GPU Stats] In={stats.Input} CulledOut={stats.Culled} " +
-                         $"Draws={stats.Drawn} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected} " +
+                         $"Draws={stats.Drawn} Tris={stats.Triangles} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected} " +
                          $"CpuFallbackEvents={cpuFallbackEvents} CpuRecovered={cpuFallbackRecovered}");
 
                 Debug.Meshes($"{FormatDebugPrefix("Stats")} [Transparency] Masked={MaskedVisibleCommandCount} " +
@@ -1631,7 +1643,7 @@ namespace XREngine.Rendering.Commands
                 (uint)Engine.Rendering.Stats.GpuTransparencyApproximateVisible,
                 (uint)Engine.Rendering.Stats.GpuTransparencyExactVisible);
 
-            Dbg($"Stats in={stats.Input} culled={stats.Culled} draws={stats.Drawn} " +
+            Dbg($"Stats in={stats.Input} culled={stats.Culled} draws={stats.Drawn} tris={stats.Triangles} " +
                 $"frustumRej={stats.FrustumRejected} distRej={stats.DistanceRejected} " +
                 $"cpuFallbackEvents={cpuFallbackEvents} cpuRecovered={cpuFallbackRecovered} " +
                 $"masked={MaskedVisibleCommandCount} approximate={ApproximateTransparentVisibleCommandCount} exact={ExactTransparentVisibleCommandCount}", "Stats");
@@ -1781,6 +1793,7 @@ namespace XREngine.Rendering.Commands
             public uint Input { get; }
             public uint Culled { get; }
             public uint Drawn { get; }
+            public uint Triangles { get; }
             public uint FrustumRejected { get; }
             public uint DistanceRejected { get; }
             public uint BvhBuildCount { get; }
@@ -1799,6 +1812,7 @@ namespace XREngine.Rendering.Commands
                 Input = values[(int)GpuStatsLayout.StatsInputCount];
                 Culled = values[(int)GpuStatsLayout.StatsCulledCount];
                 Drawn = values[(int)GpuStatsLayout.StatsDrawCount];
+                Triangles = values[(int)GpuStatsLayout.StatsTriangleCount];
                 FrustumRejected = values[(int)GpuStatsLayout.StatsRejectedFrustum];
                 DistanceRejected = values[(int)GpuStatsLayout.StatsRejectedDistance];
                 BvhBuildCount = values[(int)GpuStatsLayout.BvhBuildCount];

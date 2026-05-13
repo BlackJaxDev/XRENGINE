@@ -69,7 +69,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (ActivePipelineInstance.Resources.TryGetFrameBuffer(Name, out var fbo) && fbo is not null)
             {
                 if (NeedsRecreate?.Invoke(fbo) == true)
+                {
+                    // Destroy the previous instance so its GL/Vulkan wrappers tear down the
+                    // underlying handles. Without this, the cache-or-create cycle leaks GPU
+                    // objects on every reconfiguration (resize, AA change, pipeline rebuild),
+                    // and NVIDIA's OpenGL driver eventually trips a FAST_FAIL_CORRUPT_LIST_ENTRY
+                    // inside glNamedFramebufferTexture after enough orphaned attachments
+                    // accumulate.
+                    fbo.Destroy(true);
                     fbo = null;
+                }
 
                 if (fbo is null)
                 {

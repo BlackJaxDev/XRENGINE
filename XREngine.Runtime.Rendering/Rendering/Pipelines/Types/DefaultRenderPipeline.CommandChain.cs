@@ -128,6 +128,7 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_DepthTest>().Enable = false;
             AppendPostProcessResourceCaching(c);
             AppendDebugVisualizationCaching(c);
+            AppendFullOverdrawCountingPass(c);
             AppendAntiAliasingResourceCaching(c);
         }
 
@@ -670,6 +671,44 @@ public partial class DefaultRenderPipeline
                 CreateDepthPeelingDebugFBO,
                 GetDesiredFBOSizeInternal);
         }
+
+        var fullOverdrawCache = c.Add<VPRC_IfElse>();
+        fullOverdrawCache.ConditionEvaluator = () => EnableFullOverdrawVisualization;
+        {
+            var cacheCommands = new ViewportRenderCommandContainer(this);
+            cacheCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                FullOverdrawCountFBOName,
+                CreateFullOverdrawCountFBO,
+                GetDesiredFBOSizeInternal);
+            cacheCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                FullOverdrawDebugFBOName,
+                CreateFullOverdrawDebugFBO,
+                GetDesiredFBOSizeInternal);
+            fullOverdrawCache.TrueCommands = cacheCommands;
+        }
+    }
+
+    private void AppendFullOverdrawCountingPass(ViewportRenderCommandContainer c)
+    {
+        var fullOverdraw = c.Add<VPRC_IfElse>();
+        fullOverdraw.ConditionEvaluator = () => EnableFullOverdrawVisualization;
+        {
+            var countCommands = new ViewportRenderCommandContainer(this);
+            countCommands.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
+            using (countCommands.AddUsing<VPRC_BindFBOByName>(x =>
+                x.SetOptions(FullOverdrawCountFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: false)))
+            {
+                countCommands.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                countCommands.Add<VPRC_DepthTest>().Enable = false;
+                countCommands.Add<VPRC_DepthWrite>().Allow = false;
+                countCommands.Add<VPRC_RenderFullOverdrawPass>();
+            }
+
+            countCommands.Add<VPRC_DepthWrite>().Allow = true;
+            countCommands.Add<VPRC_DepthTest>().Enable = false;
+            countCommands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+            fullOverdraw.TrueCommands = countCommands;
+        }
     }
 
     private void AppendAntiAliasingResourceCaching(ViewportRenderCommandContainer c)
@@ -1063,24 +1102,48 @@ public partial class DefaultRenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
-                if (EnableTransformIdVisualization)
-                {
-                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
-                    AppendDebugOverlay(c, visible: false);
-                }
-                else if (ActiveTransparencyDebugFboName is not null)
-                {
-                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(ActiveTransparencyDebugFboName, null);
-                    AppendDebugOverlay(c, visible: false);
-                }
-                else
-                {
-                    AppendViewportFinalOutputSourceCommands(c, bypassVendorUpscale);
-                    AppendDebugOverlay(c);
-                }
+                AppendFullOverdrawOrStandardFinalOutput(c, bypassVendorUpscale);
             }
         }
         return c;
+    }
+
+    private void AppendFullOverdrawOrStandardFinalOutput(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
+    {
+        var fullOverdraw = c.Add<VPRC_IfElse>();
+        fullOverdraw.ConditionEvaluator = () => EnableFullOverdrawVisualization;
+        fullOverdraw.TrueCommands = CreateFullOverdrawFinalOutputCommands();
+        fullOverdraw.FalseCommands = CreateLegacyDebugOrStandardFinalOutputCommands(bypassVendorUpscale);
+    }
+
+    private ViewportRenderCommandContainer CreateFullOverdrawFinalOutputCommands()
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(FullOverdrawDebugFBOName, null);
+        AppendDebugOverlay(commands, visible: false);
+        return commands;
+    }
+
+    private ViewportRenderCommandContainer CreateLegacyDebugOrStandardFinalOutputCommands(bool bypassVendorUpscale)
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        if (EnableTransformIdVisualization)
+        {
+            commands.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
+            AppendDebugOverlay(commands, visible: false);
+        }
+        else if (ActiveTransparencyDebugFboName is not null)
+        {
+            commands.Add<VPRC_RenderQuadToFBO>().SetTargets(ActiveTransparencyDebugFboName, null);
+            AppendDebugOverlay(commands, visible: false);
+        }
+        else
+        {
+            AppendViewportFinalOutputSourceCommands(commands, bypassVendorUpscale);
+            AppendDebugOverlay(commands);
+        }
+
+        return commands;
     }
 
     private void AppendDebugOverlay(ViewportRenderCommandContainer c, bool visible = true)

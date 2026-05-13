@@ -72,6 +72,7 @@ layout(std430, binding = 8) buffer StatsBuffer
     uint StatsBvhCullTimeHi;    // 14
     uint StatsBvhRayTimeLo;     // 15
     uint StatsBvhRayTimeHi;     // 16
+    uint StatsTriangleCount;    // 17
 };
 
 // Optional comparison buffer: stores GPU-visible command indices for CPU parity checks.

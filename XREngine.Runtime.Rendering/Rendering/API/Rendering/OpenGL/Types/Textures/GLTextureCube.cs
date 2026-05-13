@@ -126,19 +126,13 @@ namespace XREngine.Rendering.Models.Materials.Textures
 
         private void DetachFaceFromFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, ECubemapFace face, int mipLevel)
         {
-            if (Renderer.GetOrCreateAPIRenderObject(target) is not GLObjectBase apiFBO)
-                return;
-
-            Api.NamedFramebufferTextureLayer(apiFBO.BindingId, ToGLEnum(attachment), 0, mipLevel, (int)face);
-            //Api.FramebufferTexture2D(GLEnum.Framebuffer, ToGLEnum(attachment), GLEnum.TextureCubeMapPositiveX + (int)face, 0, mipLevel);
+            if (TryResolveAttachIds(target, attachment, mipLevel, requireTexture: false, out uint fboId, out _))
+                Api.NamedFramebufferTextureLayer(fboId, ToGLEnum(attachment), 0, mipLevel, (int)face);
         }
         public void AttachFaceToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, ECubemapFace face, int mipLevel)
         {
-            if (Renderer.GetOrCreateAPIRenderObject(fbo) is not GLObjectBase apiFBO)
-                return;
-
-            Api.NamedFramebufferTextureLayer(apiFBO.BindingId, ToGLEnum(attachment), BindingId, mipLevel, (int)face);
-            //Api.FramebufferTexture2D(GLEnum.Framebuffer, ToGLEnum(attachment), GLEnum.TextureCubeMapPositiveX + (int)face, BindingId, mipLevel);
+            if (TryResolveAttachIds(fbo, attachment, mipLevel, requireTexture: true, out uint fboId, out uint texId))
+                Api.NamedFramebufferTextureLayer(fboId, ToGLEnum(attachment), texId, mipLevel, (int)face);
         }
 
         public unsafe override void PushData()

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 
@@ -22,13 +23,15 @@ public sealed class RenderTextureResource
         if (Instance == texture)
             return;
 
-        Instance?.Destroy();
+        // Destroy synchronously so GL handle deletion happens before the new resource
+        // attaches, avoiding NVIDIA driver state corruption from leaked texture/FBO bindings.
+        Instance?.Destroy(true);
         Instance = texture;
     }
 
     public void DestroyInstance()
     {
-        Instance?.Destroy();
+        Instance?.Destroy(true);
         Instance = null;
     }
 }
@@ -51,13 +54,13 @@ public sealed class RenderFrameBufferResource
         if (Instance == frameBuffer)
             return;
 
-        Instance?.Destroy();
+        Instance?.Destroy(true);
         Instance = frameBuffer;
     }
 
     public void DestroyInstance()
     {
-        Instance?.Destroy();
+        Instance?.Destroy(true);
         Instance = null;
     }
 }
@@ -80,13 +83,13 @@ public sealed class RenderBufferResource
         if (Instance == buffer)
             return;
 
-        Instance?.Destroy();
+        Instance?.Destroy(true);
         Instance = buffer;
     }
 
     public void DestroyInstance()
     {
-        Instance?.Destroy();
+        Instance?.Destroy(true);
         Instance = null;
     }
 }
@@ -109,42 +112,40 @@ public sealed class RenderRenderBufferResource
         if (Instance == renderBuffer)
             return;
 
-        Instance?.Destroy();
+        Instance?.Destroy(true);
         Instance = renderBuffer;
     }
 
     public void DestroyInstance()
     {
-        Instance?.Destroy();
+        Instance?.Destroy(true);
         Instance = null;
     }
 }
 
 public sealed class RenderResourceRegistry
 {
-    private readonly Dictionary<string, RenderTextureResource> _textures = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, RenderFrameBufferResource> _frameBuffers = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, RenderBufferResource> _buffers = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, RenderRenderBufferResource> _renderBuffers = new(StringComparer.OrdinalIgnoreCase);
+    // Reads happen on the render thread (e.g. pipeline FBO creation) while
+    // writes can come from worker threads (asset/pipeline registration).
+    // Using ConcurrentDictionary so concurrent reader+writer access doesn't
+    // raise per-frame InvalidOperationException ("non-concurrent collections").
+    private readonly ConcurrentDictionary<string, RenderTextureResource> _textures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, RenderFrameBufferResource> _frameBuffers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, RenderBufferResource> _buffers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, RenderRenderBufferResource> _renderBuffers = new(StringComparer.OrdinalIgnoreCase);
 
-    public IReadOnlyDictionary<string, RenderTextureResource> TextureRecords => _textures;
-    public IReadOnlyDictionary<string, RenderFrameBufferResource> FrameBufferRecords => _frameBuffers;
-    public IReadOnlyDictionary<string, RenderBufferResource> BufferRecords => _buffers;
-    public IReadOnlyDictionary<string, RenderRenderBufferResource> RenderBufferRecords => _renderBuffers;
+    public IReadOnlyDictionary<string, RenderTextureResource> TextureRecords => (IReadOnlyDictionary<string, RenderTextureResource>)_textures;
+    public IReadOnlyDictionary<string, RenderFrameBufferResource> FrameBufferRecords => (IReadOnlyDictionary<string, RenderFrameBufferResource>)_frameBuffers;
+    public IReadOnlyDictionary<string, RenderBufferResource> BufferRecords => (IReadOnlyDictionary<string, RenderBufferResource>)_buffers;
+    public IReadOnlyDictionary<string, RenderRenderBufferResource> RenderBufferRecords => (IReadOnlyDictionary<string, RenderRenderBufferResource>)_renderBuffers;
 
     public RenderTextureResource RegisterTextureDescriptor(TextureResourceDescriptor descriptor)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
-        if (!_textures.TryGetValue(descriptor.Name, out RenderTextureResource? record))
-        {
-            record = new RenderTextureResource(descriptor);
-            _textures.Add(descriptor.Name, record);
-        }
-        else
-        {
+        RenderTextureResource record = _textures.GetOrAdd(descriptor.Name, static (_, d) => new RenderTextureResource(d), descriptor);
+        if (!ReferenceEquals(record.Descriptor, descriptor))
             record.UpdateDescriptor(descriptor);
-        }
 
         return record;
     }
@@ -153,10 +154,10 @@ public sealed class RenderResourceRegistry
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
-        if (!_frameBuffers.TryGetValue(descriptor.Name, out RenderFrameBufferResource? record))
+        RenderFrameBufferResource record = _frameBuffers.GetOrAdd(descriptor.Name, static (_, d) => new RenderFrameBufferResource(d), descriptor);
+        if (!ReferenceEquals(record.Descriptor, descriptor))
         {
-            record = new RenderFrameBufferResource(descriptor);
-            _frameBuffers.Add(descriptor.Name, record);
+            record.UpdateDescriptor(descriptor);
         }
         else
         {
@@ -170,15 +171,9 @@ public sealed class RenderResourceRegistry
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
-        if (!_buffers.TryGetValue(descriptor.Name, out RenderBufferResource? record))
-        {
-            record = new RenderBufferResource(descriptor);
-            _buffers.Add(descriptor.Name, record);
-        }
-        else
-        {
+        RenderBufferResource record = _buffers.GetOrAdd(descriptor.Name, static (_, d) => new RenderBufferResource(d), descriptor);
+        if (!ReferenceEquals(record.Descriptor, descriptor))
             record.UpdateDescriptor(descriptor);
-        }
 
         return record;
     }
@@ -226,15 +221,9 @@ public sealed class RenderResourceRegistry
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
-        if (!_renderBuffers.TryGetValue(descriptor.Name, out RenderRenderBufferResource? record))
-        {
-            record = new RenderRenderBufferResource(descriptor);
-            _renderBuffers.Add(descriptor.Name, record);
-        }
-        else
-        {
+        RenderRenderBufferResource record = _renderBuffers.GetOrAdd(descriptor.Name, static (_, d) => new RenderRenderBufferResource(d), descriptor);
+        if (!ReferenceEquals(record.Descriptor, descriptor))
             record.UpdateDescriptor(descriptor);
-        }
 
         return record;
     }
@@ -329,25 +318,25 @@ public sealed class RenderResourceRegistry
 
     public void RemoveTexture(string name)
     {
-        if (_textures.Remove(name, out RenderTextureResource? record))
+        if (_textures.TryRemove(name, out RenderTextureResource? record))
             record.DestroyInstance();
     }
 
     public void RemoveFrameBuffer(string name)
     {
-        if (_frameBuffers.Remove(name, out RenderFrameBufferResource? record))
+        if (_frameBuffers.TryRemove(name, out RenderFrameBufferResource? record))
             record.DestroyInstance();
     }
 
     public void RemoveBuffer(string name)
     {
-        if (_buffers.Remove(name, out RenderBufferResource? record))
+        if (_buffers.TryRemove(name, out RenderBufferResource? record))
             record.DestroyInstance();
     }
 
     public void RemoveRenderBuffer(string name)
     {
-        if (_renderBuffers.Remove(name, out RenderRenderBufferResource? record))
+        if (_renderBuffers.TryRemove(name, out RenderRenderBufferResource? record))
             record.DestroyInstance();
     }
 

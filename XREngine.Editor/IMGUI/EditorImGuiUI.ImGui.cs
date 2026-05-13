@@ -611,6 +611,8 @@ public static partial class EditorImGuiUI
 
             using (Engine.Profiler.Start("UI.DrawProfilerPanel"))
                 DrawProfilerPanel();
+            using (Engine.Profiler.Start("UI.RenderOcclusionPanelOverlay"))
+                RenderOcclusionPanelOverlay();
             using (Engine.Profiler.Start("UI.DrawConsolePanel"))
                 DrawConsolePanel();
             using (Engine.Profiler.Start("UI.DrawStatePanel"))
@@ -1269,6 +1271,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
                 ImGui.MenuItem("Profiler", "F11", ref _showProfiler);
+                ImGui.MenuItem("Occlusion", null, ref _showOcclusionPanel);
                 ImGui.MenuItem("Render API Objects", null, ref _showOpenGLApiObjects);
                 ImGui.MenuItem("Render API Errors", null, ref _showOpenGLErrors);
                 ImGui.MenuItem("Render API Extensions", null, ref _showRenderApiExtensions);

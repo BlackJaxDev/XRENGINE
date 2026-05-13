@@ -47,6 +47,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
     private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
+    private readonly Lazy<XRMaterial> _fullOverdrawCountMaterial;
 
     private DeferredDebugViewMode _deferredDebugView = DeferredDebugViewMode.Disabled;
     [Category("Debug")]
@@ -1205,6 +1206,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string TransparentAccumulationDebugFBOName = "TransparentAccumulationDebugFBO";
     public const string TransparentRevealageDebugFBOName = "TransparentRevealageDebugFBO";
     public const string TransparentOverdrawDebugFBOName = "TransparentOverdrawDebugFBO";
+    public const string FullOverdrawCountFBOName = "FullOverdrawCountFBO";
+    public const string FullOverdrawDebugFBOName = "FullOverdrawDebugFBO";
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
@@ -1290,6 +1293,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
     public const string TransparentAccumTextureName = "TransparentAccumTex";
     public const string TransparentRevealageTextureName = "TransparentRevealageTex";
+    public const string FullOverdrawCountTextureName = "FullOverdrawCountTex";
     //public const string HDRSceneTexture2Name = "HDRSceneTex2";
     public const string AutoExposureTextureName = "AutoExposureTex";
     public const string BloomBlurTextureName = "BloomBlurTexture";
@@ -1369,6 +1373,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
+        _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
         Engine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
         Engine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
@@ -1399,6 +1404,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         // TemporalAccumulation.fs is first-touched when TAA prepares its history
         // material; observed at ~325 ms on the render thread on cold cache.
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "TemporalAccumulation.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "FullOverdrawCount.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "FullOverdrawDebug.fs"), EShaderType.Fragment);
         // UI text batched shaders are first-touched the moment editor ImGui-style
         // text-batched UI hits a draw call; observed at ~487 ms on cold cache.
         ShaderHelper.WarmEngineShader(Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment);
@@ -1423,6 +1430,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private bool EnableTransparencyOverdrawVisualization
         => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
+
+    private bool EnableFullOverdrawVisualization
+        => !Stereo && ResolveDebugVisualizationSettings()?.FullOverdrawEnabled == true;
 
     private bool EnablePerPixelLinkedListVisualization
         => ExactTransparencyEnabled && Engine.EditorPreferences.Debug.VisualizePerPixelLinkedListFragments;
@@ -1560,6 +1570,20 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     internal XRMaterial GetDepthNormalPrePassMaterial()
         => _depthNormalPrePassMaterial.Value;
+
+    internal XRMaterial GetFullOverdrawCountMaterial()
+        => _fullOverdrawCountMaterial.Value;
+
+    private static GpuBvhDebugSettings? ResolveDebugVisualizationSettings()
+    {
+        var instance = CurrentRenderingPipeline;
+        var camera = instance?.RenderState.SceneCamera
+            ?? instance?.RenderState.RenderingCamera
+            ?? instance?.LastSceneCamera
+            ?? instance?.LastRenderingCamera;
+
+        return GpuBvhDebugSettings.TryResolve(camera, out var settings) ? settings : null;
+    }
 
 
     protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)

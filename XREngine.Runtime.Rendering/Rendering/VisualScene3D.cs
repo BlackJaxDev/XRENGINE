@@ -203,6 +203,10 @@ namespace XREngine.Scene
 
         private bool ShouldMaintainCpuGpuCommandMirror()
         {
+            // The CPU↔GPU command mirror is only needed by Surfel-GI consumers.
+            // CpuDirect no longer trusts any GPU compute cull output (C-CPU-2), so
+            // mirroring would be dead weight on the CpuDirect path. The GPU paths
+            // (Instrumented/ZeroReadback) already maintain the GPUScene directly.
             foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
             {
                 switch (viewport.RenderPipeline)

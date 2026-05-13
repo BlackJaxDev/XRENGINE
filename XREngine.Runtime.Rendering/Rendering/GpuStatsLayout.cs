@@ -25,6 +25,8 @@ namespace XREngine.Rendering
         public const uint BvhRayTimeLo = 15;
         public const uint BvhRayTimeHi = 16;
 
-        public const uint FieldCount = 17;
+        public const uint StatsTriangleCount = 17;
+
+        public const uint FieldCount = 18;
     }
 }

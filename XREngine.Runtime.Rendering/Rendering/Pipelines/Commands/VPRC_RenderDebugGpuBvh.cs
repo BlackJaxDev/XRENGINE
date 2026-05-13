@@ -74,9 +74,12 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
         Vector4 internalColor = InternalColor;
         uint showFilter = ShowFilter;
 
-        var camera = ActivePipelineInstance.RenderState.SceneCamera;
-        var stage = camera?.GetPostProcessStageState<GpuBvhDebugSettings>();
-        if (stage?.TryGetBacking(out GpuBvhDebugSettings? settings) == true && settings is not null)
+        var activeInstance = ActivePipelineInstance;
+        var camera = activeInstance.RenderState.SceneCamera
+            ?? activeInstance.RenderState.RenderingCamera
+            ?? activeInstance.LastSceneCamera
+            ?? activeInstance.LastRenderingCamera;
+        if (GpuBvhDebugSettings.TryResolve(camera, out GpuBvhDebugSettings? settings) && settings is not null)
         {
             enabled = settings.Enabled;
             maxNodes = (uint)Math.Max(1, settings.MaxNodes);

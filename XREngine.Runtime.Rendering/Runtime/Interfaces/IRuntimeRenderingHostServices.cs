@@ -725,6 +725,117 @@ public interface IRuntimeRenderingHostServices
     void BeginRenderStatsFrame();
 
     /// <summary>
+    /// Adds submitted draw calls to the host render-stat counters.
+    /// </summary>
+    void IncrementRenderDrawCalls(int count);
+
+    /// <summary>
+    /// Adds submitted multi-draw calls to the host render-stat counters.
+    /// </summary>
+    void IncrementRenderMultiDrawCalls(int count);
+
+    /// <summary>
+    /// Adds rendered triangles to the host render-stat counters.
+    /// </summary>
+    void AddRenderTrianglesRendered(int count);
+
+    void AddRenderGpuBufferAllocation(long bytes);
+    void RemoveRenderGpuBufferAllocation(long bytes);
+    void AddRenderGpuTextureAllocation(long bytes);
+    void RemoveRenderGpuTextureAllocation(long bytes);
+    void AddRenderGpuRenderBufferAllocation(long bytes);
+    void RemoveRenderGpuRenderBufferAllocation(long bytes);
+    bool CanAllocateRenderVram(long requestedBytes, long existingAllocationBytes, out long projectedBytes, out long budgetBytes);
+    void RecordRenderGpuBufferMapped(int count = 1);
+    void RecordRenderGpuReadbackBytes(long bytes);
+    void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands);
+    void RecordRenderForbiddenGpuFallback(int eventCount = 1);
+    void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible);
+    void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands);
+    void RecordRenderRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime);
+    void RecordRenderRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime);
+    void RecordRenderSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded);
+    void RecordRenderSkinnedBoundsRefreshDeferredScheduled();
+    void RecordRenderSkinnedBoundsRefreshGpuCompleted(long computeTicks, long applyTicks);
+    void RecordRenderVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime);
+    void RecordRenderVrPerViewVisibleCounts(uint leftVisible, uint rightVisible);
+    void RecordRenderVrRenderSubmitTime(TimeSpan submitTime);
+    void RecordRenderVulkanAdhocBarrier(int emittedCount, int redundantCount);
+    void RecordRenderVulkanAllocation(int allocationClass, long bytes);
+    void RecordRenderVulkanBarrierPlannerPass(int imageBarrierCount, int bufferBarrierCount, int queueOwnershipTransfers, int stageFlushes);
+    void RecordRenderVulkanBindChurn(
+        int pipelineBinds = 0,
+        int descriptorBinds = 0,
+        int pushConstantWrites = 0,
+        int vertexBufferBinds = 0,
+        int indexBufferBinds = 0,
+        int pipelineBindSkips = 0,
+        int descriptorBindSkips = 0,
+        int vertexBufferBindSkips = 0,
+        int indexBufferBindSkips = 0);
+    void RecordRenderVulkanDescriptorBindingFailure(
+        string? programName,
+        string? bindingClass,
+        string? bindingName,
+        uint set,
+        uint binding,
+        bool skippedDraw,
+        bool skippedDispatch,
+        string? message);
+    void RecordRenderVulkanDescriptorFallback(
+        string? programName,
+        string? bindingClass,
+        string? bindingName,
+        uint set,
+        uint binding,
+        int count = 1);
+    void RecordRenderVulkanDescriptorPoolCreate();
+    void RecordRenderVulkanDescriptorPoolDestroy();
+    void RecordRenderVulkanDescriptorPoolReset();
+    void RecordRenderVulkanDynamicUniformAllocation(long bytes);
+    void RecordRenderVulkanDynamicUniformExhaustion();
+    void RecordRenderVulkanFrameDiagnostics(
+        int droppedFrameOps,
+        int droppedDrawOps,
+        int droppedComputeOps,
+        int sceneSwapchainWriters,
+        int overlaySwapchainWriters,
+        int forcedDiagnosticSwapchainWriters,
+        int fboOnlyDrawOps,
+        int fboOnlyBlitOps,
+        bool missingSceneSwapchainWriters,
+        string? firstFailedOpType,
+        int firstFailedPassIndex,
+        int firstFailedPipelineIdentity,
+        int firstFailedViewportIdentity,
+        string? firstFailedTargetName,
+        string? firstFailedMaterialName,
+        string? firstFailedShaderName,
+        string? firstFailedMessage,
+        string? diagnosticSummary);
+    void RecordRenderVulkanFrameGpuCommandBufferTime(TimeSpan elapsed);
+    void RecordRenderVulkanFrameLifecycleTiming(
+        TimeSpan waitFence,
+        TimeSpan acquireImage,
+        TimeSpan recordCommandBuffer,
+        TimeSpan submit,
+        TimeSpan trim,
+        TimeSpan present,
+        TimeSpan total);
+    void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed);
+    void RecordRenderVulkanIndirectBatchMerge(int requestedBatchCount, int mergedBatchCount);
+    void RecordRenderVulkanIndirectEffectiveness(uint requestedDraws, uint culledDraws, uint emittedIndirectDraws, uint consumedDraws, uint overflowCount = 0u);
+    void RecordRenderVulkanIndirectRecordingMode(bool usedSecondary, bool usedParallel, int opCount);
+    void RecordRenderVulkanIndirectSubmission(bool usedCountPath, bool usedLoopFallback, int apiCalls, uint submittedDraws);
+    void RecordRenderVulkanOomFallback();
+    void RecordRenderVulkanPipelineCacheLookup(bool cacheHit);
+    void RecordRenderVulkanPipelineCacheMiss(string? summary);
+    void RecordRenderVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode);
+    void RecordRenderVulkanQueueSubmit();
+    void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount);
+    void RecordRenderVulkanValidationMessage(bool isError, string? message);
+
+    /// <summary>
     /// Gets whether editor scene panel presentation is enabled for render windows.
     /// </summary>
     bool IsWindowScenePanelPresentationEnabled { get; }

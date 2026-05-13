@@ -88,6 +88,35 @@ namespace XREngine.Rendering.OpenGL
             return success;
         }
 
+        /// <summary>
+        /// Detach all cached attachments before the framebuffer is deleted.
+        /// </summary>
+        /// <remarks>
+        /// The OpenGL 4.6 core spec states that deleting a framebuffer object implicitly
+        /// detaches all its attachments. In practice, NVIDIA's OpenGL driver
+        /// (32.0.15.8157) has been observed to leave stale entries on the *texture's*
+        /// internal attached-FBO list when its FBO is deleted while still bearing
+        /// attachments. The next attach of that texture to a fresh FBO then walks a
+        /// corrupted list and trips a FAST_FAIL_CORRUPT_LIST_ENTRY check inside
+        /// <c>glNamedFramebufferTexture</c>, tearing the process down.
+        ///
+        /// Detaching here, while our binding id is still valid, keeps the driver's
+        /// per-texture attachment bookkeeping clean. This matches the workaround
+        /// recommended for several other engines targeting NVIDIA OpenGL drivers.
+        /// </remarks>
+        protected internal override void PreDeleted()
+        {
+            var cache = _attachedTargetsCache;
+            if (!Engine.IsRenderThread)
+                return;
+
+            if (cache is not null && cache.Length > 0)
+                Data.DetachTargets(cache);
+
+            _attachedTargetsCache = null;
+            _invalidated = true;
+        }
+
         public void BindForReading()
         {
             if (!Engine.IsRenderThread)

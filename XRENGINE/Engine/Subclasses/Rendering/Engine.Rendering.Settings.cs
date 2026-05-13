@@ -495,8 +495,10 @@ namespace XREngine
                 private EVulkanGeometryFetchMode _vulkanGeometryFetchMode = EVulkanGeometryFetchMode.Atlas;
                 private EGpuCullingDataLayout _gpuCullingDataLayout = EGpuCullingDataLayout.AoSHot;
                 private EGpuSortDomainPolicy _gpuSortDomainPolicy = EGpuSortDomainPolicy.OpaqueFrontToBackTransparentBackToFront;
-                private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.Disabled;
+                private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
                 private bool _cacheGpuHiZOcclusionOncePerFrame = false;
+                private int _cpuQueryOcclusionRetestPeriodFrames = 6;
+                private bool _enableCpuSoftwareOcclusionCulling = false;
                 private uint _bvhLeafMaxPrims = 4u;
                 private EBvhMode _bvhMode = EBvhMode.Morton;
                 private bool _bvhRefitOnlyWhenStable = true;
@@ -1365,7 +1367,31 @@ namespace XREngine
                 [Description("Selects which occlusion culling path to run for GPU indirect rendering.")]
                 public EOcclusionCullingMode GpuOcclusionCullingMode
                 {
-                    get => _gpuOcclusionCullingMode;
+                    get
+                    {
+                        // Env override for perf measurement / bisecting regressions.
+                        // Wins over both the serialized setting and the in-memory field.
+                        EOcclusionCullingMode resolved = _gpuOcclusionCullingMode;
+                        string? raw = System.Environment.GetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE");
+                        if (!string.IsNullOrWhiteSpace(raw) &&
+                            System.Enum.TryParse(raw.Trim(), ignoreCase: true, out EOcclusionCullingMode parsed))
+                        {
+                            resolved = parsed;
+                        }
+
+                        // Path-aware coercion: the CpuDirect submission path has no GPU compute cull
+                        // to consume Hi-Z output, so GpuHiZ is meaningless there. Coerce to
+                        // CpuQueryAsync (hardware occlusion queries) when CpuDirect is active.
+                        // This keeps the serialized setting intact so switching strategies at
+                        // runtime still produces the right effective mode.
+                        if (resolved == EOcclusionCullingMode.GpuHiZ &&
+                            Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.CpuDirect)
+                        {
+                            return EOcclusionCullingMode.CpuQueryAsync;
+                        }
+
+                        return resolved;
+                    }
                     set => SetField(ref _gpuOcclusionCullingMode, value);
                 }
 
@@ -1380,6 +1406,34 @@ namespace XREngine
                 {
                     get => _cacheGpuHiZOcclusionOncePerFrame;
                     set => SetField(ref _cacheGpuHiZOcclusionOncePerFrame, value);
+                }
+
+                /// <summary>
+                /// Period (in render frames) at which a fully-occluded CPU-query mesh is forced
+                /// to redraw + requery so it can detect unocclusion. Lower values reduce visibility
+                /// latency when an occluder moves; higher values reduce per-frame retest cost.
+                /// Per-command stagger keeps the worst-case retest count bounded.
+                /// Range: 1..64. Default 6.
+                /// </summary>
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: frames between forced redraw+requery of fully-occluded meshes (1..64). Lower = faster unocclusion response, higher = lower retest cost.")]
+                public int CpuQueryOcclusionRetestPeriodFrames
+                {
+                    get => _cpuQueryOcclusionRetestPeriodFrames;
+                    set => SetField(ref _cpuQueryOcclusionRetestPeriodFrames, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Opt-in: enable the CPU software-rasterizer occluder pass (Masked SOC-style).
+                /// Scaffold-only today — the rasterizer body is a no-op pending a real port.
+                /// Env override: XRE_CPU_SOC_OCCLUSION=1. See C-CPU-3 in the perf-debug plan.
+                /// </summary>
+                [Category("Occlusion")]
+                [Description("Opt-in: enable CPU software-rasterizer occluder pass (SOC). Scaffold only — no rasterization is performed yet.")]
+                public bool EnableCpuSoftwareOcclusionCulling
+                {
+                    get => _enableCpuSoftwareOcclusionCulling;
+                    set => SetField(ref _enableCpuSoftwareOcclusionCulling, value);
                 }
 
                 /// <summary>

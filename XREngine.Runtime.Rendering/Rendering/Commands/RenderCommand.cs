@@ -1,4 +1,5 @@
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using YamlDotNet.Serialization;
 
@@ -6,8 +7,42 @@ namespace XREngine.Rendering.Commands
 {
     public abstract class RenderCommand : XRBase, IComparable<RenderCommand>, IComparable
     {
-        public RenderCommand() { }
-        public RenderCommand(int renderPass) => RenderPass = renderPass;
+        public RenderCommand()
+        {
+            StableQueryKey = (uint)System.Threading.Interlocked.Increment(ref s_nextStableQueryKey);
+        }
+        public RenderCommand(int renderPass)
+        {
+            StableQueryKey = (uint)System.Threading.Interlocked.Increment(ref s_nextStableQueryKey);
+            RenderPass = renderPass;
+        }
+
+        private static int s_nextStableQueryKey;
+
+        /// <summary>
+        /// Stable per-command identity assigned at construction time. Used as the key for
+        /// secondary state that must survive scene mutations (insert/remove of unrelated
+        /// commands), notably the CPU occlusion coordinator's per-mesh query state. The
+        /// foreach position in the render-command list (cpuCmdIndex) is *not* stable across
+        /// mutations and must not be used for this purpose. Monotonically increasing within
+        /// the process; wraps every 4G commands which is fine for the coordinator's
+        /// dictionary keying and stale-eviction TTL.
+        /// </summary>
+        [YamlIgnore]
+        public uint StableQueryKey { get; }
+
+        /// <summary>
+        /// Optional world-space culling volume for this command, used by per-command
+        /// visibility systems that need a cheap proxy geometry without involving the
+        /// command's full mesh + material. Notably consumed by
+        /// <c>CpuRenderOcclusionCoordinator</c>'s periodic-retest path: when an occluded
+        /// mesh is force-requeried, it draws this AABB (depth-only, color writes off)
+        /// instead of redrawing the full mesh, which avoids visible flicker.
+        /// Default null; mesh-bearing commands override to return their transformed
+        /// mesh bounds.
+        /// </summary>
+        [YamlIgnore]
+        public virtual AABB? CullingVolume => null;
 
         public delegate void DelPreRender(RenderCommand command, IRuntimeRenderCamera? camera);
         public event DelPreRender? OnCollectedForRender;

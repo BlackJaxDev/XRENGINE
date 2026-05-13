@@ -69,7 +69,7 @@ public partial class DefaultRenderPipeline
         DescribeFogStage(builder.Stage(FogStageKey, "Depth Fog").BackedBy<FogSettings>());
         DescribeAtmosphericScatteringStage(builder.Stage(AtmosphericScatteringStageKey, "Atmospheric Scattering").BackedBy<AtmosphericScatteringSettings>());
         DescribeVolumetricFogStage(builder.Stage(VolumetricFogStageKey, "Volumetric Fog").BackedBy<VolumetricFogSettings>());
-        DescribeGpuBvhDebugStage(builder.Stage(GpuBvhDebugStageKey, "GPU BVH Debug").BackedBy<GpuBvhDebugSettings>());
+        DescribeGpuBvhDebugStage(builder.Stage(GpuBvhDebugStageKey, "Debug Visualization").BackedBy<GpuBvhDebugSettings>());
 
         builder.Category("imaging", "Imaging")
             .IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);
@@ -1627,10 +1627,38 @@ public partial class DefaultRenderPipeline
     private static void DescribeGpuBvhDebugStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
         stage.AddParameter(
+            nameof(GpuBvhDebugSettings.FullOverdrawEnabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Full Overdraw");
+
+        bool IsFullOverdrawEnabled(object o) => ((GpuBvhDebugSettings)o).FullOverdrawEnabled;
+
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.FullOverdrawSaturationCount),
+            PostProcessParameterKind.Int,
+            GpuBvhDebugSettings.DefaultFullOverdrawSaturationCount,
+            displayName: "Overdraw Saturation Count",
+            min: GpuBvhDebugSettings.MinFullOverdrawSaturationCount,
+            max: GpuBvhDebugSettings.MaxFullOverdrawSaturationCount,
+            step: 1,
+            visibilityCondition: IsFullOverdrawEnabled);
+
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.FullOverdrawOverlayOpacity),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Overdraw Overlay Opacity",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsFullOverdrawEnabled);
+
+        stage.AddParameter(
             nameof(GpuBvhDebugSettings.Enabled),
             PostProcessParameterKind.Bool,
             false,
-            displayName: "Enabled");
+            displayName: "GPU BVH");
 
         bool IsEnabled(object o) => ((GpuBvhDebugSettings)o).Enabled;
 
@@ -1638,7 +1666,7 @@ public partial class DefaultRenderPipeline
             nameof(GpuBvhDebugSettings.Filter),
             PostProcessParameterKind.Int,
             (int)GpuBvhDebugSettings.NodeFilter.All,
-            displayName: "Node Filter",
+            displayName: "GPU BVH Filter",
             enumOptions: BuildEnumOptions<GpuBvhDebugSettings.NodeFilter>(),
             visibilityCondition: IsEnabled);
 
@@ -1646,7 +1674,7 @@ public partial class DefaultRenderPipeline
             nameof(GpuBvhDebugSettings.MaxNodes),
             PostProcessParameterKind.Int,
             16384,
-            displayName: "Max Nodes",
+            displayName: "GPU BVH Max Nodes",
             min: 1,
             max: 1048576,
             step: 256,
@@ -1656,7 +1684,7 @@ public partial class DefaultRenderPipeline
             nameof(GpuBvhDebugSettings.LineWidth),
             PostProcessParameterKind.Float,
             0.0015f,
-            displayName: "Line Width",
+            displayName: "GPU BVH Line Width",
             min: 0.0001f,
             max: 0.05f,
             step: 0.0001f,
@@ -1666,7 +1694,7 @@ public partial class DefaultRenderPipeline
             nameof(GpuBvhDebugSettings.LeafColor),
             PostProcessParameterKind.Vector4,
             new Vector4(0.20f, 1.00f, 0.40f, 1.00f),
-            displayName: "Leaf Color",
+            displayName: "GPU BVH Leaf Color",
             isColor: true,
             visibilityCondition: IsEnabled);
 
@@ -1674,7 +1702,7 @@ public partial class DefaultRenderPipeline
             nameof(GpuBvhDebugSettings.InternalColor),
             PostProcessParameterKind.Vector4,
             new Vector4(1.00f, 0.65f, 0.10f, 0.55f),
-            displayName: "Internal Color",
+            displayName: "GPU BVH Internal Color",
             isColor: true,
             visibilityCondition: IsEnabled);
     }
