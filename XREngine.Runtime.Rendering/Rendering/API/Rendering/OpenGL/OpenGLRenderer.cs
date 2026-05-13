@@ -25,6 +25,7 @@ using XREngine.Components;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Diagnostics;
 
 namespace XREngine.Rendering.OpenGL;
 
@@ -261,7 +262,9 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
     {
         _frameCounter++;
 
+        long _tPoll = Stopwatch.GetTimestamp();
         GLRenderProgram.PollPendingAsyncPrograms(Engine.Rendering.Settings.MaxAsyncShaderProgramsPerFrame);
+        UploadStageStats.Record("PollPendingAsyncPrograms", ElapsedMs(_tPoll), 0, 0);
 
         // Snapshot and clear the volatile flag set by the debug callback.
         // This must happen before the cooldown check so the cooldown's own
@@ -281,12 +284,122 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
         {
             _oomCooldownFrames--;
             SuppressDrawsForOomRecovery = true;
+            UploadStageStats.Record("OomCooldownSkip", 0.0, 0, 0);
             return;
         }
 
         SuppressDrawsForOomRecovery = false;
+
+        int uploadPendingBefore = UploadQueue.PendingCount;
+        long _tUpload = Stopwatch.GetTimestamp();
         UploadQueue.ProcessUploads();
+        int uploadPendingAfter = UploadQueue.PendingCount;
+        UploadStageStats.Record(
+            "UploadQueue.ProcessUploads",
+            ElapsedMs(_tUpload),
+            Math.Max(0, uploadPendingBefore - uploadPendingAfter),
+            uploadPendingAfter);
+
+        int meshPendingBefore = MeshGenerationQueue.PendingCount;
+        long _tMesh = Stopwatch.GetTimestamp();
         MeshGenerationQueue.ProcessGeneration();
+        int meshPendingAfter = MeshGenerationQueue.PendingCount;
+        UploadStageStats.Record(
+            "MeshGenerationQueue.ProcessGeneration",
+            ElapsedMs(_tMesh),
+            Math.Max(0, meshPendingBefore - meshPendingAfter),
+            meshPendingAfter);
+    }
+
+    private static double ElapsedMs(long startTicks)
+        => (Stopwatch.GetTimestamp() - startTicks) * 1000.0 / Stopwatch.Frequency;
+
+    /// <summary>
+    /// Upload-pipeline per-stage timing aggregator (env-gated: XRE_UPLOAD_STAGE_LOGGING=1, or
+    /// hard-on while debugging). Bypasses the engine profiler because nested BeginTiming scopes
+    /// only surface as drop-log HotPath leaves, hiding cumulative cost. Flushes a one-line
+    /// summary once per second to Build/Logs/upload-stage-stats.log.
+    /// </summary>
+    private static class UploadStageStats
+    {
+        private readonly struct Entry
+        {
+            public Entry(long calls, double totalMs, double maxMs, long processed, long pendingMax)
+            {
+                Calls = calls; TotalMs = totalMs; MaxMs = maxMs; Processed = processed; PendingMax = pendingMax;
+            }
+            public long Calls { get; }
+            public double TotalMs { get; }
+            public double MaxMs { get; }
+            public long Processed { get; }
+            public long PendingMax { get; }
+        }
+
+        private static readonly object _lock = new();
+        private static readonly Dictionary<string, Entry> _stats = new();
+        private static long _lastFlushTicks;
+        private static string? _logPath;
+
+        public static bool IsEnabled()
+        {
+            // Always-on for this investigation. Cheap; flushes only once/sec.
+            return true;
+        }
+
+        public static void Record(string stage, double ms, int processedItems, int pendingAfter)
+        {
+            if (!IsEnabled())
+                return;
+            lock (_lock)
+            {
+                if (_stats.TryGetValue(stage, out var e))
+                {
+                    _stats[stage] = new Entry(
+                        e.Calls + 1,
+                        e.TotalMs + ms,
+                        ms > e.MaxMs ? ms : e.MaxMs,
+                        e.Processed + processedItems,
+                        pendingAfter > e.PendingMax ? pendingAfter : e.PendingMax);
+                }
+                else
+                {
+                    _stats[stage] = new Entry(1, ms, ms, processedItems, pendingAfter);
+                }
+
+                long now = Stopwatch.GetTimestamp();
+                if (_lastFlushTicks == 0)
+                    _lastFlushTicks = now;
+                double sinceFlushSec = (now - _lastFlushTicks) / (double)Stopwatch.Frequency;
+                if (sinceFlushSec >= 1.0)
+                    FlushLocked(sinceFlushSec, now);
+            }
+        }
+
+        private static void FlushLocked(double windowSec, long nowTicks)
+        {
+            _lastFlushTicks = nowTicks;
+            if (_stats.Count == 0)
+                return;
+            _logPath ??= System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs", "upload-stage-stats.log");
+            try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_logPath)!); } catch { }
+            var sb = new StringBuilder(256);
+            sb.Append('[').Append(DateTime.Now.ToString("HH:mm:ss.fff")).Append("] window=")
+              .Append(windowSec.ToString("F2")).Append('s');
+            foreach (var kv in _stats)
+            {
+                double avg = kv.Value.TotalMs / Math.Max(1, kv.Value.Calls);
+                sb.Append(' ').Append(kv.Key).Append('=')
+                  .Append(kv.Value.Calls).Append("c,")
+                  .Append(kv.Value.TotalMs.ToString("F2")).Append("ms,avg=")
+                  .Append(avg.ToString("F3")).Append(",max=")
+                  .Append(kv.Value.MaxMs.ToString("F3"))
+                  .Append(",done=").Append(kv.Value.Processed)
+                  .Append(",pendMax=").Append(kv.Value.PendingMax);
+            }
+            sb.AppendLine();
+            try { System.IO.File.AppendAllText(_logPath, sb.ToString()); } catch { }
+            _stats.Clear();
+        }
     }
 
     protected override void WindowRenderCallback(double delta)

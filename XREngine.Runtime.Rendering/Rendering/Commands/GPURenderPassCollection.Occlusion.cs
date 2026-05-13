@@ -28,6 +28,70 @@ namespace XREngine.Rendering.Commands
 
         private static readonly ConditionalWeakTable<XRRenderPipelineInstance, HiZSharedState> _hiZSharedCache = new();
 
+        // --- HiZ per-stage timing aggregator (env-gated: XRE_HIZ_STAGE_LOGGING=1).
+        // Bypasses the engine profiler so nested BeginTiming scopes (which only surface
+        // as drop-log HotPath leaves) cannot hide cost. Flushes a summary line once per
+        // second to Build/Logs/hiz-stage-stats.log.
+        private static class HiZStageStats
+        {
+            private static readonly object _lock = new();
+            private static readonly Dictionary<string, (long Calls, double TotalMs, double MaxMs)> _stats = new();
+            private static long _lastFlushTicks;
+            private static string? _logPath;
+            private static int _enabledCached = -1;
+
+            public static bool IsEnabled()
+            {
+                // Always-on for the duration of this investigation. Cheap enough; flushes only once/sec.
+                return true;
+            }
+
+            public static void Record(string stage, double ms)
+            {
+                if (!IsEnabled())
+                    return;
+                lock (_lock)
+                {
+                    if (_stats.TryGetValue(stage, out var s))
+                        _stats[stage] = (s.Calls + 1, s.TotalMs + ms, ms > s.MaxMs ? ms : s.MaxMs);
+                    else
+                        _stats[stage] = (1, ms, ms);
+
+                    long now = Stopwatch.GetTimestamp();
+                    if (_lastFlushTicks == 0)
+                        _lastFlushTicks = now;
+                    double sinceFlushSec = (now - _lastFlushTicks) / (double)Stopwatch.Frequency;
+                    if (sinceFlushSec >= 1.0)
+                        FlushLocked(sinceFlushSec, now);
+                }
+            }
+
+            private static void FlushLocked(double windowSec, long nowTicks)
+            {
+                _lastFlushTicks = nowTicks;
+                if (_stats.Count == 0)
+                    return;
+                _logPath ??= System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs", "hiz-stage-stats.log");
+                try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_logPath)!); } catch { }
+                var sb = new System.Text.StringBuilder(256);
+                sb.Append('[').Append(DateTime.Now.ToString("HH:mm:ss.fff")).Append("] window=")
+                    .Append(windowSec.ToString("F2")).Append("s");
+                foreach (var kv in _stats)
+                {
+                    double avg = kv.Value.TotalMs / Math.Max(1, kv.Value.Calls);
+                    double perFrameMs = kv.Value.TotalMs / windowSec / 60.0 * 60.0; // = TotalMs/windowSec (per second). Expose as ms/s.
+                    sb.Append(' ').Append(kv.Key).Append('=')
+                      .Append(kv.Value.Calls).Append("c,")
+                      .Append(kv.Value.TotalMs.ToString("F2")).Append("ms,avg=")
+                      .Append(avg.ToString("F3")).Append(",max=")
+                      .Append(kv.Value.MaxMs.ToString("F3"));
+                }
+                sb.AppendLine();
+                try { System.IO.File.AppendAllText(_logPath, sb.ToString()); } catch { }
+                _stats.Clear();
+            }
+        }
+
         private EOcclusionCullingMode _lastLoggedOcclusionMode = (EOcclusionCullingMode)(-1);
         private bool _loggedGpuHiZOcclusionScaffold;
         private bool _loggedCpuQueryAsyncScaffold;
@@ -191,6 +255,7 @@ namespace XREngine.Rendering.Commands
 
         private void ApplyOcclusionCulling(GPUScene scene, XRCamera? camera)
         {
+            HiZStageStats.Record("Entry", 0.0);
             Stopwatch occlusionStopwatch = Stopwatch.StartNew();
             void RecordOcclusionTiming()
             {
@@ -215,6 +280,7 @@ namespace XREngine.Rendering.Commands
 
             if (mode == EOcclusionCullingMode.Disabled)
             {
+                HiZStageStats.Record("Exit.Disabled", 0.0);
                 RecordOcclusionTiming();
                 return;
             }
@@ -223,6 +289,7 @@ namespace XREngine.Rendering.Commands
             if (Engine.Rendering.State.IsShadowPass ||
                 (Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false))
             {
+                HiZStageStats.Record("Exit.ShadowOrDepthPass", 0.0);
                 RecordOcclusionFrameStats(0u, 0u, 0u, 0u);
                 RecordOcclusionTiming();
                 return;
@@ -232,6 +299,7 @@ namespace XREngine.Rendering.Commands
 
             if (candidates == 0u)
             {
+                HiZStageStats.Record("Exit.NoCandidates", 0.0);
                 RecordOcclusionTiming();
                 return;
             }
@@ -239,10 +307,12 @@ namespace XREngine.Rendering.Commands
             switch (mode)
             {
                 case EOcclusionCullingMode.GpuHiZ:
+                    HiZStageStats.Record("Dispatch.GpuHiZ", 0.0);
                     ApplyGpuHiZOcclusionScaffold(scene, camera, candidates);
                     break;
 
                 case EOcclusionCullingMode.CpuQueryAsync:
+                    HiZStageStats.Record("Dispatch.CpuQueryAsync", 0.0);
                     ApplyCpuQueryAsyncOcclusionScaffold(scene, camera, candidates);
                     break;
             }
@@ -278,6 +348,7 @@ namespace XREngine.Rendering.Commands
             // Need: shaders + buffers + a depth texture from the active pipeline.
             if (_hiZInitProgram is null || _hiZGenProgram is null || _hiZOcclusionProgram is null)
             {
+                HiZStageStats.Record("GpuHiZ.Exit.MissingShaders", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
                 if (!_loggedGpuHiZOcclusionScaffold)
                 {
@@ -303,6 +374,7 @@ namespace XREngine.Rendering.Commands
             const string DepthViewTextureName = DefaultRenderPipeline.DepthViewTextureName;
             if (!pipeline.TryGetTexture(DepthViewTextureName, out XRTexture? depthTex) || depthTex is null)
             {
+                HiZStageStats.Record("GpuHiZ.Exit.NoDepthTexture", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
                 if (!_loggedGpuHiZOcclusionScaffold)
                 {
@@ -317,14 +389,27 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            if (depthTex is not XRTexture2D depth2D)
+            if (!TryResolveHiZDepthSource(depthTex, out XRTexture depthSampler, out uint depthWidth, out uint depthHeight))
             {
+                HiZStageStats.Record("GpuHiZ.Exit.DepthUnsupportedView", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                if (!_loggedGpuHiZOcclusionScaffold)
+                {
+                    _loggedGpuHiZOcclusionScaffold = true;
+                    Log(LogCategory.Culling, LogLevel.Warning,
+                        "Occlusion mode {0}: depth texture '{1}' is an unsupported view kind ({2}) for pass {3}; keeping {4} candidates visible.",
+                        EOcclusionCullingMode.GpuHiZ,
+                        DepthViewTextureName,
+                        depthTex.GetType().Name,
+                        RenderPass,
+                        candidates);
+                }
                 return;
             }
 
             if (_cullCountScratchBuffer is null || _culledCountBuffer is null || _occlusionCulledBuffer is null || _occlusionOverflowFlagBuffer is null)
             {
+                HiZStageStats.Record("GpuHiZ.Exit.MissingBuffers", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
                 return;
             }
@@ -342,7 +427,7 @@ namespace XREngine.Rendering.Commands
             if (cacheOncePerFrame)
             {
                 var shared = _hiZSharedCache.GetValue(pipeline, static _ => new HiZSharedState());
-                EnsureSharedHiZDepthPyramid(shared, depth2D);
+                EnsureSharedHiZDepthPyramid(shared, depthWidth, depthHeight);
                 _hiZDepthPyramid = shared.Pyramid;
                 _hiZMaxMip = shared.MaxMip;
 
@@ -359,7 +444,9 @@ namespace XREngine.Rendering.Commands
                 if (shared.LastBuiltFrameId != frameId)
                 {
                     Crumb($"HiZ.BuildPyramid.SHARED.BEGIN pass={RenderPass} mip={_hiZMaxMip}");
-                    BuildHiZPyramid(depth2D, isReverseZ);
+                    long _bpStart = Stopwatch.GetTimestamp();
+                    BuildHiZPyramid(depthSampler, isReverseZ);
+                    HiZStageStats.Record("BuildPyramid.Shared", (Stopwatch.GetTimestamp() - _bpStart) * 1000.0 / Stopwatch.Frequency);
                     Crumb("HiZ.BuildPyramid.SHARED.END");
                     shared.LastBuiltFrameId = frameId;
                 }
@@ -367,14 +454,16 @@ namespace XREngine.Rendering.Commands
             else
             {
                 // Per-pass: ensure Hi-Z pyramid exists and matches depth size, then build each pass.
-                EnsureHiZDepthPyramid(depth2D);
+                EnsureHiZDepthPyramid(depthWidth, depthHeight);
                 if (_hiZDepthPyramid is null)
                 {
                     RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
                     return;
                 }
 
-                BuildHiZPyramid(depth2D, isReverseZ);
+                long _bpStart2 = Stopwatch.GetTimestamp();
+                BuildHiZPyramid(depthSampler, isReverseZ);
+                HiZStageStats.Record("BuildPyramid.PerPass", (Stopwatch.GetTimestamp() - _bpStart2) * 1000.0 / Stopwatch.Frequency);
             }
 
             // C-GPU-3: when temporal state is dirty (scene mutated or camera jumped this
@@ -408,12 +497,16 @@ namespace XREngine.Rendering.Commands
             // Occlusion refinement: read candidates from CulledSceneToRenderBuffer and count from scratch.
             // Write refined visible commands into the ping-pong buffer and final counts into _culledCountBuffer.
             Crumb($"HiZ.Refine.BEGIN pass={RenderPass} cand={candidates}");
+            long _refineStart = Stopwatch.GetTimestamp();
             ApplyHiZOcclusionRefine(camera);
+            HiZStageStats.Record("Refine", (Stopwatch.GetTimestamp() - _refineStart) * 1000.0 / Stopwatch.Frequency);
             Crumb($"HiZ.Refine.END pass={RenderPass}");
 
             // Swap in refined buffer for subsequent indirect build.
             Crumb($"HiZ.Swap.BEGIN pass={RenderPass}");
+            long _swapStart = Stopwatch.GetTimestamp();
             SwapCulledBufferAfterOcclusion();
+            HiZStageStats.Record("Swap", (Stopwatch.GetTimestamp() - _swapStart) * 1000.0 / Stopwatch.Frequency);
             Crumb($"HiZ.Swap.END pass={RenderPass}");
 
             // Stats: we conservatively report all candidates tested; accepted is the number removed.
@@ -448,10 +541,49 @@ namespace XREngine.Rendering.Commands
             return sceneChanged || cameraChanged;
         }
 
-        private void EnsureHiZDepthPyramid(XRTexture2D depthTexture)
+        /// <summary>
+        /// Resolves the actual sample-able 2D depth texture and its size from the
+        /// pipeline-exposed depth view. The pipeline's <see cref="DefaultRenderPipeline.DepthViewTextureName"/>
+        /// is constructed as either <see cref="XRTexture2D"/>, <see cref="XRTexture2DView"/>
+        /// (mono), or <see cref="XRTexture2DArrayView"/> (stereo, NumLayers=2). The HiZ
+        /// init/gen shaders sample a plain <c>sampler2D</c>, so we accept the first two
+        /// and the single-layer array case; multi-layer stereo views need a parallel
+        /// sampler2DArray HiZ path which is not yet wired (C-DRP-2, deferred).
+        /// </summary>
+        private static bool TryResolveHiZDepthSource(XRTexture depthTex, out XRTexture sampler, out uint width, out uint height)
         {
-            uint width = Math.Max(1u, depthTexture.Width);
-            uint height = Math.Max(1u, depthTexture.Height);
+            switch (depthTex)
+            {
+                case XRTexture2D plain:
+                    sampler = plain;
+                    width = Math.Max(1u, plain.Width);
+                    height = Math.Max(1u, plain.Height);
+                    return true;
+
+                case XRTexture2DView view2d when !view2d.Array && !view2d.Multisample:
+                    sampler = view2d;
+                    width = Math.Max(1u, view2d.Width);
+                    height = Math.Max(1u, view2d.Height);
+                    return true;
+
+                case XRTexture2DArrayView arrayView when arrayView.NumLayers == 1u && !arrayView.Multisample:
+                    sampler = arrayView;
+                    width = Math.Max(1u, arrayView.Width);
+                    height = Math.Max(1u, arrayView.Height);
+                    return true;
+
+                default:
+                    sampler = null!;
+                    width = 0u;
+                    height = 0u;
+                    return false;
+            }
+        }
+
+        private void EnsureHiZDepthPyramid(uint width, uint height)
+        {
+            width = Math.Max(1u, width);
+            height = Math.Max(1u, height);
 
             int smallestMip = XRTexture.GetSmallestMipmapLevel(width, height);
             _hiZMaxMip = Math.Max(0, smallestMip);
@@ -499,10 +631,10 @@ namespace XREngine.Rendering.Commands
             _hiZDepthPyramid = _hiZDepthPyramidOwned;
         }
 
-        private void EnsureSharedHiZDepthPyramid(HiZSharedState shared, XRTexture2D depthTexture)
+        private void EnsureSharedHiZDepthPyramid(HiZSharedState shared, uint width, uint height)
         {
-            uint width = Math.Max(1u, depthTexture.Width);
-            uint height = Math.Max(1u, depthTexture.Height);
+            width = Math.Max(1u, width);
+            height = Math.Max(1u, height);
 
             int smallestMip = XRTexture.GetSmallestMipmapLevel(width, height);
             int maxMip = Math.Max(0, smallestMip);
@@ -550,7 +682,7 @@ namespace XREngine.Rendering.Commands
             shared.Pyramid.PushData();
         }
 
-        private void BuildHiZPyramid(XRTexture2D depthTexture, bool isReverseZ)
+        private void BuildHiZPyramid(XRTexture depthSamplerTexture, bool isReverseZ)
         {
             if (_hiZDepthPyramid is null)
                 return;
@@ -558,7 +690,7 @@ namespace XREngine.Rendering.Commands
             // Mip 0 init.
             _hiZInitProgram!.Use();
             _hiZInitProgram.Uniform("mipLevelSize", new IVector2((int)_hiZDepthPyramid.Mipmaps[0].Width, (int)_hiZDepthPyramid.Mipmaps[0].Height));
-            _hiZInitProgram.Sampler("depthTexture", depthTexture, 0);
+            _hiZInitProgram.Sampler("depthTexture", depthSamplerTexture, 0);
             _hiZInitProgram.BindImageTexture(1u, _hiZDepthPyramid, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.RGBA32F);
 
             uint gx = (uint)Math.Max(1, ((int)_hiZDepthPyramid.Mipmaps[0].Width + 15) / 16);
