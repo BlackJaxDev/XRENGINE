@@ -45,6 +45,15 @@ public sealed class GpuBvhTree : IDisposable
     private const uint OverflowQueueBit = 1u << 2;
     private const uint OverflowBvhBit = 1u << 3;
 
+    // C-GPU-3 diagnostic flag (XRE_HIZ_CULL_TRACE=1).
+    // When set, the BVH dumps every overflow with full capacity context (primitive
+    // count, node count, computed node/range/morton capacities, build mode). This
+    // lets us distinguish a real capacity exhaustion from the stage-3 malformed-tree
+    // detection in bvh_build.comp (both set OverflowBvhBit but mean very different
+    // things). Default off; reads env once on first use.
+    private static readonly bool s_traceEnabled =
+        string.Equals(Environment.GetEnvironmentVariable("XRE_HIZ_CULL_TRACE"), "1", StringComparison.Ordinal);
+
     // Buffer storage
     private XRDataBuffer? _nodeBuffer;
     private XRDataBuffer? _rangeBuffer;
@@ -304,14 +313,26 @@ public sealed class GpuBvhTree : IDisposable
         uint nodeCount = leafCount > 0 ? (leafCount * 2u) - 1u : 0u;
         _lastNodeCount = nodeCount;
 
-        uint nodeScalars = GpuBvhLayout.NodeScalarCapacity(Math.Max(nodeCount, 1u));
-        uint rangeScalars = GpuBvhLayout.RangeScalarCapacity(Math.Max(nodeCount, 1u));
+        // C-GPU-4 capacity headroom: the shader (bvh_build.comp) computes
+        // `maxNodesByBuffer = (nodeScalarCapacity - header) / stride` and trips
+        // OverflowBvhBit when `totalNodes > maxNodesByBuffer`. Allocating
+        // exactly `2N-1` ties the boundary at zero slack, so any rounding,
+        // stale count, or stage-3 malformed-tree detection (parent-pointer
+        // cycle from duplicate Morton codes) is indistinguishable from real
+        // capacity exhaustion. 8 extra node slots (~640 bytes) gives the
+        // shader unambiguous headroom and frees the BvhBit signal to mean
+        // exclusively "malformed tree".
+        const uint NodeCapacitySlack = 8u;
+        uint nodeCapacity = Math.Max(nodeCount, 1u) + NodeCapacitySlack;
+
+        uint nodeScalars = GpuBvhLayout.NodeScalarCapacity(nodeCapacity);
+        uint rangeScalars = GpuBvhLayout.RangeScalarCapacity(nodeCapacity);
         uint mortonScalars = Math.Max(1u, NextPowerOfTwo(primitiveCount)) * 2u;
 
         EnsureBuffer(ref _nodeBuffer, "GpuBvhTree.Nodes", nodeScalars, 6);
         EnsureBuffer(ref _rangeBuffer, "GpuBvhTree.Ranges", rangeScalars, 7);
         EnsureBuffer(ref _mortonBuffer, "GpuBvhTree.Morton", mortonScalars, null);
-        EnsureBuffer(ref _counterBuffer, "GpuBvhTree.Counters", Math.Max(nodeCount, 1u), 11);
+        EnsureBuffer(ref _counterBuffer, "GpuBvhTree.Counters", nodeCapacity, 11);
         EnsureOverflowFlagBuffer();
     }
 
@@ -466,6 +487,8 @@ public sealed class GpuBvhTree : IDisposable
             return false;
 
         Debug.LogWarning($"[GpuBvhTree] Overflow detected while building BVH ({DescribeOverflow(flags, primitiveCount, nodeCount)}). Falling back to non-BVH culling.");
+        if (s_traceEnabled)
+            LogOverflowTrace(flags, primitiveCount, nodeCount);
         _lastNodeCount = 0;
         _lastPrimitiveCount = 0;
         _isDirty = true;
@@ -524,6 +547,38 @@ public sealed class GpuBvhTree : IDisposable
         return reasons.Count == 0
             ? $"unknown overflow (flags=0x{flags:X})"
             : string.Join(", ", reasons);
+    }
+
+    /// <summary>
+    /// C-GPU-3 trace: dump capacity-vs-required figures so the operator can tell
+    /// whether the overflow is real capacity exhaustion or stage-3 malformed-tree
+    /// detection (parent-pointer cycle from duplicate Morton codes or stage-2 race).
+    /// Both conditions set <see cref="OverflowBvhBit"/> in bvh_build.comp; only this
+    /// trace can distinguish them.
+    /// </summary>
+    private void LogOverflowTrace(uint flags, uint primitiveCount, uint nodeCount)
+    {
+        uint nodeScalars = _nodeBuffer?.ElementCount ?? 0u;
+        uint rangeScalars = _rangeBuffer?.ElementCount ?? 0u;
+        uint mortonScalars = _mortonBuffer?.ElementCount ?? 0u;
+        uint nodesByBuffer = nodeScalars > GpuBvhLayout.NodeStrideScalars
+            ? (nodeScalars - GpuBvhLayout.NodeHeaderScalarCount) / GpuBvhLayout.NodeStrideScalars
+            : 0u;
+        uint rangesByBuffer = rangeScalars / GpuBvhLayout.RangeStrideScalars;
+        uint mortonCapacity = mortonScalars / 2u;
+
+        bool nodeCapacityHit = (flags & OverflowNodeBit) != 0 || nodeCount > nodesByBuffer || nodeCount > rangesByBuffer;
+        bool mortonCapacityHit = (flags & OverflowMortonBit) != 0 || primitiveCount > mortonCapacity;
+        bool bvhBit = (flags & OverflowBvhBit) != 0;
+        string suspect = (bvhBit && !nodeCapacityHit && !mortonCapacityHit)
+            ? "stage-3 malformed tree (parent-pointer cycle; check for duplicate Morton codes or stage-2 race)"
+            : "real capacity exhaustion";
+
+        Debug.LogWarning(
+            $"[GpuBvhTree][trace] flags=0x{flags:X} buildMode={_buildMode} maxLeaf={_maxLeafPrimitives} " +
+            $"primitives={primitiveCount} nodes={nodeCount} " +
+            $"nodeCapacity={nodesByBuffer} rangeCapacity={rangesByBuffer} mortonCapacity={mortonCapacity} " +
+            $"=> {suspect}");
     }
 
     private void DispatchBuild(uint primitiveCount)

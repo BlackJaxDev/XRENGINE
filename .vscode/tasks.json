@@ -542,6 +542,96 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Measurement-P3-CpuDirect-Census",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect && set XRE_P3_LOGGING=1 && set XRE_WINDOW_TITLE=XRE Editor (P3 CpuDirect Census) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Measurement-P3-CpuDirect-Census-NoOcclusion",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect && set XRE_P3_LOGGING=1 && set XRE_OCCLUSION_CULLING_MODE=None && set XRE_WINDOW_TITLE=XRE Editor (P3 CpuDirect, Occlusion=None) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Measurement-P3-ZeroReadback-Census-NoOcclusion",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback && set XRE_P3_LOGGING=1 && set XRE_OCCLUSION_CULLING_MODE=None && set XRE_WINDOW_TITLE=XRE Editor (P3 ZeroReadback, Occlusion=None) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Measurement-P3-ZeroReadback-Census",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback && set XRE_P3_LOGGING=1 && set XRE_WINDOW_TITLE=XRE Editor (P3 ZeroReadback Census) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Measurement-P3-ZeroReadback-BucketDryRun",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback && set XRE_P3_LOGGING=1 && set XRE_BUCKET_LOOP_DRY_RUN=1 && set XRE_WINDOW_TITLE=XRE Editor (P3 ZR Bucket DryRun) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Measurement-P3-ZeroReadback-SkipCleanSwap",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback && set XRE_P3_LOGGING=1 && set XRE_SKIP_COMMAND_SWAP_IF_CLEAN=1 && set XRE_WINDOW_TITLE=XRE Editor (P3 ZR SkipCleanSwap) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Cook-CommonAssets-Archive (Manual Slow)",
 			"type": "shell",
 			"command": "powershell",

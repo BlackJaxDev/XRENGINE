@@ -709,6 +709,9 @@ namespace XREngine
 
                     // Notify GPU dispatch logger of new frame for logging context
                     GpuDispatchLogger.BeginFrame();
+
+                    // Snapshot & reset per-frame occlusion observability counters.
+                    XREngine.Rendering.Occlusion.OcclusionTelemetry.BeginFrame();
                     
                     _lastFrameDrawCalls = _drawCalls;
                     _lastFrameTrianglesRendered = _trianglesRendered;

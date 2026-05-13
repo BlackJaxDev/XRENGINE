@@ -437,8 +437,20 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     //    }
     //}
 
+    private bool EnqueueResourceMutationIfOffRenderThread(Action action, string reason)
+    {
+        if (Engine.IsRenderThread)
+            return false;
+
+        Engine.EnqueueRenderThreadTask(action, reason);
+        return true;
+    }
+
     public void DestroyCache()
     {
+        if (EnqueueResourceMutationIfOffRenderThread(DestroyCache, "XRRenderPipelineInstance.DestroyCache"))
+            return;
+
         LogDefaultRenderPipelineResourceDestruction("DestroyCache");
         Resources.DestroyAllPhysicalResources();
     }
@@ -450,6 +462,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public void InvalidatePhysicalResources()
     {
+        if (EnqueueResourceMutationIfOffRenderThread(InvalidatePhysicalResources, "XRRenderPipelineInstance.InvalidatePhysicalResources"))
+            return;
+
         LogDefaultRenderPipelineResourceDestruction($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
         Resources.DestroyAllPhysicalResources(retainDescriptors: true);
         ResourceGeneration++;
@@ -457,6 +472,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     internal void RemoveTextureResource(string name, string reason)
     {
+        if (EnqueueResourceMutationIfOffRenderThread(() => RemoveTextureResource(name, reason), $"XRRenderPipelineInstance.RemoveTextureResource[{name}]"))
+            return;
+
         if (_pipeline is DefaultRenderPipeline pipeline
             && Resources.TryGetTexture(name, out XRTexture? texture)
             && texture is not null)
@@ -469,6 +487,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     internal void RemoveFrameBufferResource(string name, string reason)
     {
+        if (EnqueueResourceMutationIfOffRenderThread(() => RemoveFrameBufferResource(name, reason), $"XRRenderPipelineInstance.RemoveFrameBufferResource[{name}]"))
+            return;
+
         if (_pipeline is DefaultRenderPipeline pipeline
             && Resources.TryGetFrameBuffer(name, out XRFrameBuffer? frameBuffer)
             && frameBuffer is not null)
@@ -526,6 +547,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
 
         Resources.TryGetTexture(name, out XRTexture? existingTexture);
+        if (!Engine.IsRenderThread && existingTexture is not null && !ReferenceEquals(existingTexture, texture))
+        {
+            Engine.EnqueueRenderThreadTask(() => SetTexture(texture, descriptor), $"XRRenderPipelineInstance.SetTexture[{name}]");
+            return;
+        }
+
         if (!ReferenceEquals(existingTexture, texture) && _pipeline is DefaultRenderPipeline pipeline)
             pipeline.LogTextureBinding(this, name, texture, existingTexture);
 
@@ -551,6 +578,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (string.IsNullOrWhiteSpace(name))
         {
             Debug.RenderingWarning("Data buffer attribute name must be set before adding to the pipeline.");
+            return;
+        }
+
+        if (!Engine.IsRenderThread && Resources.TryGetBuffer(name, out XRDataBuffer? existingBuffer) && !ReferenceEquals(existingBuffer, buffer))
+        {
+            Engine.EnqueueRenderThreadTask(() => SetBuffer(buffer, descriptor), $"XRRenderPipelineInstance.SetBuffer[{name}]");
             return;
         }
 
@@ -580,6 +613,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
 
         Resources.TryGetFrameBuffer(name, out XRFrameBuffer? existingFbo);
+        if (!Engine.IsRenderThread && existingFbo is not null && !ReferenceEquals(existingFbo, fbo))
+        {
+            Engine.EnqueueRenderThreadTask(() => SetFBO(fbo, descriptor), $"XRRenderPipelineInstance.SetFBO[{name}]");
+            return;
+        }
+
         if (!ReferenceEquals(existingFbo, fbo) && _pipeline is DefaultRenderPipeline pipeline)
             pipeline.LogFrameBufferBinding(this, name, fbo, existingFbo);
 

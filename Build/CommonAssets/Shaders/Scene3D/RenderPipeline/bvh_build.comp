@@ -234,15 +234,35 @@ void main()
     }
 
     // Stage 2: assign parent indices (run after stage 1 has finished).
+    //
+    // C-GPU-4: Karras LBVH with duplicate Morton codes can have findSplit /
+    // determineRange produce overlapping internal-node ranges where two
+    // distinct internal nodes both claim the same child. A plain store of
+    // parentIndex would then race; whichever thread won last would create a
+    // parent-pointer cycle that stage 3 detects as "malformed" and reports
+    // as OverflowBvhBit (indistinguishable from real capacity exhaustion).
+    //
+    // Resolve with atomicCompSwap: only the *first* writer succeeds (the
+    // child's parentIndex was initialized to uint(-1) at stage 0/1). The
+    // losing writer signals OVERFLOW_BVH explicitly so the host's
+    // C-GPU-3 trace can classify it as malformed-tree rather than capacity.
     if (buildStage == 2u && gid < internalCount)
     {
         uint nodeIndex = leafCount + gid;
         uint leftIndex = nodes[nodeIndex].leftChild;
         uint rightIndex = nodes[nodeIndex].rightChild;
         if (leftIndex != uint(-1))
-            nodes[leftIndex].parentIndex = nodeIndex;
+        {
+            uint prev = atomicCompSwap(nodes[leftIndex].parentIndex, uint(-1), nodeIndex);
+            if (prev != uint(-1) && prev != nodeIndex)
+                atomicOr(overflowFlags, OVERFLOW_BVH);
+        }
         if (rightIndex != uint(-1))
-            nodes[rightIndex].parentIndex = nodeIndex;
+        {
+            uint prev = atomicCompSwap(nodes[rightIndex].parentIndex, uint(-1), nodeIndex);
+            if (prev != uint(-1) && prev != nodeIndex)
+                atomicOr(overflowFlags, OVERFLOW_BVH);
+        }
     }
 
     // Stage 3: compute root index by following parent pointers from leaf 0.

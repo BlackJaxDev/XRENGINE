@@ -91,6 +91,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                         }
                     }
 
+                    // Destroy the previous instance so its API wrappers tear down the
+                    // underlying GPU handles. Without this, the cache-or-create cycle leaks
+                    // texture objects on every pipeline reconfiguration, which combined with
+                    // leaked FBO attachments eventually corrupts NVIDIA's per-texture
+                    // attached-FBO list (FAST_FAIL_CORRUPT_LIST_ENTRY in glNamedFramebufferTexture).
+                    texture.Destroy(true);
                     texture = null;
                     hasTexture = false;
                 }

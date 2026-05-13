@@ -144,35 +144,27 @@ namespace XREngine.Rendering.OpenGL
 
         public override void AttachToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
         {
-            if (Renderer.GetOrCreateAPIRenderObject(fbo) is not GLObjectBase apiFBO)
-                return;
-
-            Api.NamedFramebufferTexture(apiFBO.BindingId, ToGLEnum(attachment), BindingId, mipLevel);
+            if (TryResolveAttachIds(fbo, attachment, mipLevel, requireTexture: true, out uint fboId, out uint texId))
+                Api.NamedFramebufferTexture(fboId, ToGLEnum(attachment), texId, mipLevel);
         }
 
         public override void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
         {
-            if (Renderer.GetOrCreateAPIRenderObject(fbo) is not GLObjectBase apiFBO)
-                return;
-
-            Api.NamedFramebufferTexture(apiFBO.BindingId, ToGLEnum(attachment), 0, mipLevel);
+            if (TryResolveAttachIds(fbo, attachment, mipLevel, requireTexture: false, out uint fboId, out _))
+                Api.NamedFramebufferTexture(fboId, ToGLEnum(attachment), 0, mipLevel);
         }
 
         private void DetachImageFromFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int layer, int mipLevel)
         {
-            if (Renderer.GetOrCreateAPIRenderObject(target) is not GLObjectBase apiFBO)
-                return;
-
-            Api.NamedFramebufferTextureLayer(apiFBO.BindingId, ToGLEnum(attachment), 0, mipLevel, layer);
+            if (TryResolveAttachIds(target, attachment, mipLevel, requireTexture: false, out uint fboId, out _))
+                Api.NamedFramebufferTextureLayer(fboId, ToGLEnum(attachment), 0, mipLevel, layer);
             //Api.FramebufferTexture2D(GLEnum.Framebuffer, ToGLEnum(attachment), GLEnum.TextureCubeMapPositiveX + layer, BindingId, mipLevel);
         }
 
         private void AttachImageToFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int layer, int mipLevel)
         {
-            if (Renderer.GetOrCreateAPIRenderObject(target) is not GLObjectBase apiFBO)
-                return;
-
-            Api.NamedFramebufferTextureLayer(apiFBO.BindingId, ToGLEnum(attachment), BindingId, mipLevel, layer);
+            if (TryResolveAttachIds(target, attachment, mipLevel, requireTexture: true, out uint fboId, out uint texId))
+                Api.NamedFramebufferTextureLayer(fboId, ToGLEnum(attachment), texId, mipLevel, layer);
             //Api.FramebufferTexture2D(GLEnum.Framebuffer, ToGLEnum(attachment), GLEnum.TextureCubeMapPositiveX + layer, BindingId, mipLevel);
         }
 

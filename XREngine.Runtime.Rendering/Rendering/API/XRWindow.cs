@@ -1073,6 +1073,7 @@ namespace XREngine.Rendering
 
             // Reset per-frame rendering statistics at the start of each frame
             RuntimeRenderingHostServices.Current.BeginRenderStatsFrame();
+            Renderer.PollGpuRenderStatsReadbacks();
 
             // Process any pending async buffer uploads within the frame budget
             using (var uploadSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ProcessPendingUploads"))

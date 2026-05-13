@@ -1,3 +1,4 @@
+﻿using Silk.NET.OpenGL;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,6 +9,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;
 
@@ -67,6 +69,11 @@ namespace XREngine.Rendering.Commands
         public uint OcclusionAccepted => _occlusionAccepted;
         public uint OcclusionFalsePositiveRecoveries => _occlusionFalsePositiveRecoveries;
         public uint OcclusionTemporalOverrides => _occlusionTemporalOverrides;
+
+        // CPU Hi-Z visibility snapshot machinery removed (C-CPU-2). The CPU path now
+        // owns its own occlusion via CpuRenderOcclusionCoordinator hardware queries;
+        // CpuDirect never consumes the GPU compute cull output. See
+        // docs/work/design/rendering/render-submission-perf-debug-plan.md section 10.
 
         private void ResetOcclusionFrameStats()
         {
@@ -132,6 +139,8 @@ namespace XREngine.Rendering.Commands
 
             EOcclusionCullingMode mode = ResolveActiveOcclusionMode();
             LogOcclusionModeActivation(mode);
+            XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
+                mode, Engine.Rendering.ResolveMeshSubmissionStrategy());
 
             if (_lastLoggedOcclusionMode != mode)
                 ResetTemporalOcclusionState();
@@ -310,12 +319,18 @@ namespace XREngine.Rendering.Commands
             // Stats: we conservatively report all candidates tested; accepted is the number removed.
             // Avoid CPU readbacks here; in shipping mode we may not have a CPU-visible count.
             uint occluded = 0u;
-            if (!IsCpuReadbackCountDisabledForPass())
+            bool readbackAvailable = !IsCpuReadbackCountDisabledForPass();
+            if (readbackAvailable)
             {
                 uint visibleAfter = VisibleCommandCount;
                 occluded = candidates > visibleAfter ? (candidates - visibleAfter) : 0u;
             }
             RecordOcclusionFrameStats(candidates, occluded, 0u, temporalInvalidations);
+            XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPass(
+                (int)candidates, (int)occluded, readbackAvailable);
+            XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
+                EOcclusionCullingMode.GpuHiZ,
+                Engine.Rendering.ResolveMeshSubmissionStrategy());
         }
 
         private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)
@@ -642,7 +657,7 @@ namespace XREngine.Rendering.Commands
             if (CulledSceneToRenderBuffer is null)
                 return;
 
-            // CPU occlusion queries require reading count from GPU — skip when readback is disabled.
+            // CPU occlusion queries require reading count from GPU â€” skip when readback is disabled.
             if (IsCpuReadbackCountDisabledForPass())
                 return;
 
@@ -679,7 +694,7 @@ namespace XREngine.Rendering.Commands
             if (CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
                 return 0u;
 
-            // CPU temporal filter requires GPU count readback — pass through all candidates when disabled.
+            // CPU temporal filter requires GPU count readback â€” pass through all candidates when disabled.
             if (IsCpuReadbackCountDisabledForPass())
                 return candidates;
 

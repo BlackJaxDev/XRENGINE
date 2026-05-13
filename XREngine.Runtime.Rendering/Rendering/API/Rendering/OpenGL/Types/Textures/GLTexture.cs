@@ -368,7 +368,8 @@ namespace XREngine.Rendering.OpenGL
             var previous = Renderer.BoundTexture;
             Bind();
 
-            Api.NamedFramebufferTexture(Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId, ToGLEnum(attachment), BindingId, mipLevel);
+            if (TryResolveAttachIds(fbo, attachment, mipLevel, requireTexture: true, out uint fboId, out uint texId))
+                Api.NamedFramebufferTexture(fboId, ToGLEnum(attachment), texId, mipLevel);
 
             if (previous is null || ReferenceEquals(previous, this))
                 Unbind();
@@ -376,7 +377,10 @@ namespace XREngine.Rendering.OpenGL
                 previous.Bind();
         }
         public virtual void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
-            => Api.NamedFramebufferTexture(Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId, ToGLEnum(attachment), 0, mipLevel);
+        {
+            if (TryResolveAttachIds(fbo, attachment, mipLevel, requireTexture: false, out uint fboId, out _))
+                Api.NamedFramebufferTexture(fboId, ToGLEnum(attachment), 0, mipLevel);
+        }
 
         public void AttachToFBO_OVRMultiView(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel, int offset, uint numViews)
         {
@@ -418,6 +422,89 @@ namespace XREngine.Rendering.OpenGL
         public virtual void PreSampling()
         {
 
+        }
+
+        /// <summary>
+        /// Resolves and validates the FBO id (and optionally this texture's id) for an
+        /// FBO attach/detach call. Returns false (with a synchronously-logged warning) if
+        /// either handle is unknown to the GL driver.
+        /// </summary>
+        /// <remarks>
+        /// Historical context: NVIDIA's OpenGL driver (32.0.15.8157) faulted with
+        /// FAST_FAIL_CORRUPT_LIST_ENTRY inside <c>glNamedFramebufferTexture</c> when its
+        /// internal attachment list was walked with a stale FBO or texture handle. The
+        /// fastfail tears the process down before any async log buffer is flushed, so this
+        /// guard runs validity checks (<c>glIsFramebuffer</c>/<c>glIsTexture</c>, which the
+        /// spec requires to return GL_FALSE on unknown names without raising errors) and
+        /// emits a synchronous Console.Error + Trace.Flush message that survives a crash.
+        /// </remarks>
+        internal bool TryResolveAttachIds(
+            XRFrameBuffer fbo,
+            EFrameBufferAttachment attachment,
+            int mipLevel,
+            bool requireTexture,
+            out uint fboId,
+            out uint textureId)
+        {
+            fboId = 0u;
+            textureId = 0u;
+
+            if (Renderer.GetOrCreateAPIRenderObject(fbo) is not GLObjectBase apiFBO)
+            {
+                LogAttachReject(fbo, attachment, mipLevel, "FBO has no API render object");
+                return false;
+            }
+
+            fboId = apiFBO.BindingId;
+            if (fboId == InvalidBindingId || fboId == 0u || !Api.IsFramebuffer(fboId))
+            {
+                LogAttachReject(fbo, attachment, mipLevel, $"FBO id {fboId} is not a live framebuffer (glIsFramebuffer=false)");
+                fboId = 0u;
+                return false;
+            }
+
+            if (requireTexture)
+            {
+                textureId = BindingId;
+                if (textureId == InvalidBindingId || textureId == 0u || !Api.IsTexture(textureId))
+                {
+                    LogAttachReject(fbo, attachment, mipLevel, $"Texture id {textureId} is not a live texture (glIsTexture=false)");
+                    textureId = 0u;
+                    return false;
+                }
+            }
+
+            if (s_attachTraceEnabled)
+                LogAttachTrace(fbo, attachment, mipLevel, fboId, textureId, requireTexture);
+
+            return true;
+        }
+
+        private static readonly bool s_attachTraceEnabled =
+            string.Equals(System.Environment.GetEnvironmentVariable("XRE_GL_DEBUG"), "1", System.StringComparison.Ordinal);
+
+        private static long s_attachCounter;
+
+        private void LogAttachTrace(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel, uint fboId, uint textureId, bool isAttach)
+        {
+            long n = System.Threading.Interlocked.Increment(ref s_attachCounter);
+            string op = isAttach ? "ATTACH" : "DETACH";
+            string message =
+                $"[GLAttachFBO #{n}] {op} tex='{GetType().Name}:{Data?.Name ?? "<null>"}' texId={textureId} " +
+                $"fbo='{fbo?.GetType().Name}:{fbo?.Name ?? "<null>"}' fboId={fboId} attachment={attachment} mip={mipLevel}.";
+            try { System.Console.Error.WriteLine(message); System.Console.Error.Flush(); } catch { }
+        }
+
+        private void LogAttachReject(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel, string reason)
+        {
+            // Synchronous, fastfail-safe diagnostic. Async loggers can lose buffered output
+            // when the driver tears the process down; Console.Error + Trace.Flush survives.
+            string message =
+                $"[GLAttachFBO] REJECT reason='{reason}' tex='{GetType().Name}' texData='{Data?.Name ?? "<null>"}' " +
+                $"fbo='{fbo?.GetType().Name}:{fbo?.Name ?? "<null>"}' attachment={attachment} mip={mipLevel}.";
+            try { System.Console.Error.WriteLine(message); } catch { }
+            try { System.Diagnostics.Trace.WriteLine(message); System.Diagnostics.Trace.Flush(); } catch { }
+            Debug.OpenGLWarning(message);
         }
     }
 }

@@ -8,7 +8,7 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 | Strategy | Purpose | CPU readbacks | CPU mesh fallback | Hot-path diagnostics |
 |----------|---------|---------------|-------------------|----------------------|
-| `CpuDirect` | CPU traversal and direct mesh draw submission. | None from GPU indirect. | Not applicable. | CPU renderer diagnostics only. |
+| `CpuDirect` | CPU traversal and direct mesh draw submission. | None, except previous-frame visibility snapshot readback when `GpuOcclusionCullingMode=GpuHiZ`. | Not applicable. | CPU renderer diagnostics only. |
 | `GpuIndirectInstrumented` | GPU indirect path for bring-up, validation, and inspection. | Allowed and counted. | Allowed only when explicitly requested and strict profiles are not active. | Allowed. |
 | `GpuIndirectZeroReadback` | Production GPU indirect path. | Forbidden in the steady-state render path. | Forbidden. | Forbidden; use counters and warnings outside the hot path. |
 | `GpuMeshlet` | Meshlet/task-mesh submission. | Forbidden by contract. | No implicit CPU fallback; unsupported renderers fall back to traditional GPU indirect with a warning. | Backend bring-up only. |
@@ -45,6 +45,7 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 
 `GPURenderPassCollection` snapshots the strategy at pass execution:
 
+- `CpuDirect` with `GpuOcclusionCullingMode=GpuHiZ` keeps a GPU command mirror for culling only. It dispatches the Hi-Z cull in a zero-readback mode, publishes the previous compatible frame's visible-command snapshot, and applies a short temporal hysteresis before CPU draws are skipped. Depth-normal prepasses stay conservative so they can seed the depth pyramid.
 - `GpuIndirectZeroReadback` enables material-tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts. Use `FullBucketScan` when validating the strict no-readback material path; the active-bucket and material-table variants intentionally read back the compact active bucket list for diagnostics.
 - `GpuIndirectInstrumented` is the only strategy allowed to read back batch ranges, count buffers, per-view draw counts, or indirect command dumps.
 - CPU safety-net mesh fallback is only available for `GpuIndirectInstrumented` and only when fallback diagnostics are explicitly enabled.

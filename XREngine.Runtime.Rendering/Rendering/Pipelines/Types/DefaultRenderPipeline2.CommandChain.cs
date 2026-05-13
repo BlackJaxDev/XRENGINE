@@ -18,6 +18,7 @@ public partial class DefaultRenderPipeline2
     private const string DebugVizTransparencyAccumulationVariableName = "DebugViz_TransparencyAccumulation";
     private const string DebugVizTransparencyRevealageVariableName = "DebugViz_TransparencyRevealage";
     private const string DebugVizTransparencyOverdrawVariableName = "DebugViz_TransparencyOverdraw";
+    private const string DebugVizFullOverdrawVariableName = "DebugViz_FullOverdraw";
     private const string DebugVizPpllFragmentsVariableName = "DebugViz_PpllFragments";
     private const string DebugVizDepthPeelingLayerVariableName = "DebugViz_DepthPeelingLayer";
 
@@ -151,6 +152,7 @@ public partial class DefaultRenderPipeline2
             }
             AppendPostProcessResourceCaching(c);
             AppendDebugVisualizationCaching(c);
+            AppendFullOverdrawCountingPass(c);
             AppendAntiAliasingResourceCaching(c);
         }
 
@@ -173,6 +175,7 @@ public partial class DefaultRenderPipeline2
         AddDebugVisualizationVariable(c, DebugVizTransparencyAccumulationVariableName, () => EnableTransparencyAccumulationVisualization);
         AddDebugVisualizationVariable(c, DebugVizTransparencyRevealageVariableName, () => EnableTransparencyRevealageVisualization);
         AddDebugVisualizationVariable(c, DebugVizTransparencyOverdrawVariableName, () => EnableTransparencyOverdrawVisualization);
+        AddDebugVisualizationVariable(c, DebugVizFullOverdrawVariableName, () => EnableFullOverdrawVisualization);
         AddDebugVisualizationVariable(c, DebugVizPpllFragmentsVariableName, () => EnablePerPixelLinkedListVisualization);
         AddDebugVisualizationVariable(c, DebugVizDepthPeelingLayerVariableName, () => EnableDepthPeelingLayerVisualization);
     }
@@ -947,6 +950,18 @@ public partial class DefaultRenderPipeline2
             DebugVizTransparencyOverdrawVariableName,
             TransparentOverdrawDebugFBOName,
             CreateTransparentOverdrawDebugFBO);
+
+        AppendConditionalDebugFboCache(
+            c,
+            DebugVizFullOverdrawVariableName,
+            FullOverdrawCountFBOName,
+            CreateFullOverdrawCountFBO);
+
+        AppendConditionalDebugFboCache(
+            c,
+            DebugVizFullOverdrawVariableName,
+            FullOverdrawDebugFBOName,
+            CreateFullOverdrawDebugFBO);
     }
 
     private void AppendConditionalDebugFboCache(
@@ -962,6 +977,29 @@ public partial class DefaultRenderPipeline2
             fboName,
             factory,
             GetDesiredFBOSizeInternal);
+    }
+
+    private void AppendFullOverdrawCountingPass(ViewportRenderCommandContainer c)
+    {
+        var fullOverdraw = c.Add<VPRC_IfElse>();
+        fullOverdraw.ConditionEvaluator = () => DebugVariableIsTrue(DebugVizFullOverdrawVariableName);
+        {
+            var countCommands = new ViewportRenderCommandContainer(this);
+            countCommands.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
+            using (countCommands.AddUsing<VPRC_BindFBOByName>(x =>
+                x.SetOptions(FullOverdrawCountFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: false)))
+            {
+                countCommands.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                countCommands.Add<VPRC_DepthTest>().Enable = false;
+                countCommands.Add<VPRC_DepthWrite>().Allow = false;
+                countCommands.Add<VPRC_RenderFullOverdrawPass>();
+            }
+
+            countCommands.Add<VPRC_DepthWrite>().Allow = true;
+            countCommands.Add<VPRC_DepthTest>().Enable = false;
+            countCommands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+            fullOverdraw.TrueCommands = countCommands;
+        }
     }
 
     /// <summary>Caches post-AA and TSR support resources used by the default pipeline.</summary>
@@ -1171,6 +1209,7 @@ public partial class DefaultRenderPipeline2
     {
         var debugOutputs = new[]
         {
+            (VariableName: DebugVizFullOverdrawVariableName, FboName: FullOverdrawDebugFBOName),
             (VariableName: DebugVizTransparencyAccumulationVariableName, FboName: TransparentAccumulationDebugFBOName),
             (VariableName: DebugVizTransparencyRevealageVariableName, FboName: TransparentRevealageDebugFBOName),
             (VariableName: DebugVizTransparencyOverdrawVariableName, FboName: TransparentOverdrawDebugFBOName),
@@ -1259,6 +1298,22 @@ public partial class DefaultRenderPipeline2
                     x.TextureName = TransparentAccumTextureName;
                     x.TextureUnit = 1;
                 }))
+                {
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(fboName, null);
+                }
+                break;
+            case FullOverdrawDebugFBOName:
+                using (c.AddUsing<VPRC_BindTexture>(x =>
+                {
+                    x.TextureName = FullOverdrawCountTextureName;
+                    x.TextureUnit = 0;
+                }))
+                using (c.AddUsing<VPRC_BindTexture>(x =>
+                {
+                    x.TextureName = PostProcessOutputTextureName;
+                    x.TextureUnit = 1;
+                }))
+                using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = FullOverdrawDebugFBO_SettingUniforms))
                 {
                     c.Add<VPRC_RenderQuadToFBO>().SetTargets(fboName, null);
                 }
@@ -1706,6 +1761,12 @@ public partial class DefaultRenderPipeline2
             PostProcessOutputTextureName,
             CreatePostProcessOutputTexture,
             NeedsRecreatePostProcessTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            FullOverdrawCountTextureName,
+            CreateFullOverdrawCountTexture,
+            NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
         if (EnableFxaa)

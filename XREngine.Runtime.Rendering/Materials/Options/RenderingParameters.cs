@@ -26,6 +26,7 @@ namespace XREngine.Rendering.Models.Materials
         private EUniformRequirements _requiredEngineUniforms = EUniformRequirements.None;
         private BlendMode? _blendModeAllDrawBuffers;
         private bool _excludeFromGpuIndirect;
+        private bool _excludeFromCpuOcclusion;
 
         [Browsable(false)]
         public bool HasBlending => (BlendModesPerDrawBuffer?.Values.Any(x => x.Enabled == ERenderParamUsage.Enabled) ?? false) || BlendModeAllDrawBuffers?.Enabled == ERenderParamUsage.Enabled;
@@ -152,6 +153,23 @@ namespace XREngine.Rendering.Models.Materials
         {
             get => _excludeFromGpuIndirect;
             set => SetField(ref _excludeFromGpuIndirect, value);
+        }
+
+        /// <summary>
+        /// When true, the CPU occlusion-query coordinator skips this material entirely:
+        /// no probe AABB, no hardware query, no cull decision. The mesh always renders.
+        /// Set this for materials whose depth contract doesn't match a standard Lequal
+        /// opaque write (skybox / fullscreen backgrounds / overlays / debug gizmos)
+        /// where AnySamplesPassedConservative against the AABB would oscillate or
+        /// produce false negatives.
+        /// </summary>
+        [Category("Culling")]
+        [DisplayName("Exclude From CPU Occlusion")]
+        [Description("When true, this material is never CPU occlusion-tested. Use for skybox, fullscreen overlays, and similar non-standard-depth content.")]
+        public bool ExcludeFromCpuOcclusion
+        {
+            get => _excludeFromCpuOcclusion;
+            set => SetField(ref _excludeFromCpuOcclusion, value);
         }
     }
 }

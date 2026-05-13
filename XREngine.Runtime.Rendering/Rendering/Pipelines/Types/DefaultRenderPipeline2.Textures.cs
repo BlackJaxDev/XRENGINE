@@ -1237,6 +1237,28 @@ public partial class DefaultRenderPipeline2
         return texture;
     }
 
+    private XRTexture CreateFullOverdrawCountTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeInternal();
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            EPixelInternalFormat.R16f,
+            EPixelFormat.Red,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = ESizedInternalFormat.R16f;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = FullOverdrawCountTextureName;
+        texture.Name = FullOverdrawCountTextureName;
+        return texture;
+    }
+
     private XRTexture CreateAutoExposureTexture()
     {
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(

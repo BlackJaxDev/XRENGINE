@@ -468,6 +468,43 @@ public partial class DefaultRenderPipeline2
             GetTexture<XRTexture>(TransparentRevealageTextureName)!,
             GetTexture<XRTexture>(TransparentAccumTextureName)!);
 
+    private XRFrameBuffer CreateFullOverdrawCountFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(FullOverdrawCountTextureName, CreateFullOverdrawCountTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = FullOverdrawCountFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateFullOverdrawDebugFBO()
+    {
+        XRTexture[] references =
+        [
+            GetTexture<XRTexture>(FullOverdrawCountTextureName)!,
+            GetTexture<XRTexture>(PostProcessOutputTextureName)!,
+        ];
+
+        XRMaterial material = new(
+            references,
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, "FullOverdrawDebug.fs"), EShaderType.Fragment))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = FullOverdrawDebugFBOName };
+        fbo.SettingUniforms += FullOverdrawDebugFBO_SettingUniforms;
+        return fbo;
+    }
+
     private XRFrameBuffer CreateSceneCopyFBO()
     {
         XRTexture[] references =
@@ -521,6 +558,24 @@ public partial class DefaultRenderPipeline2
     {
         program.Uniform("ScreenWidth", (float)InternalWidth);
         program.Uniform("ScreenHeight", (float)InternalHeight);
+    }
+
+    private void FullOverdrawDebugFBO_SettingUniforms(XRRenderProgram program)
+    {
+        XRTexture? count = GetTexture<XRTexture>(FullOverdrawCountTextureName);
+        XRTexture? scene = GetTexture<XRTexture>(PostProcessOutputTextureName);
+        if (count is null || scene is null)
+            return;
+
+        GpuBvhDebugSettings? settings = ResolveDebugVisualizationSettings();
+        int saturationCount = settings?.FullOverdrawSaturationCount
+            ?? GpuBvhDebugSettings.DefaultFullOverdrawSaturationCount;
+        float overlayOpacity = settings?.FullOverdrawOverlayOpacity ?? 1.0f;
+
+        program.Sampler(FullOverdrawCountTextureName, count, 0);
+        program.Sampler(PostProcessOutputTextureName, scene, 1);
+        program.Uniform("OverdrawMaxCount", (float)Math.Max(1, saturationCount));
+        program.Uniform("OverlayOpacity", Math.Clamp(overlayOpacity, 0.0f, 1.0f));
     }
 
     private XRFrameBuffer CreateForwardPassFBO()
@@ -637,6 +692,35 @@ public partial class DefaultRenderPipeline2
                     Enabled = ERenderParamUsage.Enabled,
                     Function = EComparison.Lequal,
                     UpdateDepth = true,
+                },
+                RequiredEngineUniforms = EUniformRequirements.None
+            }
+        };
+    }
+
+    private XRMaterial CreateFullOverdrawCountMaterial()
+    {
+        XRShader shader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "FullOverdrawCount.fs"), EShaderType.Fragment);
+        return new XRMaterial(Array.Empty<XRTexture?>(), shader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                CullMode = ECullMode.Back,
+                BlendModeAllDrawBuffers = new BlendMode()
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    RgbSrcFactor = EBlendingFactor.One,
+                    AlphaSrcFactor = EBlendingFactor.One,
+                    RgbDstFactor = EBlendingFactor.One,
+                    AlphaDstFactor = EBlendingFactor.One,
+                    RgbEquation = EBlendEquationMode.FuncAdd,
+                    AlphaEquation = EBlendEquationMode.FuncAdd
                 },
                 RequiredEngineUniforms = EUniformRequirements.None
             }

@@ -7,7 +7,7 @@ layout(binding = 1, rgba32f) uniform image2D hiZBuffer; // Hi-Z target mip level
 
 uniform ivec2 mipLevelSize; // Size of the current mip level
 uniform int SrcMip;          // Source mip level to read from depthTexture
-uniform uint UseMinReduction; // 1 = store min depth (normal Z), 0 = store max depth (reversed Z)
+uniform uint UseMinReduction; // 0 = store max depth for normal Z, 1 = store min depth for reversed Z
 
 void main()
 {

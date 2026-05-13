@@ -2,11 +2,13 @@ using XREngine.Extensions;
 using System;
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Scene;
 
 namespace XREngine.Rendering.Commands
 {
@@ -302,6 +304,32 @@ namespace XREngine.Rendering.Commands
             return added;
         }
 
+        // Per-thread probe-deferred work list. Probe draws are intentionally deferred to
+        // the END of RenderCPU so they test against the COMPLETE depth buffer for this pass
+        // (every Visible mesh has already written its depth). Drawing probes inline in the
+        // pass iteration produced visible flicker because the probe's outcome depended on
+        // whether the future occluder had drawn yet within the same pass iteration.
+        [ThreadStatic] private static List<DeferredProbe>? t_deferredProbes;
+
+        private readonly struct DeferredProbe(uint queryKey, in AABB worldBounds)
+        {
+            public readonly uint QueryKey = queryKey;
+            public readonly AABB WorldBounds = worldBounds;
+        }
+
+        /// <summary>
+        /// Returns true when the CPU occlusion coordinator should be consulted for the
+        /// given render pass. Background / pre / post / transparent passes do not have
+        /// stable opaque depth semantics for AnySamplesPassedConservative and must be
+        /// drawn unconditionally.
+        /// </summary>
+        private static bool RenderPassIsOcclusionTestable(int renderPass)
+        {
+            return renderPass == (int)EDefaultRenderPass.OpaqueDeferred
+                || renderPass == (int)EDefaultRenderPass.OpaqueForward
+                || renderPass == (int)EDefaultRenderPass.MaskedForward;
+        }
+
         public void RenderCPU(
             int renderPass,
             bool skipGpuCommands = false,
@@ -312,13 +340,40 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
-            bool useCpuOcclusion =
-                !Engine.Rendering.State.IsShadowPass &&
+            EOcclusionCullingMode occlusionMode = Engine.EffectiveSettings.GpuOcclusionCullingMode;
+            bool isShadowPass = Engine.Rendering.State.IsShadowPass;
+            bool useCpuQueryOcclusion =
+                !isShadowPass &&
                 camera is not null &&
-                Engine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync;
+                occlusionMode == EOcclusionCullingMode.CpuQueryAsync &&
+                RenderPassIsOcclusionTestable(renderPass);
 
-            if (useCpuOcclusion)
+            // Always record the configured mode so the observability panel reflects reality
+            // (otherwise it stays "Disabled" when every callsite happens to be ineligible).
+            XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
+                occlusionMode,
+                Engine.Rendering.ResolveMeshSubmissionStrategy());
+
+            if (useCpuQueryOcclusion)
+            {
                 s_cpuOcclusionCoordinator.BeginPass(renderPass, camera!, (uint)list.Count);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuPassBegin(list.Count);
+            }
+            else
+            {
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuPassSkipped(
+                    noCamera: camera is null,
+                    shadowPass: isShadowPass,
+                    modeOff: occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
+            }
+
+            // Phase 2 deferred-probe queue (reused per-thread).
+            List<DeferredProbe>? deferredProbes = null;
+            if (useCpuQueryOcclusion)
+            {
+                deferredProbes = t_deferredProbes ??= new List<DeferredProbe>(64);
+                deferredProbes.Clear();
+            }
 
             uint cpuCmdIndex = 0;
             foreach (var cmd in list)
@@ -343,25 +398,72 @@ namespace XREngine.Rendering.Commands
                     }
                 }
 
-                if (useCpuOcclusion && cmd is IRenderCommandMesh)
+                if (useCpuQueryOcclusion && cmd is IRenderCommandMesh occlMesh)
                 {
-                    // Use the loop index as the key — GPUCommandIndex is uint.MaxValue
-                    // for all commands in pure CPU mode, which would cause every command
-                    // to share a single query state.
-                    if (!s_cpuOcclusionCoordinator.ShouldRender(renderPass, cpuCmdIndex))
+                    // Explicit per-material opt-out (skybox, fullscreen overlays, gizmos
+                    // whose AABB / depth contract is unsuitable for AnySamplesPassedConservative).
+                    var occlMaterial = occlMesh.MaterialOverride ?? occlMesh.Mesh?.Material;
+                    if (occlMaterial?.RenderOptions?.ExcludeFromCpuOcclusion == true)
                     {
+                        cmd.Render();
                         cpuCmdIndex++;
                         continue;
                     }
 
-                    s_cpuOcclusionCoordinator.BeginQuery(renderPass, cpuCmdIndex);
+                    // C-CPU-4: key by stable per-command identity, not foreach position.
+                    // cpuCmdIndex shifts on every list mutation; StableQueryKey is assigned
+                    // at command construction and never changes.
+                    uint queryKey = cmd.StableQueryKey;
+                    var decision = s_cpuOcclusionCoordinator.ShouldRender(renderPass, queryKey, out bool needsHardwareQuery);
+
+                    if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Skip)
+                    {
+                        XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
+                        cpuCmdIndex++;
+                        continue;
+                    }
+
+                    if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.ProbeOnly)
+                    {
+                        // Cull telemetry: visually the mesh contributes no color this frame.
+                        XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
+
+                        // Only the first pass to see this command in the frame actually
+                        // emits the probe AABB; later passes (e.g. color pass after a
+                        // depth-normal prepass) reuse the same query result.
+                        if (!needsHardwareQuery)
+                        {
+                            cpuCmdIndex++;
+                            continue;
+                        }
+
+                        var probeBounds = cmd.CullingVolume;
+                        if (probeBounds.HasValue && deferredProbes is not null)
+                        {
+                            // DEFERRED: probe is queued and issued after the visible-mesh
+                            // loop completes so it tests against complete-depth, not the
+                            // partial depth that would exist at this command's iteration
+                            // point. This eliminates render-order false positives.
+                            deferredProbes.Add(new DeferredProbe(queryKey, probeBounds.Value));
+                            cpuCmdIndex++;
+                            continue;
+                        }
+                        // No bounds available — fall through to full-mesh requery so the
+                        // query can still refresh (correctness fallback; will flicker).
+                    }
+
+                    // Visible (or ProbeOnly fallback without bounds): draw inline so the
+                    // depth buffer reflects this mesh before any deferred probes run.
+                    if (needsHardwareQuery)
+                        s_cpuOcclusionCoordinator.BeginQuery(renderPass, queryKey);
                     try
                     {
                         cmd?.Render();
                     }
                     finally
                     {
-                        s_cpuOcclusionCoordinator.EndQuery(renderPass, cpuCmdIndex);
+                        if (needsHardwareQuery)
+                            s_cpuOcclusionCoordinator.EndQuery(renderPass, queryKey);
                     }
 
                     cpuCmdIndex++;
@@ -371,6 +473,26 @@ namespace XREngine.Rendering.Commands
                 cpuCmdIndex++;
 
                 cmd?.Render();
+            }
+
+            // Phase 3: deferred probe-only AABB draws. Now the depth buffer reflects all
+            // visible meshes from this pass, so the conservative samples-passed query
+            // result is a faithful "is this mesh's AABB exposed to the camera?" answer.
+            if (deferredProbes is { Count: > 0 })
+            {
+                foreach (var probe in deferredProbes)
+                {
+                    s_cpuOcclusionCoordinator.BeginQuery(renderPass, probe.QueryKey);
+                    try
+                    {
+                        XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.Draw(probe.WorldBounds);
+                    }
+                    finally
+                    {
+                        s_cpuOcclusionCoordinator.EndQuery(renderPass, probe.QueryKey);
+                    }
+                }
+                deferredProbes.Clear();
             }
         }
 
@@ -419,13 +541,51 @@ namespace XREngine.Rendering.Commands
         /// Renders only commands in the specified pass that satisfy the given predicate.
         /// </summary>
         public void RenderCPUFiltered(int renderPass, Predicate<RenderCommand> filter)
+            => RenderCPUFiltered(renderPass, filter, respectCpuQueryOcclusion: false);
+
+        /// <summary>
+        /// Filtered CPU render that can optionally consult the CPU-query occlusion coordinator
+        /// (non-mutating peek). Used by secondary debug passes (e.g. Full Overdraw) so that the
+        /// visualization reflects the same visibility set as the primary mesh pass.
+        /// </summary>
+        public void RenderCPUFiltered(int renderPass, Predicate<RenderCommand> filter, bool respectCpuQueryOcclusion)
         {
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
+            bool useCpuQueryOcclusion =
+                respectCpuQueryOcclusion &&
+                !Engine.Rendering.State.IsShadowPass &&
+                Engine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync;
+
+            uint cpuCmdIndex = 0;
             foreach (var cmd in list)
-                if (cmd is not null && filter(cmd))
-                    cmd.Render();
+            {
+                if (cmd is null)
+                {
+                    cpuCmdIndex++;
+                    continue;
+                }
+
+                if (!filter(cmd))
+                {
+                    cpuCmdIndex++;
+                    continue;
+                }
+
+                if (useCpuQueryOcclusion && cmd is IRenderCommandMesh)
+                {
+                    // C-CPU-4: stable per-command identity, matches primary RenderCPU keying.
+                    if (!s_cpuOcclusionCoordinator.PeekShouldRender(renderPass, cmd.StableQueryKey))
+                    {
+                        cpuCmdIndex++;
+                        continue;
+                    }
+                }
+
+                cmd.Render();
+                cpuCmdIndex++;
+            }
         }
 
         public void RenderGPU(int renderPass)

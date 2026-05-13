@@ -1,6 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Numerics;
 using XREngine;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -186,6 +187,28 @@ namespace XREngine.Rendering.Commands
                 return _renderWorldMatrix;
 
             return _renderPrevWorldMatrix;
+        }
+
+        /// <summary>
+        /// World-space AABB for this mesh command, used by the CPU occlusion coordinator's
+        /// proxy-probe path (depth-only AABB redraw for retest, no visible flicker).
+        /// Computed from the mesh's local-space bounds transformed by the current model
+        /// matrix. Returns null when the mesh or its bounds are unavailable.
+        /// </summary>
+        public override AABB? CullingVolume
+        {
+            get
+            {
+                XRMesh? meshAsset = _renderMesh?.Mesh ?? _mesh?.Mesh;
+                if (meshAsset is null)
+                    return null;
+
+                Matrix4x4 modelMatrix = GetModelMatrix();
+                if (modelMatrix == Matrix4x4.Identity)
+                    return meshAsset.Bounds;
+
+                return meshAsset.Bounds.Transformed(p => Vector3.Transform(p, modelMatrix));
+            }
         }
     }
 }
