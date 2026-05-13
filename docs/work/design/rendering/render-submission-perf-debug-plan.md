@@ -13,15 +13,31 @@ Two-Sponza scene, lights off, ImGui editor hidden.
 - **GpuIndirectZeroReadback**: ~10 fps. 8x slower than CpuDirect on the same static scene.
 - **GpuIndirectInstrumented**: also degraded; froze above ~28 commands before optimizations landed.
 
-**Current state after P4/P5 (2026-05-12, post C-CPU-1..2 and C-GPU-1..5, Debug build):**
+**Current state after P6 (2026-05-12, post FBO-attach storage-commit fix, Debug build):**
 
 | Strategy | Drop events / 60 s | Median fps during drops | p10 | p90 | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- |
-| CpuDirect | 1779 (~30/s) | 24.05 | 20.51 | 717 | Sustained sub-threshold; **regressed** vs P1. Mirror+Hi-Z plumbing now off but Debug-build CPU work dominates. |
-| GpuIndirectInstrumented | 423 (~7/s) | 27.26 | 5.12 | 131 | Intermittent drops; recovered from "frozen at 28 commands". |
-| GpuIndirectZeroReadback | N/A — process crashed | — | — | — | C-GPU-3 dirty-bypass + ZeroReadback state-handoff inconsistency triggered `nvoglv64.dll` STATUS_STACK_BUFFER_OVERRUN. Bypass now opt-in (`XRE_GPU_HIZ_DIRTY_BYPASS=1`). Re-measure pending. |
+| CpuDirect | 1595 (~30/s, capture cut short at +54 s) | 25.64 | 21.35 | 674 | Sustained sub-threshold; **regressed** vs P1. Mirror+Hi-Z plumbing now off but Debug-build CPU work dominates. |
+| GpuIndirectInstrumented | 353 (~14/s, capture cut short at +25 s) | 26.85 | 5.89 | 90 | Intermittent drops; recovered from "frozen at 28 commands". |
+| GpuIndirectZeroReadback | 768 (~13/s, full 60 s) | 25.02 | 5.07 | 90 | **No longer crashes.** Drop-event profile now matches GpuIndirectInstrumented within noise. Original 8x gap closed. |
 
-The drop log records only frames slower than the threshold, so "0 drops" can mean either healthy *or* dead-process — the measurement script (`Tools/Measure-MeshSubmissionBaselines.ps1`) needs a process-still-alive check before it can be trusted in the latter case. ZeroReadback's "0 drops" entry was a crash, not a healthy steady state (see §10.5 P5 retraction). CpuDirect Debug-build fps is below the original ~80 fps target. **Re-measure on Release after C-GPU-3 bypass change before drawing further conclusions.**
+The drop log records only frames slower than the threshold, so "0 drops" can mean either healthy *or* dead-process. The measurement script (`Tools/Measure-MeshSubmissionBaselines.ps1`) now distinguishes user-closed (exit code 0, no WER) from genuine crash (non-zero exit OR WER record). ZeroReadback's earlier crash (P5) was a real fastfail in `glNamedFramebufferTexture` due to a missing immutable-storage commit before FBO attach — fixed in `GLTexture<T>.AttachToFBO` (see Findings Log P6). CpuDirect Debug-build fps is well below the original ~80 fps P1 target. **Re-measure on Release before drawing further conclusions about absolute targets.**
+
+> **Update (P8, 2026-05-13).** P7 is retracted. The "occlusion = bottleneck"
+> conclusion was an artefact of (a) `XRE_OCCLUSION_CULLING_MODE=None`
+> being an invalid enum value (silently ignored — variant `C` ran the
+> same `GpuHiZ` mode as `A` and `B`) and (b) variant `C` running third
+> in sequence on already-warm shader / asset / upload caches. New
+> per-stage instrumentation (`HiZStageStats` in
+> `GPURenderPassCollection.Occlusion.cs`) shows every occlusion
+> attempt actually exits at `GpuHiZ.Exit.DepthNot2D` — the depth view
+> is an `XRTexture2DView` (mono) or `XRTexture2DArrayView` (stereo),
+> not the bare `XRTexture2D` the path requires, so HiZ has been
+> silently no-op'd. The real frame-time drivers are
+> `XRWindow.ProcessPendingUploads` (6.2 s cumulative across drops) and
+> cold-cache `AssetManager.DeserializeAsset` stalls. Critical-path
+> work is now §10.5 C-DRP-1 / C-UPL-1 / C-CACHE-1 / C-MEAS-1; see
+> Findings Log P8.
 
 Goal: GPU-indirect paths within 20% of CpuDirect fps on B1 (two static Sponzas) and B2 (Sponzas + 100 skinned avatars). On B1 (Debug) this is now satisfied; B2 untested.
 
@@ -108,6 +124,194 @@ The data needed to confirm or reject the P3 bucket-fan-out hypothesis is not cur
 RenderDoc/Nsight on B1/B2: count `MultiDrawElementsIndirect[Count]`, `glUseProgram`, `glBindBufferBase`, `glBindVertexArray`, `glBufferSubData` per frame.
 
 ## 4. Findings Log
+
+### P8 P7 retracted — bisect was contaminated; HiZ depth-view type bug (2026-05-13)
+
+The P7 conclusion ("occlusion ~18 ms/frame") is **wrong**. Two independent
+checks falsified it:
+
+1. `EOcclusionCullingMode` has only `Disabled / GpuHiZ / CpuQueryAsync`.
+   `XRE_OCCLUSION_CULLING_MODE=None` from `Tools/Diagnose-ZeroReadbackHz.ps1`
+   does not parse and is silently ignored — variant `C` ran the **same**
+   `GpuHiZ` mode as variants `A` and `B`. Its 0.22 drops/s and 60 fps
+   median come entirely from being the third sequential run: the shader
+   binary cache, asset cache, and GL upload queue were already warm.
+2. New per-stage instrumentation (`HiZStageStats` in
+   [GPURenderPassCollection.Occlusion.cs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs))
+   records every entry/exit point of `ApplyOcclusionCulling` and
+   `ApplyGpuHiZOcclusion`. Result: **every single call exits at
+   `GpuHiZ.Exit.DepthNot2D`**.
+
+The depth view exposed by `DefaultRenderPipeline.DepthViewTextureName` is
+constructed in `DefaultRenderPipeline2.Textures.cs::CreateDepthViewTexture()`
+as `XRTexture2DView` (mono) or `XRTexture2DArrayView` (stereo). The
+occlusion path requires a plain `XRTexture2D`. The `is not XRTexture2D`
+check has been silently bypassing GpuHiZ for the duration of every test
+we ran. There is no occlusion filtering happening — all frustum-visible
+commands have always been drawn.
+
+**Real bottlenecks** (from hot-path aggregation across the baseline drop
+log): `XRWindow.ProcessPendingUploads` (6.2 s cumulative across drops),
+`XRWindow.RenderFrame` (3.8 s), `AssetManager.DeserializeAsset` for cold
+shader-cache entries (per `profiler-render-stalls.log`).
+
+**Open subtasks** (replace C-OCC-1..5):
+
+- **C-DRP-1** Fix `ApplyGpuHiZOcclusion` to accept `XRTexture2DView` /
+  `XRTexture2DArrayView` (extract the underlying 2D texture / array
+  slice) so GpuHiZ can actually run. Re-baseline ZeroReadback once
+  HiZ is producing real occlusion output.
+- **C-UPL-1** Profile `XRWindow.ProcessPendingUploads`: log what's
+  dequeued, the per-chunk ms, and whether `BoostBudgetUntilDrained` is
+  pinned. `GLUploadQueue.FrameBudgetMs = 2.0` but each
+  `ExecuteUpload` can overshoot. Likely need post-chunk budget check.
+- **C-CACHE-1** Cold shader cache deserialization in the render hot
+  path (`AssetManager.DeserializeAsset .../Atmosphere/*.fs.asset` was
+  on `XRViewport.Render` for 450 ms). Move to background or warm at
+  scene-load.
+- **C-MEAS-1** Rewrite `Tools/Diagnose-ZeroReadbackHz.ps1` to clear
+  caches between variants and validate env-var parsing so the
+  contamination cannot recur. Single-process per variant.
+
+**Files touched during this diagnosis** (kept as instrumentation,
+expected to be reverted/cleaned after C-DRP-1 lands):
+
+- `XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs`
+  — `HiZStageStats` aggregator + per-exit-point Record calls.
+  `IsEnabled() => true` is currently hardcoded; flip back to the
+  `XRE_HIZ_STAGE_LOGGING` env gate once the depth-view fix lands.
+- `Tools/Diagnose-ZeroReadbackHz.ps1` — invalid `None` enum value
+  in variant `C`.
+
+### P7 ZeroReadback bottleneck = occlusion subsystem (2026-05-13) — RETRACTED, see P8
+
+The P6 framing — "drop profiles within noise across strategies" — was
+misleading. ZeroReadback at 13 Hz drop rate / 28 fps median on a static
+two-Sponza scene with **no lights** is broken, not borderline. A 3-variant
+bisect on B1 confirms the cause:
+
+| Variant (45 s capture, 25 s warmup) | Drops/s | Median fps | P10 | P90 |
+| --- | ---: | ---: | ---: | ---: |
+| `A` ZeroReadback baseline | 13.4 | 28.48 | 3.87 | 213.66 |
+| `B` + `XRE_BUCKET_LOOP_DRY_RUN=1` (skip MDEIC) | 12.49 | 25.89 | 4.37 | 155.05 |
+| `C` + `XRE_OCCLUSION_CULLING_MODE=None` | **0.22** | **60.16** | 3.19 | 513.22 |
+
+Reproducer: `pwsh Tools\Diagnose-ZeroReadbackHz.ps1`.
+
+**Diagnosis**: skipping the actual `glMultiDrawElementsIndirectCount`
+draws (variant `B`) barely moved fps → GL submission cost is **not**
+the dominant factor. Disabling occlusion entirely (variant `C`)
+collapsed drops to ~zero and roughly doubled median fps → the GpuHiZ
+occlusion subsystem is responsible for ~18 ms/frame on a static scene
+that has nothing dynamic to occlude.
+
+**Implications**:
+1. **C-GPU-6 (shadow HZB) is deferred** until the basic occlusion path
+   is healthy. Building a *second* HZB cull pipeline on top of one that
+   eats 50% of the frame budget makes no sense.
+2. The recurring "regenerate HiZ + redispatch cull every frame on a
+   static scene" pattern is exactly what C-GPU-3 (dirty-frame bypass)
+   tried to solve in P5 before it tripped the FBO-attach fastfail. The
+   underlying optimisation is correct; the previous attempt routed
+   through an unsafe code path. Re-attack with the P6 fix in place.
+3. The fact that variant `C`'s `P10` is still 3.19 suggests an
+   unrelated periodic stall (~once per few seconds) — likely
+   shader-compile, GC, or BVH rebuild. Capture separately.
+
+**Open subtasks** for the next pass:
+
+- **C-OCC-1** Identify which stage(s) of the occlusion pipeline
+  contribute the 18 ms. Candidates (per [GPURenderPassCollection.Occlusion.cs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs)):
+  (a) `BuildHiZPyramid` (init + per-mip gen compute, ~`log2(W)` dispatches),
+  (b) `BvhCull` or `FrustumCull` dispatch + uniforms upload,
+  (c) Hi-Z occlusion compute (`_hiZOcclusionProgram`),
+  (d) `SwapCulledBufferAfterOcclusion` (any CPU-side fence/wait?),
+  (e) per-frame `_hiZSharedCache` table lookups.
+  Approach: add `VPRC_GPUTimerBegin`/`End` scopes around each block,
+  enable GPU Pipeline Profiling, dump `profiler-gpu-pipeline-*.log`.
+- **C-OCC-2** Check for CPU-side stalls inside the occlusion path —
+  any `glFinish`, `glClientWaitSync`, `glGetSync(GL_SYNC_STATUS)` in
+  a busy loop, or buffer-map that the "zero readback" label promised
+  was gone. Grep is fast; this could be a one-liner fix.
+- **C-OCC-3** Re-attempt static-scene short-circuit: if the world bvh
+  generation id, command count, and camera VP are all unchanged from
+  the previous frame, skip the HiZ rebuild + cull dispatch and reuse
+  the prior `_culledSceneToRenderBuffer`. P5 attempted this and tripped
+  the FBO crash because it short-circuited *too early* (before storage
+  commit). With the P6 fix in place the safe gate is "after the FBO
+  pass for this view has fully attached at least once".
+- **C-OCC-4** Investigate `_hiZSharedCache` per-frame churn — survey
+  flagged a `ConditionalWeakTable` access for every render-pass pass;
+  on a static frame the cached pyramid should be reused but the cost
+  of the lookup + the `Generation` mismatch path may itself be the
+  bottleneck.
+- **C-OCC-5** Verify the same diagnosis holds on Release build before
+  committing significant changes. Debug-build CPU dispatch overhead
+  is often 5–10x Release.
+
+### P6 ZeroReadback fastfail root-caused + fixed (2026-05-12)
+
+The P5 ZeroReadback crash was traced via `dotnet-dump` minidump analysis to
+`Silk.NET.OpenGL.GL.NamedFramebufferTexture` → `nvoglv64.dll+0x108f36d`,
+`STATUS_STACK_BUFFER_OVERRUN` (`0xc0000409`). The driver indexes a
+stack-allocated mip-level table sized by the attached texture's allocated
+mip count; if the texture was generated (`glGenTextures`) but immutable
+storage (`glTextureStorage2D`) had never been committed, that table is empty
+and the driver writes past its stack canary → fastfail. ZeroReadback's
+FBO-build order exposed a window where freshly-genned textures were attached
+to a freshly-created FBO before the deferred storage-commit ran. The other
+strategies serialise this differently and never tripped it.
+
+**Fix**: `GLTexture<T>.AttachToFBO` now invokes a new virtual
+`EnsureStorageAllocatedForFBOAttach()` hook between `Bind()` and
+`Api.NamedFramebufferTexture`. `GLTexture2D` overrides it to call the
+existing `EnsureStorageAllocated()` (which performs `glTextureStorage2D`
+for immutable textures). `EnsureStorageAllocated()` visibility was promoted
+`private → internal` to enable this. Mutable (resizable) textures fall
+through unchanged — pre-committing them with `glTexImage2D` was tried and
+threw `ArgumentOutOfRangeException` on `Rg16f`/`R16f` without helping.
+
+**Diagnostic infra (kept in tree, env-gated)**:
+- `XRE_CRASH_BREADCRUMBS=1` — direct file-append crumbs in
+  `GLTexture.AttachToFBO`, `HybridRenderingManager`
+  (MDEIC + IndirectComp.Dispatch), and `GPURenderPassCollection.Occlusion`
+  → `Build/Logs/crumbs.log`. Survives `RaiseFailFastException`.
+- `XRE_GL_DEBUG=1` — synchronous GL debug callback with managed stack
+  traces for high-severity messages → `Build/Logs/gldebug-high.log`.
+- `Tools/Repro-ZeroReadbackCrash.ps1` — single-shot harness; reports WER
+  fault offset + last crumbs.
+
+**Caveat / open follow-up**: with `XRE_GL_DEBUG=1` still set, ZeroReadback
+hits the *same* `nvoglv64+0x108f36d` fastfail offset on a tex whose storage
+*has* been committed (always `fbo=11 / ColorAttachment0 / Rgba16f / 1920×1080`
+during the GBuffer setup burst, ~30–35 s in). This is a separate
+NVIDIA-debug-context-only failure, not the production code path. Documented
+in repo memory `zeroreadback-fbo-attach-crash.md`; **do not enable
+`XRE_GL_DEBUG=1` while running ZeroReadback baselines.**
+
+**Measurement-script fix**: `Tools/Measure-MeshSubmissionBaselines.ps1` no
+longer mis-reports user-closed windows as crashes. It distinguishes
+`CRASHED` (non-zero exit code OR WER record matching the PID) from
+`user-closed` (exit code 0, no WER) from `no-fps-log` (process never
+produced the drop log).
+
+**Re-measured baselines (B1, two Sponzas, lights off, Debug)**:
+```
+Strategy                Drops/60s  MedianFps  P10    P90    Note
+CpuDirect                  1595      25.64    21.35  674.08 user-closed at +54s
+GpuIndirectInstrumented     353      26.85     5.89   90.30 user-closed at +25s
+GpuIndirectZeroReadback     768      25.02     5.07   90.20 full 60s, no crash
+```
+
+The original "8× slower" gap between CpuDirect and ZeroReadback (P1) has
+collapsed: drop profiles are within noise of each other. Median
+fps-during-drop is uniformly ~25 — Debug-build CPU work appears to dominate
+across all three strategies on this scene. **Action items**:
+1. Re-measure all three on Release build before adjusting §1 targets.
+2. Add a sustained-fps probe (rolling 1 s avg, not drop-event-only) so
+   future measurements aren't biased to sub-threshold statistics.
+3. Move to §10.5 step 7 (C-GPU-6 caster-shadow HZB) — B2 win remains
+   untested.
 
 ### P5 baseline re-measurement (2026-05-12): post C-CPU-1..2 + C-GPU-1..5
 
@@ -703,6 +907,68 @@ Todos:
   casters and re-test against the player's HZB. Deferred until C-GPU-1..5
   stable. Largest correctness uplift on B2 once landed because the
   avatar-heavy scene cost is shadow-pass dominated.
+
+  **Design subtasks** (added 2026-05-12, post P6):
+
+  - **C-GPU-6.1 — Shadow caster command buffer.** Today shadow draws
+    re-iterate the scene `RenderCommandCollection` filtered by pass; this
+    survey ([Lights3DCollection.Shadows.cs](../../../../XREngine.Runtime.Rendering/Rendering/Lighting/Lights3DCollection.Shadows.cs),
+    `ShadowAtlasManager.cs`) confirms there is **no separate indirect-draw
+    buffer per light**. Before any HZB cull is useful, allocate a
+    per-light (or per-cascade) indirect-draw buffer that mirrors the
+    main pass's `_culledSceneToRenderBuffer` shape so the cull pass has
+    somewhere to write its output. Reuse the existing
+    `_culledSceneToRenderBuffer` allocator in
+    [GPURenderPassCollection.CullingAndSoA.cs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs).
+  - **C-GPU-6.2 — Per-light HZB.** Add a `_lightHiZDepthPyramid[]`
+    parallel to `_hiZDepthPyramid` in `GPURenderPassCollection.Occlusion`,
+    keyed on shadow atlas page. Build via the existing
+    `HiZGen.comp`/`GPURenderHiZInit.comp` pair (no new shader); source
+    is the shadow atlas tile's depth texture instead of the main depth.
+    Atlas-tile build runs **after** the shadow depth pass for that light
+    has finished so the depth is committed.
+  - **C-GPU-6.3 — Light-space caster cull.** Extend
+    `GPURenderOcclusionHiZ.comp` (or fork to a `_shadowOcclusionProgram`)
+    to accept the light-space VP matrix + light-space HZB and write into
+    the per-light indirect buffer from C-GPU-6.1. Cull is a sphere/AABB
+    test exactly like the main pass.
+  - **C-GPU-6.4 — Shadow-volume extrude + player-HZB re-test.** For
+    non-culled casters, extrude AABB along the light direction up to a
+    cap distance, project the extruded volume corners into player space,
+    sphere/AABB-test against `_hiZDepthPyramid`. Casters fully occluded
+    in player space don't contribute visible shadows → drop them. This
+    is a second compute pass that consumes the C-GPU-6.3 output and
+    writes a refined indirect buffer.
+  - **C-GPU-6.5 — Indirect shadow draw.** Replace the immediate-mode
+    per-light render loop in `Lights3DCollection.Shadows.cs` /
+    `ShadowAtlasManager.cs` with `glMultiDrawElementsIndirectCount`
+    against the C-GPU-6.4 buffer. Gated on the
+    `GpuIndirectZeroReadback` and `GpuIndirectInstrumented` paths;
+    CpuDirect continues to use the existing immediate path (per §10.1
+    rule 1).
+  - **C-GPU-6.6 — B2 baseline measurement.** Re-run
+    `Tools/Measure-MeshSubmissionBaselines.ps1` against the B2
+    benchmark (Sponzas + 100 skinned avatars) — see §3 — to confirm
+    the expected B2 win and rule out regressions on B1.
+
+  **Order of attack**: 6.1 (buffer plumbing, no behavior change) → 6.2
+  (HZB build, dead) → 6.3 (cull, output unused) → 6.5 (indirect draw,
+  uses 6.3) → 6.4 (refine pass) → 6.6 (measure). Each step is
+  independently mergeable; the buffer in 6.1 can default to the full
+  unfiltered command list so shadows keep working at every intermediate
+  stage.
+
+  **Risks**:
+  - Driver fastfail similar to the P6 FBO-attach bug if light-HZB
+    textures are attached/sampled before storage commit — the P6 fix
+    in `GLTexture<T>.AttachToFBO` covers all attaches, but watch for
+    image-store binds and bindless sampler resolves which are separate.
+  - Shadow atlas page reallocation during a frame would invalidate the
+    cached HZB; gate HZB rebuild on `page.GenerationId`.
+  - Extruding AABBs along the light direction needs care for
+    directional lights with parallel-light-to-AABB axis (degenerate
+    volume) — use the existing cascade frustum bounds as a fallback
+    cap distance.
 - [ ] **C-GPU-7** (optional, after C-GPU-6): Darnell-style dedicated
   occluder RT (512×256-ish). Artist-tagged occluder geometry only.
   Decouples Hi-Z cull from main pass ordering, removes "first frame
@@ -759,9 +1025,21 @@ deleted.
 4. **C-GPU-4** — size BVH correctly.
 5. **C-GPU-5** — verify LOD math matches Darnell.
 6. ✅ Re-measure all three baselines. Update §1 numbers. — done 2026-05-12;
-   see Findings Log P5. ZeroReadback is now the best performer on B1 (Debug);
-   CpuDirect regressed in absolute terms — re-run on Release to confirm.
-7. **C-GPU-6** (shadow HZB) — largest B2 win once the basic path is solid.
+   first attempt (Findings P5) recorded a ZeroReadback crash, root-caused
+   and fixed under P6 (FBO-attach immutable-storage commit). Re-measured
+   post-fix: all three strategies now within drop-event noise of each
+   other on Debug B1 (CpuDirect 1595/60s, GpuIndirectInstrumented 353/25s,
+   ZeroReadback 768/60s). Release re-measure still pending.
+7. **C-DRP-1 + C-UPL-1 + C-CACHE-1 + C-MEAS-1** — Findings P8
+   retracts P7. GpuHiZ has been silently no-op'd because the depth
+   view exposed by the default pipeline is an `XRTexture2DView`/
+   `XRTexture2DArrayView`, not the bare `XRTexture2D` the path
+   requires. Real bottleneck is upload-queue spikes + cold shader
+   deserialization on the render thread. **This is now the critical
+   path**; everything below is gated on resolving it. ← **next**
+8. **C-GPU-6** (shadow HZB) — deferred. Largest B2 win on paper but
+   meaningless until C-DRP-1 lands; building a second HZB cull on top
+   of a primary HZB that never even runs makes no sense.
 8. **C-GPU-7** (dedicated occluder RT) only if §1 still misses target.
 9. **C-CPU-3** (software occluder) only if hardware queries don't cull
    enough on B2 (avatar-heavy).

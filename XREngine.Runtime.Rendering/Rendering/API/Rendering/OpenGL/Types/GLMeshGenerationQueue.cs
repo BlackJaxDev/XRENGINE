@@ -102,6 +102,22 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public int MaxThrottledPriorityRenderersPerFrame { get; set; } = 4;
 
+            /// <summary>
+            /// Always-on hard cap for render-pipeline-priority renderer preparation per frame.
+            /// Prevents the priority lane from iterating an unbounded backlog of
+            /// material-not-ready renderers every frame (C-MESH-1).
+            /// </summary>
+            public int MaxPriorityRenderersPerFrame { get; set; } = 32;
+
+            /// <summary>
+            /// Maximum number of "material-not-ready" deferrals that may be visited
+            /// per frame across the priority + normal lanes combined. Each visit
+            /// re-requests uber-variant preparation and re-enqueues the renderer,
+            /// which is cheap individually but accumulates render-thread time when
+            /// the same hundred-plus renderers cycle every frame (C-MESH-1).
+            /// </summary>
+            public int MaxMaterialNotReadyDeferralsPerFrame { get; set; } = 16;
+
             private double _savedBudgetMs;
             private int _savedMaxNormalRenderersPerFrame;
             private int _savedMaxThrottledPriorityRenderersPerFrame;
@@ -225,19 +241,33 @@ namespace XREngine.Rendering.OpenGL
                 bool throttlePriorityGeneration = ThrottlePriorityGeneration;
                 int priorityProcessed = 0;
                 int normalProcessed = 0;
+                int materialNotReadyDeferralsThisFrame = 0;
+                int priorityCap = throttlePriorityGeneration
+                    ? MaxThrottledPriorityRenderersPerFrame
+                    : MaxPriorityRenderersPerFrame;
 
-                // Priority lane: normally drains immediately so render-pipeline quads are ready the same frame.
-                // During startup budget boosts, throttle this lane too so cold-start mesh generation is spread
-                // across frames instead of stalling a single frame for hundreds of milliseconds.
+                // Priority lane: drains render-pipeline quads, but with an unconditional
+                // time + count cap so a steady-state backlog of material-not-ready
+                // renderers cannot iterate uncapped each frame (C-MESH-1).
+                // During startup budget boost, the cap drops further to spread
+                // cold-start mesh generation across more frames.
                 while (!_renderer._oomDetectedThisFrame
-                    && (!throttlePriorityGeneration || sw.Elapsed.TotalMilliseconds < budgetMs)
-                    && (!throttlePriorityGeneration || priorityProcessed < MaxThrottledPriorityRenderersPerFrame)
+                    && sw.Elapsed.TotalMilliseconds < budgetMs
+                    && priorityProcessed < priorityCap
                     && _priorityQueue.TryDequeue(out var priorityRenderer))
                 {
                     _pendingSet.TryRemove(priorityRenderer, out _);
 
                     if (!IsMaterialReadyForGeneration(priorityRenderer))
                     {
+                        if (materialNotReadyDeferralsThisFrame >= MaxMaterialNotReadyDeferralsPerFrame)
+                        {
+                            // Re-enqueue without iterating further this frame; preserves
+                            // ordering and lets the queue drain over subsequent frames.
+                            deferredPriority.Add(priorityRenderer);
+                            break;
+                        }
+                        materialNotReadyDeferralsThisFrame++;
                         RequestMaterialPrepIfNeeded(priorityRenderer);
                         deferredPriority.Add(priorityRenderer);
                         continue;
@@ -265,6 +295,12 @@ namespace XREngine.Rendering.OpenGL
                     // on the render thread (50-70ms per first-use Sponza-class material).
                     if (!IsMaterialReadyForGeneration(renderer))
                     {
+                        if (materialNotReadyDeferralsThisFrame >= MaxMaterialNotReadyDeferralsPerFrame)
+                        {
+                            deferredNormal.Add(renderer);
+                            break;
+                        }
+                        materialNotReadyDeferralsThisFrame++;
                         RequestMaterialPrepIfNeeded(renderer);
                         deferredNormal.Add(renderer);
                         continue;
