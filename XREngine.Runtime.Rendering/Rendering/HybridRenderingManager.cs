@@ -715,8 +715,11 @@ namespace XREngine.Rendering
                     
                     LogMultiDrawIndirect(true, maxCommands, stride);
                     LogIndirectDrawSizes("DispatchRenderIndirect", maxCommands, stride, indirectDrawBuffer, parameterBuffer);
+                    XREngine.Rendering.Commands.GPURenderPassCollection.Crumb(
+                        $"MDIC.BEGIN maxCmd={maxCommands} stride={stride} indCap={indirectDrawBuffer.ElementCount} paramCap={(parameterBuffer?.ElementCount ?? 0u)}");
                     using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
                         renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
+                    XREngine.Rendering.Commands.GPURenderPassCollection.Crumb("MDIC.END");
                 }
                 else
                 {
@@ -1607,7 +1610,10 @@ namespace XREngine.Rendering
 
             if (logGpu)
                 GpuDebug("Dispatching compute: groups=({0},{1},{2}) groupSize={3}", groupsX, groupsY, groupsZ, groupSize);
+            XREngine.Rendering.Commands.GPURenderPassCollection.Crumb(
+                $"IndirectComp.Dispatch.BEGIN groups=({groupsX},{groupsY},{groupsZ}) gs={groupSize} dispCnt={dispatchCount} maxDraw={maxDrawAllowed}");
             _indirectCompProgram.DispatchCompute(groupsX, groupsY, groupsZ, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            XREngine.Rendering.Commands.GPURenderPassCollection.Crumb("IndirectComp.Dispatch.END");
             //Debug.Meshes("Compute dispatch complete");
 
             // Conservative barrier before consuming indirect buffer

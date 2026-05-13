@@ -141,6 +141,12 @@ public static partial class EditorImGuiUI
         {
             ImGui.Text($"  Passes Active     : {gpuPasses}");
             ImGui.Text($"  Passes w/ Readback: {gpuRb}");
+            int passthroughDirty = OcclusionTelemetry.GpuPassesPassthroughDirty;
+            if (passthroughDirty > 0)
+            {
+                ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f),
+                    $"  Passes Passthrough: {passthroughDirty}  (dirty temporal state â€” pyramid built from stale depth, cull skipped this frame)");
+            }
             ImGui.Text($"  Candidates        : {gpuCands:N0}");
             if (gpuRbAvail)
             {

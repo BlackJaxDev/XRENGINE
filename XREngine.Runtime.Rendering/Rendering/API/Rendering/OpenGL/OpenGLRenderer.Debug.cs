@@ -53,6 +53,7 @@ public partial class OpenGLRenderer
             api.Enable(EnableCap.DebugOutput);
             api.Enable(EnableCap.DebugOutputSynchronous);
             api.DebugMessageCallback(DebugCallback, null);
+            XREngine.Rendering.Commands.GPURenderPassCollection.Crumb("OpenGLRenderer.SetupDebug.callbackInstalled");
         }
         catch
         {
@@ -127,8 +128,19 @@ public partial class OpenGLRenderer
         // Serilog flushes). Errors and high-severity messages only; keep noise low.
         if (type == GLEnum.DebugTypeError || severity == GLEnum.DebugSeverityHigh)
         {
-            try { System.Console.Error.WriteLine("[GLDebug] " + formattedMessage); } catch { }
-            try { System.Diagnostics.Trace.WriteLine("[GLDebug] " + formattedMessage); System.Diagnostics.Trace.Flush(); } catch { }
+            string? stack = null;
+            try { stack = new System.Diagnostics.StackTrace(1, true).ToString(); } catch { }
+            string payload = stack is null ? formattedMessage : formattedMessage + Environment.NewLine + stack;
+            try { System.Console.Error.WriteLine("[GLDebug] " + payload); } catch { }
+            try { System.Diagnostics.Trace.WriteLine("[GLDebug] " + payload); System.Diagnostics.Trace.Flush(); } catch { }
+            try
+            {
+                string? logsRoot = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs");
+                System.IO.Directory.CreateDirectory(logsRoot);
+                System.IO.File.AppendAllText(System.IO.Path.Combine(logsRoot, "gldebug-high.log"),
+                    "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] " + payload + Environment.NewLine);
+            }
+            catch { }
         }
 
         if (type == GLEnum.DebugTypeError)

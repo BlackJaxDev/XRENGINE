@@ -95,6 +95,72 @@ namespace XREngine.Rendering.Commands
             _occlusionTemporalOverrides = temporalOverrides;
         }
 
+        // C-GPU-3 dirty-bypass kill switch. Default OFF: when the temporal Hi-Z state
+        // is dirty we still run the refine compute (legacy behavior, may over-cull for
+        // one frame after a scene mutation or large camera jump). Set
+        // XRE_GPU_HIZ_DIRTY_BYPASS=1 to skip refine on dirty frames (passes through
+        // every frustum/BVH candidate). The bypass leaves _culledCountBuffer /
+        // _culledSceneToRenderBuffer holding the cull-pass output; this has been
+        // observed to crash nvoglv64 (STATUS_STACK_BUFFER_OVERRUN) under the
+        // GpuIndirectZeroReadback path because the downstream
+        // MultiDrawElementsIndirectCount pipeline expects post-refine state. Until
+        // the bypass is rewritten as an explicit GPU passthrough copy + swap, leave
+        // it opt-in.
+        private static bool? _gpuHiZDirtyBypassCached;
+        private static bool IsGpuHiZDirtyBypassEnabled()
+        {
+            if (_gpuHiZDirtyBypassCached.HasValue)
+                return _gpuHiZDirtyBypassCached.Value;
+            string? raw = Environment.GetEnvironmentVariable("XRE_GPU_HIZ_DIRTY_BYPASS");
+            bool enabled = !string.IsNullOrEmpty(raw) && (raw == "1" || raw.Equals("true", StringComparison.OrdinalIgnoreCase));
+            _gpuHiZDirtyBypassCached = enabled;
+            return enabled;
+        }
+
+        // Crash breadcrumbs: synchronous Console.Error/Trace writes around suspect GL calls.
+        // Set XRE_CRASH_BREADCRUMBS=1 to enable. Each call also issues glFinish so the GPU
+        // catches up before the next breadcrumb prints; the last [CRUMB] line on stderr
+        // before a fastfail identifies which GL call killed the driver. Heavy â€” diagnostic
+        // only, leave off for measurement runs.
+        private static bool? _crashBreadcrumbsCached;
+        internal static bool AreCrashBreadcrumbsEnabled()
+        {
+            if (_crashBreadcrumbsCached.HasValue)
+                return _crashBreadcrumbsCached.Value;
+            string? raw = Environment.GetEnvironmentVariable("XRE_CRASH_BREADCRUMBS");
+            bool enabled = !string.IsNullOrEmpty(raw) && (raw == "1" || raw.Equals("true", StringComparison.OrdinalIgnoreCase));
+            _crashBreadcrumbsCached = enabled;
+            return enabled;
+        }
+
+        // Direct file-append transport. Console.Error and Trace listeners are unreliable
+        // for WinExe processes (no console attached) and may be torn down before a fastfail
+        // flushes; appending straight to a file with FlushAsync survives a hard crash.
+        private static readonly object _crumbFileLock = new();
+        private static string? _crumbFilePath;
+        private static string GetCrumbFilePath()
+        {
+            if (_crumbFilePath is not null)
+                return _crumbFilePath;
+            string logsRoot = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs");
+            try { System.IO.Directory.CreateDirectory(logsRoot); } catch { }
+            _crumbFilePath = System.IO.Path.Combine(logsRoot, "crumbs.log");
+            return _crumbFilePath;
+        }
+
+        internal static void Crumb(string label)
+        {
+            if (!AreCrashBreadcrumbsEnabled())
+                return;
+            // No GPU sync: WaitForGpu may itself stall or throw on a corrupted context,
+            // hiding the breadcrumb we are trying to capture.
+            string line = "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] [CRUMB] " + label + Environment.NewLine;
+            lock (_crumbFileLock)
+            {
+                try { System.IO.File.AppendAllText(GetCrumbFilePath(), line); } catch { }
+            }
+        }
+
         private EOcclusionCullingMode ResolveActiveOcclusionMode()
         {
             // Passthrough mode is a debug-only escape hatch; keep it behaviorally stable.
@@ -292,7 +358,9 @@ namespace XREngine.Rendering.Commands
                 ulong frameId = Engine.Rendering.State.RenderFrameId;
                 if (shared.LastBuiltFrameId != frameId)
                 {
+                    Crumb($"HiZ.BuildPyramid.SHARED.BEGIN pass={RenderPass} mip={_hiZMaxMip}");
                     BuildHiZPyramid(depth2D, isReverseZ);
+                    Crumb("HiZ.BuildPyramid.SHARED.END");
                     shared.LastBuiltFrameId = frameId;
                 }
             }
@@ -309,12 +377,44 @@ namespace XREngine.Rendering.Commands
                 BuildHiZPyramid(depth2D, isReverseZ);
             }
 
+            // C-GPU-3: when temporal state is dirty (scene mutated or camera jumped this
+            // frame), the depth feeding the pyramid we just built does not contain newly
+            // added meshes (or the right view of existing meshes). Consuming that
+            // pyramid would over-cull â€” the symptom that previously kept
+            // XRE_CPU_HIZ_OCCLUSION default-off. The bypass below builds the pyramid
+            // anyway (so the *next* frame can cull normally) and skips refine for this
+            // pass: every frustum/BVH candidate passes through unchanged.
+            //
+            // OPT-IN ONLY (default off). Skipping refine leaves _culledCountBuffer /
+            // _culledSceneToRenderBuffer holding the cull-pass output; downstream
+            // GpuIndirectZeroReadback (MultiDrawElementsIndirectCount) interactions
+            // were observed to crash nvoglv64 (STATUS_STACK_BUFFER_OVERRUN) when the
+            // bypass fires under sustained dirty conditions. Until the state-handoff
+            // is rewritten as an explicit GPU passthrough copy, retain the original
+            // refine-always behavior. Set XRE_GPU_HIZ_DIRTY_BYPASS=1 to opt in.
+            if (invalidateTemporalHiZ && IsGpuHiZDirtyBypassEnabled())
+            {
+                bool readbackAvailableDirty = !IsCpuReadbackCountDisabledForPass();
+                RecordOcclusionFrameStats(candidates, 0u, 0u, temporalInvalidations);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPass(
+                    (int)candidates, 0, readbackAvailableDirty);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPassthroughDirty();
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
+                    EOcclusionCullingMode.GpuHiZ,
+                    Engine.Rendering.ResolveMeshSubmissionStrategy());
+                return;
+            }
+
             // Occlusion refinement: read candidates from CulledSceneToRenderBuffer and count from scratch.
             // Write refined visible commands into the ping-pong buffer and final counts into _culledCountBuffer.
+            Crumb($"HiZ.Refine.BEGIN pass={RenderPass} cand={candidates}");
             ApplyHiZOcclusionRefine(camera);
+            Crumb($"HiZ.Refine.END pass={RenderPass}");
 
             // Swap in refined buffer for subsequent indirect build.
+            Crumb($"HiZ.Swap.BEGIN pass={RenderPass}");
             SwapCulledBufferAfterOcclusion();
+            Crumb($"HiZ.Swap.END pass={RenderPass}");
 
             // Stats: we conservatively report all candidates tested; accepted is the number removed.
             // Avoid CPU readbacks here; in shipping mode we may not have a CPU-visible count.

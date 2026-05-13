@@ -37,10 +37,18 @@ namespace XREngine.Rendering.Occlusion
         private static int _gpuOccluded;
         private static int _gpuPassesActive;
         private static int _gpuPassesWithReadback;
+        // C-GPU-3 passthrough: passes that bypassed the Hi-Z cull because temporal
+        // state was invalidated this frame (scene mutation or large camera jump).
+        // The pyramid built from stale depth is unsafe to consume on those frames
+        // because newly added meshes have no depth representation yet, so we let
+        // every candidate through. Next frame's pyramid is built from the freshly
+        // rendered depth and the cull resumes normally.
+        private static int _gpuPassesPassthroughDirty;
         private static int _lastFrameGpuCandidates;
         private static int _lastFrameGpuOccluded;
         private static int _lastFrameGpuPassesActive;
         private static int _lastFrameGpuPassesWithReadback;
+        private static int _lastFrameGpuPassesPassthroughDirty;
 
         // Most recently observed effective modes (set every frame; sticky for UI).
         private static EOcclusionCullingMode _lastEffectiveMode = EOcclusionCullingMode.Disabled;
@@ -92,6 +100,8 @@ namespace XREngine.Rendering.Occlusion
         public static int GpuPassesActive => _lastFrameGpuPassesActive;
         /// <summary>Last completed frame: how many GPU Hi-Z passes were able to read back accurate counts.</summary>
         public static int GpuPassesWithReadback => _lastFrameGpuPassesWithReadback;
+        /// <summary>Last completed frame: GPU Hi-Z passes that bypassed cull due to dirty temporal state (C-GPU-3).</summary>
+        public static int GpuPassesPassthroughDirty => _lastFrameGpuPassesPassthroughDirty;
         /// <summary>True when at least one GPU Hi-Z pass produced an accurate count this frame.</summary>
         public static bool LastFrameGpuOcclusionAvailable => _lastFrameGpuPassesWithReadback > 0;
 
@@ -129,6 +139,7 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameGpuOccluded = _gpuOccluded;
             _lastFrameGpuPassesActive = _gpuPassesActive;
             _lastFrameGpuPassesWithReadback = _gpuPassesWithReadback;
+            _lastFrameGpuPassesPassthroughDirty = _gpuPassesPassthroughDirty;
             _lastFrameCpuSocTested = _cpuSocTested;
             _lastFrameCpuSocCulled = _cpuSocCulled;
 
@@ -149,6 +160,7 @@ namespace XREngine.Rendering.Occlusion
             _gpuOccluded = 0;
             _gpuPassesActive = 0;
             _gpuPassesWithReadback = 0;
+            _gpuPassesPassthroughDirty = 0;
             _cpuSocTested = 0;
             _cpuSocCulled = 0;
             _cpuDecisionSeed = 0;
@@ -201,6 +213,14 @@ namespace XREngine.Rendering.Occlusion
                     Interlocked.Add(ref _gpuOccluded, occluded);
             }
         }
+
+        /// <summary>
+        /// C-GPU-3: records a GPU Hi-Z pass that bypassed cull because temporal state
+        /// was invalidated (scene mutation or large camera jump). Always paired with
+        /// <see cref="RecordGpuPass"/> reporting <c>occluded=0</c>.
+        /// </summary>
+        public static void RecordGpuPassthroughDirty() =>
+            Interlocked.Increment(ref _gpuPassesPassthroughDirty);
 
         /// <summary>Records the active occlusion mode and submission strategy this frame (latest wins).</summary>
         public static void RecordActiveMode(EOcclusionCullingMode mode, EMeshSubmissionStrategy strategy)

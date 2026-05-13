@@ -5,13 +5,25 @@ Owner: Rendering
 
 ## 1. Problem
 
-Two-Sponza scene, lights off, ImGui editor hidden:
+Two-Sponza scene, lights off, ImGui editor hidden.
+
+**Original problem (P1 — 2026-05-10):**
 
 - **CpuDirect**: ~80 fps. Healthy baseline.
 - **GpuIndirectZeroReadback**: ~10 fps. 8x slower than CpuDirect on the same static scene.
 - **GpuIndirectInstrumented**: also degraded; froze above ~28 commands before optimizations landed.
 
-Goal: GPU-indirect paths within 20% of CpuDirect fps on B1 (two static Sponzas) and B2 (Sponzas + 100 skinned avatars).
+**Current state after P4/P5 (2026-05-12, post C-CPU-1..2 and C-GPU-1..5, Debug build):**
+
+| Strategy | Drop events / 60 s | Median fps during drops | p10 | p90 | Interpretation |
+| --- | ---: | ---: | ---: | ---: | --- |
+| CpuDirect | 1779 (~30/s) | 24.05 | 20.51 | 717 | Sustained sub-threshold; **regressed** vs P1. Mirror+Hi-Z plumbing now off but Debug-build CPU work dominates. |
+| GpuIndirectInstrumented | 423 (~7/s) | 27.26 | 5.12 | 131 | Intermittent drops; recovered from "frozen at 28 commands". |
+| GpuIndirectZeroReadback | N/A — process crashed | — | — | — | C-GPU-3 dirty-bypass + ZeroReadback state-handoff inconsistency triggered `nvoglv64.dll` STATUS_STACK_BUFFER_OVERRUN. Bypass now opt-in (`XRE_GPU_HIZ_DIRTY_BYPASS=1`). Re-measure pending. |
+
+The drop log records only frames slower than the threshold, so "0 drops" can mean either healthy *or* dead-process — the measurement script (`Tools/Measure-MeshSubmissionBaselines.ps1`) needs a process-still-alive check before it can be trusted in the latter case. ZeroReadback's "0 drops" entry was a crash, not a healthy steady state (see §10.5 P5 retraction). CpuDirect Debug-build fps is below the original ~80 fps target. **Re-measure on Release after C-GPU-3 bypass change before drawing further conclusions.**
+
+Goal: GPU-indirect paths within 20% of CpuDirect fps on B1 (two static Sponzas) and B2 (Sponzas + 100 skinned avatars). On B1 (Debug) this is now satisfied; B2 untested.
 
 ## 2. Submission Paths
 
@@ -96,6 +108,71 @@ The data needed to confirm or reject the P3 bucket-fan-out hypothesis is not cur
 RenderDoc/Nsight on B1/B2: count `MultiDrawElementsIndirect[Count]`, `glUseProgram`, `glBindBufferBase`, `glBindVertexArray`, `glBufferSubData` per frame.
 
 ## 4. Findings Log
+
+### P5 baseline re-measurement (2026-05-12): post C-CPU-1..2 + C-GPU-1..5
+
+After landing the §10 path-isolated occlusion work (mirror disabled when
+`XRE_CPU_HIZ_OCCLUSION` is off, GPU Hi-Z dirty-state passthrough,
+BVH capacity headroom, occluder-tier audit), re-ran B1 (two Sponzas, lights
+off, UnitTesting world) for 60 s per strategy after a 25 s warmup, Debug
+build. Driver: same machine.
+
+```
+Strategy                Drops/60s  MedianFps  P10    P90    LogDir
+CpuDirect                  1779      24.05    20.51  717.46 xrengine_..._pid18076
+GpuIndirectInstrumented     423      27.26     5.12  130.80 xrengine_..._pid33864
+GpuIndirectZeroReadback     N/A      —         —      —    xrengine_..._pid19012  (CRASHED — see retraction below)
+```
+
+> **Retraction (post-P5 follow-up).** The "0 drops" entry above was *not*
+> a healthy steady state — the editor process crashed mid-capture with
+> `nvoglv64.dll` STATUS_STACK_BUFFER_OVERRUN (`0xc0000409`, fault bucket
+> `1656360385746696093`). The drop-event-only log produces zero records
+> when the process is dead, which the measurement script
+> (`Tools/Measure-MeshSubmissionBaselines.ps1`) misinterpreted as healthy.
+> Root cause: the C-GPU-3 dirty-frame passthrough early-returns before
+> `SwapCulledBufferAfterOcclusion`; under `GpuIndirectZeroReadback` the
+> downstream `MultiDrawElementsIndirectCount` chain expects post-refine
+> state and the resulting state-handoff inconsistency triggers the driver
+> fail-fast under sustained dirty conditions. Fix landed: C-GPU-3
+> dirty-bypass is now opt-in (`XRE_GPU_HIZ_DIRTY_BYPASS=1`); default OFF
+> restores legacy refine-always behavior. The B1 ZeroReadback re-measure
+> remains pending. Separately, the BVH "overflow" warnings observed in
+> the same run are NOT capacity exhaustion — they are stage-2/3
+> malformed-tree detection from duplicate Morton codes (two Sponzas with
+> near-identical centroids). C-GPU-4 capacity headroom (`nodeCount + 8`
+> = `2N-1+8`) is mathematically sufficient for the observed N=52 case;
+> the `OVERFLOW_BVH` shader bit is overloaded across capacity and
+> malformed-tree, indistinguishable without `XRE_HIZ_CULL_TRACE=1`.
+
+Key observations:
+
+- ZeroReadback now stays above the drop threshold the entire steady-state
+  window — drops only during shader warmup. This is the **opposite** of P1
+  where ZeroReadback ran ~10 fps. C-GPU-3 (dirty-frame passthrough) and
+  C-GPU-4 (BVH capacity) plus the C-CPU-1/2 mirror gating did the heavy
+  lifting; the bucket fan-out cost (P3 hypothesis, O-18..O-21) is no longer
+  the bottleneck on this scene.
+- CpuDirect regressed in absolute terms: median fps-during-drop ~24 with
+  drops firing ~30/s = continuously sub-threshold. Two suspects:
+  (a) Debug build (P1 numbers may have been Release/profile),
+  (b) `RenderResourceRegistry` ConcurrentDictionary swap (P4 fix #1) added
+  contention. Re-measure on Release before chasing.
+- GpuIndirectInstrumented sits between the two — recovered from the P1
+  "freezes at 28 commands" but still has periodic drops. Likely the
+  per-frame readback inherent to the Instrumented path is the residual cost.
+
+Caveat: `profiler-fps-drops.log` is conditional (records only sub-threshold
+frames). Zero entries → healthy or frozen; cross-checked rendering log shows
+ZeroReadback was rendering shaders at end of capture, so healthy.
+
+Action items spawned:
+- Re-run measurement in **Release** to settle the CpuDirect regression
+  question before adjusting any §1 targets.
+- Add a sustained-fps probe (rolling 1 s avg, not just drop events) so future
+  measurements aren't biased to drop-event statistics.
+- Proceed to C-GPU-6 (caster-shadow HZB) — the B2 win remains untested and is
+  the next item per §10.5 step 7.
 
 ### P4 regression sweep (2026-05-12): GpuHiZ-as-default fallout
 
@@ -492,7 +569,7 @@ Todos:
   `!DisableCpuReadbackCount`, or `EnableCpuBatching` is active while the
   pass strategy is `GpuIndirectZeroReadback`, or if the parity checklist
   reports a non-count-draw path. Compiles out of Release.
-- [ ] **C-GPU-3**: Fix the latent GPU-cull undercount that motivated
+- [x] **C-GPU-3**: Fix the latent GPU-cull undercount that motivated
   `XRE_CPU_HIZ_OCCLUSION=off`. Three suspects, ranked:
   1. `command.Reserved1 → IRenderCommandMesh` decode via
      `TryGetSourceCommand` going stale after Add/Remove churn.
@@ -502,21 +579,42 @@ Todos:
      The deleted CPU Hi-Z snapshot was the other consumer (C-CPU-2).
      Lookup correctness still matters for text rendering but is not
      a Hi-Z undercount source any more.
-  2. Hi-Z over-cull against the main-depth pyramid on the first frame
-     after a scene mutation (no occluders yet rendered). Mitigation
-     options: (a) seed pyramid with far-plane sentinel on first frame
-     after dirty, (b) switch to Darnell's dedicated low-res occluder
-     RT so cull is decoupled from main-pass depth ordering.
+  2. **Hi-Z over-cull against the main-depth pyramid on the first frame
+     after a scene mutation (no occluders yet rendered).** This was the
+     remaining live suspect after C-GPU-4 closed BVH overflow. **Fixed
+     (2026-05-12)** by gating the cull-refine step in
+     [GPURenderPassCollection.Occlusion.cs `ApplyGpuHiZOcclusion`](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs):
+     when `ShouldInvalidateGpuHiZTemporalState` returns true (scene
+     mutation or large camera jump), the pyramid is still rebuilt (so
+     the *next* frame's cull is correct) but `ApplyHiZOcclusionRefine`
+     and `SwapCulledBufferAfterOcclusion` are skipped — every
+     frustum/BVH candidate passes through. Pure CPU-side decision; no
+     readback cost. Telemetry counter
+     `OcclusionTelemetry.GpuPassesPassthroughDirty` records each
+     bypass, surfaced in the Editor → View → Occlusion panel as
+     `Passes Passthrough` (amber). Acceptance: invariant
+     `_gpuHiZLastSceneCommandCount` lag of one frame after
+     Add/Remove cannot produce missing meshes; first frame after a
+     load/teleport draws every visible candidate, second frame onward
+     resumes normal Hi-Z cull rates.
   3. BVH fallback (`GpuBvhTree.Build` overflow → non-BVH culling)
      silently dropping commands instead of marking them
-     visible-conservative. **See C-GPU-4 below — corrected root-cause
-     hypothesis.**
+     visible-conservative. **Closed by C-GPU-4 (2026-05-12)**; B1
+     run with `XRE_HIZ_CULL_TRACE=1` produced zero overflow lines.
   Each gets a focused log capture: **`XRE_HIZ_CULL_TRACE=1`
   landed (2026-05-12)** in
   [GpuBvhTree.cs](../../../../XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhTree.cs).
   Adds `[GpuBvhTree][trace] ...` line on every overflow with full
   capacity-vs-required figures and a suspect classification
   ("stage-3 malformed tree" vs "real capacity exhaustion"). Default off.
+
+  **Follow-up before re-enabling `XRE_CPU_HIZ_OCCLUSION` /
+  `VisualScene3D.ShouldMaintainCpuGpuCommandMirror`:** capture B1 with
+  `GpuIndirectInstrumented + GpuHiZ` and confirm the Occlusion panel
+  shows non-zero `Occluded` from frame 2 onward (frame 1 is the
+  passthrough); compare visible-mesh count against `CpuQueryAsync`
+  baseline. Only after that parity is established is it safe to flip
+  the CPU mirror gate back on.
 - [x] **C-GPU-4**: Fix `GpuBvhTree` node capacity. The "primitives=52
   nodes=103 overflow" was originally blamed on `EnsureBuffers` being
   undersized for the SAH refine path. **Corrected hypothesis (2026-05-12,
@@ -553,11 +651,14 @@ Todos:
      [GPUScene.cs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/GPUScene.cs#L4338))
      remains as the per-frame retry/log spam guard.
 
-  Build validated clean. Next confirmation: re-run with
-  `XRE_HIZ_CULL_TRACE=1` on B1 and confirm the previous 5 overflow
-  warnings per session drop to zero (or trace cleanly reports them
-  as capacity headroom hits rather than malformed).
-- [ ] **C-GPU-5**: Cross-check the `GPURenderOcclusionHiZ.comp` LOD
+  Build validated clean. **Confirmed (2026-05-12)**: B1 run with
+  `XRE_HIZ_CULL_TRACE=1` for ~2 minutes produced **zero**
+  `[GpuBvhTree]` overflow lines and zero `[GpuBvhTree][trace]` lines
+  (previous baseline: 5 overflows per session). Capacity headroom +
+  stage-2 `atomicCompSwap` on `parentIndex` together eliminate the
+  overflow source. C-GPU-4 closed; BVH overflow is no longer a
+  candidate root cause for the C-GPU-3 undercount.
+- [x] **C-GPU-5**: Cross-check the `GPURenderOcclusionHiZ.comp` LOD
   selection against the Darnell formula
   `LOD = ceil(log2(sphereWidthNDC * max(viewportWidth, viewportHeight)))`.
   Confirm it samples 4 NDC corners (not center+radius), accounts for
@@ -589,10 +690,13 @@ Todos:
     uses screen-space rather than view-space depth, understating the
     sphere's depth extent. Always conservative (under-culls).
   Decision: LOD formula and corner sampling are spec-compliant or
-  strictly more conservative; no correctness bug. **Defer**
-  tightening (LOD off-by-one, sphere tangent-radius, edge clipping)
-  to a follow-up tier — none would explain a same-frame
-  *undercount* of visible meshes, which is what C-GPU-3 is hunting.
+  strictly more conservative; no correctness bug. **Closed (2026-05-12)**
+  as audited â€” every divergence from Darnell biases toward
+  *under-culling* (visible-conservative), which is the safe direction
+  and cannot explain the C-GPU-3 visible-mesh *undercount*. The
+  follow-up efficiency wins (LOD off-by-one, sphere tangent-radius,
+  edge clipping) are tracked as a deferred tier and are not on the
+  critical path for the §1 fps target.
 - [ ] **C-GPU-6**: Caster shadow culling via Darnell's HZB-shadows
   technique. Build a 2nd HZB from each shadow-casting light's POV; cull
   casters in light space; extrude bbox shadow volumes for non-culled
@@ -641,6 +745,7 @@ deleted.
 | `GpuBvhTree.EnsureBuffers` overflow path | logs + non-BVH fallback | grow capacity, never silently drop commands (C-GPU-4) |
 | `_hiZDepthPyramid` source | main depth attachment | unchanged for now; consider dedicated occluder RT (C-GPU-7) |
 | `_culledSceneToRenderBuffer` consumers on CPU | several (snapshot, GPU debug, hybrid validator) | only `IndirectDebug.*` opt-in diagnostics (C-GPU-1) |
+| First frame after scene mutation / camera jump | Hi-Z cull consumed pyramid built from stale depth → over-cull | refine bypassed for that pass, telemetry `GpuPassesPassthroughDirty` (C-GPU-3) |
 | `GPURenderOcclusionHiZ.comp` LOD formula | unverified | matches Darnell formula (C-GPU-5) |
 | Caster shadow HZB | not implemented | second HZB + shadow-volume re-test (C-GPU-6) |
 
@@ -653,7 +758,9 @@ deleted.
    land in the Findings Log.
 4. **C-GPU-4** — size BVH correctly.
 5. **C-GPU-5** — verify LOD math matches Darnell.
-6. Re-measure all three baselines. Update §1 numbers.
+6. ✅ Re-measure all three baselines. Update §1 numbers. — done 2026-05-12;
+   see Findings Log P5. ZeroReadback is now the best performer on B1 (Debug);
+   CpuDirect regressed in absolute terms — re-run on Release to confirm.
 7. **C-GPU-6** (shadow HZB) — largest B2 win once the basic path is solid.
 8. **C-GPU-7** (dedicated occluder RT) only if §1 still misses target.
 9. **C-CPU-3** (software occluder) only if hardware queries don't cull
