@@ -28,7 +28,7 @@ public partial class GLTexture2D
     private bool IsStorageGenerationCurrent(int storageGeneration)
         => CurrentStorageGeneration == storageGeneration;
 
-    private EPixelInternalFormat? EnsureStorageAllocated()
+    internal EPixelInternalFormat? EnsureStorageAllocated()
     {
         EPixelInternalFormat? internalFormatForce = null;
         if (!Data.Resizable && !StorageSet)

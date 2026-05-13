@@ -1,3 +1,4 @@
+using Silk.NET.OpenGL;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Extensions;
@@ -174,6 +175,22 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         _pendingImmutableStorageRecreate = false;
         if (IsGenerated)
             Destroy();
+    }
+
+    /// <summary>
+    /// Commits immutable GL storage before this texture is attached to an FBO. Without
+    /// this, NVIDIA's driver fastfails inside glNamedFramebufferTexture on textures whose
+    /// glTextureStorage2D call has not yet run (see EnsureStorageAllocated for details).
+    /// Mutable (Resizable=true) textures are intentionally left to PushData; trying to
+    /// pre-commit mutable storage here was observed to throw on certain sized formats and
+    /// to leave the GL state in a worse spot than skipping the attach.
+    /// </summary>
+    protected override void EnsureStorageAllocatedForFBOAttach()
+    {
+        ApplyPendingImmutableStorageRecreate();
+
+        if (!Data.Resizable)
+            EnsureStorageAllocated();
     }
 
     public override void PreSampling()

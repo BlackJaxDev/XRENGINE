@@ -368,13 +368,35 @@ namespace XREngine.Rendering.OpenGL
             var previous = Renderer.BoundTexture;
             Bind();
 
+            // CRITICAL: NVIDIA's nvoglv64 fastfails (STATUS_STACK_BUFFER_OVERRUN) inside
+            // glNamedFramebufferTexture if the texture's immutable storage was never
+            // committed. The driver indexes a stack-allocated mip table by the texture's
+            // allocated mip count and runs past its canary on an empty table. Some FBO
+            // setup paths (notably GpuIndirectZeroReadback) attach freshly-generated
+            // textures before any PushData runs, so commit storage here as a safety net.
+            EnsureStorageAllocatedForFBOAttach();
+
             if (TryResolveAttachIds(fbo, attachment, mipLevel, requireTexture: true, out uint fboId, out uint texId))
+            {
+                XREngine.Rendering.Commands.GPURenderPassCollection.Crumb(
+                    $"NamedFramebufferTexture.BEGIN fbo={fboId} attachment={attachment} tex={texId} mip={mipLevel} type={GetType().Name} dataFmt={Data?.GetType().Name}");
                 Api.NamedFramebufferTexture(fboId, ToGLEnum(attachment), texId, mipLevel);
+                XREngine.Rendering.Commands.GPURenderPassCollection.Crumb("NamedFramebufferTexture.END");
+            }
 
             if (previous is null || ReferenceEquals(previous, this))
                 Unbind();
             else
                 previous.Bind();
+        }
+
+        /// <summary>
+        /// Subclasses override this to commit immutable GPU storage (e.g. glTextureStorage2D)
+        /// for their texture target before an FBO attach. Default is a no-op for texture types
+        /// whose storage is committed unconditionally elsewhere or that use mutable storage.
+        /// </summary>
+        protected virtual void EnsureStorageAllocatedForFBOAttach()
+        {
         }
         public virtual void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
         {
