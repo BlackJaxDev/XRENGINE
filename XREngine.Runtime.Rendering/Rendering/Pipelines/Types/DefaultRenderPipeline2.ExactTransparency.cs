@@ -24,8 +24,8 @@ public partial class DefaultRenderPipeline2
     private const int MaxDepthPeelingLayersSupported = 4;
     private const float DepthPeelingEpsilon = 1e-5f;
 
-    internal XRDataBuffer? PpllNodeBuffer => Engine.Rendering.State.CurrentRenderingPipeline?.GetBuffer(PpllNodeBufferName);
-    internal XRDataBuffer? PpllCounterBuffer => Engine.Rendering.State.CurrentRenderingPipeline?.GetBuffer(PpllCounterBufferName);
+    internal XRDataBuffer? PpllNodeBuffer => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetBuffer(PpllNodeBufferName);
+    internal XRDataBuffer? PpllCounterBuffer => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetBuffer(PpllCounterBufferName);
     internal XRTexture? PpllHeadPointerTexture => GetTexture<XRTexture>(PpllHeadPointerTextureName);
     internal XRTexture? PreviousDepthPeelDepthTexture => ActiveDepthPeelLayerIndex > 0
         ? GetTexture<XRTexture>(DepthPeelDepthTextureName(ActiveDepthPeelLayerIndex - 1))
@@ -35,10 +35,10 @@ public partial class DefaultRenderPipeline2
     internal uint PpllMaxNodeCount => ComputePpllNodeCapacity();
 
     private bool ExactTransparencyEnabled
-        => !Stereo && Engine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
 
     private int ActiveDepthPeelLayerCount
-        => Math.Clamp(Engine.EditorPreferences.Debug.DepthPeelingMaxLayers, 1, MaxDepthPeelingLayersSupported);
+        => Math.Clamp(RuntimeEngine.EditorPreferences.Debug.DepthPeelingMaxLayers, 1, MaxDepthPeelingLayersSupported);
 
     private static string DepthPeelColorTextureName(int layerIndex)
         => $"DepthPeelColorTex_{layerIndex}";
@@ -62,7 +62,7 @@ public partial class DefaultRenderPipeline2
 
     private static int ResolveActiveDepthPeelLayerIndex()
     {
-        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         return pipeline is not null && pipeline.Variables.TryGet(ActiveDepthPeelLayerVariableName, out int value)
             ? value
             : -1;
@@ -296,7 +296,7 @@ public partial class DefaultRenderPipeline2
 
     private void ApplyDepthPeelingDebugProgramBindings(XRRenderProgram program)
     {
-        int layerIndex = Math.Clamp(Engine.EditorPreferences.Debug.DepthPeelingPreviewLayer, 0, MaxDepthPeelingLayersSupported - 1);
+        int layerIndex = Math.Clamp(RuntimeEngine.EditorPreferences.Debug.DepthPeelingPreviewLayer, 0, MaxDepthPeelingLayersSupported - 1);
         for (int i = 0; i < MaxDepthPeelingLayersSupported; i++)
         {
             XRTexture? colorLayer = GetTexture<XRTexture>(DepthPeelColorTextureName(i));

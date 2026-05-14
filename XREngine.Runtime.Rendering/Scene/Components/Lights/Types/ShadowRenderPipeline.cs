@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Colors;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -119,9 +119,9 @@ namespace XREngine.Components.Lights
                 ? shadowPipeline.ClearColor
                 : ColorF4.White;
 
-            Engine.Rendering.State.ClearColor(clearColor);
-            Engine.Rendering.State.ClearDepth(1.0f);
-            Engine.Rendering.State.ClearStencil(0);
+            RuntimeEngine.Rendering.State.ClearColor(clearColor);
+            RuntimeEngine.Rendering.State.ClearDepth(1.0f);
+            RuntimeEngine.Rendering.State.ClearStencil(0);
         }
     }
 
@@ -134,7 +134,7 @@ namespace XREngine.Components.Lights
                 shadowPipeline.IndexedClearRegions is not { } regions ||
                 shadowPipeline.IndexedClearRegionCount <= 0)
             {
-                Engine.Rendering.State.ClearByBoundFBO();
+                RuntimeEngine.Rendering.State.ClearByBoundFBO();
                 return;
             }
 
@@ -149,7 +149,7 @@ namespace XREngine.Components.Lights
                 renderer?.SetRenderArea(region);
                 renderer?.SetCroppingEnabled(true);
                 renderer?.CropRenderArea(region);
-                Engine.Rendering.State.ClearByBoundFBO();
+                RuntimeEngine.Rendering.State.ClearByBoundFBO();
             }
 
             // Clearing uses scissor box 0, so the loop above temporarily overwrites viewport/scissor index 0.

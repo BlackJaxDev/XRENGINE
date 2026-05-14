@@ -60,7 +60,7 @@ public partial class GLTexture2D
         if (!transitionResult.ExposureDeferred)
             return SparseTextureStreamingFinalizeResult.Success();
 
-        if (!Engine.IsRenderThread)
+        if (!RuntimeEngine.IsRenderThread)
             return SparseTextureStreamingFinalizeResult.Failed("Sparse texture transition finalization must run on the render thread.");
 
         if (transitionResult.FenceSync == 0)
@@ -149,7 +149,7 @@ public partial class GLTexture2D
     {
         prepared = default;
 
-        if (!Engine.IsRenderThread)
+        if (!RuntimeEngine.IsRenderThread)
             return false;
 
         if (!Renderer.HasSharedContext

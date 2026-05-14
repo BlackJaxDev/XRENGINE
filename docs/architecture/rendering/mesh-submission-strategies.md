@@ -8,7 +8,7 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 | Strategy | Purpose | CPU readbacks | CPU mesh fallback | Hot-path diagnostics |
 |----------|---------|---------------|-------------------|----------------------|
-| `CpuDirect` | CPU traversal and direct mesh draw submission. | None, except previous-frame visibility snapshot readback when `GpuOcclusionCullingMode=GpuHiZ`. | Not applicable. | CPU renderer diagnostics only. |
+| `CpuDirect` | CPU traversal and direct mesh draw submission. | None in the steady-state render path. | Not applicable. | CPU renderer diagnostics only. |
 | `GpuIndirectInstrumented` | GPU indirect path for bring-up, validation, and inspection. | Allowed and counted. | Allowed only when explicitly requested and strict profiles are not active. | Allowed. |
 | `GpuIndirectZeroReadback` | Production GPU indirect path. | Forbidden in the steady-state render path. | Forbidden. | Forbidden; use counters and warnings outside the hot path. |
 | `GpuMeshlet` | Meshlet/task-mesh submission. | Forbidden by contract. | No implicit CPU fallback; unsupported renderers fall back to traditional GPU indirect with a warning. | Backend bring-up only. |
@@ -34,10 +34,23 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 
 | Draw path | Purpose |
 |-----------|---------|
-| `FullBucketScan` | Strict no-readback path. The GPU scatters commands into material/tier buckets and the CPU loops over every bucket while using GPU-written counts. |
+| `FullBucketScan` | Strict no-readback path. The GPU scatters commands into state-class/tier buckets and the CPU loops over every bucket while using GPU-written counts. |
 | `ActiveBucketList` | Readback-assisted diagnostic path. Adds a compute compaction pass that writes only non-empty bucket IDs, maps that compact ID list on the CPU, then submits those buckets. Useful for measuring empty-bucket overhead. |
 | `MaterialTable` | Readback-assisted diagnostic path. Uses active buckets with a shared material-table shader instead of per-material shader programs. Current OpenGL implementation renders material-table debug colors. |
 | `BindlessMaterialTable` | Readback-assisted diagnostic path. Same as `MaterialTable`, but requires `GL_ARB_bindless_texture` and `GL_ARB_gpu_shader_int64`; falls back to `MaterialTable` when unavailable. Texture-correct bindless still requires backend texture handle population. |
+
+## State Class IDs
+
+Phase C separates material identity from pipeline state. `DrawMetadata.MaterialID` still identifies the material data, but `DrawMetadata.StateClassID` is the batching key consumed by sort/scatter shaders.
+
+Default derivation:
+
+- Transparent-like materials or transparent/on-top/OIT passes resolve to `Transparent`.
+- Masked, alpha-tested, or alpha-to-coverage materials and masked passes resolve to `AlphaTested`.
+- Opaque deferred passes resolve to `OpaqueDeferred`.
+- Remaining opaque forward/shadow-compatible draws resolve to `OpaqueForward` unless a renderer-specific exception allocates a custom state class.
+
+`GpuIndirectZeroReadback` currently binds one representative CPU material per state class while the GPU indirect command carries the stable `DrawID`; Phase D will use that `DrawID` to fetch per-draw material records from the bindless/descriptor-indexed material table.
 
 ## Pass Contract
 
@@ -45,8 +58,8 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 
 `GPURenderPassCollection` snapshots the strategy at pass execution:
 
-- `CpuDirect` with `GpuOcclusionCullingMode=GpuHiZ` keeps a GPU command mirror for culling only. It dispatches the Hi-Z cull in a zero-readback mode, publishes the previous compatible frame's visible-command snapshot, and applies a short temporal hysteresis before CPU draws are skipped. Depth-normal prepasses stay conservative so they can seed the depth pyramid.
-- `GpuIndirectZeroReadback` enables material-tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts. Use `FullBucketScan` when validating the strict no-readback material path; the active-bucket and material-table variants intentionally read back the compact active bucket list for diagnostics.
+- `CpuDirect` does not consume GPU Hi-Z visibility snapshots. Hardware CPU queries remain the default occlusion path, and optional CPU masked software occlusion can pre-cull traditional CPU mesh draws before hardware-query submission when explicitly enabled.
+- `GpuIndirectZeroReadback` enables state-class/tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts. Use `FullBucketScan` when validating the strict no-readback material path; the active-bucket and material-table variants intentionally read back the compact active bucket list for diagnostics.
 - `GpuIndirectInstrumented` is the only strategy allowed to read back batch ranges, count buffers, per-view draw counts, or indirect command dumps.
 - CPU safety-net mesh fallback is only available for `GpuIndirectInstrumented` and only when fallback diagnostics are explicitly enabled.
 

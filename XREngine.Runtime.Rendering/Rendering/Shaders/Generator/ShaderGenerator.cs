@@ -63,7 +63,7 @@ namespace XREngine.Rendering.Shaders.Generator
                     WriteOutVar(kvp.Value.type, kvp.Key);
 
             //For some reason, this is necessary when using shader pipelines
-            //if (Engine.Rendering.Settings.AllowShaderPipelines)
+            //if (RuntimeEngine.Rendering.Settings.AllowShaderPipelines)
             if (WriteGLPerVertexOutStruct)
                 WriteGLPerVertexOut();
         }

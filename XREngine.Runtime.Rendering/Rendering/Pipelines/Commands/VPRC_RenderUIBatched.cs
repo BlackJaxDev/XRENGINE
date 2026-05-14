@@ -24,7 +24,7 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
 
     protected override void Execute()
     {
-        using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
 
         // Batched UI elements inject lightweight marker commands during collect-visible.
         // Rendering the CPU pass now executes inline batch groups and normal CPU fallback

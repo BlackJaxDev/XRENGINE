@@ -97,7 +97,7 @@ public unsafe partial class VulkanRenderer
 			if (_descriptorPool.Handle != 0)
 			{
 				Api!.DestroyDescriptorPool(Device, _descriptorPool, null);
-				Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+				RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
 				_descriptorPool = default;
 			}
 		}

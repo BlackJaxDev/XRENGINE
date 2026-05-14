@@ -474,7 +474,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
 
     private void SetSkyUniforms(XRMaterialBase material, XRRenderProgram program)
     {
-        var state = Engine.Rendering.State.RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         AtmosphericScatteringSettings settings = state?.GetStage<AtmosphericScatteringSettings>()?.TryGetBacking(out AtmosphericScatteringSettings? backing) == true && backing is not null
             ? backing
             : AtmosphericScatteringSettings.Default;

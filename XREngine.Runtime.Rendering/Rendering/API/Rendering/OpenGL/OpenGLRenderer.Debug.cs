@@ -37,7 +37,7 @@ public partial class OpenGLRenderer
         // We still try to enable the callback; we just skip driver-level filtering when unsupported.
 
         bool supportsDebugOutput = true;
-        string[]? extensions = Engine.Rendering.State.OpenGLExtensions;
+        string[]? extensions = RuntimeEngine.Rendering.State.OpenGLExtensions;
         if (extensions is { Length: > 0 })
         {
             supportsDebugOutput = extensions.Any(static e =>

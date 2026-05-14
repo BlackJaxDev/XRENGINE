@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         [YamlIgnore]
         public RenderPipeline? ParentPipeline => CommandContainer?.ParentPipeline;
-        public static XRRenderPipelineInstance ActivePipelineInstance => Engine.Rendering.State.CurrentRenderingPipeline!;
+        public static XRRenderPipelineInstance ActivePipelineInstance => RuntimeEngine.Rendering.State.CurrentRenderingPipeline!;
 
         /// <summary>
         /// If true, the command will execute in the shadow pass.

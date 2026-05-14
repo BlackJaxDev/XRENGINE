@@ -226,9 +226,9 @@ namespace XREngine.Rendering.OpenGL
 
             private void PushSource(bool compile = true)
             {
-                if (!Engine.IsRenderThread)
+                if (!RuntimeEngine.IsRenderThread)
                 {
-                    Engine.EnqueueMainThreadTask(() => PushSource(compile));
+                    RuntimeEngine.EnqueueMainThreadTask(() => PushSource(compile));
                     return;
                 }
 
@@ -389,7 +389,7 @@ namespace XREngine.Rendering.OpenGL
                 action();
                 double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
 
-                bool renderThread = Engine.IsRenderThread;
+                bool renderThread = RuntimeEngine.IsRenderThread;
                 uint shaderId = TryGetBindingId(out uint id) ? id : 0;
                 Debug.Rendering(
                     EOutputVerbosity.Verbose,

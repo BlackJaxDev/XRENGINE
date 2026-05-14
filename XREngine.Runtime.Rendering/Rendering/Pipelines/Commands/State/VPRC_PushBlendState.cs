@@ -30,9 +30,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            Engine.Rendering.State.EnableBlend(true);
-            Engine.Rendering.State.BlendEquationSeparate(RgbEquation, AlphaEquation);
-            Engine.Rendering.State.BlendFuncSeparate(SrcRGB, DstRGB, SrcAlpha, DstAlpha);
+            RuntimeEngine.Rendering.State.EnableBlend(true);
+            RuntimeEngine.Rendering.State.BlendEquationSeparate(RgbEquation, AlphaEquation);
+            RuntimeEngine.Rendering.State.BlendFuncSeparate(SrcRGB, DstRGB, SrcAlpha, DstAlpha);
         }
     }
 }

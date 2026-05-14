@@ -23,19 +23,19 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool GenerateMipmapsHere { get; set; } = true;
 
         private static bool IsAutoExposureRestrictedPass()
-            => Engine.Rendering.State.IsLightProbePass
-            || Engine.Rendering.State.IsShadowPass
-            || Engine.Rendering.State.IsSceneCapturePass;
+            => RuntimeEngine.Rendering.State.IsLightProbePass
+            || RuntimeEngine.Rendering.State.IsShadowPass
+            || RuntimeEngine.Rendering.State.IsSceneCapturePass;
 
         private static string DescribeRestrictedPass()
         {
-            if (Engine.Rendering.State.IsLightProbePass)
+            if (RuntimeEngine.Rendering.State.IsLightProbePass)
                 return "light-probe";
 
-            if (Engine.Rendering.State.IsShadowPass)
+            if (RuntimeEngine.Rendering.State.IsShadowPass)
                 return "shadow";
 
-            if (Engine.Rendering.State.IsSceneCapturePass)
+            if (RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return "scene-capture";
 
             return "restricted";
@@ -52,7 +52,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             grading.MarkGpuAutoExposureReady(false);
 
-            if (Engine.StartupPresentationEnabled)
+            if (RuntimeEngine.StartupPresentationEnabled)
                 return;
 
             if (IsAutoExposureRestrictedPass())

@@ -519,6 +519,10 @@ public sealed class GpuBvhTree : IDisposable
                 {
                     unsafe
                     {
+                        // Phase B invariant: every GPU->CPU readback must be recorded in
+                        // Engine.Rendering.Stats so GpuReadbackBytes stays honest under the
+                        // zero-readback strategy. This is a 4-byte read, but it counts.
+                        RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
                         return *((uint*)addr.Pointer);
                     }
                 }

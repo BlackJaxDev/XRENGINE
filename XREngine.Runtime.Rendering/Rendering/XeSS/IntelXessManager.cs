@@ -40,8 +40,8 @@ namespace XREngine.Rendering.XeSS
         private static void EnsureDetected()
         {
             if (_probed &&
-                _lastIsVulkan == Engine.Rendering.State.IsVulkan &&
-                string.Equals(_lastBridgeFingerprint, Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint, StringComparison.Ordinal))
+                _lastIsVulkan == RuntimeEngine.Rendering.State.IsVulkan &&
+                string.Equals(_lastBridgeFingerprint, RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint, StringComparison.Ordinal))
                 return;
 
             DetectSupport();
@@ -50,8 +50,8 @@ namespace XREngine.Rendering.XeSS
         private static void DetectSupport()
         {
             _probed = true;
-            _lastIsVulkan = Engine.Rendering.State.IsVulkan;
-            _lastBridgeFingerprint = Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint;
+            _lastIsVulkan = RuntimeEngine.Rendering.State.IsVulkan;
+            _lastBridgeFingerprint = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint;
             _lastError = null;
 
             bool usingVulkan = _lastIsVulkan;
@@ -71,12 +71,12 @@ namespace XREngine.Rendering.XeSS
 
         private static bool TryIsBridgeCapable(out string? failureReason)
         {
-            var snapshot = Engine.Rendering.VulkanUpscaleBridgeSnapshot;
+            var snapshot = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot;
             failureReason = null;
 
-            if (!Engine.Rendering.VulkanUpscaleBridgeRequested || !snapshot.EnvironmentEnabled)
+            if (!RuntimeEngine.Rendering.VulkanUpscaleBridgeRequested || !snapshot.EnvironmentEnabled)
             {
-                failureReason = $"{Engine.Rendering.VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge (clear it or set it to 1 to re-enable)";
+                failureReason = $"{RuntimeEngine.Rendering.VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge (clear it or set it to 1 to re-enable)";
                 return false;
             }
 
@@ -155,7 +155,7 @@ namespace XREngine.Rendering.XeSS
         {
             EnsureDetected();
 
-            if (!Engine.EffectiveSettings.EnableIntelXess || !_cachedIsSupported)
+            if (!RuntimeEngine.EffectiveSettings.EnableIntelXess || !_cachedIsSupported)
                 return MaxScale;
 
             static float ScaleForMode(EXessQualityMode mode)
@@ -171,10 +171,10 @@ namespace XREngine.Rendering.XeSS
                 };
             }
 
-            var quality = Engine.EffectiveSettings.XessQuality;
+            var quality = RuntimeEngine.EffectiveSettings.XessQuality;
 
             if (quality == EXessQualityMode.Custom)
-                return Math.Clamp(Engine.Rendering.Settings.XessCustomScale, MinScale, MaxScale);
+                return Math.Clamp(RuntimeEngine.Rendering.Settings.XessCustomScale, MinScale, MaxScale);
 
             return Math.Clamp(ScaleForMode(quality), MinScale, MaxScale);
         }

@@ -60,7 +60,7 @@ namespace XREngine.Scene
         /// </summary>
         public virtual void GlobalSwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("VisualScene.GlobalSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
+            using var sample = RuntimeEngine.Profiler.Start("VisualScene.GlobalSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
             GenericRenderTree.Swap();
             GPUCommands.SwapCommandBuffers();
         }

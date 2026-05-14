@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Threading.Tasks;
 using XREngine;
@@ -112,13 +112,13 @@ public static class ShaderHelper
         XRShader source;
         if (EngineShaderLoadTasks.TryGetValue(key, out Task<XRShader>? existingTask))
         {
-            source = !existingTask.IsCompleted && Engine.IsRenderThread
+            source = !existingTask.IsCompleted && RuntimeEngine.IsRenderThread
                 ? LoadAndCacheEngineShaderInline(key)
                 : existingTask.GetAwaiter().GetResult();
         }
         else
         {
-            source = Engine.IsRenderThread
+            source = RuntimeEngine.IsRenderThread
                 ? LoadAndCacheEngineShaderInline(key)
                 : GetOrCreateEngineShaderTask(relativePath, shaderType).GetAwaiter().GetResult();
         }
@@ -583,7 +583,7 @@ public static class ShaderHelper
             "UnlitColoredForward.fs" => UnlitColorFragForwardWeightedOit(),
             "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, WeightedBlendedOitDefine),
             "DeferredDecal.fs" => DeferredDecalForwardWeightedOit(),
-            // Deferred → lit forward WBOIT variants
+            // Deferred ? lit forward WBOIT variants
             "TexturedDeferred.fs" => LitTextureFragForwardWeightedOit(),
             "TexturedNormalDeferred.fs" => LitTextureNormalFragForwardWeightedOit(),
             "ColoredDeferred.fs" => LitColorFragForwardWeightedOit(),
@@ -618,7 +618,7 @@ public static class ShaderHelper
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardPerPixelLinkedList(),
             "UnlitColoredForward.fs" => UnlitColorFragForwardPerPixelLinkedList(),
             "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, PerPixelLinkedListDefine),
-            // Deferred → lit forward PPLL variants
+            // Deferred ? lit forward PPLL variants
             "TexturedDeferred.fs" => LitTextureFragForwardPerPixelLinkedList(),
             "TexturedNormalDeferred.fs" => LitTextureNormalFragForwardPerPixelLinkedList(),
             "ColoredDeferred.fs" => LitColorFragForwardPerPixelLinkedList(),
@@ -653,7 +653,7 @@ public static class ShaderHelper
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardDepthPeeling(),
             "UnlitColoredForward.fs" => UnlitColorFragForwardDepthPeeling(),
             "UberShader.frag" => CreateDefinedShaderVariant(sourceShader, DepthPeelingDefine),
-            // Deferred → lit forward depth-peeling variants
+            // Deferred ? lit forward depth-peeling variants
             "TexturedDeferred.fs" => LitTextureFragForwardDepthPeeling(),
             "TexturedNormalDeferred.fs" => LitTextureNormalFragForwardDepthPeeling(),
             "ColoredDeferred.fs" => LitColorFragForwardDepthPeeling(),

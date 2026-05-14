@@ -44,11 +44,11 @@ namespace XREngine.Scene
                     && viewport.ActiveCamera is not null
                     && ViewportPrefersCascadedDirectionalShadows(viewport);
 
-            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                 if (Matches(viewport))
                     return true;
 
-            return Matches(Engine.VRState.LeftEyeViewport) || Matches(Engine.VRState.RightEyeViewport);
+            return Matches(RuntimeEngine.VRState.LeftEyeViewport) || Matches(RuntimeEngine.VRState.RightEyeViewport);
         }
 
         internal bool NeedsPrimaryDirectionalShadowMap()
@@ -67,11 +67,11 @@ namespace XREngine.Scene
                 return !ViewportPrefersCascadedDirectionalShadows(viewport);
             }
 
-            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                 if (PrefersPrimary(viewport))
                     return true;
 
-            if (PrefersPrimary(Engine.VRState.LeftEyeViewport) || PrefersPrimary(Engine.VRState.RightEyeViewport))
+            if (PrefersPrimary(RuntimeEngine.VRState.LeftEyeViewport) || PrefersPrimary(RuntimeEngine.VRState.RightEyeViewport))
                 return true;
 
             return !sawRelevantViewport;
@@ -110,19 +110,19 @@ namespace XREngine.Scene
                 fallback ??= camera;
             }
 
-            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
             {
                 ConsiderViewport(viewport);
                 if (preferredCascaded is not null)
                     return preferredCascaded;
             }
 
-            if (Engine.VRState.LeftEyeViewport is XRViewport leftEye)
+            if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport leftEye)
                 ConsiderViewport(leftEye);
             if (preferredCascaded is not null)
                 return preferredCascaded;
 
-            if (Engine.VRState.RightEyeViewport is XRViewport rightEye)
+            if (RuntimeEngine.VRState.RightEyeViewport is XRViewport rightEye)
                 ConsiderViewport(rightEye);
 
             return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;
@@ -161,18 +161,18 @@ namespace XREngine.Scene
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][Source] frame={0} useDirAtlas={1} wantsCascades={2} selectedCamera={3} dirLights={4}",
-                Engine.Rendering.State.RenderFrameId,
-                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
                 wantsCascades,
                 DescribeDirectionalShadowCamera(cascadeCamera),
                 DynamicDirectionalLights.Count);
 
             int ordinal = 0;
-            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                 LogDirectionalShadowViewportAudit("active", viewport, ordinal++);
 
-            LogDirectionalShadowViewportAudit("leftEye", Engine.VRState.LeftEyeViewport, ordinal++);
-            LogDirectionalShadowViewportAudit("rightEye", Engine.VRState.RightEyeViewport, ordinal);
+            LogDirectionalShadowViewportAudit("leftEye", RuntimeEngine.VRState.LeftEyeViewport, ordinal++);
+            LogDirectionalShadowViewportAudit("rightEye", RuntimeEngine.VRState.RightEyeViewport, ordinal);
         }
 
         private void LogDirectionalShadowViewportAudit(string source, XRViewport? viewport, int ordinal)
@@ -183,7 +183,7 @@ namespace XREngine.Scene
                     EOutputVerbosity.Normal,
                     false,
                     "[DirectionalShadowAudit][Viewport] frame={0} source={1} ordinal={2} viewport=<null>",
-                    Engine.Rendering.State.RenderFrameId,
+                    RuntimeEngine.Rendering.State.RenderFrameId,
                     source,
                     ordinal);
                 return;
@@ -193,7 +193,7 @@ namespace XREngine.Scene
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][Viewport] frame={0} source={1} ordinal={2} vpIndex={3} worldMatch={4} suppress3D={5} player={6} mode={7} activeCamera={8}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 source,
                 ordinal,
                 viewport.Index,
@@ -252,11 +252,11 @@ namespace XREngine.Scene
             switch (light)
             {
                 case PointLightComponent pointLight:
-                    Engine.Rendering.Debug.RenderSphere(pointLight.Transform.RenderTranslation, pointLight.Radius, false, color);
+                    RuntimeEngine.Rendering.Debug.RenderSphere(pointLight.Transform.RenderTranslation, pointLight.Radius, false, color);
                     return;
                 case SpotLightComponent spotLight:
                     Cone cone = spotLight.OuterCone;
-                    Engine.Rendering.Debug.RenderCone(cone.Center, cone.Up, cone.Radius, cone.Height, false, color);
+                    RuntimeEngine.Rendering.Debug.RenderCone(cone.Center, cone.Up, cone.Radius, cone.Height, false, color);
                     return;
             }
 
@@ -271,7 +271,7 @@ namespace XREngine.Scene
                 Vector3 max = aabb.Max;
                 Vector3 center = (min + max) * 0.5f;
                 Vector3 halfExtents = (max - min) * 0.5f;
-                Engine.Rendering.Debug.RenderAABB(halfExtents, center, false, color);
+                RuntimeEngine.Rendering.Debug.RenderAABB(halfExtents, center, false, color);
             }
         }
 
@@ -304,7 +304,7 @@ namespace XREngine.Scene
                 var cascade = cascades[i];
                 ColorF4 color = CascadeDebugColors[cascade.CascadeIndex % CascadeDebugColors.Length];
                 Matrix4x4 rotation = Matrix4x4.CreateFromQuaternion(cascade.Orientation);
-                Engine.Rendering.Debug.RenderBox(cascade.HalfExtents, cascade.Center, rotation, false, color);
+                RuntimeEngine.Rendering.Debug.RenderBox(cascade.HalfExtents, cascade.Center, rotation, false, color);
             }
         }
 

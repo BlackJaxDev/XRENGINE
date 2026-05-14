@@ -18,14 +18,14 @@ namespace XREngine.Components.Lights
 {
     public class SceneCaptureComponent : SceneCaptureComponentBase
     {
-        private uint _colorResolution = Engine.Rendering.Settings.LightProbeResolution;
+        private uint _colorResolution = RuntimeEngine.Rendering.Settings.LightProbeResolution;
         public uint Resolution
         {
             get => _colorResolution;
             set => SetField(ref _colorResolution, value);
         }
 
-        private bool _captureDepthCubeMap = Engine.Rendering.Settings.LightProbesCaptureDepth;
+        private bool _captureDepthCubeMap = RuntimeEngine.Rendering.Settings.LightProbesCaptureDepth;
         public bool CaptureDepthCubeMap
         {
             get => _captureDepthCubeMap;
@@ -148,12 +148,12 @@ namespace XREngine.Components.Lights
             if (!_captureResourcesDirty && AreCaptureResourcesInitialized())
                 return;
 
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 if (_captureResourceInitializationQueued)
                     return;
 
-                _captureResourceInitializationQueued = Engine.InvokeOnMainThread(() =>
+                _captureResourceInitializationQueued = RuntimeEngine.InvokeOnMainThread(() =>
                 {
                     _captureResourceInitializationQueued = false;
                     EnsureCaptureResourcesInitialized();
@@ -200,9 +200,9 @@ namespace XREngine.Components.Lights
         {
             if (AbstractRenderer.Current is OpenGLRenderer renderer)
             {
-                if (!Engine.IsRenderThread)
+                if (!RuntimeEngine.IsRenderThread)
                 {
-                    Engine.EnqueueMainThreadTask(
+                    RuntimeEngine.EnqueueMainThreadTask(
                         () => renderer.MemoryBarrier(
                             EMemoryBarrierMask.Framebuffer |
                             EMemoryBarrierMask.TextureFetch |
@@ -218,13 +218,13 @@ namespace XREngine.Components.Lights
                 return;
             }
 
-            if (Engine.IsRenderThread)
+            if (RuntimeEngine.IsRenderThread)
             {
                 AbstractRenderer.Current?.WaitForGpu();
                 return;
             }
 
-            Engine.EnqueueMainThreadTask(
+            RuntimeEngine.EnqueueMainThreadTask(
                 () => AbstractRenderer.Current?.WaitForGpu(),
                 "SceneCapture.SyncCaptureTextureWrites");
         }
@@ -453,7 +453,7 @@ namespace XREngine.Components.Lights
             if (World is null || RenderFBO is null)
                 return;
 
-            Engine.Rendering.State.IsSceneCapturePass = true;
+            RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
 
             try
             {
@@ -487,7 +487,7 @@ namespace XREngine.Components.Lights
             }
             finally
             {
-                Engine.Rendering.State.IsSceneCapturePass = false;
+                RuntimeEngine.Rendering.State.IsSceneCapturePass = false;
             }
         }
 
@@ -655,7 +655,7 @@ namespace XREngine.Components.Lights
             int width = (int)Math.Max(1u, _environmentTextureOctahedral.Width);
             int height = (int)Math.Max(1u, _environmentTextureOctahedral.Height);
             // Guarantee a clean viewport/scissor for the fullscreen blit
-            var pipelineState = Engine.Rendering.State.RenderingPipelineState;
+            var pipelineState = RuntimeEngine.Rendering.State.RenderingPipelineState;
             BoundingRectangle previousCrop = pipelineState?.CurrentCropRegion ?? BoundingRectangle.Empty;
             bool hadCrop = previousCrop.Width > 0 && previousCrop.Height > 0;
 
@@ -671,7 +671,7 @@ namespace XREngine.Components.Lights
                 // Make sure the cubemap is bound on GL before the blit; avoids relying solely on shader program state when other passes clear bindings.
                 _environmentTextureCubemap?.Bind();
 
-                Engine.Rendering.State.ClearByBoundFBO();
+                RuntimeEngine.Rendering.State.ClearByBoundFBO();
                 _octahedralFBO.Render(null, true);
             }
 
@@ -738,7 +738,7 @@ namespace XREngine.Components.Lights
             if (World is null || RenderFBO is null || viewport is null)
                 return;
 
-            Engine.Rendering.State.IsSceneCapturePass = true;
+            RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
             try
             {
                 PrepareCaptureViewportForFace(faceIndex);
@@ -749,7 +749,7 @@ namespace XREngine.Components.Lights
             }
             finally
             {
-                Engine.Rendering.State.IsSceneCapturePass = false;
+                RuntimeEngine.Rendering.State.IsSceneCapturePass = false;
             }
         }
 
@@ -764,7 +764,7 @@ namespace XREngine.Components.Lights
             if (_environmentTextureCubemap is null)
                 return;
 
-            Engine.Rendering.State.IsSceneCapturePass = true;
+            RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
             try
             {
                 _environmentTextureCubemap.Bind();
@@ -775,7 +775,7 @@ namespace XREngine.Components.Lights
             }
             finally
             {
-                Engine.Rendering.State.IsSceneCapturePass = false;
+                RuntimeEngine.Rendering.State.IsSceneCapturePass = false;
             }
         }
     }

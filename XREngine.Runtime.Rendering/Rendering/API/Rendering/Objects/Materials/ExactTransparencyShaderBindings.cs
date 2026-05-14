@@ -9,7 +9,7 @@ internal static class ExactTransparencyShaderBindings
         if (materialBase is not XRMaterial material)
             return;
 
-        XRRenderPipelineInstance? pipelineInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? pipelineInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (pipelineInstance?.Pipeline is not DefaultRenderPipeline pipeline)
             return;
 

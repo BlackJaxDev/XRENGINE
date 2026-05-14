@@ -94,7 +94,7 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
                 try
                 {
                     if (ClearColor || ClearDepth || ClearStencil)
-                        Engine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
+                        RuntimeEngine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
 
                     Body.Execute();
                 }

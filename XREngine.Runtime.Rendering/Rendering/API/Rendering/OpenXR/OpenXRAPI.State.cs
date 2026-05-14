@@ -41,6 +41,40 @@ public unsafe partial class OpenXRAPI
         Late
     }
 
+    public enum OpenXrCollectVisiblePosePolicy
+    {
+        Predicted,
+        RelocatePredicted,
+        PaddedFrustum
+    }
+
+    public enum OpenXrTrackingLossPolicy
+    {
+        FreezeLastValid,
+        Identity,
+        SkipFrame
+    }
+
+    public enum OpenXrActionSyncPolicy
+    {
+        PredictedOnly,
+        PredictedAndLate
+    }
+
+    /// <summary>
+    /// Controls where OpenXR's next-frame preparation (xrWaitFrame / xrBeginFrame / LocateViews(Predicted) /
+    /// UpdateActionPoseCaches(Predicted)) runs.
+    /// </summary>
+    public enum OpenXrRenderPacingMode
+    {
+        /// <summary>Run prep inline at the start of the render callback (legacy behavior).</summary>
+        InRenderCallback,
+        /// <summary>Run prep at the end of the render callback after desktop viewports finish (default).</summary>
+        PostRenderCallback,
+        /// <summary>Run prep on a dedicated OpenXR pacing thread; the render thread only signals after xrEndFrame.</summary>
+        DedicatedThread
+    }
+
     #region Core OpenXR state
 
     /// <summary>
@@ -65,6 +99,12 @@ public unsafe partial class OpenXRAPI
 
     private Space _appSpace;
     private View[] _views = new View[2];
+    private View[]? _lastValidViews;
+    private int _hasLastValidViews;
+    // Rate-limit flags for tracking-loss warnings: 0 = no streak logged yet, 1 = logged for this streak.
+    // Cleared by CacheLastValidViews() once tracking recovers.
+    private int _trackingLossStreakLogged;
+    private int _freezeFallbackStreakLogged;
     private FrameState _frameState;
     private GL? _gl;
     private System.Action? _deferredOpenGlInit;
@@ -110,12 +150,6 @@ public unsafe partial class OpenXRAPI
     private readonly System.Collections.Generic.Dictionary<string, Matrix4x4> _openXrPredTrackerLocalPose = new(StringComparer.Ordinal);
     private readonly System.Collections.Generic.Dictionary<string, Matrix4x4> _openXrLateTrackerLocalPose = new(StringComparer.Ordinal);
     private readonly System.Collections.Generic.HashSet<string> _openXrKnownTrackerPaths = new(StringComparer.Ordinal);
-
-    /// <summary>
-    /// Controls which OpenXR pose cache VR transforms should use when invoked from RecalcMatrixOnDraw.
-    /// OpenXR sets this immediately before invoking Engine.VRState.InvokeRecalcMatrixOnDraw().
-    /// </summary>
-    public OpenXrPoseTiming PoseTimingForRecalc { get; internal set; } = OpenXrPoseTiming.Late;
 
     /// <summary>
     /// Returns the latest predicted HMD pose in the app reference space (center-eye), as a local matrix.
@@ -250,6 +284,14 @@ public unsafe partial class OpenXRAPI
 
     private int _openXrPendingFrameNumber;
     private int _openXrLifecycleFrameIndex;
+    private int _openXrRenderThreadId;
+    private int _openXrActionsSyncedFrameNumber;
+
+    // Dedicated OpenXR pacing thread (only used when OpenXrRenderPacingHandling == DedicatedThread).
+    private Thread? _openXrPacingThread;
+    private int _openXrPacingThreadId;
+    private readonly ManualResetEventSlim _openXrPacingWakeEvent = new(initialState: false);
+    private int _openXrPacingStopRequested;
 
     private long _openXrPrepareTimestamp;
     private long _openXrCollectTimestamp;
@@ -258,10 +300,17 @@ public unsafe partial class OpenXRAPI
     private int _openXrDebugFrameIndex;
     private const int OpenXrDebugLogEveryNFrames = 60;
 
-    private static bool OpenXrDebugGl => Engine.Rendering.Settings.OpenXrDebugGl;
-    private static bool OpenXrDebugClearOnly => Engine.Rendering.Settings.OpenXrDebugClearOnly;
-    private static bool OpenXrDebugLifecycle => Engine.Rendering.Settings.OpenXrDebugLifecycle;
-    private static bool OpenXrDebugRenderRightThenLeft => Engine.Rendering.Settings.OpenXrDebugRenderRightThenLeft;
+    private static bool OpenXrDebugGl => RuntimeEngine.Rendering.Settings.OpenXrDebugGl;
+    private static bool OpenXrDebugClearOnly => RuntimeEngine.Rendering.Settings.OpenXrDebugClearOnly;
+    private static bool OpenXrDebugLifecycle => RuntimeEngine.Rendering.Settings.OpenXrDebugLifecycle;
+    private static bool OpenXrDebugRenderRightThenLeft => RuntimeEngine.Rendering.Settings.OpenXrDebugRenderRightThenLeft;
+    private static bool OpenXrPrepareFrameAfterDesktopRender => RuntimeEngine.Rendering.Settings.OpenXrPrepareFrameAfterDesktopRender;
+    private static float OpenXrDeadlineSafetyMarginMs => RuntimeEngine.Rendering.Settings.OpenXrDeadlineSafetyMarginMs;
+    private static OpenXrCollectVisiblePosePolicy OpenXrCollectPosePolicy => RuntimeEngine.Rendering.Settings.OpenXrCollectVisiblePosePolicy;
+    private static float OpenXrCollectFrustumPaddingDegrees => RuntimeEngine.Rendering.Settings.OpenXrCollectVisibleFrustumPaddingDegrees;
+    private static OpenXrTrackingLossPolicy OpenXrTrackingLossHandling => RuntimeEngine.Rendering.Settings.OpenXrTrackingLossPolicy;
+    private static OpenXrActionSyncPolicy OpenXrActionSyncHandling => RuntimeEngine.Rendering.Settings.OpenXrActionSyncPolicy;
+    private static OpenXrRenderPacingMode OpenXrRenderPacingHandling => RuntimeEngine.Rendering.Settings.OpenXrRenderPacingMode;
 
     private static bool ShouldLogLifecycle(int frameNumber)
         => frameNumber == 1 || (frameNumber % OpenXrDebugLogEveryNFrames) == 0;
@@ -399,7 +448,7 @@ public unsafe partial class OpenXRAPI
     private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline)
     {
         // Best-effort: if no source pipeline exists, fall back to a sane default.
-        sourcePipeline ??= Engine.Rendering.NewRenderPipeline(stereo: false);
+        sourcePipeline ??= RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
 
         // If the source pipeline type changed, recreate our dedicated instance.
         if (_openXrRenderPipeline is null || _openXrRenderPipeline.GetType() != sourcePipeline.GetType())
@@ -413,7 +462,7 @@ public unsafe partial class OpenXRAPI
                         throw new InvalidOperationException($"No registered OpenXR render pipeline factory for type {sourcePipeline.GetType().FullName}.");
 
                     created = (RenderPipeline?)Activator.CreateInstance(sourcePipeline.GetType())
-                              ?? Engine.Rendering.NewRenderPipeline(stereo: false);
+                              ?? RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
                     created.IsShadowPass = sourcePipeline.IsShadowPass;
                 }
                 else
@@ -423,7 +472,7 @@ public unsafe partial class OpenXRAPI
             }
             catch when (!XRRuntimeEnvironment.IsAotRuntimeBuild)
             {
-                created = Engine.Rendering.NewRenderPipeline(stereo: false);
+                created = RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
             }
 
             _openXrRenderPipeline = created;

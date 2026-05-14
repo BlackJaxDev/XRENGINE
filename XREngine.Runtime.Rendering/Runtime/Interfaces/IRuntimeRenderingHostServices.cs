@@ -8,6 +8,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Scene;
 
 namespace XREngine.Rendering;
@@ -760,6 +761,16 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime);
     void RecordRenderVrPerViewVisibleCounts(uint leftVisible, uint rightVisible);
     void RecordRenderVrRenderSubmitTime(TimeSpan submitTime);
+    void RecordRenderVrXrWaitFrameBlockTime(TimeSpan waitTime);
+    void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime);
+    void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees);
+    void RecordRenderVrXrPredictedDisplayLeadTime(double leadTimeMs);
+    void RecordRenderVrXrMissedDeadlineFrame();
+    void RecordRenderVrXrTrackingLossFrame();
+    void RecordRenderVrXrRelocatePredictedTime(TimeSpan elapsed);
+    void RecordRenderVrXrCollectFrustumExpansionDegrees(double degrees);
+    void RecordRenderVrXrPacingThreadIdleTime(TimeSpan elapsed);
+    void RecordRenderVrXrPacingHandoffStall();
     void RecordRenderVulkanAdhocBarrier(int emittedCount, int redundantCount);
     void RecordRenderVulkanAllocation(int allocationClass, long bytes);
     void RecordRenderVulkanBarrierPlannerPass(int imageBarrierCount, int bufferBarrierCount, int queueOwnershipTransfers, int stageFlushes);
@@ -913,6 +924,19 @@ public interface IRuntimeRenderingHostServices
     /// Gets the near-field distance threshold, in meters, used for full-resolution foveated rendering.
     /// </summary>
     float VrFoveationFullResNearDistanceMeters { get; }
+
+    bool OpenXrCullWithFrustum { get; }
+    bool OpenXrDebugGl { get; }
+    bool OpenXrDebugClearOnly { get; }
+    bool OpenXrDebugLifecycle { get; }
+    bool OpenXrDebugRenderRightThenLeft { get; }
+    bool OpenXrPrepareFrameAfterDesktopRender { get; }
+    float OpenXrDeadlineSafetyMarginMs { get; }
+    OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy { get; }
+    float OpenXrCollectVisibleFrustumPaddingDegrees { get; }
+    OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy { get; }
+    OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy { get; }
+    OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode { get; }
 
     /// <summary>
     /// Attempts to render the host desktop mirror composition into the current target size.

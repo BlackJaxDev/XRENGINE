@@ -30,7 +30,7 @@ public partial class OpenGLRenderer
     {
         ArgumentNullException.ThrowIfNull(callback);
 
-        if (!Engine.IsRenderThread)
+        if (!RuntimeEngine.IsRenderThread)
         {
             RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
                 () => TryBuildTexture2DMipChainRgba8Async(texture, callback),
@@ -179,7 +179,7 @@ public partial class OpenGLRenderer
                 return false;
             }
 
-            Engine.Rendering.Stats.RecordGpuReadbackBytes(totalBytes);
+            RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(totalBytes);
 
             PendingTextureStreamingCacheMipChainReadback pending = new()
             {

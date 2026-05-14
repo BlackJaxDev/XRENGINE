@@ -172,7 +172,7 @@ namespace XREngine.Rendering.Compute
 
                 _latest = _frameAccumulator.ToMetrics();
 
-                Engine.Rendering.BvhStats.Publish(_latest);
+                RuntimeEngine.Rendering.BvhStats.Publish(_latest);
                 WriteStats(statsBuffer, _latest);
 
                 return _latest;
@@ -181,7 +181,7 @@ namespace XREngine.Rendering.Compute
 
         private TimingHandle? Begin(Stage stage, uint workCount)
         {
-            if (!Engine.EffectiveSettings.EnableGpuBvhTimingQueries)
+            if (!RuntimeEngine.EffectiveSettings.EnableGpuBvhTimingQueries)
             {
                 lock (_lock)
                     _frameAccumulator.Add(stage, 0, workCount);
@@ -204,7 +204,7 @@ namespace XREngine.Rendering.Compute
 
         private void End(TimingHandle handle)
         {
-            if (!Engine.EffectiveSettings.EnableGpuBvhTimingQueries)
+            if (!RuntimeEngine.EffectiveSettings.EnableGpuBvhTimingQueries)
                 return;
 
             GLRenderQuery end = AcquireQuery(handle.Renderer);

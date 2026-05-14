@@ -129,7 +129,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     missingTextures,
                     viewport?.Index ?? -1,
                     world?.TargetWorldName ?? "<null>",
-                    Engine.PlayMode.State,
+                    RuntimeEngine.PlayMode.State,
                     viewport?.CameraComponent?.Name ?? "<null>",
                     missingRegion.Width,
                     missingRegion.Height,
@@ -227,7 +227,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void RenderLightsMsaaDeferred(Lights3DCollection lights)
         {
             // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
-            Engine.Rendering.State.DisableSampleShading();
+            RuntimeEngine.Rendering.State.DisableSampleShading();
             for (int i = 0; i < lights.DynamicPointLights.Count; i++)
                 RenderLight(MsaaSimplePointLightRenderer!, lights.DynamicPointLights[i]);
             for (int i = 0; i < lights.DynamicSpotLights.Count; i++)
@@ -235,7 +235,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             for (int i = 0; i < lights.DynamicDirectionalLights.Count; i++)
                 RenderLight(MsaaSimpleDirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
 
-            Engine.Rendering.State.EnableSampleShading(1.0f);
+            RuntimeEngine.Rendering.State.EnableSampleShading(1.0f);
             try
             {
                 for (int i = 0; i < lights.DynamicPointLights.Count; i++)
@@ -247,7 +247,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
             finally
             {
-                Engine.Rendering.State.DisableSampleShading();
+                RuntimeEngine.Rendering.State.DisableSampleShading();
             }
         }
 
@@ -685,7 +685,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][DeferredBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMap={6} cascadeTex={7} atlasRequests={8} atlasRenderedThisFrame={9} atlasPages={10} c0={11} c1={12} c2={13} c3={14}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 requested,
                 shaderAtlasEnabled,

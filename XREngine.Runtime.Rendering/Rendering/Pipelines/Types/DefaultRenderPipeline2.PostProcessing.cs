@@ -7,7 +7,7 @@ using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 using XREngine.Rendering.Pipelines.Commands;
-using static XREngine.Engine.Rendering.State;
+using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
@@ -1734,42 +1734,42 @@ public partial class DefaultRenderPipeline2
 
     private static MotionBlurSettings? GetMotionBlurSettings()
     {
-        var renderState = Engine.Rendering.State.RenderingPipelineState;
+        var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
         var stage = renderState?.SceneCamera?.GetPostProcessStageState<MotionBlurSettings>();
         return stage?.TryGetBacking(out MotionBlurSettings? settings) == true ? settings : null;
     }
 
     private static bool DisableHistoryBasedVrEffects()
-        => Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo;
+        => RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.Settings.RenderVRSinglePassStereo;
 
     private static bool ShouldUseMotionBlur()
         => !IsLightProbePass
-        && !Engine.Rendering.State.IsSceneCapturePass
+        && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && !DisableHistoryBasedVrEffects()
         && GetMotionBlurSettings() is { Enabled: true };
 
     private static DepthOfFieldSettings? GetDepthOfFieldSettings()
     {
-        var renderState = Engine.Rendering.State.RenderingPipelineState;
+        var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
         var stage = renderState?.SceneCamera?.GetPostProcessStageState<DepthOfFieldSettings>();
         return stage?.TryGetBacking(out DepthOfFieldSettings? settings) == true ? settings : null;
     }
 
     private static BloomSettings? GetBloomSettings()
     {
-        var renderState = Engine.Rendering.State.RenderingPipelineState;
+        var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
         var stage = renderState?.SceneCamera?.GetPostProcessStageState<BloomSettings>();
         return stage?.TryGetBacking(out BloomSettings? settings) == true ? settings : null;
     }
 
     private static bool ShouldUseDepthOfField()
         => !IsLightProbePass
-        && !Engine.Rendering.State.IsSceneCapturePass
+        && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetDepthOfFieldSettings() is { Enabled: true };
 
     private static bool ShouldUseBloom()
         => !IsLightProbePass
-        && !Engine.Rendering.State.IsSceneCapturePass
+        && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetBloomSettings() is not { Enabled: false };
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class
@@ -1787,7 +1787,7 @@ public partial class DefaultRenderPipeline2
         program.Uniform("BloomIntensity", 0.530f);
         program.Uniform("BloomThreshold", 0.138f);
         program.Uniform("SoftKnee", 0.5f);
-        program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
+        program.Uniform("Luminance", RuntimeEngine.Rendering.Settings.DefaultLuminance);
     }
 
     private static void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program)
@@ -1850,7 +1850,7 @@ public partial class DefaultRenderPipeline2
     {
         materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
 
-        var prefs = Engine.EditorPreferences;
+        var prefs = RuntimeEngine.EditorPreferences;
         var hoverOutlineColor = prefs is null
             ? DefaultHoverOutlineColor
             : new Vector3((float)prefs.HoverOutlineColor.R, (float)prefs.HoverOutlineColor.G, (float)prefs.HoverOutlineColor.B);
@@ -2102,7 +2102,7 @@ public partial class DefaultRenderPipeline2
         (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
         materialProgram.Uniform("GlobalAmbient", new Vector3(0.1f, 0.1f, 0.1f));
 
-        var lights = Engine.Rendering.State.RenderingWorld?.Lights;
+        var lights = RuntimeEngine.Rendering.State.RenderingWorld?.Lights;
         if (lights is not null)
         {
             lights.SetForwardLightingUniforms(materialProgram);

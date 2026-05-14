@@ -4,7 +4,10 @@ param(
     [string]$Root = (Resolve-Path ".").Path,
 
     [Parameter(Mandatory = $false)]
-    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "docs\work\audit\new-allocations.md")
+    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "docs\work\audit\new-allocations.md"),
+
+    [Parameter(Mandatory = $false)]
+    [switch]$FailOnOpenXrHotPathAllocations
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,8 +79,15 @@ $patterns = @(
     '\bnew\s*\[\]'
 )
 
+$openXrHotPathPatterns = @(
+    'Debug\.(Out|Log|LogWarning|LogException)\s*\(\s*\$"',
+    'Console\.WriteLine\s*\(\s*\$"',
+    'string\.Format\s*\('
+)
+
 $regexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Compiled
 $regexes = foreach ($pat in $patterns) { New-Object System.Text.RegularExpressions.Regex($pat, $regexOptions) }
+$openXrHotPathRegexes = foreach ($pat in $openXrHotPathPatterns) { New-Object System.Text.RegularExpressions.Regex($pat, $regexOptions) }
 
 New-Item -ItemType Directory -Force -Path (Split-Path $OutFile) | Out-Null
 
@@ -95,6 +105,10 @@ try {
 
     $sw.WriteLine('Search patterns:')
     foreach ($pat in $patterns) { $sw.WriteLine('- ' + $pat) }
+    $sw.WriteLine('')
+
+    $sw.WriteLine('OpenXR hot-path formatted logging patterns:')
+    foreach ($pat in $openXrHotPathPatterns) { $sw.WriteLine('- ' + $pat) }
     $sw.WriteLine('')
 
     $sw.WriteLine('Excluded paths (regex):')
@@ -145,10 +159,59 @@ try {
         }
     }
 
+    $openXrHotPathTotal = 0
+    $openXrFiles = foreach ($d in $scanDirs) {
+        $openXrDir = Join-Path $d "Rendering\API\Rendering\OpenXR"
+        if (Test-Path $openXrDir) {
+            Get-ChildItem -Path $openXrDir -File -Filter "OpenXRAPI*.cs" |
+                Where-Object { $_.FullName -notmatch $excludeRegex }
+        }
+    }
+
+    foreach ($f in ($openXrFiles | Sort-Object FullName)) {
+        $anyWritten = $false
+        $lineNumber = 0
+
+        foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+            $lineNumber++
+            $trim = $line.Trim()
+
+            if ($trim.Length -eq 0) { continue }
+            if ($trim.StartsWith('//') -or $trim.StartsWith('/*') -or $trim.StartsWith('*') -or $trim.StartsWith('*/')) { continue }
+
+            foreach ($re in $openXrHotPathRegexes) {
+                $matches = $re.Matches($line)
+                if ($matches.Count -eq 0) { continue }
+
+                if (-not $anyWritten) {
+                    if ($openXrHotPathTotal -eq 0) {
+                        $sw.WriteLine('')
+                        $sw.WriteLine('')
+                        $sw.WriteLine('# OpenXR hot-path formatted logging candidates')
+                        $sw.WriteLine('')
+                        $sw.WriteLine('These are potential per-frame string allocations in `OpenXRAPI.*`. Keep them debug-gated or move them to a non-allocating diagnostic path before enabling them in steady-state rendering.')
+                    }
+
+                    $sw.WriteLine('')
+                    $sw.WriteLine('## ' + (Get-RelativePath -RootPath $Root -FullPath $f.FullName))
+                    $anyWritten = $true
+                }
+
+                foreach ($m in $matches) {
+                    $col = $m.Index + 1
+                    $token = $m.Value
+                    $sw.WriteLine("- L${lineNumber} C${col}: ${token} :: $trim")
+                    $openXrHotPathTotal++
+                }
+            }
+        }
+    }
+
     $sw.WriteLine('')
     $sw.WriteLine('')
     $sw.WriteLine('---')
     $sw.WriteLine("Total matches: $total")
+    $sw.WriteLine("OpenXR hot-path formatted logging candidates: $openXrHotPathTotal")
 }
 finally {
     $sw.Flush()
@@ -156,3 +219,7 @@ finally {
 }
 
 Write-Host "Wrote report to: $OutFile"
+
+if ($FailOnOpenXrHotPathAllocations -and $openXrHotPathTotal -gt 0) {
+    throw "Found $openXrHotPathTotal OpenXR hot-path formatted logging candidate(s). See $OutFile."
+}

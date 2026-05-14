@@ -39,7 +39,7 @@ public unsafe partial class OpenXRAPI
 
         // Check if multiple graphics queues are supported
         bool supportsMultiQueue = renderer.SupportsMultipleGraphicsQueues();
-        bool projectAllowsParallel = (Engine.GameSettings as IVRGameStartupSettings)?.EnableOpenXrVulkanParallelRendering ?? true;
+        bool projectAllowsParallel = (RuntimeEngine.GameSettings as IVRGameStartupSettings)?.EnableOpenXrVulkanParallelRendering ?? true;
 
         if (supportsMultiQueue && projectAllowsParallel)
         {

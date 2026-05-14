@@ -270,9 +270,9 @@ namespace XREngine.Rendering.OpenGL
 
             public override void Destroy()
             {
-                if (!Engine.IsRenderThread)
+                if (!RuntimeEngine.IsRenderThread)
                 {
-                    Engine.EnqueueMainThreadTask(Destroy);
+                    RuntimeEngine.EnqueueMainThreadTask(Destroy);
                     return;
                 }
 

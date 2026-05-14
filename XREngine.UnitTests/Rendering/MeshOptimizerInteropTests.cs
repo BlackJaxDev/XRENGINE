@@ -71,7 +71,23 @@ public sealed class MeshOptimizerInteropTests
         string swapBody = ExtractSwapCommandBuffersBody(gpuSceneSource);
         swapBody.ShouldNotContain("RebuildMeshletsFromUpdatingCommands");
         gpuSceneSource.ShouldContain("public bool RenderMeshlets(XRCamera camera, int renderPass)");
-        hybridSource.ShouldContain("scene.RenderMeshlets(camera, currentRenderPass)");
+        hybridSource.ShouldContain("scene.RenderMeshlets(");
+        hybridSource.ShouldContain("RenderCommandCollection.TestCpuSoftwareOcclusionForGpuSource");
+    }
+
+    [Test]
+    public void MeshletTaskShaderConsumesCpuCommandVisibility()
+    {
+        string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene.cs").Replace("\r\n", "\n");
+        string meshletCollectionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Meshlets/MeshletCollection.cs").Replace("\r\n", "\n");
+        string taskShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletCulling.task").Replace("\r\n", "\n");
+
+        gpuSceneSource.ShouldContain("Func<GPUScene, uint, bool>? commandVisibility");
+        meshletCollectionSource.ShouldContain("CommandVisibilityBuffer");
+        meshletCollectionSource.ShouldContain("UseCpuCommandVisibility");
+        taskShader.ShouldContain("uniform uint UseCpuCommandVisibility");
+        taskShader.ShouldContain("buffer CommandVisibilityBuffer");
+        taskShader.ShouldContain("commandVisibility[m.Meta.x] != 0u");
     }
 
     private static string ExtractSwapCommandBuffersBody(string source)

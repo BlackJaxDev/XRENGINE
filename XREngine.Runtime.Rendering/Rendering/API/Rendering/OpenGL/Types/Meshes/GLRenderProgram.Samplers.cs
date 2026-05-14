@@ -52,7 +52,7 @@ namespace XREngine.Rendering.OpenGL
                 // If the uniform is optimized out (e.g. a layout(binding=) sampler),
                 // fixed-unit binding below can still make the sampler usable when
                 // the requested unit is free.
-                if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
+                if (location < 0 && RuntimeEngine.Rendering.Settings.LogMissingShaderSamplers)
                 {
                     string key = $"{Data.Name ?? BindingId.ToString()}:{name}:{textureUnit}";
                     if (_loggedUniformMismatches.TryAdd(key, 1))
@@ -75,7 +75,7 @@ namespace XREngine.Rendering.OpenGL
                 RememberSamplerBindingName(name);
                 int location = GetUniformLocation(name);
 
-                if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
+                if (location < 0 && RuntimeEngine.Rendering.Settings.LogMissingShaderSamplers)
                 {
                     string key = $"{Data.Name ?? BindingId.ToString()}:{name}:{textureUnit}";
                     if (_loggedUniformMismatches.TryAdd(key, 1))

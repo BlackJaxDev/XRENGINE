@@ -38,10 +38,10 @@ public partial class DefaultRenderPipeline
     internal uint PpllMaxNodeCount => ComputePpllNodeCapacity();
 
     private bool ExactTransparencyEnabled
-        => !Stereo && Engine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
 
     private int ActiveDepthPeelLayerCount
-        => Math.Clamp(Engine.EditorPreferences.Debug.DepthPeelingMaxLayers, 1, MaxDepthPeelingLayersSupported);
+        => Math.Clamp(RuntimeEngine.EditorPreferences.Debug.DepthPeelingMaxLayers, 1, MaxDepthPeelingLayersSupported);
 
     private static string DepthPeelColorTextureName(int layerIndex)
         => $"DepthPeelColorTex_{layerIndex}";
@@ -446,7 +446,7 @@ public partial class DefaultRenderPipeline
 
     private void DepthPeelingDebugMaterial_SettingUniforms(XRMaterialBase _, XRRenderProgram program)
     {
-        int layerIndex = Math.Clamp(Engine.EditorPreferences.Debug.DepthPeelingPreviewLayer, 0, MaxDepthPeelingLayersSupported - 1);
+        int layerIndex = Math.Clamp(RuntimeEngine.EditorPreferences.Debug.DepthPeelingPreviewLayer, 0, MaxDepthPeelingLayersSupported - 1);
         for (int i = 0; i < MaxDepthPeelingLayersSupported; i++)
         {
             XRTexture? colorLayer = GetTexture<XRTexture>(DepthPeelColorTextureName(i));

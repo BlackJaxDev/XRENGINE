@@ -189,6 +189,21 @@ namespace XREngine.Rendering.Commands
             return _renderPrevWorldMatrix;
         }
 
+        internal bool TryGetCpuOcclusionSnapshot(
+            out XRMeshRenderer? mesh,
+            out Matrix4x4 modelMatrix,
+            out XRMaterial? materialOverride,
+            out RenderingParameters? renderOptionsOverride,
+            out uint instances)
+        {
+            mesh = _renderMesh;
+            modelMatrix = GetModelMatrix();
+            materialOverride = _renderMaterialOverride;
+            renderOptionsOverride = _renderRenderOptionsOverride;
+            instances = _renderInstances;
+            return mesh is not null;
+        }
+
         /// <summary>
         /// World-space AABB for this mesh command, used by the CPU occlusion coordinator's
         /// proxy-probe path (depth-only AABB redraw for retest, no visible flicker).

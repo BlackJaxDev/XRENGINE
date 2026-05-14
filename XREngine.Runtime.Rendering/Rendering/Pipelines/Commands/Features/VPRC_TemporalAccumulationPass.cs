@@ -5,7 +5,7 @@ using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
-using static XREngine.Engine.Rendering.State;
+using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -235,10 +235,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private static EAntiAliasingMode ResolveAntiAliasingMode()
     {
-        if (IsLightProbePass || Engine.Rendering.State.IsSceneCapturePass)
+        if (IsLightProbePass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
             return EAntiAliasingMode.None;
 
-        if (Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo)
+        if (RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.Settings.RenderVRSinglePassStereo)
             return EAntiAliasingMode.None;
 
         return XREngine.Rendering.RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame();

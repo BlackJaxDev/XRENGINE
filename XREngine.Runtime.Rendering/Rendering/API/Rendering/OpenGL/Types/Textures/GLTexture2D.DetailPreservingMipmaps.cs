@@ -15,7 +15,7 @@ public partial class GLTexture2D
 
     private bool TryGenerateMipmapsWithDetailPreservingCompute()
     {
-        if (!Engine.Rendering.Settings.UseDetailPreservingComputeMipmaps || 
+        if (!RuntimeEngine.Rendering.Settings.UseDetailPreservingComputeMipmaps || 
             IsMultisampleTarget || 
             Data.SparseTextureStreamingEnabled || 
             !StorageSet || 

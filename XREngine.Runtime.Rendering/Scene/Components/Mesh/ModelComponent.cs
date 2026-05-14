@@ -117,7 +117,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void OnModelChanged()
         {
-            using var t = Engine.Profiler.Start("ModelComponent.ModelChanged");
+            using var t = RuntimeEngine.Profiler.Start("ModelComponent.ModelChanged");
             long start = Stopwatch.GetTimestamp();
 
             Model? model = Model;
@@ -270,7 +270,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void CompleteModelMeshAddRange()
         {
-            using var t = Engine.Profiler.Start("ModelComponent.AddMeshRange");
+            using var t = RuntimeEngine.Profiler.Start("ModelComponent.AddMeshRange");
             long start = Stopwatch.GetTimestamp();
             int batchedCount = _batchedRenderableAdds.Count;
 
@@ -336,7 +336,7 @@ namespace XREngine.Components.Scene.Mesh
         private static void ScheduleMeshBVHWarmup(RenderableMesh mesh)
         {
             // BVH generation can be expensive; keep it away from render/swap hot paths.
-            Engine.Jobs.Schedule(
+            RuntimeEngine.Jobs.Schedule(
                 () => WarmupMeshBVHJob(mesh),
                 error: ex => Debug.LogException(ex, "ModelComponent BVH warmup failed."),
                 priority: JobPriority.Low);

@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         protected override void Execute()
         {
-            Engine.Rendering.State.EnableBlend(false);
+            RuntimeEngine.Rendering.State.EnableBlend(false);
         }
     }
 }

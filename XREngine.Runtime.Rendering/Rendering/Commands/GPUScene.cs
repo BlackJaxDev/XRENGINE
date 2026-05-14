@@ -83,13 +83,81 @@ namespace XREngine.Rendering.Commands
     /// </para>
     /// <para><b>Memory Layout:</b></para>
     /// <list type="bullet">
-    /// <item><description>Command Buffer: Array of <see cref="GPUIndirectRenderCommand"/> structures (48 floats each)</description></item>
+    /// <item><description>Command Buffer: compact <see cref="GPUIndirectRenderCommand"/> compatibility records (20 lanes each)</description></item>
     /// <item><description>Mesh Atlas: Unified vertex attributes (positions, normals, tangents, UVs) and index data</description></item>
     /// <item><description>MeshData Buffer: Per-mesh metadata mapping mesh IDs to atlas offsets</description></item>
     /// </list>
     /// </remarks>
     public class GPUScene : XRBase, IGpuBvhProvider
     {
+        private sealed class StableGpuIdAllocator
+        {
+            private readonly Stack<uint> _free = new();
+            private uint _next = 1u;
+
+            public uint Allocate()
+                => _free.Count > 0 ? _free.Pop() : _next++;
+
+            public void Release(uint id)
+            {
+                if (id == 0u || id >= _next)
+                    return;
+
+                _free.Push(id);
+            }
+
+            public void Clear()
+            {
+                _free.Clear();
+                _next = 1u;
+            }
+        }
+
+        private struct DirtyRange
+        {
+            public bool HasValue;
+            public uint Min;
+            public uint MaxExclusive;
+
+            public void Mark(uint index)
+            {
+                if (!HasValue)
+                {
+                    HasValue = true;
+                    Min = index;
+                    MaxExclusive = index + 1u;
+                    return;
+                }
+
+                Min = Math.Min(Min, index);
+                MaxExclusive = Math.Max(MaxExclusive, index + 1u);
+            }
+
+            public void Mark(uint start, uint count)
+            {
+                if (count == 0u)
+                    return;
+
+                if (!HasValue)
+                {
+                    HasValue = true;
+                    Min = start;
+                    MaxExclusive = start + count;
+                    return;
+                }
+
+                Min = Math.Min(Min, start);
+                MaxExclusive = Math.Max(MaxExclusive, start + count);
+            }
+
+            public void Clear()
+            {
+                HasValue = false;
+                Min = 0u;
+                MaxExclusive = 0u;
+            }
+        }
+
         #region Bounds Helpers
 
         private static float ComputeMaxAxisScale(in Matrix4x4 m)
@@ -151,6 +219,76 @@ namespace XREngine.Rendering.Commands
                 worldRadius = 0f;
 
             cmd.SetBoundingSphere(worldCenter, worldRadius);
+        }
+
+        private static BoundsGpu ComputeWorldBoundsGpu(in AABB localBounds, in Matrix4x4 modelMatrix, uint version)
+        {
+            Vector3 localCenter = localBounds.Center;
+            float localRadius = localBounds.HalfExtents.Length();
+
+            Vector3 worldCenter;
+            float maxScale;
+            if (AffineMatrix4x3.TryFromMatrix4x4(modelMatrix, out AffineMatrix4x3 affineModelMatrix))
+            {
+                worldCenter = affineModelMatrix.TransformPosition(localCenter);
+                maxScale = ComputeMaxAxisScale(affineModelMatrix);
+            }
+            else
+            {
+                worldCenter = Vector3.Transform(localCenter, modelMatrix);
+                maxScale = ComputeMaxAxisScale(modelMatrix);
+            }
+
+            float worldRadius = localRadius * maxScale;
+            if (float.IsNaN(worldRadius) || float.IsInfinity(worldRadius) || worldRadius < 0f)
+                worldRadius = 0f;
+
+            localBounds.GetCorners(
+                out Vector3 c0,
+                out Vector3 c1,
+                out Vector3 c2,
+                out Vector3 c3,
+                out Vector3 c4,
+                out Vector3 c5,
+                out Vector3 c6,
+                out Vector3 c7);
+
+            Vector3 w0, w1, w2, w3, w4, w5, w6, w7;
+            if (AffineMatrix4x3.TryFromMatrix4x4(modelMatrix, out AffineMatrix4x3 affine))
+            {
+                w0 = affine.TransformPosition(c0);
+                w1 = affine.TransformPosition(c1);
+                w2 = affine.TransformPosition(c2);
+                w3 = affine.TransformPosition(c3);
+                w4 = affine.TransformPosition(c4);
+                w5 = affine.TransformPosition(c5);
+                w6 = affine.TransformPosition(c6);
+                w7 = affine.TransformPosition(c7);
+            }
+            else
+            {
+                w0 = Vector3.Transform(c0, modelMatrix);
+                w1 = Vector3.Transform(c1, modelMatrix);
+                w2 = Vector3.Transform(c2, modelMatrix);
+                w3 = Vector3.Transform(c3, modelMatrix);
+                w4 = Vector3.Transform(c4, modelMatrix);
+                w5 = Vector3.Transform(c5, modelMatrix);
+                w6 = Vector3.Transform(c6, modelMatrix);
+                w7 = Vector3.Transform(c7, modelMatrix);
+            }
+
+            Vector3 min = Vector3.Min(Vector3.Min(Vector3.Min(w0, w1), Vector3.Min(w2, w3)),
+                                      Vector3.Min(Vector3.Min(w4, w5), Vector3.Min(w6, w7)));
+            Vector3 max = Vector3.Max(Vector3.Max(Vector3.Max(w0, w1), Vector3.Max(w2, w3)),
+                                      Vector3.Max(Vector3.Max(w4, w5), Vector3.Max(w6, w7)));
+
+            return new BoundsGpu
+            {
+                BoundingSphere = new Vector4(worldCenter, worldRadius),
+                AabbMin = new Vector4(min, 0f),
+                AabbMax = new Vector4(max, 0f),
+                BoundsVersion = version,
+            };
         }
 
         // Tight world-space AABB for a single command, written into _commandAabbBuffer.
@@ -663,6 +801,9 @@ namespace XREngine.Rendering.Commands
         /// <summary>Reverse mapping from material ID to XRMaterial instance.</summary>
         private readonly ConcurrentDictionary<uint, XRMaterial> _idToMaterial = new();
 
+        private readonly Dictionary<uint, XRMaterial> _stateClassRepresentativeMaterials = [];
+        private readonly Dictionary<uint, MaterialStateGpu> _materialStateByClass = [];
+
         /// <summary>Reverse mapping from mesh ID to XRMesh instance.</summary>
         private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
 
@@ -675,6 +816,10 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Next material ID to assign (incremented atomically).</summary>
         private uint _nextMaterialID = 1;
+
+        private readonly StableGpuIdAllocator _transformIdAllocator = new();
+        private readonly StableGpuIdAllocator _skinIdAllocator = new();
+        private readonly StableGpuIdAllocator _stateClassIdAllocator = new();
 
         #endregion
 
@@ -701,7 +846,7 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Checks if GPU scene logging is enabled in settings.</summary>
         private static bool IsGpuSceneLoggingEnabled()
-            => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+            => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
         /// <summary>Logs a message if GPU scene logging is enabled.</summary>
         private static void SceneLog(string message, params object[] args)
@@ -730,7 +875,7 @@ namespace XREngine.Rendering.Commands
         // -------------------------------------------------------------------------
 
         /// <summary>Whether to use GPU BVH traversal for culling.</summary>
-        private bool _useGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
+        private bool _useGpuBvh = RuntimeEngine.EffectiveSettings.UseGpuBvh;
 
         /// <summary>External BVH provider for GPU-accelerated culling (optional).</summary>
         private IGpuBvhProvider? _externalBvhProvider;
@@ -792,6 +937,12 @@ namespace XREngine.Rendering.Commands
         public IReadOnlyDictionary<uint, XRMaterial> MaterialMap => _idToMaterial;
 
         /// <summary>
+        /// Representative material per coarse GPU state class. Phase C batches by these IDs;
+        /// Phase D replaces the representative with real per-draw material-table fetches.
+        /// </summary>
+        public IReadOnlyDictionary<uint, XRMaterial> StateClassMaterialMap => _stateClassRepresentativeMaterials;
+
+        /// <summary>
         /// Attempts to get a material by its ID.
         /// </summary>
         /// <param name="id">The material ID to look up.</param>
@@ -802,6 +953,17 @@ namespace XREngine.Rendering.Commands
             bool ok = _idToMaterial.TryGetValue(id, out var mat);
             material = ok ? mat : null;
             return ok;
+        }
+
+        public bool TryGetTransform(uint transformId, out Matrix4x4 worldMatrix)
+        {
+            worldMatrix = Matrix4x4.Identity;
+            XRDataBuffer? buffer = _allLoadedTransformBuffer ?? _updatingTransformBuffer;
+            if (transformId >= (buffer?.ElementCount ?? 0u))
+                return false;
+
+            worldMatrix = buffer!.GetDataRawAtIndex<TransformGpu>(transformId).WorldMatrix;
+            return true;
         }
 
         public XRDataBuffer LODTableBuffer => _lodTableBuffer ??= MakeLodTableBuffer();
@@ -930,7 +1092,7 @@ namespace XREngine.Rendering.Commands
                         if (buffer.IsMapped)
                         {
                             mappedTemporarily = true;
-                            Engine.Rendering.Stats.RecordGpuBufferMapped();
+                            RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
                         }
                     }
 
@@ -953,7 +1115,7 @@ namespace XREngine.Rendering.Commands
                                 if (lodMask == 0)
                                     continue;
 
-                                Engine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
+                                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
                                 requests.Add((logicalMeshId, lodMask));
                                 ptr[logicalMeshId] = 0u;
                                 modified = true;
@@ -2232,14 +2394,37 @@ namespace XREngine.Rendering.Commands
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = MakeCommandsInputBuffer();
 
+            _allLoadedDrawMetadataBuffer?.Destroy();
+            _allLoadedDrawMetadataBuffer = MakeDrawMetadataBuffer("DrawMetadataBuffer");
+            _allLoadedTransformBuffer?.Destroy();
+            _allLoadedTransformBuffer = MakeTransformBuffer("TransformBuffer");
+            _allLoadedPrevTransformBuffer?.Destroy();
+            _allLoadedPrevTransformBuffer = MakeTransformBuffer("PrevTransformBuffer");
+            _allLoadedBoundsBuffer?.Destroy();
+            _allLoadedBoundsBuffer = MakeBoundsBuffer("BoundsBuffer");
+
             _allLoadedTransparencyMetadataBuffer?.Destroy();
             _allLoadedTransparencyMetadataBuffer = MakeTransparencyMetadataBuffer();
             
             _updatingCommandsBuffer?.Destroy();
             _updatingCommandsBuffer = MakeCommandsInputBuffer();
 
+            _updatingDrawMetadataBuffer?.Destroy();
+            _updatingDrawMetadataBuffer = MakeDrawMetadataBuffer("UpdatingDrawMetadataBuffer");
+            _updatingTransformBuffer?.Destroy();
+            _updatingTransformBuffer = MakeTransformBuffer("UpdatingTransformBuffer");
+            _updatingPrevTransformBuffer?.Destroy();
+            _updatingPrevTransformBuffer = MakeTransformBuffer("UpdatingPrevTransformBuffer");
+            _updatingBoundsBuffer?.Destroy();
+            _updatingBoundsBuffer = MakeBoundsBuffer("UpdatingBoundsBuffer");
+
             _updatingTransparencyMetadataBuffer?.Destroy();
             _updatingTransparencyMetadataBuffer = MakeTransparencyMetadataBuffer();
+
+            _materialStateBuffer?.Destroy();
+            _materialStateBuffer = MakeMaterialStateBuffer();
+            _skinningPaletteBuffer?.Destroy();
+            _skinningPaletteBuffer = MakeSkinningPaletteBuffer();
         }
 
         /// <summary>
@@ -2278,12 +2463,32 @@ namespace XREngine.Rendering.Commands
             _lodRequestBuffer = null;
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = null;
+            _allLoadedDrawMetadataBuffer?.Destroy();
+            _allLoadedDrawMetadataBuffer = null;
+            _allLoadedTransformBuffer?.Destroy();
+            _allLoadedTransformBuffer = null;
+            _allLoadedPrevTransformBuffer?.Destroy();
+            _allLoadedPrevTransformBuffer = null;
+            _allLoadedBoundsBuffer?.Destroy();
+            _allLoadedBoundsBuffer = null;
             _allLoadedTransparencyMetadataBuffer?.Destroy();
             _allLoadedTransparencyMetadataBuffer = null;
             _updatingCommandsBuffer?.Destroy();
             _updatingCommandsBuffer = null;
+            _updatingDrawMetadataBuffer?.Destroy();
+            _updatingDrawMetadataBuffer = null;
+            _updatingTransformBuffer?.Destroy();
+            _updatingTransformBuffer = null;
+            _updatingPrevTransformBuffer?.Destroy();
+            _updatingPrevTransformBuffer = null;
+            _updatingBoundsBuffer?.Destroy();
+            _updatingBoundsBuffer = null;
             _updatingTransparencyMetadataBuffer?.Destroy();
             _updatingTransparencyMetadataBuffer = null;
+            _materialStateBuffer?.Destroy();
+            _materialStateBuffer = null;
+            _skinningPaletteBuffer?.Destroy();
+            _skinningPaletteBuffer = null;
 
             DestroyTierBuffers(_staticAtlas);
             DestroyTierBuffers(_dynamicAtlas);
@@ -2319,6 +2524,8 @@ namespace XREngine.Rendering.Commands
             _meshIDMap.Clear();
             _materialIDMap.Clear();
             _idToMaterial.Clear();
+            _stateClassRepresentativeMaterials.Clear();
+            _materialStateByClass.Clear();
             _idToMesh.Clear();
             _renderableLogicalMeshIdMap.Clear();
             _standaloneLogicalMeshIdMap.Clear();
@@ -2326,6 +2533,15 @@ namespace XREngine.Rendering.Commands
             _nextMeshID = 1;
             _nextMaterialID = 1;
             _nextLogicalMeshID = 1;
+            _transformIdAllocator.Clear();
+            _skinIdAllocator.Clear();
+            _stateClassIdAllocator.Clear();
+            _drawMetadataDirtyRange.Clear();
+            _transformDirtyRange.Clear();
+            _prevTransformDirtyRange.Clear();
+            _boundsDirtyRange.Clear();
+            _materialStateDirtyRange.Clear();
+            _skinningPaletteDirtyRange.Clear();
             _totalCommandCount = 0;
             _updatingCommandCount = 0;
             _bounds = new AABB();
@@ -2367,7 +2583,7 @@ namespace XREngine.Rendering.Commands
         /// </remarks>
         public void SwapCommandBuffers()
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers");
 
             using (_lock.EnterScope())
             {
@@ -2421,6 +2637,9 @@ namespace XREngine.Rendering.Commands
                     }
                 }
 
+                CopyDrawIndexedSoABuffersToRenderSnapshot(_updatingCommandCount);
+                CopyDirtyStableSoABuffersToRenderSnapshot();
+
                 if (_updatingTransparencyMetadataBuffer is not null && _allLoadedTransparencyMetadataBuffer is not null)
                 {
                     if (_allLoadedTransparencyMetadataBuffer.ElementCount < _updatingTransparencyMetadataBuffer.ElementCount)
@@ -2464,6 +2683,69 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        private static unsafe void CopyBufferRange(XRDataBuffer source, XRDataBuffer destination, uint startIndex, uint count)
+        {
+            if (count == 0u)
+                return;
+
+            if (destination.ElementCount < source.ElementCount)
+                destination.Resize(source.ElementCount);
+
+            uint elementSize = source.ElementSize;
+            if (elementSize == 0u)
+                return;
+
+            uint byteOffset = startIndex * elementSize;
+            uint byteCount = count * elementSize;
+            if (source.TryGetAddress(out var srcBase) &&
+                destination.TryGetAddress(out var dstBase))
+            {
+                Memory.Move(dstBase + (int)byteOffset, srcBase + (int)byteOffset, byteCount);
+                destination.PushSubData((int)byteOffset, byteCount);
+            }
+        }
+
+        private void CopyDrawIndexedSoABuffersToRenderSnapshot(uint commandCount)
+        {
+            if (commandCount == 0u)
+                return;
+
+            if (_updatingDrawMetadataBuffer is not null && _allLoadedDrawMetadataBuffer is not null)
+                CopyBufferRange(_updatingDrawMetadataBuffer, _allLoadedDrawMetadataBuffer, 0u, commandCount);
+
+            if (_updatingBoundsBuffer is not null && _allLoadedBoundsBuffer is not null)
+                CopyBufferRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer, 0u, commandCount);
+
+            _drawMetadataDirtyRange.Clear();
+            _boundsDirtyRange.Clear();
+        }
+
+        private static void CopyDirtyRange(
+            XRDataBuffer? source,
+            XRDataBuffer? destination,
+            ref DirtyRange dirtyRange)
+        {
+            if (!dirtyRange.HasValue || source is null || destination is null)
+                return;
+
+            CopyBufferRange(source, destination, dirtyRange.Min, dirtyRange.MaxExclusive - dirtyRange.Min);
+            dirtyRange.Clear();
+        }
+
+        private void CopyDirtyStableSoABuffersToRenderSnapshot()
+        {
+            CopyDirtyRange(_updatingTransformBuffer, _allLoadedTransformBuffer, ref _transformDirtyRange);
+            CopyDirtyRange(_updatingPrevTransformBuffer, _allLoadedPrevTransformBuffer, ref _prevTransformDirtyRange);
+            CopyDirtyRange(_skinningPaletteBuffer, _skinningPaletteBuffer, ref _skinningPaletteDirtyRange);
+            if (_materialStateDirtyRange.HasValue && _materialStateBuffer is not null)
+            {
+                uint byteOffset = _materialStateDirtyRange.Min * _materialStateBuffer.ElementSize;
+                uint byteCount = (_materialStateDirtyRange.MaxExclusive - _materialStateDirtyRange.Min) * _materialStateBuffer.ElementSize;
+                _materialStateBuffer.PushSubData((int)byteOffset, byteCount);
+                _materialStateDirtyRange.Clear();
+            }
+        }
+
         /// <summary>
         /// Creates a new command buffer for storing GPU indirect render commands.
         /// </summary>
@@ -2474,7 +2756,97 @@ namespace XREngine.Rendering.Commands
                 EBufferTarget.ShaderStorageBuffer,
                 MinCommandCount,
                 EComponentType.Float,
-                CommandFloatCount, // 48 floats (192 bytes) per command
+                CommandFloatCount,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true
+            };
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeDrawMetadataBuffer(string name)
+        {
+            var buffer = new XRDataBuffer(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                MinCommandCount,
+                EComponentType.UInt,
+                DrawMetadataUIntCount,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true
+            };
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeTransformBuffer(string name)
+        {
+            var buffer = new XRDataBuffer(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                MinCommandCount,
+                EComponentType.Float,
+                TransformFloatCount,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true
+            };
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeBoundsBuffer(string name)
+        {
+            var buffer = new XRDataBuffer(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                MinCommandCount,
+                EComponentType.Float,
+                BoundsFloatCount,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true
+            };
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeMaterialStateBuffer()
+        {
+            var buffer = new XRDataBuffer(
+                "MaterialStateBuffer",
+                EBufferTarget.ShaderStorageBuffer,
+                MinMaterialStateCount,
+                EComponentType.UInt,
+                MaterialStateUIntCount,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true
+            };
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeSkinningPaletteBuffer()
+        {
+            var buffer = new XRDataBuffer(
+                "SkinningPaletteBuffer",
+                EBufferTarget.ShaderStorageBuffer,
+                MinCommandCount,
+                EComponentType.Float,
+                TransformFloatCount,
                 false,
                 false)
             {
@@ -2533,10 +2905,10 @@ namespace XREngine.Rendering.Commands
             // the persistent-coherent allocation. Both were responsible for the multi-second
             // render-thread stall recovered as `MainThreadJobs.Normal.Invoke:GPUScene.LodTransitionBuffer.Initialize`
             // (see render-submission-perf-debug-plan.md §5.8 I1).
-            if (Engine.IsRenderThread)
+            if (RuntimeEngine.IsRenderThread)
                 buffer.Generate();
             else
-                Engine.EnqueueMainThreadTask(buffer.Generate, "GPUScene.LodTransitionBuffer.Initialize");
+                RuntimeEngine.EnqueueMainThreadTask(buffer.Generate, "GPUScene.LodTransitionBuffer.Initialize");
         }
 
         private void EnsureLodTransitionBufferCapacity(uint requiredSize)
@@ -2563,7 +2935,7 @@ namespace XREngine.Rendering.Commands
 
             // Collect-visible mutates the CPU-side command buffers too, but only the render thread
             // may issue GL barriers. Off-thread callers fall back to the persistently mapped view.
-            if (Engine.IsRenderThread)
+            if (RuntimeEngine.IsRenderThread)
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.ShaderStorage);
 
             Memory.Move(cpuAddress, mapped, _lodTransitionBuffer.Length);
@@ -2596,11 +2968,17 @@ namespace XREngine.Rendering.Commands
         /// <summary>The initial size of the command buffer. It will grow or shrink as needed at powers of two.</summary>
         public const uint MinCommandCount = 8;
 
-        /// <summary>Number of float components per GPU command (192 bytes).</summary>
-        public const int CommandFloatCount = 48;
+        /// <summary>Number of 32-bit lanes per compact GPU command (80 bytes).</summary>
+        public const int CommandFloatCount = 20;
 
-        /// <summary>Number of uint components per hot GPU command (64 bytes).</summary>
-        public const int CommandHotUIntCount = 16;
+        /// <summary>Number of uint components per hot GPU command (80 bytes).</summary>
+        public const int CommandHotUIntCount = 20;
+
+        public const uint DrawMetadataUIntCount = 16;
+        public const uint TransformFloatCount = 16;
+        public const uint BoundsFloatCount = 16;
+        public const uint MaterialStateUIntCount = 8;
+        private const uint MinMaterialStateCount = 16;
 
         /// <summary>Number of components in the visible count buffer.</summary>
         public const uint VisibleCountComponents = 3;
@@ -2694,6 +3072,35 @@ namespace XREngine.Rendering.Commands
             public uint Flags;
         }
 
+        private XRDataBuffer? _allLoadedDrawMetadataBuffer;
+        private XRDataBuffer? _updatingDrawMetadataBuffer;
+        private XRDataBuffer? _allLoadedTransformBuffer;
+        private XRDataBuffer? _updatingTransformBuffer;
+        private XRDataBuffer? _allLoadedPrevTransformBuffer;
+        private XRDataBuffer? _updatingPrevTransformBuffer;
+        private XRDataBuffer? _allLoadedBoundsBuffer;
+        private XRDataBuffer? _updatingBoundsBuffer;
+        private XRDataBuffer? _materialStateBuffer;
+        private XRDataBuffer? _skinningPaletteBuffer;
+
+        private DirtyRange _drawMetadataDirtyRange;
+        private DirtyRange _transformDirtyRange;
+        private DirtyRange _prevTransformDirtyRange;
+        private DirtyRange _boundsDirtyRange;
+        private DirtyRange _materialStateDirtyRange;
+        private DirtyRange _skinningPaletteDirtyRange;
+
+        public XRDataBuffer DrawMetadataBuffer => _allLoadedDrawMetadataBuffer ??= MakeDrawMetadataBuffer("DrawMetadataBuffer");
+        private XRDataBuffer UpdatingDrawMetadataBuffer => _updatingDrawMetadataBuffer ??= MakeDrawMetadataBuffer("UpdatingDrawMetadataBuffer");
+        public XRDataBuffer TransformBuffer => _allLoadedTransformBuffer ??= MakeTransformBuffer("TransformBuffer");
+        private XRDataBuffer UpdatingTransformBuffer => _updatingTransformBuffer ??= MakeTransformBuffer("UpdatingTransformBuffer");
+        public XRDataBuffer PrevTransformBuffer => _allLoadedPrevTransformBuffer ??= MakeTransformBuffer("PrevTransformBuffer");
+        private XRDataBuffer UpdatingPrevTransformBuffer => _updatingPrevTransformBuffer ??= MakeTransformBuffer("UpdatingPrevTransformBuffer");
+        public XRDataBuffer BoundsBuffer => _allLoadedBoundsBuffer ??= MakeBoundsBuffer("BoundsBuffer");
+        private XRDataBuffer UpdatingBoundsBuffer => _updatingBoundsBuffer ??= MakeBoundsBuffer("UpdatingBoundsBuffer");
+        public XRDataBuffer MaterialStateBuffer => _materialStateBuffer ??= MakeMaterialStateBuffer();
+        public XRDataBuffer SkinningPaletteBuffer => _skinningPaletteBuffer ??= MakeSkinningPaletteBuffer();
+
         /// <summary>Render buffer - read by the render thread. Contains stable command data.</summary>
         private XRDataBuffer? _allLoadedCommandsBuffer;
 
@@ -2735,12 +3142,15 @@ namespace XREngine.Rendering.Commands
         /// paths never call this, so meshoptimizer work stays out of their swap/update path.
         /// </summary>
         public bool RenderMeshlets(XRCamera camera, int renderPass)
+            => RenderMeshlets(camera, renderPass, null);
+
+        public bool RenderMeshlets(XRCamera camera, int renderPass, Func<GPUScene, uint, bool>? commandVisibility)
         {
             if (camera is null)
                 return false;
 
             EnsureMeshletsReadyForRender();
-            return _meshlets.Render(camera, renderPass);
+            return _meshlets.Render(camera, renderPass, this, commandVisibility);
         }
 
         private void EnsureMeshletsReadyForRender()
@@ -2856,9 +3266,41 @@ namespace XREngine.Rendering.Commands
                 SyncLodTransitionBufferFromGpu();
                 VerifyUpdatingBufferSize(safeRequired);
                 VerifyCommandBufferSize(safeRequired);
+                EnsureDrawIndexedSoACapacity(safeRequired);
                 return AllLoadedCommandsBuffer.ElementCount;
             }
         }
+
+        private static void EnsureBufferCapacity(XRDataBuffer buffer, uint requiredCapacity)
+        {
+            if (requiredCapacity > buffer.ElementCount)
+                buffer.Resize(XRMath.NextPowerOfTwo(requiredCapacity).ClampMin(MinCommandCount));
+        }
+
+        private void EnsureDrawIndexedSoACapacity(uint requiredCapacity)
+        {
+            EnsureBufferCapacity(UpdatingDrawMetadataBuffer, requiredCapacity);
+            EnsureBufferCapacity(DrawMetadataBuffer, requiredCapacity);
+            EnsureBufferCapacity(UpdatingBoundsBuffer, requiredCapacity);
+            EnsureBufferCapacity(BoundsBuffer, requiredCapacity);
+        }
+
+        private void EnsureTransformCapacity(uint requiredCapacity)
+        {
+            EnsureBufferCapacity(UpdatingTransformBuffer, requiredCapacity);
+            EnsureBufferCapacity(TransformBuffer, requiredCapacity);
+            EnsureBufferCapacity(UpdatingPrevTransformBuffer, requiredCapacity);
+            EnsureBufferCapacity(PrevTransformBuffer, requiredCapacity);
+        }
+
+        private void EnsureMaterialStateCapacity(uint requiredCapacity)
+        {
+            if (requiredCapacity > MaterialStateBuffer.ElementCount)
+                MaterialStateBuffer.Resize(XRMath.NextPowerOfTwo(requiredCapacity).ClampMin(MinMaterialStateCount));
+        }
+
+        private void EnsureSkinningPaletteCapacity(uint requiredCapacity)
+            => EnsureBufferCapacity(SkinningPaletteBuffer, requiredCapacity);
 
         /// <summary>Maps mesh commands to their GPU command indices (for multi-submesh support).</summary>
         private readonly Dictionary<IRenderCommandMesh, List<uint>> _commandIndicesPerMeshCommand = [];
@@ -2965,14 +3407,36 @@ namespace XREngine.Rendering.Commands
                             continue;
                         }
 
-                        var gpuCommand = ConvertToGPUCommand(renderInfo, meshCmd, mesh, m, meshID, logicalMeshID, lodCount, (uint)subMeshIndex);
+                        Matrix4x4 modelMatrix = meshCmd.WorldMatrixIsModelMatrix ? meshCmd.WorldMatrix : Matrix4x4.Identity;
+                        uint transformId = AllocateTransformId(modelMatrix);
+                        uint skinId = AllocateSkinId(false);
+                        GetOrCreateMaterialID(m, out uint materialIDForState);
+                        uint stateClassId = ResolveStateClassId(m, meshCmd.RenderPass, materialIDForState);
+                        uint index = UpdatingCommandCount++;
+                        uint boundsId = index;
+
+                        var gpuCommand = ConvertToGPUCommand(
+                            renderInfo,
+                            meshCmd,
+                            mesh,
+                            m,
+                            meshID,
+                            logicalMeshID,
+                            lodCount,
+                            (uint)subMeshIndex,
+                            transformId,
+                            skinId,
+                            stateClassId,
+                            boundsId);
                         if (gpuCommand is null)
                         {
+                            ReleaseTransformId(transformId);
+                            ReleaseSkinId(skinId);
+                            --UpdatingCommandCount;
                             SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to conversion failure.");
                             continue;
                         }
 
-                        uint index = UpdatingCommandCount++;
                         if (meshCmd.GPUCommandIndex == uint.MaxValue || indices.Count == 0)
                             meshCmd.GPUCommandIndex = index; // Store first index for legacy single-index usage
 
@@ -2983,9 +3447,11 @@ namespace XREngine.Rendering.Commands
                         // Preserve the source command index so post-cull stages can map back to CPU-side data.
                         commandValue.Reserved1 = index;
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
+                        WriteDrawMetadata(index, commandValue);
+                        WriteBounds(boundsId, ComputeWorldBoundsGpu(mesh.Bounds, modelMatrix, 1u));
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
                         if (_useInternalBvh)
-                            WriteTightCommandAabb(index, renderInfo, mesh.Bounds, commandValue.WorldMatrix);
+                            WriteTightCommandAabb(index, renderInfo, mesh.Bounds, modelMatrix);
                                                 LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
                         AcquireLogicalMeshResidency(commandValue.LogicalMeshID);
 
@@ -3496,6 +3962,8 @@ namespace XREngine.Rendering.Commands
             GPUIndirectRenderCommand removedCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(targetIndex);
             uint removedMeshId = removedCommand.MeshID;
             uint removedLogicalMeshId = removedCommand.LogicalMeshID;
+            uint removedTransformId = removedCommand.TransformID;
+            uint removedSkinId = removedCommand.SkinID;
 
             uint lastIndex = UpdatingCommandCount - 1;
 
@@ -3507,7 +3975,12 @@ namespace XREngine.Rendering.Commands
                 GPUTransparencyMetadata lastMetadata = UpdatingTransparencyMetadataBuffer.GetDataRawAtIndex<GPUTransparencyMetadata>(lastIndex);
                 GPULodTransitionState lastTransition = LodTransitionBuffer.GetDataRawAtIndex<GPULodTransitionState>(lastIndex);
                 lastCommand.Reserved1 = targetIndex;
+                lastCommand.BoundsID = targetIndex;
                 UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
+                WriteDrawMetadata(targetIndex, lastCommand);
+
+                BoundsGpu lastBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(lastIndex);
+                WriteBounds(targetIndex, lastBounds);
                 UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(targetIndex, lastMetadata);
                 LodTransitionBuffer.SetDataRawAtIndex(targetIndex, lastTransition);
 
@@ -3538,6 +4011,9 @@ namespace XREngine.Rendering.Commands
             }
 
             LodTransitionBuffer.SetDataRawAtIndex(lastIndex, default(GPULodTransitionState));
+            ClearDrawIndexedSoA(lastIndex);
+            ReleaseTransformId(removedTransformId);
+            ReleaseSkinId(removedSkinId);
 
             // Update mesh atlas lifetime after structural changes.
             if (removedLogicalMeshId != 0)
@@ -3559,12 +4035,16 @@ namespace XREngine.Rendering.Commands
             SceneLog($"Resizing updating command buffer from {currentCapacity} to {nextPowerOfTwo}.");
             UpdatingCommandsBuffer.Resize(nextPowerOfTwo);
             UpdatingTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
+            UpdatingDrawMetadataBuffer.Resize(nextPowerOfTwo);
+            UpdatingBoundsBuffer.Resize(nextPowerOfTwo);
             EnsureLodTransitionBufferCapacity(nextPowerOfTwo);
             uint newCapacity = UpdatingCommandsBuffer.ElementCount;
             if (newCapacity > currentCapacity)
             {
                 ZeroUpdatingCommandRange(currentCapacity, newCapacity - currentCapacity);
                 ZeroUpdatingTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
+                for (uint i = currentCapacity; i < newCapacity; ++i)
+                    ClearDrawIndexedSoA(i);
                 ZeroLodTransitionRange(currentCapacity, newCapacity - currentCapacity);
             }
         }
@@ -3623,6 +4103,8 @@ namespace XREngine.Rendering.Commands
             SceneLog($"Resizing command buffer from {currentCapacity} to {nextPowerOfTwo}.");
             AllLoadedCommandsBuffer.Resize(nextPowerOfTwo);
             AllLoadedTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
+            DrawMetadataBuffer.Resize(nextPowerOfTwo);
+            BoundsBuffer.Resize(nextPowerOfTwo);
             uint newCapacity = AllLoadedCommandsBuffer.ElementCount;
             if (newCapacity > currentCapacity)
             {
@@ -3693,6 +4175,174 @@ namespace XREngine.Rendering.Commands
 
         #endregion
 
+        #region SoA Scene Database
+
+        private uint AllocateTransformId(in Matrix4x4 worldMatrix)
+        {
+            uint transformId = _transformIdAllocator.Allocate();
+            EnsureTransformCapacity(transformId + 1u);
+            TransformGpu transform = new(worldMatrix);
+            UpdatingTransformBuffer.SetDataRawAtIndex(transformId, transform);
+            UpdatingPrevTransformBuffer.SetDataRawAtIndex(transformId, transform);
+            _transformDirtyRange.Mark(transformId);
+            _prevTransformDirtyRange.Mark(transformId);
+            return transformId;
+        }
+
+        private void ReleaseTransformId(uint transformId)
+        {
+            if (transformId == 0u)
+                return;
+
+            _transformIdAllocator.Release(transformId);
+            if (transformId < UpdatingTransformBuffer.ElementCount)
+            {
+                UpdatingTransformBuffer.SetDataRawAtIndex(transformId, default(TransformGpu));
+                UpdatingPrevTransformBuffer.SetDataRawAtIndex(transformId, default(TransformGpu));
+                _transformDirtyRange.Mark(transformId);
+                _prevTransformDirtyRange.Mark(transformId);
+            }
+        }
+
+        private uint AllocateSkinId(bool skinned)
+        {
+            if (!skinned)
+                return 0u;
+
+            uint skinId = _skinIdAllocator.Allocate();
+            EnsureSkinningPaletteCapacity(skinId + 1u);
+            _skinningPaletteDirtyRange.Mark(skinId);
+            return skinId;
+        }
+
+        private void ReleaseSkinId(uint skinId)
+        {
+            if (skinId == 0u)
+                return;
+
+            _skinIdAllocator.Release(skinId);
+            if (skinId < SkinningPaletteBuffer.ElementCount)
+            {
+                SkinningPaletteBuffer.SetDataRawAtIndex(skinId, default(TransformGpu));
+                _skinningPaletteDirtyRange.Mark(skinId);
+            }
+        }
+
+        public uint AllocateCustomStateClassId()
+        {
+            uint id = _stateClassIdAllocator.Allocate() + (uint)EGpuMaterialStateClass.Custom;
+            EnsureMaterialStateCapacity(id + 1u);
+            return id;
+        }
+
+        public void ReleaseCustomStateClassId(uint stateClassId)
+        {
+            if (stateClassId <= (uint)EGpuMaterialStateClass.Custom)
+                return;
+
+            _stateClassIdAllocator.Release(stateClassId - (uint)EGpuMaterialStateClass.Custom);
+        }
+
+        private static EGpuMaterialStateClass ResolveStateClass(XRMaterial material, int renderPass)
+        {
+            if (RuntimeEngine.Rendering.State.IsShadowPass)
+                return EGpuMaterialStateClass.Shadow;
+
+            ETransparencyMode mode = material.GetEffectiveTransparencyMode();
+            if (material.IsTransparentLike(mode) ||
+                renderPass == (int)EDefaultRenderPass.TransparentForward ||
+                renderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward ||
+                renderPass == (int)EDefaultRenderPass.PerPixelLinkedListForward ||
+                renderPass == (int)EDefaultRenderPass.DepthPeelingForward)
+            {
+                return EGpuMaterialStateClass.Transparent;
+            }
+
+            if (mode is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage ||
+                renderPass == (int)EDefaultRenderPass.MaskedForward)
+            {
+                return EGpuMaterialStateClass.AlphaTested;
+            }
+
+            return renderPass == (int)EDefaultRenderPass.OpaqueDeferred
+                ? EGpuMaterialStateClass.OpaqueDeferred
+                : EGpuMaterialStateClass.OpaqueForward;
+        }
+
+        private uint ResolveStateClassId(XRMaterial material, int renderPass, uint materialId)
+        {
+            uint stateClassId = (uint)ResolveStateClass(material, renderPass);
+            EnsureMaterialStateCapacity(stateClassId + 1u);
+
+            if (!_stateClassRepresentativeMaterials.ContainsKey(stateClassId))
+                _stateClassRepresentativeMaterials[stateClassId] = material;
+
+            MaterialStateGpu state = new()
+            {
+                StateClassID = stateClassId,
+                MaterialID = materialId,
+                PipelineKey = stateClassId,
+                OptionsBits = 0u,
+                TransparencyMode = (uint)material.GetEffectiveTransparencyMode(),
+                DescriptorStart = 0u,
+                DescriptorCount = 0u,
+                Flags = material.IsTransparentLike() ? 1u : 0u,
+            };
+
+            _materialStateByClass[stateClassId] = state;
+            MaterialStateBuffer.SetDataRawAtIndex(stateClassId, state);
+            _materialStateDirtyRange.Mark(stateClassId);
+            return stateClassId;
+        }
+
+        private void WriteDrawMetadata(uint drawId, in GPUIndirectRenderCommand command)
+        {
+            EnsureDrawIndexedSoACapacity(drawId + 1u);
+            UpdatingDrawMetadataBuffer.SetDataRawAtIndex(drawId, command.ToDrawMetadata(drawId));
+            _drawMetadataDirtyRange.Mark(drawId);
+        }
+
+        private void WriteBounds(uint boundsId, in BoundsGpu bounds)
+        {
+            EnsureDrawIndexedSoACapacity(boundsId + 1u);
+            UpdatingBoundsBuffer.SetDataRawAtIndex(boundsId, bounds);
+            _boundsDirtyRange.Mark(boundsId);
+        }
+
+        private bool UpdateTransform(uint transformId, in Matrix4x4 worldMatrix)
+        {
+            if (transformId == 0u)
+                return false;
+
+            EnsureTransformCapacity(transformId + 1u);
+            TransformGpu previous = UpdatingTransformBuffer.GetDataRawAtIndex<TransformGpu>(transformId);
+            if (previous.WorldMatrix.Equals(worldMatrix))
+                return false;
+
+            UpdatingPrevTransformBuffer.SetDataRawAtIndex(transformId, previous);
+            UpdatingTransformBuffer.SetDataRawAtIndex(transformId, new TransformGpu(worldMatrix));
+            _prevTransformDirtyRange.Mark(transformId);
+            _transformDirtyRange.Mark(transformId);
+            return true;
+        }
+
+        private void ClearDrawIndexedSoA(uint drawId)
+        {
+            if (drawId < UpdatingDrawMetadataBuffer.ElementCount)
+            {
+                UpdatingDrawMetadataBuffer.SetDataRawAtIndex(drawId, default(DrawMetadata));
+                _drawMetadataDirtyRange.Mark(drawId);
+            }
+
+            if (drawId < UpdatingBoundsBuffer.ElementCount)
+            {
+                UpdatingBoundsBuffer.SetDataRawAtIndex(drawId, default(BoundsGpu));
+                _boundsDirtyRange.Mark(drawId);
+            }
+        }
+
+        #endregion
+
         #region Command Conversion
 
         /// <summary>
@@ -3704,7 +4354,19 @@ namespace XREngine.Rendering.Commands
         /// <param name="material">The material to use.</param>
         /// <param name="submeshLocalIndex">The submesh index within the mesh renderer.</param>
         /// <returns>The GPU command, or null if conversion failed.</returns>
-        private GPUIndirectRenderCommand? ConvertToGPUCommand(RenderInfo renderInfo, IRenderCommandMesh command, XRMesh? mesh, XRMaterial? material, uint meshID, uint logicalMeshID, uint lodCount, uint submeshLocalIndex)
+        private GPUIndirectRenderCommand? ConvertToGPUCommand(
+            RenderInfo renderInfo,
+            IRenderCommandMesh command,
+            XRMesh? mesh,
+            XRMaterial? material,
+            uint meshID,
+            uint logicalMeshID,
+            uint lodCount,
+            uint submeshLocalIndex,
+            uint transformId,
+            uint skinId,
+            uint stateClassId,
+            uint boundsId)
         {
             if (mesh is null || material is null)
                 return null;
@@ -3722,12 +4384,14 @@ namespace XREngine.Rendering.Commands
                 InstanceCount = command.Instances == 0 ? 1u : command.Instances,
                 LayerMask = 0xFFFFFFFF,
                 RenderDistance = 0f,
-                WorldMatrix = modelMatrix,
-                PrevWorldMatrix = modelMatrix, // Initialize to current; will be updated on subsequent frames
                 Flags = 0,
                 LODLevel = 0,
                 ShaderProgramID = 0,
                 LogicalMeshID = logicalMeshID,
+                TransformID = transformId,
+                SkinID = skinId,
+                StateClassID = stateClassId,
+                BoundsID = boundsId,
                 Reserved1 = 0
             };
 
@@ -3864,8 +4528,7 @@ namespace XREngine.Rendering.Commands
                     var existing = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
                     var updated = existing;
 
-                    updated.PrevWorldMatrix = existing.WorldMatrix;
-                    updated.WorldMatrix = modelMatrix;
+                    bool transformChanged = UpdateTransform(existing.TransformID, modelMatrix);
                     SetWorldSpaceBoundingSphere(ref updated, mesh.Bounds, modelMatrix);
 
                     updated.MeshID = newMeshID;
@@ -3876,6 +4539,8 @@ namespace XREngine.Rendering.Commands
                     updated.RenderDistance = meshCmd.RenderDistance.ClampMin(0.0f);
                     updated.LogicalMeshID = newLogicalMeshID;
                     updated.Reserved1 = index;
+                    updated.BoundsID = index;
+                    updated.StateClassID = ResolveStateClassId(material, meshCmd.RenderPass, newMaterialID);
 
                     uint flags = 0;
                     if (renderInfo is RenderInfo3D info3d)
@@ -3900,13 +4565,15 @@ namespace XREngine.Rendering.Commands
                         ReleaseLogicalMeshResidency(existing.LogicalMeshID, "TryUpdateMeshCommand(mesh changed)");
                     }
 
-                    if (!existing.Equals(updated))
+                    if (!existing.Equals(updated) || transformChanged)
                     {
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, updated);
+                        WriteDrawMetadata(index, updated);
+                        WriteBounds(index, ComputeWorldBoundsGpu(mesh.Bounds, modelMatrix, updated.BoundsID + 1u));
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
                             LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
                         if (_useInternalBvh)
-                            WriteTightCommandAabb(index, renderInfo, mesh.Bounds, updated.WorldMatrix);
+                            WriteTightCommandAabb(index, renderInfo, mesh.Bounds, modelMatrix);
                         anyChanged = true;
                         minIndex = Math.Min(minIndex, index);
                         maxIndex = Math.Max(maxIndex, index);
@@ -4435,11 +5102,11 @@ namespace XREngine.Rendering.Commands
 
         private void DispatchCommandAabbBuild(uint commandCount)
         {
-            if (_commandAabbProgram is null || _allLoadedCommandsBuffer is null || _commandAabbBuffer is null)
+            if (_commandAabbProgram is null || _commandAabbBuffer is null)
                 return;
 
             var program = _commandAabbProgram;
-            program.BindBuffer(_allLoadedCommandsBuffer, 0);
+            program.BindBuffer(BoundsBuffer, 0);
             program.BindBuffer(_commandAabbBuffer, 1);
             program.Uniform("numCommands", commandCount);
 

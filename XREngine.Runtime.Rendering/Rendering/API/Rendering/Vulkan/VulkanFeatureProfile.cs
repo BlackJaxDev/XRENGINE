@@ -29,12 +29,12 @@ public static class VulkanFeatureProfile
     /// and the safe feature profile should be used to restrict unsupported features.
     /// </summary>
     public static bool IsActive
-        => Engine.Rendering.IsVulkanRendererActive();
+        => RuntimeEngine.Rendering.IsVulkanRendererActive();
 
     public static EVulkanGpuDrivenProfile ActiveProfile
         => ResolveRuntimeProfile(
-            Engine.EffectiveSettings.VulkanGpuDrivenProfile,
-            Engine.GameSettings?.BuildSettings?.Configuration ?? EBuildConfiguration.Development);
+            RuntimeEngine.EffectiveSettings.VulkanGpuDrivenProfile,
+            RuntimeEngine.GameSettings?.BuildSettings?.Configuration ?? EBuildConfiguration.Development);
 
     public static EVulkanGpuDrivenProfile ResolveRuntimeProfile(EVulkanGpuDrivenProfile configuredProfile, EBuildConfiguration buildConfiguration)
     {
@@ -257,13 +257,13 @@ public static class VulkanFeatureProfile
         => ResolveImGuiPreference(true);
 
     public static bool EnableDescriptorIndexing
-        => ResolveDescriptorIndexingPreference(Engine.EffectiveSettings.EnableVulkanDescriptorIndexing);
+        => ResolveDescriptorIndexingPreference(RuntimeEngine.EffectiveSettings.EnableVulkanDescriptorIndexing);
 
     public static bool EnableBindlessMaterialTable
-        => ResolveBindlessMaterialTablePreference(Engine.EffectiveSettings.EnableVulkanBindlessMaterialTable);
+        => ResolveBindlessMaterialTablePreference(RuntimeEngine.EffectiveSettings.EnableVulkanBindlessMaterialTable);
 
     public static bool EnableDescriptorContractValidation
-        => ResolveDescriptorContractValidationPreference(Engine.EffectiveSettings.ValidateVulkanDescriptorContracts);
+        => ResolveDescriptorContractValidationPreference(RuntimeEngine.EffectiveSettings.ValidateVulkanDescriptorContracts);
 
     public static bool EnableRtxIoVulkanDecompression
         => ResolveRtxIoVulkanDecompressionPreference(true);
@@ -272,7 +272,7 @@ public static class VulkanFeatureProfile
         => ResolveRtxIoVulkanCopyMemoryIndirectPreference(true);
 
     public static EVulkanGeometryFetchMode ActiveGeometryFetchMode
-        => ResolveGeometryFetchMode(Engine.EffectiveSettings.VulkanGeometryFetchMode);
+        => ResolveGeometryFetchMode(RuntimeEngine.EffectiveSettings.VulkanGeometryFetchMode);
 
     public static EVulkanQueueOverlapMode ResolveQueueOverlapMode(EVulkanQueueOverlapMode requested)
     {

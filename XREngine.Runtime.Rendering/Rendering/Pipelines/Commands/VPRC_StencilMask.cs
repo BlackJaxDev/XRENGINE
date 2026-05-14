@@ -9,6 +9,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             => Mask = mask;
 
         protected override void Execute()
-            => Engine.Rendering.State.StencilMask(Mask);
+            => RuntimeEngine.Rendering.State.StencilMask(Mask);
     }
 }

@@ -68,6 +68,7 @@ namespace XREngine.Rendering.Vulkan
             // For resource lifetime management
             private BufferUsageFlags _lastUsageFlags;
             private MemoryPropertyFlags _lastMemProps;
+            private bool _lastDeviceAddressEnabled;
 
             // --- Event wiring ---
             protected override void UnlinkData()
@@ -110,6 +111,13 @@ namespace XREngine.Rendering.Vulkan
             /// Exposes the backing Vulkan memory handle. Primarily useful for debugging.
             /// </summary>
             public DeviceMemory? MemoryHandle => _vkMemory;
+            public ulong DeviceAddress { get; private set; }
+
+            public bool TryGetDeviceAddress(out ulong address)
+            {
+                address = DeviceAddress;
+                return address != 0ul;
+            }
 
             protected internal override void PostGenerated()
             {
@@ -126,7 +134,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(PushData, "VkDataBuffer.PushData"))
+                if (RuntimeEngine.InvokeOnMainThread(PushData, "VkDataBuffer.PushData"))
                     return;
 
                 // Determine usage and memory flags
@@ -134,13 +142,17 @@ namespace XREngine.Rendering.Vulkan
                 MemoryPropertyFlags memProps = ShouldUseDeviceLocal(Data.Usage)
                     ? MemoryPropertyFlags.DeviceLocalBit
                     : MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
+                bool enableDeviceAddress = Renderer.ShouldEnableDeviceAddressForSceneDatabaseBuffer(Data);
+                if (enableDeviceAddress)
+                    usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
                 bool needsRecreate =
                     _vkBuffer is null ||
                     _vkMemory is null ||
                     _bufferSize != Data.Length ||
                     _lastUsageFlags != usage ||
-                    _lastMemProps != memProps;
+                    _lastMemProps != memProps ||
+                    _lastDeviceAddressEnabled != enableDeviceAddress;
 
                 if (needsRecreate)
                 {
@@ -164,25 +176,28 @@ namespace XREngine.Rendering.Vulkan
                         _vkBuffer = null;
                         _vkMemory = null;
                         _persistentMappedPtr = null;
+                        DeviceAddress = 0ul;
                     }
                     if (_allocatedVRAMBytes > 0)
                     {
-                        Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                        RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
                         _allocatedVRAMBytes = 0;
                     }
 
                     _bufferSize = Data.Length;
                     _lastUsageFlags = usage;
                     _lastMemProps = memProps;
+                    _lastDeviceAddressEnabled = enableDeviceAddress;
 
                     // --- Staging buffer pattern for device-local ---
                     if (ShouldUseDeviceLocal(Data.Usage))
                     {
                         bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
+                        bool createDeviceAddress = preferIndirectCopy || enableDeviceAddress;
 
                         // Create device-local buffer first.
                         BufferUsageFlags deviceUsage = usage | BufferUsageFlags.TransferDstBit;
-                        if (preferIndirectCopy)
+                        if (createDeviceAddress)
                             deviceUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
                         var (deviceBuffer, deviceMemory) = Renderer.CreateBuffer(
@@ -190,7 +205,7 @@ namespace XREngine.Rendering.Vulkan
                             deviceUsage,
                             MemoryPropertyFlags.DeviceLocalBit,
                             null,
-                            preferIndirectCopy);
+                            createDeviceAddress);
                         _vkBuffer = deviceBuffer;
                         _vkMemory = deviceMemory;
 
@@ -225,12 +240,19 @@ namespace XREngine.Rendering.Vulkan
                     else
                     {
                         // Host-visible buffer for dynamic/stream
-                        (_vkBuffer, _vkMemory) = Renderer.CreateBuffer(_bufferSize, usage, memProps, Data.TryGetAddress(out var address) ? address : null);
+                        (_vkBuffer, _vkMemory) = Renderer.CreateBuffer(
+                            _bufferSize,
+                            usage,
+                            memProps,
+                            Data.TryGetAddress(out var address) ? address : null,
+                            enableDeviceAddress);
                     }
+
+                    RefreshDeviceAddress();
 
                     // Track VRAM allocation only when the backing allocation is recreated.
                     _allocatedVRAMBytes = (long)_bufferSize;
-                    Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
                 }
                 else
                 {
@@ -254,7 +276,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(() => PushSubData(offset, length), "VkDataBuffer.PushSubData"))
+                if (RuntimeEngine.InvokeOnMainThread(() => PushSubData(offset, length), "VkDataBuffer.PushSubData"))
                     return;
                 if (offset < 0 || length == 0)
                     return;
@@ -369,6 +391,15 @@ namespace XREngine.Rendering.Vulkan
             }
             public void PushSubData() => PushSubData(0, Data.Length);
 
+            private void RefreshDeviceAddress()
+            {
+                DeviceAddress = 0ul;
+                if (!_lastDeviceAddressEnabled || !Renderer.SupportsBufferDeviceAddress || _vkBuffer is not { } buffer)
+                    return;
+
+                DeviceAddress = Renderer.GetBufferDeviceAddress(buffer);
+            }
+
             /// <summary>
             /// Flushes mapped memory range. Only needed for non-coherent memory.
             /// </summary>
@@ -376,7 +407,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(Flush, "VkDataBuffer.Flush"))
+                if (RuntimeEngine.InvokeOnMainThread(Flush, "VkDataBuffer.Flush"))
                     return;
                 // Only needed for non-coherent memory
                 if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
@@ -386,7 +417,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(() => FlushRange(offset, length), "VkDataBuffer.FlushRange"))
+                if (RuntimeEngine.InvokeOnMainThread(() => FlushRange(offset, length), "VkDataBuffer.FlushRange"))
                     return;
                 if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
                     Renderer.FlushBuffer(_vkMemory, (ulong)offset, (ulong)length);
@@ -421,7 +452,7 @@ namespace XREngine.Rendering.Vulkan
                     Debug.VulkanWarning($"Buffer {GetDescribingName()} is resizable and cannot be mapped.");
                     return;
                 }
-                if (Engine.InvokeOnMainThread(MapBufferData, "VkDataBuffer.MapBufferData"))
+                if (RuntimeEngine.InvokeOnMainThread(MapBufferData, "VkDataBuffer.MapBufferData"))
                     return;
                 MapToClientSide();
             }
@@ -473,7 +504,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (!Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(UnmapBufferData, "VkDataBuffer.UnmapBufferData"))
+                if (RuntimeEngine.InvokeOnMainThread(UnmapBufferData, "VkDataBuffer.UnmapBufferData"))
                     return;
                 if (_persistentMappedPtr != null)
                 {
@@ -597,7 +628,7 @@ namespace XREngine.Rendering.Vulkan
                 // Track VRAM deallocation
                 if (_allocatedVRAMBytes > 0)
                 {
-                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
 
@@ -620,6 +651,7 @@ namespace XREngine.Rendering.Vulkan
                 _vkBuffer = null;
                 _vkMemory = null;
                 _persistentMappedPtr = null;
+                DeviceAddress = 0ul;
             }
         }
 
@@ -1052,8 +1084,8 @@ namespace XREngine.Rendering.Vulkan
 
             mappedPtr = localMappedPtr;
             InvalidateBuffer(memory, offset, mappedLength);
-            Engine.Rendering.Stats.RecordGpuBufferMapped();
-            Engine.Rendering.Stats.RecordGpuReadbackBytes((long)length);
+            RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
+            RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes((long)length);
             return true;
         }
 
@@ -1101,19 +1133,19 @@ namespace XREngine.Rendering.Vulkan
             if ((properties & MemoryPropertyFlags.DeviceLocalBit) != 0 &&
                 (properties & MemoryPropertyFlags.HostVisibleBit) == 0)
             {
-                Engine.Rendering.Stats.RecordVulkanAllocation(Engine.Rendering.Stats.EVulkanAllocationTelemetryClass.DeviceLocal, bytes);
+                RuntimeEngine.Rendering.Stats.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.EVulkanAllocationTelemetryClass.DeviceLocal, bytes);
                 return;
             }
 
             if ((properties & MemoryPropertyFlags.HostVisibleBit) != 0 &&
                 (properties & MemoryPropertyFlags.HostCachedBit) != 0)
             {
-                Engine.Rendering.Stats.RecordVulkanAllocation(Engine.Rendering.Stats.EVulkanAllocationTelemetryClass.Readback, bytes);
+                RuntimeEngine.Rendering.Stats.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.EVulkanAllocationTelemetryClass.Readback, bytes);
                 return;
             }
 
             if ((properties & MemoryPropertyFlags.HostVisibleBit) != 0)
-                Engine.Rendering.Stats.RecordVulkanAllocation(Engine.Rendering.Stats.EVulkanAllocationTelemetryClass.Upload, bytes);
+                RuntimeEngine.Rendering.Stats.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.EVulkanAllocationTelemetryClass.Upload, bytes);
         }
     }
 } 

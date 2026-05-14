@@ -1,20 +1,21 @@
-// Minimum working-set indirect draw build shader for 48-float command struct
+// Minimum working-set indirect draw build shader for compact Phase C command struct
 #version 460 core
 
 layout(local_size_x = 256) in;
 
 // Constants
-const int COMMAND_FLOATS = 48;      // 192 bytes per command
+const int COMMAND_FLOATS = 20;      // 80 bytes per command
 const int DRAW_COMMAND_UINTS = 5;   // count, instanceCount, firstIndex, baseVertex, baseInstance
 const uint LOD_TRANSITION_UINTS = 4u;
 const uint LOD_TRANSITION_ACTIVE = 1u;
 const uint PREVIOUS_LOD_DRAW_FLAG = 0x40000000u;
 const uint COMMAND_INDEX_MASK = 0x3FFFFFFFu;
 
-/* Command layout (float[48]):
- 00-15 WorldMatrix, 16-31 PrevWorldMatrix, 32-35 BoundingSphere, 36 MeshID, 37 SubmeshID, 38 MaterialID,
- 39 InstanceCount, 40 RenderPass, 41 ShaderProgramID, 42 RenderDistance,
- 43 LayerMask, 44 LODLevel, 45 Flags, 46 Reserved0, 47 Reserved1 */
+/* Command layout (float[20]):
+ 0-3 BoundingSphere, 4 MeshID, 5 SubmeshID, 6 MaterialID, 7 InstanceCount,
+ 8 RenderPass, 9 ShaderProgramID, 10 RenderDistance, 11 LayerMask,
+ 12 LODLevel, 13 Flags, 14 LogicalMeshID, 15 TransformID, 16 SkinID,
+ 17 StateClassID, 18 BoundsID, 19 DrawID */
 
 // === Buffers ===
 layout(std430, binding = 0) buffer CulledCommandsBuffer { float culled[]; };
@@ -106,6 +107,37 @@ uniform int SourceViewId;
 uniform int UseHotCommands;
 //uniform int UseSorted;             // 1 = use keyIndexPairs for ordering
 
+bool TryReserveDrawSlot(out uint outIndex)
+{
+    outIndex = 0u;
+
+    if (MaxIndirectDraws <= 0)
+    {
+        atomicExchange(IndirectOverflowFlag, 1u);
+        atomicExchange(TruncationFlag, 1u);
+        return false;
+    }
+
+    uint capacity = uint(MaxIndirectDraws);
+    while (true)
+    {
+        uint current = DrawCount;
+        if (current >= capacity)
+        {
+            atomicExchange(IndirectOverflowFlag, 1u);
+            atomicExchange(TruncationFlag, 1u);
+            return false;
+        }
+
+        uint observed = atomicCompSwap(DrawCount, current, current + 1u);
+        if (observed == current)
+        {
+            outIndex = current;
+            return true;
+        }
+    }
+}
+
 void TryEmitDraw(uint meshID, uint instanceCount, uint commandIndex, bool previousLod)
 {
     if (instanceCount == 0u)
@@ -119,13 +151,9 @@ void TryEmitDraw(uint meshID, uint instanceCount, uint commandIndex, bool previo
     if (indexCount == 0u)
         return;
 
-    uint outIndex = atomicAdd(DrawCount, 1u);
-    if (outIndex >= uint(MaxIndirectDraws))
-    {
-        atomicExchange(IndirectOverflowFlag, 1u);
-        atomicExchange(TruncationFlag, 1u);
+    uint outIndex;
+    if (!TryReserveDrawSlot(outIndex))
         return;
-    }
 
     uint drawBase = outIndex * DRAW_COMMAND_UINTS;
     uint firstIndex = submeshData[submeshOffset + 1u];
@@ -183,23 +211,26 @@ void main()
     //}
 
     int base = int(idx) * COMMAND_FLOATS;
-    int hotBase = int(idx) * 16;
+    int hotBase = int(idx) * 20;
 
     uint renderPass;
     uint instanceCount;
     uint meshID;
+    uint drawID;
 
     if (UseHotCommands != 0)
     {
         renderPass = culledHot[hotBase + 8];
         instanceCount = culledHot[hotBase + 7];
         meshID = culledHot[hotBase + 4];
+        drawID = culledHot[hotBase + 14];
     }
     else
     {
-        renderPass = floatBitsToUint(culled[base + 40]);
-        instanceCount = floatBitsToUint(culled[base + 39]);
-        meshID = floatBitsToUint(culled[base + 36]);
+        renderPass = floatBitsToUint(culled[base + 8]);
+        instanceCount = floatBitsToUint(culled[base + 7]);
+        meshID = floatBitsToUint(culled[base + 4]);
+        drawID = floatBitsToUint(culled[base + 19]);
     }
 
     // Defensive pass filter (culling shader should already filter by pass, but keep this to avoid
@@ -210,7 +241,7 @@ void main()
     if (instanceCount == 0u)
         return;
 
-    uint transitionBase = idx * LOD_TRANSITION_UINTS;
+    uint transitionBase = drawID * LOD_TRANSITION_UINTS;
     bool transitionActive = false;
     uint previousMeshID = 0u;
     if (transitionBase + 3u < uint(lodTransitions.length()))
@@ -222,7 +253,7 @@ void main()
     }
 
     if (transitionActive)
-        TryEmitDraw(previousMeshID, instanceCount, idx, true);
+        TryEmitDraw(previousMeshID, instanceCount, drawID, true);
 
-    TryEmitDraw(meshID, instanceCount, idx, false);
+    TryEmitDraw(meshID, instanceCount, drawID, false);
 }

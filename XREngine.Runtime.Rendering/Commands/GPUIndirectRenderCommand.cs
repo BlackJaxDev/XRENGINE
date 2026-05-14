@@ -3,11 +3,75 @@ using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Commands
 {
+    public enum EGpuMaterialStateClass : uint
+    {
+        Invalid = 0,
+        OpaqueDeferred = 1,
+        OpaqueForward = 2,
+        AlphaTested = 3,
+        Shadow = 4,
+        Transparent = 5,
+        Custom = 6
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DrawMetadata
+    {
+        public uint DrawID;
+        public uint MeshID;
+        public uint SubmeshID;
+        public uint MaterialID;
+        public uint TransformID;
+        public uint SkinID;
+        public uint RenderPassMask;
+        public uint LayerMask;
+        public uint Flags;
+        public uint LodPolicy;
+        public uint StateClassID;
+        public uint InstanceCount;
+        public uint RenderPass;
+        public uint ShaderProgramID;
+        public uint LogicalMeshID;
+        public uint BoundsID;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TransformGpu
+    {
+        public Matrix4x4 WorldMatrix;
+
+        public TransformGpu(Matrix4x4 worldMatrix)
+            => WorldMatrix = worldMatrix;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BoundsGpu
+    {
+        public Vector4 BoundingSphere;
+        public Vector4 AabbMin;
+        public Vector4 AabbMax;
+        public uint BoundsVersion;
+        public uint Padding0;
+        public uint Padding1;
+        public uint Padding2;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MaterialStateGpu
+    {
+        public uint StateClassID;
+        public uint MaterialID;
+        public uint PipelineKey;
+        public uint OptionsBits;
+        public uint TransparencyMode;
+        public uint DescriptorStart;
+        public uint DescriptorCount;
+        public uint Flags;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUIndirectRenderCommand
     {
-        public Matrix4x4 WorldMatrix;
-        public Matrix4x4 PrevWorldMatrix;
         public Vector4 BoundingSphere;
         public uint MeshID;
         public uint SubmeshID;
@@ -20,6 +84,10 @@ namespace XREngine.Rendering.Commands
         public uint LODLevel;
         public uint Flags;
         public uint LogicalMeshID;
+        public uint TransformID;
+        public uint SkinID;
+        public uint StateClassID;
+        public uint BoundsID;
         public uint Reserved1;
 
         public uint Reserved0
@@ -47,24 +115,28 @@ namespace XREngine.Rendering.Commands
                 RenderDistance = RenderDistance,
                 SourceCommandIndex = sourceCommandIndex,
                 LogicalMeshID = LogicalMeshID,
+                TransformID = TransformID,
+                SkinID = SkinID,
+                StateClassID = StateClassID,
+                BoundsID = BoundsID,
             };
 
         public GPUIndirectRenderCommandCold ToCold()
             => new()
             {
-                WorldMatrix = WorldMatrix,
-                PrevWorldMatrix = PrevWorldMatrix,
                 ShaderProgramID = ShaderProgramID,
                 RenderDistance = RenderDistance,
                 LogicalMeshID = LogicalMeshID,
+                TransformID = TransformID,
+                SkinID = SkinID,
+                StateClassID = StateClassID,
+                BoundsID = BoundsID,
                 Reserved1 = Reserved1,
             };
 
         public static GPUIndirectRenderCommand FromHotCold(in GPUIndirectRenderCommandHot hot, in GPUIndirectRenderCommandCold cold)
             => new()
             {
-                WorldMatrix = cold.WorldMatrix,
-                PrevWorldMatrix = cold.PrevWorldMatrix,
                 BoundingSphere = hot.BoundingSphere,
                 MeshID = hot.MeshID,
                 SubmeshID = hot.SubmeshID,
@@ -77,7 +149,32 @@ namespace XREngine.Rendering.Commands
                 LODLevel = hot.LODLevel,
                 Flags = hot.Flags,
                 LogicalMeshID = cold.LogicalMeshID,
+                TransformID = cold.TransformID,
+                SkinID = cold.SkinID,
+                StateClassID = cold.StateClassID,
+                BoundsID = cold.BoundsID,
                 Reserved1 = cold.Reserved1,
+            };
+
+        public readonly DrawMetadata ToDrawMetadata(uint drawID)
+            => new()
+            {
+                DrawID = drawID,
+                MeshID = MeshID,
+                SubmeshID = SubmeshID,
+                MaterialID = MaterialID,
+                TransformID = TransformID,
+                SkinID = SkinID,
+                RenderPassMask = RenderPass < 32u ? 1u << (int)RenderPass : 0u,
+                LayerMask = LayerMask,
+                Flags = Flags,
+                LodPolicy = LODLevel,
+                StateClassID = StateClassID,
+                InstanceCount = InstanceCount,
+                RenderPass = RenderPass,
+                ShaderProgramID = ShaderProgramID,
+                LogicalMeshID = LogicalMeshID,
+                BoundsID = BoundsID
             };
     }
 
@@ -97,6 +194,10 @@ namespace XREngine.Rendering.Commands
         public float RenderDistance;
         public uint SourceCommandIndex;
         public uint LogicalMeshID;
+        public uint TransformID;
+        public uint SkinID;
+        public uint StateClassID;
+        public uint BoundsID;
 
         public uint Reserved0
         {
@@ -108,11 +209,13 @@ namespace XREngine.Rendering.Commands
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUIndirectRenderCommandCold
     {
-        public Matrix4x4 WorldMatrix;
-        public Matrix4x4 PrevWorldMatrix;
         public uint ShaderProgramID;
         public float RenderDistance;
         public uint LogicalMeshID;
+        public uint TransformID;
+        public uint SkinID;
+        public uint StateClassID;
+        public uint BoundsID;
         public uint Reserved1;
 
         public uint Reserved0

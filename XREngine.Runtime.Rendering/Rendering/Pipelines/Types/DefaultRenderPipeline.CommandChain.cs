@@ -6,7 +6,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
-using static XREngine.Engine.Rendering.State;
+using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
@@ -236,11 +236,11 @@ public partial class DefaultRenderPipeline
     private void AppendForwardDepthPrePass(ViewportRenderCommandContainer c)
     {
         var prePassChoice = c.Add<VPRC_IfElse>();
-        prePassChoice.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+        prePassChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
         {
             var shareChoice = new ViewportRenderCommandContainer(this);
             var shareIfElse = shareChoice.Add<VPRC_IfElse>();
-            shareIfElse.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
+            shareIfElse.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
             shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
             shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
             shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
@@ -1077,7 +1077,7 @@ public partial class DefaultRenderPipeline
 
     private static bool IsOffscreenSceneCaptureOutput()
         => State.OutputFBO is not null &&
-           (Engine.Rendering.State.IsSceneCapturePass || Engine.Rendering.State.IsLightProbePass);
+           (RuntimeEngine.Rendering.State.IsSceneCapturePass || RuntimeEngine.Rendering.State.IsLightProbePass);
 
     private ViewportRenderCommandContainer CreateOffscreenCaptureFinalOutputCommands()
     {

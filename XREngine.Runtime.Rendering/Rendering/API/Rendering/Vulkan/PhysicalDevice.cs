@@ -35,24 +35,24 @@ public unsafe partial class VulkanRenderer
 
         Api!.GetPhysicalDeviceProperties(_physicalDevice, out var properties);
         // NVIDIA PCI vendor ID.
-        Engine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
+        RuntimeEngine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
         // Intel PCI vendor ID.
-        Engine.Rendering.State.IsIntel = properties.VendorID == 0x8086;
-        Engine.Rendering.State.IsVulkan = true;
-        Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers = false;
-        Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering = false;
-        Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering = false;
-        Engine.Rendering.State.SupportsOpenGLViewportArray = false;
-        Engine.Rendering.State.SupportsOpenGLViewportScissorArray = false;
-        Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex = false;
-        Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex = false;
-        Engine.Rendering.State.MaxOpenGLViewports = 1;
-        Engine.Rendering.State.VulkanDeviceName = Silk.NET.Core.Native.SilkMarshal.PtrToString((nint)properties.DeviceName);
-        Engine.Rendering.State.VulkanVendorId = properties.VendorID;
-        Engine.Rendering.State.VulkanDeviceId = properties.DeviceID;
+        RuntimeEngine.Rendering.State.IsIntel = properties.VendorID == 0x8086;
+        RuntimeEngine.Rendering.State.IsVulkan = true;
+        RuntimeEngine.Rendering.State.SupportsOpenGLLayeredFramebuffers = false;
+        RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering = false;
+        RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering = false;
+        RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray = false;
+        RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray = false;
+        RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex = false;
+        RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex = false;
+        RuntimeEngine.Rendering.State.MaxOpenGLViewports = 1;
+        RuntimeEngine.Rendering.State.VulkanDeviceName = Silk.NET.Core.Native.SilkMarshal.PtrToString((nint)properties.DeviceName);
+        RuntimeEngine.Rendering.State.VulkanVendorId = properties.VendorID;
+        RuntimeEngine.Rendering.State.VulkanDeviceId = properties.DeviceID;
 
         // Cache Vulkan ray tracing extension availability once at startup.
-        Engine.Rendering.State.HasVulkanRayTracing = ProbeVulkanRayTracingSupport(_physicalDevice);
+        RuntimeEngine.Rendering.State.HasVulkanRayTracing = ProbeVulkanRayTracingSupport(_physicalDevice);
     }
 
     private bool ProbeVulkanRayTracingSupport(PhysicalDevice device)

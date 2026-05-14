@@ -732,7 +732,7 @@ namespace XREngine.Components.Scene.Mesh
 
             if (_autoCycle)
             {
-                float dt = Math.Max(0.0f, Engine.Time.Timer.Update.Delta);
+                float dt = Math.Max(0.0f, RuntimeEngine.Time.Timer.Update.Delta);
                 float dayLength = Math.Max(1.0f, _dayLengthSeconds);
                 _timeOfDay = (_timeOfDay + dt / dayLength) % 1.0f;
             }
@@ -1208,7 +1208,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (s_vertexShader is null)
             {
-                s_vertexShader = Engine.Assets.LoadEngineAsset<XRShader>(
+                s_vertexShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "Skybox.vs");
 
@@ -1223,7 +1223,7 @@ namespace XREngine.Components.Scene.Mesh
             if (s_gradientShader is not null)
                 return s_gradientShader;
 
-            s_gradientShader = Engine.Assets.LoadEngineAsset<XRShader>(
+            s_gradientShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
                 JobPriority.Highest,
                 "Shaders", "Scene3D", "SkyboxGradient.fs");
 
@@ -1236,7 +1236,7 @@ namespace XREngine.Components.Scene.Mesh
             if (s_dynamicShader is not null)
                 return s_dynamicShader;
 
-            s_dynamicShader = Engine.Assets.LoadEngineAsset<XRShader>(
+            s_dynamicShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
                 JobPriority.Highest,
                 "Shaders", "Scene3D", "SkyboxDynamic.fs");
 
@@ -1247,7 +1247,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (s_equirectShader is null)
             {
-                s_equirectShader = Engine.Assets.LoadEngineAsset<XRShader>(
+                s_equirectShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "SkyboxEquirect.fs");
 
@@ -1261,7 +1261,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (s_octahedralShader is null)
             {
-                s_octahedralShader = Engine.Assets.LoadEngineAsset<XRShader>(
+                s_octahedralShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "SkyboxOctahedral.fs");
 
@@ -1275,7 +1275,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (s_cubemapShader is null)
             {
-                s_cubemapShader = Engine.Assets.LoadEngineAsset<XRShader>(
+                s_cubemapShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "SkyboxCubemap.fs");
 
@@ -1289,7 +1289,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (s_cubemapArrayShader is null)
             {
-                s_cubemapArrayShader = Engine.Assets.LoadEngineAsset<XRShader>(
+                s_cubemapArrayShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "SkyboxCubemapArray.fs");
 

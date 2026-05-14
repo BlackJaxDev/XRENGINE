@@ -1071,6 +1071,96 @@ CommandChain: []
         clone.Shaders[0].Source.Text.ShouldBe(sourceText);
     }
 
+    [Test]
+    public void MaterialYaml_NullShaderScalars_AreIgnored()
+    {
+        const string yaml = """
+Name: NullShaderMaterial
+Shaders:
+-
+- null
+- ~
+""";
+
+        XRMaterial clone = AssetManager.Deserializer.Deserialize<XRMaterial>(yaml).ShouldNotBeNull();
+
+        clone.Shaders.Count.ShouldBe(0);
+        clone.FragmentShaders.Count.ShouldBe(0);
+    }
+
+    [Test]
+    public void ShaderArrayYaml_NullShaderScalars_AreIgnored()
+    {
+        const string yaml = """
+NonVertexShadersOverride:
+-
+- null
+- ~
+""";
+
+        ShaderArrayContainer clone = AssetManager.Deserializer.Deserialize<ShaderArrayContainer>(yaml).ShouldNotBeNull();
+
+        clone.NonVertexShadersOverride.ShouldNotBeNull();
+        clone.NonVertexShadersOverride.Length.ShouldBe(0);
+    }
+
+    [Test]
+    public void ShaderArrayYaml_InlineShaderMappings_DeserializeWithoutRecursion()
+    {
+        ShaderArrayContainer original = new()
+        {
+            NonVertexShadersOverride =
+            [
+                new XRShader(EShaderType.Compute, TextFile.FromText("void main() {}"))
+            ]
+        };
+
+        string yaml = AssetManager.Serializer.Serialize(original);
+        ShaderArrayContainer clone = AssetManager.Deserializer.Deserialize<ShaderArrayContainer>(yaml).ShouldNotBeNull();
+
+        XRShader shader = clone.NonVertexShadersOverride.ShouldNotBeNull().ShouldHaveSingleItem();
+        shader.Type.ShouldBe(EShaderType.Compute);
+        shader.Source.Text.ShouldBe("void main() {}");
+    }
+
+    [Test]
+    public void ShaderArrayYaml_MixedNullAndInlineShaderMappings_DeserializesOnlyRealShaders()
+    {
+        const string yaml = """
+NonVertexShadersOverride:
+-
+- Source:
+    Text: void main() {}
+  Type: Compute
+- null
+- ~
+""";
+
+        ShaderArrayContainer clone = AssetManager.Deserializer.Deserialize<ShaderArrayContainer>(yaml).ShouldNotBeNull();
+
+        XRShader shader = clone.NonVertexShadersOverride.ShouldNotBeNull().ShouldHaveSingleItem();
+        shader.Type.ShouldBe(EShaderType.Compute);
+        shader.Source.Text.ShouldBe("void main() {}");
+    }
+
+    [Test]
+    public void ShaderArrayYaml_BareDashWithNestedShaderMapping_DeserializesShader()
+    {
+        const string yaml = """
+NonVertexShadersOverride:
+-
+  Source:
+    Text: void main() {}
+  Type: Compute
+""";
+
+        ShaderArrayContainer clone = AssetManager.Deserializer.Deserialize<ShaderArrayContainer>(yaml).ShouldNotBeNull();
+
+        XRShader shader = clone.NonVertexShadersOverride.ShouldNotBeNull().ShouldHaveSingleItem();
+        shader.Type.ShouldBe(EShaderType.Compute);
+        shader.Source.Text.ShouldBe("void main() {}");
+    }
+
     private static SceneNode CreateSceneNodeWithModel(Model model)
     {
         SceneNode node = new("PrefabModelRoot");
@@ -1279,5 +1369,10 @@ CommandChain: []
         public float ShadowCollectMaxDistance { get; set; }
 
         public LayerMask CullingMask { get; set; }
+    }
+
+    private sealed class ShaderArrayContainer
+    {
+        public XRShader[]? NonVertexShadersOverride { get; set; }
     }
 }

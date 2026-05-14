@@ -115,7 +115,7 @@ public unsafe partial class VulkanRenderer
                 // Track VRAM deallocation
                 if (_allocatedVRAMBytes > 0)
                 {
-                    Engine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
 
@@ -212,7 +212,7 @@ public unsafe partial class VulkanRenderer
 
             // Track VRAM allocation
             _allocatedVRAMBytes = (long)allocation.Size;
-            Engine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);
+            RuntimeEngine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);
         }
 
         private void CreateImageView()

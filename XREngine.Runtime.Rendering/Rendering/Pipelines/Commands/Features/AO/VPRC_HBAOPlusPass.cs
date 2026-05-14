@@ -116,7 +116,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var area = Engine.Rendering.State.RenderArea;
+            var area = RuntimeEngine.Rendering.State.RenderArea;
             int width = area.Width;
             int height = area.Height;
             bool forceRebuild = state.ResourcesDirty;
@@ -316,7 +316,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             camera.SetUniforms(program);
 
-            if (Engine.Rendering.State.IsStereoPass)
+            if (RuntimeEngine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
             camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.HorizonBasedPlus);

@@ -221,7 +221,7 @@ namespace XREngine.Rendering
         {
             if (_isPaused)
                 return false;
-            if (!Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            if (!RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 return false;
             if (level > _logLevel)
                 return false;

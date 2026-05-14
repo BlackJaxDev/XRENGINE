@@ -161,7 +161,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             EnqueueFrameOp(new IndirectDrawOp(
                 EnsureValidPassIndex(passIndex, "IndirectDraw"),
                 _boundIndirectBuffer,
@@ -173,8 +173,8 @@ namespace XREngine.Rendering.Vulkan
                 UseCount: false,
                 CaptureFrameOpContext()));
 
-            Engine.Rendering.Stats.IncrementMultiDrawCalls();
-            Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
+            RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
+            RuntimeEngine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
         }
 
         public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
@@ -205,7 +205,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             EnqueueFrameOp(new IndirectDrawOp(
                 EnsureValidPassIndex(passIndex, "IndirectCountDraw"),
                 _boundIndirectBuffer,
@@ -217,9 +217,9 @@ namespace XREngine.Rendering.Vulkan
                 UseCount: true,
                 CaptureFrameOpContext()));
 
-            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
             // Actual draw count is determined by GPU; we track max as approximation
-            Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
+            RuntimeEngine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
         }
 
         private static IndexType ToVkIndexType(IndexSize size)

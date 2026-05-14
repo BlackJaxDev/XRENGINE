@@ -61,8 +61,8 @@ namespace XREngine.Rendering
 
         static XRMeshRenderer()
         {
-            Engine.Rendering.SettingsChanged += () => Interlocked.Increment(ref _settingsRevision);
-            Engine.Rendering.AntiAliasingSettingsChanged += () => Interlocked.Increment(ref _settingsRevision);
+            RuntimeEngine.Rendering.SettingsChanged += () => Interlocked.Increment(ref _settingsRevision);
+            RuntimeEngine.Rendering.AntiAliasingSettingsChanged += () => Interlocked.Increment(ref _settingsRevision);
         }
 
         private static int CurrentSettingsRevision => Volatile.Read(ref _settingsRevision);
@@ -156,37 +156,37 @@ namespace XREngine.Rendering
         /// <returns></returns>
         private BaseVersion GetVersion(bool forceNoStereo = false)
         {
-            bool stereoPass = !forceNoStereo && Engine.Rendering.State.IsStereoPass && CanUseVrSpecificVersions();
+            bool stereoPass = !forceNoStereo && RuntimeEngine.Rendering.State.IsStereoPass && CanUseVrSpecificVersions();
             bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
 
             BaseVersion ver;
-            if (!useMeshDeform && Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
-                return Engine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass
+            if (!useMeshDeform && RuntimeEngine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
+                return RuntimeEngine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass
                     ? GetDirectionalCascadeAtlasInstancedVersion()
                     : GetDirectionalCascadeInstancedVersion();
-            if (!useMeshDeform && Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
-                return Engine.Rendering.State.IsPointLightAtlasGroupedShadowPass
+            if (!useMeshDeform && RuntimeEngine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
+                return RuntimeEngine.Rendering.State.IsPointLightAtlasGroupedShadowPass
                     ? GetPointLightAtlasInstancedVersion()
                     : GetPointLightInstancedVersion();
 
-            bool preferNV = Engine.Rendering.Settings.PreferNVStereo;
+            bool preferNV = RuntimeEngine.Rendering.Settings.PreferNVStereo;
             bool hasNvMaterialVertexShader = MaterialHasMatchingVertexShader(HasNVStereoViewRendering);
             bool hasMultiViewMaterialVertexShader = MaterialHasMatchingVertexShader(HasMultiViewExtension);
             
             if (useMeshDeform)
             {
                 // Use mesh deform versions
-                if (stereoPass && Engine.Rendering.State.ForwardPlusEnabled && hasMultiViewMaterialVertexShader)
+                if (stereoPass && RuntimeEngine.Rendering.State.ForwardPlusEnabled && hasMultiViewMaterialVertexShader)
                     ver = GetMeshDeformOVRMultiViewVersion();
-                else if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
+                else if (stereoPass && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
                     ver = GetMeshDeformNVStereoVersion();
                 else if (stereoPass && hasMultiViewMaterialVertexShader)
                     ver = GetMeshDeformOVRMultiViewVersion();
                 else if (stereoPass && hasNvMaterialVertexShader)
                     ver = GetMeshDeformNVStereoVersion();
-                else if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
+                else if (stereoPass && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA)
                     ver = GetMeshDeformNVStereoVersion();
-                else if (stereoPass && Engine.Rendering.State.HasAnyMultiViewExtension)
+                else if (stereoPass && RuntimeEngine.Rendering.State.HasAnyMultiViewExtension)
                     ver = GetMeshDeformOVRMultiViewVersion();
                 else
                     ver = GetMeshDeformDefaultVersion();
@@ -194,17 +194,17 @@ namespace XREngine.Rendering
             else
             {
                 // Use standard versions
-                if (stereoPass && Engine.Rendering.State.ForwardPlusEnabled && hasMultiViewMaterialVertexShader)
+                if (stereoPass && RuntimeEngine.Rendering.State.ForwardPlusEnabled && hasMultiViewMaterialVertexShader)
                     ver = GetOVRMultiViewVersion();
-                else if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
+                else if (stereoPass && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA && hasNvMaterialVertexShader)
                     ver = GetNVStereoVersion();
                 else if (stereoPass && hasMultiViewMaterialVertexShader)
                     ver = GetOVRMultiViewVersion();
                 else if (stereoPass && hasNvMaterialVertexShader)
                     ver = GetNVStereoVersion();
-                else if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
+                else if (stereoPass && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA)
                     ver = GetNVStereoVersion();
-                else if (stereoPass && Engine.Rendering.State.HasAnyMultiViewExtension)
+                else if (stereoPass && RuntimeEngine.Rendering.State.HasAnyMultiViewExtension)
                     ver = GetOVRMultiViewVersion();
                 else
                     ver = GetDefaultVersion();
@@ -223,7 +223,7 @@ namespace XREngine.Rendering
         }
 
         private static bool CanUseVrSpecificVersions()
-            => Engine.VRState.IsInVR;
+            => RuntimeEngine.VRState.IsInVR;
 
         public BaseVersion GetDefaultVersion() => GetOrCreateVersion(0);
         public BaseVersion GetOVRMultiViewVersion() => GetOrCreateVersion(1);
@@ -911,10 +911,10 @@ namespace XREngine.Rendering
         {
             ResetDrivableBuffers();
 
-            if ((Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning)
+            if ((Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning)
                 PopulateBoneMatrixBuffers();
 
-            if ((Mesh?.HasBlendshapes ?? false) && Engine.Rendering.Settings.AllowBlendshapes)
+            if ((Mesh?.HasBlendshapes ?? false) && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
                 PopulateBlendshapeWeightsBuffer();
         }
 
@@ -954,7 +954,7 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            if (!Engine.Rendering.Settings.AllowSkinning)
+            if (!RuntimeEngine.Rendering.Settings.AllowSkinning)
             {
                 if (logWarnings)
                     Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Skinning is disabled in render settings. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
@@ -995,7 +995,7 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            if (!Engine.Rendering.Settings.AllowBlendshapes)
+            if (!RuntimeEngine.Rendering.Settings.AllowBlendshapes)
             {
                 if (logWarnings)
                     Debug.LogWarning($"[XRMeshRenderer] EnsureBlendshapeBuffers: Blendshapes are disabled in render settings. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
@@ -1134,7 +1134,7 @@ namespace XREngine.Rendering
 
         [MemoryPackIgnore]
         public bool HasExternalBoneMatrixSource
-            => Engine.Rendering.Settings.CalculateSkinningInComputeShader
+            => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
                 && _externalBoneMatricesBuffer is not null
                 && _externalBoneInvBindMatricesBuffer is not null
                 && _externalBoneMatrixCount > 0u;
@@ -1251,7 +1251,7 @@ namespace XREngine.Rendering
 
         private void PopulateBoneMatrixBuffers()
         {
-            //using var timer = Engine.Profiler.Start();
+            //using var timer = RuntimeEngine.Profiler.Start();
 
             uint boneCount = (uint)(Mesh?.UtilizedBones?.Length ?? 0);
 
@@ -1694,7 +1694,7 @@ namespace XREngine.Rendering
                 MeshDeformVertexShaderGenerator.MeshDeformVertexIndicesAttrName,
                 EBufferTarget.ArrayBuffer,
                 vertexCount,
-                Engine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
+                RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
                 4, // ivec4 or vec4
                 false,
                 false)
@@ -1756,7 +1756,7 @@ namespace XREngine.Rendering
                     }
                 }
 
-                if (Engine.Rendering.Settings.UseIntegerUniformsInShaders)
+                if (RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders)
                 {
                     MeshDeformVertexIndicesBuffer.SetDataRawAtIndex(v, new IVector4((int)indices.X, (int)indices.Y, (int)indices.Z, (int)indices.W));
                 }
@@ -1820,7 +1820,7 @@ namespace XREngine.Rendering
                 MeshDeformVertexShaderGenerator.MeshDeformVertexOffsetAttrName,
                 EBufferTarget.ArrayBuffer,
                 vertexCount,
-                Engine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
+                RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
                 1,
                 false,
                 false)
@@ -1833,7 +1833,7 @@ namespace XREngine.Rendering
                 MeshDeformVertexShaderGenerator.MeshDeformVertexCountAttrName,
                 EBufferTarget.ArrayBuffer,
                 vertexCount,
-                Engine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
+                RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
                 1,
                 false,
                 false)
@@ -1857,7 +1857,7 @@ namespace XREngine.Rendering
                     }
                 }
 
-                if (Engine.Rendering.Settings.UseIntegerUniformsInShaders)
+                if (RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders)
                 {
                     MeshDeformVertexOffsetBuffer.Set(v, (int)currentOffset);
                     MeshDeformVertexCountBuffer.Set(v, count);
@@ -2173,7 +2173,7 @@ namespace XREngine.Rendering
 
         internal void OnSettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
         {
-            var renderState = Engine.Rendering.State.RenderingPipelineState;
+            var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
             renderState?.ApplyScopedProgramBindings(vertexProgram);
 
             if (!ReferenceEquals(vertexProgram, materialProgram))

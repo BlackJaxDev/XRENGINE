@@ -31,9 +31,12 @@ namespace XREngine.Rendering.Commands
     public sealed class RenderCommandCollection : XRBase
     {
         private static readonly CpuRenderOcclusionCoordinator s_cpuOcclusionCoordinator = new();
+        private static readonly CpuSoftwareOcclusionCuller s_cpuSoftwareOcclusionCuller = new();
         private static int s_addCpuMissingPassDiagCount = 0;
         private Dictionary<int, Type?> _passSorterTypes = [];
         private Dictionary<int, long> _updatingPassSortOrderCounters = [];
+
+        internal static CpuSoftwareOcclusionCuller CpuSoftwareOcclusion => s_cpuSoftwareOcclusionCuller;
 
         public bool IsShadowPass { get; private set; } = false;
         public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
@@ -330,6 +333,49 @@ namespace XREngine.Rendering.Commands
                 || renderPass == (int)EDefaultRenderPass.MaskedForward;
         }
 
+        internal bool PrepareCpuSoftwareOcclusion(int renderPass, XRCamera? camera)
+        {
+            if (!CpuSoftwareOcclusionCuller.IsEnabled ||
+                camera is null ||
+                RuntimeEngine.Rendering.State.IsShadowPass ||
+                IsStereoRenderPassActive() ||
+                !RenderPassIsOcclusionTestable(renderPass))
+            {
+                return false;
+            }
+
+            GetActiveViewportSize(out int viewportWidth, out int viewportHeight);
+            if (!s_cpuSoftwareOcclusionCuller.IsFrameInitializedFor(camera, viewportWidth, viewportHeight) ||
+                !s_cpuSoftwareOcclusionCuller.HasOccludersFrom(this))
+            {
+                s_cpuSoftwareOcclusionCuller.BeginFrame(camera, viewportWidth, viewportHeight);
+                s_cpuSoftwareOcclusionCuller.SubmitOccludersFromOpaqueCommands(this);
+            }
+
+            return s_cpuSoftwareOcclusionCuller.IsFrameOpen;
+        }
+
+        internal static bool TestCpuSoftwareOcclusionForGpuSource(GPUScene scene, uint sourceCommandIndex)
+        {
+            if (!CpuSoftwareOcclusionCuller.IsEnabled ||
+                !s_cpuSoftwareOcclusionCuller.IsFrameOpen ||
+                IsStereoRenderPassActive())
+            {
+                return true;
+            }
+
+            if (!scene.TryGetSourceCommand(sourceCommandIndex, out IRenderCommandMesh? command) || command is null)
+                return true;
+
+            if (CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(command))
+                return true;
+
+            if (command is not RenderCommand renderCommand || renderCommand.CullingVolume is not AABB bounds)
+                return true;
+
+            return s_cpuSoftwareOcclusionCuller.TestVisible(renderCommand.StableQueryKey, bounds);
+        }
+
         public void RenderCPU(
             int renderPass,
             bool skipGpuCommands = false,
@@ -340,8 +386,8 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
-            EOcclusionCullingMode occlusionMode = Engine.EffectiveSettings.GpuOcclusionCullingMode;
-            bool isShadowPass = Engine.Rendering.State.IsShadowPass;
+            EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
+            bool isShadowPass = RuntimeEngine.Rendering.State.IsShadowPass;
             bool useCpuQueryOcclusion =
                 !isShadowPass &&
                 camera is not null &&
@@ -352,7 +398,7 @@ namespace XREngine.Rendering.Commands
             // (otherwise it stays "Disabled" when every callsite happens to be ineligible).
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
                 occlusionMode,
-                Engine.Rendering.ResolveMeshSubmissionStrategy());
+                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
 
             if (useCpuQueryOcclusion)
             {
@@ -366,6 +412,8 @@ namespace XREngine.Rendering.Commands
                     shadowPass: isShadowPass,
                     modeOff: occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
             }
+
+            bool useCpuSocOcclusion = PrepareCpuSoftwareOcclusion(renderPass, camera);
 
             // Phase 2 deferred-probe queue (reused per-thread).
             List<DeferredProbe>? deferredProbes = null;
@@ -402,10 +450,17 @@ namespace XREngine.Rendering.Commands
                 {
                     // Explicit per-material opt-out (skybox, fullscreen overlays, gizmos
                     // whose AABB / depth contract is unsuitable for AnySamplesPassedConservative).
-                    var occlMaterial = occlMesh.MaterialOverride ?? occlMesh.Mesh?.Material;
-                    if (occlMaterial?.RenderOptions?.ExcludeFromCpuOcclusion == true)
+                    if (CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(occlMesh))
                     {
                         cmd.Render();
+                        cpuCmdIndex++;
+                        continue;
+                    }
+
+                    if (useCpuSocOcclusion && cmd.CullingVolume is AABB cpuSocBounds &&
+                        !s_cpuSoftwareOcclusionCuller.TestVisible(cmd.StableQueryKey, cpuSocBounds))
+                    {
+                        XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
                         cpuCmdIndex++;
                         continue;
                     }
@@ -466,6 +521,15 @@ namespace XREngine.Rendering.Commands
                             s_cpuOcclusionCoordinator.EndQuery(renderPass, queryKey);
                     }
 
+                    cpuCmdIndex++;
+                    continue;
+                }
+
+                if (!useCpuQueryOcclusion && useCpuSocOcclusion && cmd is IRenderCommandMesh socMesh &&
+                    !CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(socMesh) &&
+                    cmd.CullingVolume is AABB socBounds &&
+                    !s_cpuSoftwareOcclusionCuller.TestVisible(cmd.StableQueryKey, socBounds))
+                {
                     cpuCmdIndex++;
                     continue;
                 }
@@ -555,8 +619,8 @@ namespace XREngine.Rendering.Commands
 
             bool useCpuQueryOcclusion =
                 respectCpuQueryOcclusion &&
-                !Engine.Rendering.State.IsShadowPass &&
-                Engine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync;
+                !RuntimeEngine.Rendering.State.IsShadowPass &&
+                RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync;
 
             uint cpuCmdIndex = 0;
             foreach (var cmd in list)
@@ -589,7 +653,7 @@ namespace XREngine.Rendering.Commands
         }
 
         public void RenderGPU(int renderPass)
-            => RenderGPU(renderPass, Engine.Rendering.ResolveMeshSubmissionStrategy(true));
+            => RenderGPU(renderPass, RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true));
 
         public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
         {
@@ -662,6 +726,16 @@ namespace XREngine.Rendering.Commands
 
             return false;
         }
+
+        private static void GetActiveViewportSize(out int width, out int height)
+        {
+            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+            width = Math.Max(1, renderState?.WindowViewport?.InternalWidth ?? renderState?.WindowViewport?.Width ?? RuntimeEngine.EffectiveSettings.CpuSocBufferWidth);
+            height = Math.Max(1, renderState?.WindowViewport?.InternalHeight ?? renderState?.WindowViewport?.Height ?? RuntimeEngine.EffectiveSettings.CpuSocBufferHeight);
+        }
+
+        private static bool IsStereoRenderPassActive()
+            => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState?.StereoPass == true;
 
         private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, IRuntimeRenderCommandExecutionState renderState, IRuntimeRenderCamera leftCamera)
         {
@@ -912,12 +986,12 @@ namespace XREngine.Rendering.Commands
 
         public void SwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("RenderCommandCollection.SwapBuffers");
+            using var sample = RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers");
 
             (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
             (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
 
-            using (Engine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
+            using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
             {
                 // Dirty-delta publish: walk only the commands that mutated since the last swap.
                 // Skip commands whose dirty bit was already cleared by another collection sharing
@@ -939,7 +1013,7 @@ namespace XREngine.Rendering.Commands
                 queue.Clear();
             }
 
-            using (Engine.Profiler.Start("RenderCommandCollection.SwapBuffers.ClearPasses"))
+            using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.ClearPasses"))
             {
                 foreach (var pass in _updatingPasses.Values)
                     pass.Clear();

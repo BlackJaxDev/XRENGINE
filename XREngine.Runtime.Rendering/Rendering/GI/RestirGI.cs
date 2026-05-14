@@ -49,7 +49,7 @@ public static class RestirGI
     public static bool VerifyRayTracingSupport(bool logSuccess)
     {
         // Vulkan-only feature path.
-        if (!Engine.Rendering.State.IsVulkan)
+        if (!RuntimeEngine.Rendering.State.IsVulkan)
             return false;
 
         if (_supportLogged)

@@ -251,7 +251,7 @@ public sealed class OctahedralImposterGenerator
         Result? result = null;
         Exception? exception = null;
 
-        if (Engine.IsRenderThread)
+        if (RuntimeEngine.IsRenderThread)
         {
             try
             {
@@ -265,7 +265,7 @@ public sealed class OctahedralImposterGenerator
         else
         {
             using ManualResetEventSlim completionEvent = new(false);
-            Engine.EnqueueMainThreadTask(() =>
+            RuntimeEngine.EnqueueMainThreadTask(() =>
             {
                 try
                 {
@@ -299,7 +299,7 @@ public sealed class OctahedralImposterGenerator
         ArgumentNullException.ThrowIfNull(component);
 
         TaskCompletionSource<Result?> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        Engine.EnqueueMainThreadTask(() =>
+        RuntimeEngine.EnqueueMainThreadTask(() =>
         {
             if (cancellationToken.IsCancellationRequested)
             {
@@ -898,7 +898,7 @@ public sealed class OctahedralImposterGenerator
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             CullWithFrustum = true,
-            RenderPipeline = Engine.Rendering.NewRenderPipeline()
+            RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline()
         };
 
         public RenderCommandCollection Commands { get; } = new();
@@ -909,7 +909,7 @@ public sealed class OctahedralImposterGenerator
             if (Viewport.Width != safeResolution || Viewport.Height != safeResolution)
                 Viewport.Resize(safeResolution, safeResolution);
 
-            Viewport.RenderPipeline ??= Engine.Rendering.NewRenderPipeline();
+            Viewport.RenderPipeline ??= RuntimeEngine.Rendering.NewRenderPipeline();
         }
     }
 }

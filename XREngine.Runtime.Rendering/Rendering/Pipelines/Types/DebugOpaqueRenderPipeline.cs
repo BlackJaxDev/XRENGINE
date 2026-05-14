@@ -8,7 +8,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
-using static XREngine.Engine.Rendering.State;
+using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
@@ -19,7 +19,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 {
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
 
-    private EMeshSubmissionStrategy _meshSubmissionStrategy = Engine.Rendering.ResolveMeshSubmissionStrategy();
+    private EMeshSubmissionStrategy _meshSubmissionStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
 
     /// <summary>
     /// When true, the pipeline dispatches opaque passes using GPU-driven rendering.
@@ -28,7 +28,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
     {
         get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
         set => MeshSubmissionStrategy = value
-            ? Engine.Rendering.ResolveMeshSubmissionStrategy(true)
+            ? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)
             : EMeshSubmissionStrategy.CpuDirect;
     }
 
@@ -169,6 +169,6 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         base.OnPropertyChanged(propName, prev, field);
 
         if (propName == nameof(GpuRenderDispatch) || propName == nameof(MeshSubmissionStrategy))
-            Engine.Rendering.ApplyMeshSubmissionStrategyToPipeline(this, MeshSubmissionStrategy);
+            RuntimeEngine.Rendering.ApplyMeshSubmissionStrategyToPipeline(this, MeshSubmissionStrategy);
     }
 }

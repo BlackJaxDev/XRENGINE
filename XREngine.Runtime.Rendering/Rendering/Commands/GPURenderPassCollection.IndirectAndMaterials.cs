@@ -12,6 +12,8 @@ using XREngine.Data.Lists.Unsafe;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Materials;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using static XREngine.Rendering.GpuDispatchLogger;
@@ -76,8 +78,8 @@ namespace XREngine.Rendering.Commands
             Stopwatch resetStopwatch = Stopwatch.StartNew();
             ResetCounters();
             resetStopwatch.Stop();
-            Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Reset,
+            RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Reset,
                 resetStopwatch.Elapsed);
 
             Cull(scene, camera);
@@ -145,8 +147,8 @@ namespace XREngine.Rendering.Commands
 
             if (indirectStageElapsed > TimeSpan.Zero)
             {
-                Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                    Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Indirect,
+                RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                    RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Indirect,
                     indirectStageElapsed);
             }
 
@@ -165,8 +167,8 @@ namespace XREngine.Rendering.Commands
             Stopwatch drawStopwatch = Stopwatch.StartNew();
             _renderManager.Render(this, camera, scene, _indirectDrawBuffer!, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
             drawStopwatch.Stop();
-            Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Draw,
+            RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Draw,
                 drawStopwatch.Elapsed);
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render submission done");
@@ -202,15 +204,15 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
-            camera = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.RenderingCamera
-                ?? Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.SceneCamera;
+            camera = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState?.RenderingCamera
+                ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState?.SceneCamera;
             if (camera is null)
             {
                 Dbg("Render abort - no camera", "Lifecycle");
                 return false;
             }
 
-            if (Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.RenderingScene is VisualScene3D visualScene)
+            if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState?.RenderingScene is VisualScene3D visualScene)
                 visualScene.PrepareGpuCulling();
 
             return true;
@@ -257,7 +259,7 @@ namespace XREngine.Rendering.Commands
 
         private void BuildIndirectCommandBuffer(GPUScene scene)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.BuildIndirectCommandBuffer");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.BuildIndirectCommandBuffer");
 
             Dbg("BuildIndirect begin", "Indirect");
 
@@ -295,7 +297,7 @@ namespace XREngine.Rendering.Commands
 
         private void SelectVisibleCommandLods(GPUScene scene, XRCamera camera)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.SelectVisibleCommandLods");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.SelectVisibleCommandLods");
 
             if (_lodSelectComputeShader is null ||
                 _culledSceneToRenderBuffer is null ||
@@ -365,7 +367,7 @@ namespace XREngine.Rendering.Commands
 
         private void BuildCulledHotCommandBuffer()
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.BuildCulledHotCommandBuffer");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.BuildCulledHotCommandBuffer");
 
             _culledCommandsUseHotLayout = false;
 
@@ -397,30 +399,22 @@ namespace XREngine.Rendering.Commands
 
         private List<HybridRenderingManager.DrawBatch>? BuildGpuBatchesAndInstancing(GPUScene scene)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.BuildGpuBatchesAndInstancing");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.BuildGpuBatchesAndInstancing");
 
             if (_buildKeysComputeShader is null ||
-                _buildGpuBatchesComputeShader is null ||
                 _keyIndexBufferA is null ||
-                _gpuBatchRangeBuffer is null ||
-                _gpuBatchCountBuffer is null ||
-                _instanceTransformBuffer is null ||
-                _instanceSourceIndexBuffer is null ||
-                _materialAggregationBuffer is null ||
                 _drawCountBuffer is null ||
                 _indirectDrawBuffer is null ||
                 _culledCountBuffer is null)
             {
-                Dbg("GPU batching unavailable - missing shader/buffer dependencies.", "Materials");
+                Dbg("GPU indirect batching unavailable - missing shader/buffer dependencies.", "Materials");
                 return null;
             }
 
             UpdateVisibleCountersFromBuffer();
-            PopulateMaterialAggregationFlags(scene);
-            DispatchBuildKeys();
-            DispatchBuildGpuBatches(scene);
             if (EnableZeroReadbackMaterialScatter)
             {
+                DispatchBuildKeys();
                 DispatchMaterialScatter(scene);
                 _zeroReadbackMaterialScatterPreparedThisFrame = _materialTierIndirectDrawBuffer is not null &&
                     _materialTierDrawCountBuffer is not null &&
@@ -432,11 +426,16 @@ namespace XREngine.Rendering.Commands
                 {
                     DispatchBuildActiveMaterialBuckets();
                 }
-            }
-            UpdateVisibleCountersFromBuffer();
 
-            if (_zeroReadbackMaterialScatterPreparedThisFrame)
+                UpdateVisibleCountersFromBuffer();
                 return null;
+            }
+
+#if XRE_DEBUG_BATCH_RANGE_READBACK
+            DispatchBuildKeys();
+            PopulateMaterialAggregationFlags(scene);
+            DispatchBuildGpuBatches(scene);
+            UpdateVisibleCountersFromBuffer();
 
             // When readback is disabled (shipping / zero-readback mode), skip batch readback entirely.
             // The draw submission consumes GPU count buffers rather than CPU material batch ranges.
@@ -444,11 +443,18 @@ namespace XREngine.Rendering.Commands
                 return null;
 
             return ReadGpuBatchRanges();
+#else
+            // Shipping/default builds do not include the legacy GPURenderBuildBatches +
+            // batch-range readback path. Use the count-buffer indirect build instead.
+            BuildIndirectCommandBuffer(scene);
+            UpdateVisibleCountersFromBuffer();
+            return null;
+#endif
         }
 
         private void DispatchMaterialScatter(GPUScene scene)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchMaterialScatter");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchMaterialScatter");
 
             if (_materialScatterComputeShader is null ||
                 _keyIndexBufferA is null ||
@@ -475,7 +481,7 @@ namespace XREngine.Rendering.Commands
             _materialScatterComputeShader.Uniform("MaxBucketCount", (int)_materialTierBucketCount);
             _materialScatterComputeShader.Uniform("MaxIndirectDrawsPerBucket", (int)_maxDrawsPerMaterialTier);
 
-            CulledSceneToRenderBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterInputCommands);
+            scene.DrawMetadataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterInputCommands);
             scene.MeshDataBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterMeshData);
             _culledCountBuffer.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterCulledCount);
             _keyIndexBufferA.BindTo(_materialScatterComputeShader, GPUBatchingBindings.MaterialScatterSortKeys);
@@ -572,7 +578,7 @@ namespace XREngine.Rendering.Commands
 
         private void DispatchBuildActiveMaterialBuckets()
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchBuildActiveMaterialBuckets");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchBuildActiveMaterialBuckets");
 
             _zeroReadbackActiveBucketListPreparedThisFrame = false;
 
@@ -601,9 +607,12 @@ namespace XREngine.Rendering.Commands
 
         private void PopulateMaterialSlotLookup(GPUScene scene)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.PopulateMaterialSlotLookup");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.PopulateMaterialSlotLookup");
 
-            ulong signature = ComputeMaterialSlotLookupSignature(scene.MaterialMap, out uint maxMaterialId);
+            IReadOnlyDictionary<uint, XRMaterial> stateClassMap = scene.StateClassMaterialMap.Count > 0
+                ? scene.StateClassMaterialMap
+                : scene.MaterialMap;
+            ulong signature = ComputeMaterialSlotLookupSignature(stateClassMap, out uint maxMaterialId);
 
             EnsureMaterialScatterBuffers(maxMaterialId + 1u, CommandCapacity);
             if (_materialSlotLookupBuffer is null)
@@ -612,7 +621,7 @@ namespace XREngine.Rendering.Commands
             if (ReferenceEquals(_materialSlotLookupUploadedBuffer, _materialSlotLookupBuffer) &&
                 _materialSlotLookupSignature == signature &&
                 _materialSlotLookupUploadedElementCount == _materialSlotLookupBuffer.ElementCount &&
-                _materialSlotIds.Count == scene.MaterialMap.Count)
+                _materialSlotIds.Count == stateClassMap.Count)
             {
                 return;
             }
@@ -623,15 +632,15 @@ namespace XREngine.Rendering.Commands
             for (uint i = 0; i < _materialSlotLookupBuffer.ElementCount; ++i)
                 _materialSlotLookupBuffer.SetDataRawAtIndex(i, GPUBatchingBindings.InvalidMaterialSlot);
 
-            foreach (uint materialId in scene.MaterialMap.Keys)
-                _materialSlotSortScratch.Add(materialId);
+            foreach (uint stateClassId in stateClassMap.Keys)
+                _materialSlotSortScratch.Add(stateClassId);
             _materialSlotSortScratch.Sort();
 
             for (int slotIndex = 0; slotIndex < _materialSlotSortScratch.Count; ++slotIndex)
             {
-                uint materialId = _materialSlotSortScratch[slotIndex];
-                _materialSlotLookupBuffer.SetDataRawAtIndex(materialId, (uint)slotIndex);
-                _materialSlotIds.Add(materialId);
+                uint stateClassId = _materialSlotSortScratch[slotIndex];
+                _materialSlotLookupBuffer.SetDataRawAtIndex(stateClassId, (uint)slotIndex);
+                _materialSlotIds.Add(stateClassId);
             }
 
             _materialSlotLookupBuffer.PushSubData();
@@ -642,7 +651,7 @@ namespace XREngine.Rendering.Commands
 
         private bool ResetMaterialScatterBuffersOnGpu()
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ResetMaterialScatterBuffersOnGpu");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ResetMaterialScatterBuffersOnGpu");
 
             if (_materialTierDrawCountBuffer is null || _materialTierIndirectDrawBuffer is null)
                 return false;
@@ -663,7 +672,7 @@ namespace XREngine.Rendering.Commands
 
         private bool ClearUIntBufferOnGpu(XRDataBuffer buffer, ulong uintCount, EMemoryBarrierMask barrierMask)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ClearUIntBufferOnGpu");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ClearUIntBufferOnGpu");
 
             if (_clearUIntsComputeShader is null || uintCount == 0ul)
                 return false;
@@ -698,7 +707,7 @@ namespace XREngine.Rendering.Commands
                 MaskedVisibleCommandCount = 0u;
                 ApproximateTransparentVisibleCommandCount = 0u;
                 ExactTransparentVisibleCommandCount = 0u;
-                Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(0, 0, 0, 0);
+                RuntimeEngine.Rendering.Stats.RecordGpuTransparencyDomainCounts(0, 0, 0, 0);
                 return;
             }
 
@@ -728,7 +737,7 @@ namespace XREngine.Rendering.Commands
                 ApproximateTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentApproximate);
                 ExactTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentExact);
 
-                Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(
+                RuntimeEngine.Rendering.Stats.RecordGpuTransparencyDomainCounts(
                     opaqueOrOtherCount,
                     MaskedVisibleCommandCount,
                     ApproximateTransparentVisibleCommandCount,
@@ -746,7 +755,7 @@ namespace XREngine.Rendering.Commands
 
         private void DispatchBuildKeys()
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchBuildKeys");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchBuildKeys");
 
             if (_buildKeysComputeShader is null || _keyIndexBufferA is null || _culledCountBuffer is null)
                 return;
@@ -759,7 +768,7 @@ namespace XREngine.Rendering.Commands
             _buildKeysComputeShader.Uniform("MaxSortKeys", (int)_keyIndexBufferA.ElementCount);
             _buildKeysComputeShader.Uniform("StateBitMask", 0x0FFFu);
 
-            var sortDomain = GpuSortPolicy.ResolveSortDomain(RenderPass, Engine.Rendering.Settings.GpuSortDomainPolicy);
+            var sortDomain = GpuSortPolicy.ResolveSortDomain(RenderPass, RuntimeEngine.Rendering.Settings.GpuSortDomainPolicy);
             var sortDirection = GpuSortPolicy.ResolveSortDirection(sortDomain);
             _buildKeysComputeShader.Uniform("SortDomain", (int)sortDomain);
             _buildKeysComputeShader.Uniform("SortDirection", (int)sortDirection);
@@ -772,9 +781,10 @@ namespace XREngine.Rendering.Commands
             _buildKeysComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
         }
 
+#if XRE_DEBUG_BATCH_RANGE_READBACK
         private void DispatchBuildGpuBatches(GPUScene scene)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchBuildGpuBatches");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchBuildGpuBatches");
 
             if (_buildGpuBatchesComputeShader is null ||
                 _keyIndexBufferA is null ||
@@ -819,10 +829,11 @@ namespace XREngine.Rendering.Commands
             _buildGpuBatchesComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
         }
+#endif
 
         private void PopulateMaterialAggregationFlags(GPUScene scene)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.PopulateMaterialAggregationFlags");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.PopulateMaterialAggregationFlags");
 
             ulong signature = ComputeMaterialAggregationSignature(scene.MaterialMap, out uint maxMaterialId);
 
@@ -879,6 +890,7 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
+#if XRE_DEBUG_BATCH_RANGE_READBACK
         private List<HybridRenderingManager.DrawBatch>? ReadGpuBatchRanges()
         {
             if (_gpuBatchCountBuffer is null || _gpuBatchRangeBuffer is null)
@@ -902,7 +914,7 @@ namespace XREngine.Rendering.Commands
                     _gpuBatchRangeBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
                     _gpuBatchRangeBuffer.MapBufferData();
                     mappedHere = true;
-                    Engine.Rendering.Stats.RecordGpuBufferMapped();
+                    RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
                 }
 
                 VoidPtr mapped = _gpuBatchRangeBuffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
@@ -910,7 +922,7 @@ namespace XREngine.Rendering.Commands
                     return null;
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
-                Engine.Rendering.Stats.RecordGpuReadbackBytes((int)(batchCount * GPUBatchingLayout.BatchRangeStride));
+                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes((int)(batchCount * GPUBatchingLayout.BatchRangeStride));
 
                 uint stride = _gpuBatchRangeBuffer.ElementSize;
                 if (stride == 0)
@@ -939,6 +951,7 @@ namespace XREngine.Rendering.Commands
                     _gpuBatchRangeBuffer.UnmapBufferData();
             }
         }
+#endif
 
         public List<uint>? ReadActiveMaterialTierBuckets()
         {
@@ -976,7 +989,7 @@ namespace XREngine.Rendering.Commands
                     _materialTierActiveBucketBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
                     _materialTierActiveBucketBuffer.MapBufferData();
                     mappedHere = true;
-                    Engine.Rendering.Stats.RecordGpuBufferMapped();
+                    RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
                 }
 
                 VoidPtr mapped = _materialTierActiveBucketBuffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
@@ -984,7 +997,7 @@ namespace XREngine.Rendering.Commands
                     return null;
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
-                Engine.Rendering.Stats.RecordGpuReadbackBytes((int)(activeCount * sizeof(uint)));
+                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes((int)(activeCount * sizeof(uint)));
 
                 var buckets = new List<uint>((int)activeCount);
                 unsafe
@@ -1013,7 +1026,7 @@ namespace XREngine.Rendering.Commands
 
         private bool PrepareMaterialTableAndValidateResidency(GPUScene scene, IReadOnlyList<HybridRenderingManager.DrawBatch>? batches)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.PrepareMaterialTableAndValidateResidency");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.PrepareMaterialTableAndValidateResidency");
 
             bool materialTableRequired = MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
                 ZeroReadbackMaterialDrawPath is EZeroReadbackMaterialDrawPath.MaterialTable
@@ -1024,7 +1037,7 @@ namespace XREngine.Rendering.Commands
 
             _materialTable ??= new GPUMaterialTable(128);
             bool allResident = true;
-            var renderState = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
             XRMaterial? overrideMaterial = renderState?.OverrideMaterial;
             bool useDepthNormalMaterialVariants = renderState?.UseDepthNormalMaterialVariants ?? false;
 
@@ -1037,16 +1050,28 @@ namespace XREngine.Rendering.Commands
                 _materialTable.Remove(removedId);
             }
 
+            bool buildBindlessHandles =
+                ZeroReadbackMaterialDrawPath == EZeroReadbackMaterialDrawPath.BindlessMaterialTable &&
+                AbstractRenderer.Current is OpenGLRenderer glRenderer &&
+                glRenderer.SupportsBindlessTextureHandles;
+
             foreach (var (materialId, material) in scene.MaterialMap)
             {
                 XRMaterial? effectiveMaterial = ResolveEffectiveGpuMaterial(material, overrideMaterial, useDepthNormalMaterialVariants);
-                GPUMaterialEntry entry = BuildMaterialEntry(effectiveMaterial, out bool resident);
-                _materialTable.AddOrUpdate(materialId, entry);
+                GPUMaterialEntry entry = BuildMaterialEntry(effectiveMaterial, buildBindlessHandles, out GPUMaterialTextureHandles handles, out bool resident);
+                _materialTable.AddOrUpdate(materialId, entry, handles);
                 allResident &= resident;
             }
 
             _materialTable.TrimTrailingUnused(128u);
             _materialTable.Buffer.PushSubData();
+            _materialTable.TextureHandleBuffer.PushSubData();
+
+            if (AbstractRenderer.Current is OpenGLRenderer openGlRenderer)
+            {
+                while (_materialTable.TryConsumeRetiredHandle(out GPUMaterialRetiredHandle retired))
+                    openGlRenderer.ReleaseResidentBindlessTextureHandle(retired.Handle);
+            }
 
             _lastMaterialTableIds.Clear();
             foreach (uint materialId in currentIds)
@@ -1076,8 +1101,13 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
-        private static GPUMaterialEntry BuildMaterialEntry(XRMaterial? material, out bool resident)
+        private static GPUMaterialEntry BuildMaterialEntry(
+            XRMaterial? material,
+            bool buildBindlessHandles,
+            out GPUMaterialTextureHandles handles,
+            out bool resident)
         {
+            handles = new GPUMaterialTextureHandles();
             resident = true;
             uint flags = 0u;
 
@@ -1094,19 +1124,22 @@ namespace XREngine.Rendering.Commands
             if (albedo is not null)
             {
                 flags |= 1u << 0;
-                resident &= IsTextureResident(albedo);
+                resident &= TryResolveMaterialTexture(material, albedo, buildBindlessHandles, out ulong handle);
+                handles = handles with { Albedo = handle };
             }
 
             if (normal is not null)
             {
                 flags |= 1u << 1;
-                resident &= IsTextureResident(normal);
+                resident &= TryResolveMaterialTexture(material, normal, buildBindlessHandles, out ulong handle);
+                handles = handles with { Normal = handle };
             }
 
             if (rm is not null)
             {
                 flags |= 1u << 2;
-                resident &= IsTextureResident(rm);
+                resident &= TryResolveMaterialTexture(material, rm, buildBindlessHandles, out ulong handle);
+                handles = handles with { RM = handle };
             }
 
             if (resident)
@@ -1115,13 +1148,41 @@ namespace XREngine.Rendering.Commands
             return new GPUMaterialEntry
             {
                 Flags = flags,
-                AlbedoHandle = 0ul,
-                NormalHandle = 0ul,
-                RMHandle = 0ul,
-                Padding0 = 0u,
-                Padding1 = 0u,
-                Padding2 = 0u,
             };
+        }
+
+        private static bool TryResolveMaterialTexture(XRMaterial material, XRTexture texture, bool buildBindlessHandles, out ulong handle)
+        {
+            handle = 0ul;
+            if (!IsTextureArrayAllowedForMaterialTable(material, texture))
+                return false;
+
+            if (buildBindlessHandles)
+                return TryResolveOpenGLBindlessTextureHandle(texture, out handle);
+
+            return IsTextureResident(texture);
+        }
+
+        private static bool IsTextureArrayAllowedForMaterialTable(XRMaterial material, XRTexture texture)
+        {
+            bool isTextureArray =
+                texture is XRTexture1DArray ||
+                texture is XRTexture2DArray ||
+                texture is XRTextureCubeArray;
+
+            if (!isTextureArray)
+                return true;
+
+            return material.RenderOptions?.TextureArrayPolicy == EMaterialTextureArrayPolicy.HomogeneousClassOnly;
+        }
+
+        private static bool TryResolveOpenGLBindlessTextureHandle(XRTexture texture, out ulong handle)
+        {
+            handle = 0ul;
+            if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+                return false;
+
+            return renderer.TryGetResidentBindlessTextureHandle(texture, out handle);
         }
 
         private static bool IsTextureResident(XRTexture texture)
@@ -1519,7 +1580,7 @@ namespace XREngine.Rendering.Commands
                 uint requestedDraws = scene.TotalCommandCount;
                 uint emittedDraws = VisibleCommandCount;
                 uint culledDraws = requestedDraws > emittedDraws ? requestedDraws - emittedDraws : 0u;
-                Engine.Rendering.Stats.RecordVulkanIndirectEffectiveness(
+                RuntimeEngine.Rendering.Stats.RecordVulkanIndirectEffectiveness(
                     requestedDraws,
                     culledDraws,
                     emittedDraws,
@@ -1528,7 +1589,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            _ = BvhGpuProfiler.Instance.ResolveAndPublish(Engine.Time.Timer.Render.LastTimestampTicks, _statsBuffer);
+            _ = BvhGpuProfiler.Instance.ResolveAndPublish(RuntimeEngine.Time.Timer.Render.LastTimestampTicks, _statsBuffer);
             uint overflowCount = CheckOverflowFlags(scene);
             LogGpuStats(overflowCount);
         }
@@ -1598,13 +1659,13 @@ namespace XREngine.Rendering.Commands
             ReadUints(_statsBuffer, values);
 
             var stats = new GpuRenderStats(values);
-            int cpuFallbackEvents = Engine.Rendering.Stats.GpuCpuFallbackEvents;
-            int cpuFallbackRecovered = Engine.Rendering.Stats.GpuCpuFallbackRecoveredCommands;
+            int cpuFallbackEvents = RuntimeEngine.Rendering.Stats.GpuCpuFallbackEvents;
+            int cpuFallbackRecovered = RuntimeEngine.Rendering.Stats.GpuCpuFallbackRecoveredCommands;
             uint consumedDrawCount = 0u;
             if (!IsCpuReadbackCountDisabledForPass() && _drawCountBuffer is not null)
                 consumedDrawCount = ReadUIntAt(_drawCountBuffer, 0u);
 
-            Engine.Rendering.Stats.RecordVulkanIndirectEffectiveness(
+            RuntimeEngine.Rendering.Stats.RecordVulkanIndirectEffectiveness(
                 requestedDraws: stats.Input,
                 culledDraws: stats.Culled,
                 emittedIndirectDraws: stats.Drawn,
@@ -1638,10 +1699,10 @@ namespace XREngine.Rendering.Commands
             }
 
             LogTransparencyDomainStats(
-                (uint)Engine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
-                (uint)Engine.Rendering.Stats.GpuTransparencyMaskedVisible,
-                (uint)Engine.Rendering.Stats.GpuTransparencyApproximateVisible,
-                (uint)Engine.Rendering.Stats.GpuTransparencyExactVisible);
+                (uint)RuntimeEngine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
+                (uint)RuntimeEngine.Rendering.Stats.GpuTransparencyMaskedVisible,
+                (uint)RuntimeEngine.Rendering.Stats.GpuTransparencyApproximateVisible,
+                (uint)RuntimeEngine.Rendering.Stats.GpuTransparencyExactVisible);
 
             Dbg($"Stats in={stats.Input} culled={stats.Culled} draws={stats.Drawn} tris={stats.Triangles} " +
                 $"frustumRej={stats.FrustumRejected} distRej={stats.DistanceRejected} " +
@@ -1856,7 +1917,7 @@ namespace XREngine.Rendering.Commands
                         buffer.RangeFlags |= EBufferMapRangeFlags.Read;
                         buffer.MapBufferData();
                         _mappedHere = true;
-                        Engine.Rendering.Stats.RecordGpuBufferMapped();
+                        RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
                     }
 
                     var culledPtr = buffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
@@ -1886,7 +1947,7 @@ namespace XREngine.Rendering.Commands
                 if (_basePtr == IntPtr.Zero)
                     return false;
 
-                Engine.Rendering.Stats.RecordGpuReadbackBytes(Unsafe.SizeOf<GPUIndirectRenderCommand>());
+                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(Unsafe.SizeOf<GPUIndirectRenderCommand>());
 
                 unsafe
                 {

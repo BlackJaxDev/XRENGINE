@@ -53,6 +53,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
     public NVBindlessMultiDrawIndirectCount? NVBindlessMultiDrawIndirectCount { get; }
     public ArbMultiDrawIndirect? ArbMultiDrawIndirect { get; }
     public ArbParallelShaderCompile? ARBParallelShaderCompile { get; }
+    public ArbBindlessTexture? ARBBindlessTexture { get; }
 
     private static string? _version = null;
     public string? Version
@@ -64,7 +65,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
 
             // GL calls require the correct context + thread. During import/externalization we may
             // be traversing object graphs from job threads; never query GL there.
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
                 return null;
 
             unsafe
@@ -88,8 +89,8 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
         var api = Api;
 
         OVRMultiView = api.TryGetExtension(out OvrMultiview ext7) ? ext7 : null;
-        Engine.Rendering.State.HasOvrMultiViewExtension = OVRMultiView is not null;
-        Engine.Rendering.State.HasVulkanMultiView = false;
+        RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = OVRMultiView is not null;
+        RuntimeEngine.Rendering.State.HasVulkanMultiView = false;
         NVMeshShader = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVMeshShader ext8) ? ext8 : null;
         NVGpuShader5 = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVGpuShader5 ext9) ? ext9 : null;
         NVViewportArray = ESApi.TryGetExtension(out NVViewportArray ext10) ? ext10 : null;
@@ -98,6 +99,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
         ArbMultiDrawIndirect = api.TryGetExtension<ArbMultiDrawIndirect>(out var ext12) ? ext12 : null;
         NVPathRendering = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVPathRendering ext13) ? ext13 : null;
         ARBParallelShaderCompile = api.TryGetExtension<ArbParallelShaderCompile>(out var ext14) ? ext14 : null;
+        ARBBindlessTexture = api.TryGetExtension<ArbBindlessTexture>(out var ext15) ? ext15 : null;
     }
 
     protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
@@ -263,7 +265,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
         _frameCounter++;
 
         long _tPoll = Stopwatch.GetTimestamp();
-        GLRenderProgram.PollPendingAsyncPrograms(Engine.Rendering.Settings.MaxAsyncShaderProgramsPerFrame);
+        GLRenderProgram.PollPendingAsyncPrograms(RuntimeEngine.Rendering.Settings.MaxAsyncShaderProgramsPerFrame);
         UploadStageStats.Record("PollPendingAsyncPrograms", ElapsedMs(_tPoll), 0, 0);
 
         // Snapshot and clear the volatile flag set by the debug callback.
@@ -290,14 +292,13 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
 
         SuppressDrawsForOomRecovery = false;
 
-        int uploadPendingBefore = UploadQueue.PendingCount;
         long _tUpload = Stopwatch.GetTimestamp();
         UploadQueue.ProcessUploads();
         int uploadPendingAfter = UploadQueue.PendingCount;
         UploadStageStats.Record(
             "UploadQueue.ProcessUploads",
             ElapsedMs(_tUpload),
-            Math.Max(0, uploadPendingBefore - uploadPendingAfter),
+            UploadQueue.LastDequeuedItems,
             uploadPendingAfter);
 
         int meshPendingBefore = MeshGenerationQueue.PendingCount;

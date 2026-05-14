@@ -438,7 +438,7 @@ public unsafe partial class VulkanRenderer
 			switch (normalized)
 			{
 				case nameof(EEngineUniform.UpdateDelta):
-					value = Engine.Time.Timer.Update.Delta;
+					value = RuntimeEngine.Time.Timer.Update.Delta;
 					type = EShaderVarType._float;
 					return true;
 				case nameof(EEngineUniform.ModelMatrix):
@@ -555,7 +555,7 @@ public unsafe partial class VulkanRenderer
 					return true;
 				case nameof(EEngineUniform.ScreenWidth):
 				case nameof(EEngineUniform.ScreenHeight):
-					var area = Engine.Rendering.State.RenderArea;
+					var area = RuntimeEngine.Rendering.State.RenderArea;
 					value = normalized.Equals(nameof(EEngineUniform.ScreenWidth), StringComparison.Ordinal) ? (float)area.Width : (float)area.Height;
 					type = EShaderVarType._float;
 					return true;
@@ -892,13 +892,13 @@ public unsafe partial class VulkanRenderer
 			switch (normalized)
 			{
 				case nameof(EEngineUniform.UpdateDelta):
-					return UploadUniform(buffer, Engine.Time.Timer.Update.Delta);
+					return UploadUniform(buffer, RuntimeEngine.Time.Timer.Update.Delta);
 				case nameof(EEngineUniform.RenderTime):
 					return UploadUniform(buffer, 0f); // Per-material accumulator; set by Drawing.RenderState
 				case nameof(EEngineUniform.EngineTime):
-					return UploadUniform(buffer, Engine.ElapsedTime);
+					return UploadUniform(buffer, RuntimeEngine.ElapsedTime);
 				case nameof(EEngineUniform.DeltaTime):
-					return UploadUniform(buffer, Engine.Time.Timer.Render.Delta);
+					return UploadUniform(buffer, RuntimeEngine.Time.Timer.Render.Delta);
 				case nameof(EEngineUniform.ModelMatrix):
 					return UploadUniform(buffer, draw.ModelMatrix);
 				case nameof(EEngineUniform.PrevModelMatrix):
@@ -961,7 +961,7 @@ public unsafe partial class VulkanRenderer
 					return UploadUniform(buffer, (int)(camera?.DepthMode ?? XRCamera.EDepthMode.Normal));
 				case nameof(EEngineUniform.ScreenWidth):
 				case nameof(EEngineUniform.ScreenHeight):
-					var area = Engine.Rendering.State.RenderArea;
+					var area = RuntimeEngine.Rendering.State.RenderArea;
 					return UploadUniform(buffer, normalized.Equals(nameof(EEngineUniform.ScreenWidth), StringComparison.Ordinal) ? (float)area.Width : (float)area.Height);
 				case nameof(EEngineUniform.ScreenOrigin):
 					return UploadUniform(buffer, new Vector2(0f, 0f));

@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using XREngine.Data.Rendering;
 
@@ -6,7 +7,7 @@ namespace XREngine.Rendering.Occlusion
     /// <summary>
     /// Lightweight per-frame occlusion-culling observability.
     /// Counts are accumulated atomically as render passes execute, snapshotted to
-    /// last-frame fields by <see cref="BeginFrame"/> (called from Engine.Rendering.Stats.BeginFrame),
+    /// last-frame fields by <see cref="BeginFrame"/> (called from RuntimeEngine.Rendering.Stats.BeginFrame),
     /// and exposed to debug UI so the user can see whether occlusion is actually doing work.
     ///
     /// Design rules:
@@ -54,11 +55,25 @@ namespace XREngine.Rendering.Occlusion
         private static EOcclusionCullingMode _lastEffectiveMode = EOcclusionCullingMode.Disabled;
         private static EMeshSubmissionStrategy _lastSubmissionStrategy;
 
-        // C-CPU-3 scaffold telemetry: SOC pass observability.
+        // CPU SOC pass observability.
         private static int _cpuSocTested;
         private static int _cpuSocCulled;
+        private static int _cpuSocOccludersSelected;
+        private static int _cpuSocOccludersRasterized;
+        private static int _cpuSocTilesClosed;
+        private static long _cpuSocBeginMicros;
+        private static long _cpuSocRasterMicros;
+        private static long _cpuSocTestMicros;
+        private static int _cpuSocForceVisible;
         private static int _lastFrameCpuSocTested;
         private static int _lastFrameCpuSocCulled;
+        private static int _lastFrameCpuSocOccludersSelected;
+        private static int _lastFrameCpuSocOccludersRasterized;
+        private static int _lastFrameCpuSocTilesClosed;
+        private static long _lastFrameCpuSocBeginMicros;
+        private static long _lastFrameCpuSocRasterMicros;
+        private static long _lastFrameCpuSocTestMicros;
+        private static int _lastFrameCpuSocForceVisible;
 
         // Per-decision distribution for the CPU-query path. This is the diagnostic that
         // tells us whether occlusion is failing at the *query* level (hardware reports
@@ -112,6 +127,20 @@ namespace XREngine.Rendering.Occlusion
         public static int CpuSocTested => _lastFrameCpuSocTested;
         /// <summary>Last completed frame: SOC visibility tests that reported occluded.</summary>
         public static int CpuSocCulled => _lastFrameCpuSocCulled;
+        /// <summary>Last completed frame: SOC occluder candidates selected for rasterization.</summary>
+        public static int CpuSocOccludersSelected => _lastFrameCpuSocOccludersSelected;
+        /// <summary>Last completed frame: SOC occluders that wrote at least one covered pixel.</summary>
+        public static int CpuSocOccludersRasterized => _lastFrameCpuSocOccludersRasterized;
+        /// <summary>Last completed frame: SOC tiles that reached full coverage.</summary>
+        public static int CpuSocTilesClosed => _lastFrameCpuSocTilesClosed;
+        /// <summary>Last completed frame: SOC frame setup time in milliseconds.</summary>
+        public static double CpuSocBeginMilliseconds => _lastFrameCpuSocBeginMicros / 1000.0;
+        /// <summary>Last completed frame: SOC occluder selection plus rasterization time in milliseconds.</summary>
+        public static double CpuSocRasterMilliseconds => _lastFrameCpuSocRasterMicros / 1000.0;
+        /// <summary>Last completed frame: SOC AABB test time in milliseconds.</summary>
+        public static double CpuSocTestMilliseconds => _lastFrameCpuSocTestMicros / 1000.0;
+        /// <summary>Last completed frame: true when SOC was forced visible for diagnostics.</summary>
+        public static bool CpuSocForceVisible => _lastFrameCpuSocForceVisible != 0;
 
         /// <summary>Last completed frame: first-seen commands (no prior query — forced Visible).</summary>
         public static int CpuDecisionSeed => _lastFrameCpuDecisionSeed;
@@ -126,7 +155,7 @@ namespace XREngine.Rendering.Occlusion
         /// <summary>Last completed frame: Skip decisions (fully occluded, no draw, no probe).</summary>
         public static int CpuDecisionSkip => _lastFrameCpuDecisionSkip;
 
-        /// <summary>Called by Engine.Rendering.Stats.BeginFrame to snapshot and reset counters.</summary>
+        /// <summary>Called by RuntimeEngine.Rendering.Stats.BeginFrame to snapshot and reset counters.</summary>
         public static void BeginFrame()
         {
             _lastFrameCpuTested = _cpuTested;
@@ -142,6 +171,13 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameGpuPassesPassthroughDirty = _gpuPassesPassthroughDirty;
             _lastFrameCpuSocTested = _cpuSocTested;
             _lastFrameCpuSocCulled = _cpuSocCulled;
+            _lastFrameCpuSocOccludersSelected = _cpuSocOccludersSelected;
+            _lastFrameCpuSocOccludersRasterized = _cpuSocOccludersRasterized;
+            _lastFrameCpuSocTilesClosed = _cpuSocTilesClosed;
+            _lastFrameCpuSocBeginMicros = _cpuSocBeginMicros;
+            _lastFrameCpuSocRasterMicros = _cpuSocRasterMicros;
+            _lastFrameCpuSocTestMicros = _cpuSocTestMicros;
+            _lastFrameCpuSocForceVisible = _cpuSocForceVisible;
 
             _lastFrameCpuDecisionSeed = _cpuDecisionSeed;
             _lastFrameCpuDecisionCached = _cpuDecisionCached;
@@ -163,6 +199,13 @@ namespace XREngine.Rendering.Occlusion
             _gpuPassesPassthroughDirty = 0;
             _cpuSocTested = 0;
             _cpuSocCulled = 0;
+            _cpuSocOccludersSelected = 0;
+            _cpuSocOccludersRasterized = 0;
+            _cpuSocTilesClosed = 0;
+            _cpuSocBeginMicros = 0;
+            _cpuSocRasterMicros = 0;
+            _cpuSocTestMicros = 0;
+            _cpuSocForceVisible = 0;
             _cpuDecisionSeed = 0;
             _cpuDecisionCached = 0;
             _cpuDecisionVisibleQuery = 0;
@@ -229,11 +272,43 @@ namespace XREngine.Rendering.Occlusion
             _lastSubmissionStrategy = strategy;
         }
 
-        /// <summary>C-CPU-3 scaffold: records one CPU SOC visibility test.</summary>
+        /// <summary>Records one CPU SOC visibility test.</summary>
         public static void RecordCpuSocTested() => Interlocked.Increment(ref _cpuSocTested);
 
-        /// <summary>C-CPU-3 scaffold: records one CPU SOC visibility test that reported occluded.</summary>
+        /// <summary>Records one CPU SOC visibility test that reported occluded.</summary>
         public static void RecordCpuSocCulled() => Interlocked.Increment(ref _cpuSocCulled);
+
+        /// <summary>Records CPU SOC frame setup timing and diagnostic force-visible state.</summary>
+        public static void RecordCpuSocFrameBegin(double milliseconds, bool forceVisible)
+        {
+            Interlocked.Add(ref _cpuSocBeginMicros, ToMicroseconds(milliseconds));
+            if (forceVisible)
+                Interlocked.Exchange(ref _cpuSocForceVisible, 1);
+        }
+
+        /// <summary>Records CPU SOC occluder selection and rasterization summary.</summary>
+        public static void RecordCpuSocOccluders(int selected, int rasterized, int tilesClosed, double milliseconds)
+        {
+            if (selected > 0)
+                Interlocked.Add(ref _cpuSocOccludersSelected, selected);
+            if (rasterized > 0)
+                Interlocked.Add(ref _cpuSocOccludersRasterized, rasterized);
+            if (tilesClosed > 0)
+                Interlocked.Add(ref _cpuSocTilesClosed, tilesClosed);
+            Interlocked.Add(ref _cpuSocRasterMicros, ToMicroseconds(milliseconds));
+        }
+
+        /// <summary>Records one CPU SOC visibility decision.</summary>
+        public static void RecordCpuSocTest(double milliseconds, bool culled)
+        {
+            Interlocked.Increment(ref _cpuSocTested);
+            if (culled)
+                Interlocked.Increment(ref _cpuSocCulled);
+            Interlocked.Add(ref _cpuSocTestMicros, ToMicroseconds(milliseconds));
+        }
+
+        private static long ToMicroseconds(double milliseconds)
+            => (long)Math.Round(milliseconds * 1000.0);
 
         /// <summary>Records a CPU-query decision by category for the diagnostic distribution.</summary>
         public static void RecordCpuDecision(ECpuDecisionKind kind)

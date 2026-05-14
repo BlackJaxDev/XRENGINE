@@ -60,7 +60,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            EVulkanAllocatorBackend backend = Engine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
+            EVulkanAllocatorBackend backend = RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
             _memoryAllocator = backend switch
             {
                 EVulkanAllocatorBackend.Suballocator => new VulkanBlockAllocator(this),
@@ -206,7 +206,7 @@ namespace XREngine.Rendering.Vulkan
                     $"[Vulkan] OOM for buffer (requested {requiredProperties}). Falling back to {fallback}.");
                 if (alloc.TryAllocateForBuffer(Api!, device, buffer, fallback, out allocation))
                 {
-                    Engine.Rendering.Stats.RecordVulkanOomFallback();
+                    RuntimeEngine.Rendering.Stats.RecordVulkanOomFallback();
                     return allocation;
                 }
             }
@@ -249,7 +249,7 @@ namespace XREngine.Rendering.Vulkan
                     $"[Vulkan] OOM for image (requested {requiredProperties}). Falling back to {fallback}.");
                 if (alloc.TryAllocateForImage(Api!, device, image, fallback, out allocation))
                 {
-                    Engine.Rendering.Stats.RecordVulkanOomFallback();
+                    RuntimeEngine.Rendering.Stats.RecordVulkanOomFallback();
                     return allocation;
                 }
             }
@@ -394,7 +394,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            int passIndex = EnsureValidPassIndex(Engine.Rendering.State.CurrentRenderGraphPassIndex, "DispatchCompute");
+            int passIndex = EnsureValidPassIndex(RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, "DispatchCompute");
             EnqueueFrameOp(new ComputeDispatchOp(
                 passIndex,
                 vkProgram,
@@ -464,12 +464,12 @@ namespace XREngine.Rendering.Vulkan
         {
             // Don't enqueue clear ops when there's no active rendering pipeline;
             // they would be emitted with an invalid pass index and dropped at recording time.
-            if (Engine.Rendering.State.CurrentRenderingPipeline is null)
+            if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
                 return;
 
             _state.SetClearState(color, depth, stencil);
 
-            int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
             Rect2D rect = _state.GetCroppingEnabled()
                 ? _state.GetScissor()

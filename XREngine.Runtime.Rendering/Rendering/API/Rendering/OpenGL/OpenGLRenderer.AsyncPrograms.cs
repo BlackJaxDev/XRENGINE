@@ -149,7 +149,7 @@ public partial class OpenGLRenderer
     private static int ResolveProgramCompileLinkWorkerCount()
     {
         int configured = Math.Clamp(
-            Engine.Rendering.Settings.OpenGLProgramCompileLinkWorkerCount,
+            RuntimeEngine.Rendering.Settings.OpenGLProgramCompileLinkWorkerCount,
             1,
             16);
 
@@ -178,8 +178,8 @@ public partial class OpenGLRenderer
     /// </summary>
     private void InitAsyncProgramBinaryUpload()
     {
-        bool wantBinaryUpload = Engine.Rendering.Settings.AsyncProgramBinaryUpload
-                             && Engine.Rendering.Settings.AllowBinaryProgramCaching;
+        bool wantBinaryUpload = RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload
+                             && RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching;
         bool wantCompileLink = WantsSharedContextProgramCompileLinkQueue;
         if (!wantCompileLink)
             Debug.OpenGL("[ShaderCache] Shared-context compile/link queue disabled by settings. Shader source cache misses will stay pending; render-thread synchronous source linking is disabled.");

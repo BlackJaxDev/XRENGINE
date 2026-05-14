@@ -28,7 +28,7 @@ using XREngine.Timers;
 
 namespace XREngine;
 
-internal static partial class Engine
+internal static partial class RuntimeEngine
 {
     public static float Delta => Time.Timer.Update.Delta;
     public static long ElapsedTicks => RuntimeRenderingHostServices.Current.ElapsedTicks;
@@ -272,11 +272,11 @@ internal static partial class Engine
 
         public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(bool? requestedGpuDispatch = null)
         {
-            EMeshSubmissionStrategy? forced = Engine.EffectiveSettings.ForceMeshSubmissionStrategy;
+            EMeshSubmissionStrategy? forced = RuntimeEngine.EffectiveSettings.ForceMeshSubmissionStrategy;
             if (forced.HasValue)
                 return forced.Value;
 
-            if (!(requestedGpuDispatch ?? Engine.EffectiveSettings.GPURenderDispatch))
+            if (!(requestedGpuDispatch ?? RuntimeEngine.EffectiveSettings.GPURenderDispatch))
                 return EMeshSubmissionStrategy.CpuDirect;
 
             bool diagnosticsProfile = VulkanFeatureProfile.IsActive &&
@@ -284,12 +284,12 @@ internal static partial class Engine
             bool shippingFastProfile = VulkanFeatureProfile.IsActive &&
                 VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.ShippingFast;
             bool zeroReadbackRequested = shippingFastProfile
-                || Engine.EffectiveSettings.EnableZeroReadbackMaterialScatter
-                || Engine.EditorPreferences.Debug.EnableZeroReadbackMaterialScatter;
+                || RuntimeEngine.EffectiveSettings.EnableZeroReadbackMaterialScatter
+                || RuntimeEngine.EditorPreferences.Debug.EnableZeroReadbackMaterialScatter;
             bool instrumentationRequested = diagnosticsProfile
-                || Engine.EffectiveSettings.EnableGpuIndirectDebugLogging
-                || Engine.EffectiveSettings.EnableGpuIndirectValidationLogging
-                || Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
+                || RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging
+                || RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging
+                || RuntimeEngine.EffectiveSettings.EnableGpuIndirectCpuFallback;
 
             bool supportsIndirectCount = AbstractRenderer.Current?.SupportsIndirectCountDraw() ?? true;
             if (zeroReadbackRequested)
@@ -630,6 +630,66 @@ internal static partial class Engine
             {
                 if (HasHostStats)
                     RuntimeRenderingHostServices.Current.RecordRenderVrRenderSubmitTime(elapsed);
+            }
+
+            public static void RecordVrXrWaitFrameBlockTime(TimeSpan elapsed)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrWaitFrameBlockTime(elapsed);
+            }
+
+            public static void RecordVrXrEndFrameSubmitTime(TimeSpan elapsed)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrEndFrameSubmitTime(elapsed);
+            }
+
+            public static void RecordVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrPredictedToLatePoseDelta(millimeters, degrees);
+            }
+
+            public static void RecordVrXrPredictedDisplayLeadTime(double leadTimeMs)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrPredictedDisplayLeadTime(leadTimeMs);
+            }
+
+            public static void RecordVrXrMissedDeadlineFrame()
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrMissedDeadlineFrame();
+            }
+
+            public static void RecordVrXrTrackingLossFrame()
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrTrackingLossFrame();
+            }
+
+            public static void RecordVrXrRelocatePredictedTime(TimeSpan elapsed)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrRelocatePredictedTime(elapsed);
+            }
+
+            public static void RecordVrXrCollectFrustumExpansionDegrees(double degrees)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrCollectFrustumExpansionDegrees(degrees);
+            }
+
+            public static void RecordVrXrPacingThreadIdleTime(TimeSpan elapsed)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrPacingThreadIdleTime(elapsed);
+            }
+
+            public static void RecordVrXrPacingHandoffStall()
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVrXrPacingHandoffStall();
             }
 
             public static void RecordVulkanAdhocBarrier(int emittedCount = 0, int redundantCount = 0)
@@ -1191,6 +1251,18 @@ internal sealed class RuntimeRenderSettings
     private uint _minShadowAtlasTileResolution = 128u;
     private uint _maxShadowAtlasTileResolution = 4096u;
     private int _shaderConfigVersion = RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
+    private bool _openXrCullWithFrustum = RuntimeRenderingHostServiceDefaults.OpenXrCullWithFrustum;
+    private bool _openXrDebugClearOnly = RuntimeRenderingHostServiceDefaults.OpenXrDebugClearOnly;
+    private bool _openXrDebugGl = RuntimeRenderingHostServiceDefaults.OpenXrDebugGl;
+    private bool _openXrDebugLifecycle = RuntimeRenderingHostServiceDefaults.OpenXrDebugLifecycle;
+    private bool _openXrDebugRenderRightThenLeft = RuntimeRenderingHostServiceDefaults.OpenXrDebugRenderRightThenLeft;
+    private bool _openXrPrepareFrameAfterDesktopRender = RuntimeRenderingHostServiceDefaults.OpenXrPrepareFrameAfterDesktopRender;
+    private float _openXrDeadlineSafetyMarginMs = RuntimeRenderingHostServiceDefaults.OpenXrDeadlineSafetyMarginMs;
+    private OpenXRAPI.OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
+    private float _openXrCollectVisibleFrustumPaddingDegrees = RuntimeRenderingHostServiceDefaults.OpenXrCollectVisibleFrustumPaddingDegrees;
+    private OpenXRAPI.OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
+    private OpenXRAPI.OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
+    private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = OpenXRAPI.OpenXrRenderPacingMode.PostRenderCallback;
 
     public bool AllowBinaryProgramCaching { get; set; } = true;
     public bool AllowBlendshapes
@@ -1304,11 +1376,90 @@ internal sealed class RuntimeRenderSettings
         set => _minShadowAtlasTileResolution = value;
     }
 
-    public bool OpenXrCullWithFrustum { get; set; } = true;
-    public bool OpenXrDebugClearOnly { get; set; }
-    public bool OpenXrDebugGl { get; set; }
-    public bool OpenXrDebugLifecycle { get; set; }
-    public bool OpenXrDebugRenderRightThenLeft { get; set; }
+    public bool OpenXrCullWithFrustum
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrCullWithFrustum
+            : _openXrCullWithFrustum;
+        set => _openXrCullWithFrustum = value;
+    }
+    public bool OpenXrDebugClearOnly
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrDebugClearOnly
+            : _openXrDebugClearOnly;
+        set => _openXrDebugClearOnly = value;
+    }
+    public bool OpenXrDebugGl
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrDebugGl
+            : _openXrDebugGl;
+        set => _openXrDebugGl = value;
+    }
+    public bool OpenXrDebugLifecycle
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrDebugLifecycle
+            : _openXrDebugLifecycle;
+        set => _openXrDebugLifecycle = value;
+    }
+    public bool OpenXrDebugRenderRightThenLeft
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrDebugRenderRightThenLeft
+            : _openXrDebugRenderRightThenLeft;
+        set => _openXrDebugRenderRightThenLeft = value;
+    }
+    public bool OpenXrPrepareFrameAfterDesktopRender
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrPrepareFrameAfterDesktopRender
+            : _openXrPrepareFrameAfterDesktopRender;
+        set => _openXrPrepareFrameAfterDesktopRender = value;
+    }
+    public float OpenXrDeadlineSafetyMarginMs
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrDeadlineSafetyMarginMs
+            : _openXrDeadlineSafetyMarginMs;
+        set => _openXrDeadlineSafetyMarginMs = MathF.Max(0.0f, value);
+    }
+    public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrCollectVisiblePosePolicy
+            : _openXrCollectVisiblePosePolicy;
+        set => _openXrCollectVisiblePosePolicy = value;
+    }
+    public float OpenXrCollectVisibleFrustumPaddingDegrees
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrCollectVisibleFrustumPaddingDegrees
+            : _openXrCollectVisibleFrustumPaddingDegrees;
+        set => _openXrCollectVisibleFrustumPaddingDegrees = Math.Clamp(value, 0.0f, 20.0f);
+    }
+    public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrTrackingLossPolicy
+            : _openXrTrackingLossPolicy;
+        set => _openXrTrackingLossPolicy = value;
+    }
+    public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrActionSyncPolicy
+            : _openXrActionSyncPolicy;
+        set => _openXrActionSyncPolicy = value;
+    }
+    public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrRenderPacingMode
+            : _openXrRenderPacingMode;
+        set => _openXrRenderPacingMode = value;
+    }
     public bool OptimizeSkinningTo4Weights
     {
         get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
@@ -1338,7 +1489,7 @@ internal sealed class RuntimeRenderSettings
                 return;
 
             _shaderConfigVersion = value;
-            Engine.Rendering.RaiseSettingsChanged();
+            RuntimeEngine.Rendering.RaiseSettingsChanged();
         }
     }
     public uint ShadowAtlasPageSize
@@ -1412,13 +1563,13 @@ internal sealed class RuntimeRenderSettings
         {
             _shaderConfigVersion++;
         }
-        Engine.Rendering.RaiseSettingsChanged();
+        RuntimeEngine.Rendering.RaiseSettingsChanged();
     }
 }
 
 internal sealed class RuntimeEffectiveSettings
 {
-    private RuntimeRenderSettings Settings => Engine.Rendering.Settings;
+    private RuntimeRenderSettings Settings => RuntimeEngine.Rendering.Settings;
 
     public bool AllowInitialSkinnedBoundsBuildWhenNever { get; set; } = true;
     public EAntiAliasingMode AntiAliasingMode { get; set; } = EAntiAliasingMode.None;
@@ -1458,12 +1609,12 @@ internal sealed class RuntimeEffectiveSettings
                 resolved = parsed;
             }
 
-            // Path-aware coercion (matches Engine.Rendering.Settings.GpuOcclusionCullingMode):
+            // Path-aware coercion (matches RuntimeEngine.Rendering.Settings.GpuOcclusionCullingMode):
             // GpuHiZ has no GPU compute cull consumer on the CpuDirect submission path,
             // so coerce to CpuQueryAsync (hardware occlusion queries) there. Keeps the
             // serialized value intact so switching strategies at runtime still works.
             if (resolved == EOcclusionCullingMode.GpuHiZ &&
-                Engine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.CpuDirect)
+                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.CpuDirect)
             {
                 return EOcclusionCullingMode.CpuQueryAsync;
             }
@@ -1502,6 +1653,39 @@ internal sealed class RuntimeEffectiveSettings
         }
         set => _enableCpuSoftwareOcclusionCulling = value;
     }
+    private int _cpuSocBufferWidth = 256;
+    public int CpuSocBufferWidth
+    {
+        get => _cpuSocBufferWidth;
+        set => _cpuSocBufferWidth = Math.Clamp(value, 64, 4096);
+    }
+    private int _cpuSocBufferHeight = 128;
+    public int CpuSocBufferHeight
+    {
+        get => _cpuSocBufferHeight;
+        set => _cpuSocBufferHeight = Math.Clamp(value, 32, 4096);
+    }
+    private int _cpuSocOccluderTriangleBudget = 5000;
+    public int CpuSocOccluderTriangleBudget
+    {
+        get => _cpuSocOccluderTriangleBudget;
+        set => _cpuSocOccluderTriangleBudget = Math.Clamp(value, 0, 1_000_000);
+    }
+    private int _cpuSocMaxOccluders = 64;
+    public int CpuSocMaxOccluders
+    {
+        get => _cpuSocMaxOccluders;
+        set => _cpuSocMaxOccluders = Math.Clamp(value, 0, 4096);
+    }
+    private float _cpuSocMinOccluderScreenArea = 0.005f;
+    public float CpuSocMinOccluderScreenArea
+    {
+        get => _cpuSocMinOccluderScreenArea;
+        set => _cpuSocMinOccluderScreenArea = Math.Clamp(value, 0.0f, 1.0f);
+    }
+    public bool CpuSocUseAvx2 { get; set; } = true;
+    public bool CpuSocDebugVisualization { get; set; }
+    public bool CpuSocDebugForceVisible { get; set; }
     public bool GPURenderDispatch { get; set; }
     public EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
     {
@@ -1728,7 +1912,7 @@ internal sealed class RuntimeVrState
     public OpenXRAPI? OpenXRApi { get; set; }
     public RuntimeOpenVrApi OpenVRApi { get; } = new();
     public (XRCamera? LeftEyeCamera, XRCamera? RightEyeCamera, IRuntimeRenderWorld? World, SceneNode? HMDNode) ViewInformation { get; set; }
-    public void InvokeRecalcMatrixOnDraw()
+    public void InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming timing)
     {
     }
 }

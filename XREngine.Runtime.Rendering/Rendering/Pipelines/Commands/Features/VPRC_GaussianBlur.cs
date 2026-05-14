@@ -227,7 +227,7 @@ void main()
                 return (mip.InternalFormat, sourceTexture.SizedInternalFormat, mip.PixelFormat, mip.PixelType);
             }
 
-            if (Engine.Rendering.Settings.OutputHDR)
+            if (RuntimeEngine.Rendering.Settings.OutputHDR)
                 return (EPixelInternalFormat.Rgba16f, ESizedInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat);
 
             return (EPixelInternalFormat.Rgba8, ESizedInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);

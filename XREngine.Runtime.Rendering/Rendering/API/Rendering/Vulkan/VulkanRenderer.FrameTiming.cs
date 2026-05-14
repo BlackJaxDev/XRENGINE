@@ -129,7 +129,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         double gpuMilliseconds = (end - start) * _frameTimingTimestampPeriodNanoseconds / 1_000_000.0;
-        Engine.Rendering.Stats.RecordVulkanFrameGpuCommandBufferTime(TimeSpan.FromMilliseconds(gpuMilliseconds));
+        RuntimeEngine.Rendering.Stats.RecordVulkanFrameGpuCommandBufferTime(TimeSpan.FromMilliseconds(gpuMilliseconds));
     }
 
     private void MarkFrameTimingSubmitted(int frameSlot)

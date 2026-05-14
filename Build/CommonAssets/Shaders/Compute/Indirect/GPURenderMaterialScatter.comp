@@ -2,7 +2,6 @@
 
 layout(local_size_x = 64) in;
 
-const uint COMMAND_FLOATS = 48u;
 const uint KEY_UINTS = 4u;
 const uint DRAW_UINTS = 5u;
 const uint MATERIAL_TIER_COUNT = 3u;
@@ -13,7 +12,27 @@ const uint LOD_TRANSITION_ACTIVE = 1u;
 const uint PREVIOUS_LOD_DRAW_FLAG = 0x40000000u;
 const uint COMMAND_INDEX_MASK = 0x3FFFFFFFu;
 
-layout(std430, binding = 0) readonly buffer CulledCommandsBuffer { float culled[]; };
+struct DrawMetadata
+{
+    uint DrawID;
+    uint MeshID;
+    uint SubmeshID;
+    uint MaterialID;
+    uint TransformID;
+    uint SkinID;
+    uint RenderPassMask;
+    uint LayerMask;
+    uint Flags;
+    uint LodPolicy;
+    uint StateClassID;
+    uint InstanceCount;
+    uint RenderPass;
+    uint ShaderProgramID;
+    uint LogicalMeshID;
+    uint BoundsID;
+};
+
+layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 layout(std430, binding = 1) readonly buffer MeshDataBuffer { uint meshData[]; };
 layout(std430, binding = 2) readonly buffer CulledCountBuffer
 {
@@ -61,15 +80,15 @@ bool StoreDrawCommand(uint bucketIndex, uint drawIndexInBucket, uint count, uint
     return true;
 }
 
-void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandIndex, bool previousLod)
+void TryEmitDraw(uint meshID, uint stateClassID, uint instanceCount, uint commandIndex, bool previousLod)
 {
     if (instanceCount == 0u)
         return;
 
-    if (materialID >= uint(MaxMaterialSlotLookup) || materialID >= uint(materialSlots.length()))
+    if (stateClassID >= uint(MaxMaterialSlotLookup) || stateClassID >= uint(materialSlots.length()))
         return;
 
-    uint slotIndex = materialSlots[materialID];
+    uint slotIndex = materialSlots[stateClassID];
     if (slotIndex == INVALID_MATERIAL_SLOT)
         return;
 
@@ -113,15 +132,15 @@ void main()
         return;
 
     uvec4 key = LoadKey(sortedIndex);
-    uint culledCommandIndex = key.w;
-    uint commandBase = culledCommandIndex * COMMAND_FLOATS;
-    if (commandBase + COMMAND_FLOATS > uint(culled.length()))
+    uint drawID = key.w;
+    if (drawID >= Draws.length())
         return;
 
-    uint meshID = floatBitsToUint(culled[commandBase + 36u]);
-    uint materialID = floatBitsToUint(culled[commandBase + 38u]);
-    uint instanceCount = floatBitsToUint(culled[commandBase + 39u]);
-    uint renderPass = floatBitsToUint(culled[commandBase + 40u]);
+    DrawMetadata meta = Draws[drawID];
+    uint meshID = meta.MeshID;
+    uint stateClassID = meta.StateClassID;
+    uint instanceCount = meta.InstanceCount;
+    uint renderPass = meta.RenderPass;
 
     if (instanceCount == 0u)
         return;
@@ -133,7 +152,7 @@ void main()
         return;
     }
 
-    uint transitionBase = culledCommandIndex * LOD_TRANSITION_UINTS;
+    uint transitionBase = drawID * LOD_TRANSITION_UINTS;
     bool transitionActive = false;
     uint previousMeshID = 0u;
     if (transitionBase + 3u < uint(lodTransitions.length()))
@@ -145,7 +164,7 @@ void main()
     }
 
     if (transitionActive)
-        TryEmitDraw(previousMeshID, materialID, instanceCount, culledCommandIndex, true);
+        TryEmitDraw(previousMeshID, stateClassID, instanceCount, drawID, true);
 
-    TryEmitDraw(meshID, materialID, instanceCount, culledCommandIndex, false);
+    TryEmitDraw(meshID, stateClassID, instanceCount, drawID, false);
 }

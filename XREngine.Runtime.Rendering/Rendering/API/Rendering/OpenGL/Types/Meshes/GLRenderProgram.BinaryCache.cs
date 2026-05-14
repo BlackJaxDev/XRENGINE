@@ -259,7 +259,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void CacheBinary(uint bindingId)
             {
-                if (!Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                if (!RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching)
                     return;
 
                 if (ShouldBypassBinaryCacheForLiveUberVariant())
@@ -417,7 +417,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private string ResolveSourceForCompilation(XRShader shader)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForCompilation", ProfilerScopeKind.OneOffInvoke);
+                using var sample = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForCompilation", ProfilerScopeKind.OneOffInvoke);
                 if (shader is null)
                     return string.Empty;
 
@@ -436,7 +436,7 @@ namespace XREngine.Rendering.OpenGL
 
             private string ResolveSourceForHash(GLShader shader)
             {
-                using var sample = Engine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForHash", ProfilerScopeKind.OneOffInvoke);
+                using var sample = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.ResolveSourceForHash", ProfilerScopeKind.OneOffInvoke);
                 if (shader is null)
                     return string.Empty;
 

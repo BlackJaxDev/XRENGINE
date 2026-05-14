@@ -63,7 +63,7 @@ public partial class GLTexture2D
 
         try
         {
-            using var sample = Engine.Profiler.Start("GLTexture2D.PushData");
+            using var sample = RuntimeEngine.Profiler.Start("GLTexture2D.PushData");
             IsPushing = true;
             //Debug.Out($"Pushing texture: {GetDescribingName()}");
             OnPrePushData(out bool shouldPush, out bool allowPostPushCallback);
@@ -94,7 +94,7 @@ public partial class GLTexture2D
             Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
             EPixelInternalFormat? internalFormatForce;
-            using (Engine.Profiler.Start("GLTexture2D.PushData.EnsureStorageAllocated"))
+            using (RuntimeEngine.Profiler.Start("GLTexture2D.PushData.EnsureStorageAllocated"))
                 internalFormatForce = EnsureStorageAllocated();
 
             // Determine whether mipmaps carry significant CPU data worth deferring.
@@ -156,7 +156,7 @@ public partial class GLTexture2D
                 return;
             }
 
-            using (Engine.Profiler.Start("GLTexture2D.PushData.PushMipmaps"))
+            using (RuntimeEngine.Profiler.Start("GLTexture2D.PushData.PushMipmaps"))
             {
                 if (Mipmaps is null || Mipmaps.Length == 0)
                 {
@@ -197,7 +197,7 @@ public partial class GLTexture2D
     {
         int minLOD = -1000;
         int maxLOD = 1000;
-        using (Engine.Profiler.Start("GLTexture2D.PushData.ApplyMipRangeParameters"))
+        using (RuntimeEngine.Profiler.Start("GLTexture2D.PushData.ApplyMipRangeParameters"))
             ApplyMipRangeParameters();
 
         if (!IsMultisampleTarget)
@@ -208,7 +208,7 @@ public partial class GLTexture2D
 
         if (Data.AutoGenerateMipmaps)
         {
-            using var mipmapProf = Engine.Profiler.Start("GLTexture2D.PushData.GenerateMipmaps");
+            using var mipmapProf = RuntimeEngine.Profiler.Start("GLTexture2D.PushData.GenerateMipmaps");
             GenerateMipmaps();
         }
 
@@ -284,9 +284,9 @@ public partial class GLTexture2D
             _ = uploadScheduler.TryRemove(Data, workItem);
         }
 
-        Engine.AddRenderThreadCoroutine(() =>
+        RuntimeEngine.AddRenderThreadCoroutine(() =>
         {
-            using var sample = Engine.Profiler.Start(progressiveUploadLabel);
+            using var sample = RuntimeEngine.Profiler.Start(progressiveUploadLabel);
             if (!schedulerQueueWaitRecorded)
             {
                 schedulerQueueWaitRecorded = true;
@@ -476,7 +476,7 @@ public partial class GLTexture2D
 
         int startRow = nextRow;
         long uploadStart = TextureRuntimeDiagnostics.StartTiming();
-        using (Engine.Profiler.Start("GLTexture2D.PushMipmap.UploadChunk"))
+        using (RuntimeEngine.Profiler.Start("GLTexture2D.PushMipmap.UploadChunk"))
         {
             PushWithDataRows(
                 glTarget,
@@ -517,10 +517,10 @@ public partial class GLTexture2D
 
     private bool PushPreparedMipLevel(int mipIndex)
     {
-        if (!Engine.IsRenderThread)
+        if (!RuntimeEngine.IsRenderThread)
         {
             string textureName = string.IsNullOrWhiteSpace(Data.Name) ? "UnnamedTexture" : Data.Name;
-            Engine.EnqueueMainThreadTask(
+            RuntimeEngine.EnqueueMainThreadTask(
                 () => PushPreparedMipLevel(mipIndex),
                 $"GLTexture2D.PushPreparedMipLevel[{textureName}].Mip{mipIndex}");
             return false;
@@ -622,7 +622,7 @@ public partial class GLTexture2D
 
     private unsafe void PushMipmap(GLEnum glTarget, int mipIndex, MipmapInfo? info, EPixelInternalFormat? internalFormatForce)
     {
-        using var sample = Engine.Profiler.Start("GLTexture2D.PushMipmap");
+        using var sample = RuntimeEngine.Profiler.Start("GLTexture2D.PushMipmap");
         int glLevel = mipIndex;
         if (!Data.Resizable && !StorageSet)
         {
@@ -702,12 +702,12 @@ public partial class GLTexture2D
 
         if ((data is not null && data.Length > 0) || pbo is not null)
         {
-            using var uploadSample = Engine.Profiler.Start(fullPush ? "GLTexture2D.PushMipmap.UploadFull" : "GLTexture2D.PushMipmap.UploadSubImage");
+            using var uploadSample = RuntimeEngine.Profiler.Start(fullPush ? "GLTexture2D.PushMipmap.UploadFull" : "GLTexture2D.PushMipmap.UploadSubImage");
             PushWithData(glTarget, glLevel, mip!.Width, mip.Height, pixelFormat, pixelType, internalPixelFormat, data, pbo, fullPush);
         }
         else
         {
-            using var uploadSample = Engine.Profiler.Start("GLTexture2D.PushMipmap.AllocateNoData");
+            using var uploadSample = RuntimeEngine.Profiler.Start("GLTexture2D.PushMipmap.AllocateNoData");
             uint width = Data.SparseTextureStreamingEnabled && Data.SparseTextureStreamingLogicalWidth > 0
                 ? Data.SparseTextureStreamingLogicalWidth >> mipIndex
                 : Data.Width >> mipIndex;
@@ -908,7 +908,7 @@ public partial class GLTexture2D
             || Data.Resizable
             || Data.SparseTextureStreamingEnabled
             || Data.UsesOpenGlExternalMemoryImport
-            || !Engine.IsRenderThread)
+            || !RuntimeEngine.IsRenderThread)
         {
             TryValidateTexSubImageUpload(mipLevel, xOffset, yOffset, width, height, operation, logFailure: true);
             Invalidate();

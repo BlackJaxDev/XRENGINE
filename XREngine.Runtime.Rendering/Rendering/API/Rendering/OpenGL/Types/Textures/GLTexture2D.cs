@@ -149,8 +149,8 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
                 $"[GLTexture2D] DataResized scheduling immutable recreate for '{GetDescribingName()}': binding={BindingId} " +
                 $"previousDims={previousW}x{previousH} previousLevels={previousLevels} " +
                 $"newDims={Data.Width}x{Data.Height} newMipmapCount={Mipmaps?.Length ?? 0} " +
-                $"onRenderThread={Engine.IsRenderThread}.");
-            if (Engine.IsRenderThread)
+                $"onRenderThread={RuntimeEngine.IsRenderThread}.");
+            if (RuntimeEngine.IsRenderThread)
             {
                 _pendingImmutableStorageRecreate = false;
                 Destroy();
@@ -169,7 +169,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
 
     private void ApplyPendingImmutableStorageRecreate()
     {
-        if (!_pendingImmutableStorageRecreate || !Engine.IsRenderThread)
+        if (!_pendingImmutableStorageRecreate || !RuntimeEngine.IsRenderThread)
             return;
 
         _pendingImmutableStorageRecreate = false;
@@ -196,7 +196,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
     public override void PreSampling()
         => Data.GrabPass?.Grab(
             Data.GrabPass.ReadFBO ?? XRFrameBuffer.BoundForWriting,
-            Engine.Rendering.State.RenderingPipelineState?.WindowViewport);
+            RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport);
 
     protected internal override void PostGenerated()
     {
@@ -226,7 +226,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         // Track VRAM deallocation.
         if (_allocatedVRAMBytes > 0)
         {
-            Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+            RuntimeEngine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
             _allocatedVRAMBytes = 0;
         }
 

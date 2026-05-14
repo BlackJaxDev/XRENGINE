@@ -39,7 +39,7 @@ namespace XREngine.Rendering.OpenGL
             if (Invalidated)
             {
                 long requestedBytes = CalculateRenderBufferVRAMSize(Data.Width, Data.Height, Data.Type, Data.IsMultisample ? Data.MultisampleCount : 1u);
-                if (!Engine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                if (!RuntimeEngine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
                 {
                     Debug.OpenGLWarning($"[VRAM Budget] Skipping renderbuffer allocation for '{Data.Name ?? BindingId.ToString()}' ({requestedBytes} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
                     return;
@@ -50,7 +50,7 @@ namespace XREngine.Rendering.OpenGL
                 // Track VRAM deallocation of previous buffer if any
                 if (_allocatedVRAMBytes > 0)
                 {
-                    Engine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
 
@@ -61,7 +61,7 @@ namespace XREngine.Rendering.OpenGL
 
                 // Track VRAM allocation
                 _allocatedVRAMBytes = requestedBytes;
-                Engine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);
             }
         }
         public void Unbind()
@@ -75,7 +75,7 @@ namespace XREngine.Rendering.OpenGL
             // Track VRAM deallocation
             if (_allocatedVRAMBytes > 0)
             {
-                Engine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
                 _allocatedVRAMBytes = 0;
             }
             base.PreDeleted();

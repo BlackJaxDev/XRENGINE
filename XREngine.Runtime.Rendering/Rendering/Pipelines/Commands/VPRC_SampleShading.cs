@@ -14,9 +14,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected override void Execute()
         {
             if (Enable)
-                Engine.Rendering.State.EnableSampleShading(MinValue);
+                RuntimeEngine.Rendering.State.EnableSampleShading(MinValue);
             else
-                Engine.Rendering.State.DisableSampleShading();
+                RuntimeEngine.Rendering.State.DisableSampleShading();
         }
     }
 }

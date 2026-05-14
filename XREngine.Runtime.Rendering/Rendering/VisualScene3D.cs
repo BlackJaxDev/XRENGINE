@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
@@ -28,9 +28,9 @@ namespace XREngine.Scene
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
-        private bool _isGpuDispatchActive = Engine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect;
+        private bool _isGpuDispatchActive = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect;
         private bool _isCpuGpuCommandMirrorActive = false;
-        private bool _useGpuBvhActive = Engine.EffectiveSettings.UseGpuBvh;
+        private bool _useGpuBvhActive = RuntimeEngine.EffectiveSettings.UseGpuBvh;
         public BvhRaycastDispatcher BvhRaycasts { get; } = new();
 
         public VisualScene3D()
@@ -62,7 +62,7 @@ namespace XREngine.Scene
             => RenderTree.DebugRender(camera?.WorldFrustum(), onlyContainingItems, RenderAABB);
 
         private void RenderAABB(Vector3 extents, Vector3 center, Color color)
-            => Engine.Rendering.Debug.RenderAABB(extents, center, false, color);
+            => RuntimeEngine.Rendering.Debug.RenderAABB(extents, center, false, color);
 
         public void RaycastAsync(
             Segment worldSegment,
@@ -85,7 +85,7 @@ namespace XREngine.Scene
             IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
-            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
+            using var sample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
             IRuntimeCullingCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
             IVolume? collectionVolume = collectionVolumeOverride ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
@@ -93,7 +93,7 @@ namespace XREngine.Scene
         }
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors)
         {
-            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
+            using var sample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
             int visibleRenderables = 0;
             bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
             int commandsBefore = modelDiagActive ? commands.GetUpdatingCommandCount() : 0;
@@ -119,16 +119,16 @@ namespace XREngine.Scene
 
             if (IsGpuCulling)
             {
-                using var gpuSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var gpuSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive);
             }
             else
             {
                 int cpuCommandsBefore = commands.GetUpdatingCommandCount();
-                using var octreeSample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var octreeSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
                 int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - cpuCommandsBefore);
-                Engine.Rendering.Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
+                RuntimeEngine.Rendering.Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
             }
 
             if (modelDiagActive)
@@ -203,11 +203,11 @@ namespace XREngine.Scene
 
         private bool ShouldMaintainCpuGpuCommandMirror()
         {
-            // The CPU↔GPU command mirror is only needed by Surfel-GI consumers.
+            // The CPU?GPU command mirror is only needed by Surfel-GI consumers.
             // CpuDirect no longer trusts any GPU compute cull output (C-CPU-2), so
             // mirroring would be dead weight on the CpuDirect path. The GPU paths
             // (Instrumented/ZeroReadback) already maintain the GPUScene directly.
-            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
             {
                 switch (viewport.RenderPipeline)
                 {
@@ -261,7 +261,7 @@ namespace XREngine.Scene
         {
             // Always re-resolve through the central strategy so backend capability changes
             // override any stale caller value.
-            useGpu = Engine.Rendering.ResolveMeshSubmissionStrategy(useGpu) != EMeshSubmissionStrategy.CpuDirect;
+            useGpu = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(useGpu) != EMeshSubmissionStrategy.CpuDirect;
 
             if (useGpu == _isGpuDispatchActive)
                 return;
@@ -407,7 +407,7 @@ namespace XREngine.Scene
 
         private int CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors, bool modelDiagActive)
         {
-            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
+            using var sample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
             int visibleRenderables = 0;
 
             // GPU dispatch path: the GPU performs the authoritative frustum/BVH cull on its own

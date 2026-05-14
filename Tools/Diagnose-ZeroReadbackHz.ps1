@@ -8,13 +8,67 @@
 
 param(
     [int]$WarmupSec = 25,
-    [int]$CaptureSec = 45
+    [int]$CaptureSec = 45,
+    [ValidateSet('Debug', 'Release')]
+    [string]$Configuration = 'Debug',
+    [switch]$NoClearCachesBetweenVariants
 )
 
-$ErrorActionPreference = 'Continue'
-$exe = (Resolve-Path (Join-Path $PSScriptRoot '..\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.exe')).Path
+$ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $logsRoot = Join-Path $repoRoot 'Build\Logs'
+$exe = Join-Path $repoRoot "Build\Editor\$Configuration\AnyCPU\$Configuration\net10.0-windows7.0\XREngine.Editor.exe"
+if (-not (Test-Path -LiteralPath $exe)) {
+    throw "Editor executable not found for $Configuration. Build XREngine.Editor first: $exe"
+}
+$exe = (Resolve-Path -LiteralPath $exe).Path
+
+$validEnumValues = @{
+    XRE_OCCLUSION_CULLING_MODE = @('Disabled', 'GpuHiZ', 'CpuQueryAsync')
+    XRE_FORCE_MESH_SUBMISSION_STRATEGY = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshlet')
+    XRE_ZERO_READBACK_MATERIAL_DRAW_PATH = @('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')
+}
+
+function Assert-ValidVariantEnvironment {
+    param([hashtable]$Env)
+
+    foreach ($key in $Env.Keys) {
+        if (-not $validEnumValues.ContainsKey($key)) {
+            continue
+        }
+
+        $value = [string]$Env[$key]
+        $allowed = @($validEnumValues[$key])
+        if ($allowed -notcontains $value) {
+            throw "Invalid $key='$value'. Allowed values: $($allowed -join ', ')"
+        }
+    }
+}
+
+function Clear-VariantCaches {
+    param([string]$Name)
+
+    if ($NoClearCachesBetweenVariants) {
+        return
+    }
+
+    $cacheDirs = @(
+        (Join-Path $repoRoot 'Build\Cache\OpenGL\ShaderPrograms')
+    )
+
+    foreach ($cacheDir in $cacheDirs) {
+        $fullPath = [System.IO.Path]::GetFullPath($cacheDir)
+        $rootWithSeparator = $repoRoot.TrimEnd('\') + '\'
+        if (-not $fullPath.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clear cache outside repo root: $fullPath"
+        }
+
+        if (Test-Path -LiteralPath $fullPath) {
+            Write-Host "[$Name] clearing cache $fullPath" -ForegroundColor DarkGray
+            Remove-Item -LiteralPath $fullPath -Recurse -Force
+        }
+    }
+}
 
 function Run-Variant {
     param(
@@ -22,9 +76,12 @@ function Run-Variant {
         [hashtable]$Env
     )
 
+    Assert-ValidVariantEnvironment -Env $Env
+    Clear-VariantCaches -Name $Name
+
     Write-Host ""
-    Write-Host "========== $Name ==========" -ForegroundColor Cyan
-    foreach ($k in @('XRE_BUCKET_LOOP_DRY_RUN', 'XRE_OCCLUSION_CULLING_MODE', 'XRE_SKIP_COMMAND_SWAP_IF_CLEAN', 'XRE_GL_DEBUG', 'XRE_CRASH_BREADCRUMBS')) {
+    Write-Host "========== $Name ($Configuration) ==========" -ForegroundColor Cyan
+    foreach ($k in @('XRE_BUCKET_LOOP_DRY_RUN', 'XRE_OCCLUSION_CULLING_MODE', 'XRE_SKIP_COMMAND_SWAP_IF_CLEAN', 'XRE_GL_DEBUG', 'XRE_CRASH_BREADCRUMBS', 'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH')) {
         Remove-Item "Env:$k" -ErrorAction SilentlyContinue
     }
     # Always set:
@@ -123,7 +180,7 @@ function Run-Variant {
 $results = New-Object System.Collections.Generic.List[object]
 $results.Add((Run-Variant -Name 'A_baseline'        -Env @{})) | Out-Null
 $results.Add((Run-Variant -Name 'B_bucket_dry_run'  -Env @{ XRE_BUCKET_LOOP_DRY_RUN = '1' })) | Out-Null
-$results.Add((Run-Variant -Name 'C_no_occlusion'    -Env @{ XRE_OCCLUSION_CULLING_MODE = 'None' })) | Out-Null
+$results.Add((Run-Variant -Name 'C_no_occlusion'    -Env @{ XRE_OCCLUSION_CULLING_MODE = 'Disabled' })) | Out-Null
 
 Write-Host ""
 Write-Host "================ SUMMARY ================" -ForegroundColor Green

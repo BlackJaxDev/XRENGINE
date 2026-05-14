@@ -2,8 +2,8 @@
 
 layout(local_size_x = 256) in;
 
-const uint COMMAND_FLOATS = 48u;
-const uint HOT_UINTS = 16u;
+const uint COMMAND_FLOATS = 20u;
+const uint HOT_UINTS = 20u;
 
 layout(std430, binding = 0) readonly buffer InCommands
 {
@@ -28,23 +28,27 @@ void main()
     uint inBase = idx * COMMAND_FLOATS;
     uint outBase = idx * HOT_UINTS;
 
-    OutData[outBase + 0u] = floatBitsToUint(InData[inBase + 32u]); // BoundingSphere.x
-    OutData[outBase + 1u] = floatBitsToUint(InData[inBase + 33u]); // BoundingSphere.y
-    OutData[outBase + 2u] = floatBitsToUint(InData[inBase + 34u]); // BoundingSphere.z
-    OutData[outBase + 3u] = floatBitsToUint(InData[inBase + 35u]); // BoundingSphere.r
+    OutData[outBase + 0u] = floatBitsToUint(InData[inBase + 0u]);  // BoundingSphere.x
+    OutData[outBase + 1u] = floatBitsToUint(InData[inBase + 1u]);  // BoundingSphere.y
+    OutData[outBase + 2u] = floatBitsToUint(InData[inBase + 2u]);  // BoundingSphere.z
+    OutData[outBase + 3u] = floatBitsToUint(InData[inBase + 3u]);  // BoundingSphere.r
 
-    OutData[outBase + 4u] = floatBitsToUint(InData[inBase + 36u]); // MeshID
-    OutData[outBase + 5u] = floatBitsToUint(InData[inBase + 37u]); // SubmeshID
-    OutData[outBase + 6u] = floatBitsToUint(InData[inBase + 38u]); // MaterialID
-    OutData[outBase + 7u] = floatBitsToUint(InData[inBase + 39u]); // InstanceCount
+    OutData[outBase + 4u] = floatBitsToUint(InData[inBase + 4u]);  // MeshID
+    OutData[outBase + 5u] = floatBitsToUint(InData[inBase + 5u]);  // SubmeshID
+    OutData[outBase + 6u] = floatBitsToUint(InData[inBase + 6u]);  // MaterialID
+    OutData[outBase + 7u] = floatBitsToUint(InData[inBase + 7u]);  // InstanceCount
 
-    OutData[outBase + 8u] = floatBitsToUint(InData[inBase + 40u]); // RenderPass
-    OutData[outBase + 9u] = floatBitsToUint(InData[inBase + 43u]); // LayerMask
-    OutData[outBase + 10u] = floatBitsToUint(InData[inBase + 45u]); // Flags
-    OutData[outBase + 11u] = floatBitsToUint(InData[inBase + 44u]); // LODLevel
+    OutData[outBase + 8u] = floatBitsToUint(InData[inBase + 8u]);  // RenderPass
+    OutData[outBase + 9u] = floatBitsToUint(InData[inBase + 11u]); // LayerMask
+    OutData[outBase + 10u] = floatBitsToUint(InData[inBase + 13u]); // Flags
+    OutData[outBase + 11u] = floatBitsToUint(InData[inBase + 12u]); // LODLevel
 
-    OutData[outBase + 12u] = floatBitsToUint(InData[inBase + 41u]); // ShaderProgramID
-    OutData[outBase + 13u] = floatBitsToUint(InData[inBase + 42u]); // RenderDistance
-    OutData[outBase + 14u] = idx;                                    // SourceCommandIndex
-    OutData[outBase + 15u] = floatBitsToUint(InData[inBase + 46u]);  // LogicalMeshID
+    OutData[outBase + 12u] = floatBitsToUint(InData[inBase + 9u]);  // ShaderProgramID
+    OutData[outBase + 13u] = floatBitsToUint(InData[inBase + 10u]); // RenderDistance
+    OutData[outBase + 14u] = floatBitsToUint(InData[inBase + 19u]);  // SourceCommandIndex / DrawID
+    OutData[outBase + 15u] = floatBitsToUint(InData[inBase + 14u]);  // LogicalMeshID
+    OutData[outBase + 16u] = floatBitsToUint(InData[inBase + 15u]);  // TransformID
+    OutData[outBase + 17u] = floatBitsToUint(InData[inBase + 16u]);  // SkinID
+    OutData[outBase + 18u] = floatBitsToUint(InData[inBase + 17u]);  // StateClassID
+    OutData[outBase + 19u] = floatBitsToUint(InData[inBase + 18u]);  // BoundsID
 }

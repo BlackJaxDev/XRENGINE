@@ -54,8 +54,54 @@ public sealed class TextFileYamlTypeConverter : IWriteOnlyYamlTypeConverter
         if (!TryGetUnchangedBackingPath(textFile, out string? backingPath))
             return false;
 
-        emitter.Emit(new Scalar(backingPath));
+        // Emit a workspace-portable form when the file lives under a known asset root so the
+        // serialized scalar survives moving the project to a different machine layout. Falls
+        // back to the absolute path when the file is outside all known roots; the reader's
+        // rebasing logic can still recover absolute paths that contain a known segment.
+        string scalarPath = MakePortableAssetPath(backingPath!);
+        emitter.Emit(new Scalar(scalarPath));
         return true;
+    }
+
+    private static string MakePortableAssetPath(string absolutePath)
+    {
+        string? relative = TryMakeRelativeUnderRoot(absolutePath, Engine.Assets.GameAssetsPath)
+                           ?? TryMakeRelativeUnderRoot(absolutePath, Engine.Assets.EngineAssetsPath);
+        return relative ?? absolutePath;
+    }
+
+    private static string? TryMakeRelativeUnderRoot(string absolutePath, string? root)
+    {
+        if (string.IsNullOrWhiteSpace(root))
+            return null;
+
+        string normalizedRoot;
+        try
+        {
+            normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return null;
+        }
+
+        // Use case-insensitive prefix match on Windows; Path.GetRelativePath alone would happily
+        // emit "../.." escapes if the file is outside the root, which we don't want.
+        string normalizedAbsolute = absolutePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (normalizedAbsolute.Length <= normalizedRoot.Length
+            || !normalizedAbsolute.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
+            || (normalizedAbsolute[normalizedRoot.Length] != Path.DirectorySeparatorChar
+                && normalizedAbsolute[normalizedRoot.Length] != Path.AltDirectorySeparatorChar))
+        {
+            return null;
+        }
+
+        string relative = Path.GetRelativePath(normalizedRoot, absolutePath);
+        if (string.IsNullOrWhiteSpace(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+            return null;
+
+        // Forward slashes for cross-platform portability.
+        return relative.Replace('\\', '/');
     }
 
     private static bool TryGetUnchangedBackingPath(TextFile textFile, out string? backingPath)

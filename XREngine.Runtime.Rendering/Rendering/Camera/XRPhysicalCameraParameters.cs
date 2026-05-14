@@ -164,7 +164,7 @@ namespace XREngine.Rendering
         {
             if (InheritResolution)
             {
-                var area = Engine.Rendering.State.RenderArea;
+                var area = RuntimeEngine.Rendering.State.RenderArea;
                 widthPx = MathF.Max(1.0f, area.Width);
                 heightPx = MathF.Max(1.0f, area.Height);
                 return;

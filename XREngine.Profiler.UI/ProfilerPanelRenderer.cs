@@ -94,6 +94,10 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private readonly float[] _vulkanFrameWaitFenceMsHistory = new float[RenderStatsHistorySamples];
     private readonly float[] _vulkanFrameRecordCommandBufferMsHistory = new float[RenderStatsHistorySamples];
     private readonly float[] _vulkanFrameGpuCommandBufferMsHistory = new float[RenderStatsHistorySamples];
+    private readonly float[] _vrXrWaitFrameBlockMsHistory = new float[RenderStatsHistorySamples];
+    private readonly float[] _vrXrEndFrameSubmitMsHistory = new float[RenderStatsHistorySamples];
+    private readonly float[] _vrXrPredictedToLatePoseDeltaMmHistory = new float[RenderStatsHistorySamples];
+    private readonly float[] _vrXrPredictedDisplayLeadTimeMsHistory = new float[RenderStatsHistorySamples];
     private readonly float[] _renderStatsHistoryScratch = new float[RenderStatsHistorySamples];
     private readonly float[] _renderStatsHistoryRawScratch = new float[RenderStatsHistorySamples];
     private readonly float[] _renderStatsHistoryInterpolatedScratch = new float[RenderStatsHistorySamples];
@@ -662,6 +666,30 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text("FBO Render Bandwidth:");
         ImGui.Text($"  Bandwidth: {stats.FBOBandwidthBytes / (1024.0 * 1024.0):F2} MB/frame");
         ImGui.Text($"  FBO Binds: {stats.FBOBindCount:N0}");
+
+        ImGui.Separator();
+        ImGui.Text("OpenXR / VR:");
+        ImGui.Text($"  Visible: L {stats.VrLeftEyeVisible:N0} / R {stats.VrRightEyeVisible:N0}");
+        ImGui.Text($"  Draws: L {stats.VrLeftEyeDraws:N0} / R {stats.VrRightEyeDraws:N0}");
+        ImGui.Text($"  Build: L {stats.VrLeftWorkerBuildTimeMs:F3} ms / R {stats.VrRightWorkerBuildTimeMs:F3} ms");
+        ImGui.Text($"  Submit: render {stats.VrRenderSubmitTimeMs:F3} ms / xrEndFrame {stats.VrXrEndFrameSubmitTimeMs:F3} ms");
+        ImGui.Text($"  xrWaitFrame block: {stats.VrXrWaitFrameBlockTimeMs:F3} ms");
+        string leadText = double.IsFinite(stats.VrXrPredictedDisplayLeadTimeMs)
+            ? $"{stats.VrXrPredictedDisplayLeadTimeMs:F3} ms"
+            : "unavailable";
+        ImGui.Text($"  Predicted display lead: {leadText}");
+        ImGui.Text($"  Predicted->late pose: {stats.VrXrPredictedToLatePoseDeltaMillimeters:F2} mm / {stats.VrXrPredictedToLatePoseDeltaDegrees:F2} deg");
+        ImGui.Text($"  Missed-deadline frames: {stats.VrXrMissedDeadlineFrames:N0}");
+        ImGui.Text($"  Tracking-loss frames: {stats.VrXrTrackingLossFrames:N0}");
+        ImGui.Text($"  Collect relocate: {stats.VrXrRelocatePredictedTimeMs:F3} ms / frustum pad {stats.VrXrCollectFrustumExpansionDegrees:F2} deg");
+        ImGui.Text($"  Pacing thread idle: {stats.VrXrPacingThreadIdleTimeMs:F3} ms / handoff stalls {stats.VrXrPacingHandoffStalls:N0}");
+        if (_renderStatsHistoryCount > 1 && ImGui.CollapsingHeader("OpenXR Timing History", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawRenderStatsHistoryPlot("xrWaitFrame Block", _vrXrWaitFrameBlockMsHistory, "ms", 0f, 0f);
+            DrawRenderStatsHistoryPlot("xrEndFrame Submit", _vrXrEndFrameSubmitMsHistory, "ms", 0f, 0f);
+            DrawRenderStatsHistoryPlot("Predicted->Late Pose", _vrXrPredictedToLatePoseDeltaMmHistory, "mm", 0f, 0f);
+            DrawRenderStatsHistoryPlot("Predicted Display Lead", _vrXrPredictedDisplayLeadTimeMsHistory, "ms", 0f, 0f);
+        }
 
         ImGui.Separator();
         ImGui.Text("Render Matrix Updates:");
@@ -2267,6 +2295,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         _vulkanFrameWaitFenceMsHistory[index] = (float)stats.VulkanFrameWaitFenceMs;
         _vulkanFrameRecordCommandBufferMsHistory[index] = (float)stats.VulkanFrameRecordCommandBufferMs;
         _vulkanFrameGpuCommandBufferMsHistory[index] = (float)stats.VulkanFrameGpuCommandBufferMs;
+        _vrXrWaitFrameBlockMsHistory[index] = (float)stats.VrXrWaitFrameBlockTimeMs;
+        _vrXrEndFrameSubmitMsHistory[index] = (float)stats.VrXrEndFrameSubmitTimeMs;
+        _vrXrPredictedToLatePoseDeltaMmHistory[index] = (float)stats.VrXrPredictedToLatePoseDeltaMillimeters;
+        _vrXrPredictedDisplayLeadTimeMsHistory[index] = double.IsFinite(stats.VrXrPredictedDisplayLeadTimeMs)
+            ? (float)stats.VrXrPredictedDisplayLeadTimeMs
+            : 0f;
 
         _renderStatsHistoryHead = (_renderStatsHistoryHead + 1) % RenderStatsHistorySamples;
         if (_renderStatsHistoryCount < RenderStatsHistorySamples)

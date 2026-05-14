@@ -151,7 +151,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var area = Engine.Rendering.State.RenderArea;
+            var area = RuntimeEngine.Rendering.State.RenderArea;
             int width = area.Width;
             int height = area.Height;
             if (width <= 0 || height <= 0)

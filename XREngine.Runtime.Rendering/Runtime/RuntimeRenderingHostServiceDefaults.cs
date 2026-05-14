@@ -97,6 +97,14 @@ public static class RuntimeRenderingHostServiceDefaults
     public const float VrFoveationVisibilityMargin = 0.05f;
     public const bool VrFoveationForceFullResForUiAndNearField = true;
     public const float VrFoveationFullResNearDistanceMeters = 1.5f;
+    public const bool OpenXrCullWithFrustum = true;
+    public const bool OpenXrDebugGl = false;
+    public const bool OpenXrDebugClearOnly = false;
+    public const bool OpenXrDebugLifecycle = false;
+    public const bool OpenXrDebugRenderRightThenLeft = false;
+    public const bool OpenXrPrepareFrameAfterDesktopRender = true;
+    public const float OpenXrDeadlineSafetyMarginMs = 1.0f;
+    public const float OpenXrCollectVisibleFrustumPaddingDegrees = 2.0f;
 
     public const bool IsViewportCurrentlyRendering = false;
     public const bool ShouldForceDebugOpaquePipeline = false;

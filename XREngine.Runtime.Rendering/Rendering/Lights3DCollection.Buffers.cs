@@ -13,14 +13,14 @@ namespace XREngine.Scene
 
         public void SwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("Lights3DCollection.SwapBuffers");
+            using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers");
             ShadowScratch scratch = CurrentShadowScratch;
 
             PopulateLocalShadowRelevanceCameras(scratch);
-            bool cullByCameraFrusta = Engine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !Engine.VRState.IsInVR;
+            bool cullByCameraFrusta = RuntimeEngine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !RuntimeEngine.VRState.IsInVR;
             bool gateShadowSwaps = cullByCameraFrusta;
 
-            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.DirectionalLights"))
+            using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.DirectionalLights"))
             {
                 // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
                 for (int i = 0; i < DynamicDirectionalLights.Count; i++)
@@ -31,7 +31,7 @@ namespace XREngine.Scene
                 }
             }
 
-            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.SpotLights"))
+            using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.SpotLights"))
             {
                 for (int i = 0; i < DynamicSpotLights.Count; i++)
                 {
@@ -44,7 +44,7 @@ namespace XREngine.Scene
                 }
             }
 
-            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.PointLights"))
+            using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.PointLights"))
             {
                 for (int i = 0; i < DynamicPointLights.Count; i++)
                 {
@@ -57,12 +57,12 @@ namespace XREngine.Scene
                 }
             }
 
-            using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))
+            using (RuntimeEngine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))
             {
                 LightmapBaking.ProcessManualRequests();
             }
 
-            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.SceneCaptures"))
+            using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.SceneCaptures"))
             {
                 foreach (SceneCaptureComponentBase sc in CaptureComponents)
                     sc.SwapBuffers();

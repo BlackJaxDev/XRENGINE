@@ -13,7 +13,7 @@ using XREngine.Scene.Components.Landscape.Interfaces;
 using XREngine.Scene.Components.Landscape.TerrainModules;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
-using static XREngine.Engine;
+using static XREngine.RuntimeEngine;
 
 namespace XREngine.Scene.Components.Landscape;
 

@@ -2,7 +2,7 @@
 
 layout(local_size_x = 1) in;
 
-const uint COMMAND_FLOATS = 48u;
+const uint COMMAND_FLOATS = 20u;
 const uint KEY_UINTS = 4u;
 const uint DRAW_UINTS = 5u;
 const uint BATCH_UINTS = 4u;
@@ -215,7 +215,7 @@ void CopyInstanceWorldMatrix(uint instanceIndex, uint commandBase)
 {
     uint outBase = instanceIndex * INSTANCE_MATRIX_FLOATS;
     for (uint i = 0u; i < INSTANCE_MATRIX_FLOATS; ++i)
-        instanceTransforms[outBase + i] = culled[commandBase + i];
+        instanceTransforms[outBase + i] = (i == 0u || i == 5u || i == 10u || i == 15u) ? 1.0 : 0.0;
 }
 
 bool MaterialAllowsAggregation(uint materialID)
@@ -300,12 +300,13 @@ void main()
         if (commandBase + COMMAND_FLOATS > uint(culled.length()))
             continue;
 
-        uint meshID = floatBitsToUint(culled[commandBase + 36u]);
-        uint materialID = floatBitsToUint(culled[commandBase + 38u]);
-        uint instanceCount = floatBitsToUint(culled[commandBase + 39u]);
-        uint renderPass = floatBitsToUint(culled[commandBase + 40u]);
-        uint shaderProgramID = floatBitsToUint(culled[commandBase + 41u]);
-        uint flags = floatBitsToUint(culled[commandBase + 45u]);
+        uint meshID = floatBitsToUint(culled[commandBase + 4u]);
+        uint materialID = floatBitsToUint(culled[commandBase + 6u]);
+        uint instanceCount = floatBitsToUint(culled[commandBase + 7u]);
+        uint renderPass = floatBitsToUint(culled[commandBase + 8u]);
+        uint shaderProgramID = floatBitsToUint(culled[commandBase + 9u]);
+        uint flags = floatBitsToUint(culled[commandBase + 13u]);
+        uint drawID = floatBitsToUint(culled[commandBase + 19u]);
 
         if (CurrentRenderPass >= 0 &&
             renderPass != uint(CurrentRenderPass) &&
@@ -320,7 +321,7 @@ void main()
         uint packedState = ((renderPass & 0xFFu) << 24u) |
                            ((shaderProgramID & 0x0FFFu) << 12u) |
                            (flags & 0x0FFFu);
-        uint transitionBase = culledCommandIndex * LOD_TRANSITION_UINTS;
+        uint transitionBase = drawID * LOD_TRANSITION_UINTS;
         bool transitionActive = false;
         uint previousMeshID = 0u;
         if (transitionBase + 3u < uint(lodTransitions.length()))
@@ -347,7 +348,7 @@ void main()
 
             uint firstIndex = meshData[meshBase + 1u];
             uint baseVertex = meshData[meshBase + 2u];
-            bool usesInstanceBuffer = !transitionActive && instanceCount == 1u;
+            bool usesInstanceBuffer = false;
             bool allowAggregate = usesInstanceBuffer &&
                                   EnableInstancingAggregation != 0u &&
                                   MaterialAllowsAggregation(materialID);
@@ -372,7 +373,7 @@ void main()
                 }
 
                 CopyInstanceWorldMatrix(instanceWrite, commandBase);
-                instanceSourceIndices[instanceWrite] = culledCommandIndex;
+                instanceSourceIndices[instanceWrite] = drawID;
 
                 uint drawBase = currentDrawIndex * DRAW_UINTS;
                 indirectDraws[drawBase + 1u] += 1u;
@@ -401,14 +402,14 @@ void main()
                 }
 
                 CopyInstanceWorldMatrix(instanceWrite, commandBase);
-                instanceSourceIndices[instanceWrite] = culledCommandIndex;
+                instanceSourceIndices[instanceWrite] = drawID;
                 drawBaseInstance = instanceWrite;
                 drawInstanceCount = 1u;
                 ++instanceWrite;
             }
             else
             {
-                drawBaseInstance = (culledCommandIndex & COMMAND_INDEX_MASK) | LEGACY_BASEINSTANCE_FLAG;
+                drawBaseInstance = drawID & COMMAND_INDEX_MASK;
                 if (previousVariant)
                     drawBaseInstance |= PREVIOUS_LOD_DRAW_FLAG;
                 drawInstanceCount = instanceCount;

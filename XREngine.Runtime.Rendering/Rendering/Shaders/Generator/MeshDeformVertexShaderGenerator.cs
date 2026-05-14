@@ -122,7 +122,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 if (OptimizeToVec4)
                 {
                     // Pack up to 4 indices and weights into vec4s
-                    EShaderVarType intVecVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                    EShaderVarType intVecVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                         ? EShaderVarType._ivec4
                         : EShaderVarType._vec4;
 
@@ -132,7 +132,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 else
                 {
                     // Use offset + count into SSBO
-                    EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                    EShaderVarType intVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                         ? EShaderVarType._int
                         : EShaderVarType._float;
 
@@ -259,7 +259,7 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             if (UseOVRMultiView)
             {
-                if (Engine.Rendering.State.IsVulkan)
+                if (RuntimeEngine.Rendering.State.IsVulkan)
                     Line("#extension GL_EXT_multiview : require");
                 else
                     Line("#extension GL_OVR_multiview2 : require");
@@ -351,6 +351,11 @@ namespace XREngine.Rendering.Shaders.Generator
                 for (int i = 0; i < _texCoordsUsed.ClampMax(8); ++i)
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
 
+            // See DefaultVertexShaderGenerator: FragTransformId is purely an FS-pairing aid so
+            // one fragment shader serves both the CPU-direct VS (this generator) and the
+            // GPU-indirect substitute VS produced by HybridRenderingManager. The actual
+            // TransformBuffer SSBO fetch for the indirect path lives in that substitute VS, not
+            // here.
             if (EmitTransformId)
             {
                 Line("uint _xreTransformId = uint(gl_BaseInstance);");

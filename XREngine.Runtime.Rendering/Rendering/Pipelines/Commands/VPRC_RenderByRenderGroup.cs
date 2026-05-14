@@ -35,7 +35,7 @@ public class VPRC_RenderByRenderGroup : ViewportRenderCommand
         if (string.IsNullOrWhiteSpace(GroupName))
             return;
 
-        using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
         ActivePipelineInstance.MeshRenderCommands.RenderCPUFiltered(RenderPass, MatchesGroup);
     }
 

@@ -58,7 +58,7 @@ namespace XREngine.Rendering.OpenGL
                 return;
 
             // We intentionally defer attachment changes to the render thread.
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
                 return;
 
             _verifying = true;
@@ -107,7 +107,7 @@ namespace XREngine.Rendering.OpenGL
         protected internal override void PreDeleted()
         {
             var cache = _attachedTargetsCache;
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
                 return;
 
             if (cache is not null && cache.Length > 0)
@@ -119,7 +119,7 @@ namespace XREngine.Rendering.OpenGL
 
         public void BindForReading()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 Debug.OpenGLWarning("Can't bind framebuffer from non-render thread.");
                 return;
@@ -130,7 +130,7 @@ namespace XREngine.Rendering.OpenGL
 
         public void UnbindFromReading()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 Debug.OpenGLWarning("Can't unbind framebuffer from non-render thread.");
                 return;
@@ -141,7 +141,7 @@ namespace XREngine.Rendering.OpenGL
 
         public void BindForWriting()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 Debug.OpenGLWarning("Can't bind framebuffer from non-render thread.");
                 return;
@@ -151,7 +151,7 @@ namespace XREngine.Rendering.OpenGL
         }
         public void UnbindFromWriting()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 Debug.OpenGLWarning("Can't unbind framebuffer from non-render thread.");
                 return;
@@ -163,7 +163,7 @@ namespace XREngine.Rendering.OpenGL
         //Same as BindForWriting, technically
         public void Bind()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 Debug.OpenGLWarning("Can't bind framebuffer from non-render thread.");
                 return;
@@ -174,7 +174,7 @@ namespace XREngine.Rendering.OpenGL
         //Same as UnbindFromWriting, technically
         public void Unbind()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 Debug.OpenGLWarning("Can't unbind framebuffer from non-render thread.");
                 return;
@@ -185,7 +185,7 @@ namespace XREngine.Rendering.OpenGL
 
         public unsafe void SetDrawBuffers()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 Debug.OpenGLWarning("Can't set framebuffer draw buffers from non-render thread.");
                 return;

@@ -18,6 +18,13 @@ public unsafe partial class OpenXRAPI
         Interlocked.Exchange(ref _runtimeLossPending, 0);
         _sessionBegun = false;
         _sessionState = SessionState.Unknown;
+        Volatile.Write(ref _pendingXrFrame, 0);
+        Volatile.Write(ref _pendingXrFrameCollected, 0);
+        Volatile.Write(ref _framePrepared, 0);
+        Volatile.Write(ref _frameSkipRender, 0);
+        Volatile.Write(ref _hasLastValidViews, 0);
+        StopOpenXrPacingThread();
+        _openXrActionsSyncedFrameNumber = 0;
         _nextProbeUtc = DateTime.UtcNow;
     }
 
@@ -291,6 +298,7 @@ public unsafe partial class OpenXRAPI
 
         _sessionBegun = false;
         _sessionState = SessionState.Unknown;
+        StopOpenXrPacingThread();
 
         if (Window?.Renderer is AbstractRenderer renderer && _graphicsBinding is not null)
         {
@@ -326,6 +334,8 @@ public unsafe partial class OpenXRAPI
             DestroyInstance();
             _instance = default;
             _systemId = 0;
+            _win32PerformanceCounterTimeExtension = null;
+            Volatile.Write(ref _win32PerformanceCounterTimeExtensionChecked, 0);
         }
     }
 }

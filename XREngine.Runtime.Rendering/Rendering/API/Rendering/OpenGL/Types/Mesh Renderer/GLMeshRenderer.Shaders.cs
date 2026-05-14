@@ -18,7 +18,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void GenProgramsAndBuffers()
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.GenProgramsAndBuffers", ProfilerScopeKind.OneOffInvoke);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.GenProgramsAndBuffers", ProfilerScopeKind.OneOffInvoke);
                 BuffersBound = false;
                 System.Threading.Interlocked.Increment(ref _programGenerationCount);
 
@@ -46,7 +46,7 @@ namespace XREngine.Rendering.OpenGL
                 Dbg($"Collected {_bufferCache.Count} buffer(s)", "Buffers");
 
                 bool forceSeparableUber = ShouldForceSeparableUberProgram(material);
-                if ((Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
+                if ((RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
                     || forceSeparableUber)
                 {
                     _combinedProgram?.Destroy();
@@ -85,16 +85,16 @@ namespace XREngine.Rendering.OpenGL
                 if (mesh is null)
                     return;
 
-                if (mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
+                if (mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning)
                     MeshRenderer.EnsureSkinningBuffers(logWarnings: false);
 
-                if (mesh.HasBlendshapes && Engine.Rendering.Settings.AllowBlendshapes)
+                if (mesh.HasBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
                     MeshRenderer.EnsureBlendshapeBuffers(logWarnings: false);
             }
 
             private void EnsureProgramsMatchRenderSettings()
             {
-                var settingsVersion = Engine.Rendering.Settings.ShaderConfigVersion;
+                var settingsVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
                 if (_shaderConfigVersion == settingsVersion)
                     return;
 
@@ -110,8 +110,8 @@ namespace XREngine.Rendering.OpenGL
                 _forcedGeneratedVertexProgram?.Destroy();
                 _forcedGeneratedVertexProgram = null;
 
-                if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader
-                    && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader)
+                if (!RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
+                    && !RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader)
                 {
                     DestroySkinnedBuffers();
                 }
@@ -155,7 +155,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void PrepareUberVariantForCurrentMaterial()
             {
-                if (Engine.Rendering.State.IsShadowPass)
+                if (RuntimeEngine.Rendering.State.IsShadowPass)
                     return;
 
                 MeshRenderer.Material?.EnsureUberVariantPreparedForRendering();
@@ -170,7 +170,7 @@ namespace XREngine.Rendering.OpenGL
 
             public bool IsPreparedForRendering
                 => IsGenerated
-                && _shaderConfigVersion == Engine.Rendering.Settings.ShaderConfigVersion
+                && _shaderConfigVersion == RuntimeEngine.Rendering.Settings.ShaderConfigVersion
                 && BuffersBound
                 && !VertexArrayBindingsStale()
                 && AreBuffersReadyForRendering();
@@ -197,7 +197,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool TryPrepareForRendering(double deferOverrunBudgetMs)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.TryPrepareForRendering", ProfilerScopeKind.ConditionalLoop);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.TryPrepareForRendering", ProfilerScopeKind.ConditionalLoop);
                 long methodStart = Stopwatch.GetTimestamp();
                 double generateMs = 0.0;
                 double ensureRenderSettingsMs = 0.0;
@@ -372,9 +372,9 @@ namespace XREngine.Rendering.OpenGL
                 int vsCount = xrMaterial?.VertexShaders?.Count ?? 0;
                 int shCount = xrMaterial?.Shaders?.Count ?? 0;
                 long matRev = xrMaterial?.ShaderStateRevision ?? 0;
-                int settingsVer = Engine.Rendering.Settings.ShaderConfigVersion;
-                bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
-                bool allowPipelines = Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;
+                int settingsVer = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+                bool forceShaderPipelines = RuntimeEngine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
+                bool allowPipelines = RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;
                 string versionType = Data?.GetType()?.Name ?? "<null>";
                 string vsSel = Data?.VertexShaderSelector?.Method?.Name ?? "<null>";
 
@@ -433,9 +433,9 @@ namespace XREngine.Rendering.OpenGL
                     $"genProgramsAndBuffersMs={genProgramsAndBuffersMs:F2}, materialLookupMs={materialLookupMs:F2}, getProgramsMs={getProgramsMs:F2}, " +
                     $"configureDrawTopologyMs={configureDrawTopologyMs:F2}, bindBuffersMs={bindBuffersMs:F2}, " +
                     $"dynamicRenderDataMs={dynamicRenderDataMs:F2}, generated={IsGenerated}, buffersBound={BuffersBound}, " +
-                    $"buffersReady={AreBuffersReadyForRendering()}, shadowPass={Engine.Rendering.State.IsShadowPass}, " +
-                    $"directionalAtlasGrouped={Engine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass}, " +
-                    $"pointAtlasGrouped={Engine.Rendering.State.IsPointLightAtlasGroupedShadowPass}, renderer='{GetDescribingName()}', " +
+                    $"buffersReady={AreBuffersReadyForRendering()}, shadowPass={RuntimeEngine.Rendering.State.IsShadowPass}, " +
+                    $"directionalAtlasGrouped={RuntimeEngine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass}, " +
+                    $"pointAtlasGrouped={RuntimeEngine.Rendering.State.IsPointLightAtlasGroupedShadowPass}, renderer='{GetDescribingName()}', " +
                     $"mesh='{Mesh?.Name ?? "<null>"}', material='{MeshRenderer.Material?.Name ?? "<null>"}'.");
             }
 
@@ -452,10 +452,10 @@ namespace XREngine.Rendering.OpenGL
                 [MaybeNullWhen(false)] out GLRenderProgram? vertexProgram,
                 [MaybeNullWhen(false)] out GLRenderProgram? materialProgram)
             {
-                bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
+                bool forceShaderPipelines = RuntimeEngine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
                 bool materialDiffers = !ReferenceEquals(material.Data, MeshRenderer.Material);
                 bool forceSeparableUber = ShouldForceSeparableUberProgram(material);
-                bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
+                bool usePipelines = (RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
                     || forceShaderPipelines
                     || materialDiffers
                     || forceSeparableUber;
@@ -467,13 +467,13 @@ namespace XREngine.Rendering.OpenGL
 
             private bool ShouldSkipShadowDrawForProgramBuild(GLMaterial material)
             {
-                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
                 if (renderState?.ShadowPass != true)
                     return false;
 
                 bool forceShaderPipelines = renderState.ForceShaderPipelines;
                 bool materialDiffers = !ReferenceEquals(material.Data, MeshRenderer.Material);
-                bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
+                bool usePipelines = (RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
                     || forceShaderPipelines
                     || materialDiffers;
 
@@ -501,7 +501,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool ShouldForceSeparableUberProgram(GLMaterial material)
             {
-                if (Engine.Rendering.State.IsShadowPass)
+                if (RuntimeEngine.Rendering.State.IsShadowPass)
                     return false;
 
                 XRMaterial xrMaterial = material.Data;
@@ -623,7 +623,7 @@ namespace XREngine.Rendering.OpenGL
             /// <returns></returns>
             private bool GenerateVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
             {
-                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
                 bool pointLightShadowPass = renderState?.ShadowPass == true
                     && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
                     && UsesPointLightShadowDepthOutput(globalMaterialOverride);
@@ -698,7 +698,7 @@ namespace XREngine.Rendering.OpenGL
                 Func<XRShader, bool> vertexShaderSelector,
                 Func<string> vertexSourceGenerator)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.CreateCombinedProgram", ProfilerScopeKind.OneOffInvoke);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.CreateCombinedProgram", ProfilerScopeKind.OneOffInvoke);
                 XRShader vertexShader = hasNoVertexShaders
                     ? GenerateVertexShader(vertexSourceGenerator)
                     : FindVertexShader(shaders, vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
@@ -733,7 +733,7 @@ namespace XREngine.Rendering.OpenGL
                 Func<XRShader, bool> vertexShaderSelector,
                 Func<string> vertexSourceGenerator)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.CreateSeparatedVertexProgram", ProfilerScopeKind.OneOffInvoke);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.CreateSeparatedVertexProgram", ProfilerScopeKind.OneOffInvoke);
                 XRShader vertexShader = hasNoVertexShaders
                     ? GenerateVertexShader(vertexSourceGenerator)
                     : FindVertexShader(vertexShaders, vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
@@ -759,7 +759,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void InitiateLink(GLRenderProgram vertexProgram)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.InitiateLink", ProfilerScopeKind.OneOffInvoke);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.InitiateLink", ProfilerScopeKind.OneOffInvoke);
                 vertexProgram.Data.AllowLink();
                 vertexProgram.BeginPrepareLinkData();
                 if (!Data.Parent.GenerateAsync)
@@ -771,7 +771,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void CheckProgramLinked(object? sender, IXRPropertyChangedEventArgs e)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.CheckProgramLinked", ProfilerScopeKind.OneOffInvoke);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.CheckProgramLinked", ProfilerScopeKind.OneOffInvoke);
                 GLRenderProgram? program = sender as GLRenderProgram;
                 if (e.PropertyName != nameof(GLRenderProgram.IsLinked) || !(program?.IsLinked ?? false))
                     return;
@@ -780,7 +780,7 @@ namespace XREngine.Rendering.OpenGL
                 program.PropertyChanged -= CheckProgramLinked;
 
                 if (MeshRenderer.GenerateAsync)
-                    Engine.EnqueueMainThreadTask(() => BindBuffers(program), "GLMeshRenderer.BindBuffers");
+                    RuntimeEngine.EnqueueMainThreadTask(() => BindBuffers(program), "GLMeshRenderer.BindBuffers");
                 else
                     BindBuffers(program);
             }

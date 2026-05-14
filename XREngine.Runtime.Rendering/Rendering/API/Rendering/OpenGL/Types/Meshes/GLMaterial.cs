@@ -92,19 +92,19 @@ namespace XREngine.Rendering.OpenGL
 
             public void SetUniforms(GLRenderProgram? materialProgram)
             {
-                using var sample = Engine.Profiler.Start("GLMaterial.SetUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var sample = RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
                 var renderOptions = Data.RenderOptions;
 
                 //Apply special rendering parameters
                 if (renderOptions != null)
                 {
-                    using var renderOptionsProf = Engine.Profiler.Start("GLMaterial.SetUniforms.ApplyRenderParameters", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                    using var renderOptionsProf = RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.ApplyRenderParameters", ProfilerScopeKind.AlwaysOnHotPathLoop);
                     Renderer.ApplyRenderParameters(renderOptions);
                 }
 
-                bool usePipelines = Engine.Rendering.Settings.AllowShaderPipelines
-                    || (Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false);
+                bool usePipelines = RuntimeEngine.Rendering.Settings.AllowShaderPipelines
+                    || (RuntimeEngine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false);
                 if (usePipelines)
                     materialProgram ??= SeparableProgram;
 
@@ -113,17 +113,17 @@ namespace XREngine.Rendering.OpenGL
 
                 XRMaterial? shadowBindingSource = null;
                 ShadowBindingPlan? shadowBindingPlan = null;
-                if (Engine.Rendering.State.IsShadowPass)
+                if (RuntimeEngine.Rendering.State.IsShadowPass)
                 {
                     shadowBindingSource = Data.ShadowBindingSourceMaterial;
                     if (shadowBindingSource is not null)
                     {
-                        using var shadowPlanProf = Engine.Profiler.Start("GLMaterial.SetUniforms.ShadowBindingPlan", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                        using var shadowPlanProf = RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.ShadowBindingPlan", ProfilerScopeKind.AlwaysOnHotPathLoop);
                         shadowBindingPlan = GetOrCreateShadowBindingPlan(materialProgram, shadowBindingSource);
                     }
                 }
 
-                using (Engine.Profiler.Start("GLMaterial.SetUniforms.BeginBindingBatch", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.BeginBindingBatch", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     materialProgram.BeginBindingBatch();
 
                 XRMaterialBase uniformSource = shadowBindingPlan is not null ? shadowBindingSource! : Data;
@@ -135,7 +135,7 @@ namespace XREngine.Rendering.OpenGL
                 _lastUniformProgramBindingId = materialProgram.BindingId;
 
                 // Ensure uniforms are resident on every program variant that renders this material.
-                using (Engine.Profiler.Start("GLMaterial.SetUniforms.Parameters", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.Parameters", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
                     if (shadowBindingPlan is not null)
                     {
@@ -149,7 +149,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                using (Engine.Profiler.Start("GLMaterial.SetUniforms.Textures", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.Textures", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
                     if (shadowBindingPlan is not null)
                         SetTextureUniforms(materialProgram, shadowBindingSource!, shadowBindingPlan.TextureIndices);
@@ -160,13 +160,13 @@ namespace XREngine.Rendering.OpenGL
                 EUniformRequirements requiredEngineUniforms = renderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None;
                 if (RequiresEngineUniformBinding(materialProgram, requiredEngineUniforms))
                 {
-                    using (Engine.Profiler.Start("GLMaterial.SetUniforms.EngineUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                    using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.EngineUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
                         SetEngineUniforms(materialProgram, requiredEngineUniforms);
                 }
 
-                using (Engine.Profiler.Start("GLMaterial.SetUniforms.MaterialHook", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.MaterialHook", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
-                    XRMaterial? shadowUniformSource = Engine.Rendering.State.IsShadowPass
+                    XRMaterial? shadowUniformSource = RuntimeEngine.Rendering.State.IsShadowPass
                         ? Data.ShadowUniformSourceMaterial
                         : null;
                     if (shadowUniformSource?.HasSettingShadowUniformHandlers == true)
@@ -181,15 +181,15 @@ namespace XREngine.Rendering.OpenGL
                     }
                     else
                     {
-                        if (Engine.Rendering.State.IsShadowPass && Data.HasSettingShadowUniformHandlers)
+                        if (RuntimeEngine.Rendering.State.IsShadowPass && Data.HasSettingShadowUniformHandlers)
                             Data.OnSettingShadowUniforms(materialProgram.Data);
                         else
                             Data.OnSettingUniforms(materialProgram.Data);
                     }
                 }
 
-                using (Engine.Profiler.Start("GLMaterial.SetUniforms.ScopedProgramBindings", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                    Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(materialProgram.Data);
+                using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.ScopedProgramBindings", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                    RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(materialProgram.Data);
             }
 
             private ShadowBindingPlan GetOrCreateShadowBindingPlan(GLRenderProgram materialProgram, XRMaterial sourceMaterial)
@@ -245,9 +245,9 @@ namespace XREngine.Rendering.OpenGL
                 if (materialProgram is null)
                     return;
 
-                using var sample = Engine.Profiler.Start("GLMaterial.FinalizeUniformBindings", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var sample = RuntimeEngine.Profiler.Start("GLMaterial.FinalizeUniformBindings", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
-                bool isSamplerFreeShadowBindingPath = Engine.Rendering.State.IsShadowPass
+                bool isSamplerFreeShadowBindingPath = RuntimeEngine.Rendering.State.IsShadowPass
                     && !materialProgram.HasActiveSamplerUniforms();
 
                 if (isSamplerFreeShadowBindingPath)
@@ -255,10 +255,10 @@ namespace XREngine.Rendering.OpenGL
 
                 // Mesh/FBO SettingUniforms hooks run after SetUniforms(); defer fallback binding until
                 // the full binding batch is complete so late sampler binds are observed correctly.
-                using (Engine.Profiler.Start("GLMaterial.FinalizeUniformBindings.BindFallbackSamplers", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                using (RuntimeEngine.Profiler.Start("GLMaterial.FinalizeUniformBindings.BindFallbackSamplers", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     materialProgram.BindFallbackSamplers();
 
-                using (Engine.Profiler.Start("GLMaterial.FinalizeUniformBindings.WarnIfNoBindings", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                using (RuntimeEngine.Profiler.Start("GLMaterial.FinalizeUniformBindings.WarnIfNoBindings", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     materialProgram.WarnIfNoUniformOrSamplerBindings(Data.Name);
             }
 
@@ -287,13 +287,13 @@ namespace XREngine.Rendering.OpenGL
 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.Camera))
                 {
-                    Engine.Rendering.State.RenderingCamera?.SetUniforms(program.Data, true);
-                    Engine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program.Data, false);
+                    RuntimeEngine.Rendering.State.RenderingCamera?.SetUniforms(program.Data, true);
+                    RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program.Data, false);
                 }
 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.Lights))
                 {
-                    var world = Engine.Rendering.State.RenderingWorld;
+                    var world = RuntimeEngine.Rendering.State.RenderingWorld;
                     var lights = world?.Lights;
                     if (lights != null)
                         lights.SetForwardLightingUniforms(program.Data);
@@ -303,14 +303,14 @@ namespace XREngine.Rendering.OpenGL
 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.RenderTime))
                 {
-                    program.Uniform(EEngineUniform.RenderTime.ToStringFast(), Engine.ElapsedTime);
-                    program.Uniform(EEngineUniform.EngineTime.ToStringFast(), Engine.ElapsedTime);
-                    program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), Engine.Time.Timer.Render.Delta);
+                    program.Uniform(EEngineUniform.RenderTime.ToStringFast(), RuntimeEngine.ElapsedTime);
+                    program.Uniform(EEngineUniform.EngineTime.ToStringFast(), RuntimeEngine.ElapsedTime);
+                    program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), RuntimeEngine.Time.Timer.Render.Delta);
                 }
                 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.ViewportDimensions))
                 {
-                    var area = Engine.Rendering.State.RenderArea;
+                    var area = RuntimeEngine.Rendering.State.RenderArea;
                     program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
                     program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
                     program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
@@ -353,7 +353,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void SetTextureUniforms(GLRenderProgram program, XRMaterialBase material)
             {
-                using var sample = Engine.Profiler.Start("GLMaterial.SetTextureUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var sample = RuntimeEngine.Profiler.Start("GLMaterial.SetTextureUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 XRTexture2D.RecordImportedTextureMaterialBinding(material);
 
                 // Use textureIndex as textureUnit so that null entries preserve
@@ -372,7 +372,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void SetTextureUniforms(GLRenderProgram program, XRMaterialBase material, IReadOnlyList<int> textureIndices)
             {
-                using var sample = Engine.Profiler.Start("GLMaterial.SetTextureUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var sample = RuntimeEngine.Profiler.Start("GLMaterial.SetTextureUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 XRTexture2D.RecordImportedTextureMaterialBinding(material);
 
                 for (int index = 0; index < textureIndices.Count; ++index)
@@ -400,7 +400,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 string resolvedSamplerName = texture.ResolveSamplerName(textureIndex, samplerNameOverride);
-                if (Engine.Rendering.Settings.LogMaterialTextureBindings)
+                if (RuntimeEngine.Rendering.Settings.LogMaterialTextureBindings)
                 {
                     // Opt-in diagnostic: record every material → texture → unit mapping so the exact
                     // cross-material texture-bleed culprit (e.g. lion diffuse rendering on sponza roof)
@@ -417,7 +417,7 @@ namespace XREngine.Rendering.OpenGL
                     XRTexture2D? texture2D = texture.Data as XRTexture2D;
                     Vector3 dimensions = texture.WidthHeightDepth;
                     TextureRuntimeDiagnostics.LogMaterialBinding(
-                        (long)Engine.Rendering.State.RenderFrameId,
+                        (long)RuntimeEngine.Rendering.State.RenderFrameId,
                         matName,
                         program.Data?.Name,
                         textureIndex,
@@ -476,7 +476,7 @@ namespace XREngine.Rendering.OpenGL
                 string resolvedSamplerName,
                 string? samplerNameOverride)
             {
-                if (Engine.Rendering.State.IsShadowPass)
+                if (RuntimeEngine.Rendering.State.IsShadowPass)
                     return;
 
                 if (texture.Data is not XRTexture2D texture2D)
@@ -550,7 +550,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 TextureRuntimeDiagnostics.LogBindingRisk(
-                    (long)Engine.Rendering.State.RenderFrameId,
+                    (long)RuntimeEngine.Rendering.State.RenderFrameId,
                     material?.Name,
                     program.Data?.Name,
                     textureIndex,

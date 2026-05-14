@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
 {
-    private const uint CulledCommandFloats = 48u;
+    private const uint CulledCommandFloats = 20u;
 
     public enum EVisualizationMode
     {
@@ -218,38 +218,22 @@ public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
         var scene = ActivePipelineInstance.RenderState.Scene;
         var gpuScene = scene?.GPUCommands;
 
-        if (surfelPass.TransformSource == ESurfelTransformSource.CompactTransformAtlas)
+        XRDataBuffer? transforms = gpuScene?.TransformBuffer;
+        if (transforms is null)
         {
-            var atlasBuffer = surfelPass.TransformAtlasBuffer;
-            uint atlasCount = surfelPass.TransformAtlasElementCount;
-            if (atlasBuffer is not null && atlasCount > 0)
-            {
-                atlasBuffer.BindTo(program, 6u);
-                program.Uniform("useTransformAtlas", true);
-                program.Uniform("transformAtlasCount", atlasCount * 16u);
-                program.Uniform("hasCulledCommands", false);
-                program.Uniform("culledFloatCount", 0u);
-                program.Uniform("culledCommandFloats", CulledCommandFloats);
-                return;
-            }
-            // Fall through to GPU commands path if atlas not available.
-        }
-
-        program.Uniform("useTransformAtlas", false);
-        program.Uniform("transformAtlasCount", 0u);
-
-        XRDataBuffer? commands = gpuScene is null ? null : gpuScene.AllLoadedCommandsBuffer;
-        if (commands is null)
-        {
+            program.Uniform("useTransformAtlas", false);
+            program.Uniform("transformAtlasCount", 0u);
             program.Uniform("hasCulledCommands", false);
             program.Uniform("culledFloatCount", 0u);
             program.Uniform("culledCommandFloats", CulledCommandFloats);
             return;
         }
 
-        commands.BindTo(program, 5u);
-        program.Uniform("hasCulledCommands", true);
-        program.Uniform("culledFloatCount", commands.ElementCount * CulledCommandFloats);
+        transforms.BindTo(program, 6u);
+        program.Uniform("useTransformAtlas", true);
+        program.Uniform("transformAtlasCount", transforms.ElementCount * 16u);
+        program.Uniform("hasCulledCommands", false);
+        program.Uniform("culledFloatCount", 0u);
         program.Uniform("culledCommandFloats", CulledCommandFloats);
     }
 

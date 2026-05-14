@@ -59,7 +59,7 @@ public unsafe partial class VulkanRenderer
                         continue;
 
                     Api!.DestroyDescriptorPool(device, block.Pool, null);
-                    Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
                 }
             }
         }
@@ -212,7 +212,7 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
                 return false;
 
-            Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+            RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
 
             block = new ComputeDescriptorPoolBlock
             {

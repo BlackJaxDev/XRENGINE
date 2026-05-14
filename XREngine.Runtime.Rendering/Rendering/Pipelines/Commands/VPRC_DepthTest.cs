@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            Engine.Rendering.State.EnableDepthTest(Enable);
+            RuntimeEngine.Rendering.State.EnableDepthTest(Enable);
         }
     }
 }

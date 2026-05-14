@@ -214,7 +214,7 @@ public partial class OpenGLRenderer
                     return true;
                 }
             }
-            Engine.AddMainThreadCoroutine(FenceCheck);
+            RuntimeEngine.AddMainThreadCoroutine(FenceCheck);
         }
         else
         {
@@ -343,7 +343,7 @@ public partial class OpenGLRenderer
                     return true;
                 }
             }
-            Engine.AddMainThreadCoroutine(FenceCheck);
+            RuntimeEngine.AddMainThreadCoroutine(FenceCheck);
         }
         else
         {
@@ -449,10 +449,10 @@ public partial class OpenGLRenderer
             }
             else
             {
-                Engine.EnqueueMainThreadTask(FenceCheck);
+                RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
             }
         }
-        Engine.EnqueueMainThreadTask(FenceCheck);
+        RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
     }
     public override unsafe void GetDepthAsync(XRFrameBuffer fbo, int x, int y, Action<float> depthCallback)
     {
@@ -485,10 +485,10 @@ public partial class OpenGLRenderer
             }
             else
             {
-                Engine.EnqueueMainThreadTask(FenceCheck);
+                RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
             }
         }
-        Engine.EnqueueMainThreadTask(FenceCheck);
+        RuntimeEngine.EnqueueMainThreadTask(FenceCheck);
     }
 
     public override unsafe bool TryReadTextureMipRgbaFloat(
@@ -505,7 +505,7 @@ public partial class OpenGLRenderer
         height = 0;
         failure = string.Empty;
 
-        if (!Engine.IsRenderThread)
+        if (!RuntimeEngine.IsRenderThread)
         {
             failure = "Readback unavailable off render thread";
             return false;

@@ -2,7 +2,7 @@
 
 layout(local_size_x = 256) in;
 
-const uint COMMAND_FLOATS = 48u;
+const uint COMMAND_FLOATS = 20u;
 const uint METADATA_UINTS = 4u;
 
 layout(std430, binding = 0) readonly buffer CulledCommands { float culled[]; };
@@ -34,7 +34,7 @@ const uint DOMAIN_EXACT = 3u;
 uint ReadSourceCommandIndex(uint logicalIdx)
 {
     uint base = logicalIdx * COMMAND_FLOATS;
-    return floatBitsToUint(culled[base + 47u]);
+    return floatBitsToUint(culled[base + 19u]);
 }
 
 uint ReadDomain(uint sourceCommandIndex)

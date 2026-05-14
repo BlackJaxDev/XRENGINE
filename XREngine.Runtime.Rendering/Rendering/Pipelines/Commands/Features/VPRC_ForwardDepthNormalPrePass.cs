@@ -68,7 +68,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             // RenderOptions.ExcludeFromGpuIndirect = true so RenderCPUNonMeshAndExcluded picks
             // them up; otherwise they will fault the GPU side of this dispatch.
             var strategy = _gpuDispatch
-                ? Engine.Rendering.ResolveMeshSubmissionStrategy(true)
+                ? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)
                 : EMeshSubmissionStrategy.CpuDirect;
             foreach (int pass in _renderPasses)
             {

@@ -27,6 +27,8 @@ This document describes how XREngine integrates OpenXR for VR rendering — from
   - [Phase 2: CollectVisible](#phase-2-collectvisible)
   - [Phase 3: RenderFrame](#phase-3-renderframe)
   - [Late-Pose Update](#late-pose-update)
+  - [Timing Settings And Stats](#timing-settings-and-stats)
+  - [Collect Pose And Tracking Policies](#collect-pose-and-tracking-policies)
 - [Per-Eye Rendering](#per-eye-rendering)
   - [RenderEye()](#rendereye)
   - [OpenGL Eye Rendering Path](#opengl-eye-rendering-path)
@@ -352,6 +354,36 @@ Vulkan swapchain images are `VkImage` handles. The engine records render command
 
 OpenXR frames follow a three-phase pipeline split across threads:
 
+Current ordering keeps OpenXR API calls render-thread-owned while delaying the next `xrWaitFrame` until after the desktop window has rendered by default:
+
+```text
+Render thread, RenderViewportsCallback:
+  PollEvents
+  LocateViews(Late)
+  UpdateActionPoseCaches(Late)
+  InvokeRecalcMatrixOnDraw(Late)
+  RenderFrame -> xrAcquire/xrWait/xrRelease swapchain images -> xrEndFrame
+  restore GL state
+
+XRWindow desktop render:
+  Render normal desktop viewports, mirror, and editor UI
+
+Render thread, PostRenderViewportsCallback:
+  PrepareNextFrameOnRenderThread
+    xrWaitFrame -> xrBeginFrame -> LocateViews(Predicted)
+    UpdateActionPoseCaches(Predicted)
+    InvokeRecalcMatrixOnDraw(Predicted)
+    publish _pendingXrFrame for CollectVisible
+
+CollectVisible thread:
+  OpenXrCollectVisible builds per-eye command buffers from the predicted pose cache
+  OpenXrSwapBuffers publishes the buffers by setting _framePrepared
+```
+
+`OpenXrPrepareFrameAfterDesktopRender` controls the handoff. It defaults to `true`; setting it to `false` restores the older behavior where `PrepareNextFrameOnRenderThread()` runs at the end of `Window_RenderViewportsCallback`.
+
+The older box diagram below is retained as a high-level thread-ownership sketch. For exact call order, use the ASCII ordering above.
+
 ```
 ┌─────────────── Render Thread ────────────────────────────────┐
 │  Phase 1: PrepareNextFrameOnRenderThread()                   │
@@ -387,16 +419,16 @@ OpenXR frames follow a three-phase pipeline split across threads:
 
 ### Phase 1: PrepareNextFrameOnRenderThread
 
-Called after the previous frame's `xrEndFrame` completes. Prepares the next frame:
+Called on the render thread after desktop viewport/editor rendering by default. Prepares the next frame:
 
 1. Clear stale flags (`_framePrepared`, `_pendingXrFrameCollected`)
 2. `xrWaitFrame()` — blocks until the runtime is ready for a new frame; returns predicted display time
 3. `xrBeginFrame()` — marks the start of GPU work for this frame
 4. If `ShouldRender == 0` (runtime says skip), sets `_frameSkipRender = 1` and returns
-5. `LocateViews(Predicted)` — gets predicted eye poses for the display time
-6. `UpdateActionPoseCaches(Predicted)` — samples controller/tracker poses at predicted time
-7. `InvokeRecalcMatrixOnDraw()` — updates VR rig node transforms to predicted poses
-8. Sets `_pendingXrFrame = 1` — makes the frame available to the visibility thread
+5. `LocateViews(Predicted)` gets predicted eye poses for the display time and caches them under `_openXrPoseLock`
+6. `UpdateActionPoseCaches(Predicted)` samples controller/tracker poses at the same predicted display time
+7. `InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted)` updates VR rig node transforms to predicted poses
+8. Sets `_pendingXrFrame = 1` to make the frame available to the visibility thread
 
 ### Phase 2: CollectVisible
 
@@ -406,7 +438,7 @@ Runs on the visibility/collect thread. Builds per-eye render command lists:
 2. Resolve source viewport, VR rig, base camera, and world from `Engine.VRState.ViewInformation`
 3. Ensure per-eye `XRViewport` and `XRCamera` objects exist (`EnsureOpenXrViewports()`, `EnsureOpenXrEyeCameras()`)
 4. Copy post-process settings from the base camera to eye cameras
-5. Update eye camera transforms and FOV from OpenXR view poses
+5. Update eye camera transforms and FOV from the lock-protected predicted pose cache
 6. **Collect visibility:**
    - **Vulkan (parallel):** If `_parallelRenderingEnabled`, collects left and right eyes concurrently via `Task.Run`
    - **OpenGL (serial):** Collects left then right sequentially
@@ -420,15 +452,15 @@ Runs on the render thread as part of `Window_RenderViewportsCallback()`:
 2. **Poll OpenXR events** — handles session state transitions (ready, stopping, lost, etc.)
 3. **Late-pose update** — if a frame is pending:
    - `LocateViews(Late)` — re-samples eye poses with updated prediction
-   - `UpdateActionPoseCaches(Late)` — re-samples controller poses
+   - `UpdateActionPoseCaches(Late)` re-locates controller/tracker poses at the frame target time; `xrSyncActions` runs once per frame unless `OpenXrActionSyncPolicy` is `PredictedAndLate`
    - Logs pose delta between predicted and late samples
-   - `InvokeRecalcMatrixOnDraw()` — updates transforms to latest poses
+   - `InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Late)` updates transforms to latest poses
 4. **`RenderFrame()`** — submits the frame:
    - For each eye: acquire swapchain image, render, release
    - Build `CompositionLayerProjection` with both views
    - `xrEndFrame` with the projection layer
-5. **`PrepareNextFrameOnRenderThread()`** — immediately begins the next frame
-6. **Restore GL state** — puts the GL context back to the state the engine expects
+5. **Restore GL state** - puts the GL context back to the state the engine expects
+6. **Post-render prepare** - `Window_PostRenderViewportsCallback()` calls `PrepareNextFrameOnRenderThread()` when `OpenXrPrepareFrameAfterDesktopRender` is enabled
 
 ### Late-Pose Update
 
@@ -444,6 +476,51 @@ Poses are double-buffered under `_openXrPoseLock`:
 - Late pose: `_openXrLateLeftEyePos/Rot`, `_openXrLateLeftEyeFov`
 
 `ApplyOpenXrEyePoseForRenderThread()` composes the late eye pose with the locomotion root matrix and calls `camera.Transform.SetRenderMatrix()`, bypassing the normal transform pipeline for minimum latency.
+
+### Timing Settings And Stats
+
+OpenXR timing is surfaced through `Engine.Rendering.Stats`, `ProfilerStatsPacket`, `EngineProfilerDataSource`, `Engine.ProfilerSender`, and `ProfilerPanelRenderer`.
+
+| Stat | Meaning |
+|------|---------|
+| `VrXrWaitFrameBlockTimeMs` | Time spent blocked in `xrWaitFrame`. |
+| `VrXrEndFrameSubmitTimeMs` | Time spent in `xrEndFrame`. |
+| `VrXrPredictedDisplayLeadTimeMs` | `predictedDisplayTime` minus the current QPC time converted with `XR_KHR_win32_convert_performance_counter_time`; unavailable as NaN when the extension is missing. |
+| `VrXrPredictedToLatePoseDeltaMillimeters` / `VrXrPredictedToLatePoseDeltaDegrees` | HMD delta between predicted and late samples for the same frame. |
+| `VrXrMissedDeadlineFrames` | Count of frames where `xrEndFrame` completion, converted to `XrTime`, reached the target display time minus `OpenXrDeadlineSafetyMarginMs`. |
+| `VrXrTrackingLossFrames` | Count of `xrLocateViews` calls whose view state did not contain valid orientation and position. |
+| `VrXrRelocatePredictedTimeMs` | Cost of the optional predicted-view relocate policy. |
+| `VrXrCollectFrustumExpansionDegrees` | Frustum padding applied during `CollectVisible`. |
+| `VrXrPacingThreadIdleTimeMs` | Time the dedicated XR pacing thread spent waiting on its wake event between successive `xrWaitFrame` calls. Only populated when `OpenXrRenderPacingMode == DedicatedThread`. |
+| `VrXrPacingHandoffStalls` | Count of frames where the render thread reached `RenderFrame` with no prepared XR frame published. Should remain near zero under steady state when `OpenXrRenderPacingMode == DedicatedThread`. |
+
+`Tools/Reports/Find-NewAllocations.ps1` also flags formatted `Debug.Out`/`Console.WriteLine` candidates in `OpenXRAPI.*`; pass `-FailOnOpenXrHotPathAllocations` when the report should fail CI-like validation.
+
+### Collect Pose And Tracking Policies
+
+`OpenXrCollectVisiblePosePolicy` controls the predicted pose used for visibility:
+
+| Policy | Behavior |
+|--------|----------|
+| `Predicted` | Use the predicted pose cached by `PrepareNextFrameOnRenderThread`. |
+| `RelocatePredicted` | Re-issue `LocateViews(Predicted)` on the render thread before publishing the frame, then record relocate cost. |
+| `PaddedFrustum` | Use the predicted pose cache and expand the asymmetric per-eye FOV by `OpenXrCollectVisibleFrustumPaddingDegrees` for culling only. |
+
+`OpenXrTrackingLossPolicy` controls invalid `ViewStateFlags`: `FreezeLastValid` reuses the last valid view poses, `Identity` substitutes identity poses, and `SkipFrame` aborts the frame. `OpenXrActionSyncPolicy` defaults to `PredictedOnly`; `PredictedAndLate` restores the older two-sync behavior if an input backend needs it.
+
+### Render Pacing Mode
+
+`OpenXrRenderPacingMode` selects where `PrepareNextFrameOnRenderThread` (xrWaitFrame → xrBeginFrame → predicted-pose work) runs:
+
+| Mode | Behavior |
+|------|----------|
+| `InRenderCallback` | Prep runs at the end of the eye-render callback (legacy). Blocks the render dispatch on `xrWaitFrame`. |
+| `PostRenderCallback` (default) | Prep runs in the post-render callback after the desktop frame is presented. Still on the render dispatch, but the desktop mirror has already been submitted. |
+| `DedicatedThread` | Prep runs on a dedicated `XR Pacing` thread. The render thread returns immediately after `xrEndFrame`, fully decoupling desktop FPS from the compositor cadence. |
+
+External-sync invariant when `DedicatedThread` is selected: the pacing thread Waits on a `ManualResetEventSlim` before each prep iteration; the render thread Sets that event only after `xrEndFrame` (and on aborted-prep cleanup). This guarantees `xrWaitFrame`/`xrBeginFrame` on the pacing thread never overlap `xrEndFrame` or swapchain acquire/wait/release on the render thread. `xrEndFrame`, per-eye swapchain ops, and the Late `xrLocateViews` stay on the render thread; `xrWaitFrame`, `xrBeginFrame`, predicted `xrLocateViews`, `UpdateActionPoseCaches(Predicted)`, and `InvokeRecalcMatrixOnDraw(Predicted)` move to the pacing thread.
+
+The pacing thread starts lazily on the first render callback after `_sessionBegun` becomes true, and stops on session `Stopping`/`Exiting`/`LossPending`, on `TearDownSessionResources`, on `EnableRuntimeMonitoring`, and during `CleanUp`. `VrXrPacingThreadIdleTimeMs` and `VrXrPacingHandoffStalls` are populated only in this mode.
 
 ---
 
@@ -626,10 +703,11 @@ Default bindings are suggested for multiple controller types:
 
 ### Per-Frame Updates
 
-`UpdateActionPoseCaches()` runs twice per frame (predicted + late):
-1. `xrSyncActions` — synchronizes the action state
-2. For each hand: `xrLocateSpace(gripSpace, appSpace, time)` → position/orientation
-3. For each tracker role: `xrLocateSpace(trackerSpace, appSpace, time)` → position/orientation
+`UpdateActionPoseCaches()` is called for predicted and late timing. By default, `xrSyncActions` runs during the predicted call only and the late call re-locates spaces at the same XR frame target display time. `OpenXrActionSyncPolicy.PredictedAndLate` can opt back into synchronizing on both calls.
+
+1. `xrSyncActions` synchronizes the action state once per frame by default
+2. For each hand: `xrLocateSpace(gripSpace, appSpace, time)` returns position/orientation
+3. For each tracker role: `xrLocateSpace(trackerSpace, appSpace, time)` returns position/orientation
 4. Poses are stored double-buffered under `_openXrPoseLock`
 
 ---

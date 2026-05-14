@@ -5,6 +5,12 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Models.Materials
 {
+    public enum EMaterialTextureArrayPolicy
+    {
+        ArbitraryMaterialTextures = 0,
+        HomogeneousClassOnly = 1,
+    }
+
     /// <summary>
     /// Contains parameters for rendering an object, such as blending and depth testing.
     /// </summary>
@@ -27,6 +33,7 @@ namespace XREngine.Rendering.Models.Materials
         private BlendMode? _blendModeAllDrawBuffers;
         private bool _excludeFromGpuIndirect;
         private bool _excludeFromCpuOcclusion;
+        private EMaterialTextureArrayPolicy _textureArrayPolicy = EMaterialTextureArrayPolicy.ArbitraryMaterialTextures;
 
         [Browsable(false)]
         public bool HasBlending => (BlendModesPerDrawBuffer?.Values.Any(x => x.Enabled == ERenderParamUsage.Enabled) ?? false) || BlendModeAllDrawBuffers?.Enabled == ERenderParamUsage.Enabled;
@@ -170,6 +177,20 @@ namespace XREngine.Rendering.Models.Materials
         {
             get => _excludeFromCpuOcclusion;
             set => SetField(ref _excludeFromCpuOcclusion, value);
+        }
+
+        /// <summary>
+        /// Texture arrays are reserved for homogeneous resource classes such as decals, terrain splats,
+        /// and light cookies. Arbitrary material textures should use bindless handles or Vulkan
+        /// descriptor indexing through the material table.
+        /// </summary>
+        [Category("GPU Dispatch")]
+        [DisplayName("Texture Array Policy")]
+        [Description("Declares whether this material may use texture arrays. Generic material-table draws reject texture arrays unless this is HomogeneousClassOnly.")]
+        public EMaterialTextureArrayPolicy TextureArrayPolicy
+        {
+            get => _textureArrayPolicy;
+            set => SetField(ref _textureArrayPolicy, value);
         }
     }
 }

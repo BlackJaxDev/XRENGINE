@@ -12,6 +12,7 @@ using XREngine.Diagnostics;
 using XREngine.Components;
 using XREngine.Input;
 using XREngine.Rendering;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
@@ -477,6 +478,36 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVrRenderSubmitTime(TimeSpan submitTime)
         => Engine.Rendering.Stats.RecordVrRenderSubmitTime(submitTime);
 
+    public void RecordRenderVrXrWaitFrameBlockTime(TimeSpan waitTime)
+        => Engine.Rendering.Stats.RecordVrXrWaitFrameBlockTime(waitTime);
+
+    public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime)
+        => Engine.Rendering.Stats.RecordVrXrEndFrameSubmitTime(submitTime);
+
+    public void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
+        => Engine.Rendering.Stats.RecordVrXrPredictedToLatePoseDelta(millimeters, degrees);
+
+    public void RecordRenderVrXrPredictedDisplayLeadTime(double leadTimeMs)
+        => Engine.Rendering.Stats.RecordVrXrPredictedDisplayLeadTime(leadTimeMs);
+
+    public void RecordRenderVrXrMissedDeadlineFrame()
+        => Engine.Rendering.Stats.RecordVrXrMissedDeadlineFrame();
+
+    public void RecordRenderVrXrTrackingLossFrame()
+        => Engine.Rendering.Stats.RecordVrXrTrackingLossFrame();
+
+    public void RecordRenderVrXrRelocatePredictedTime(TimeSpan elapsed)
+        => Engine.Rendering.Stats.RecordVrXrRelocatePredictedTime(elapsed);
+
+    public void RecordRenderVrXrCollectFrustumExpansionDegrees(double degrees)
+        => Engine.Rendering.Stats.RecordVrXrCollectFrustumExpansionDegrees(degrees);
+
+    public void RecordRenderVrXrPacingThreadIdleTime(TimeSpan elapsed)
+        => Engine.Rendering.Stats.RecordVrXrPacingThreadIdleTime(elapsed);
+
+    public void RecordRenderVrXrPacingHandoffStall()
+        => Engine.Rendering.Stats.RecordVrXrPacingHandoffStall();
+
     public void RecordRenderVulkanAdhocBarrier(int emittedCount, int redundantCount)
         => Engine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount, redundantCount);
 
@@ -676,6 +707,18 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public float VrFoveationVisibilityMargin => Engine.Rendering.Settings.VrFoveationVisibilityMargin;
     public bool VrFoveationForceFullResForUiAndNearField => Engine.Rendering.Settings.VrFoveationForceFullResForUiAndNearField;
     public float VrFoveationFullResNearDistanceMeters => Engine.Rendering.Settings.VrFoveationFullResNearDistanceMeters;
+    public bool OpenXrCullWithFrustum => Engine.Rendering.Settings.OpenXrCullWithFrustum;
+    public bool OpenXrDebugGl => Engine.Rendering.Settings.OpenXrDebugGl;
+    public bool OpenXrDebugClearOnly => Engine.Rendering.Settings.OpenXrDebugClearOnly;
+    public bool OpenXrDebugLifecycle => Engine.Rendering.Settings.OpenXrDebugLifecycle;
+    public bool OpenXrDebugRenderRightThenLeft => Engine.Rendering.Settings.OpenXrDebugRenderRightThenLeft;
+    public bool OpenXrPrepareFrameAfterDesktopRender => Engine.Rendering.Settings.OpenXrPrepareFrameAfterDesktopRender;
+    public float OpenXrDeadlineSafetyMarginMs => Engine.Rendering.Settings.OpenXrDeadlineSafetyMarginMs;
+    public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => Engine.Rendering.Settings.OpenXrCollectVisiblePosePolicy;
+    public float OpenXrCollectVisibleFrustumPaddingDegrees => Engine.Rendering.Settings.OpenXrCollectVisibleFrustumPaddingDegrees;
+    public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => Engine.Rendering.Settings.OpenXrTrackingLossPolicy;
+    public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => Engine.Rendering.Settings.OpenXrActionSyncPolicy;
+    public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => Engine.Rendering.Settings.OpenXrRenderPacingMode;
 
     public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         => _ = Engine.VRState.OpenXRApi?.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);

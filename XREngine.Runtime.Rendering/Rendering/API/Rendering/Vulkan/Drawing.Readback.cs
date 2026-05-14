@@ -1016,7 +1016,7 @@ namespace XREngine.Rendering.Vulkan
             height = 0;
             failure = string.Empty;
 
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 failure = "Readback unavailable off render thread";
                 return false;

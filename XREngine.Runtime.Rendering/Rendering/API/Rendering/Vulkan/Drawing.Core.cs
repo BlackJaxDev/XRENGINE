@@ -559,7 +559,7 @@ namespace XREngine.Rendering.Vulkan
             finally
             {
                 TimeSpan totalFrameTime = Stopwatch.GetElapsedTime(frameStartTimestamp);
-                Engine.Rendering.Stats.RecordVulkanFrameLifecycleTiming(
+                RuntimeEngine.Rendering.Stats.RecordVulkanFrameLifecycleTiming(
                     waitFenceTime,
                     acquireImageTime,
                     recordCommandBufferTime,

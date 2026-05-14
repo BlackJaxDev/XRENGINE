@@ -1,5 +1,7 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 
@@ -18,12 +20,14 @@ namespace XREngine.Rendering.Meshlets
         private XRDataBuffer? _triangleBuffer;
         private XRDataBuffer? _transformBuffer;
         private XRDataBuffer? _materialBuffer;
+        private XRDataBuffer? _commandVisibilityBuffer;
 
         private readonly Dictionary<uint, (int offsetIndex, int count)> _meshletOffsets = [];
         private readonly List<Meshlet> _meshlets = [];
         private readonly List<MeshletVertex> _vertices = [];
         private readonly List<MeshletMaterial> _materials = [];
         private readonly Dictionary<uint, Matrix4x4> _transforms = [];
+        private readonly List<uint> _commandVisibilityValues = [];
 
         // Persisted index arrays for all meshlets in this collection
         private readonly List<uint> _vertexIndices = [];
@@ -60,6 +64,7 @@ namespace XREngine.Rendering.Meshlets
             _triangleBuffer = CreateBuffer("TriangleBuffer", EBufferTarget.ShaderStorageBuffer);
             _transformBuffer = CreateBuffer("TransformBuffer", EBufferTarget.ShaderStorageBuffer);
             _materialBuffer = CreateBuffer("MaterialBuffer", EBufferTarget.ShaderStorageBuffer);
+            _commandVisibilityBuffer = CreateBuffer("CommandVisibilityBuffer", EBufferTarget.ShaderStorageBuffer);
         }
 
         private static XRDataBuffer CreateBuffer(string name, EBufferTarget target) => new(name, target, false)
@@ -156,6 +161,7 @@ namespace XREngine.Rendering.Meshlets
         private bool _buffersDirty = true;
         private bool _materialBufferDirty = true;
         private bool _transformBufferDirty = true;
+        private bool _commandVisibilityBufferDirty = true;
 
         private void UpdateBuffers()
         {
@@ -189,7 +195,7 @@ namespace XREngine.Rendering.Meshlets
             if (_transformBufferDirty)
             {
                 // Convert dictionary to array indexed by meshID
-                var maxMeshID = _transforms.Keys.Count > 0 ? Math.Max(1, _transforms.Keys.Max() + 1) : 1;
+                var maxMeshID = GetTransformBufferElementCount();
                 var transformArray = new Matrix4x4[maxMeshID];
                 
                 foreach (var kvp in _transforms)
@@ -197,13 +203,57 @@ namespace XREngine.Rendering.Meshlets
                 
                 _transformBuffer?.SetDataRaw(transformArray);
                 _transformBufferDirty = false;
+                _commandVisibilityBufferDirty = true;
             }
+        }
+
+        private int GetTransformBufferElementCount()
+        {
+            if (_transforms.Count == 0)
+                return 1;
+
+            uint maxMeshID = 0u;
+            foreach (uint meshID in _transforms.Keys)
+                maxMeshID = Math.Max(maxMeshID, meshID);
+            return checked((int)maxMeshID + 1);
+        }
+
+        private void UpdateCommandVisibilityBuffer(GPUScene? scene, Func<GPUScene, uint, bool>? commandVisibility)
+        {
+            int elementCount = GetTransformBufferElementCount();
+            while (_commandVisibilityValues.Count < elementCount)
+                _commandVisibilityValues.Add(1u);
+            if (_commandVisibilityValues.Count > elementCount)
+                _commandVisibilityValues.RemoveRange(elementCount, _commandVisibilityValues.Count - elementCount);
+
+            if (commandVisibility is null || scene is null)
+            {
+                if (!_commandVisibilityBufferDirty)
+                    return;
+
+                for (int i = 0; i < _commandVisibilityValues.Count; i++)
+                    _commandVisibilityValues[i] = 1u;
+            }
+            else
+            {
+                for (int i = 0; i < _commandVisibilityValues.Count; i++)
+                    _commandVisibilityValues[i] = 0u;
+                foreach (uint meshID in _transforms.Keys)
+                    _commandVisibilityValues[(int)meshID] = commandVisibility(scene, meshID) ? 1u : 0u;
+            }
+
+            _commandVisibilityBuffer?.SetDataRaw(CollectionsMarshal.AsSpan(_commandVisibilityValues));
+            _commandVisibilityBufferDirty = commandVisibility is not null && scene is not null;
         }
 
         /// <summary>
         /// Issue an OpenGL NV_mesh_shader draw using current meshlet data.
         /// </summary>
-        public bool Render(XRCamera camera, int renderPass)
+        public bool Render(
+            XRCamera camera,
+            int renderPass,
+            GPUScene? visibilityScene = null,
+            Func<GPUScene, uint, bool>? commandVisibility = null)
         {
             EnsureInitialized();
 
@@ -223,6 +273,7 @@ namespace XREngine.Rendering.Meshlets
                 return false;
 
             UpdateBuffers();
+            UpdateCommandVisibilityBuffer(visibilityScene, commandVisibility);
 
             // Use task/mesh program
             _taskMeshProgram.Use();
@@ -242,6 +293,8 @@ namespace XREngine.Rendering.Meshlets
                 _taskMeshProgram.BindBuffer(_transformBuffer, 5);
             if (_materialBuffer is not null)
                 _taskMeshProgram.BindBuffer(_materialBuffer, 6);
+            if (_commandVisibilityBuffer is not null)
+                _taskMeshProgram.BindBuffer(_commandVisibilityBuffer, 7);
 
             // Set camera uniforms expected by shaders
             var viewMatrix = camera.Transform.InverseRenderMatrix;
@@ -253,6 +306,7 @@ namespace XREngine.Rendering.Meshlets
             _taskMeshProgram.Uniform("ViewMatrix", viewMatrix);
             _taskMeshProgram.Uniform("cameraPosition", cameraPosition);
             _taskMeshProgram.Uniform("RenderPass", renderPass);
+            _taskMeshProgram.Uniform("UseCpuCommandVisibility", commandVisibility is not null && visibilityScene is not null ? 1u : 0u);
             _taskMeshProgram.Uniform("lightDirection", Vector3.Normalize(new Vector3(-0.35f, -1.0f, -0.25f)));
             _taskMeshProgram.Uniform("lightColor", Vector3.One);
             _taskMeshProgram.Uniform("lightIntensity", 2.0f);
@@ -286,9 +340,11 @@ namespace XREngine.Rendering.Meshlets
             _transforms.Clear();
             _vertexIndices.Clear();
             _triangleIndices.Clear();
+            _commandVisibilityValues.Clear();
             _buffersDirty = true;
             _materialBufferDirty = true;
             _transformBufferDirty = true;
+            _commandVisibilityBufferDirty = true;
         }
 
         public void Dispose()
@@ -301,6 +357,7 @@ namespace XREngine.Rendering.Meshlets
             _triangleBuffer?.Dispose();
             _transformBuffer?.Dispose();
             _materialBuffer?.Dispose();
+            _commandVisibilityBuffer?.Dispose();
         }
     }
 }

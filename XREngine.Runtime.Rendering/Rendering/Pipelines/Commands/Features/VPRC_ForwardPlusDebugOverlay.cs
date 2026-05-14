@@ -231,12 +231,12 @@ void main()
         if (_quad is null)
             return;
 
-        if (Engine.Rendering.State.ForwardPlusTileLightCountsBuffer is null)
+        if (RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer is null)
             return;
 
-        if (Engine.Rendering.State.ForwardPlusTileCountX <= 0 ||
-            Engine.Rendering.State.ForwardPlusTileCountY <= 0 ||
-            Engine.Rendering.State.ForwardPlusTileSize <= 0)
+        if (RuntimeEngine.Rendering.State.ForwardPlusTileCountX <= 0 ||
+            RuntimeEngine.Rendering.State.ForwardPlusTileCountY <= 0 ||
+            RuntimeEngine.Rendering.State.ForwardPlusTileSize <= 0)
         {
             return;
         }
@@ -314,28 +314,28 @@ void main()
     private void Overlay_SettingUniforms(XRRenderProgram program)
     {
         var cam = ResolveDebugCamera();
-        var countsBuffer = Engine.Rendering.State.ForwardPlusTileLightCountsBuffer;
+        var countsBuffer = RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer;
         if (cam is null || countsBuffer is null)
             return;
 
         countsBuffer.BindTo(program, VPRC_ForwardPlusLightCullingPass.TileLightCountsBinding);
 
-        var screen = Engine.Rendering.State.ForwardPlusScreenSize;
+        var screen = RuntimeEngine.Rendering.State.ForwardPlusScreenSize;
         program.Uniform("ScreenSize", new XREngine.Data.Vectors.IVector2((int)screen.X, (int)screen.Y));
-        program.Uniform("TileSize", Engine.Rendering.State.ForwardPlusTileSize);
-        program.Uniform("TileCountX", Engine.Rendering.State.ForwardPlusTileCountX);
-        program.Uniform("TileCountY", Engine.Rendering.State.ForwardPlusTileCountY);
-        program.Uniform("MaxLightsPerTile", Engine.Rendering.State.ForwardPlusMaxLightsPerTile);
+        program.Uniform("TileSize", RuntimeEngine.Rendering.State.ForwardPlusTileSize);
+        program.Uniform("TileCountX", RuntimeEngine.Rendering.State.ForwardPlusTileCountX);
+        program.Uniform("TileCountY", RuntimeEngine.Rendering.State.ForwardPlusTileCountY);
+        program.Uniform("MaxLightsPerTile", RuntimeEngine.Rendering.State.ForwardPlusMaxLightsPerTile);
         program.Uniform("DebugMode", (int)cam.ForwardPlusDebugMode);
         program.Uniform("MaxCount", Math.Max(1, cam.ForwardPlusDebugMaxCount));
         program.Uniform("OverlayAlpha", cam.ForwardPlusDebugOpacity);
         program.Uniform("GridColor", new System.Numerics.Vector3(0.0f, 0.95f, 1.0f));
         program.Uniform("GridThickness", 1.0f);
         program.Uniform("OverflowColor", new System.Numerics.Vector3(1.0f, 0.0f, 1.0f));
-        program.Uniform("TotalLightCount", Engine.Rendering.State.ForwardPlusLocalLightCount);
+        program.Uniform("TotalLightCount", RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount);
         program.Uniform("ShowEmptyTiles", cam.ForwardPlusDebugShowEmptyTiles ? 1 : 0);
         program.Uniform("ShowCountBar", cam.ForwardPlusDebugShowCountBar ? 1 : 0);
-        program.Uniform("Time", (float)Engine.ElapsedTime);
+        program.Uniform("Time", (float)RuntimeEngine.ElapsedTime);
     }
 
     private static XRCamera? ResolveDebugCamera()
@@ -343,7 +343,7 @@ void main()
         XRRenderPipelineInstance? pipeline = ActivePipelineInstance;
         return pipeline?.RenderState.SceneCamera
             ?? pipeline?.LastSceneCamera
-            ?? Engine.Rendering.State.RenderingPipelineState?.SceneCamera
-            ?? Engine.Rendering.State.CurrentRenderingPipeline?.LastSceneCamera;
+            ?? RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastSceneCamera;
     }
 }

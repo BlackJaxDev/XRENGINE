@@ -741,7 +741,7 @@ public partial class DefaultRenderPipeline2
             return;
         }
 
-        var camera = Engine.Rendering.State.RenderingCamera;
+        var camera = RuntimeEngine.Rendering.State.RenderingCamera;
         if (camera is not null)
         {
             Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
@@ -762,7 +762,7 @@ public partial class DefaultRenderPipeline2
     private IFrameBufferAttachement EnsureTextureAttachment(string textureName, Func<XRTexture> factory)
     {
         XRTexture? texture = null;
-        bool hasConcreteTexture = Engine.Rendering.State.CurrentRenderingPipeline?.Resources.TryGetTexture(textureName, out texture) == true;
+        bool hasConcreteTexture = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Resources.TryGetTexture(textureName, out texture) == true;
         if (hasConcreteTexture && texture is IFrameBufferAttachement attachment)
             return attachment;
 

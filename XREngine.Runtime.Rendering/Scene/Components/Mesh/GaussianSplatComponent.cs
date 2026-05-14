@@ -125,7 +125,7 @@ public class GaussianSplatComponent : ModelComponent
 
     private static void RendererOnSettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram _)
     {
-        var viewport = Engine.Rendering.State.RenderingViewport;
+        var viewport = RuntimeEngine.Rendering.State.RenderingViewport;
         if (viewport is null)
             return;
 

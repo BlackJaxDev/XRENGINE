@@ -190,7 +190,7 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 
     /// <summary>
     /// Whether to process meshes asynchronously.
-    /// Null means "inherit <see cref="Engine.Rendering.Settings.ProcessMeshImportsAsynchronously"/>".
+    /// Null means "inherit <see cref="RuntimeEngine.Rendering.Settings.ProcessMeshImportsAsynchronously"/>".
     /// </summary>
     public bool? ProcessMeshesAsynchronously { get; set; } = null;
 

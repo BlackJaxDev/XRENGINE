@@ -480,8 +480,8 @@ public unsafe partial class VulkanRenderer
 
     internal FrameOpContext CaptureFrameOpContext()
     {
-        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-        XRViewport? viewport = Engine.Rendering.State.RenderingViewport;
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
         return new FrameOpContext(
             pipeline?.GetHashCode() ?? 0,
             viewport?.GetHashCode() ?? 0,
@@ -519,7 +519,7 @@ public unsafe partial class VulkanRenderer
         int retiredImageCount = _resourceAllocator.EnumeratePhysicalGroups().Count(static g => g.IsAllocated);
         int retiredBufferCount = _resourceAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
         if (retiredImageCount > 0 || retiredBufferCount > 0)
-            Engine.Rendering.Stats.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
+            RuntimeEngine.Rendering.Stats.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
         _resourceAllocator.DestroyPhysicalImages(this);
         _resourceAllocator.DestroyPhysicalBuffers(this);
 
@@ -554,7 +554,7 @@ public unsafe partial class VulkanRenderer
         HashCode hash = new();
         hash.Add(ComputeResourceRegistrySignature(context.ResourceRegistry));
 
-        XRViewport? viewport = Engine.Rendering.State.RenderingViewport;
+        XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
         hash.Add(viewport?.Width ?? 0);
         hash.Add(viewport?.Height ?? 0);
         hash.Add(viewport?.InternalWidth ?? 0);
@@ -763,7 +763,7 @@ public unsafe partial class VulkanRenderer
         uint computeFamily = useComputeOwnership ? candidateComputeFamily : graphicsFamily;
         uint transferFamily = useTransferOwnership ? candidateTransferFamily : computeFamily;
 
-        Engine.Rendering.Stats.RecordVulkanQueueOverlapWindow(
+        RuntimeEngine.Rendering.Stats.RecordVulkanQueueOverlapWindow(
             metrics.OverlapCandidatePassCount,
             metrics.TransferCost,
             metrics.FrameDelta,
@@ -808,12 +808,12 @@ public unsafe partial class VulkanRenderer
             ? passMetadata!.Count(IsQueueOverlapCandidatePass)
             : 0;
 
-        int queueOwnershipTransfers = Engine.Rendering.Stats.VulkanQueueOwnershipTransfers;
-        int stageFlushes = Engine.Rendering.Stats.VulkanBarrierStageFlushes;
+        int queueOwnershipTransfers = RuntimeEngine.Rendering.Stats.VulkanQueueOwnershipTransfers;
+        int stageFlushes = RuntimeEngine.Rendering.Stats.VulkanBarrierStageFlushes;
         int transferCost = transferUsageCount + queueOwnershipTransfers + stageFlushes;
 
         TimeSpan frameDelta = TimeSpan.Zero;
-        ulong frameId = Engine.Rendering.State.RenderFrameId;
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
         if (_lastQueueOverlapSampleFrameId != frameId)
         {
             long now = Stopwatch.GetTimestamp();
@@ -854,7 +854,7 @@ public unsafe partial class VulkanRenderer
         promotedMode = false;
         demotedMode = false;
 
-        EVulkanQueueOverlapMode requestedMode = Engine.EffectiveSettings.VulkanQueueOverlapMode;
+        EVulkanQueueOverlapMode requestedMode = RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode;
         if (requestedMode != EVulkanQueueOverlapMode.Auto)
         {
             _autoQueueOverlapMode = requestedMode;
@@ -1226,7 +1226,7 @@ public unsafe partial class VulkanRenderer
         string opName,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata = null)
     {
-        passMetadata ??= Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata;
+        passMetadata ??= RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata;
 
         // Short-circuit: well-known EDefaultRenderPass values are always valid.
         // Metadata may lag behind runtime enqueues (conditional pipeline paths,
@@ -1242,7 +1242,7 @@ public unsafe partial class VulkanRenderer
 
         if (passIndex == int.MinValue)
         {
-            int currentPassIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            int currentPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             bool currentPassDefined = currentPassIndex != int.MinValue &&
                 (!hasMetadata || passMetadata!.Any(m => m.PassIndex == currentPassIndex));
 
@@ -1275,7 +1275,7 @@ public unsafe partial class VulkanRenderer
             fallback,
             passMetadata?.Count ?? -1,
             firstKnownBarrierPass?.ToString() ?? "none",
-            Engine.Rendering.State.CurrentRenderingPipeline?.GetType().Name ?? "null");
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetType().Name ?? "null");
 
         return fallback;
     }
@@ -1316,7 +1316,7 @@ public unsafe partial class VulkanRenderer
 
     private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer)
     {
-        var registry = Engine.Rendering.State.CurrentResourceRegistry;
+        var registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
         if (registry is null)
             return;
 
@@ -1329,7 +1329,7 @@ public unsafe partial class VulkanRenderer
 
     private void EnsureFrameBufferAttachmentsRegistered(XRFrameBuffer frameBuffer)
     {
-        var registry = Engine.Rendering.State.CurrentResourceRegistry;
+        var registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
         if (registry is null)
             return;
 
@@ -1366,7 +1366,7 @@ public unsafe partial class VulkanRenderer
 
         _trackedBuffersByName[name] = buffer;
 
-        RenderResourceRegistry? registry = Engine.Rendering.State.CurrentResourceRegistry;
+        RenderResourceRegistry? registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
         if (registry is not null)
         {
             BufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromBuffer(buffer, lifetime) with { Name = name };

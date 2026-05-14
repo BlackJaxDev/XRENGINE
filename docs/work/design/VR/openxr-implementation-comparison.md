@@ -13,7 +13,9 @@ This document compares the XREngine OpenXR implementation against:
 
 The OpenXR implementation is **architecturally sound** and follows the tutorial pattern correctly. Recent updates made it significantly more robust in the engine's multi-threaded render model:
 - Predicted **and** late pose sampling (`LocateViews(Predicted)` for culling, `LocateViews(Late)` right before rendering)
-- Central pose/FOV caches (HMD, per-eye, controllers, trackers) with a timing selector (`PoseTimingForRecalc`)
+- Central pose/FOV caches (HMD, per-eye, controllers, trackers) with a timing selector (`PoseTimingForRecalc`)[^pose-timing-superseded]
+
+[^pose-timing-superseded]: The `PoseTimingForRecalc` global selector was removed during the OpenXR Timing TODO (Phase 5). Callers now pass an explicit `RuntimeVrPoseTiming` argument through `RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming)` so update / collect / render readers cannot race on a process-global toggle. The historical text below is preserved for context.
 - Safer OpenGL execution (no forced WGL context switching, deferred GL session init on the render thread)
 - Stronger swapchain safety (infinite wait timeout, always-release-on-finally, GL flush)
 - GL state isolation to avoid contaminating desktop rendering and cross-eye state leakage
@@ -105,7 +107,7 @@ Matrix4x4 mtx = device.RenderDeviceToAbsoluteTrackingMatrix;  // HMD pose
 
 **VR rig integration (new):** if the app provides a VR rig (e.g., `VREyeTransform` / `VRHeadsetTransform`), the engine now:
 - Updates predicted/late pose caches in `OpenXRAPI`
-- Lets transforms pull from the correct cache via `PoseTimingForRecalc`
+- Lets transforms pull from the correct cache via the explicit `RuntimeVrPoseTiming` argument plumbed through `InvokeRecalcMatrixOnDraw` (formerly the `PoseTimingForRecalc` global)
 - Still applies a late render-matrix update to minimize latency
 
 ---

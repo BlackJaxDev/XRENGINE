@@ -32,6 +32,8 @@ public static partial class EditorImGuiUI
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawMissingAssetsTabContent");
 
+            DrawRebasedAssetsSection();
+
             var missingAssets = AssetDiagnostics.GetTrackedMissingAssets();
             if (missingAssets.Count == 0)
             {
@@ -349,4 +351,68 @@ public static partial class EditorImGuiUI
             Debug.LogException(ex, $"Failed to reveal location for '{assetPath}'.");
         }
     }
+
+        private static void DrawRebasedAssetsSection()
+        {
+            var rebased = AssetDiagnostics.GetTrackedRebasedAssets();
+            if (rebased.Count == 0)
+                return;
+
+            if (!ImGui.CollapsingHeader($"Auto-Repaired / Non-Portable Asset Paths ({rebased.Count})", ImGuiTreeNodeFlags.DefaultOpen))
+                return;
+
+            ImGui.TextDisabled("These asset references loaded successfully but were not workspace-portable. They'll be saved in portable form on the next save.");
+
+            if (ImGui.Button("Clear Auto-Repaired Log"))
+                AssetDiagnostics.ClearTrackedRebasedAssets();
+
+            const ImGuiTableFlags tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
+            float height = MathF.Min(220.0f, MathF.Max(80.0f, 22.0f + rebased.Count * 22.0f));
+            if (ImGui.BeginTable("RebasedAssetTable", 5, tableFlags, new Vector2(-1.0f, height)))
+            {
+                ImGui.TableSetupScrollFreeze(0, 1);
+                ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 110.0f);
+                ImGui.TableSetupColumn("Original Path", ImGuiTableColumnFlags.WidthStretch, 0.4f);
+                ImGui.TableSetupColumn("Resolved Path", ImGuiTableColumnFlags.WidthStretch, 0.4f);
+                ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 60.0f);
+                ImGui.TableSetupColumn("Last Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
+                ImGui.TableHeadersRow();
+
+                foreach (var info in rebased.OrderByDescending(static i => i.LastSeenUtc))
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableSetColumnIndex(0);
+                    ImGui.TextUnformatted(info.Category);
+
+                    ImGui.TableSetColumnIndex(1);
+                    ImGui.TextUnformatted(info.OriginalPath);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(info.OriginalPath);
+
+                    ImGui.TableSetColumnIndex(2);
+                    ImGui.TextUnformatted(info.ResolvedPath);
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.TextUnformatted(info.ResolvedPath);
+                        if (!string.IsNullOrWhiteSpace(info.LastContext))
+                        {
+                            ImGui.Separator();
+                            ImGui.TextUnformatted(info.LastContext);
+                        }
+                        ImGui.EndTooltip();
+                    }
+
+                    ImGui.TableSetColumnIndex(3);
+                    ImGui.TextUnformatted(info.Count.ToString(CultureInfo.InvariantCulture));
+
+                    ImGui.TableSetColumnIndex(4);
+                    ImGui.TextUnformatted(info.LastSeenUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+                }
+
+                ImGui.EndTable();
+            }
+
+            ImGui.Separator();
+        }
 }

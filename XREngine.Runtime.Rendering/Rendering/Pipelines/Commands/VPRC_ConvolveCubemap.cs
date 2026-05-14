@@ -139,7 +139,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 _irradianceFbo.SetRenderTargets((_irradianceTexture, EFrameBufferAttachment.ColorAttachment0, 0, faceIndex));
                 using var bindScope = _irradianceFbo.BindForWritingState();
-                Engine.Rendering.State.ClearByBoundFBO(true, false, false);
+                RuntimeEngine.Rendering.State.ClearByBoundFBO(true, false, false);
                 _irradianceFbo.RenderFullscreen((ECubemapFace)faceIndex);
             }
         }
@@ -164,7 +164,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     _prefilterFbo.SetRenderTargets((_prefilterTexture, EFrameBufferAttachment.ColorAttachment0, mip, faceIndex));
                     using var bindScope = _prefilterFbo.BindForWritingState();
-                    Engine.Rendering.State.ClearByBoundFBO(true, false, false);
+                    RuntimeEngine.Rendering.State.ClearByBoundFBO(true, false, false);
                     _prefilterFbo.RenderFullscreen((ECubemapFace)faceIndex);
                 }
             }

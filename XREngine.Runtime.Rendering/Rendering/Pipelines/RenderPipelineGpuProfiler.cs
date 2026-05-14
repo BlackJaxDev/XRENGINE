@@ -414,7 +414,7 @@ internal sealed class RenderPipelineGpuProfiler
         }
 
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
-        ulong frameId = Engine.Rendering.State.RenderFrameId;
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
         string pipelineName = instance.ProfilerKey;
         string commandName = command.GpuProfilingName;
 
@@ -464,7 +464,7 @@ internal sealed class RenderPipelineGpuProfiler
         }
 
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
-        ulong frameId = Engine.Rendering.State.RenderFrameId;
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
         string pipelineName = instance.ProfilerKey;
 
         List<string> userStack = _userScopeStack ??= [];

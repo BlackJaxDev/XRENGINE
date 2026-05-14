@@ -1,39 +1,55 @@
-// Minimum working-set culling shader (no octree) using a 48-float command struct
 #version 460 core
+
+// Phase C SoA culling. Culling consumes draw metadata + bounds; the compact
+// command output is a compatibility envelope for downstream indirect builders.
 
 layout(local_size_x = 256) in;
 
-/*
- GPUIndirectRenderCommand (float[48], 192 bytes):
-  00-15 : WorldMatrix (mat4, column-major)
-  16-31 : PrevWorldMatrix (mat4, column-major) - for motion vectors
-  32-35 : BoundingSphere (vec4: xyz center, w radius)
-  36 : MeshID (uint as float)
-  37 : SubmeshID (uint as float)  (optional / may mirror meshID if not flattened)
-  38 : MaterialID (uint)
-  39 : InstanceCount (uint)
-  40 : RenderPass (uint)
-  41 : ShaderProgramID (uint)
-  42 : RenderDistance (float)  (camera-space depth or squared distance)
-  43 : LayerMask (uint)
-  44 : LODLevel (uint)
-  45 : Flags (uint)
-  46 : Reserved0
-  47 : Reserved1
-*/
+const int COMMAND_FLOATS = 20;
 
-// === Buffers ===
-layout(std430, binding = 0) buffer InputCommandsBuffer { float inCommands[]; };
-layout(std430, binding = 1) buffer CulledCommandsBuffer { float outCommands[]; };
-layout(std430, binding = 2) buffer CulledCountBuffer
+struct DrawMetadata
+{
+    uint DrawID;
+    uint MeshID;
+    uint SubmeshID;
+    uint MaterialID;
+    uint TransformID;
+    uint SkinID;
+    uint RenderPassMask;
+    uint LayerMask;
+    uint Flags;
+    uint LodPolicy;
+    uint StateClassID;
+    uint InstanceCount;
+    uint RenderPass;
+    uint ShaderProgramID;
+    uint LogicalMeshID;
+    uint BoundsID;
+};
+
+struct BoundsGpu
+{
+    vec4 BoundingSphere;
+    vec4 AabbMin;
+    vec4 AabbMax;
+    uint BoundsVersion;
+    uint Padding0;
+    uint Padding1;
+    uint Padding2;
+};
+
+layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
+layout(std430, binding = 1) readonly buffer BoundsBuffer { BoundsGpu Bounds[]; };
+layout(std430, binding = 2) writeonly buffer CulledCommandsBuffer { float outCommands[]; };
+layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer { uint outHotCommands[]; };
+layout(std430, binding = 3) buffer CulledCountBuffer
 {
     uint CulledCount;
     uint CulledInstanceCount;
     uint CulledOverflow;
 };
-layout(std430, binding = 3) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
-layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
-layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer { uint outHotCommands[]; };
+layout(std430, binding = 4) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
+
 layout(std430, binding = 8) buffer StatsBuffer {
     uint StatsInputCount;
     uint StatsCulledCount;
@@ -89,34 +105,25 @@ layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 Comma
 layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
 layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
 
-// === Uniforms ===
 uniform vec4 FrustumPlanes[6];
 uniform float MaxRenderDistance;
 uniform uint CameraLayerMask;
-uniform int  CurrentRenderPass;
-uniform int  InputCommandCount;
-uniform int  MaxCulledCommands;
+uniform int CurrentRenderPass;
+uniform int InputCommandCount;
+uniform int MaxCulledCommands;
 uniform uint DisabledFlagsMask;
 uniform vec3 CameraPosition;
 uniform int ActiveViewCount;
 uniform int UseHotCommands;
 
 #define FLAG_TRANSPARENT    (1u<<0)
-#define FLAG_CAST_SHADOW    (1u<<1)
-#define FLAG_SKINNED        (1u<<2)
-#define FLAG_DYNAMIC        (1u<<3)
-#define FLAG_DOUBLE_SIDED   (1u<<4)
-
-const int COMMAND_FLOATS = 48;
-const int HOT_UINTS = 16;
 
 bool FrustumSphereVisible(vec3 center, float radius)
 {
     for (int i = 0; i < 6; ++i)
     {
         vec4 p = FrustumPlanes[i];
-        float dist = dot(p.xyz, center) + p.w;
-        if (dist < -radius)
+        if (dot(p.xyz, center) + p.w < -radius)
             return false;
     }
     return true;
@@ -128,10 +135,7 @@ bool ViewMaskContains(uvec2 mask, uint viewId)
         return (mask.x & (1u << viewId)) != 0u;
 
     uint hi = viewId - 32u;
-    if (hi >= 32u)
-        return false;
-
-    return (mask.y & (1u << hi)) != 0u;
+    return hi < 32u && (mask.y & (1u << hi)) != 0u;
 }
 
 bool ViewPassMatches(uint viewId)
@@ -147,27 +151,19 @@ bool ViewPassMatches(uint viewId)
         return (vd.RenderPassMaskLo & (1u << uint(CurrentRenderPass))) != 0u;
 
     uint hi = uint(CurrentRenderPass - 32);
-    if (hi >= 32u)
-        return true;
-
-    return (vd.RenderPassMaskHi & (1u << hi)) != 0u;
+    return hi >= 32u || (vd.RenderPassMaskHi & (1u << hi)) != 0u;
 }
 
 void AppendPerView(uint sourceCommandIndex, uint culledCommandIndex, vec3 commandCenter, uint commandFlags)
 {
-    if (ActiveViewCount <= 0)
-        return;
-
-    if (sourceCommandIndex >= CommandViewMasks.length())
+    if (ActiveViewCount <= 0 || sourceCommandIndex >= CommandViewMasks.length())
         return;
 
     uvec2 mask = CommandViewMasks[sourceCommandIndex];
     uint maxViews = min(uint(ActiveViewCount), min(uint(64), uint(PerViewDrawCounts.length())));
     for (uint viewId = 0u; viewId < maxViews; ++viewId)
     {
-        if (!ViewMaskContains(mask, viewId))
-            continue;
-        if (!ViewPassMatches(viewId))
+        if (!ViewMaskContains(mask, viewId) || !ViewPassMatches(viewId))
             continue;
 
         GPUViewDescriptor vd = ViewDescriptors[viewId];
@@ -195,59 +191,91 @@ void AppendPerView(uint sourceCommandIndex, uint culledCommandIndex, vec3 comman
     }
 }
 
+void StoreCommand(uint outIndex, DrawMetadata meta, vec4 sphere, float renderDistance)
+{
+    int base = int(outIndex) * COMMAND_FLOATS;
+    outCommands[base + 0] = sphere.x;
+    outCommands[base + 1] = sphere.y;
+    outCommands[base + 2] = sphere.z;
+    outCommands[base + 3] = sphere.w;
+    outCommands[base + 4] = uintBitsToFloat(meta.MeshID);
+    outCommands[base + 5] = uintBitsToFloat(meta.SubmeshID);
+    outCommands[base + 6] = uintBitsToFloat(meta.MaterialID);
+    outCommands[base + 7] = uintBitsToFloat(meta.InstanceCount);
+    outCommands[base + 8] = uintBitsToFloat(meta.RenderPass);
+    outCommands[base + 9] = uintBitsToFloat(meta.ShaderProgramID);
+    outCommands[base + 10] = renderDistance;
+    outCommands[base + 11] = uintBitsToFloat(meta.LayerMask);
+    outCommands[base + 12] = uintBitsToFloat(meta.LodPolicy);
+    outCommands[base + 13] = uintBitsToFloat(meta.Flags);
+    outCommands[base + 14] = uintBitsToFloat(meta.LogicalMeshID);
+    outCommands[base + 15] = uintBitsToFloat(meta.TransformID);
+    outCommands[base + 16] = uintBitsToFloat(meta.SkinID);
+    outCommands[base + 17] = uintBitsToFloat(meta.StateClassID);
+    outCommands[base + 18] = uintBitsToFloat(meta.BoundsID);
+    outCommands[base + 19] = uintBitsToFloat(meta.DrawID);
+}
+
+void StoreHotCommand(uint outIndex, DrawMetadata meta, vec4 sphere, float renderDistance)
+{
+    uint base = outIndex * 20u;
+    outHotCommands[base + 0u] = floatBitsToUint(sphere.x);
+    outHotCommands[base + 1u] = floatBitsToUint(sphere.y);
+    outHotCommands[base + 2u] = floatBitsToUint(sphere.z);
+    outHotCommands[base + 3u] = floatBitsToUint(sphere.w);
+    outHotCommands[base + 4u] = meta.MeshID;
+    outHotCommands[base + 5u] = meta.SubmeshID;
+    outHotCommands[base + 6u] = meta.MaterialID;
+    outHotCommands[base + 7u] = meta.InstanceCount;
+    outHotCommands[base + 8u] = meta.RenderPass;
+    outHotCommands[base + 9u] = meta.LayerMask;
+    outHotCommands[base + 10u] = meta.Flags;
+    outHotCommands[base + 11u] = meta.LodPolicy;
+    outHotCommands[base + 12u] = meta.ShaderProgramID;
+    outHotCommands[base + 13u] = floatBitsToUint(renderDistance);
+    outHotCommands[base + 14u] = meta.DrawID;
+    outHotCommands[base + 15u] = meta.LogicalMeshID;
+    outHotCommands[base + 16u] = meta.TransformID;
+    outHotCommands[base + 17u] = meta.SkinID;
+    outHotCommands[base + 18u] = meta.StateClassID;
+    outHotCommands[base + 19u] = meta.BoundsID;
+}
+
 void main()
 {
     uint idx = gl_GlobalInvocationID.x;
-    if (idx >= uint(InputCommandCount))
+    if (idx >= uint(InputCommandCount) || idx >= Draws.length())
         return;
 
     if (idx == 0u)
         StatsInputCount = uint(InputCommandCount);
 
-    int base = int(idx) * COMMAND_FLOATS;
-    if (base + COMMAND_FLOATS > inCommands.length())
+    DrawMetadata meta = Draws[idx];
+    uint boundsId = meta.BoundsID;
+    if (boundsId >= Bounds.length())
         return;
 
-    int hotBase = int(idx) * HOT_UINTS;
-
-    vec3 center;
-    float radius;
-    uint layerMask;
-    uint renderPass;
-    uint instanceCount;
-    uint flags;
-
-    if (UseHotCommands != 0)
-    {
-        center = vec3(uintBitsToFloat(inHotCommands[hotBase + 0]), uintBitsToFloat(inHotCommands[hotBase + 1]), uintBitsToFloat(inHotCommands[hotBase + 2]));
-        radius = uintBitsToFloat(inHotCommands[hotBase + 3]);
-        layerMask = inHotCommands[hotBase + 9];
-        renderPass = inHotCommands[hotBase + 8];
-        instanceCount = inHotCommands[hotBase + 7];
-        flags = inHotCommands[hotBase + 10];
-    }
-    else
-    {
-        vec4 bs = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]);
-        center = bs.xyz;
-        radius = bs.w;
-        layerMask = floatBitsToUint(inCommands[base+43]);
-        renderPass = floatBitsToUint(inCommands[base+40]);
-        instanceCount = floatBitsToUint(inCommands[base+39]);
-        flags = floatBitsToUint(inCommands[base+45]);
-    }
-
-    vec3 toCenter = center - CameraPosition;
-    float renderDistance = dot(toCenter, toCenter);
+    vec4 sphere = Bounds[boundsId].BoundingSphere;
+    uint instanceCount = meta.InstanceCount;
+    uint renderPass = meta.RenderPass;
+    uint layerMask = meta.LayerMask;
+    uint flags = meta.Flags;
 
     if (instanceCount == 0u) return;
     if ((layerMask & CameraLayerMask) == 0u) return;
     if (DisabledFlagsMask != 0u && (flags & DisabledFlagsMask) != 0u) return;
     if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass) && renderPass != 0xFFFFFFFFu) return;
+
+    vec3 center = sphere.xyz;
+    float radius = sphere.w;
+    vec3 toCenter = center - CameraPosition;
+    float renderDistance = dot(toCenter, toCenter);
+
     if (renderDistance > MaxRenderDistance) {
         atomicAdd(StatsRejectedDistance, 1u);
         return;
     }
+
     if (!FrustumSphereVisible(center, radius)) {
         atomicAdd(StatsRejectedFrustum, 1u);
         return;
@@ -257,32 +285,12 @@ void main()
     if (outIndex >= uint(MaxCulledCommands))
     {
         atomicAdd(CullingOverflowFlag, 1u);
-        if (MaxCulledCommands > 0)
-        {
-            uint sentinelIndex = uint(MaxCulledCommands - 1);
-            int sentinelBase = int(sentinelIndex) * COMMAND_FLOATS;
-            outCommands[sentinelBase + 36] = uintBitsToFloat(0xFFFFFFFFu);
-            outCommands[sentinelBase + 38] = uintBitsToFloat(0xFFFFFFFFu);
-            outCommands[sentinelBase + 39] = uintBitsToFloat(0u);
-        }
         return;
     }
 
-    int outBase = int(outIndex) * COMMAND_FLOATS;
-    for (int i = 0; i < COMMAND_FLOATS; ++i)
-        outCommands[outBase + i] = inCommands[base + i];
-    outCommands[outBase + 42] = renderDistance;
-
+    StoreCommand(outIndex, meta, sphere, renderDistance);
     if (UseHotCommands != 0)
-    {
-        int outHotBase = int(outIndex) * HOT_UINTS;
-        for (int i = 0; i < HOT_UINTS; ++i)
-            outHotCommands[outHotBase + i] = inHotCommands[hotBase + i];
-
-        outHotCommands[outHotBase + 13] = floatBitsToUint(renderDistance);
-        outHotCommands[outHotBase + 14] = idx;
-    }
-
+        StoreHotCommand(outIndex, meta, sphere, renderDistance);
     AppendPerView(idx, outIndex, center, flags);
 
     atomicAdd(CulledInstanceCount, instanceCount);

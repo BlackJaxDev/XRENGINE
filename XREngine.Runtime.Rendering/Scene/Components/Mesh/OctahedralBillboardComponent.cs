@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine;
@@ -272,7 +272,7 @@ namespace XREngine.Components.Scene.Mesh
             if (_vertexShader is not null)
                 return _vertexShader;
 
-            XRShader? shader = Engine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", "Scene3D", "OctahedralImposterBillboard.vs");
+            XRShader? shader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", "Scene3D", "OctahedralImposterBillboard.vs");
             if (shader is null)
                 Debug.RenderingWarning("Unable to load OctahedralImposterBillboard.vs.");
             _vertexShader = shader;
@@ -284,7 +284,7 @@ namespace XREngine.Components.Scene.Mesh
             if (_fragmentShader is not null)
                 return _fragmentShader;
 
-            XRShader? shader = Engine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", "Scene3D", "OctahedralImposterBillboard.fs");
+            XRShader? shader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", "Scene3D", "OctahedralImposterBillboard.fs");
             if (shader is null)
             {
                 Debug.RenderingWarning("Unable to load OctahedralImposterBillboard.fs. Billboard imposters will render blank.");

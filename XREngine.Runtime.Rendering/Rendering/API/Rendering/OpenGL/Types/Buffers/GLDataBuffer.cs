@@ -42,7 +42,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.BindSSBORequested -= BindSSBO;
             }
             private static bool IsGpuBufferLoggingEnabled()
-                => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+                => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
             protected override void LinkData()
             {
@@ -313,7 +313,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 // Synchronous path for small buffers or when upload queue is disabled
-                if (Engine.InvokeOnMainThread(PushData, "GLDataBuffer.PushData"))
+                if (RuntimeEngine.InvokeOnMainThread(PushData, "GLDataBuffer.PushData"))
                     return;
 
                 PushDataImmediate();
@@ -333,10 +333,10 @@ namespace XREngine.Rendering.OpenGL
                 if (!Data.TryGetAddress(out var sourceAddress) || sourceAddress == VoidPtr.Zero)
                 {
                     // Fallback to sync path if no data
-                    if (Engine.IsRenderThread)
+                    if (RuntimeEngine.IsRenderThread)
                         PushDataImmediate();
                     else
-                        Engine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushData.Fallback");
+                        RuntimeEngine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushData.Fallback");
                     return;
                 }
 
@@ -368,11 +368,11 @@ namespace XREngine.Rendering.OpenGL
 
                         CancelQueuedUpload();
                         Debug.OpenGLWarning($"[GLDataBuffer] Failed to snapshot queued upload for '{GetDescribingName()}' ({dataLength} bytes): {ex.GetType().Name}: {ex.Message}. Falling back to immediate upload.");
-                        Engine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushDataQueued.Fallback");
+                        RuntimeEngine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushDataQueued.Fallback");
                     }
                 }
 
-                if (Engine.IsRenderThread)
+                if (RuntimeEngine.IsRenderThread)
                 {
                     Task.Run(EnqueueCopy);
                 }
@@ -390,7 +390,7 @@ namespace XREngine.Rendering.OpenGL
                 bool shouldUseImmutableStorage = ShouldUseImmutableStorage();
                 bool remapAfterUpload = Data.ActivelyMapping.Contains(this);
 
-                if (!Engine.Rendering.Stats.CanAllocateVram(Data.Length, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                if (!RuntimeEngine.Rendering.Stats.CanAllocateVram(Data.Length, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
                 {
                     Debug.OpenGLWarning($"[VRAM Budget] Skipping buffer allocation for '{GetDescribingName()}' ({Data.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
                     return;
@@ -447,7 +447,7 @@ namespace XREngine.Rendering.OpenGL
                 // Track VRAM deallocation of previous buffer if any
                 if (_allocatedVRAMBytes > 0)
                 {
-                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
 
@@ -461,7 +461,7 @@ namespace XREngine.Rendering.OpenGL
 
                 // Track VRAM allocation
                 _allocatedVRAMBytes = Data.Length;
-                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
 
                 if (Data.DisposeOnPush)
                     Data.Dispose();
@@ -546,10 +546,10 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (_allocatedVRAMBytes > 0)
                 {
-                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
                 }
                 _allocatedVRAMBytes = bytes;
-                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
             }
 
             /// <summary>
@@ -570,7 +570,7 @@ namespace XREngine.Rendering.OpenGL
                 if (HasBlockingActiveMapping())
                     return;
 
-                if (Engine.InvokeOnMainThread(EnsureStorageAllocatedForGpuCopy, "GLDataBuffer.EnsureStorageAllocatedForGpuCopy"))
+                if (RuntimeEngine.InvokeOnMainThread(EnsureStorageAllocatedForGpuCopy, "GLDataBuffer.EnsureStorageAllocatedForGpuCopy"))
                     return;
 
                 if (!IsGenerated)
@@ -749,7 +749,7 @@ namespace XREngine.Rendering.OpenGL
                 if (HasBlockingActiveMapping())
                     return;
 
-                if (Engine.InvokeOnMainThread(() => PushSubData(offset, length), "GLDataBuffer.PushSubData"))
+                if (RuntimeEngine.InvokeOnMainThread(() => PushSubData(offset, length), "GLDataBuffer.PushSubData"))
                     return;
 
                 if (_pushSubDataBreakdownEnabled)
@@ -852,7 +852,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (HasBlockingActiveMapping())
                     return;
-                if (Engine.InvokeOnMainThread(Flush, "GLDataBuffer.Flush"))
+                if (RuntimeEngine.InvokeOnMainThread(Flush, "GLDataBuffer.Flush"))
                     return;
                 Api.FlushMappedNamedBufferRange(BindingId, 0, Data.Length);
             }
@@ -861,7 +861,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (HasBlockingActiveMapping())
                     return;
-                if (Engine.InvokeOnMainThread(() => FlushRange(offset, length), "GLDataBuffer.FlushRange"))
+                if (RuntimeEngine.InvokeOnMainThread(() => FlushRange(offset, length), "GLDataBuffer.FlushRange"))
                     return;
                 Api.FlushMappedNamedBufferRange(BindingId, offset, length);
             }
@@ -891,7 +891,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                if (Engine.InvokeOnMainThread(MapBufferData, "GLDataBuffer.MapBufferData"))
+                if (RuntimeEngine.InvokeOnMainThread(MapBufferData, "GLDataBuffer.MapBufferData"))
                     return;
 
                 // Insert a client-mapped buffer barrier before mapping to ensure visibility of GPU writes to persistently mapped buffers
@@ -932,7 +932,7 @@ namespace XREngine.Rendering.OpenGL
                 // Track VRAM deallocation of previous buffer if any
                 if (_allocatedVRAMBytes > 0)
                 {
-                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
 
@@ -951,7 +951,7 @@ namespace XREngine.Rendering.OpenGL
 
                 // Track VRAM allocation
                 _allocatedVRAMBytes = length;
-                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
             }
             // ------------------------------------------------------
 
@@ -960,7 +960,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!Data.ActivelyMapping.Contains(this))
                     return;
 
-                if (Engine.InvokeOnMainThread(UnmapBufferData, "GLDataBuffer.UnmapBufferData"))
+                if (RuntimeEngine.InvokeOnMainThread(UnmapBufferData, "GLDataBuffer.UnmapBufferData"))
                     return;
 
                 if (IsGpuBufferLoggingEnabled())
@@ -1022,7 +1022,7 @@ namespace XREngine.Rendering.OpenGL
                 if (bindingID == InvalidBindingId)
                     return;
 
-                if (Engine.InvokeOnMainThread(() => SetUniformBlockName(program, blockName), "GLDataBuffer.SetUniformBlockName"))
+                if (RuntimeEngine.InvokeOnMainThread(() => SetUniformBlockName(program, blockName), "GLDataBuffer.SetUniformBlockName"))
                     return;
 
                 Bind();
@@ -1035,7 +1035,7 @@ namespace XREngine.Rendering.OpenGL
                 if (blockIndex == uint.MaxValue)
                     return;
 
-                if (Engine.InvokeOnMainThread(() => SetBlockIndex(blockIndex), "GLDataBuffer.SetBlockIndex"))
+                if (RuntimeEngine.InvokeOnMainThread(() => SetBlockIndex(blockIndex), "GLDataBuffer.SetBlockIndex"))
                     return;
 
                 Bind();
@@ -1074,21 +1074,21 @@ namespace XREngine.Rendering.OpenGL
                 // Track VRAM deallocation
                 if (_allocatedVRAMBytes > 0)
                 {
-                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
             }
 
             public void Bind()
             {
-                if (Engine.InvokeOnMainThread(Bind, "GLDataBuffer.Bind"))
+                if (RuntimeEngine.InvokeOnMainThread(Bind, "GLDataBuffer.Bind"))
                     return;
 
                 Api.BindBuffer(ToGLEnum(Data.Target), BindingId);
             }
             public void Unbind()
             {
-                if (Engine.InvokeOnMainThread(Unbind, "GLDataBuffer.Unbind"))
+                if (RuntimeEngine.InvokeOnMainThread(Unbind, "GLDataBuffer.Unbind"))
                     return;
 
                 Api.BindBuffer(ToGLEnum(Data.Target), 0);

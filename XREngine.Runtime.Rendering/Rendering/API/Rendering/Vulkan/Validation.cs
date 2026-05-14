@@ -119,7 +119,7 @@ public unsafe partial class VulkanRenderer
         }
 
         bool isError = messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt);
-        Engine.Rendering.Stats.RecordVulkanValidationMessage(isError, msg);
+        RuntimeEngine.Rendering.Stats.RecordVulkanValidationMessage(isError, msg);
 
         if (isError)
             Debug.VulkanError($"[Vulkan] {msg}");

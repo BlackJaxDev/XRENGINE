@@ -761,12 +761,12 @@ public sealed class UIBatchCollector : IDisposable
 
     private static XRMeshRenderer.BaseVersion GetImmediateRenderVersion(XRMeshRenderer mesh)
     {
-        if (Engine.Rendering.State.IsStereoPass)
+        if (RuntimeEngine.Rendering.State.IsStereoPass)
         {
-            if (Engine.Rendering.Settings.PreferNVStereo && Engine.Rendering.State.IsNVIDIA)
+            if (RuntimeEngine.Rendering.Settings.PreferNVStereo && RuntimeEngine.Rendering.State.IsNVIDIA)
                 return mesh.GetNVStereoVersion();
 
-            if (Engine.Rendering.State.HasAnyMultiViewExtension)
+            if (RuntimeEngine.Rendering.State.HasAnyMultiViewExtension)
                 return mesh.GetOVRMultiViewVersion();
         }
 
@@ -892,7 +892,7 @@ public sealed class UIBatchCollector : IDisposable
             return;
         }
 
-        using var sample = Engine.Profiler.Start();
+        using var sample = RuntimeEngine.Profiler.Start();
 
         EnsureMaterialQuadMesh();
         UploadMaterialQuadData(batch.Entries);
@@ -934,7 +934,7 @@ public sealed class UIBatchCollector : IDisposable
             return;
         }
 
-        using var sample = Engine.Profiler.Start();
+        using var sample = RuntimeEngine.Profiler.Start();
 
         var gpu = EnsureTextGPUResources(batchData.Atlas);
         XRMeshRenderer textMesh = gpu.Mesh!;
@@ -1187,7 +1187,7 @@ public sealed class UIBatchCollector : IDisposable
 
     private static string GetProjectedGlyphSummary(in Matrix4x4 worldMatrix, in Vector4 glyphTransform)
     {
-        var camera = Engine.Rendering.State.RenderingCamera;
+        var camera = RuntimeEngine.Rendering.State.RenderingCamera;
         if (camera is null)
             return "camera=<null>";
 

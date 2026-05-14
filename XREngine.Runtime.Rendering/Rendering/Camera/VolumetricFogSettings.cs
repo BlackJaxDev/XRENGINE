@@ -125,7 +125,7 @@ namespace XREngine.Rendering
 
             if (Enabled && Intensity > 0.0f && MaxDistance > 0.0f)
             {
-                var world = Engine.Rendering.State.RenderingWorld;
+                var world = RuntimeEngine.Rendering.State.RenderingWorld;
                 if (world is not null)
                 {
                     int count = VolumetricFogVolumeComponent.Registry.CopyActive(world, _activeVolumes);

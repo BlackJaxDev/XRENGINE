@@ -41,10 +41,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override bool ShouldExecuteThisFrame()
         {
-            if (Engine.Rendering.State.IsSceneCapturePass || RenderPasses.Length == 0)
+            if (RuntimeEngine.Rendering.State.IsSceneCapturePass || RenderPasses.Length == 0)
                 return false;
 
-            XRRenderPipelineInstance? activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+            XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             if (activeInstance is null)
                 return false;
 
@@ -60,7 +60,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected override void Execute()
         {
             // Scene captures (light probes, reflection probes) don't need motion vectors.
-            if (Engine.Rendering.State.IsSceneCapturePass)
+            if (RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
             XRMaterial? material = ParentPipeline switch
@@ -108,7 +108,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             // defaults to GpuIndirectInstrumented and thrashes gpuPass.MeshSubmissionStrategy
             // mid-frame, producing mismatched cull results between motion vectors and shading.
             var motionStrategy = _gpuDispatch
-                ? Engine.Rendering.ResolveMeshSubmissionStrategy(true)
+                ? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)
                 : EMeshSubmissionStrategy.CpuDirect;
             foreach (int pass in RenderPasses)
             {

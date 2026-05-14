@@ -99,10 +99,13 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+				RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
 			}
 
 			DescriptorSetLayout[] layoutArray = [.. layouts];
+			uint[] variableDescriptorCounts = _program.DescriptorSetsRequireVariableDescriptorCount
+				? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, layoutArray.Length)
+				: [];
 			_descriptorSets = new DescriptorSet[frameCount][];
 
 			for (int frame = 0; frame < frameCount; frame++)
@@ -111,10 +114,19 @@ public unsafe partial class VulkanRenderer
 
 				fixed (DescriptorSetLayout* layoutPtr = layoutArray)
 				fixed (DescriptorSet* setPtr = frameSets)
+				fixed (uint* variableDescriptorCountPtr = variableDescriptorCounts)
 				{
+					DescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountInfo = new()
+					{
+						SType = StructureType.DescriptorSetVariableDescriptorCountAllocateInfo,
+						DescriptorSetCount = (uint)layoutArray.Length,
+						PDescriptorCounts = variableDescriptorCountPtr,
+					};
+
 					DescriptorSetAllocateInfo allocInfo = new()
 					{
 						SType = StructureType.DescriptorSetAllocateInfo,
+						PNext = _program.DescriptorSetsRequireVariableDescriptorCount ? &variableDescriptorCountInfo : null,
 						DescriptorPool = _descriptorPool,
 						DescriptorSetCount = (uint)layoutArray.Length,
 						PSetLayouts = layoutPtr,
@@ -214,7 +226,7 @@ public unsafe partial class VulkanRenderer
 			Dictionary<DescriptorType, uint> counts = [];
 			foreach (DescriptorBindingInfo binding in bindings)
 			{
-				uint count = Math.Max(binding.Count, 1u) * (uint)frameCount;
+				uint count = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding) * (uint)frameCount;
 				if (counts.TryGetValue(binding.DescriptorType, out uint existing))
 					counts[binding.DescriptorType] = existing + count;
 				else
@@ -240,7 +252,7 @@ public unsafe partial class VulkanRenderer
 			};
 
 		private void RecordDescriptorFailure(DescriptorBindingInfo binding, string reason, bool skippedDraw = true)
-			=> Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+			=> RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
 				_program?.Data?.Name,
 				GetDescriptorBindingClass(binding.DescriptorType),
 				binding.Name,
@@ -251,7 +263,7 @@ public unsafe partial class VulkanRenderer
 				reason);
 
 		private void RecordDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
-			=> Engine.Rendering.Stats.RecordVulkanDescriptorFallback(
+			=> RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorFallback(
 				_program?.Data?.Name,
 				GetDescriptorBindingClass(binding.DescriptorType),
 				binding.Name,
@@ -282,7 +294,7 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				uint descriptorCount = Math.Max(binding.Count, 1u);
+				uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
 
 				switch (binding.DescriptorType)
 				{
@@ -385,7 +397,7 @@ public unsafe partial class VulkanRenderer
 
 		private bool TryUpdateDescriptorSetsWithTemplates(DescriptorSet[] frameSets, WriteDescriptorSet[] writeArray)
 		{
-			if (Engine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
+			if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
 				return false;
 
 			if (_program is null || _program.DescriptorSetLayouts.Count < frameSets.Length)
@@ -538,7 +550,9 @@ public unsafe partial class VulkanRenderer
 
 			if (material.Textures is { Count: > 0 })
 			{
-				int idx = (int)binding.Binding + arrayIndex;
+				int idx = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding)
+					? arrayIndex
+					: (int)binding.Binding + arrayIndex;
 				if (idx >= 0 && idx < material.Textures.Count)
 					texture = material.Textures[idx];
 			}

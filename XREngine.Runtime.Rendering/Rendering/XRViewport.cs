@@ -14,7 +14,7 @@ using XREngine.Rendering.UI;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using YamlDotNet.Serialization;
-using State = XREngine.Engine.Rendering.State;
+using State = XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering
 {
@@ -378,7 +378,7 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// When true, visible objects are automatically collected each frame via Engine.Time.Timer.CollectVisible.
+        /// When true, visible objects are automatically collected each frame via RuntimeEngine.Time.Timer.CollectVisible.
         /// This populates the render command collection with all objects visible to this viewport's camera.
         /// Set to false for manual control, such as:
         /// - Custom visibility determination algorithms
@@ -392,7 +392,7 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// When true, render command buffers are automatically double-buffered each frame via Engine.Time.Timer.SwapBuffers.
+        /// When true, render command buffers are automatically double-buffered each frame via RuntimeEngine.Time.Timer.SwapBuffers.
         /// Double-buffering prevents rendering artifacts from concurrent updates to render commands.
         /// Set to false for manual control, such as:
         /// - Multi-pass rendering where buffers should persist across passes
@@ -527,7 +527,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void Destroy()
         {
-            Engine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
+            RuntimeEngine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
             Camera = null;
             CameraComponent = null;
         }
@@ -675,7 +675,7 @@ namespace XREngine.Rendering
 
         private bool ShouldSuspendPipelineWork(string operation)
         {
-            if (!Engine.PlayMode.IsTransitioning)
+            if (!RuntimeEngine.PlayMode.IsTransitioning)
                 return false;
 
             Debug.RenderingEvery(
@@ -684,7 +684,7 @@ namespace XREngine.Rendering
                 "[RenderDiag] {0} skipped during play-mode transition. VP[{1}] State={2} World={3} CameraComponent={4}",
                 operation,
                 Index,
-                Engine.PlayMode.State,
+                RuntimeEngine.PlayMode.State,
                 World?.TargetWorldName ?? "<null>",
                 CameraComponent?.Name ?? "<null>");
 
@@ -721,10 +721,10 @@ namespace XREngine.Rendering
             
 /*
             Debug.RenderingEvery(
-                $"XRViewport.CollectVisible.Tick.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
+                $"XRViewport.CollectVisible.Tick.{GetHashCode()}[{Index}].{RuntimeEngine.PlayMode.State}",
                 TimeSpan.FromSeconds(1),
                 "[RenderDiag] CollectVisible tick. PlayMode={0} VP[{1}] AutoCollect={2} CameraNull={3} WorldNull={4} PipelineNull={5} AssocPlayer={6}",
-                Engine.PlayMode.State,
+                RuntimeEngine.PlayMode.State,
                 Index,
                 AutomaticallyCollectVisible,
                 ActiveCamera is null,
@@ -806,10 +806,10 @@ namespace XREngine.Rendering
 
 /*
                 Debug.RenderingEvery(
-                    $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
+                    $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{RuntimeEngine.PlayMode.State}",
                     TimeSpan.FromSeconds(1),
                     "[RenderDiag] CollectVisible submit. PlayMode={0} VP[{1}] CmdsUpdating={2} Delta={3} UpdatingPasses={4} VisualScene={5} TrackedRenderables={6} Camera={7}",
-                    Engine.PlayMode.State,
+                    RuntimeEngine.PlayMode.State,
                     Index,
                     afterUpdatingCount,
                     delta,
@@ -864,7 +864,7 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Internal callback for automatic visibility collection.
-        /// Subscribed to Engine.Time.Timer.CollectVisible when AutomaticallyCollectVisible is true.
+        /// Subscribed to RuntimeEngine.Time.Timer.CollectVisible when AutomaticallyCollectVisible is true.
         /// Simply delegates to CollectVisible() with default parameters.
         /// </summary>
         private void CollectVisibleAutomatic()
@@ -907,10 +907,10 @@ namespace XREngine.Rendering
 
 /*
             Debug.RenderingEvery(
-                $"XRViewport.SwapBuffers.Tick.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
+                $"XRViewport.SwapBuffers.Tick.{GetHashCode()}[{Index}].{RuntimeEngine.PlayMode.State}",
                 TimeSpan.FromSeconds(1),
                 "[RenderDiag] SwapBuffers tick. PlayMode={0} VP[{1}] AutoSwap={2} AssocPlayer={3}",
-                Engine.PlayMode.State,
+                RuntimeEngine.PlayMode.State,
                 Index,
                 AutomaticallySwapBuffers,
                 AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
@@ -949,7 +949,7 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Internal callback for automatic buffer swapping.
-        /// Subscribed to Engine.Time.Timer.SwapBuffers when AutomaticallySwapBuffers is true.
+        /// Subscribed to RuntimeEngine.Time.Timer.SwapBuffers when AutomaticallySwapBuffers is true.
         /// Delegates to SwapBuffers() with default parameters, wrapped in a profiler sample.
         /// </summary>
         private void SwapBuffersAutomatic()
@@ -1073,10 +1073,10 @@ namespace XREngine.Rendering
                 camera.Transform?.RenderTranslation.X ?? 0,
                 camera.Transform?.RenderTranslation.Y ?? 0,
                 camera.Transform?.RenderTranslation.Z ?? 0,
-                Engine.PlayMode.State);
+                RuntimeEngine.PlayMode.State);
             */
             
-            //using (Engine.Profiler.Start("XRViewport.Render"))
+            //using (RuntimeEngine.Profiler.Start("XRViewport.Render"))
             {
                 bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
 

@@ -753,7 +753,7 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         deviceFeatures13 = [];
         dlssQueueRequirements = default;
 
-        bool preferDlss = Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+        bool preferDlss = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
         string? dlssFailure = null;
         string? xessFailure = null;
 

@@ -20,7 +20,7 @@ namespace XREngine.Scene
 
         public void CollectVisibleItems()
         {
-            using var sample = Engine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
+            using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
             ShadowScratch scratch = CurrentShadowScratch;
 
             //CollectingVisibleShadowMaps = true;
@@ -38,13 +38,13 @@ namespace XREngine.Scene
             // also differ from the desktop/mirror camera. Frustum-based shadow collection culling can
             // therefore cause visible shadow caster popping that looks like lighting/material flicker.
             // Prefer stability over CPU savings while in VR.
-            bool cullByCameraFrusta = Engine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !Engine.VRState.IsInVR;
+            bool cullByCameraFrusta = RuntimeEngine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !RuntimeEngine.VRState.IsInVR;
 
             if (cullByCameraFrusta)
             {
                 var cameraFrustumScratch = scratch.CameraFrusta;
                 cameraFrustumScratch.Clear();
-                foreach ((XRWindow window, XRViewport viewport) in Engine.EnumerateActiveWindowViewports())
+                foreach ((XRWindow window, XRViewport viewport) in RuntimeEngine.EnumerateActiveWindowViewports())
                 {
                     if (!ViewportTargetsWorld(window, viewport, World))
                         continue;
@@ -235,7 +235,7 @@ namespace XREngine.Scene
             if (RenderingShadowMaps)
                 return;
 
-            ulong frameId = Engine.Rendering.State.RenderFrameId;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (_lastShadowMapsRenderFrameId == frameId)
                 return;
 
@@ -244,7 +244,7 @@ namespace XREngine.Scene
 
         public void RenderShadowMaps(bool collectVisibleNow)
         {
-            using var sample = Engine.Profiler.Start("Lights3DCollection.RenderShadowMaps");
+            using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.RenderShadowMaps");
             RenderShadowMapsInternal(collectVisibleNow, includeAuxiliaryCaptures: true);
         }
 
@@ -271,7 +271,7 @@ namespace XREngine.Scene
                 {
                     SpotLightComponent light = DynamicSpotLights[i];
                     bool relevant = IsSpotShadowRelevant(light, scratch);
-                    light.SetShadowRelevance(relevant, Engine.Rendering.State.RenderFrameId);
+                    light.SetShadowRelevance(relevant, RuntimeEngine.Rendering.State.RenderFrameId);
                     if (relevant && (!light.UsesSpotShadowAtlasForCurrentEncoding || ShouldRenderLegacySpotShadowMap(light)))
                         light.RenderShadowMap(collectVisibleNow);
                 }
@@ -279,7 +279,7 @@ namespace XREngine.Scene
                 {
                     PointLightComponent light = DynamicPointLights[i];
                     int faceMask = CalculatePointShadowFaceMask(light, scratch);
-                    light.SetShadowFaceRelevanceMask(faceMask, Engine.Rendering.State.RenderFrameId);
+                    light.SetShadowFaceRelevanceMask(faceMask, RuntimeEngine.Rendering.State.RenderFrameId);
                     if (!light.UsesPointShadowAtlasForCurrentEncoding)
                         light.RenderShadowMap(collectVisibleNow);
                 }
@@ -289,7 +289,7 @@ namespace XREngine.Scene
                 RenderingShadowMaps = false;
             }
 
-            _lastShadowMapsRenderFrameId = Engine.Rendering.State.RenderFrameId;
+            _lastShadowMapsRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
             if (!includeAuxiliaryCaptures)
                 return;
@@ -342,7 +342,7 @@ namespace XREngine.Scene
 
         private void UpdateShadowAtlasRequests(bool collectVisibleNow, ShadowScratch scratch)
         {
-            using var sample = Engine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
+            using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
 
             PopulateShadowAtlasActiveCameras(scratch);
             PrepareLocalShadowRelevanceFrusta(scratch);
@@ -364,11 +364,11 @@ namespace XREngine.Scene
             List<XRCamera> cameras = scratch.ShadowAtlasCameras;
             cameras.Clear();
 
-            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                 AddShadowAtlasCamera(viewport, cameras);
 
-            AddShadowAtlasCamera(Engine.VRState.LeftEyeViewport, cameras);
-            AddShadowAtlasCamera(Engine.VRState.RightEyeViewport, cameras);
+            AddShadowAtlasCamera(RuntimeEngine.VRState.LeftEyeViewport, cameras);
+            AddShadowAtlasCamera(RuntimeEngine.VRState.RightEyeViewport, cameras);
         }
 
         private void AddShadowAtlasCamera(XRViewport? viewport, List<XRCamera> cameras)
@@ -417,7 +417,7 @@ namespace XREngine.Scene
 
         private bool UpdateLocalShadowRelevanceState(LightComponent light, ShadowScratch scratch)
         {
-            ulong frameId = Engine.Rendering.State.RenderFrameId;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (light is PointLightComponent pointLight)
             {
                 int faceMask = CalculatePointShadowFaceMask(pointLight, scratch);
@@ -465,7 +465,7 @@ namespace XREngine.Scene
 
         private void SubmitDirectionalShadowAtlasRequests()
         {
-            if (!Engine.Rendering.Settings.UseDirectionalShadowAtlas)
+            if (!RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
                 return;
 
             int count = DynamicDirectionalLights.Count;
@@ -513,7 +513,7 @@ namespace XREngine.Scene
 
         private void SubmitSpotShadowAtlasRequests(ShadowScratch scratch)
         {
-            if (!Engine.Rendering.Settings.UseSpotShadowAtlas)
+            if (!RuntimeEngine.Rendering.Settings.UseSpotShadowAtlas)
                 return;
 
             int count = DynamicSpotLights.Count;
@@ -528,7 +528,7 @@ namespace XREngine.Scene
                 }
 
                 bool relevant = IsSpotShadowRelevant(light, scratch);
-                light.SetShadowRelevance(relevant, Engine.Rendering.State.RenderFrameId);
+                light.SetShadowRelevance(relevant, RuntimeEngine.Rendering.State.RenderFrameId);
                 SubmitShadowAtlasRequest(
                     light,
                     EShadowProjectionType.SpotPrimary,
@@ -542,7 +542,7 @@ namespace XREngine.Scene
 
         private void SubmitPointShadowAtlasRequests(ShadowScratch scratch)
         {
-            if (!Engine.Rendering.Settings.UsePointShadowAtlas)
+            if (!RuntimeEngine.Rendering.Settings.UsePointShadowAtlas)
                 return;
 
             int count = DynamicPointLights.Count;
@@ -554,7 +554,7 @@ namespace XREngine.Scene
                     continue;
 
                 int faceMask = CalculatePointShadowFaceMask(light, scratch);
-                light.SetShadowFaceRelevanceMask(faceMask, Engine.Rendering.State.RenderFrameId);
+                light.SetShadowFaceRelevanceMask(faceMask, RuntimeEngine.Rendering.State.RenderFrameId);
                 float basePriority = 3000.0f + EstimatePointPriority(light, scratch);
                 for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
                 {
@@ -629,7 +629,7 @@ namespace XREngine.Scene
                 dirtyReason,
                 canReusePreviousFrame,
                 EditorPinned: false,
-                StereoVis: Engine.VRState.IsInVR ? StereoVisibility.BothEyes : StereoVisibility.Mono,
+                StereoVis: RuntimeEngine.VRState.IsInVR ? StereoVisibility.BothEyes : StereoVisibility.Mono,
                 ForcedSkipReason: forcedSkipReason);
 
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
@@ -967,8 +967,8 @@ namespace XREngine.Scene
                 "[DirectionalShadowAudit][AtlasFrame] frame={0} generation={1} useDirAtlas={2} useSpotAtlas={3} collectVisibleNow={4} activeAtlasCameras={5} requests={6} allocations={7} resident={8} skipped={9} notRelevant={10} pages={11} renderedThisFrame={12} queueOverflow={13} budgetTiles={14} budgetMs={15:F2}",
                 frameData.FrameId,
                 frameData.Generation,
-                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
-                Engine.Rendering.Settings.UseSpotShadowAtlas,
+                RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
+                RuntimeEngine.Rendering.Settings.UseSpotShadowAtlas,
                 collectVisibleNow,
                 scratch.ShadowAtlasCameras.Count,
                 metrics.RequestCount,
@@ -1002,7 +1002,7 @@ namespace XREngine.Scene
                 EOutputVerbosity.Normal,
                 false,
             "[DirectionalShadowAudit][AtlasSubmit] frame={0} light='{1}' projection={2} cascadeOrFace={3} dirty={4} dirtyReason={5} contentChanged={6} canReuse={7} fallback={8} desired={9} min={10} near={11:F3} far={12:F3} priority={13:F1} previousResident={14} previousRenderedFrame={15} previousFallback={16} previousPage={17} previousRect={18}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 request.ProjectionType,
                 request.FaceOrCascadeIndex,
@@ -1043,10 +1043,10 @@ namespace XREngine.Scene
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][LegacyDecision] frame={0} light='{1}' reason={2} useDirAtlas={3} legacyRender={4} renderCascades={5} needsLegacyCascades={6} needsLegacyPrimary={7} casts={8} cascadesEnabled={9} activeCascades={10} shadowMap={11} cascadeTex={12} slots={13}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 reason,
-                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
                 legacyRender,
                 renderCascades,
                 needsLegacyCascades,

@@ -30,7 +30,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 _state.SetDepthTestEnabled(true);
                 _state.SetDepthWriteEnabled(depthTest.UpdateDepth);
-                _state.SetDepthCompare(ToVulkanCompareOp(Engine.Rendering.State.MapDepthComparison(depthTest.Function)));
+                _state.SetDepthCompare(ToVulkanCompareOp(RuntimeEngine.Rendering.State.MapDepthComparison(depthTest.Function)));
             }
             else if (depthTest.Enabled == ERenderParamUsage.Disabled)
             {
@@ -83,10 +83,10 @@ namespace XREngine.Rendering.Vulkan
             if (program is null)
                 return;
 
-            bool stereoPass = Engine.Rendering.State.IsStereoPass;
+            bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
             if (stereoPass)
             {
-                var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
+                var rightCam = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
                 PassCameraUniforms(program, camera, EEngineUniform.LeftEyeViewMatrix, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeInverseProjMatrix, EEngineUniform.LeftEyeProjMatrix, EEngineUniform.LeftEyeViewProjectionMatrix);
                 PassCameraUniforms(program, rightCam, EEngineUniform.RightEyeViewMatrix, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeInverseProjMatrix, EEngineUniform.RightEyeProjMatrix, EEngineUniform.RightEyeViewProjectionMatrix);
             }
@@ -117,34 +117,34 @@ namespace XREngine.Rendering.Vulkan
                 program.Sampler(samplerName, texture, i);
             }
 
-            _materialUniformSecondsLive += Engine.Time.Timer.Update.Delta;
+            _materialUniformSecondsLive += RuntimeEngine.Time.Timer.Update.Delta;
             var reqs = material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None;
 
             if (reqs.HasFlag(EUniformRequirements.Camera))
             {
-                Engine.Rendering.State.RenderingCamera?.SetUniforms(program, true);
-                Engine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program, false);
+                RuntimeEngine.Rendering.State.RenderingCamera?.SetUniforms(program, true);
+                RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program, false);
             }
 
             if (reqs.HasFlag(EUniformRequirements.Lights))
-                Engine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program);
+                RuntimeEngine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program);
 
             if (reqs.HasFlag(EUniformRequirements.RenderTime))
             {
                 program.Uniform(EEngineUniform.RenderTime.ToStringFast(), _materialUniformSecondsLive);
-                program.Uniform(EEngineUniform.EngineTime.ToStringFast(), Engine.ElapsedTime);
-                program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), Engine.Time.Timer.Render.Delta);
+                program.Uniform(EEngineUniform.EngineTime.ToStringFast(), RuntimeEngine.ElapsedTime);
+                program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), RuntimeEngine.Time.Timer.Render.Delta);
             }
 
             if (reqs.HasFlag(EUniformRequirements.ViewportDimensions))
             {
-                var area = Engine.Rendering.State.RenderArea;
+                var area = RuntimeEngine.Rendering.State.RenderArea;
                 program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
                 program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
             }
 
             material.OnSettingUniforms(program);
-            Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
+            RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
         }
 
         private static void PassCameraUniforms(XRRenderProgram program, XRCamera? camera, EEngineUniform viewName, EEngineUniform inverseViewName, EEngineUniform inverseProjectionName, EEngineUniform projectionName, EEngineUniform viewProjectionName)
@@ -158,7 +158,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 viewMatrix = camera.Transform.InverseRenderMatrix;
                 inverseViewMatrix = camera.Transform.RenderMatrix;
-                bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                bool useUnjittered = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
                 projectionMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
                 inverseProjectionMatrix = useUnjittered ? camera.InverseProjectionMatrixUnjittered : camera.InverseProjectionMatrix;
                 viewProjectionMatrix = useUnjittered ? camera.ViewProjectionMatrixUnjittered : camera.ViewProjectionMatrix;
@@ -189,7 +189,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static ECullMode ResolveCullMode(ECullMode mode)
         {
-            if (!Engine.Rendering.State.ReverseCulling)
+            if (!RuntimeEngine.Rendering.State.ReverseCulling)
                 return mode;
 
             return mode switch
@@ -202,7 +202,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static EWinding ResolveWinding(EWinding winding)
         {
-            if (!Engine.Rendering.State.ReverseWinding)
+            if (!RuntimeEngine.Rendering.State.ReverseWinding)
                 return winding;
 
             return winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;

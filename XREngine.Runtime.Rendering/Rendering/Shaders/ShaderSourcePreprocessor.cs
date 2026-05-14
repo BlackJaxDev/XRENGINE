@@ -17,14 +17,14 @@ public static class ShaderSourcePreprocessor
             annotateIncludes);
 
     private static string? GetEngineShaderRoot()
-        => string.IsNullOrWhiteSpace(Engine.Assets?.EngineAssetsPath)
+        => string.IsNullOrWhiteSpace(RuntimeEngine.Assets?.EngineAssetsPath)
             ? null
-            : Path.Combine(Engine.Assets!.EngineAssetsPath, "Shaders");
+            : Path.Combine(RuntimeEngine.Assets!.EngineAssetsPath, "Shaders");
 
     private static string? GetGameShaderRoot()
-        => string.IsNullOrWhiteSpace(Engine.Assets?.GameAssetsPath)
+        => string.IsNullOrWhiteSpace(RuntimeEngine.Assets?.GameAssetsPath)
             ? null
-            : Path.Combine(Engine.Assets!.GameAssetsPath, "Shaders");
+            : Path.Combine(RuntimeEngine.Assets!.GameAssetsPath, "Shaders");
 
     private static RuntimeResolverOptions CreateResolverOptions()
     {

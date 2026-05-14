@@ -3,7 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
-using static XREngine.Engine.Rendering.State;
+using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 public class TestRenderPipeline : RenderPipeline
@@ -49,7 +49,7 @@ public class TestRenderPipeline : RenderPipeline
                     ClearColor(new ColorF4(0.0f, 0.0f, 0.0f, 1.0f));
                     Clear(true, true, true);
                     DepthFunc(EComparison.Less);
-                    ClearDepth(Engine.Rendering.State.GetDefaultDepthClearValue());
+                    ClearDepth(RuntimeEngine.Rendering.State.GetDefaultDepthClearValue());
                     AllowDepthWrite(true);
                 };
                 c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
@@ -66,7 +66,7 @@ public class TestRenderPipeline : RenderPipeline
                     ClearColor(new ColorF4(0.0f, 0.0f, 0.0f, 1.0f));
                     Clear(true, true, true);
                     DepthFunc(EComparison.Less);
-                    ClearDepth(Engine.Rendering.State.GetDefaultDepthClearValue());
+                    ClearDepth(RuntimeEngine.Rendering.State.GetDefaultDepthClearValue());
                     AllowDepthWrite(true);
                 };
                 c.Add<VPRC_RenderQuadFBO>().FrameBufferName = InternalResFBOName;
@@ -137,7 +137,7 @@ void main()
 
     private static XRTexture CreateHDRSceneTexture()
     {
-        bool useHdr = Engine.Rendering.Settings.OutputHDR;
+        bool useHdr = RuntimeEngine.Rendering.Settings.OutputHDR;
         var tex = XRTexture2D.CreateFrameBufferTexture(InternalWidth, InternalHeight,
             useHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8,
             useHdr ? EPixelFormat.Rgba : EPixelFormat.Bgra,

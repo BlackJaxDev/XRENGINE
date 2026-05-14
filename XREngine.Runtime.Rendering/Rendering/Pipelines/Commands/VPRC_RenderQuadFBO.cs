@@ -33,7 +33,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             int passIndex = ResolvePassIndex($"QuadRender_{FrameBufferName}_to_{target}");
             using var passScope = passIndex != int.MinValue
-                ? Engine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
 
             var inputFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);

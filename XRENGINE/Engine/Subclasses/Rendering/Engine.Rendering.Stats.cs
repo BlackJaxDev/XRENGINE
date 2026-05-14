@@ -268,6 +268,28 @@ namespace XREngine
                 private static long _lastFrameVrRightWorkerBuildTimeTicks;
                 private static long _vrRenderSubmitTimeTicks;
                 private static long _lastFrameVrRenderSubmitTimeTicks;
+                private static long _vrXrWaitFrameBlockTimeTicks;
+                private static long _lastFrameVrXrWaitFrameBlockTimeTicks;
+                private static long _vrXrEndFrameSubmitTimeTicks;
+                private static long _lastFrameVrXrEndFrameSubmitTimeTicks;
+                private static long _vrXrPredictedToLatePoseDeltaMillimetersBits;
+                private static long _lastFrameVrXrPredictedToLatePoseDeltaMillimetersBits;
+                private static long _vrXrPredictedToLatePoseDeltaDegreesBits;
+                private static long _lastFrameVrXrPredictedToLatePoseDeltaDegreesBits;
+                private static long _vrXrPredictedDisplayLeadTimeMsBits = BitConverter.DoubleToInt64Bits(double.NaN);
+                private static long _lastFrameVrXrPredictedDisplayLeadTimeMsBits = BitConverter.DoubleToInt64Bits(double.NaN);
+                private static int _vrXrMissedDeadlineFrames;
+                private static int _lastFrameVrXrMissedDeadlineFrames;
+                private static int _vrXrTrackingLossFrames;
+                private static int _lastFrameVrXrTrackingLossFrames;
+                private static long _vrXrRelocatePredictedTimeTicks;
+                private static long _lastFrameVrXrRelocatePredictedTimeTicks;
+                private static long _vrXrCollectFrustumExpansionDegreesBits;
+                private static long _lastFrameVrXrCollectFrustumExpansionDegreesBits;
+                private static long _vrXrPacingThreadIdleTimeTicks;
+                private static long _lastFrameVrXrPacingThreadIdleTimeTicks;
+                private static int _vrXrPacingHandoffStalls;
+                private static int _lastFrameVrXrPacingHandoffStalls;
 
                 // Render-matrix stats use a separate swap cycle aligned with SwapBuffers phase.
                 // Current = being written now, Display = last completed swap, Ready = waiting to become Display.
@@ -517,6 +539,17 @@ namespace XREngine
                 public static double VrLeftWorkerBuildTimeMs => TimeSpan.FromTicks(_lastFrameVrLeftWorkerBuildTimeTicks).TotalMilliseconds;
                 public static double VrRightWorkerBuildTimeMs => TimeSpan.FromTicks(_lastFrameVrRightWorkerBuildTimeTicks).TotalMilliseconds;
                 public static double VrRenderSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrRenderSubmitTimeTicks).TotalMilliseconds;
+                public static double VrXrWaitFrameBlockTimeMs => TimeSpan.FromTicks(_lastFrameVrXrWaitFrameBlockTimeTicks).TotalMilliseconds;
+                public static double VrXrEndFrameSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrXrEndFrameSubmitTimeTicks).TotalMilliseconds;
+                public static double VrXrPredictedToLatePoseDeltaMillimeters => BitConverter.Int64BitsToDouble(_lastFrameVrXrPredictedToLatePoseDeltaMillimetersBits);
+                public static double VrXrPredictedToLatePoseDeltaDegrees => BitConverter.Int64BitsToDouble(_lastFrameVrXrPredictedToLatePoseDeltaDegreesBits);
+                public static double VrXrPredictedDisplayLeadTimeMs => BitConverter.Int64BitsToDouble(_lastFrameVrXrPredictedDisplayLeadTimeMsBits);
+                public static int VrXrMissedDeadlineFrames => _lastFrameVrXrMissedDeadlineFrames;
+                public static int VrXrTrackingLossFrames => _lastFrameVrXrTrackingLossFrames;
+                public static double VrXrRelocatePredictedTimeMs => TimeSpan.FromTicks(_lastFrameVrXrRelocatePredictedTimeTicks).TotalMilliseconds;
+                public static double VrXrCollectFrustumExpansionDegrees => BitConverter.Int64BitsToDouble(_lastFrameVrXrCollectFrustumExpansionDegreesBits);
+                public static double VrXrPacingThreadIdleTimeMs => TimeSpan.FromTicks(_lastFrameVrXrPacingThreadIdleTimeTicks).TotalMilliseconds;
+                public static int VrXrPacingHandoffStalls => _lastFrameVrXrPacingHandoffStalls;
 
                 /// <summary>
                 /// Enables collection of render-matrix statistics.
@@ -840,6 +873,17 @@ namespace XREngine
                     _lastFrameVrLeftWorkerBuildTimeTicks = _vrLeftWorkerBuildTimeTicks;
                     _lastFrameVrRightWorkerBuildTimeTicks = _vrRightWorkerBuildTimeTicks;
                     _lastFrameVrRenderSubmitTimeTicks = _vrRenderSubmitTimeTicks;
+                    _lastFrameVrXrWaitFrameBlockTimeTicks = _vrXrWaitFrameBlockTimeTicks;
+                    _lastFrameVrXrEndFrameSubmitTimeTicks = _vrXrEndFrameSubmitTimeTicks;
+                    _lastFrameVrXrPredictedToLatePoseDeltaMillimetersBits = _vrXrPredictedToLatePoseDeltaMillimetersBits;
+                    _lastFrameVrXrPredictedToLatePoseDeltaDegreesBits = _vrXrPredictedToLatePoseDeltaDegreesBits;
+                    _lastFrameVrXrPredictedDisplayLeadTimeMsBits = _vrXrPredictedDisplayLeadTimeMsBits;
+                    _lastFrameVrXrMissedDeadlineFrames = _vrXrMissedDeadlineFrames;
+                    _lastFrameVrXrTrackingLossFrames = _vrXrTrackingLossFrames;
+                    _lastFrameVrXrRelocatePredictedTimeTicks = _vrXrRelocatePredictedTimeTicks;
+                    _lastFrameVrXrCollectFrustumExpansionDegreesBits = _vrXrCollectFrustumExpansionDegreesBits;
+                    _lastFrameVrXrPacingThreadIdleTimeTicks = _vrXrPacingThreadIdleTimeTicks;
+                    _lastFrameVrXrPacingHandoffStalls = _vrXrPacingHandoffStalls;
                     _lastFrameFBOBandwidthBytes = _fboBandwidthBytes;
                     _lastFrameFBOBindCount = _fboBindCount;
 
@@ -970,6 +1014,17 @@ namespace XREngine
                     _vrLeftWorkerBuildTimeTicks = 0;
                     _vrRightWorkerBuildTimeTicks = 0;
                     _vrRenderSubmitTimeTicks = 0;
+                    _vrXrWaitFrameBlockTimeTicks = 0;
+                    _vrXrEndFrameSubmitTimeTicks = 0;
+                    _vrXrPredictedToLatePoseDeltaMillimetersBits = 0;
+                    _vrXrPredictedToLatePoseDeltaDegreesBits = 0;
+                    _vrXrPredictedDisplayLeadTimeMsBits = BitConverter.DoubleToInt64Bits(double.NaN);
+                    _vrXrMissedDeadlineFrames = 0;
+                    _vrXrTrackingLossFrames = 0;
+                    _vrXrRelocatePredictedTimeTicks = 0;
+                    _vrXrCollectFrustumExpansionDegreesBits = 0;
+                    _vrXrPacingThreadIdleTimeTicks = 0;
+                    _vrXrPacingHandoffStalls = 0;
                     _fboBandwidthBytes = 0;
                     _fboBindCount = 0;
                     // Note: render-matrix and skinned-bounds stats are swapped separately during swap-buffers.
@@ -1329,6 +1384,95 @@ namespace XREngine
                         return;
 
                     Interlocked.Exchange(ref _vrRenderSubmitTimeTicks, submitTime.Ticks);
+                }
+
+                public static void RecordVrXrWaitFrameBlockTime(TimeSpan waitTime)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrXrWaitFrameBlockTimeTicks, waitTime.Ticks);
+                }
+
+                public static void RecordVrXrEndFrameSubmitTime(TimeSpan submitTime)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrXrEndFrameSubmitTimeTicks, submitTime.Ticks);
+                }
+
+                public static void RecordVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrXrPredictedToLatePoseDeltaMillimetersBits, BitConverter.DoubleToInt64Bits(millimeters));
+                    Interlocked.Exchange(ref _vrXrPredictedToLatePoseDeltaDegreesBits, BitConverter.DoubleToInt64Bits(degrees));
+                }
+
+                public static void RecordVrXrPredictedDisplayLeadTime(double leadTimeMs)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrXrPredictedDisplayLeadTimeMsBits, BitConverter.DoubleToInt64Bits(leadTimeMs));
+                }
+
+                public static void RecordVrXrMissedDeadlineFrame()
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vrXrMissedDeadlineFrames);
+                }
+
+                public static void RecordVrXrTrackingLossFrame()
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vrXrTrackingLossFrames);
+                }
+
+                public static void RecordVrXrRelocatePredictedTime(TimeSpan elapsed)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrXrRelocatePredictedTimeTicks, elapsed.Ticks);
+                }
+
+                public static void RecordVrXrCollectFrustumExpansionDegrees(double degrees)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrXrCollectFrustumExpansionDegreesBits, BitConverter.DoubleToInt64Bits(degrees));
+                }
+
+                /// <summary>
+                /// Records the time the OpenXR pacing thread spent idle waiting for the render thread's frame-submit signal.
+                /// Accumulated across pacing-thread wakes in a single frame.
+                /// </summary>
+                public static void RecordVrXrPacingThreadIdleTime(TimeSpan elapsed)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Add(ref _vrXrPacingThreadIdleTimeTicks, elapsed.Ticks);
+                }
+
+                /// <summary>
+                /// Records that the render thread had to stall because the pacing thread had not yet published the
+                /// next OpenXR frame (predicted views) before the engine wanted to render.
+                /// </summary>
+                public static void RecordVrXrPacingHandoffStall()
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _vrXrPacingHandoffStalls);
                 }
 
                 public static void RecordVulkanFrameLifecycleTiming(

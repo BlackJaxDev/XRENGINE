@@ -101,7 +101,7 @@ namespace XREngine.Rendering
     //    //    bool hasBind = GetCurrentBind();
     //    //    if (!hasBind)
     //    //    {
-    //    //        //Engine.LogWarning("Unable to create render object: no captured render context.");
+    //    //        //RuntimeEngine.LogWarning("Unable to create render object: no captured render context.");
     //    //        return NullBindingId;
     //    //    }
 
@@ -117,7 +117,7 @@ namespace XREngine.Rendering
     //    //        if (bind != null)
     //    //        {
     //    //            bind.BindingId = id;
-    //    //            //bind.GenerationStackTrace = Engine.GetStackTrace();
+    //    //            //bind.GenerationStackTrace = RuntimeEngine.GetStackTrace();
     //    //            bind.GenerationTime = DateTime.Now;
     //    //            bind.ThreadID = Environment.CurrentManagedThreadId;
     //    //            PostGenerated();
@@ -125,7 +125,7 @@ namespace XREngine.Rendering
     //    //        }
     //    //    }
     //    //    //else
-    //    //    //    Engine.LogWarning("Unable to create render object.");
+    //    //    //    RuntimeEngine.LogWarning("Unable to create render object.");
 
     //    //    return id;
     //    //}

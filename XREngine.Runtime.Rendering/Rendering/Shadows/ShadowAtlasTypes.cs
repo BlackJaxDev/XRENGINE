@@ -255,12 +255,12 @@ public readonly record struct ShadowAtlasManagerSettings(
 
     public static ShadowAtlasManagerSettings FromCurrentRuntimeSettings()
         => new(
-            PageSize: Engine.Rendering.Settings.ShadowAtlasPageSize,
-            MaxPages: Engine.Rendering.Settings.MaxShadowAtlasPages,
-            MaxMemoryBytes: Engine.Rendering.Settings.MaxShadowAtlasMemoryBytes,
-            MaxTilesRenderedPerFrame: Engine.Rendering.Settings.MaxShadowTilesRenderedPerFrame,
-            MaxRenderMilliseconds: Engine.Rendering.Settings.MaxShadowRenderMilliseconds,
-            MinTileResolution: Engine.Rendering.Settings.MinShadowAtlasTileResolution,
-            MaxTileResolution: Engine.Rendering.Settings.MaxShadowAtlasTileResolution,
+            PageSize: RuntimeEngine.Rendering.Settings.ShadowAtlasPageSize,
+            MaxPages: RuntimeEngine.Rendering.Settings.MaxShadowAtlasPages,
+            MaxMemoryBytes: RuntimeEngine.Rendering.Settings.MaxShadowAtlasMemoryBytes,
+            MaxTilesRenderedPerFrame: RuntimeEngine.Rendering.Settings.MaxShadowTilesRenderedPerFrame,
+            MaxRenderMilliseconds: RuntimeEngine.Rendering.Settings.MaxShadowRenderMilliseconds,
+            MinTileResolution: RuntimeEngine.Rendering.Settings.MinShadowAtlasTileResolution,
+            MaxTileResolution: RuntimeEngine.Rendering.Settings.MaxShadowAtlasTileResolution,
             MaxRequestsPerFrame: Default.MaxRequestsPerFrame);
 }

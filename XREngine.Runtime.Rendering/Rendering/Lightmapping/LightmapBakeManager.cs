@@ -199,7 +199,7 @@ public sealed class LightmapBakeManager(IRuntimeRenderWorld world) : XRBase
         XRCamera camera = new(new Transform());
         var pipeline = new XRRenderPipelineInstance();
 
-        using var _ = Engine.Rendering.State.PushRenderingPipeline(pipeline);
+        using var _ = RuntimeEngine.Rendering.State.PushRenderingPipeline(pipeline);
         using var __ = pipeline.RenderState.PushMainAttributes(
             viewport: null,
             scene: null,

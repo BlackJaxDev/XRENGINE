@@ -124,12 +124,12 @@ public sealed class AtmosphericScatteringSettings : PostProcessSettings
         if (!Enabled || MaxDistance <= 0.0f)
             return false;
 
-        var world = Engine.Rendering.State.RenderingWorld;
+        var world = RuntimeEngine.Rendering.State.RenderingWorld;
         if (world is null)
             return false;
 
-        Vector3 cameraPosition = Engine.Rendering.State.RenderingPipelineState?.SceneCamera?.Transform.RenderTranslation
-            ?? Engine.Rendering.State.RenderingCamera?.Transform.RenderTranslation
+        Vector3 cameraPosition = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera?.Transform.RenderTranslation
+            ?? RuntimeEngine.Rendering.State.RenderingCamera?.Transform.RenderTranslation
             ?? Vector3.Zero;
 
         int count = AtmosphericScatteringComponent.Registry.CopyActive(world, cameraPosition, _activeAtmospheres);
@@ -144,12 +144,12 @@ public sealed class AtmosphericScatteringSettings : PostProcessSettings
     {
         active = null;
 
-        var world = Engine.Rendering.State.RenderingWorld;
+        var world = RuntimeEngine.Rendering.State.RenderingWorld;
         if (world is null)
             return false;
 
-        Vector3 cameraPosition = Engine.Rendering.State.RenderingPipelineState?.SceneCamera?.Transform.RenderTranslation
-            ?? Engine.Rendering.State.RenderingCamera?.Transform.RenderTranslation
+        Vector3 cameraPosition = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera?.Transform.RenderTranslation
+            ?? RuntimeEngine.Rendering.State.RenderingCamera?.Transform.RenderTranslation
             ?? Vector3.Zero;
 
         return AtmosphericScatteringComponent.Registry.TryGetBestActive(world, cameraPosition, out active);

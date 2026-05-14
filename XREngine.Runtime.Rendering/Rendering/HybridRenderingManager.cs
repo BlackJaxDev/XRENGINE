@@ -26,9 +26,11 @@ namespace XREngine.Rendering
         private const uint InstanceTransformSsboBinding = GPUBatchingBindings.InstanceTransformBuffer;
         private const uint InstanceSourceIndexSsboBinding = GPUBatchingBindings.InstanceSourceIndexBuffer;
         private const uint MaterialTableSsboBinding = 11;
+        private const uint DrawMetadataSsboBinding = 12;
         private const uint LodTransitionSsboBinding = 16;
-        private const int IndirectCommandFloatCount = 48;
-        private const int IndirectTextGlyphOffsetFloatIndex = 46;
+        private const uint MaterialTextureHandleTableSsboBinding = 17;
+        private const int IndirectCommandFloatCount = GPUScene.CommandFloatCount;
+        private const uint IndirectTextGlyphOffsetSsboBinding = 3;
         private const uint IndirectLegacyBaseInstanceFlag = 0x80000000u;
         private const uint IndirectPreviousLodBaseInstanceFlag = 0x40000000u;
         private const uint IndirectBaseInstanceCommandIndexMask = 0x3FFFFFFFu;
@@ -37,6 +39,7 @@ namespace XREngine.Rendering
         private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
         private const string GlyphTexCoordsBufferName = "GlyphTexCoordsBuffer";
         private const string GlyphRotationsBufferName = "GlyphRotationsBuffer";
+        private const string GlyphOffsetsBufferName = "GlyphOffsetsBuffer";
         private const int ZeroReadbackPendingProgramSampleLimit = 6;
         private XRRenderProgram? _indirectCompProgram;
 
@@ -68,13 +71,14 @@ namespace XREngine.Rendering
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
         private XRDataBuffer? _indirectTextRotationsBuffer;
+        private XRDataBuffer? _indirectTextGlyphOffsetsBuffer;
         private bool _indirectTextBuffersNeedFullPush = true;
         private int _bindlessMaterialTableUnsupportedLogBudget = 4;
 
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
     private static readonly HashSet<uint> _warnedMultiVertexMaterials = [];
     private static bool IsGpuIndirectLoggingEnabled()
-        => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+        => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
     private static bool IsInstrumentedStrategy(GPURenderPassCollection renderPasses)
         => renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented;
 
@@ -104,7 +108,7 @@ namespace XREngine.Rendering
         private static XRMaterial? ResolveEffectiveGpuMaterial(XRMaterial? sourceMaterial, XRMaterial? overrideMaterial)
         {
             bool useDepthNormalMaterialVariants =
-                Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false;
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false;
 
             if (!useDepthNormalMaterialVariants)
                 return overrideMaterial ?? sourceMaterial;
@@ -290,7 +294,7 @@ namespace XREngine.Rendering
         [System.Diagnostics.Conditional("DEBUG")]
         private static void AssertZeroReadbackUsesGpuCountPath(in IndirectParityChecklist parity, string callsite)
         {
-            if (Engine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
                 return;
 
             if (parity.UsesCountDrawPath)
@@ -313,7 +317,7 @@ namespace XREngine.Rendering
         [System.Diagnostics.Conditional("DEBUG")]
         private static void AssertZeroReadbackProductionInvariants(string callsite)
         {
-            if (Engine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
                 return;
 
             var d = GPURenderPassCollection.IndirectDebug;
@@ -352,18 +356,23 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             IReadOnlyList<DrawBatch>? batches = null)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.HybridRender");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.HybridRender");
 
             if (camera is null || scene is null)
                 return;
 
-            if (_useMeshletPipeline && scene.RenderMeshlets(camera, currentRenderPass))
+            if (_useMeshletPipeline && scene.RenderMeshlets(
+                camera,
+                currentRenderPass,
+                RenderCommandCollection.TestCpuSoftwareOcclusionForGpuSource))
+            {
                 return;
+            }
 
             if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
                 !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
-                Engine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+                RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
                 XREngine.Debug.RenderingWarningEvery(
                     $"RenderDispatch.ZeroReadbackScatterMissing.{currentRenderPass}",
                     TimeSpan.FromSeconds(2),
@@ -567,6 +576,7 @@ namespace XREngine.Rendering
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
             XRDataBuffer? culledCommandsBuffer,
+            XRDataBuffer? drawMetadataBuffer,
             XRDataBuffer? lodTransitionBuffer,
             XRDataBuffer? instanceTransformBuffer,
             XRDataBuffer? instanceSourceIndexBuffer,
@@ -579,7 +589,7 @@ namespace XREngine.Rendering
             bool allowDrawCountReadback,
             Matrix4x4 modelMatrix)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchRenderIndirect");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchRenderIndirect");
             using var timing = BeginTiming("DispatchRenderIndirect");
             bool logGpu = IsEnabled(LogCategory.Draw, LogLevel.Debug);
             
@@ -609,9 +619,10 @@ namespace XREngine.Rendering
                 if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirect"))
                     return;
 
-                // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader.
-                // Use a dedicated binding to avoid colliding with material SSBOs (for example text glyph buffers).
+                // Bind compact per-draw command data plus SoA metadata/transform buffers.
+                // Dedicated bindings avoid colliding with material SSBOs (for example text glyph buffers).
                 culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+                drawMetadataBuffer?.BindTo(graphicsProgram, DrawMetadataSsboBinding);
                 lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
                 instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
                 instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
@@ -672,7 +683,7 @@ namespace XREngine.Rendering
             }
 
             LogBufferBind("IndirectDrawBuffer", "DrawIndirect");
-            using (Engine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
+            using (RuntimeEngine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
                 renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
 
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
@@ -706,18 +717,18 @@ namespace XREngine.Rendering
                 if (useCount)
                 {
                     LogBufferBind("ParameterBuffer", "Parameter");
-                    using (Engine.Profiler.Start("GpuIndirect.BindParameterBuffer"))
+                    using (RuntimeEngine.Profiler.Start("GpuIndirect.BindParameterBuffer"))
                         renderer.BindParameterBuffer(parameterBuffer!);
                     
                     GpuDebug(LogCategory.Sync, "Issuing memory barrier (ClientMappedBuffer | Command)");
-                    using (Engine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier"))
+                    using (RuntimeEngine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier"))
                         renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
                     
                     LogMultiDrawIndirect(true, maxCommands, stride);
                     LogIndirectDrawSizes("DispatchRenderIndirect", maxCommands, stride, indirectDrawBuffer, parameterBuffer);
                     XREngine.Rendering.Commands.GPURenderPassCollection.Crumb(
                         $"MDIC.BEGIN maxCmd={maxCommands} stride={stride} indCap={indirectDrawBuffer.ElementCount} paramCap={(parameterBuffer?.ElementCount ?? 0u)}");
-                    using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
+                    using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
                         renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
                     XREngine.Rendering.Commands.GPURenderPassCollection.Crumb("MDIC.END");
                 }
@@ -733,7 +744,7 @@ namespace XREngine.Rendering
                         ClearIndirectTail(indirectDrawBuffer, drawCount, maxCommands);
                     
                     LogMultiDrawIndirect(false, drawCount, stride);
-                    using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirect"))
+                    using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirect"))
                         renderer.MultiDrawElementsIndirect(drawCount, stride);
                 }
 
@@ -1074,8 +1085,15 @@ namespace XREngine.Rendering
                         var cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(basePtr + (int)(i * stride));
                         var sb = new StringBuilder();
                         sb.Append($"visible[{i}] mesh={cmd.MeshID} submesh={cmd.SubmeshID & 0xFFFF} material={cmd.MaterialID} instances={cmd.InstanceCount} pass={cmd.RenderPass}");
-                        Vector3 translation = cmd.WorldMatrix.Translation;
-                        sb.Append($" | worldPos=({translation.X:F3},{translation.Y:F3},{translation.Z:F3})");
+                        if (scene.TryGetTransform(cmd.TransformID, out Matrix4x4 transform))
+                        {
+                            Vector3 translation = transform.Translation;
+                            sb.Append($" | worldPos=({translation.X:F3},{translation.Y:F3},{translation.Z:F3})");
+                        }
+                        else
+                        {
+                            sb.Append($" | transform=<missing:{cmd.TransformID}>");
+                        }
                         if (scene.TryGetMeshDataEntry(cmd.MeshID, out GPUScene.MeshDataEntry meshEntry))
                         {
                             sb.Append($" | meshData indexCount={meshEntry.IndexCount} firstIndex={meshEntry.FirstIndex} firstVertex={meshEntry.FirstVertex}");
@@ -1101,6 +1119,7 @@ namespace XREngine.Rendering
         }
 
         private static bool TryReadWorldMatrix(
+            GPUScene scene,
             XRDataBuffer culledBuffer,
             uint commandIndex,
             out Matrix4x4 worldMatrix)
@@ -1135,8 +1154,7 @@ namespace XREngine.Rendering
                     byte* basePtr = (byte*)ptr.Pointer;
                     byte* commandPtr = basePtr + (commandIndex * stride);
                     var command = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(commandPtr);
-                    worldMatrix = command.WorldMatrix;
-                    return true;
+                    return scene.TryGetTransform(command.TransformID, out worldMatrix);
                 }
             }
             catch (Exception ex)
@@ -1156,6 +1174,7 @@ namespace XREngine.Rendering
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
             XRDataBuffer? culledCommandsBuffer,
+            XRDataBuffer? drawMetadataBuffer,
             XRDataBuffer? lodTransitionBuffer,
             XRDataBuffer? instanceTransformBuffer,
             XRDataBuffer? instanceSourceIndexBuffer,
@@ -1184,8 +1203,9 @@ namespace XREngine.Rendering
                 if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectRange"))
                     return;
 
-                // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader
+                // Bind compact per-draw command data plus SoA metadata/transform buffers.
                 culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+                drawMetadataBuffer?.BindTo(graphicsProgram, DrawMetadataSsboBinding);
                 lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
                 instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
                 instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
@@ -1374,7 +1394,7 @@ namespace XREngine.Rendering
             Matrix4x4 modelMatrix = Matrix4x4.Identity;
             if (!DebugSettings.DisableCpuReadbackCount)
             {
-                if (visibleCount > 0 && TryReadWorldMatrix(culledBuffer, 0, out Matrix4x4 firstWorldMatrix))
+                if (visibleCount > 0 && TryReadWorldMatrix(scene, culledBuffer, 0, out Matrix4x4 firstWorldMatrix))
                     modelMatrix = firstWorldMatrix;
             }
 
@@ -1391,7 +1411,7 @@ namespace XREngine.Rendering
             if (logGpu)
                 GpuDebug("Material map count: {0}", matMap.Count);
 
-            XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
+            XRMaterial? overrideMaterial = RuntimeEngine.Rendering.State.OverrideMaterial;
             if (overrideMaterial is not null && logGpu)
                 GpuDebug("Override material active: {0}", overrideMaterial.Name ?? "<unnamed>");
 
@@ -1478,10 +1498,11 @@ namespace XREngine.Rendering
                     indirectDrawBuffer,
                     vaoRenderer,
                     culledBuffer,
+                    scene.DrawMetadataBuffer,
                     scene.LodTransitionBuffer,
+                    scene.TransformBuffer,
                     null,
-                    null,
-                    false,
+                    true,
                     built,
                     built,
                     null,
@@ -1624,7 +1645,7 @@ namespace XREngine.Rendering
                 EMemoryBarrierMask.BufferUpdate);
             //Debug.Meshes("Memory barrier issued");
 
-            if (IsInstrumentedStrategy(renderPasses) && DebugSettings.DumpIndirectArguments && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            if (IsInstrumentedStrategy(renderPasses) && DebugSettings.DumpIndirectArguments && RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 DumpGpuIndirectArguments(renderPasses, indirectDrawBuffer, maxDrawAllowed, parameterBuffer, visibleCount);
 
             //ClearIndirectTail(indirectDrawBuffer, parameterBuffer, maxDrawAllowed);
@@ -1637,10 +1658,11 @@ namespace XREngine.Rendering
                 indirectDrawBuffer,
                 vaoRenderer,
                 culledBuffer,
+                scene.DrawMetadataBuffer,
                 scene.LodTransitionBuffer,
+                scene.TransformBuffer,
                 null,
-                null,
-                false,
+                true,
                 visibleCount,
                 maxDrawAllowed,
                 parameterBuffer,
@@ -1745,8 +1767,8 @@ namespace XREngine.Rendering
                     InstanceCount = gpuCommand.InstanceCount == 0 ? 1u : gpuCommand.InstanceCount,
                     FirstIndex = meshEntry.FirstIndex,
                     BaseVertex = (int)meshEntry.FirstVertex,
-                    // Match GPURenderIndirect.comp: baseInstance encodes the culled-command index.
-                    BaseInstance = i
+                    // Match GPURenderIndirect.comp: baseInstance encodes DrawID, not the compacted visible index.
+                    BaseInstance = gpuCommand.Reserved1 & IndirectBaseInstanceCommandIndexMask
                 };
 
                 indirectDrawBuffer.SetDataRawAtIndex(written, drawCmd);
@@ -2073,7 +2095,7 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            material = ResolveEffectiveGpuMaterial(sourceMaterial, Engine.Rendering.State.OverrideMaterial)
+            material = ResolveEffectiveGpuMaterial(sourceMaterial, RuntimeEngine.Rendering.State.OverrideMaterial)
                 ?? XRMaterial.InvalidMaterial;
             return material is not null;
         }
@@ -2200,12 +2222,37 @@ namespace XREngine.Rendering
             if (AbstractRenderer.Current is not OpenGLRenderer)
                 return false;
 
-            string[]? extensions = Engine.Rendering.State.OpenGLExtensions;
+            string[]? extensions = RuntimeEngine.Rendering.State.OpenGLExtensions;
             if (extensions is null || extensions.Length == 0)
                 return false;
 
             return extensions.Contains("GL_ARB_bindless_texture", StringComparer.Ordinal) &&
-                extensions.Contains("GL_ARB_gpu_shader_int64", StringComparer.Ordinal);
+                extensions.Contains("GL_ARB_gpu_shader_int64", StringComparer.Ordinal) &&
+                AbstractRenderer.Current is OpenGLRenderer { SupportsBindlessTextureHandles: true };
+        }
+
+        private static void AppendDrawMetadataGlsl(StringBuilder sb)
+        {
+            sb.AppendLine("struct DrawMetadata");
+            sb.AppendLine("{");
+            sb.AppendLine("    uint DrawID;");
+            sb.AppendLine("    uint MeshID;");
+            sb.AppendLine("    uint SubmeshID;");
+            sb.AppendLine("    uint MaterialID;");
+            sb.AppendLine("    uint TransformID;");
+            sb.AppendLine("    uint SkinID;");
+            sb.AppendLine("    uint RenderPassMask;");
+            sb.AppendLine("    uint LayerMask;");
+            sb.AppendLine("    uint Flags;");
+            sb.AppendLine("    uint LodPolicy;");
+            sb.AppendLine("    uint StateClassID;");
+            sb.AppendLine("    uint InstanceCount;");
+            sb.AppendLine("    uint RenderPass;");
+            sb.AppendLine("    uint ShaderProgramID;");
+            sb.AppendLine("    uint LogicalMeshID;");
+            sb.AppendLine("    uint BoundsID;");
+            sb.AppendLine("};");
+            sb.AppendLine($"layout(std430, binding = {DrawMetadataSsboBinding}) readonly buffer DrawMetadataBuffer {{ DrawMetadata Draws[]; }};");
         }
 
         private static XRShader CreateMaterialTableFragmentShader(bool bindless)
@@ -2219,31 +2266,48 @@ namespace XREngine.Rendering
             }
             sb.AppendLine();
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
+            sb.AppendLine("layout(location=4) in vec2 FragUV0;");
             sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
             sb.AppendLine("layout(location=0) out vec4 FragColor;");
             sb.AppendLine();
-            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
+            AppendDrawMetadataGlsl(sb);
             sb.AppendLine("struct MaterialEntry");
             sb.AppendLine("{");
-            sb.AppendLine("    uvec2 AlbedoHandle;");
-            sb.AppendLine("    uvec2 NormalHandle;");
-            sb.AppendLine("    uvec2 RMHandle;");
+            sb.AppendLine("    uint AlbedoHandleIndex;");
+            sb.AppendLine("    uint NormalHandleIndex;");
+            sb.AppendLine("    uint RMHandleIndex;");
             sb.AppendLine("    uint Flags;");
-            sb.AppendLine("    uint Padding0;");
-            sb.AppendLine("    uint Padding1;");
-            sb.AppendLine("    uint Padding2;");
-            sb.AppendLine("    uint Padding3;");
-            sb.AppendLine("    uint Padding4;");
             sb.AppendLine("};");
             sb.AppendLine($"layout(std430, binding = {MaterialTableSsboBinding}) readonly buffer MaterialTableBuffer {{ MaterialEntry MaterialTable[]; }};");
-            sb.AppendLine($"const uint COMMAND_FLOATS = {IndirectCommandFloatCount}u;");
+            if (bindless)
+            {
+                sb.AppendLine("struct TextureHandleEntry");
+                sb.AppendLine("{");
+                sb.AppendLine("    uvec2 Handle;");
+                sb.AppendLine("    uint Flags;");
+                sb.AppendLine("    uint Padding0;");
+                sb.AppendLine("};");
+                sb.AppendLine($"layout(std430, binding = {MaterialTextureHandleTableSsboBinding}) readonly buffer MaterialTextureHandleTableBuffer {{ TextureHandleEntry TextureHandleTable[]; }};");
+                sb.AppendLine("uint64_t XR_CombineHandle(uvec2 parts)");
+                sb.AppendLine("{");
+                sb.AppendLine("    return (uint64_t(parts.y) << 32) | uint64_t(parts.x);");
+                sb.AppendLine("}");
+                sb.AppendLine("vec4 SampleBindlessTexture(uint handleIndex, vec2 uv, vec4 fallback)");
+                sb.AppendLine("{");
+                sb.AppendLine("    if (handleIndex == 0u || handleIndex >= uint(TextureHandleTable.length()))");
+                sb.AppendLine("        return fallback;");
+                sb.AppendLine("    TextureHandleEntry entry = TextureHandleTable[handleIndex];");
+                sb.AppendLine("    if ((entry.Flags & 1u) == 0u)");
+                sb.AppendLine("        return fallback;");
+                sb.AppendLine("    return texture(sampler2D(XR_CombineHandle(entry.Handle)), uv);");
+                sb.AppendLine("}");
+            }
             sb.AppendLine();
-            sb.AppendLine("uint LoadMaterialId(uint commandIndex)");
+            sb.AppendLine("uint LoadMaterialId(uint drawID)");
             sb.AppendLine("{");
-            sb.AppendLine("    uint baseIndex = commandIndex * COMMAND_FLOATS;");
-            sb.AppendLine("    if (baseIndex + COMMAND_FLOATS > uint(culled.length()))");
+            sb.AppendLine("    if (drawID >= uint(Draws.length()))");
             sb.AppendLine("        return 0u;");
-            sb.AppendLine("    return floatBitsToUint(culled[baseIndex + 38u]);");
+            sb.AppendLine("    return Draws[drawID].MaterialID;");
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("vec3 HashMaterialColor(uint materialId)");
@@ -2259,12 +2323,20 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine("void main()");
             sb.AppendLine("{");
-            sb.AppendLine($"    uint commandIndex = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
-            sb.AppendLine("    uint materialId = LoadMaterialId(commandIndex);");
+            sb.AppendLine($"    uint drawID = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
+            sb.AppendLine("    uint materialId = LoadMaterialId(drawID);");
             sb.AppendLine("    uint flags = 0u;");
             sb.AppendLine("    if (materialId < uint(MaterialTable.length()))");
             sb.AppendLine("        flags = MaterialTable[materialId].Flags;");
             sb.AppendLine("    vec3 baseColor = HashMaterialColor(materialId);");
+            if (bindless)
+            {
+                sb.AppendLine("    if (materialId < uint(MaterialTable.length()) && (flags & 1u) != 0u)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        vec4 albedo = SampleBindlessTexture(MaterialTable[materialId].AlbedoHandleIndex, FragUV0, vec4(baseColor, 1.0));");
+                sb.AppendLine("        baseColor = albedo.rgb;");
+                sb.AppendLine("    }");
+            }
             sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
             sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
             sb.AppendLine("    vec3 normal = normalize(FragNorm);");
@@ -2286,9 +2358,10 @@ namespace XREngine.Rendering
             sb.AppendLine("#version 460");
             sb.AppendLine();
             sb.AppendLine($"// GPU indirect: per-draw command data (float[{IndirectCommandFloatCount}])");
-            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) buffer CulledCommandsBuffer {{ float culled[]; }};");
-            sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) buffer InstanceTransformBuffer {{ float instanceWorld[]; }};");
-            sb.AppendLine($"layout(std430, binding = {InstanceSourceIndexSsboBinding}) buffer InstanceSourceIndexBuffer {{ uint instanceSourceIndex[]; }};");
+            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
+            sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) readonly buffer TransformBuffer {{ float instanceWorld[]; }};");
+            sb.AppendLine($"layout(std430, binding = {InstanceSourceIndexSsboBinding}) readonly buffer InstanceSourceIndexBuffer {{ uint instanceSourceIndex[]; }};");
+            AppendDrawMetadataGlsl(sb);
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
             sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
             sb.AppendLine($"const uint XRE_LEGACY_BASEINSTANCE_FLAG = 0x{IndirectLegacyBaseInstanceFlag:X8}u;");
@@ -2325,6 +2398,8 @@ namespace XREngine.Rendering
 
             for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
                 sb.AppendLine($"layout(location={4 + i}) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, i)};");
+            if (texCoordBindings.Count == 0)
+                sb.AppendLine($"layout(location=4) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)};");
 
             for (int i = 0; i < colorBindings.Count && i < 8; ++i)
                 sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
@@ -2344,20 +2419,27 @@ namespace XREngine.Rendering
             sb.AppendLine("uniform int UseInstanceTransformBuffer;");
             sb.AppendLine();
 
-            sb.AppendLine("mat4 LoadWorldMatrixFromCommands(uint commandIndex)");
+            sb.AppendLine("uint LoadDrawIdFromCommand(uint commandIndex)");
             sb.AppendLine("{");
             sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
-            sb.AppendLine("    // CPU Matrix4x4 rows are intentionally reinterpreted as GLSL columns, matching uniform upload.");
-            sb.AppendLine("    vec4 c0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);");
-            sb.AppendLine("    vec4 c1 = vec4(culled[base+4],  culled[base+5],  culled[base+6],  culled[base+7]);");
-            sb.AppendLine("    vec4 c2 = vec4(culled[base+8],  culled[base+9],  culled[base+10], culled[base+11]);");
-            sb.AppendLine("    vec4 c3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);");
-            sb.AppendLine("    return mat4(c0, c1, c2, c3);");
+            sb.AppendLine("    if (base + 19 < culled.length())");
+            sb.AppendLine("        return floatBitsToUint(culled[base + 19]);");
+            sb.AppendLine("    return commandIndex;");
             sb.AppendLine("}");
             sb.AppendLine();
-            sb.AppendLine("mat4 LoadWorldMatrixFromInstances(uint instanceIndex)");
+            sb.AppendLine("uint LoadTransformId(uint drawID)");
             sb.AppendLine("{");
-            sb.AppendLine("    int base = int(instanceIndex) * INSTANCE_MATRIX_FLOATS;");
+            sb.AppendLine("    if (drawID < uint(Draws.length()))");
+            sb.AppendLine("        return Draws[drawID].TransformID;");
+            sb.AppendLine("    return 0u;");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("mat4 LoadWorldMatrixFromTransforms(uint transformID)");
+            sb.AppendLine("{");
+            sb.AppendLine("    int base = int(transformID) * INSTANCE_MATRIX_FLOATS;");
+            sb.AppendLine("    if (base + 15 >= instanceWorld.length())");
+            sb.AppendLine("        return mat4(1.0);");
+            sb.AppendLine("    // CPU Matrix4x4 rows are intentionally reinterpreted as GLSL columns, matching uniform upload.");
             sb.AppendLine("    vec4 c0 = vec4(instanceWorld[base+0],  instanceWorld[base+1],  instanceWorld[base+2],  instanceWorld[base+3]);");
             sb.AppendLine("    vec4 c1 = vec4(instanceWorld[base+4],  instanceWorld[base+5],  instanceWorld[base+6],  instanceWorld[base+7]);");
             sb.AppendLine("    vec4 c2 = vec4(instanceWorld[base+8],  instanceWorld[base+9],  instanceWorld[base+10], instanceWorld[base+11]);");
@@ -2369,19 +2451,17 @@ namespace XREngine.Rendering
             sb.AppendLine("{");
             sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
             sb.AppendLine("    bool useLegacyBaseInstance = (rawBaseInstance & XRE_LEGACY_BASEINSTANCE_FLAG) != 0u;");
-            sb.AppendLine("    if (UseInstanceTransformBuffer != 0 && !useLegacyBaseInstance && instanceLinearIndex < uint(instanceSourceIndex.length()))");
-            sb.AppendLine("        return instanceSourceIndex[instanceLinearIndex];");
+            sb.AppendLine("    if (useLegacyBaseInstance)");
+            sb.AppendLine("        return LoadDrawIdFromCommand(baseIndex);");
             sb.AppendLine("    return baseIndex;");
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("mat4 ResolveModelMatrix(uint rawBaseInstance, uint instanceLinearIndex)");
             sb.AppendLine("{");
-            sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
-            sb.AppendLine("    bool useLegacyBaseInstance = (rawBaseInstance & XRE_LEGACY_BASEINSTANCE_FLAG) != 0u;");
-            sb.AppendLine("    uint instanceCapacity = uint(instanceWorld.length()) / uint(INSTANCE_MATRIX_FLOATS);");
-            sb.AppendLine("    if (UseInstanceTransformBuffer != 0 && !useLegacyBaseInstance && instanceLinearIndex < instanceCapacity)");
-            sb.AppendLine("        return LoadWorldMatrixFromInstances(instanceLinearIndex);");
-            sb.AppendLine("    return LoadWorldMatrixFromCommands(baseIndex);");
+            sb.AppendLine("    if (UseInstanceTransformBuffer == 0)");
+            sb.AppendLine("        return mat4(1.0);");
+            sb.AppendLine("    uint drawID = ResolveCommandIndex(rawBaseInstance, instanceLinearIndex);");
+            sb.AppendLine("    return LoadWorldMatrixFromTransforms(LoadTransformId(drawID));");
             sb.AppendLine("}");
             sb.AppendLine();
 
@@ -2439,6 +2519,8 @@ namespace XREngine.Rendering
 
             for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
                 sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, i)} = {texCoordBindings[i]};");
+            if (texCoordBindings.Count == 0)
+                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)} = vec2(0.0);");
 
             for (int i = 0; i < colorBindings.Count && i < 8; ++i)
                 sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragColorName, i)} = {colorBindings[i]};");
@@ -2465,8 +2547,14 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(std430, binding = 1) buffer GlyphTexCoordsBuffer { vec4 GlyphTexCoords[]; };");
             if (includeRotations)
                 sb.AppendLine("layout(std430, binding = 2) buffer GlyphRotationsBuffer { float GlyphRotations[]; };");
-            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) buffer CulledCommandsBuffer {{ float culled[]; }};");
+            sb.AppendLine($"layout(std430, binding = {IndirectTextGlyphOffsetSsboBinding}) readonly buffer GlyphOffsetsBuffer {{ uint GlyphOffsets[]; }};");
+            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
+            sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) readonly buffer TransformBuffer {{ float instanceWorld[]; }};");
+            AppendDrawMetadataGlsl(sb);
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
+            sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
+            sb.AppendLine($"const uint XRE_LEGACY_BASEINSTANCE_FLAG = 0x{IndirectLegacyBaseInstanceFlag:X8}u;");
+            sb.AppendLine($"const uint XRE_BASEINSTANCE_COMMAND_INDEX_MASK = 0x{IndirectBaseInstanceCommandIndexMask:X8}u;");
             sb.AppendLine();
 
             sb.AppendLine("layout(location = 0) out vec3 FragPos;");
@@ -2484,19 +2572,39 @@ namespace XREngine.Rendering
             sb.AppendLine($"uniform bool {EEngineUniform.VRMode};");
             sb.AppendLine();
 
-            sb.AppendLine("mat4 LoadWorldMatrix(uint commandIndex)");
+            sb.AppendLine("uint LoadDrawIdFromCommand(uint commandIndex)");
             sb.AppendLine("{");
             sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
-            sb.AppendLine("    vec4 c0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);");
-            sb.AppendLine("    vec4 c1 = vec4(culled[base+4],  culled[base+5],  culled[base+6],  culled[base+7]);");
-            sb.AppendLine("    vec4 c2 = vec4(culled[base+8],  culled[base+9],  culled[base+10], culled[base+11]);");
-            sb.AppendLine("    vec4 c3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);");
+            sb.AppendLine("    if (base + 19 < culled.length())");
+            sb.AppendLine("        return floatBitsToUint(culled[base + 19]);");
+            sb.AppendLine("    return commandIndex;");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("uint LoadTransformId(uint drawID)");
+            sb.AppendLine("{");
+            sb.AppendLine("    if (drawID < uint(Draws.length()))");
+            sb.AppendLine("        return Draws[drawID].TransformID;");
+            sb.AppendLine("    return 0u;");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("mat4 LoadWorldMatrix(uint transformID)");
+            sb.AppendLine("{");
+            sb.AppendLine("    int base = int(transformID) * INSTANCE_MATRIX_FLOATS;");
+            sb.AppendLine("    if (base + 15 >= instanceWorld.length())");
+            sb.AppendLine("        return mat4(1.0);");
+            sb.AppendLine("    vec4 c0 = vec4(instanceWorld[base+0],  instanceWorld[base+1],  instanceWorld[base+2],  instanceWorld[base+3]);");
+            sb.AppendLine("    vec4 c1 = vec4(instanceWorld[base+4],  instanceWorld[base+5],  instanceWorld[base+6],  instanceWorld[base+7]);");
+            sb.AppendLine("    vec4 c2 = vec4(instanceWorld[base+8],  instanceWorld[base+9],  instanceWorld[base+10], instanceWorld[base+11]);");
+            sb.AppendLine("    vec4 c3 = vec4(instanceWorld[base+12], instanceWorld[base+13], instanceWorld[base+14], instanceWorld[base+15]);");
             sb.AppendLine("    return mat4(c0, c1, c2, c3);");
             sb.AppendLine("}");
             sb.AppendLine();
-            sb.AppendLine("uint ResolveCommandIndex(uint rawBaseInstance)");
+            sb.AppendLine("uint ResolveDrawID(uint rawBaseInstance)");
             sb.AppendLine("{");
-            sb.AppendLine("    return rawBaseInstance;");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance & XRE_BASEINSTANCE_COMMAND_INDEX_MASK;");
+            sb.AppendLine("    if ((rawBaseInstance & XRE_LEGACY_BASEINSTANCE_FLAG) != 0u)");
+            sb.AppendLine("        return LoadDrawIdFromCommand(baseIndex);");
+            sb.AppendLine("    return baseIndex;");
             sb.AppendLine("}");
             sb.AppendLine();
 
@@ -2515,13 +2623,12 @@ namespace XREngine.Rendering
 
             sb.AppendLine("void main()");
             sb.AppendLine("{");
-            sb.AppendLine("    uint commandIndex = ResolveCommandIndex(uint(gl_BaseInstance));");
-            sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(commandIndex);");
+            sb.AppendLine("    uint drawID = ResolveDrawID(uint(gl_BaseInstance));");
+            sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(LoadTransformId(drawID));");
             if (emitTransformId)
-                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
+                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(drawID);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
-            sb.AppendLine("    int cmdBase = int(commandIndex) * COMMAND_FLOATS;");
-            sb.AppendLine($"    uint glyphBase = floatBitsToUint(culled[cmdBase + {IndirectTextGlyphOffsetFloatIndex}]);");
+            sb.AppendLine("    uint glyphBase = drawID < uint(GlyphOffsets.length()) ? GlyphOffsets[drawID] : 0u;");
             sb.AppendLine("    uint glyphIndex = glyphBase + uint(gl_InstanceID);");
             sb.AppendLine("    vec4 tfm = GlyphTransforms[glyphIndex];");
             sb.AppendLine("    vec4 uv = GlyphTexCoords[glyphIndex];");
@@ -2904,13 +3011,18 @@ namespace XREngine.Rendering
             vaoRenderer.Buffers.Remove(GlyphTransformsBufferName);
             vaoRenderer.Buffers.Remove(GlyphTexCoordsBufferName);
             vaoRenderer.Buffers.Remove(GlyphRotationsBufferName);
+            vaoRenderer.Buffers.Remove(GlyphOffsetsBufferName);
         }
 
-        private bool EnsureIndirectTextBatchBuffers(XRMeshRenderer vaoRenderer, uint requiredGlyphCount, bool includeRotations)
+        private bool EnsureIndirectTextBatchBuffers(XRMeshRenderer vaoRenderer, uint requiredGlyphCount, uint requiredDrawId, bool includeRotations)
         {
             uint requiredCapacity = requiredGlyphCount == 0 ? 1u : XRMath.NextPowerOfTwo(requiredGlyphCount);
             if (requiredCapacity == 0)
                 requiredCapacity = requiredGlyphCount == 0 ? 1u : requiredGlyphCount;
+
+            uint requiredOffsetCapacity = XRMath.NextPowerOfTwo(requiredDrawId + 1u);
+            if (requiredOffsetCapacity == 0u)
+                requiredOffsetCapacity = requiredDrawId + 1u;
 
             if (_indirectTextTransformsBuffer is null)
             {
@@ -2990,6 +3102,31 @@ namespace XREngine.Rendering
             vaoRenderer.Buffers[GlyphTransformsBufferName] = _indirectTextTransformsBuffer;
             vaoRenderer.Buffers[GlyphTexCoordsBufferName] = _indirectTextTexCoordsBuffer;
 
+            if (_indirectTextGlyphOffsetsBuffer is null)
+            {
+                _indirectTextGlyphOffsetsBuffer = new XRDataBuffer(
+                    GlyphOffsetsBufferName,
+                    EBufferTarget.ShaderStorageBuffer,
+                    requiredOffsetCapacity,
+                    EComponentType.UInt,
+                    1,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    BindingIndexOverride = IndirectTextGlyphOffsetSsboBinding,
+                    DisposeOnPush = false
+                };
+                _indirectTextBuffersNeedFullPush = true;
+            }
+            else if (_indirectTextGlyphOffsetsBuffer.ElementCount < requiredOffsetCapacity)
+            {
+                _indirectTextGlyphOffsetsBuffer.Resize(requiredOffsetCapacity);
+                _indirectTextBuffersNeedFullPush = true;
+            }
+
+            vaoRenderer.Buffers[GlyphOffsetsBufferName] = _indirectTextGlyphOffsetsBuffer;
+
             if (includeRotations && _indirectTextRotationsBuffer is not null)
                 vaoRenderer.Buffers[GlyphRotationsBufferName] = _indirectTextRotationsBuffer;
             else
@@ -3013,8 +3150,9 @@ namespace XREngine.Rendering
             if (indirectBuffer is null)
                 return false;
 
-            var sources = new List<(uint culledIndex, uint glyphCount, XRDataBuffer transforms, XRDataBuffer texCoords, XRDataBuffer? rotations)>((int)batchCount);
+            var sources = new List<(uint drawID, uint glyphCount, XRDataBuffer transforms, XRDataBuffer texCoords, XRDataBuffer? rotations)>((int)batchCount);
             ulong totalGlyphs64 = 0;
+            uint maxDrawId = 0u;
 
             for (uint local = 0; local < batchCount; ++local)
             {
@@ -3027,27 +3165,36 @@ namespace XREngine.Rendering
                 if (glyphCount == 0)
                     continue;
 
-                uint culledIndex = drawCommand.BaseInstance;
-                if (culledIndex >= renderPasses.CulledSceneToRenderBuffer.ElementCount)
+                uint drawID = drawCommand.BaseInstance & IndirectBaseInstanceCommandIndexMask;
+                if ((drawCommand.BaseInstance & IndirectLegacyBaseInstanceFlag) != 0u)
                 {
-                    GpuWarn(LogCategory.Draw,
-                        "Indirect text batch preparation failed: culled index {0} out of range for drawIndex={1}.",
-                        culledIndex,
-                        drawIndex);
-                    return false;
-                }
-
-                GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(culledIndex);
-                uint sourceCommandIndex = culledCommand.Reserved1;
-                if (!scene.TryGetSourceCommand(sourceCommandIndex, out IRenderCommandMesh? sourceCommand) || sourceCommand?.Mesh is null)
-                {
-                    // Fallback for legacy command buffers that predate Reserved1 source-index encoding.
-                    if (!scene.TryGetSourceCommand(culledIndex, out sourceCommand) || sourceCommand?.Mesh is null)
+                    if (drawID >= renderPasses.CulledSceneToRenderBuffer.ElementCount)
                     {
                         GpuWarn(LogCategory.Draw,
-                            "Indirect text batch preparation failed: unable to resolve source command for culledIndex={0} (source={1}).",
-                            culledIndex,
-                            sourceCommandIndex);
+                            "Indirect text batch preparation failed: legacy culled index {0} out of range for drawIndex={1}.",
+                            drawID,
+                            drawIndex);
+                        return false;
+                    }
+
+                    GPUIndirectRenderCommand legacyCulledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(drawID);
+                    drawID = legacyCulledCommand.Reserved1;
+                }
+
+                if (!scene.TryGetSourceCommand(drawID, out IRenderCommandMesh? sourceCommand) || sourceCommand?.Mesh is null)
+                {
+                    if (drawIndex < renderPasses.CulledSceneToRenderBuffer.ElementCount)
+                    {
+                        GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(drawIndex);
+                        uint sourceCommandIndex = culledCommand.Reserved1;
+                        scene.TryGetSourceCommand(sourceCommandIndex, out sourceCommand);
+                    }
+
+                    if (sourceCommand?.Mesh is null)
+                    {
+                        GpuWarn(LogCategory.Draw,
+                            "Indirect text batch preparation failed: unable to resolve source command for drawID={0}.",
+                            drawID);
                         return false;
                     }
                 }
@@ -3058,7 +3205,7 @@ namespace XREngine.Rendering
                 {
                     GpuWarn(LogCategory.Draw,
                         "Indirect text batch preparation failed: command {0} is missing glyph SSBOs.",
-                        sourceCommandIndex);
+                        drawID);
                     return false;
                 }
 
@@ -3067,7 +3214,7 @@ namespace XREngine.Rendering
                 {
                     GpuWarn(LogCategory.Draw,
                         "Indirect text batch preparation failed: command {0} is missing '{1}'.",
-                        sourceCommandIndex,
+                        drawID,
                         GlyphRotationsBufferName);
                     return false;
                 }
@@ -3079,27 +3226,21 @@ namespace XREngine.Rendering
                     return false;
                 }
 
-                sources.Add((culledIndex, glyphCount, sourceTransforms, sourceTexCoords, sourceRotations));
+                sources.Add((drawID, glyphCount, sourceTransforms, sourceTexCoords, sourceRotations));
+                maxDrawId = Math.Max(maxDrawId, drawID);
             }
 
             uint totalGlyphs = (uint)totalGlyphs64;
             if (totalGlyphs == 0)
                 return false;
 
-            if (!EnsureIndirectTextBatchBuffers(vaoRenderer, totalGlyphs, includeRotations))
+            if (!EnsureIndirectTextBatchBuffers(vaoRenderer, totalGlyphs, maxDrawId, includeRotations))
                 return false;
 
             uint writeOffset = 0;
-            uint commandStride = renderPasses.CulledSceneToRenderBuffer.ElementSize;
-            if (commandStride == 0)
-                commandStride = (uint)(GPUScene.CommandFloatCount * sizeof(float));
-
             foreach (var source in sources)
             {
-                GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(source.culledIndex);
-                culledCommand.Reserved0 = writeOffset;
-                renderPasses.CulledSceneToRenderBuffer.SetDataRawAtIndex(source.culledIndex, culledCommand);
-                renderPasses.CulledSceneToRenderBuffer.PushSubData((int)(source.culledIndex * commandStride), commandStride);
+                _indirectTextGlyphOffsetsBuffer!.SetDataRawAtIndex(source.drawID, writeOffset);
 
                 uint copyCount = source.glyphCount;
                 copyCount = Math.Min(copyCount, source.transforms.ElementCount);
@@ -3110,8 +3251,8 @@ namespace XREngine.Rendering
                 if (copyCount < source.glyphCount)
                 {
                     GpuWarn(LogCategory.Draw,
-                        "Indirect text glyph data truncated for command at culledIndex={0}: requested={1}, copied={2}.",
-                        source.culledIndex,
+                        "Indirect text glyph data truncated for drawID={0}: requested={1}, copied={2}.",
+                        source.drawID,
                         source.glyphCount,
                         copyCount);
                 }
@@ -3139,6 +3280,7 @@ namespace XREngine.Rendering
             {
                 _indirectTextTransformsBuffer!.PushData();
                 _indirectTextTexCoordsBuffer!.PushData();
+                _indirectTextGlyphOffsetsBuffer!.PushData();
                 if (includeRotations && _indirectTextRotationsBuffer is not null)
                     _indirectTextRotationsBuffer.PushData();
                 _indirectTextBuffersNeedFullPush = false;
@@ -3147,6 +3289,7 @@ namespace XREngine.Rendering
             {
                 _indirectTextTransformsBuffer!.PushSubData();
                 _indirectTextTexCoordsBuffer!.PushSubData();
+                _indirectTextGlyphOffsetsBuffer!.PushSubData();
                 if (includeRotations && _indirectTextRotationsBuffer is not null)
                     _indirectTextRotationsBuffer.PushSubData();
             }
@@ -3408,7 +3551,7 @@ namespace XREngine.Rendering
             //}
 
             var activeBatches = CoalesceContiguousBatches(overrideBatches ?? batches);
-            Engine.Rendering.Stats.RecordVulkanIndirectBatchMerge(batches.Count, activeBatches.Count);
+            RuntimeEngine.Rendering.Stats.RecordVulkanIndirectBatchMerge(batches.Count, activeBatches.Count);
 
             if (activeBatches.Count != batches.Count)
             {
@@ -3418,12 +3561,9 @@ namespace XREngine.Rendering
                     batches.Count,
                     activeBatches.Count);
             }
-            XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
+            XRDataBuffer? instanceTransformBuffer = scene.TransformBuffer;
             XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
-            bool useGpuInstanceTransforms =
-                renderPasses.GpuBatchingPreparedThisFrame &&
-                instanceTransformBuffer is not null &&
-                instanceSourceIndexBuffer is not null;
+            bool useGpuInstanceTransforms = instanceTransformBuffer is not null;
 
             bool instrumentedStrategy = IsInstrumentedStrategy(renderPasses);
             if (instrumentedStrategy && DebugSettings.DumpIndirectArguments && materialMap.Count > 0)
@@ -3504,7 +3644,7 @@ namespace XREngine.Rendering
                 if (lookupMaterialId == uint.MaxValue && cpuMaterialOrder is not null && batch.Offset < cpuMaterialOrder.Count)
                     lookupMaterialId = cpuMaterialOrder[(int)batch.Offset];
 
-                XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
+                XRMaterial? overrideMaterial = RuntimeEngine.Rendering.State.OverrideMaterial;
 
                 uint effectiveMaterialId = lookupMaterialId;
                 XRMaterial? sourceMaterial = null;
@@ -3591,6 +3731,7 @@ namespace XREngine.Rendering
                     indirectDrawBuffer,
                     vaoRenderer,
                     renderPasses.CulledSceneToRenderBuffer,
+                    scene.DrawMetadataBuffer,
                     scene.LodTransitionBuffer,
                     instanceTransformBuffer,
                     instanceSourceIndexBuffer,
@@ -3616,7 +3757,7 @@ namespace XREngine.Rendering
             int currentRenderPass,
             IReadOnlyDictionary<uint, XRMaterial> materialMap)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTiers");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTiers");
 
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
@@ -3649,12 +3790,9 @@ namespace XREngine.Rendering
                 return;
             }
 
-            XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
+            XRDataBuffer? instanceTransformBuffer = scene.TransformBuffer;
             XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
-            bool useGpuInstanceTransforms =
-                renderPasses.GpuBatchingPreparedThisFrame &&
-                instanceTransformBuffer is not null &&
-                instanceSourceIndexBuffer is not null;
+            bool useGpuInstanceTransforms = instanceTransformBuffer is not null;
 
             Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
@@ -3671,7 +3809,7 @@ namespace XREngine.Rendering
             {
                 P3Diagnostics.IncSlotIterated();
                 uint materialId = materialSlotIds[slotIndex];
-                XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
+                XRMaterial? overrideMaterial = RuntimeEngine.Rendering.State.OverrideMaterial;
 
                 XRMaterial? sourceMaterial = null;
                 if (materialId != 0)
@@ -3736,6 +3874,7 @@ namespace XREngine.Rendering
                         indirectDrawBuffer,
                         vaoRenderer,
                         culledCommandsBuffer,
+                        scene.DrawMetadataBuffer,
                         scene.LodTransitionBuffer,
                         instanceTransformBuffer,
                         instanceSourceIndexBuffer,
@@ -3763,7 +3902,7 @@ namespace XREngine.Rendering
             int currentRenderPass,
             IReadOnlyDictionary<uint, XRMaterial> materialMap)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ZeroReadback.RenderActiveMaterialBuckets");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ZeroReadback.RenderActiveMaterialBuckets");
 
             if (!renderPasses.ZeroReadbackActiveBucketListPreparedThisFrame)
             {
@@ -3809,12 +3948,9 @@ namespace XREngine.Rendering
                 return;
             }
 
-            XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
+            XRDataBuffer? instanceTransformBuffer = scene.TransformBuffer;
             XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
-            bool useGpuInstanceTransforms =
-                renderPasses.GpuBatchingPreparedThisFrame &&
-                instanceTransformBuffer is not null &&
-                instanceSourceIndexBuffer is not null;
+            bool useGpuInstanceTransforms = instanceTransformBuffer is not null;
 
             Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
@@ -3834,7 +3970,7 @@ namespace XREngine.Rendering
                     continue;
 
                 uint materialId = materialSlotIds[(int)slotIndex];
-                XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
+                XRMaterial? overrideMaterial = RuntimeEngine.Rendering.State.OverrideMaterial;
 
                 XRMaterial? sourceMaterial = null;
                 if (materialId != 0)
@@ -3873,6 +4009,7 @@ namespace XREngine.Rendering
                     indirectDrawBuffer,
                     vaoRenderer,
                     culledCommandsBuffer,
+                    scene.DrawMetadataBuffer,
                     scene.LodTransitionBuffer,
                     instanceTransformBuffer,
                     instanceSourceIndexBuffer,
@@ -3897,7 +4034,7 @@ namespace XREngine.Rendering
             int currentRenderPass,
             bool bindless)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTableBuckets");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTableBuckets");
 
             IReadOnlyDictionary<uint, XRMaterial> materialMap = renderPasses.GetMaterialMap(scene);
 
@@ -3906,8 +4043,8 @@ namespace XREngine.Rendering
             // or per-material DepthNormalPrePassVariant. Forward depth/normal pre-passes and similar
             // override-driven passes need the per-material tier path to ensure the override or
             // depth-normal variant program is actually used.
-            var renderState = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
-            bool overrideActive = Engine.Rendering.State.OverrideMaterial is not null
+            var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            bool overrideActive = RuntimeEngine.Rendering.State.OverrideMaterial is not null
                 || (renderState is not null && renderState.UseDepthNormalMaterialVariants);
             if (overrideActive)
             {
@@ -3939,6 +4076,10 @@ namespace XREngine.Rendering
             }
 
             bool useBindless = bindless && SupportsOpenGLBindlessMaterialTable();
+            XRDataBuffer? materialTextureHandleBuffer = useBindless ? renderPasses.MaterialTextureHandleBuffer : null;
+            if (useBindless && materialTextureHandleBuffer is null)
+                useBindless = false;
+
             if (bindless && !useBindless && _bindlessMaterialTableUnsupportedLogBudget > 0)
             {
                 _bindlessMaterialTableUnsupportedLogBudget--;
@@ -3975,12 +4116,9 @@ namespace XREngine.Rendering
             if (activeBuckets is null || activeBuckets.Count == 0)
                 return;
 
-            XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
+            XRDataBuffer? instanceTransformBuffer = scene.TransformBuffer;
             XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
-            bool useGpuInstanceTransforms =
-                renderPasses.GpuBatchingPreparedThisFrame &&
-                instanceTransformBuffer is not null &&
-                instanceSourceIndexBuffer is not null;
+            bool useGpuInstanceTransforms = instanceTransformBuffer is not null;
 
             Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
@@ -4013,6 +4151,7 @@ namespace XREngine.Rendering
                     indirectDrawBuffer,
                     vaoRenderer,
                     culledCommandsBuffer,
+                    scene.DrawMetadataBuffer,
                     scene.LodTransitionBuffer,
                     instanceTransformBuffer,
                     instanceSourceIndexBuffer,
@@ -4025,6 +4164,7 @@ namespace XREngine.Rendering
                     camera,
                     defaultModelMatrix,
                     materialTableBuffer,
+                    materialTextureHandleBuffer,
                     allowMaxDrawFallback: true,
                     emitBarrier: false);
             }
@@ -4068,6 +4208,7 @@ namespace XREngine.Rendering
             XRDataBuffer indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
             XRDataBuffer culledCommandsBuffer,
+            XRDataBuffer drawMetadataBuffer,
             XRDataBuffer? lodTransitionBuffer,
             XRDataBuffer? instanceTransformBuffer,
             XRDataBuffer? instanceSourceIndexBuffer,
@@ -4080,10 +4221,11 @@ namespace XREngine.Rendering
             XRCamera camera,
             Matrix4x4 modelMatrix,
             XRDataBuffer? materialTableBuffer = null,
+            XRDataBuffer? materialTextureHandleBuffer = null,
             bool allowMaxDrawFallback = false,
             bool emitBarrier = true)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.DispatchRenderIndirectCountBucket");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchRenderIndirectCountBucket");
 
             var renderer = AbstractRenderer.Current;
             if (renderer is null || maxDrawCount == 0)
@@ -4104,10 +4246,12 @@ namespace XREngine.Rendering
                 return;
 
             culledCommandsBuffer.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+            drawMetadataBuffer.BindTo(graphicsProgram, DrawMetadataSsboBinding);
             lodTransitionBuffer?.BindTo(graphicsProgram, LodTransitionSsboBinding);
             instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
             instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
             materialTableBuffer?.BindTo(graphicsProgram, MaterialTableSsboBinding);
+            materialTextureHandleBuffer?.BindTo(graphicsProgram, MaterialTextureHandleTableSsboBinding);
             graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
             renderer.SetEngineUniforms(graphicsProgram, camera);
             graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);
@@ -4156,20 +4300,20 @@ namespace XREngine.Rendering
                     return;
                 }
 
-                using (Engine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
+                using (RuntimeEngine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
                     renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
                 try
                 {
                     if (emitBarrier)
                     {
-                        using var barrierScope = Engine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier");
+                        using var barrierScope = RuntimeEngine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier");
                         renderer.MemoryBarrier(
                             EMemoryBarrierMask.ShaderStorage |
                             EMemoryBarrierMask.ClientMappedBuffer |
                             EMemoryBarrierMask.Command);
                     }
 
-                    using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectWithOffset"))
+                    using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectWithOffset"))
                         renderer.MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, indirectByteOffset);
                 }
                 finally
@@ -4200,22 +4344,22 @@ namespace XREngine.Rendering
                 return;
             }
 
-            using (Engine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
+            using (RuntimeEngine.Profiler.Start("GpuIndirect.BindDrawIndirectBuffer"))
                 renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
-            using (Engine.Profiler.Start("GpuIndirect.BindParameterBuffer"))
+            using (RuntimeEngine.Profiler.Start("GpuIndirect.BindParameterBuffer"))
                 renderer.BindParameterBuffer(parameterBuffer);
             try
             {
                 if (emitBarrier)
                 {
-                    using var barrierScope = Engine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier");
+                    using var barrierScope = RuntimeEngine.Profiler.Start("GpuIndirect.Draw.MemoryBarrier");
                     renderer.MemoryBarrier(
                         EMemoryBarrierMask.ShaderStorage |
                         EMemoryBarrierMask.ClientMappedBuffer |
                         EMemoryBarrierMask.Command);
                 }
 
-                using (Engine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
+                using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
                 {
                     LogIndirectDrawSizes("DispatchRenderIndirectCountBucket", maxDrawCount, stride, indirectDrawBuffer, parameterBuffer, indirectByteOffset, countByteOffset);
                     renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
@@ -4311,7 +4455,7 @@ namespace XREngine.Rendering
                 return true;
             }
 
-            Engine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+            RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
             var backend = graphicsProgram.ShaderMetadata.Backend;
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderDispatch.ProgramNotReady.{context}.{RuntimeHelpers.GetHashCode(graphicsProgram)}",
@@ -4348,6 +4492,7 @@ namespace XREngine.Rendering
             _indirectTextTransformsBuffer?.Destroy();
             _indirectTextTexCoordsBuffer?.Destroy();
             _indirectTextRotationsBuffer?.Destroy();
+            _indirectTextGlyphOffsetsBuffer?.Destroy();
             GC.SuppressFinalize(this);
         }
     }

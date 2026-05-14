@@ -124,6 +124,34 @@ public static partial class EditorImGuiUI
         }
         ImGui.Separator();
 
+        // CPU software occlusion path
+        int socTested = OcclusionTelemetry.CpuSocTested;
+        int socCulled = OcclusionTelemetry.CpuSocCulled;
+        int socSelected = OcclusionTelemetry.CpuSocOccludersSelected;
+        int socRasterized = OcclusionTelemetry.CpuSocOccludersRasterized;
+        double socRate = socTested > 0 ? (double)socCulled / socTested : 0.0;
+
+        ImGui.TextColored(new Vector4(0.6f, 0.9f, 1.0f, 1.0f), "CPU SOC Path (software raster):");
+        if (socTested + socSelected + socRasterized == 0)
+        {
+            ImGui.TextDisabled("  Not active this frame.");
+        }
+        else
+        {
+            ImGui.Text($"  Occluders Selected  : {socSelected:N0}");
+            ImGui.Text($"  Occluders Rasterized: {socRasterized:N0}");
+            ImGui.Text($"  Tiles Closed        : {OcclusionTelemetry.CpuSocTilesClosed:N0}");
+            ImGui.Text($"  Tested              : {socTested:N0}");
+            Vector4 socColor = socCulled > 0
+                ? new Vector4(0.4f, 1.0f, 0.6f, 1.0f)
+                : new Vector4(1.0f, 0.7f, 0.3f, 1.0f);
+            ImGui.TextColored(socColor, $"  Culled              : {socCulled:N0}  ({socRate * 100.0:F1}%)");
+            ImGui.Text($"  Time ms             : begin={OcclusionTelemetry.CpuSocBeginMilliseconds:F3} raster={OcclusionTelemetry.CpuSocRasterMilliseconds:F3} test={OcclusionTelemetry.CpuSocTestMilliseconds:F3}");
+            if (OcclusionTelemetry.CpuSocForceVisible)
+                ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f), "  Force visible is enabled.");
+        }
+        ImGui.Separator();
+
         // GPU path
         int gpuCands = OcclusionTelemetry.GpuCandidates;
         int gpuOccl = OcclusionTelemetry.GpuOccluded;
