@@ -446,12 +446,16 @@ public static partial class EditorUnitTests
             }
         }
 
-        private static string ResolveModelPath(string desktopDir, string rawPath)
+        internal static string ResolveModelPath(string desktopDir, string rawPath)
         {
             if (Path.IsPathRooted(rawPath))
                 return rawPath;
 
-            string candidate = Path.Combine(desktopDir, rawPath);
+            string candidate = Path.Combine(Environment.CurrentDirectory, rawPath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            candidate = Path.Combine(desktopDir, rawPath);
             if (File.Exists(candidate))
                 return candidate;
 

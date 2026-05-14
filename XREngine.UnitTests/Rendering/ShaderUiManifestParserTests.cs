@@ -3,6 +3,7 @@ using System.IO;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -65,6 +66,83 @@ public sealed class ShaderUiManifestParserTests
         manifest.ValidationIssues.ShouldBeEmpty();
         manifest.PropertyLookup["_HideInShadow"].IsToggle.ShouldBeTrue();
         manifest.PropertyLookup["_BlendMode"].EnumOptions.ShouldBe("0:Mix|1:Add|2:Multiply");
+    }
+
+    [Test]
+    public void Parse_BindingAnnotation_CapturesMaterialScope()
+    {
+        const string source = """
+            #version 450 core
+            //@binding(name="BaseColor", scope=material, semantic=baseColorOpacity, storage=field, default="vec4(1.0)")
+            uniform vec4 BaseColor;
+            //@binding(name="Texture0", scope=texture, semantic=albedo, storage=bindless)
+            layout(binding = 0) uniform sampler2D Texture0;
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source);
+
+        manifest.ValidationIssues.ShouldBeEmpty();
+        manifest.Bindings.Count.ShouldBe(2);
+        manifest.BindingLookup["BaseColor"].Scope.ShouldBe(EMaterialBindingScope.Material);
+        manifest.BindingLookup["BaseColor"].Storage.ShouldBe(EMaterialBindingStorage.Field);
+        manifest.BindingLookup["BaseColor"].Semantic.ShouldBe("baseColorOpacity");
+        manifest.BindingLookup["Texture0"].Scope.ShouldBe(EMaterialBindingScope.Texture);
+        manifest.BindingLookup["Texture0"].Storage.ShouldBe(EMaterialBindingStorage.Bindless);
+    }
+
+    [Test]
+    public void Parse_PropertyIndirectKeys_CaptureBindingMetadata()
+    {
+        const string source = """
+            #version 450 core
+            //@property(name="_MainTex", display="Albedo Map", slot=texture, indirect=texture, semantic=albedo)
+            uniform sampler2D _MainTex;
+            //@property(name="_Color", display="Tint", mode=static, indirect=field, semantic=baseColorOpacity, default="vec4(1.0)")
+            uniform vec4 _Color;
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source);
+
+        manifest.ValidationIssues.ShouldBeEmpty();
+        manifest.PropertyLookup["_MainTex"].Binding.ShouldNotBeNull();
+        manifest.PropertyLookup["_MainTex"].Binding!.Scope.ShouldBe(EMaterialBindingScope.Texture);
+        manifest.PropertyLookup["_MainTex"].Binding!.Semantic.ShouldBe("albedo");
+        manifest.PropertyLookup["_Color"].Binding.ShouldNotBeNull();
+        manifest.PropertyLookup["_Color"].Binding!.Scope.ShouldBe(EMaterialBindingScope.Material);
+        manifest.PropertyLookup["_Color"].Binding!.Storage.ShouldBe(EMaterialBindingStorage.Field);
+    }
+
+    [Test]
+    public void Parse_BindingMissingScope_ReportsCompatibilityWarning()
+    {
+        const string source = """
+            #version 450 core
+            //@binding(name="Tint", semantic=baseColorOpacity, storage=field)
+            uniform vec4 Tint;
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source);
+
+        manifest.BindingLookup["Tint"].Scope.ShouldBe(EMaterialBindingScope.Unspecified);
+        manifest.ValidationIssues.ShouldContain(x =>
+            x.Severity == EShaderUiValidationSeverity.Warning &&
+            x.Message.Contains("missing a scope", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Parse_BindingSamplerAsMaterialField_ReportsTypeError()
+    {
+        const string source = """
+            #version 450 core
+            //@binding(name="Texture0", scope=material, semantic=baseColorOpacity, storage=field)
+            uniform sampler2D Texture0;
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source);
+
+        manifest.ValidationIssues.ShouldContain(x =>
+            x.Severity == EShaderUiValidationSeverity.Error &&
+            x.Message.Contains("sampler", StringComparison.Ordinal));
     }
 
     [Test]

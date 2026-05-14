@@ -674,6 +674,13 @@ namespace XREngine.Rendering.Commands
         private GPUMaterialTable? _materialTable;
         public XRDataBuffer? MaterialTableBuffer => _materialTable?.Buffer;
         public XRDataBuffer? MaterialTextureHandleBuffer => _materialTable?.TextureHandleBuffer;
+        private MaterialBindingResolverResult _lastMaterialBindingResolverResult =
+            MaterialBindingResolverResult.PerMaterial("Material binding resolver has not run.");
+        public MaterialBindingResolverResult LastMaterialBindingResolverResult => _lastMaterialBindingResolverResult;
+        public MaterialBindingLayout? MaterialBindingLayout
+            => MaterialBindingLayouts.TryGetDefaultForRenderPass(RenderPass, out MaterialBindingLayout layout)
+                ? layout
+                : null;
 
         // Hybrid rendering manager (meshlets vs traditional indirect)
         private readonly HybridRenderingManager _renderManager = new() { UseMeshletPipeline = false };
@@ -707,6 +714,12 @@ namespace XREngine.Rendering.Commands
         }
 
         public void SetMaterialTable(GPUMaterialTable table) => _materialTable = table;
+
+        public bool TryGetGeneratedMaterialTableDispatchLayout(int renderPass, out MaterialBindingLayout layout)
+            => MaterialBindingLayouts.TryGetGeneratedMaterialTableDispatchLayout(renderPass, out layout);
+
+        public void RecordMaterialBindingResolverResult(MaterialBindingResolverResult result)
+            => _lastMaterialBindingResolverResult = result;
     }
 
     public sealed partial class GPURenderPassCollection : IRuntimeGpuRenderPassHost
