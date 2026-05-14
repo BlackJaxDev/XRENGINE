@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Materials;
 
@@ -31,6 +33,40 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
     }
 
     [Test]
+    public void MaterialTable_PacksConstantsAndHandleRowsContiguously()
+    {
+        using GPUMaterialTable table = new(initialCapacity: 4, initialHandleCapacity: 4);
+
+        table.AddOrUpdate(
+            2u,
+            new GPUMaterialEntry
+            {
+                Flags = 0x80000001u,
+                BaseColorOpacity = new Vector4(0.25f, 0.5f, 0.75f, 0.9f),
+                RMSE = new Vector4(0.1f, 0.2f, 0.3f, 0.4f)
+            },
+            new GPUMaterialTextureHandles(0x0000000200000001ul, 0ul, 0ul));
+
+        ReadUInt(table.Buffer, 2u, 0u).ShouldBe(1u);
+        ReadUInt(table.Buffer, 2u, 1u).ShouldBe(0u);
+        ReadUInt(table.Buffer, 2u, 2u).ShouldBe(0u);
+        ReadUInt(table.Buffer, 2u, 3u).ShouldBe(0x80000001u);
+        ReadFloat(table.Buffer, 2u, 4u).ShouldBe(0.25f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 5u).ShouldBe(0.5f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 6u).ShouldBe(0.75f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 7u).ShouldBe(0.9f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 8u).ShouldBe(0.1f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 9u).ShouldBe(0.2f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 10u).ShouldBe(0.3f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 11u).ShouldBe(0.4f, 0.000001f);
+
+        ReadUInt(table.TextureHandleBuffer, 1u, 0u).ShouldBe(1u);
+        ReadUInt(table.TextureHandleBuffer, 1u, 1u).ShouldBe(2u);
+        ReadUInt(table.TextureHandleBuffer, 1u, 2u).ShouldBe(1u);
+        ReadUInt(table.TextureHandleBuffer, 1u, 3u).ShouldBe(0u);
+    }
+
+    [Test]
     public void PhaseD_SourceContracts_ArePresent()
     {
         string glRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs");
@@ -38,6 +74,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         string materialTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs");
         string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+        string materialScatterSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp");
         string vulkanDescriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanDescriptorLayoutCache.cs");
         string vulkanBindlessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanBindlessMaterialDescriptors.cs");
         string vkBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
@@ -52,10 +89,19 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         glBindlessSource.ShouldContain("MakeTextureHandleResident");
         materialTableSource.ShouldContain("MaterialTextureHandleTable");
         materialTableSource.ShouldContain("GPUMaterialTextureHandles");
+        materialTableSource.ShouldContain("BaseColorOpacity");
+        materialTableSource.ShouldContain("RMSE");
         passSource.ShouldContain("TryResolveOpenGLBindlessTextureHandle");
         passSource.ShouldContain("TextureArrayPolicy");
+        passSource.ShouldContain("ResolveMaterialBaseColorOpacity");
+        passSource.ShouldContain("ResolveMaterialRmse");
+        passSource.ShouldContain("IReadOnlyDictionary<uint, XRMaterial> materialMap = scene.MaterialMap;");
         hybridSource.ShouldContain("MaterialTextureHandleTableSsboBinding");
         hybridSource.ShouldContain("SampleBindlessTexture");
+        hybridSource.ShouldContain("AlbedoOpacity = vec4(baseColor, opacity);");
+        hybridSource.ShouldNotContain("HashMaterialColor");
+        materialScatterSource.ShouldContain("uint materialID = meta.MaterialID;");
+        materialScatterSource.ShouldContain("uint slotIndex = materialSlots[materialID];");
 
         vulkanDescriptorSource.ShouldContain("VariableDescriptorCountBit");
         vulkanBindlessSource.ShouldContain("MaxTextureDescriptorCount");
@@ -137,4 +183,15 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
 
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
     }
+
+    private static uint ReadUInt(XRDataBuffer buffer, uint row, uint wordIndex)
+    {
+        uint offset = (row * buffer.ElementSize) + (wordIndex * sizeof(uint));
+        uint? value = buffer.Get<uint>(offset);
+        value.HasValue.ShouldBeTrue();
+        return value.Value;
+    }
+
+    private static float ReadFloat(XRDataBuffer buffer, uint row, uint wordIndex)
+        => BitConverter.UInt32BitsToSingle(ReadUInt(buffer, row, wordIndex));
 }

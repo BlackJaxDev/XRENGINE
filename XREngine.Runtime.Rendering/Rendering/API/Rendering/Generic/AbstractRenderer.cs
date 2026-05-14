@@ -145,7 +145,7 @@ namespace XREngine.Rendering
         protected virtual bool SupportsImGui => false;
 
         protected virtual bool ShouldRenderImGui(XRViewport? viewport)
-            => viewport?.Window is not null;
+            => viewport?.Window is not null || XRWindow.Window is not null;
 
         protected virtual IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
             => null;

@@ -97,6 +97,7 @@ public partial class OpenGLRenderer
         if (glIndexBuffer is null)
             return false;
 
+        glIndexBuffer.EnsureStorageAllocatedForGpuCopy();
         glMesh.SetTriangleIndexBuffer(glIndexBuffer, elementSize);
         Api.VertexArrayElementBuffer(glMesh.BindingId, glIndexBuffer.BindingId);
         return true;

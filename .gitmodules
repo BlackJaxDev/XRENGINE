@@ -9,6 +9,7 @@
 [submodule "rive-sharp"]
 	path = Build/Submodules/rive-sharp
 	url = https://github.com/rive-app/rive-sharp.git
+	ignore = untracked
 [submodule "Build/Submodules/OpenVR.NET"]
 	path = Build/Submodules/OpenVR.NET
 	url = https://github.com/BlackJaxDev/OpenVR.NET.git

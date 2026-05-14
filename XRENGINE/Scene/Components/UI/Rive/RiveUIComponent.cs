@@ -1,3 +1,4 @@
+#if XRENGINE_HAS_RIVESHARP
 using RiveSharp;
 using Silk.NET.OpenGL;
 using SkiaSharp;
@@ -658,3 +659,4 @@ public class RiveUIComponent : UIInteractableComponent
             : Renderer.ComputeAlignment(Fit.Contain, Alignment.Center, frame, new RiveSharp.AABB(0, 0, scene.Width, scene.Height));
     }
 }
+#endif

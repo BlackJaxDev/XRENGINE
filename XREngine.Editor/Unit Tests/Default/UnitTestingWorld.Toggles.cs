@@ -236,6 +236,12 @@ public static partial class EditorUnitTests
             public int Z { get; set; } = 10;
         }
 
+        /// <summary>
+        /// Startup model imports processed when the Unit Testing World boots. Each array item
+        /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
+        /// Path, ImportFlags, Scale, ZUp, and optional YawPitchRoll/Translation objects.
+        /// Paths are relative to the process working directory unless absolute.
+        /// </summary>
         public List<ModelImportSettings> ModelsToImport { get; set; } = [];
         /// <summary>
         /// Additional directories that the startup model importer searches recursively by texture file name

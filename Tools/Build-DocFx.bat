@@ -6,15 +6,17 @@ cd /d "%~dp0.."
 
 REM Build the DocFX site
 dotnet tool restore
-if errorlevel 1 (
+set "TOOL_RESTORE_EXIT=%ERRORLEVEL%"
+if not "%TOOL_RESTORE_EXIT%"=="0" (
   echo Failed to restore dotnet tools.
-  exit /b 1
+  exit /b %TOOL_RESTORE_EXIT%
 )
 
 dotnet docfx "docs\docfx\docfx.json"
-if errorlevel 1 (
+set "DOCFX_EXIT=%ERRORLEVEL%"
+if not "%DOCFX_EXIT%"=="0" (
   echo DocFX build failed.
-  exit /b 1
+  exit /b %DOCFX_EXIT%
 )
 
 echo DocFX build complete. Output: docs\docfx\_site

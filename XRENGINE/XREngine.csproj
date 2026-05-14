@@ -10,6 +10,8 @@
     <BaseOutputPath>$(SolutionDir)Build\Engine\$(Configuration)\$(Platform)</BaseOutputPath>
     <AotFactoryRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</AotFactoryRegistrationGenerator>
     <GeneratedAotFactoryRegistrations>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
+    <RiveSharpManagedDll>$(MSBuildProjectDirectory)\..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</RiveSharpManagedDll>
+    <DefineConstants Condition="Exists('$(RiveSharpManagedDll)')">$(DefineConstants);XRENGINE_HAS_RIVESHARP</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
@@ -231,15 +233,15 @@
     <Reference Include="OscCore">
       <HintPath>..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll</HintPath>
     </Reference>
-    <Reference Include="RiveSharp">
-      <HintPath>..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</HintPath>
+    <Reference Include="RiveSharp" Condition="Exists('$(RiveSharpManagedDll)')">
+      <HintPath>$(RiveSharpManagedDll)</HintPath>
     </Reference>
   </ItemGroup>
 
   <ItemGroup>
     <None Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll')" />
     <None Include="..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll')" />
-    <None Include="..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll')" />
+    <None Include="$(RiveSharpManagedDll)" Pack="true" PackagePath="lib\$(TargetFramework)\" Visible="false" Condition="Exists('$(RiveSharpManagedDll)')" />
   </ItemGroup>
 
   <ItemGroup>

@@ -446,6 +446,7 @@ public unsafe partial class OpenXRAPI
             uint width = _viewConfigViews[viewIndex].RecommendedImageRectWidth;
             uint height = _viewConfigViews[viewIndex].RecommendedImageRectHeight;
             EnsureViewportMirrorTargets(renderer, width, height);
+            EnsureOpenXrPreviewTargets(renderer, width, height);
 
             var eyeViewport = viewIndex == 0 ? _openXrLeftViewport : _openXrRightViewport;
             var eyeCamera = viewIndex == 0 ? _openXrLeftEyeCamera : _openXrRightEyeCamera;
@@ -473,6 +474,11 @@ public unsafe partial class OpenXRAPI
                 var srcApiTex = renderer.GetOrCreateAPIRenderObject(_viewportMirrorColor, generateNow: true) as IGLTexture;
                 if (srcApiTex is null || srcApiTex.BindingId == 0)
                     return;
+
+                XRTexture2D? previewTexture = viewIndex == 0 ? _previewLeftEyeTexture : _previewRightEyeTexture;
+                var previewApiTex = previewTexture is null
+                    ? null
+                    : renderer.GetOrCreateAPIRenderObject(previewTexture, generateNow: true) as IGLTexture;
 
                 if (logLifecycle)
                 {
@@ -525,6 +531,16 @@ public unsafe partial class OpenXRAPI
                     _gl.DrawBuffers(1, drawBuffers);
                 }
                 // Attach without assuming the underlying texture target (2D vs 2DMS etc).
+                if (previewApiTex is not null && previewApiTex.BindingId != 0)
+                {
+                    _gl.FramebufferTexture(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, previewApiTex.BindingId, 0);
+                    _gl.BlitFramebuffer(
+                        0, 0, (int)width, (int)height,
+                        0, 0, (int)width, (int)height,
+                        ClearBufferMask.ColorBufferBit,
+                        BlitFramebufferFilter.Linear);
+                }
+
                 _gl.FramebufferTexture(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, textureHandle, 0);
 
                 if (OpenXrDebugGl)
@@ -895,5 +911,65 @@ public unsafe partial class OpenXRAPI
         renderer.GetOrCreateAPIRenderObject(_viewportMirrorColor, generateNow: true);
         renderer.GetOrCreateAPIRenderObject(_viewportMirrorDepth, generateNow: true);
         renderer.GetOrCreateAPIRenderObject(_viewportMirrorFbo, generateNow: true);
+    }
+
+    private void EnsureOpenXrPreviewTargets(OpenGLRenderer renderer, uint width, uint height)
+    {
+        width = Math.Max(1u, width);
+        height = Math.Max(1u, height);
+
+        if (_previewLeftEyeTexture is not null &&
+            _previewRightEyeTexture is not null &&
+            _previewEyeTextureWidth == width &&
+            _previewEyeTextureHeight == height)
+        {
+            return;
+        }
+
+        DestroyOpenXrPreviewTargets();
+
+        _previewEyeTextureWidth = width;
+        _previewEyeTextureHeight = height;
+        _previewLeftEyeTexture = CreateOpenXrPreviewTexture(width, height, "OpenXRPreviewLeftEyeColor");
+        _previewRightEyeTexture = CreateOpenXrPreviewTexture(width, height, "OpenXRPreviewRightEyeColor");
+
+        renderer.GetOrCreateAPIRenderObject(_previewLeftEyeTexture, generateNow: true);
+        renderer.GetOrCreateAPIRenderObject(_previewRightEyeTexture, generateNow: true);
+    }
+
+    private static XRTexture2D CreateOpenXrPreviewTexture(uint width, uint height, string name)
+    {
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.Name = name;
+        return texture;
+    }
+
+    private void DestroyOpenXrPreviewTargets()
+    {
+        try
+        {
+            _previewLeftEyeTexture?.Destroy();
+            _previewLeftEyeTexture = null;
+            _previewRightEyeTexture?.Destroy();
+            _previewRightEyeTexture = null;
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
+
+        _previewEyeTextureWidth = 0;
+        _previewEyeTextureHeight = 0;
     }
 }

@@ -69,7 +69,9 @@ public static partial class EditorUnitTests
         debug.RenderCullingVolumes = false;
         s.RecalcChildMatricesLoopType = Toggles.RecalcChildMatricesType;
         s.TickGroupedItemsInParallel = Toggles.TickGroupedItemsInParallel;
-        s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR;
+        bool requiresDesktopVrWindow = Toggles.VRPawn && (Toggles.AllowEditingInVR || Toggles.PreviewVRStereoViews);
+        s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresDesktopVrWindow;
+        s.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;
         s.AllowShaderPipelines = Toggles.AllowShaderPipelines;
         s.AllowBinaryProgramCaching = Toggles.AllowBinaryProgramCaching;
         s.AsyncProgramBinaryUpload = Toggles.AsyncProgramBinaryUpload;

@@ -56,6 +56,13 @@ namespace XREngine.Rendering.UI
             Mesh = null;
         }
 
+        public void SetQuadMaterial(XRMaterial material)
+        {
+            RenderPass = material.RenderPass;
+            material.RenderOptions = _renderParameters;
+            RemakeMesh(material);
+        }
+
         private void RemakeMesh()
         {
             if (Material is null)

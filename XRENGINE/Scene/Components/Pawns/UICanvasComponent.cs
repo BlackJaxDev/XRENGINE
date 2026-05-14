@@ -599,6 +599,8 @@ namespace XREngine.Components
 
             _lastRenderObservedSwapGeneration = _lastSwappedGeneration;
 
+            var viewport = Engine.Rendering.State.RenderingViewport;
+
             //if (_renderDiagCount < 10)
             //{
             //    var bounds = canvasTransform.GetActualBounds();
@@ -612,7 +614,7 @@ namespace XREngine.Components
                 VisualScene2D,
                 Camera2D,
                 null,
-                null,
+                viewport,
                 _offscreenFbo,
                 null,
                 false,

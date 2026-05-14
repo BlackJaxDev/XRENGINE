@@ -549,8 +549,111 @@ static class SchemaGenerator
         if (generated["description"] is null)
             generated["description"] = GetFallbackDescription(member);
 
+        ApplyMemberSchemaAugmentations(member, generated);
+
         return MergeNode(generated, existingNode);
     }
+
+    private static void ApplyMemberSchemaAugmentations(MemberMetadata member, JObject generated)
+    {
+        if (!string.Equals(member.Name, "ModelsToImport", StringComparison.Ordinal) ||
+            member.ObjectMetadata?.Name != "ModelImportSettings")
+        {
+            return;
+        }
+
+        if (generated["markdownDescription"] is null)
+        {
+            generated["markdownDescription"] =
+                "Startup model imports are an array of objects. Each item uses this shape:\n\n" +
+                "```json\n" +
+                "{\n" +
+                "  \"Enabled\": true,\n" +
+                "  \"Kind\": \"Static\",\n" +
+                "  \"MaterialMode\": \"Deferred\",\n" +
+                "  \"UseForwardForTransparent\": false,\n" +
+                "  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n" +
+                "  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n" +
+                "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n" +
+                "  \"Scale\": 1.0,\n" +
+                "  \"ZUp\": false,\n" +
+                "  \"GenerateCoacdCollidersPerSubmesh\": false,\n" +
+                "  \"SplitSubmeshesIntoSeparateModelComponents\": false,\n" +
+                "  \"YawPitchRoll\": null,\n" +
+                "  \"Translation\": null\n" +
+                "}\n" +
+                "```\n\n" +
+                "`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; " +
+                "`ImporterBackend` is `PreferNativeThenAssimp` or `AssimpOnly`. " +
+                "`ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. " +
+                "`YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; " +
+                "`Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.";
+        }
+
+        if (generated["examples"] is null)
+        {
+            generated["examples"] = new JArray
+            {
+                new JArray(BuildStaticModelImportExample())
+            };
+        }
+
+        if (generated["defaultSnippets"] is null)
+        {
+            generated["defaultSnippets"] = new JArray
+            {
+                new JObject
+                {
+                    ["label"] = "Static model import",
+                    ["description"] = "Import one static model when the Unit Testing World starts.",
+                    ["body"] = new JArray(BuildStaticModelImportExample())
+                }
+            };
+        }
+
+        if (generated["x-jsoncComments"] is null)
+        {
+            generated["x-jsoncComments"] = new JArray
+            {
+                "Format each array item as an object:",
+                "{",
+                "  \"Enabled\": true,",
+                "  \"Kind\": \"Static\",",
+                "  \"MaterialMode\": \"Deferred\",",
+                "  \"UseForwardForTransparent\": false,",
+                "  \"ImporterBackend\": \"PreferNativeThenAssimp\",",
+                "  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",",
+                "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",",
+                "  \"Scale\": 1.0,",
+                "  \"ZUp\": false,",
+                "  \"GenerateCoacdCollidersPerSubmesh\": false,",
+                "  \"SplitSubmeshesIntoSeparateModelComponents\": false,",
+                "  \"YawPitchRoll\": null,",
+                "  \"Translation\": null",
+                "}",
+                "Use comma-separated Assimp PostProcessSteps names for ImportFlags.",
+                "YawPitchRoll is { \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }; Translation is { \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }."
+            };
+        }
+    }
+
+    private static JObject BuildStaticModelImportExample()
+        => new()
+        {
+            ["Enabled"] = true,
+            ["Kind"] = "Static",
+            ["MaterialMode"] = "Deferred",
+            ["UseForwardForTransparent"] = false,
+            ["ImporterBackend"] = "PreferNativeThenAssimp",
+            ["Path"] = "XREngine.UnitTests\\TestData\\Gltf\\external-static-scene.gltf",
+            ["ImportFlags"] = "Triangulate, FlipUVs, GenerateNormals",
+            ["Scale"] = 1.0,
+            ["ZUp"] = false,
+            ["GenerateCoacdCollidersPerSubmesh"] = false,
+            ["SplitSubmeshesIntoSeparateModelComponents"] = false,
+            ["YawPitchRoll"] = null,
+            ["Translation"] = null
+        };
 
     private static JObject BuildTypeNode(Type type, bool allowsNull, bool isCollection, Type? elementType, bool isFlagsEnum, TypeMetadata? objectMetadata, JObject definitions, JObject? existingDefinitions)
     {
@@ -681,7 +784,8 @@ static class SchemaGenerator
             "minLength",
             "maxLength",
             "pattern",
-            "format"
+            "format",
+            "x-jsoncComments"
         ];
 
         foreach (string key in copyKeys)
@@ -886,6 +990,16 @@ static class JsoncWriter
 
         if (member.IsEnum && !member.IsFlagsEnum)
             yield return $"{member.Name}: {string.Join(", ", member.EnumNames)}";
+
+        if (schemaProperty?["x-jsoncComments"] is JArray jsoncComments)
+        {
+            foreach (JToken comment in jsoncComments)
+            {
+                string? line = comment.Value<string>();
+                if (!string.IsNullOrWhiteSpace(line))
+                    yield return line!;
+            }
+        }
     }
 
     private static string WriteValue(MemberMetadata member, JToken value, JToken? schemaProperty, int indentLevel)

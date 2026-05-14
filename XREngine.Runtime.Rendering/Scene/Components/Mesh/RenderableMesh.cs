@@ -1746,8 +1746,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             SetSkinnedRootRenderMatrix(worldMatrix);
-            if (RenderInfo is not null)
-                RenderInfo.CullingOffsetMatrix = worldMatrix;
+            RenderInfo?.CullingOffsetMatrix = worldMatrix;
         }
 
         /// <summary>
@@ -1775,8 +1774,7 @@ namespace XREngine.Components.Scene.Mesh
                 SetSkinnedRootRenderMatrix(worldMatrix);
             }
 
-            if (RenderInfo is not null)
-                RenderInfo.CullingOffsetMatrix = worldMatrix;
+            RenderInfo?.CullingOffsetMatrix = worldMatrix;
         }
 
         private void ApplyImmediateRenderMatrixUpdate(Matrix4x4? componentMatrix, Matrix4x4? rootMatrix)
@@ -1790,17 +1788,15 @@ namespace XREngine.Components.Scene.Mesh
 
                 _rc.WorldMatrix = Matrix4x4.Identity;
                 SetSkinnedRootRenderMatrix(basis);
-                if (RenderInfo is not null)
-                    RenderInfo.CullingOffsetMatrix = basis;
+                RenderInfo?.CullingOffsetMatrix = basis;
 
                 return;
             }
 
             Matrix4x4 matrix = componentMatrix ?? Component.Transform.RenderMatrix;
-            _rc?.ApplyLateRenderThreadWorldMatrix(matrix);
+            _rc?.WorldMatrix = matrix;
 
-            if (RenderInfo is not null)
-                RenderInfo.CullingOffsetMatrix = matrix;
+            RenderInfo?.CullingOffsetMatrix = matrix;
         }
 
         private void QueuePendingRenderMatrixUpdate()
@@ -1850,19 +1846,15 @@ namespace XREngine.Components.Scene.Mesh
             if (hasSkinning)
             {
                 Matrix4x4 basis = RootBone is null ? componentMatrix : rootMatrix;
-                if (_rc is not null)
-                    _rc.WorldMatrix = Matrix4x4.Identity;
+                _rc?.WorldMatrix = Matrix4x4.Identity;
                 SetSkinnedRootRenderMatrix(basis);
-                if (RenderInfo is not null)
-                    RenderInfo.CullingOffsetMatrix = basis;
+                RenderInfo?.CullingOffsetMatrix = basis;
             }
             else
             {
-                if (_rc is not null)
-                    _rc.WorldMatrix = componentMatrix;
+                _rc?.WorldMatrix = componentMatrix;
 
-                if (RenderInfo is not null)
-                    RenderInfo.CullingOffsetMatrix = componentMatrix;
+                RenderInfo?.CullingOffsetMatrix = componentMatrix;
             }
 
             Interlocked.Exchange(ref _pendingRenderMatrixQueued, 0);

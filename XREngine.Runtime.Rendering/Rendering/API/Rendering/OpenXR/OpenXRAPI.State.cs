@@ -337,6 +337,14 @@ public unsafe partial class OpenXRAPI
     private uint _viewportMirrorWidth;
     private uint _viewportMirrorHeight;
 
+    private XRTexture2D? _previewLeftEyeTexture;
+    private XRTexture2D? _previewRightEyeTexture;
+    private uint _previewEyeTextureWidth;
+    private uint _previewEyeTextureHeight;
+
+    public XRTexture2D? PreviewLeftEyeTexture => _previewLeftEyeTexture;
+    public XRTexture2D? PreviewRightEyeTexture => _previewRightEyeTexture;
+
     private uint _blitReadFbo;
     private uint _blitDrawFbo;
 

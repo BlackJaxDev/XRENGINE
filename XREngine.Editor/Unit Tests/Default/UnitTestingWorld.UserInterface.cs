@@ -43,6 +43,11 @@ public static partial class EditorUnitTests
         private static XRTexture? _vrStereoPreviewLastLeft;
         private static XRTexture? _vrStereoPreviewLastRight;
         private static bool _vrStereoPreviewRefreshHooked;
+        private const float VRStereoPreviewEyeWidth = 300.0f;
+        private const float VRStereoPreviewEyeHeight = 170.0f;
+        private const float VRStereoPreviewGap = 8.0f;
+        private const float VRStereoPreviewTopMargin = 12.0f;
+        private const int VRStereoPreviewZIndex = -100_000;
 
         private static int _tickFpsDiagCount = 0;
         private static void TickFPS(UITextComponent t)
@@ -276,6 +281,7 @@ public static partial class EditorUnitTests
             var rootCanvasNode = new SceneNode(parent.World, "TestUINode") { IsEditorOnly = true };
             var canvas = rootCanvasNode.AddComponent<UICanvasComponent>()!;
             var canvasTfm = canvas.CanvasTransform;
+            bool addDearImGui = EditorUnitTests.Toggles.EditorType == UnitTestEditorType.IMGUI;
             bool useOffscreenForNonScreenSpaces;
             bool bindToCameraSpace;
             switch (Toggles.CameraUIDrawSpaceOnInit)
@@ -311,6 +317,9 @@ public static partial class EditorUnitTests
                     bindToCameraSpace = false;
                     break;
             }
+
+            if (addDearImGui && canvasTfm.DrawSpace != ECanvasDrawSpace.Screen && !useOffscreenForNonScreenSpaces)
+                useOffscreenForNonScreenSpaces = true;
 
             canvas.PreferOffscreenRenderingForNonScreenSpaces = useOffscreenForNonScreenSpaces;
             canvas.AutoDisableOffscreenForBackdropBlur = !useOffscreenForNonScreenSpaces;
@@ -364,6 +373,9 @@ public static partial class EditorUnitTests
 
             screenSpaceCamera?.UserInterface = Toggles.CameraUIDrawSpaceOnInit == CameraUIDrawMode.Screen ? canvas : null;
 
+            if (Toggles.VRPawn && Toggles.PreviewVRStereoViews)
+                CreateVRStereoPreviewOverlay(rootCanvasNode);
+
             if (EditorUnitTests.Toggles.RiveUI)
             {
                 bool disableRiveUi = false;
@@ -399,7 +411,6 @@ public static partial class EditorUnitTests
                 }
             }
 
-            bool addDearImGui = EditorUnitTests.Toggles.EditorType == UnitTestEditorType.IMGUI;
             if (addDearImGui)
             {
                 using var imGuiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.DearImGui");
@@ -445,9 +456,6 @@ public static partial class EditorUnitTests
 
             AddFPSText(null, rootCanvasNode);
 
-            if (Toggles.VRPawn && Toggles.PreviewVRStereoViews)
-                CreateVRStereoPreviewOverlay(rootCanvasNode);
-
             createUiStopwatch.Stop();
             Debug.Rendering("[StartupUI] CreateEditorUI complete in {0:F1} ms.", createUiStopwatch.Elapsed.TotalMilliseconds);
 
@@ -470,22 +478,28 @@ public static partial class EditorUnitTests
 
             SceneNode leftNode = new(previewRoot) { Name = "Left Eye" };
             var leftTfm = leftNode.SetTransform<UIBoundableTransform>();
-            leftTfm.MinAnchor = new Vector2(0.0f, 0.0f);
+            leftTfm.MinAnchor = new Vector2(0.5f, 1.0f);
             leftTfm.MaxAnchor = new Vector2(0.5f, 1.0f);
-            leftTfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
-            leftTfm.Width = null;
-            leftTfm.Height = null;
+            leftTfm.NormalizedPivot = new Vector2(1.0f, 1.0f);
+            leftTfm.Width = VRStereoPreviewEyeWidth;
+            leftTfm.Height = VRStereoPreviewEyeHeight;
+            leftTfm.Margins = new Vector4(0.0f, 0.0f, VRStereoPreviewGap, VRStereoPreviewTopMargin);
 
             SceneNode rightNode = new(previewRoot) { Name = "Right Eye" };
             var rightTfm = rightNode.SetTransform<UIBoundableTransform>();
-            rightTfm.MinAnchor = new Vector2(0.5f, 0.0f);
-            rightTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
-            rightTfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
-            rightTfm.Width = null;
-            rightTfm.Height = null;
+            rightTfm.MinAnchor = new Vector2(0.5f, 1.0f);
+            rightTfm.MaxAnchor = new Vector2(0.5f, 1.0f);
+            rightTfm.NormalizedPivot = new Vector2(0.0f, 1.0f);
+            rightTfm.Width = VRStereoPreviewEyeWidth;
+            rightTfm.Height = VRStereoPreviewEyeHeight;
+            rightTfm.Margins = new Vector4(VRStereoPreviewGap, 0.0f, 0.0f, VRStereoPreviewTopMargin);
 
             var left = leftNode.AddComponent<UIMaterialComponent>()!;
             var right = rightNode.AddComponent<UIMaterialComponent>()!;
+            left.RenderPass = (int)EDefaultRenderPass.Background;
+            right.RenderPass = (int)EDefaultRenderPass.Background;
+            left.RenderCommand2D.ZIndex = VRStereoPreviewZIndex;
+            right.RenderCommand2D.ZIndex = VRStereoPreviewZIndex;
             _vrStereoPreviewLeft = left;
             _vrStereoPreviewRight = right;
             _vrStereoPreviewLeftWasArray = false;
@@ -526,25 +540,41 @@ public static partial class EditorUnitTests
 
             _vrStereoPreviewRoot.IsActiveSelf = true;
 
-            XRTexture? leftTex;
-            XRTexture? rightTex;
-            bool isArray;
+            if (!TryResolveVRStereoPreviewTextures(out XRTexture? leftTex, out XRTexture? rightTex, out bool isArray))
+            {
+                _vrStereoPreviewRoot.IsActiveSelf = false;
+                return;
+            }
+
+            ApplyPreviewTexture(_vrStereoPreviewLeft, leftTex, isArray, ref _vrStereoPreviewLeftWasArray, ref _vrStereoPreviewLastLeft);
+            ApplyPreviewTexture(_vrStereoPreviewRight, rightTex, isArray, ref _vrStereoPreviewRightWasArray, ref _vrStereoPreviewLastRight);
+        }
+
+        private static bool TryResolveVRStereoPreviewTextures(
+            out XRTexture? leftTex,
+            out XRTexture? rightTex,
+            out bool isArray)
+        {
+            if (Engine.VRState.IsOpenXRActive)
+            {
+                leftTex = Engine.VRState.OpenXRApi?.PreviewLeftEyeTexture;
+                rightTex = Engine.VRState.OpenXRApi?.PreviewRightEyeTexture;
+                isArray = false;
+                return leftTex is not null && rightTex is not null;
+            }
 
             if (Engine.VRState.StereoLeftViewTexture is not null && Engine.VRState.StereoRightViewTexture is not null)
             {
                 leftTex = Engine.VRState.StereoLeftViewTexture;
                 rightTex = Engine.VRState.StereoRightViewTexture;
                 isArray = true;
-            }
-            else
-            {
-                leftTex = Engine.VRState.VRLeftEyeViewTexture;
-                rightTex = Engine.VRState.VRRightEyeViewTexture;
-                isArray = false;
+                return true;
             }
 
-            ApplyPreviewTexture(_vrStereoPreviewLeft, leftTex, isArray, ref _vrStereoPreviewLeftWasArray, ref _vrStereoPreviewLastLeft);
-            ApplyPreviewTexture(_vrStereoPreviewRight, rightTex, isArray, ref _vrStereoPreviewRightWasArray, ref _vrStereoPreviewLastRight);
+            leftTex = Engine.VRState.VRLeftEyeViewTexture;
+            rightTex = Engine.VRState.VRRightEyeViewTexture;
+            isArray = false;
+            return leftTex is not null && rightTex is not null;
         }
 
         private static void ApplyPreviewTexture(
@@ -564,8 +594,12 @@ public static partial class EditorUnitTests
                     ? XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedArraySliceForward.fs"), EShaderType.Fragment)
                     : XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"), EShaderType.Fragment);
 
-                var mat = new XRMaterial([texture], frag);
-                target.Material = mat;
+                var mat = new XRMaterial([texture], frag)
+                {
+                    RenderPass = (int)EDefaultRenderPass.Background
+                };
+                target.SetQuadMaterial(mat);
+                target.RenderCommand2D.ZIndex = VRStereoPreviewZIndex;
                 wasArray = isArray;
                 lastTexture = texture;
                 return;
