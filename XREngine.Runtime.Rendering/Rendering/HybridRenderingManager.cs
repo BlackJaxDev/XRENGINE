@@ -10,6 +10,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Shaders.Generator;
@@ -25,10 +26,10 @@ namespace XREngine.Rendering
         private const uint IndirectCommandSsboBinding = 7;
         private const uint InstanceTransformSsboBinding = GPUBatchingBindings.InstanceTransformBuffer;
         private const uint InstanceSourceIndexSsboBinding = GPUBatchingBindings.InstanceSourceIndexBuffer;
-        private const uint MaterialTableSsboBinding = 11;
+        private const uint MaterialTableSsboBinding = MaterialBindingLayouts.MaterialTableSsboBinding;
         private const uint DrawMetadataSsboBinding = 12;
         private const uint LodTransitionSsboBinding = 16;
-        private const uint MaterialTextureHandleTableSsboBinding = 17;
+        private const uint MaterialTextureHandleTableSsboBinding = MaterialBindingLayouts.MaterialTextureHandleTableSsboBinding;
         private const int IndirectCommandFloatCount = GPUScene.CommandFloatCount;
         private const uint IndirectTextGlyphOffsetSsboBinding = 3;
         private const uint IndirectLegacyBaseInstanceFlag = 0x80000000u;
@@ -41,6 +42,8 @@ namespace XREngine.Rendering
         private const string GlyphRotationsBufferName = "GlyphRotationsBuffer";
         private const string GlyphOffsetsBufferName = "GlyphOffsetsBuffer";
         private const int ZeroReadbackPendingProgramSampleLimit = 6;
+        private const int FragMaterialIdLocation = 24;
+        private const string FragMaterialIdName = "XRE_FragMaterialId";
         private XRRenderProgram? _indirectCompProgram;
 
         private bool _useMeshletPipeline = false;
@@ -67,7 +70,7 @@ namespace XREngine.Rendering
 
         private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _pendingMaterialPrograms = [];
-        private readonly Dictionary<(bool bindless, int rendererKey), MaterialTableProgramCache> _materialTablePrograms = [];
+        private readonly Dictionary<(bool bindless, int rendererKey, string layoutHash), MaterialTableProgramCache> _materialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
         private XRDataBuffer? _indirectTextRotationsBuffer;
@@ -2188,13 +2191,20 @@ namespace XREngine.Rendering
             cache.FragmentShader.Destroy();
         }
 
-        private XRRenderProgram? EnsureMaterialTableDrawProgram(XRMeshRenderer? vaoRenderer, bool bindless)
+        private XRRenderProgram? EnsureMaterialTableDrawProgram(XRMeshRenderer? vaoRenderer, bool bindless, MaterialBindingLayout layout)
         {
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
-            (bool bindless, int rendererKey) cacheKey = (bindless, rendererKey);
+            (bool bindless, int rendererKey, string layoutHash) cacheKey = (bindless, rendererKey, layout.LayoutHash);
 
             if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
             {
+                GpuDebug(
+                    LogCategory.Validation,
+                    "Material-table program cache hit bindless={0} rendererKey={1} layout={2} hash={3}",
+                    bindless,
+                    rendererKey,
+                    layout.Name,
+                    layout.LayoutHash);
                 existing.Program.Link();
                 return existing.Program;
             }
@@ -2202,11 +2212,12 @@ namespace XREngine.Rendering
             XRShader? generatedVertexShader = CreateGpuIndirectVertexShader(
                 vaoRenderer,
                 emitTransformId: true,
-                emitLodTransitionRole: false);
+                emitLodTransitionRole: false,
+                emitMaterialId: true);
             if (generatedVertexShader is null)
                 return null;
 
-            XRShader fragmentShader = CreateMaterialTableFragmentShader(bindless);
+            XRShader fragmentShader = CreateMaterialTableFragmentShader(bindless, layout);
             var shaderList = new List<XRShader> { fragmentShader, generatedVertexShader };
             var program = new XRRenderProgram(false, false, shaderList);
             program.AllowLink();
@@ -2214,6 +2225,14 @@ namespace XREngine.Rendering
 
             var cacheEntry = new MaterialTableProgramCache(program, generatedVertexShader, fragmentShader);
             _materialTablePrograms[cacheKey] = cacheEntry;
+            GpuDebug(
+                LogCategory.Validation,
+                "Material-table program cache miss bindless={0} rendererKey={1} layout={2} hash={3} rowBytes={4}",
+                bindless,
+                rendererKey,
+                layout.Name,
+                layout.LayoutHash,
+                layout.RowByteCount);
             return program;
         }
 
@@ -2255,7 +2274,7 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(std430, binding = {DrawMetadataSsboBinding}) readonly buffer DrawMetadataBuffer {{ DrawMetadata Draws[]; }};");
         }
 
-        private static XRShader CreateMaterialTableFragmentShader(bool bindless)
+        private static XRShader CreateMaterialTableFragmentShader(bool bindless, MaterialBindingLayout layout)
         {
             var sb = new StringBuilder();
             sb.AppendLine("#version 460 core");
@@ -2268,52 +2287,18 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
             sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat in uint {FragMaterialIdName};");
             sb.AppendLine("layout(location=0) out vec4 AlbedoOpacity;");
             sb.AppendLine("layout(location=1) out vec2 Normal;");
             sb.AppendLine("layout(location=2) out vec4 RMSE;");
             sb.AppendLine("layout(location=3) out uint TransformId;");
             sb.AppendLine();
-            AppendDrawMetadataGlsl(sb);
-            sb.AppendLine("struct MaterialEntry");
-            sb.AppendLine("{");
-            sb.AppendLine("    uint AlbedoHandleIndex;");
-            sb.AppendLine("    uint NormalHandleIndex;");
-            sb.AppendLine("    uint RMHandleIndex;");
-            sb.AppendLine("    uint Flags;");
-            sb.AppendLine("    vec4 BaseColorOpacity;");
-            sb.AppendLine("    vec4 RMSE;");
-            sb.AppendLine("};");
-            sb.AppendLine($"layout(std430, binding = {MaterialTableSsboBinding}) readonly buffer MaterialTableBuffer {{ MaterialEntry MaterialTable[]; }};");
-            if (bindless)
-            {
-                sb.AppendLine("struct TextureHandleEntry");
-                sb.AppendLine("{");
-                sb.AppendLine("    uvec2 Handle;");
-                sb.AppendLine("    uint Flags;");
-                sb.AppendLine("    uint Padding0;");
-                sb.AppendLine("};");
-                sb.AppendLine($"layout(std430, binding = {MaterialTextureHandleTableSsboBinding}) readonly buffer MaterialTextureHandleTableBuffer {{ TextureHandleEntry TextureHandleTable[]; }};");
-                sb.AppendLine("uint64_t XR_CombineHandle(uvec2 parts)");
-                sb.AppendLine("{");
-                sb.AppendLine("    return (uint64_t(parts.y) << 32) | uint64_t(parts.x);");
-                sb.AppendLine("}");
-                sb.AppendLine("vec4 SampleBindlessTexture(uint handleIndex, vec2 uv, vec4 fallback)");
-                sb.AppendLine("{");
-                sb.AppendLine("    if (handleIndex == 0u || handleIndex >= uint(TextureHandleTable.length()))");
-                sb.AppendLine("        return fallback;");
-                sb.AppendLine("    TextureHandleEntry entry = TextureHandleTable[handleIndex];");
-                sb.AppendLine("    if ((entry.Flags & 1u) == 0u)");
-                sb.AppendLine("        return fallback;");
-                sb.AppendLine("    return texture(sampler2D(XR_CombineHandle(entry.Handle)), uv);");
-                sb.AppendLine("}");
-            }
-            sb.AppendLine();
-            sb.AppendLine("uint LoadMaterialId(uint drawID)");
-            sb.AppendLine("{");
-            sb.AppendLine("    if (drawID >= uint(Draws.length()))");
-            sb.AppendLine("        return 0u;");
-            sb.AppendLine("    return Draws[drawID].MaterialID;");
-            sb.AppendLine("}");
+            MaterialBindingGlslGenerator.AppendMaterialTableDefinitions(
+                sb,
+                layout,
+                bindless,
+                MaterialTableSsboBinding,
+                MaterialTextureHandleTableSsboBinding);
             sb.AppendLine();
             sb.AppendLine("vec2 XRENGINE_EncodeNormal(vec3 normal)");
             sb.AppendLine("{");
@@ -2332,24 +2317,19 @@ namespace XREngine.Rendering
             sb.AppendLine("void main()");
             sb.AppendLine("{");
             sb.AppendLine($"    uint drawID = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
-            sb.AppendLine("    uint materialId = LoadMaterialId(drawID);");
-            sb.AppendLine("    uint flags = 0u;");
-            sb.AppendLine("    vec4 baseColorOpacity = vec4(1.0);");
-            sb.AppendLine("    vec4 rmse = vec4(1.0, 0.0, 1.0, 0.0);");
-            sb.AppendLine("    if (materialId < uint(MaterialTable.length()))");
-            sb.AppendLine("    {");
-            sb.AppendLine("        MaterialEntry material = MaterialTable[materialId];");
-            sb.AppendLine("        flags = material.Flags;");
-            sb.AppendLine("        baseColorOpacity = material.BaseColorOpacity;");
-            sb.AppendLine("        rmse = material.RMSE;");
-            sb.AppendLine("    }");
+            sb.AppendLine($"    uint materialId = {FragMaterialIdName};");
+            sb.AppendLine("    MaterialEntry material;");
+            sb.AppendLine("    XR_LoadMaterial(materialId, material);");
+            sb.AppendLine("    uint flags = material.Flags;");
+            sb.AppendLine("    vec4 baseColorOpacity = material.BaseColorOpacity;");
+            sb.AppendLine("    vec4 rmse = material.RMSE;");
             sb.AppendLine("    vec3 baseColor = baseColorOpacity.rgb;");
             sb.AppendLine("    float opacity = baseColorOpacity.a;");
             if (bindless)
             {
-                sb.AppendLine("    if (materialId < uint(MaterialTable.length()) && (flags & 1u) != 0u)");
+                sb.AppendLine("    if ((flags & 1u) != 0u)");
                 sb.AppendLine("    {");
-                sb.AppendLine("        vec4 albedo = SampleBindlessTexture(MaterialTable[materialId].AlbedoHandleIndex, FragUV0, vec4(1.0));");
+                sb.AppendLine("        vec4 albedo = SampleBindlessTexture(material.AlbedoHandleIndex, FragUV0, vec4(1.0));");
                 sb.AppendLine("        baseColor *= albedo.rgb;");
                 sb.AppendLine("        opacity *= albedo.a;");
                 sb.AppendLine("    }");
@@ -2368,7 +2348,11 @@ namespace XREngine.Rendering
             };
         }
 
-        private XRShader? CreateGpuIndirectVertexShader(XRMeshRenderer? vaoRenderer, bool emitTransformId, bool emitLodTransitionRole)
+        private XRShader? CreateGpuIndirectVertexShader(
+            XRMeshRenderer? vaoRenderer,
+            bool emitTransformId,
+            bool emitLodTransitionRole,
+            bool emitMaterialId = false)
         {
             // Build a vertex shader compatible with the engine's default fragment shader expectations,
             // but sourcing ModelMatrix from the culled command buffer via gl_BaseInstance.
@@ -2428,6 +2412,8 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(location=22) out float {DefaultVertexShaderGenerator.FragViewIndexName};");
             if (emitLodTransitionRole)
                 sb.AppendLine($"layout(location={FragLodTransitionRoleLocation}) flat out uint {FragLodTransitionRoleName};");
+            if (emitMaterialId)
+                sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat out uint {FragMaterialIdName};");
             sb.AppendLine();
 
             sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -2495,6 +2481,8 @@ namespace XREngine.Rendering
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
             if (emitLodTransitionRole)
                 sb.AppendLine($"    {FragLodTransitionRoleName} = (rawBaseInstance & XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG) != 0u ? 1u : 0u;");
+            if (emitMaterialId)
+                sb.AppendLine($"    {FragMaterialIdName} = commandIndex < uint(Draws.length()) ? Draws[commandIndex].MaterialID : 0u;");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -4070,14 +4058,32 @@ namespace XREngine.Rendering
                 return;
             }
 
-            if (currentRenderPass != (int)EDefaultRenderPass.OpaqueDeferred)
+            if (!renderPasses.TryGetGeneratedMaterialTableDispatchLayout(currentRenderPass, out MaterialBindingLayout layout))
             {
+                MaterialBindingResolverResult result = MaterialBindingResolverResult.PerMaterial(
+                    $"Pass {currentRenderPass} does not expose a generated material-table layout.");
+                renderPasses.RecordMaterialBindingResolverResult(result);
+                GpuDebug(LogCategory.Validation, "Material binding resolver fallback for pass {0}: {1}", currentRenderPass, result.Reason);
                 RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
                 return;
             }
 
+            renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.Compatible(layout));
+            GpuDebug(
+                LogCategory.Validation,
+                "Material binding resolver outcome={0} pass={1} layout={2} hash={3} rowBytes={4} bindlessRequested={5}",
+                EMaterialBindingResolverOutcome.MaterialTableCompatible,
+                currentRenderPass,
+                layout.Name,
+                layout.LayoutHash,
+                layout.RowByteCount,
+                bindless);
+
             if (!renderPasses.ZeroReadbackActiveBucketListPreparedThisFrame)
             {
+                renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.PerMaterial(
+                    "Material-table draw path needs active bucket compaction for this pass.",
+                    layout));
                 XREngine.Debug.RenderingWarningEvery(
                     $"RenderDispatch.MaterialTableActiveBucketsMissing.{currentRenderPass}",
                     TimeSpan.FromSeconds(2),
@@ -4090,6 +4096,9 @@ namespace XREngine.Rendering
             XRDataBuffer? materialTableBuffer = renderPasses.MaterialTableBuffer;
             if (materialTableBuffer is null)
             {
+                renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.PerMaterial(
+                    "Material-table draw path selected but no material table was prepared.",
+                    layout));
                 XREngine.Debug.RenderingWarningEvery(
                     $"RenderDispatch.MaterialTableMissing.{currentRenderPass}",
                     TimeSpan.FromSeconds(2),
@@ -4110,7 +4119,7 @@ namespace XREngine.Rendering
                 Debug.MeshesWarning("[RenderDispatch] Bindless material-table draw path requested, but the active OpenGL renderer does not expose GL_ARB_bindless_texture + GL_ARB_gpu_shader_int64. Falling back to material-table shader.");
             }
 
-            XRRenderProgram? program = EnsureMaterialTableDrawProgram(vaoRenderer, useBindless);
+            XRRenderProgram? program = EnsureMaterialTableDrawProgram(vaoRenderer, useBindless, layout);
             if (program is null)
             {
                 RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);

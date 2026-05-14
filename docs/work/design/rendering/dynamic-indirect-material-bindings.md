@@ -1,7 +1,23 @@
 # Dynamic Indirect Material Bindings
 
-Status: proposal (extends [bindless-deferred-texturing-plan.md](../texturing/bindless-deferred-texturing-plan.md); upgrade path referenced from [material-binding-policy.md](../../../architecture/rendering/material-binding-policy.md))
+Status: in progress (extends [bindless-deferred-texturing-plan.md](../texturing/bindless-deferred-texturing-plan.md); upgrade path referenced from [material-binding-policy.md](../../../architecture/rendering/material-binding-policy.md))
 Last updated: 2026-05-14
+
+## Implementation Status
+
+The first implementation slice is active on branch
+`rendering-dynamic-indirect-material-bindings`. It adds immutable material
+binding layout descriptors, layout validation, shader binding manifest
+metadata, generated OpenGL material-table GLSL, layout-driven opaque deferred
+row packing, pass-level layout exposure, resolver outcomes, and render
+diagnostics for layout hash/fallback reasons. The generated material-table
+path now forwards a flat material id from the generated indirect vertex shader
+and loads missing rows through layout defaults.
+
+Still pending: editor/runtime visual smoke for `MaterialTable` and
+`BindlessMaterialTable`, Forward+ material-table promotion, Vulkan
+descriptor-indexing runtime validation, material/shader inspector UI, and final
+merge back to `main`.
 
 ## Problem
 
@@ -336,4 +352,3 @@ Vulkan:
 - Uber shader variants can choose material-table compatibility from authored state and annotations.
 - Per-material tier rendering remains available and correct for arbitrary shaders.
 - No shader parsing, layout synthesis, or allocation occurs in the per-frame hot draw path.
-

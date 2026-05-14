@@ -17,6 +17,7 @@ uniform mat4 ViewProjectionMatrix_VTX;
 uniform vec3 CameraPosition;
 
 // Time for animations (provided by engine when RenderTime is requested)
+//@feature(id="render-time", name="Render Time", default=on, cost=none)
 #ifndef XRENGINE_UBER_DISABLE_RENDER_TIME
 uniform float RenderTime;
 #endif
@@ -70,14 +71,14 @@ mat3 adjoint(mat4 m) {
 // Main Texture Properties
 // ============================================
 //@category("Surface", order=0)
-//@property(name="_MainTex", display="Albedo Map", slot=texture)
+//@property(name="_MainTex", display="Albedo Map", slot=texture, indirect=texture, semantic=albedo)
 //@tooltip("Primary base-color texture sampled for the material surface.")
 uniform sampler2D _MainTex;
 uniform vec4 _MainTex_ST;           // xy: tiling, zw: offset
 uniform vec2 _MainTexPan;
 uniform int _MainTexUV;
 
-//@property(name="_Color", display="Tint", mode=static)
+//@property(name="_Color", display="Tint", mode=static, indirect=field, semantic=baseColorOpacity, default="vec4(1.0, 1.0, 1.0, 1.0)")
 //@tooltip("Color tint multiplied into the sampled albedo.")
 uniform vec4 _Color;                // Main color tint
 uniform int _ColorThemeIndex;
@@ -86,13 +87,13 @@ uniform int _ColorThemeIndex;
 // Normal Map
 // ============================================
 //@category("Surface")
-//@property(name="_BumpMap", display="Normal Map", slot=texture)
+//@property(name="_BumpMap", display="Normal Map", slot=texture, indirect=texture, semantic=normal)
 //@tooltip("Tangent-space normal map used to perturb surface lighting.")
 uniform sampler2D _BumpMap;
 uniform vec4 _BumpMap_ST;
 uniform vec2 _BumpMapPan;
 uniform int _BumpMapUV;
-//@property(name="_BumpScale", display="Normal Strength", mode=static, range=[0,2])
+//@property(name="_BumpScale", display="Normal Strength", mode=static, range=[0,2], indirect=static, semantic=normalStrength, default="1.0")
 uniform float _BumpScale;
 uniform int NormalMapMode;
 uniform float HeightMapScale;

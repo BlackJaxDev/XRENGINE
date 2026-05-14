@@ -1,6 +1,7 @@
 using Assimp;
 using NUnit.Framework;
 using Shouldly;
+using System.IO;
 using XREngine.Editor;
 using XREngine.Rendering.Models;
 using XREngine.Runtime.Bootstrap;
@@ -129,5 +130,35 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         options!.SplitSubmeshesIntoSeparateModelComponents.ShouldBeTrue();
         options.FbxBackend.ShouldBe(FbxImportBackend.Auto);
         options.GltfBackend.ShouldBe(GltfImportBackend.Auto);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void ResolveModelPath_ResolvesPathsRelativeToCurrentWorkingDirectory()
+    {
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string tempRoot = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+
+        try
+        {
+            string modelPath = Path.Combine(tempRoot, "Build", "CommonAssets", "Models", "Sponza2", "sponza.obj");
+            Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+            File.WriteAllText(modelPath, string.Empty);
+
+            Environment.CurrentDirectory = tempRoot;
+
+            string resolvedPath = EditorUnitTests.Models.ResolveModelPath(
+                desktopDir: Path.Combine(tempRoot, "Desktop"),
+                rawPath: "Build\\CommonAssets\\Models\\Sponza2\\sponza.obj");
+
+            resolvedPath.ShouldBe(modelPath);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = previousCurrentDirectory;
+
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
     }
 }

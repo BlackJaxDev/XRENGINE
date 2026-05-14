@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering
 {
@@ -30,16 +31,18 @@ namespace XREngine.Rendering
 
     public sealed class ShaderUiManifest
     {
-        public static ShaderUiManifest Empty { get; } = new([], [], []);
+        public static ShaderUiManifest Empty { get; } = new([], [], [], []);
 
         public ShaderUiManifest(
             IReadOnlyList<ShaderUiFeature> features,
             IReadOnlyList<ShaderUiProperty> properties,
-            IReadOnlyList<ShaderUiValidationIssue> validationIssues)
+            IReadOnlyList<ShaderUiValidationIssue> validationIssues,
+            IReadOnlyList<ShaderBindingMetadata>? bindings = null)
         {
             Features = features;
             Properties = properties;
             ValidationIssues = validationIssues;
+            Bindings = bindings ?? [];
 
             var featuresById = new Dictionary<string, ShaderUiFeature>(StringComparer.Ordinal);
             foreach (ShaderUiFeature feature in features)
@@ -50,13 +53,20 @@ namespace XREngine.Rendering
             foreach (ShaderUiProperty property in properties)
                 propertiesByName[property.Name] = property;
             PropertyLookup = new ReadOnlyDictionary<string, ShaderUiProperty>(propertiesByName);
+
+            var bindingsByName = new Dictionary<string, ShaderBindingMetadata>(StringComparer.Ordinal);
+            foreach (ShaderBindingMetadata binding in Bindings)
+                bindingsByName[binding.Name] = binding;
+            BindingLookup = new ReadOnlyDictionary<string, ShaderBindingMetadata>(bindingsByName);
         }
 
         public IReadOnlyList<ShaderUiFeature> Features { get; }
         public IReadOnlyList<ShaderUiProperty> Properties { get; }
         public IReadOnlyList<ShaderUiValidationIssue> ValidationIssues { get; }
+        public IReadOnlyList<ShaderBindingMetadata> Bindings { get; }
         public IReadOnlyDictionary<string, ShaderUiFeature> FeatureLookup { get; }
         public IReadOnlyDictionary<string, ShaderUiProperty> PropertyLookup { get; }
+        public IReadOnlyDictionary<string, ShaderBindingMetadata> BindingLookup { get; }
     }
 
     public sealed record ShaderUiFeature(
@@ -91,7 +101,16 @@ namespace XREngine.Rendering
         EShaderUiPropertyMode DefaultMode,
         bool HasExplicitMetadata,
         int SourceLine,
-        string? DefaultLiteral = null);
+        string? DefaultLiteral = null,
+        ShaderBindingMetadata? Binding = null);
+
+    public sealed record ShaderBindingMetadata(
+        string Name,
+        EMaterialBindingScope Scope,
+        EMaterialBindingStorage Storage,
+        string? Semantic,
+        string? DefaultLiteral,
+        int SourceLine);
 
     public sealed record ShaderUiValidationIssue(
         EShaderUiValidationSeverity Severity,
@@ -108,6 +127,7 @@ namespace XREngine.Rendering
             HashSet<string> definedMacros = CollectDefinedMacros(source);
             Dictionary<string, FeatureBuilder> featuresById = new(StringComparer.Ordinal);
             List<ShaderUiProperty> properties = [];
+            List<ShaderBindingMetadata> bindings = [];
             List<ShaderUiValidationIssue> validation = [];
 
             ParseState state = new();
@@ -144,6 +164,7 @@ namespace XREngine.Rendering
                 string? inlineCommentTooltip = ExtractInlineComment(line);
 
                 PendingPropertyAnnotation? propertyAnnotation = state.PendingProperty;
+                PendingBindingAnnotation? bindingAnnotation = state.PendingBinding;
                 bool hasExplicitPropertyMetadata = propertyAnnotation is not null;
 
                 if (propertyAnnotation?.Name is { Length: > 0 } annotatedName &&
@@ -152,6 +173,15 @@ namespace XREngine.Rendering
                     validation.Add(new(
                         EShaderUiValidationSeverity.Error,
                         $"Annotated property '{annotatedName}' does not match following uniform '{uniformName}'.",
+                        lineNumber));
+                }
+
+                if (bindingAnnotation?.Name is { Length: > 0 } bindingName &&
+                    !string.Equals(bindingName, uniformName, StringComparison.Ordinal))
+                {
+                    validation.Add(new(
+                        EShaderUiValidationSeverity.Error,
+                        $"Binding annotation '{bindingName}' does not match following uniform '{uniformName}'.",
                         lineNumber));
                 }
 
@@ -169,6 +199,17 @@ namespace XREngine.Rendering
                 string? enumOptions = propertyAnnotation?.EnumOptions;
                 EShaderUiPropertyMode mode = propertyAnnotation?.Mode
                     ?? (isSampler ? EShaderUiPropertyMode.Unspecified : EShaderUiPropertyMode.Static);
+                ShaderBindingMetadata? binding = CreateBindingMetadata(
+                    uniformName,
+                    isSampler,
+                    lineNumber,
+                    propertyAnnotation,
+                    bindingAnnotation);
+                if (binding is not null)
+                {
+                    ValidateBindingMetadata(binding, glslType, isSampler, validation);
+                    bindings.Add(binding);
+                }
 
                 properties.Add(new ShaderUiProperty(
                     uniformName,
@@ -187,9 +228,11 @@ namespace XREngine.Rendering
                     mode,
                     hasExplicitPropertyMetadata,
                     lineNumber,
-                    propertyAnnotation?.DefaultLiteral));
+                    propertyAnnotation?.DefaultLiteral,
+                    binding));
 
                 state.PendingProperty = null;
+                state.PendingBinding = null;
                 state.PendingTooltip = null;
             }
 
@@ -203,7 +246,7 @@ namespace XREngine.Rendering
                 .Select(static x => x.Build())
                 .ToArray();
 
-            return new ShaderUiManifest(features, properties, validation);
+            return new ShaderUiManifest(features, properties, validation, bindings);
         }
 
         private static void FinalizePendingAnnotations(ParseState state, List<ShaderUiValidationIssue> validation, int lineCount)
@@ -221,6 +264,14 @@ namespace XREngine.Rendering
                 validation.Add(new(
                     EShaderUiValidationSeverity.Error,
                     $"Property annotation '{state.PendingProperty.Name ?? state.PendingProperty.DisplayName ?? "<unnamed>"}' was not followed by a uniform declaration.",
+                    lineCount));
+            }
+
+            if (state.PendingBinding is not null)
+            {
+                validation.Add(new(
+                    EShaderUiValidationSeverity.Error,
+                    $"Binding annotation '{state.PendingBinding.Name ?? state.PendingBinding.Semantic ?? "<unnamed>"}' was not followed by a uniform declaration.",
                     lineCount));
             }
         }
@@ -431,7 +482,20 @@ namespace XREngine.Rendering
                         state.CurrentCategory,
                         state.CurrentSubcategory,
                         propertyTooltip,
-                        namedArgs.TryGetValue("default", out string? defaultLiteral) ? Unquote(defaultLiteral) : null);
+                        namedArgs.TryGetValue("default", out string? defaultLiteral) ? Unquote(defaultLiteral) : null,
+                        namedArgs.TryGetValue("indirect", out string? indirect) ? Unquote(indirect) : null,
+                        namedArgs.TryGetValue("semantic", out string? semantic) ? Unquote(semantic) : null,
+                        namedArgs.TryGetValue("storage", out string? propertyStorage) ? Unquote(propertyStorage) : null);
+                    break;
+
+                case "binding":
+                    state.PendingBinding = new PendingBindingAnnotation(
+                        namedArgs.TryGetValue("name", out string? bindingName) ? Unquote(bindingName) : FirstStringArgument(arguments, namedArgs, "name"),
+                        ParseBindingScope(namedArgs),
+                        ParseBindingStorage(namedArgs),
+                        namedArgs.TryGetValue("semantic", out string? bindingSemantic) ? Unquote(bindingSemantic) : null,
+                        namedArgs.TryGetValue("default", out string? bindingDefault) ? Unquote(bindingDefault) : null,
+                        lineNumber);
                     break;
             }
 
@@ -464,8 +528,9 @@ namespace XREngine.Rendering
             {
                 string displayName = pendingFeature?.DisplayName ?? FormatDisplayName(featureId);
                 bool guardDefinedEnablesFeature = !isIfndef;
-                bool defaultEnabled = pendingFeature?.DefaultEnabled
-                    ?? (guardDefinedEnablesFeature ? definedMacros.Contains(macro) : !definedMacros.Contains(macro));
+                bool defaultEnabled = guardDefinedEnablesFeature
+                    ? pendingFeature?.DefaultEnabled ?? definedMacros.Contains(macro)
+                    : !definedMacros.Contains(macro);
 
                 if (!featuresById.TryGetValue(featureId, out FeatureBuilder? feature))
                 {
@@ -761,6 +826,165 @@ namespace XREngine.Rendering
             };
         }
 
+        private static ShaderBindingMetadata? CreateBindingMetadata(
+            string uniformName,
+            bool isSampler,
+            int lineNumber,
+            PendingPropertyAnnotation? propertyAnnotation,
+            PendingBindingAnnotation? bindingAnnotation)
+        {
+            if (bindingAnnotation is not null)
+            {
+                EMaterialBindingScope scope = bindingAnnotation.Scope;
+                EMaterialBindingStorage storage = bindingAnnotation.Storage;
+                if (storage == EMaterialBindingStorage.Unspecified)
+                    storage = DefaultStorageForScope(scope, isSampler);
+
+                return new ShaderBindingMetadata(
+                    uniformName,
+                    scope,
+                    storage,
+                    bindingAnnotation.Semantic,
+                    bindingAnnotation.DefaultLiteral,
+                    lineNumber);
+            }
+
+            if (propertyAnnotation is null || string.IsNullOrWhiteSpace(propertyAnnotation.Indirect))
+                return null;
+
+            string indirect = propertyAnnotation.Indirect.Trim().ToLowerInvariant();
+            EMaterialBindingScope propertyScope = indirect switch
+            {
+                "field" or "material" => EMaterialBindingScope.Material,
+                "texture" or "sampler" => EMaterialBindingScope.Texture,
+                "static" or "define" => EMaterialBindingScope.Static,
+                _ => EMaterialBindingScope.Unspecified,
+            };
+
+            EMaterialBindingStorage propertyStorage = ParseBindingStorage(propertyAnnotation.Storage);
+            if (propertyStorage == EMaterialBindingStorage.Unspecified)
+            {
+                propertyStorage = indirect switch
+                {
+                    "field" or "material" => EMaterialBindingStorage.Field,
+                    "texture" or "sampler" => EMaterialBindingStorage.Bindless,
+                    "static" or "define" => EMaterialBindingStorage.Static,
+                    _ => DefaultStorageForScope(propertyScope, isSampler),
+                };
+            }
+
+            return new ShaderBindingMetadata(
+                uniformName,
+                propertyScope,
+                propertyStorage,
+                propertyAnnotation.Semantic,
+                propertyAnnotation.DefaultLiteral,
+                lineNumber);
+        }
+
+        private static void ValidateBindingMetadata(
+            ShaderBindingMetadata binding,
+            string glslType,
+            bool isSampler,
+            List<ShaderUiValidationIssue> validation)
+        {
+            if (binding.Scope == EMaterialBindingScope.Unspecified)
+            {
+                validation.Add(new(
+                    EShaderUiValidationSeverity.Warning,
+                    $"Binding '{binding.Name}' is missing a scope and cannot be promoted to a material-table variant.",
+                    binding.SourceLine));
+                return;
+            }
+
+            if (binding.Scope == EMaterialBindingScope.Material && isSampler)
+            {
+                validation.Add(new(
+                    EShaderUiValidationSeverity.Error,
+                    $"Binding '{binding.Name}' uses material scope but the following uniform type '{glslType}' is a sampler.",
+                    binding.SourceLine));
+            }
+
+            if (binding.Scope == EMaterialBindingScope.Texture && !isSampler && binding.Storage == EMaterialBindingStorage.Bindless)
+            {
+                validation.Add(new(
+                    EShaderUiValidationSeverity.Error,
+                    $"Binding '{binding.Name}' uses texture scope with bindless storage but the following uniform type '{glslType}' is not a sampler.",
+                    binding.SourceLine));
+            }
+
+            if (binding.Storage == EMaterialBindingStorage.Field && isSampler)
+            {
+                validation.Add(new(
+                    EShaderUiValidationSeverity.Error,
+                    $"Binding '{binding.Name}' uses field storage but the following uniform type '{glslType}' is a sampler.",
+                    binding.SourceLine));
+            }
+
+            if (binding.Scope is EMaterialBindingScope.Material or EMaterialBindingScope.Texture &&
+                string.IsNullOrWhiteSpace(binding.Semantic))
+            {
+                validation.Add(new(
+                    EShaderUiValidationSeverity.Warning,
+                    $"Binding '{binding.Name}' is missing a material semantic and will require per-material rendering.",
+                    binding.SourceLine));
+            }
+        }
+
+        private static EMaterialBindingScope DefaultScopeForSampler(bool isSampler)
+            => isSampler ? EMaterialBindingScope.Texture : EMaterialBindingScope.Material;
+
+        private static EMaterialBindingStorage DefaultStorageForScope(EMaterialBindingScope scope, bool isSampler)
+            => scope switch
+            {
+                EMaterialBindingScope.Frame or EMaterialBindingScope.Camera or EMaterialBindingScope.Pass => EMaterialBindingStorage.Uniform,
+                EMaterialBindingScope.Material => EMaterialBindingStorage.Field,
+                EMaterialBindingScope.Texture => isSampler ? EMaterialBindingStorage.Bindless : EMaterialBindingStorage.DescriptorIndex,
+                EMaterialBindingScope.Static => EMaterialBindingStorage.Static,
+                _ => EMaterialBindingStorage.Unspecified,
+            };
+
+        private static EMaterialBindingScope ParseBindingScope(Dictionary<string, string> namedArgs)
+        {
+            if (!namedArgs.TryGetValue("scope", out string? value))
+                return EMaterialBindingScope.Unspecified;
+
+            return Unquote(value).ToLowerInvariant() switch
+            {
+                "frame" => EMaterialBindingScope.Frame,
+                "camera" => EMaterialBindingScope.Camera,
+                "pass" => EMaterialBindingScope.Pass,
+                "draw" => EMaterialBindingScope.Draw,
+                "instance" => EMaterialBindingScope.Instance,
+                "material" => EMaterialBindingScope.Material,
+                "texture" => EMaterialBindingScope.Texture,
+                "static" => EMaterialBindingScope.Static,
+                _ => EMaterialBindingScope.Unspecified,
+            };
+        }
+
+        private static EMaterialBindingStorage ParseBindingStorage(Dictionary<string, string> namedArgs)
+            => namedArgs.TryGetValue("storage", out string? value)
+                ? ParseBindingStorage(Unquote(value))
+                : EMaterialBindingStorage.Unspecified;
+
+        private static EMaterialBindingStorage ParseBindingStorage(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return EMaterialBindingStorage.Unspecified;
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "uniform" => EMaterialBindingStorage.Uniform,
+                "ubo" or "uniformbuffer" or "uniform-buffer" => EMaterialBindingStorage.UniformBuffer,
+                "field" => EMaterialBindingStorage.Field,
+                "bindless" => EMaterialBindingStorage.Bindless,
+                "descriptor" or "descriptorindex" or "descriptor-index" => EMaterialBindingStorage.DescriptorIndex,
+                "static" or "define" => EMaterialBindingStorage.Static,
+                _ => EMaterialBindingStorage.Unspecified,
+            };
+        }
+
         private static List<string> ParseStringList(List<string> arguments, Dictionary<string, string> namedArgs, string? namedKey)
         {
             if (namedKey is not null && namedArgs.TryGetValue(namedKey, out string? namedValue))
@@ -912,6 +1136,7 @@ namespace XREngine.Rendering
             public string? PendingTooltip { get; set; }
             public PendingFeatureAnnotation? PendingFeature { get; set; }
             public PendingPropertyAnnotation? PendingProperty { get; set; }
+            public PendingBindingAnnotation? PendingBinding { get; set; }
         }
 
         private sealed record GuardScope(string Macro, bool IsIfndef, string? FeatureId);
@@ -942,6 +1167,17 @@ namespace XREngine.Rendering
             string? Category,
             string? Subcategory,
             string? Tooltip,
-            string? DefaultLiteral);
+            string? DefaultLiteral,
+            string? Indirect,
+            string? Semantic,
+            string? Storage);
+
+        private sealed record PendingBindingAnnotation(
+            string? Name,
+            EMaterialBindingScope Scope,
+            EMaterialBindingStorage Storage,
+            string? Semantic,
+            string? DefaultLiteral,
+            int SourceLine);
     }
 }

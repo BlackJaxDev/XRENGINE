@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 
@@ -54,7 +55,8 @@ namespace XREngine.Rendering.Materials
         public const uint InvalidTextureHandleIndex = 0u;
         private const uint InitialHandleIndex = 1u;
 
-        private const int MaterialEntryUIntCount = 12;
+        public static MaterialBindingLayout MaterialLayout => MaterialBindingLayouts.OpaqueDeferred;
+        public static uint MaterialEntryUIntCount => MaterialLayout.RowWordCount;
         private readonly HashSet<uint> _activeMaterialIds = [];
         private readonly Dictionary<uint, GPUMaterialHandleIndices> _materialHandleIndices = [];
         private readonly Dictionary<ulong, uint> _handleIndicesByHandle = [];
@@ -247,24 +249,20 @@ namespace XREngine.Rendering.Materials
             };
 
         private static GPUMaterialEntryWords PackMaterialEntry(GPUMaterialEntry entry)
-            => new()
-            {
-                AlbedoHandleIndex = entry.AlbedoHandleIndex,
-                NormalHandleIndex = entry.NormalHandleIndex,
-                RMHandleIndex = entry.RMHandleIndex,
-                Flags = entry.Flags,
-                BaseColorX = BitConverter.SingleToUInt32Bits(entry.BaseColorOpacity.X),
-                BaseColorY = BitConverter.SingleToUInt32Bits(entry.BaseColorOpacity.Y),
-                BaseColorZ = BitConverter.SingleToUInt32Bits(entry.BaseColorOpacity.Z),
-                Opacity = BitConverter.SingleToUInt32Bits(entry.BaseColorOpacity.W),
-                Roughness = BitConverter.SingleToUInt32Bits(entry.RMSE.X),
-                Metallic = BitConverter.SingleToUInt32Bits(entry.RMSE.Y),
-                Specular = BitConverter.SingleToUInt32Bits(entry.RMSE.Z),
-                Emission = BitConverter.SingleToUInt32Bits(entry.RMSE.W),
-            };
+        {
+            GPUMaterialEntryWords words = new();
+            Span<uint> row = MemoryMarshal.CreateSpan(ref words.AlbedoHandleIndex, GPUMaterialEntryWords.WordCount);
+            if (!MaterialBindingRowPacker.TryWriteOpaqueDeferred(MaterialLayout, entry, row, out string error))
+                throw new InvalidOperationException(error);
 
+            return words;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct GPUMaterialEntryWords
         {
+            public const int WordCount = 12;
+
             public uint AlbedoHandleIndex;
             public uint NormalHandleIndex;
             public uint RMHandleIndex;

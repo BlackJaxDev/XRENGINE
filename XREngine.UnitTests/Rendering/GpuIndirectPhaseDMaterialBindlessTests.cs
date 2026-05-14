@@ -89,6 +89,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         glBindlessSource.ShouldContain("MakeTextureHandleResident");
         materialTableSource.ShouldContain("MaterialTextureHandleTable");
         materialTableSource.ShouldContain("GPUMaterialTextureHandles");
+        materialTableSource.ShouldContain("MaterialBindingLayouts.OpaqueDeferred");
         materialTableSource.ShouldContain("BaseColorOpacity");
         materialTableSource.ShouldContain("RMSE");
         passSource.ShouldContain("TryResolveOpenGLBindlessTextureHandle");
@@ -100,6 +101,9 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         hybridSource.ShouldContain("SampleBindlessTexture");
         hybridSource.ShouldContain("AlbedoOpacity = vec4(baseColor, opacity);");
         hybridSource.ShouldNotContain("HashMaterialColor");
+        hybridSource.ShouldContain("emitMaterialId: true");
+        hybridSource.ShouldContain("XR_LoadMaterial(materialId, material);");
+        hybridSource.ShouldContain("FragMaterialIdName");
         materialScatterSource.ShouldContain("uint materialID = meta.MaterialID;");
         materialScatterSource.ShouldContain("uint slotIndex = materialSlots[materialID];");
 
@@ -114,6 +118,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         gpuSceneSource.ShouldContain("EGpuMaterialStateClass.Shadow");
         vulkanShaderInclude.ShouldContain("nonuniformEXT");
         policyDoc.ShouldContain("Texture arrays are not the fallback for arbitrary material diversity");
+        hybridSource.ShouldContain("MaterialBindingGlslGenerator.AppendMaterialTableDefinitions");
     }
 
     /// <summary>
@@ -152,7 +157,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         // Invariant 2: material-table program cache key does not depend on material identity.
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         hybridSource.ShouldContain(
-            "(bool bindless, int rendererKey) cacheKey = (bindless, rendererKey);",
+            "(bool bindless, int rendererKey, string layoutHash) cacheKey = (bindless, rendererKey, layout.LayoutHash);",
             customMessage: "EnsureMaterialTableDrawProgram cache key changed shape. Phase D acceptance requires the material-table draw program to be keyed on (bindless, rendererKey) only — never on material identity. (The separate EnsureCombinedProgram per-material cache is unrelated.)");
 
         // Sanity: the shadow short-circuit that routes every shadow-pass draw to the Shadow family
