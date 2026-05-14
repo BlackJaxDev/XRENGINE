@@ -56,6 +56,9 @@ namespace XREngine.Timers
         }
 
         private const float MaxFrequency = 1000.0f; // Frequency cap for Update/RenderFrame events
+        private const int MaxFixedCatchUpSteps = 4;
+        private static readonly long SleepWaitThresholdTicks = SecondsToStopwatchTicks(0.002);
+        private static readonly long YieldWaitThresholdTicks = SecondsToStopwatchTicks(0.00025);
 
         #region Pause Support
 
@@ -152,6 +155,9 @@ namespace XREngine.Timers
             _swapDone = new(true);//,
             //_updateDone = new(false);
 
+        private long _fixedUpdateAccumulatorTicks;
+        private long _fixedUpdateClockTimestampTicks;
+
         public bool IsRunning => _watch.IsRunning;
 
         public DeltaManager Render { get; } = new();
@@ -223,6 +229,52 @@ namespace XREngine.Timers
             };
             t.Start();
             return t;
+        }
+
+        private void WaitForRemainingTicks(long remainingTicks)
+        {
+            if (remainingTicks <= 0L)
+                return;
+
+            if (remainingTicks >= SleepWaitThresholdTicks)
+            {
+                int sleepMilliseconds = (int)Math.Min(
+                    15L,
+                    Math.Max(1L, (remainingTicks * 1000L / Stopwatch.Frequency) - 1L));
+                Thread.Sleep(sleepMilliseconds);
+                return;
+            }
+
+            if (remainingTicks >= YieldWaitThresholdTicks)
+            {
+                Thread.Yield();
+                return;
+            }
+
+            Thread.SpinWait(32);
+        }
+
+        private void WaitUntilTimestamp(long targetTimestampTicks)
+        {
+            while (IsRunning)
+            {
+                long remainingTicks = targetTimestampTicks - TimeTicks();
+                if (remainingTicks <= 0L)
+                    return;
+
+                WaitForRemainingTicks(remainingTicks);
+            }
+        }
+
+        private void WaitUntilNextRenderDispatch()
+        {
+            if (_targetRenderPeriodTicks <= 0L)
+            {
+                Thread.Yield();
+                return;
+            }
+
+            WaitUntilTimestamp(Render.LastTimestampTicks + _targetRenderPeriodTicks);
         }
 
         public void BlockForRendering(Func<bool> runUntilPredicate)
@@ -308,6 +360,9 @@ namespace XREngine.Timers
         private void FixedUpdateThread()
         {
             Engine.SetPhysicsThreadId(Environment.CurrentManagedThreadId);
+            _fixedUpdateAccumulatorTicks = 0L;
+            _fixedUpdateClockTimestampTicks = TimeTicks();
+
             while (IsRunning)
             {
                 // Always drain physics-thread work, even while paused.
@@ -318,39 +373,56 @@ namespace XREngine.Timers
                 // engine's "physics thread" affinity assumptions for queued PhysX mutations.
                 if (!ShouldDispatchUpdate())
                 {
+                    _fixedUpdateAccumulatorTicks = 0L;
+                    _fixedUpdateClockTimestampTicks = TimeTicks();
                     Thread.Sleep(1);
                     continue;
                 }
 
                 long timestampTicks = TimeTicks();
-                long elapsedTicks = Math.Clamp(timestampTicks - FixedUpdateManager.LastTimestampTicks, 0L, Stopwatch.Frequency);
-                if (elapsedTicks < _fixedUpdateDeltaTicks)
+                long elapsedTicks = Math.Clamp(timestampTicks - _fixedUpdateClockTimestampTicks, 0L, Stopwatch.Frequency);
+                _fixedUpdateClockTimestampTicks = timestampTicks;
+                _fixedUpdateAccumulatorTicks = Math.Min(
+                    _fixedUpdateAccumulatorTicks + elapsedTicks,
+                    _fixedUpdateDeltaTicks * MaxFixedCatchUpSteps);
+
+                if (_fixedUpdateAccumulatorTicks < _fixedUpdateDeltaTicks)
                 {
-                    Thread.Yield();
+                    WaitForRemainingTicks(_fixedUpdateDeltaTicks - _fixedUpdateAccumulatorTicks);
                     continue;
                 }
 
-                FixedUpdateManager.DeltaTicks = elapsedTicks;
-                FixedUpdateManager.LastTimestampTicks = timestampTicks;
-
-#if !XRE_PUBLISHED
-                long allocStart = 0;
-                if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
-                    allocStart = GC.GetAllocatedBytesForCurrentThread();
-#endif
-
-                DispatchFixedUpdate();
-
-#if !XRE_PUBLISHED
-                if (allocStart != 0)
+                int steps = 0;
+                while (IsRunning && steps < MaxFixedCatchUpSteps && _fixedUpdateAccumulatorTicks >= _fixedUpdateDeltaTicks)
                 {
-                    long allocEnd = GC.GetAllocatedBytesForCurrentThread();
-                    Engine.Allocations.RecordFixedUpdateTick(allocEnd - allocStart);
-                }
+                    long dispatchStartTicks = TimeTicks();
+                    FixedUpdateManager.DeltaTicks = _fixedUpdateDeltaTicks;
+                    FixedUpdateManager.LastTimestampTicks = dispatchStartTicks;
+
+#if !XRE_PUBLISHED
+                    long allocStart = 0;
+                    if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
+                        allocStart = GC.GetAllocatedBytesForCurrentThread();
 #endif
 
-                timestampTicks = TimeTicks();
-                FixedUpdateManager.ElapsedTicks = Math.Max(0L, timestampTicks - FixedUpdateManager.LastTimestampTicks);
+                    DispatchFixedUpdate();
+
+#if !XRE_PUBLISHED
+                    if (allocStart != 0)
+                    {
+                        long allocEnd = GC.GetAllocatedBytesForCurrentThread();
+                        Engine.Allocations.RecordFixedUpdateTick(allocEnd - allocStart);
+                    }
+#endif
+
+                    timestampTicks = TimeTicks();
+                    FixedUpdateManager.ElapsedTicks = Math.Max(0L, timestampTicks - dispatchStartTicks);
+                    _fixedUpdateAccumulatorTicks -= _fixedUpdateDeltaTicks;
+                    steps++;
+                }
+
+                if (_fixedUpdateAccumulatorTicks >= _fixedUpdateDeltaTicks)
+                    _fixedUpdateAccumulatorTicks %= _fixedUpdateDeltaTicks;
             }
         }
         /// <summary>
@@ -361,14 +433,19 @@ namespace XREngine.Timers
         public void WaitToRender()
         {
             // Wait for the collect-visible thread to finish swapping buffers.
-            while (!_swapDone.Wait(0))
-                Thread.Yield();
+            _swapDone.Wait();
+            if (!IsRunning)
+                return;
+
             _swapDone.Reset();
 
             // Suspend this thread until a render is dispatched. Keep the loop responsive,
             // but do not steal time from the upcoming render by draining queued jobs here.
-            while (!DispatchRender())
-                Thread.Yield();
+            while (IsRunning && !DispatchRender())
+                WaitUntilNextRenderDispatch();
+
+            if (!IsRunning)
+                return;
 
             // Inform the update thread that the render is done
             _renderDone.Set();
@@ -484,8 +561,7 @@ namespace XREngine.Timers
                 Collect.DeltaTicks = elapsedTicks;
                 Collect.LastTimestampTicks = timestampTicks;
                 PreCollectVisible?.Invoke();
-                //CollectVisible?.InvokeParallel();
-                (CollectVisible?.InvokeAsync() ?? Task.CompletedTask).Wait();
+                CollectVisible?.InvokeParallel(minParallelListeners: 2);
                 timestampTicks = TimeTicks();
                 Collect.ElapsedTicks = Math.Max(0L, timestampTicks - Collect.LastTimestampTicks);
             }
@@ -524,6 +600,12 @@ namespace XREngine.Timers
 
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - Update.LastTimestampTicks, 0L, Stopwatch.Frequency);
+                long adjustedElapsedTicks = elapsedTicks + _updateTimeDiffTicks;
+                if (_targetUpdatePeriodTicks > 0L && adjustedElapsedTicks < _targetUpdatePeriodTicks)
+                {
+                    WaitForRemainingTicks(_targetUpdatePeriodTicks - adjustedElapsedTicks);
+                    return;
+                }
 
                 //Raise UpdateFrame events until we catch up with the target update period
                 while (IsRunning && elapsedTicks > 0L && elapsedTicks + _updateTimeDiffTicks >= _targetUpdatePeriodTicks)

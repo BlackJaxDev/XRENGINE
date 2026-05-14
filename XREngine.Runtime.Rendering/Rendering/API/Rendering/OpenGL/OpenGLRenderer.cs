@@ -323,6 +323,10 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
     /// </summary>
     private static class UploadStageStats
     {
+        private static readonly bool Enabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_UPLOAD_STAGE_LOGGING"), "1", StringComparison.OrdinalIgnoreCase)
+            || Debugger.IsAttached;
+
         private readonly struct Entry
         {
             public Entry(long calls, double totalMs, double maxMs, long processed, long pendingMax)
@@ -342,10 +346,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
         private static string? _logPath;
 
         public static bool IsEnabled()
-        {
-            // Always-on for this investigation. Cheap; flushes only once/sec.
-            return true;
-        }
+            => Enabled;
 
         public static void Record(string stage, double ms, int processedItems, int pendingAfter)
         {

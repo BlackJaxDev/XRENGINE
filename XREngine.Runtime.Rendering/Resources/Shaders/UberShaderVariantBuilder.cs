@@ -86,7 +86,7 @@ internal static partial class UberShaderVariantBuilder
 
     private static UberMaterialVariantRequest BuildRequest(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, string resolvedSource)
     {
-        string? sourcePath = canonicalShader.Source?.FilePath ?? canonicalShader.FilePath;
+        string? sourcePath = ResolveShaderSourcePathOrName(canonicalShader);
         long sourceVersion = unchecked((long)ComputeStableHash(resolvedSource));
         ulong vertexPermutationHash = ComputeVertexPermutationHash(material);
 
@@ -96,6 +96,7 @@ internal static partial class UberShaderVariantBuilder
             .Select(static x => x.Id)
             .OrderBy(static x => x, StringComparer.Ordinal)
             .ToArray();
+        HashSet<string> enabledFeatureSet = enabledFeatures.ToHashSet(StringComparer.Ordinal);
 
         string[] pipelineMacros = ResolvePipelineMacros(canonicalShader)
             .OrderBy(static x => x, StringComparer.Ordinal)
@@ -106,6 +107,9 @@ internal static partial class UberShaderVariantBuilder
 
         foreach (ShaderUiProperty property in manifest.Properties.Where(IsAuthorableUberProperty))
         {
+            if (property.FeatureId is not null && !enabledFeatureSet.Contains(property.FeatureId))
+                continue;
+
             EShaderUiPropertyMode mode = ResolvePropertyMode(material, property);
             if (property.IsSampler || mode == EShaderUiPropertyMode.Animated || !IsStaticPropertySupported(property))
             {
@@ -139,14 +143,25 @@ internal static partial class UberShaderVariantBuilder
     private static XRShader CreateVariantShader(XRShader canonicalShader, string generatedSource)
     {
         TextFile text = TextFile.FromText(generatedSource);
-        text.FilePath = canonicalShader.Source?.FilePath;
-        text.Name = canonicalShader.Source?.Name;
+        text.FilePath = canonicalShader.Source?.FilePath ?? canonicalShader.FilePath;
+        text.Name = canonicalShader.Source?.Name ?? canonicalShader.Name;
 
         return new XRShader(canonicalShader.Type, text)
         {
             Name = canonicalShader.Name,
             GenerateAsync = canonicalShader.GenerateAsync,
         };
+    }
+
+    private static string? ResolveShaderSourcePathOrName(XRShader shader)
+    {
+        if (!string.IsNullOrWhiteSpace(shader.Source?.FilePath))
+            return shader.Source.FilePath;
+        if (!string.IsNullOrWhiteSpace(shader.FilePath))
+            return shader.FilePath;
+        if (!string.IsNullOrWhiteSpace(shader.Source?.Name))
+            return shader.Source.Name;
+        return shader.Name;
     }
 
     private static string GenerateVariantSource(string resolvedSource, ShaderUiManifest manifest, UberMaterialVariantRequest request)
@@ -158,6 +173,10 @@ internal static partial class UberShaderVariantBuilder
             .ToHashSet(StringComparer.Ordinal);
 
         string strippedSource = StripRecognizedDefines(resolvedSource, featureGuardMacros, request.PipelineMacros);
+        strippedSource = PruneKnownConditionalBlocks(
+            strippedSource,
+            ResolveKnownConditionalMacros(featureGuardMacros),
+            ResolveDefinedConditionalMacros(disabledFeatureMacros, request.PipelineMacros));
         strippedSource = StripStaticUniformDeclarations(strippedSource, staticPropertyNames);
 
         List<string> defines = [];
@@ -210,6 +229,26 @@ internal static partial class UberShaderVariantBuilder
                 macros.Add(feature.GuardMacro);
         }
 
+        return macros;
+    }
+
+    private static HashSet<string> ResolveKnownConditionalMacros(IEnumerable<string> featureGuardMacros)
+    {
+        HashSet<string> macros = new(StringComparer.Ordinal);
+        foreach (string macro in PipelineAxisMacros)
+            macros.Add(macro);
+        foreach (string macro in featureGuardMacros)
+            macros.Add(macro);
+        return macros;
+    }
+
+    private static HashSet<string> ResolveDefinedConditionalMacros(IEnumerable<string> disabledFeatureMacros, IEnumerable<string> pipelineMacros)
+    {
+        HashSet<string> macros = new(StringComparer.Ordinal);
+        foreach (string macro in disabledFeatureMacros)
+            macros.Add(macro);
+        foreach (string macro in pipelineMacros)
+            macros.Add(macro);
         return macros;
     }
 
@@ -343,7 +382,12 @@ internal static partial class UberShaderVariantBuilder
         ShaderVar resolvedParameter = parameter
             ?? throw new InvalidOperationException($"Uber property '{property.Name}' could not resolve a backing shader parameter.");
 
-        return resolvedParameter switch
+        return FormatShaderParameterStaticLiteral(resolvedParameter);
+    }
+
+    private static string FormatShaderParameterStaticLiteral(ShaderVar parameter)
+    {
+        return parameter switch
         {
             ShaderBool value => value.Value ? "true" : "false",
             ShaderInt value => value.Value.ToString(CultureInfo.InvariantCulture),
@@ -352,7 +396,7 @@ internal static partial class UberShaderVariantBuilder
             ShaderVector2 value => $"vec2({FormatFloatLiteral(value.Value.X)}, {FormatFloatLiteral(value.Value.Y)})",
             ShaderVector3 value => $"vec3({FormatFloatLiteral(value.Value.X)}, {FormatFloatLiteral(value.Value.Y)}, {FormatFloatLiteral(value.Value.Z)})",
             ShaderVector4 value => $"vec4({FormatFloatLiteral(value.Value.X)}, {FormatFloatLiteral(value.Value.Y)}, {FormatFloatLiteral(value.Value.Z)}, {FormatFloatLiteral(value.Value.W)})",
-            _ => throw new InvalidOperationException($"Uber property '{property.Name}' uses unsupported shader parameter type '{resolvedParameter.GetType().Name}'."),
+            _ => throw new InvalidOperationException($"Uber shader parameter '{parameter.Name}' uses unsupported shader parameter type '{parameter.GetType().Name}'."),
         };
     }
 
@@ -402,14 +446,55 @@ internal static partial class UberShaderVariantBuilder
 
     private static string ResolveStaticLiteral(XRMaterial material, ShaderUiProperty property)
     {
-        if (TryFormatStaticLiteral(material, property, out string literal))
-            return literal;
-
         UberMaterialPropertyState? authored = material.UberAuthoredState.GetProperty(property.Name);
         if (!string.IsNullOrWhiteSpace(authored?.StaticLiteral))
             return authored.StaticLiteral!;
 
+        if (TryFormatMaterialParameterStaticLiteral(material, property, out string literal))
+            return literal;
+
+        if (TryResolveBakedStaticLiteral(material.ActiveUberVariant.StaticProperties, property.Name, out literal) ||
+            TryResolveBakedStaticLiteral(material.RequestedUberVariant.StaticProperties, property.Name, out literal))
+        {
+            return literal;
+        }
+
         return FormatStaticLiteral(material, property);
+    }
+
+    private static bool TryFormatMaterialParameterStaticLiteral(XRMaterial material, ShaderUiProperty property, out string literal)
+    {
+        ShaderVar? parameter = material.Parameters?.FirstOrDefault(x => string.Equals(x.Name, property.Name, StringComparison.Ordinal));
+        if (parameter is not null)
+        {
+            literal = FormatShaderParameterStaticLiteral(parameter);
+            return true;
+        }
+
+        if (string.Equals(property.Name, "_Cutoff", StringComparison.Ordinal))
+        {
+            literal = FormatFloatLiteral(material.AlphaCutoff);
+            return true;
+        }
+
+        literal = string.Empty;
+        return false;
+    }
+
+    private static bool TryResolveBakedStaticLiteral(IReadOnlyList<string> staticProperties, string propertyName, out string literal)
+    {
+        literal = string.Empty;
+        string prefix = propertyName + "=";
+        foreach (string property in staticProperties)
+        {
+            if (!property.StartsWith(prefix, StringComparison.Ordinal))
+                continue;
+
+            literal = property[prefix.Length..];
+            return true;
+        }
+
+        return false;
     }
 
     private static ulong ComputeVariantHash(
