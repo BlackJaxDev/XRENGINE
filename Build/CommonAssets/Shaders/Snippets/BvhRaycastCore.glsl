@@ -10,11 +10,7 @@
 #define XR_FORCE_CLOSEST_HIT 0u
 #endif
 
-// Shared BVH raycast helpers. Consumers must declare the following resources:
-// layout(std430, binding = 0) buffer Rays      { RayInput gRays[];      };
-// layout(std430, binding = 1) buffer Nodes     { BvhNode  gNodes[];     };
-// layout(std430, binding = 2) buffer Triangles { PackedTriangle gTriangles[]; };
-// layout(std430, binding = 3) buffer Hits      { HitRecord gHits[];     };
+// Shared BVH raycast helpers and buffer contract.
 //
 // Uniforms expected:
 // uniform uint uRayCount;
@@ -65,13 +61,33 @@ struct HitRecord
     float padding;
 };
 
-Ray DecodeRay(RayInput input)
+layout(std430, binding = 0) readonly buffer Rays
+{
+    RayInput gRays[];
+};
+
+layout(std430, binding = 1) readonly buffer Nodes
+{
+    BvhNode gNodes[];
+};
+
+layout(std430, binding = 2) readonly buffer Triangles
+{
+    PackedTriangle gTriangles[];
+};
+
+layout(std430, binding = 3) writeonly buffer Hits
+{
+    HitRecord gHits[];
+};
+
+Ray DecodeRay(RayInput rayInput)
 {
     Ray r;
-    r.origin = input.origin.xyz;
-    r.tMin = input.origin.w;
-    r.direction = input.direction.xyz;
-    r.tMax = input.direction.w;
+    r.origin = rayInput.origin.xyz;
+    r.tMin = rayInput.origin.w;
+    r.direction = rayInput.direction.xyz;
+    r.tMax = rayInput.direction.w;
     return r;
 }
 

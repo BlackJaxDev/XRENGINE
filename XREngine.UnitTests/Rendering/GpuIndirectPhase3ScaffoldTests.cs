@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Shouldly;
+using System.Runtime.CompilerServices;
 using XREngine.Rendering.Commands;
 
 namespace XREngine.UnitTests.Rendering;
@@ -26,6 +27,9 @@ public class GpuIndirectPhase3ScaffoldTests
         settings.GpuOcclusionCullingMode = EOcclusionCullingMode.CpuQueryAsync;
         settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.CpuQueryAsync);
 
+        settings.GpuOcclusionCullingMode = EOcclusionCullingMode.CpuSoftwareOcclusion;
+        settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.CpuSoftwareOcclusion);
+
         settings.GpuOcclusionCullingMode = EOcclusionCullingMode.Disabled;
         settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.Disabled);
     }
@@ -33,7 +37,7 @@ public class GpuIndirectPhase3ScaffoldTests
     [Test]
     public void GpuRenderPass_OcclusionCounters_DefaultToZero()
     {
-        var pass = new GPURenderPassCollection(renderPass: 0);
+        var pass = (GPURenderPassCollection)RuntimeHelpers.GetUninitializedObject(typeof(GPURenderPassCollection));
 
         pass.OcclusionCandidatesTested.ShouldBe(0u);
         pass.OcclusionAccepted.ShouldBe(0u);

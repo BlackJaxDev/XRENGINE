@@ -1609,16 +1609,6 @@ internal sealed class RuntimeEffectiveSettings
                 resolved = parsed;
             }
 
-            // Path-aware coercion (matches RuntimeEngine.Rendering.Settings.GpuOcclusionCullingMode):
-            // GpuHiZ has no GPU compute cull consumer on the CpuDirect submission path,
-            // so coerce to CpuQueryAsync (hardware occlusion queries) there. Keeps the
-            // serialized value intact so switching strategies at runtime still works.
-            if (resolved == EOcclusionCullingMode.GpuHiZ &&
-                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.CpuDirect)
-            {
-                return EOcclusionCullingMode.CpuQueryAsync;
-            }
-
             return resolved;
         }
         set => _gpuOcclusionCullingMode = value;

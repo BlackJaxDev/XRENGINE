@@ -446,7 +446,7 @@ public partial class XRMaterial
     public bool EnsureUberVariantPreparedForRendering()
     {
         XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
-        if (!ActiveUberVariant.IsEmpty && UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+        if (HasRenderableUberVariantState(activeFragmentShader))
             return false;
 
         if (!TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest) || fragmentShader is null)
@@ -474,7 +474,7 @@ public partial class XRMaterial
     public bool IsUberVariantReadyForRendering()
     {
         XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
-        if (!ActiveUberVariant.IsEmpty && UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+        if (HasRenderableUberVariantState(activeFragmentShader))
             return true;
 
         // Non-uber materials never need variant prep.
@@ -493,14 +493,12 @@ public partial class XRMaterial
     public void RequestUberVariantPreparationIfNeeded()
     {
         XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
-        if (!ActiveUberVariant.IsEmpty && UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+        if (HasRenderableUberVariantState(activeFragmentShader))
             return;
 
         if (UberVariantStatus.Stage is EUberMaterialVariantStage.Requested or
             EUberMaterialVariantStage.Preparing or
-            EUberMaterialVariantStage.Compiling or
-            EUberMaterialVariantStage.Ready or
-            EUberMaterialVariantStage.Active)
+            EUberMaterialVariantStage.Compiling)
         {
             return;
         }
@@ -509,6 +507,19 @@ public partial class XRMaterial
             return;
 
         RequestUberVariantRebuild();
+    }
+
+    private bool HasRenderableUberVariantState(XRShader? activeFragmentShader)
+    {
+        if (ActiveUberVariant.IsEmpty || ActiveUberVariant.VariantHash == 0)
+            return false;
+
+        if (UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+            return true;
+
+        UberMaterialVariantStatus status = UberVariantStatus;
+        return status.Stage is EUberMaterialVariantStage.Ready or EUberMaterialVariantStage.Active &&
+               status.ActiveVariantHash == ActiveUberVariant.VariantHash;
     }
 
     public void RequestUberVariantRebuildDebounced(int debounceMilliseconds = UberConstantPropertyEditDebounceMilliseconds)

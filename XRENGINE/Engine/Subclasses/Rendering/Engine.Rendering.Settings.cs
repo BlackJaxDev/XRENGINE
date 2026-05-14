@@ -278,7 +278,7 @@ namespace XREngine
                 }
 
                 [Category("Debug")]
-                [Description("Texture runtime log detail written to log_textures.txt. Summary logs periodic summaries and high-severity events; SlowOnly logs slow/high-severity events; Verbose logs every texture transition/upload diagnostic.")]
+                [Description("Texture runtime log detail written to log_textures.log. Summary logs periodic summaries and high-severity events; SlowOnly logs slow/high-severity events; Verbose logs every texture transition/upload diagnostic.")]
                 public TextureRuntimeLogMode TextureLogMode
                 {
                     get => _textureLogMode;
@@ -1377,10 +1377,10 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// Selects which occlusion culling path to run for GPU indirect rendering.
+                /// Selects which mesh occlusion culling path to run.
                 /// </summary>
                 [Category("Occlusion")]
-                [Description("Selects which occlusion culling path to run for GPU indirect rendering.")]
+                [Description("Selects which mesh occlusion culling path to run.")]
                 public EOcclusionCullingMode GpuOcclusionCullingMode
                 {
                     get
@@ -1393,17 +1393,6 @@ namespace XREngine
                             System.Enum.TryParse(raw.Trim(), ignoreCase: true, out EOcclusionCullingMode parsed))
                         {
                             resolved = parsed;
-                        }
-
-                        // Path-aware coercion: the CpuDirect submission path has no GPU compute cull
-                        // to consume Hi-Z output, so GpuHiZ is meaningless there. Coerce to
-                        // CpuQueryAsync (hardware occlusion queries) when CpuDirect is active.
-                        // This keeps the serialized setting intact so switching strategies at
-                        // runtime still produces the right effective mode.
-                        if (resolved == EOcclusionCullingMode.GpuHiZ &&
-                            Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.CpuDirect)
-                        {
-                            return EOcclusionCullingMode.CpuQueryAsync;
                         }
 
                         return resolved;
@@ -1440,12 +1429,13 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// Opt-in: enable the CPU software-rasterizer occluder pass (Masked SOC-style).
+                /// Legacy opt-in: enable the CPU software-rasterizer occluder pass (Masked SOC-style).
                 /// Rasterizes a conservative low-resolution opaque depth buffer on the CPU.
+                /// Prefer GpuOcclusionCullingMode=CpuSoftwareOcclusion for new captures.
                 /// Env override: XRE_CPU_SOC_OCCLUSION=1. See C-CPU-3 in the perf-debug plan.
                 /// </summary>
                 [Category("Occlusion")]
-                [Description("Opt-in: enable CPU software-rasterizer occluder pass (SOC).")]
+                [Description("Legacy opt-in: enable CPU software-rasterizer occluder pass (SOC). Prefer CpuSoftwareOcclusion mode.")]
                 public bool EnableCpuSoftwareOcclusionCulling
                 {
                     get => _enableCpuSoftwareOcclusionCulling;

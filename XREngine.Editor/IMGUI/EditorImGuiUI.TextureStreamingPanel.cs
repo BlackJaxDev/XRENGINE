@@ -46,7 +46,7 @@ public static partial class EditorImGuiUI
             if (ImGui.MenuItem("Dump Summary"))
                 XRTexture2D.DumpImportedTextureStreamingSummary();
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Write an immediate Texture.VramSummary event to log_textures.txt.");
+                ImGui.SetTooltip("Write an immediate Texture.VramSummary event to log_textures.log.");
             ImGui.EndMenuBar();
         }
 

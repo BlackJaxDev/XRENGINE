@@ -31,6 +31,7 @@ public static partial class EditorImGuiUI
         var mode = OcclusionTelemetry.LastEffectiveMode;
         var strategy = OcclusionTelemetry.LastSubmissionStrategy;
         var configuredMode = Engine.EffectiveSettings.GpuOcclusionCullingMode;
+        bool legacyCpuSocEnabled = Engine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling;
 
         Vector4 modeColor = mode == EOcclusionCullingMode.Disabled
             ? new Vector4(1.0f, 0.4f, 0.4f, 1.0f)
@@ -39,6 +40,8 @@ public static partial class EditorImGuiUI
         ImGui.SameLine();
         ImGui.Text($"  Strategy: {strategy}");
         ImGui.Text($"Configured Mode (settings): {configuredMode}");
+        if (legacyCpuSocEnabled && configuredMode != EOcclusionCullingMode.CpuSoftwareOcclusion)
+            ImGui.Text("Legacy CPU SOC toggle: enabled");
         if (mode == EOcclusionCullingMode.Disabled && configuredMode != EOcclusionCullingMode.Disabled)
         {
             ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f),
@@ -135,6 +138,11 @@ public static partial class EditorImGuiUI
         if (socTested + socSelected + socRasterized == 0)
         {
             ImGui.TextDisabled("  Not active this frame.");
+            if (configuredMode == EOcclusionCullingMode.CpuSoftwareOcclusion || legacyCpuSocEnabled)
+            {
+                ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f),
+                    "  Enabled, but no eligible CPU opaque pass submitted SOC work this frame.");
+            }
         }
         else
         {

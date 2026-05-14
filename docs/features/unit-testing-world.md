@@ -114,7 +114,7 @@ If a startup model references textures outside the authored folder layout, use `
 
 For glTF validation work, the checked-in corpus under `XREngine.UnitTests/TestData/Gltf/` is the fastest repeatable source of startup assets. It covers external resources, data URIs, embedded GLB BIN chunks, sparse accessors, skins, morph targets, animations, and malformed-container regression cases.
 
-`FbxLogVerbosity` controls how much native FBX importer/exporter trace output is emitted while the unit-testing world boots. When enabled, those lines go through the engine `Assets` log category, so they show up in the editor console `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled. glTF does not currently expose a separate verbosity toggle; native glTF warnings and fallback diagnostics also flow through the normal asset-import logging path.
+`FbxLogVerbosity` controls how much native FBX importer/exporter trace output is emitted while the unit-testing world boots. When enabled, those lines go through the engine `Assets` log category, so they show up in the editor console `Assets` tab and in `Build/Logs/.../log_assets.log` when file logging is enabled. glTF does not currently expose a separate verbosity toggle; native glTF warnings and fallback diagnostics also flow through the normal asset-import logging path.
 
 This is the fastest way to spin up repeatable import tests without hand-building the scene each time.
 

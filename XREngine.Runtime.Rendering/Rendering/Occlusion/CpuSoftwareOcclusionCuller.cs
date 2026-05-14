@@ -38,6 +38,9 @@ namespace XREngine.Rendering.Occlusion
         {
             get
             {
+                if (RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuSoftwareOcclusion)
+                    return true;
+
                 if (RuntimeEngine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling)
                     return true;
 
@@ -134,7 +137,10 @@ namespace XREngine.Rendering.Occlusion
 
             _frameTestsRun++;
             if (_frameOccludersRasterized == 0)
+            {
+                OcclusionTelemetry.RecordCpuSocTested();
                 return true;
+            }
 
             long start = Stopwatch.GetTimestamp();
             bool visible = _tester.TestVisible(_buffer, _viewProjectionMatrix, worldBounds);

@@ -74,7 +74,7 @@ For importer and exporter tracing, set `XRE_FBX_LOG` before launching the editor
 - `XRE_FBX_LOG=verbose` (or `1`) for detailed per-stage and per-asset trace lines
 - `XRE_FBX_LOG=warn` or `error` to log only problems
 
-Enabled FBX trace lines flow through the engine `Assets` log category, so they appear in the editor console's `Assets` tab and in `Build/Logs/.../log_assets.txt` when file logging is enabled. There is no separate glTF trace env var today; native glTF warnings, unsupported-extension diagnostics, and Auto-to-Assimp fallback messages also surface through the normal asset-import logging path.
+Enabled FBX trace lines flow through the engine `Assets` log category, so they appear in the editor console's `Assets` tab and in `Build/Logs/.../log_assets.log` when file logging is enabled. There is no separate glTF trace env var today; native glTF warnings, unsupported-extension diagnostics, and Auto-to-Assimp fallback messages also surface through the normal asset-import logging path.
 
 The remaining import settings apply across native and compatibility paths unless noted otherwise:
 

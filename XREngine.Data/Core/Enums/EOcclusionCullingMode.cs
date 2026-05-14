@@ -1,7 +1,7 @@
 namespace XREngine
 {
     /// <summary>
-    /// Selects which occlusion culling path is active for GPU indirect rendering.
+    /// Selects which mesh occlusion culling path is active.
     /// </summary>
     public enum EOcclusionCullingMode
     {
@@ -18,6 +18,11 @@ namespace XREngine
         /// <summary>
         /// CPU-compatible asynchronous query path.
         /// </summary>
-        CpuQueryAsync = 2
+        CpuQueryAsync = 2,
+
+        /// <summary>
+        /// CPU software rasterizer occlusion path.
+        /// </summary>
+        CpuSoftwareOcclusion = 3
     }
 }
