@@ -747,9 +747,7 @@ namespace XREngine.Rendering.Commands
 
         // Returns the current scene material map (ID -> XRMaterial)
         public IReadOnlyDictionary<uint, XRMaterial> GetMaterialMap(GPUScene scene)
-            => EnableZeroReadbackMaterialScatter && scene.StateClassMaterialMap.Count > 0
-                ? scene.StateClassMaterialMap
-                : scene.MaterialMap;
+            => scene.MaterialMap;
 
         private void SetCurrentBatches(IReadOnlyList<HybridRenderingManager.DrawBatch>? batches)
             => CurrentBatches = batches;

@@ -107,6 +107,10 @@ Or:
 ```
 
 This requires Visual Studio or Build Tools with the Desktop development with C++ workload.
+If that native C++ workload is missing, the script builds the managed `RiveSharp.dll`
+without native project references so the engine, editor, settings generator, and docs
+can still compile. In that fallback state, Rive UI components log a warning and remain
+disabled at runtime until the native `rive.dll` is built and staged.
 
 ### FFmpeg
 

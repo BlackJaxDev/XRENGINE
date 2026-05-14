@@ -1,6 +1,6 @@
 namespace XREngine;
 
-internal enum EPlayModeState
+internal enum RuntimePlayModeState
 {
     Edit,
     EnteringPlay,

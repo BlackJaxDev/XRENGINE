@@ -80,15 +80,15 @@ bool StoreDrawCommand(uint bucketIndex, uint drawIndexInBucket, uint count, uint
     return true;
 }
 
-void TryEmitDraw(uint meshID, uint stateClassID, uint instanceCount, uint commandIndex, bool previousLod)
+void TryEmitDraw(uint meshID, uint materialID, uint instanceCount, uint commandIndex, bool previousLod)
 {
     if (instanceCount == 0u)
         return;
 
-    if (stateClassID >= uint(MaxMaterialSlotLookup) || stateClassID >= uint(materialSlots.length()))
+    if (materialID >= uint(MaxMaterialSlotLookup) || materialID >= uint(materialSlots.length()))
         return;
 
-    uint slotIndex = materialSlots[stateClassID];
+    uint slotIndex = materialSlots[materialID];
     if (slotIndex == INVALID_MATERIAL_SLOT)
         return;
 
@@ -138,7 +138,7 @@ void main()
 
     DrawMetadata meta = Draws[drawID];
     uint meshID = meta.MeshID;
-    uint stateClassID = meta.StateClassID;
+    uint materialID = meta.MaterialID;
     uint instanceCount = meta.InstanceCount;
     uint renderPass = meta.RenderPass;
 
@@ -164,7 +164,7 @@ void main()
     }
 
     if (transitionActive)
-        TryEmitDraw(previousMeshID, stateClassID, instanceCount, drawID, true);
+        TryEmitDraw(previousMeshID, materialID, instanceCount, drawID, true);
 
-    TryEmitDraw(meshID, stateClassID, instanceCount, drawID, false);
+    TryEmitDraw(meshID, materialID, instanceCount, drawID, false);
 }

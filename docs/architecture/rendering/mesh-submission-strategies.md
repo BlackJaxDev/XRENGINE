@@ -36,8 +36,8 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 |-----------|---------|
 | `FullBucketScan` | Strict no-readback path. The GPU scatters commands into state-class/tier buckets and the CPU loops over every bucket while using GPU-written counts. |
 | `ActiveBucketList` | Readback-assisted diagnostic path. Adds a compute compaction pass that writes only non-empty bucket IDs, maps that compact ID list on the CPU, then submits those buckets. Useful for measuring empty-bucket overhead. |
-| `MaterialTable` | Readback-assisted diagnostic path. Uses active buckets with a shared material-table shader instead of per-material shader programs. Current OpenGL implementation renders material-table debug colors. |
-| `BindlessMaterialTable` | Readback-assisted diagnostic path. Same as `MaterialTable`, but requires `GL_ARB_bindless_texture` and `GL_ARB_gpu_shader_int64`; falls back to `MaterialTable` when unavailable. Texture-correct bindless still requires backend texture handle population. |
+| `MaterialTable` | Readback-assisted diagnostic path. Uses active material buckets with a shared deferred material-table shader instead of per-material shader programs. The OpenGL path reads material constants from `MaterialTable`; unsupported/non-deferred passes fall back to the per-material tier path. |
+| `BindlessMaterialTable` | Readback-assisted diagnostic path. Same as `MaterialTable`, but requires `GL_ARB_bindless_texture` and `GL_ARB_gpu_shader_int64`; falls back to `MaterialTable` when unavailable. Resident bindless albedo handles are applied through the two-level texture handle table. |
 
 ## State Class IDs
 
@@ -50,7 +50,9 @@ Default derivation:
 - Opaque deferred passes resolve to `OpaqueDeferred`.
 - Remaining opaque forward/shadow-compatible draws resolve to `OpaqueForward` unless a renderer-specific exception allocates a custom state class.
 
-`GpuIndirectZeroReadback` currently binds one representative CPU material per state class while the GPU indirect command carries the stable `DrawID`; Phase D will use that `DrawID` to fetch per-draw material records from the bindless/descriptor-indexed material table.
+`GpuIndirectZeroReadback` material scatter uses `DrawMetadata.MaterialID` as the bucket key. `StateClassID` remains the coarse pipeline-state key; it must not substitute for material identity. Material-table draw paths use the stable `DrawID` to fetch the material row and preserve per-material constants such as base color, opacity, roughness, metallic, specular, and emission.
+
+Dynamic material-table layouts for additional deferred, forward+, Uber, and annotated custom shader paths are proposed in [Dynamic Indirect Material Bindings](../../work/design/rendering/dynamic-indirect-material-bindings.md).
 
 ## Pass Contract
 

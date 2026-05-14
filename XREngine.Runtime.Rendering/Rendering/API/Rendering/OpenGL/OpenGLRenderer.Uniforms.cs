@@ -48,7 +48,11 @@ public partial class OpenGLRenderer
             foreach (var kv in meshBuffers)
             {
                 var glBuf = GenericToAPI<GLDataBuffer>(kv.Value);
-                glBuf?.BindToRenderer(glProgram, glMesh);
+                if (glBuf is null)
+                    continue;
+
+                glBuf.EnsureStorageAllocatedForGpuCopy();
+                glBuf.BindToRenderer(glProgram, glMesh);
             }
         }
 
@@ -59,7 +63,11 @@ public partial class OpenGLRenderer
             foreach (var kv in rendBuffers)
             {
                 var glBuf = GenericToAPI<GLDataBuffer>(kv.Value);
-                glBuf?.BindToRenderer(glProgram, glMesh);
+                if (glBuf is null)
+                    continue;
+
+                glBuf.EnsureStorageAllocatedForGpuCopy();
+                glBuf.BindToRenderer(glProgram, glMesh);
             }
         }
 

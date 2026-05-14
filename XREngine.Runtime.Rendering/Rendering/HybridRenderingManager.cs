@@ -2268,7 +2268,10 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
             sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
-            sb.AppendLine("layout(location=0) out vec4 FragColor;");
+            sb.AppendLine("layout(location=0) out vec4 AlbedoOpacity;");
+            sb.AppendLine("layout(location=1) out vec2 Normal;");
+            sb.AppendLine("layout(location=2) out vec4 RMSE;");
+            sb.AppendLine("layout(location=3) out uint TransformId;");
             sb.AppendLine();
             AppendDrawMetadataGlsl(sb);
             sb.AppendLine("struct MaterialEntry");
@@ -2277,6 +2280,8 @@ namespace XREngine.Rendering
             sb.AppendLine("    uint NormalHandleIndex;");
             sb.AppendLine("    uint RMHandleIndex;");
             sb.AppendLine("    uint Flags;");
+            sb.AppendLine("    vec4 BaseColorOpacity;");
+            sb.AppendLine("    vec4 RMSE;");
             sb.AppendLine("};");
             sb.AppendLine($"layout(std430, binding = {MaterialTableSsboBinding}) readonly buffer MaterialTableBuffer {{ MaterialEntry MaterialTable[]; }};");
             if (bindless)
@@ -2310,15 +2315,18 @@ namespace XREngine.Rendering
             sb.AppendLine("    return Draws[drawID].MaterialID;");
             sb.AppendLine("}");
             sb.AppendLine();
-            sb.AppendLine("vec3 HashMaterialColor(uint materialId)");
+            sb.AppendLine("vec2 XRENGINE_EncodeNormal(vec3 normal)");
             sb.AppendLine("{");
-            sb.AppendLine("    uint x = materialId * 747796405u + 2891336453u;");
-            sb.AppendLine("    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;");
-            sb.AppendLine("    x = (x >> 22u) ^ x;");
-            sb.AppendLine("    return vec3(");
-            sb.AppendLine("        float((x >>  0u) & 255u) / 255.0,");
-            sb.AppendLine("        float((x >>  8u) & 255u) / 255.0,");
-            sb.AppendLine("        float((x >> 16u) & 255u) / 255.0) * 0.75 + vec3(0.18);");
+            sb.AppendLine("    normal = normalize(normal);");
+            sb.AppendLine("    float invL1Norm = 1.0 / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-6);");
+            sb.AppendLine("    vec3 n = normal * invL1Norm;");
+            sb.AppendLine("    vec2 oct = n.xy;");
+            sb.AppendLine("    if (n.z < 0.0)");
+            sb.AppendLine("    {");
+            sb.AppendLine("        vec2 signDir = vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);");
+            sb.AppendLine("        oct = (1.0 - abs(oct.yx)) * signDir;");
+            sb.AppendLine("    }");
+            sb.AppendLine("    return oct * 0.5 + 0.5;");
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("void main()");
@@ -2326,22 +2334,32 @@ namespace XREngine.Rendering
             sb.AppendLine($"    uint drawID = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
             sb.AppendLine("    uint materialId = LoadMaterialId(drawID);");
             sb.AppendLine("    uint flags = 0u;");
+            sb.AppendLine("    vec4 baseColorOpacity = vec4(1.0);");
+            sb.AppendLine("    vec4 rmse = vec4(1.0, 0.0, 1.0, 0.0);");
             sb.AppendLine("    if (materialId < uint(MaterialTable.length()))");
-            sb.AppendLine("        flags = MaterialTable[materialId].Flags;");
-            sb.AppendLine("    vec3 baseColor = HashMaterialColor(materialId);");
+            sb.AppendLine("    {");
+            sb.AppendLine("        MaterialEntry material = MaterialTable[materialId];");
+            sb.AppendLine("        flags = material.Flags;");
+            sb.AppendLine("        baseColorOpacity = material.BaseColorOpacity;");
+            sb.AppendLine("        rmse = material.RMSE;");
+            sb.AppendLine("    }");
+            sb.AppendLine("    vec3 baseColor = baseColorOpacity.rgb;");
+            sb.AppendLine("    float opacity = baseColorOpacity.a;");
             if (bindless)
             {
                 sb.AppendLine("    if (materialId < uint(MaterialTable.length()) && (flags & 1u) != 0u)");
                 sb.AppendLine("    {");
-                sb.AppendLine("        vec4 albedo = SampleBindlessTexture(MaterialTable[materialId].AlbedoHandleIndex, FragUV0, vec4(baseColor, 1.0));");
-                sb.AppendLine("        baseColor = albedo.rgb;");
+                sb.AppendLine("        vec4 albedo = SampleBindlessTexture(MaterialTable[materialId].AlbedoHandleIndex, FragUV0, vec4(1.0));");
+                sb.AppendLine("        baseColor *= albedo.rgb;");
+                sb.AppendLine("        opacity *= albedo.a;");
                 sb.AppendLine("    }");
             }
             sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
             sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
-            sb.AppendLine("    vec3 normal = normalize(FragNorm);");
-            sb.AppendLine("    float light = clamp(dot(normal, normalize(vec3(0.35, 0.65, 0.7))) * 0.5 + 0.5, 0.25, 1.0);");
-            sb.AppendLine("    FragColor = vec4(baseColor * light, 1.0);");
+            sb.AppendLine("    TransformId = drawID;");
+            sb.AppendLine("    Normal = XRENGINE_EncodeNormal(FragNorm);");
+            sb.AppendLine("    AlbedoOpacity = vec4(baseColor, opacity);");
+            sb.AppendLine("    RMSE = rmse;");
             sb.AppendLine("}");
 
             return new XRShader(EShaderType.Fragment, sb.ToString())
@@ -4047,6 +4065,12 @@ namespace XREngine.Rendering
             bool overrideActive = RuntimeEngine.Rendering.State.OverrideMaterial is not null
                 || (renderState is not null && renderState.UseDepthNormalMaterialVariants);
             if (overrideActive)
+            {
+                RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
+                return;
+            }
+
+            if (currentRenderPass != (int)EDefaultRenderPass.OpaqueDeferred)
             {
                 RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
                 return;

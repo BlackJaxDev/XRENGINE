@@ -1,14 +1,16 @@
 # Material Binding Policy
 
-Last updated: 2026-05-13
+Last updated: 2026-05-14
 
 ## Production Rule
 
 General scene materials use the GPU material table:
 
 - `MaterialTable` stores compact material rows.
-- Each material row stores texture handle or descriptor indices.
+- Each material row stores base color/opacity, roughness/metallic/specular/emission constants, and texture handle or descriptor indices.
 - `MaterialTextureHandleTable` stores OpenGL bindless texture handles, or maps to Vulkan descriptor-indexing slots.
+
+The current material row is the standard opaque-deferred row. The proposed upgrade for pass-declared dynamic layouts and shader annotation-driven conversion is tracked in [Dynamic Indirect Material Bindings](../../work/design/rendering/dynamic-indirect-material-bindings.md).
 
 Texture arrays are not the fallback for arbitrary material diversity. They are allowed only for genuinely homogeneous resource classes where every layer has the same semantic, dimensions, format, sampling policy, and lifetime pattern:
 

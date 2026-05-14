@@ -42,18 +42,8 @@ if errorlevel 1 (
     call :build_project "Build\Submodules\OscCore-NET9\OscCore.csproj"
     if errorlevel 1 set "SUBMODULE_FAILURE=1"
 
-    call :build_rivesharp_managed
+    call :build_rive_dependency
     if errorlevel 1 set "SUBMODULE_FAILURE=1"
-)
-
-if "%SUBMODULE_FAILURE%"=="0" (
-    call :ensure_premake
-    if errorlevel 1 (
-        set "SUBMODULE_FAILURE=1"
-    ) else (
-        call :build_rive_native
-        if errorlevel 1 set "SUBMODULE_FAILURE=1"
-    )
 )
 
 echo.
@@ -114,6 +104,7 @@ if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Community\MSBuild\Cur
 
 :msbuild_found
 if "%MSBUILD_EXE%"=="" (
+    if /I "%~1"=="quiet" exit /b 1
     echo ERROR: MSBuild not found. Install Visual Studio Build Tools with the "Desktop development with C++" workload.
     exit /b 1
 )
@@ -159,6 +150,7 @@ if "%VCTargetsPath%"=="" (
 
 :vctargets_found
 if "%VCTargetsPath%"=="" (
+    if /I "%~1"=="quiet" exit /b 1
     echo ERROR: Microsoft.Cpp.Default.props not found. Install Visual Studio Build Tools with the "Desktop development with C++" workload.
     exit /b 1
 )
@@ -191,6 +183,49 @@ if errorlevel 1 (
     echo Failed to build RiveSharp managed project.
     exit /b 1
 )
+exit /b 0
+
+:build_rivesharp_managed_only
+set "RIVESHARP_CSPROJ=%REPO_ROOT%\Build\Submodules\rive-sharp\RiveSharp\RiveSharp.csproj"
+if not exist "%RIVESHARP_CSPROJ%" (
+    echo ERROR: RiveSharp project file not found at "%RIVESHARP_CSPROJ%".
+    exit /b 1
+)
+
+echo Building RiveSharp managed assembly without native project references...
+dotnet build "%RIVESHARP_CSPROJ%" -c %CONFIG% -p:Platform=AnyCPU -p:BuildProjectReferences=false
+if errorlevel 1 (
+    echo Failed to build RiveSharp managed assembly.
+    exit /b 1
+)
+exit /b 0
+
+:build_rive_dependency
+call :ensure_msbuild quiet
+if errorlevel 1 (
+    echo WARNING: MSBuild was not found. Building RiveSharp managed assembly only; Rive native rendering will be unavailable.
+    call :build_rivesharp_managed_only
+    if errorlevel 1 exit /b 1
+    exit /b 0
+)
+
+call :ensure_vctargets quiet
+if errorlevel 1 (
+    echo WARNING: Visual C++ build tools are missing. Building RiveSharp managed assembly only; Rive native rendering will be unavailable.
+    call :build_rivesharp_managed_only
+    if errorlevel 1 exit /b 1
+    exit /b 0
+)
+
+call :ensure_premake
+if errorlevel 1 exit /b 1
+
+call :build_rive_native
+if errorlevel 1 exit /b 1
+
+call :build_rivesharp_managed
+if errorlevel 1 exit /b 1
+
 exit /b 0
 
 :ensure_premake

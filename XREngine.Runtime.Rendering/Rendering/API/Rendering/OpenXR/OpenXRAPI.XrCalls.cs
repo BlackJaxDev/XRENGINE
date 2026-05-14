@@ -490,6 +490,7 @@ public unsafe partial class OpenXRAPI
             _viewportMirrorDepth = null;
             _viewportMirrorColor?.Destroy();
             _viewportMirrorColor = null;
+            DestroyOpenXrPreviewTargets();
         }
         catch
         {

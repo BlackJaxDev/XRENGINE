@@ -609,10 +609,8 @@ namespace XREngine.Rendering.Commands
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.PopulateMaterialSlotLookup");
 
-            IReadOnlyDictionary<uint, XRMaterial> stateClassMap = scene.StateClassMaterialMap.Count > 0
-                ? scene.StateClassMaterialMap
-                : scene.MaterialMap;
-            ulong signature = ComputeMaterialSlotLookupSignature(stateClassMap, out uint maxMaterialId);
+            IReadOnlyDictionary<uint, XRMaterial> materialMap = scene.MaterialMap;
+            ulong signature = ComputeMaterialSlotLookupSignature(materialMap, out uint maxMaterialId);
 
             EnsureMaterialScatterBuffers(maxMaterialId + 1u, CommandCapacity);
             if (_materialSlotLookupBuffer is null)
@@ -621,7 +619,7 @@ namespace XREngine.Rendering.Commands
             if (ReferenceEquals(_materialSlotLookupUploadedBuffer, _materialSlotLookupBuffer) &&
                 _materialSlotLookupSignature == signature &&
                 _materialSlotLookupUploadedElementCount == _materialSlotLookupBuffer.ElementCount &&
-                _materialSlotIds.Count == stateClassMap.Count)
+                _materialSlotIds.Count == materialMap.Count)
             {
                 return;
             }
@@ -632,15 +630,15 @@ namespace XREngine.Rendering.Commands
             for (uint i = 0; i < _materialSlotLookupBuffer.ElementCount; ++i)
                 _materialSlotLookupBuffer.SetDataRawAtIndex(i, GPUBatchingBindings.InvalidMaterialSlot);
 
-            foreach (uint stateClassId in stateClassMap.Keys)
-                _materialSlotSortScratch.Add(stateClassId);
+            foreach (uint materialId in materialMap.Keys)
+                _materialSlotSortScratch.Add(materialId);
             _materialSlotSortScratch.Sort();
 
             for (int slotIndex = 0; slotIndex < _materialSlotSortScratch.Count; ++slotIndex)
             {
-                uint stateClassId = _materialSlotSortScratch[slotIndex];
-                _materialSlotLookupBuffer.SetDataRawAtIndex(stateClassId, (uint)slotIndex);
-                _materialSlotIds.Add(stateClassId);
+                uint materialId = _materialSlotSortScratch[slotIndex];
+                _materialSlotLookupBuffer.SetDataRawAtIndex(materialId, (uint)slotIndex);
+                _materialSlotIds.Add(materialId);
             }
 
             _materialSlotLookupBuffer.PushSubData();
@@ -1148,7 +1146,40 @@ namespace XREngine.Rendering.Commands
             return new GPUMaterialEntry
             {
                 Flags = flags,
+                BaseColorOpacity = ResolveMaterialBaseColorOpacity(material),
+                RMSE = ResolveMaterialRmse(material),
             };
+        }
+
+        private static Vector4 ResolveMaterialBaseColorOpacity(XRMaterial material)
+        {
+            Vector3 baseColor = material.Parameter<ShaderVector3>("BaseColor")?.Value ?? Vector3.One;
+            float opacity = material.Parameter<ShaderFloat>("Opacity")?.Value ?? 1.0f;
+
+            if (material.Parameter<ShaderVector4>("BaseColor") is { } baseColor4)
+            {
+                Vector4 v = baseColor4.Value;
+                baseColor = new Vector3(v.X, v.Y, v.Z);
+                opacity = v.W;
+            }
+            else if (material.Parameter<ShaderVector4>("MatColor") is { } matColor)
+            {
+                Vector4 v = matColor.Value;
+                baseColor = new Vector3(v.X, v.Y, v.Z);
+                opacity = v.W;
+            }
+
+            return new Vector4(baseColor, opacity);
+        }
+
+        private static Vector4 ResolveMaterialRmse(XRMaterial material)
+        {
+            float roughness = material.Parameter<ShaderFloat>("Roughness")?.Value ?? 1.0f;
+            float metallic = material.Parameter<ShaderFloat>("Metallic")?.Value ?? 0.0f;
+            float specular = material.Parameter<ShaderFloat>("Specular")?.Value ?? 1.0f;
+            float emission = material.Parameter<ShaderFloat>("Emission")?.Value ?? 0.0f;
+
+            return new Vector4(roughness, metallic, specular, emission);
         }
 
         private static bool TryResolveMaterialTexture(XRMaterial material, XRTexture texture, bool buildBindlessHandles, out ulong handle)

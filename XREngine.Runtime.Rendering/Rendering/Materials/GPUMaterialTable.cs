@@ -17,6 +17,8 @@ namespace XREngine.Rendering.Materials
         public uint NormalHandleIndex;
         public uint RMHandleIndex;
         public uint Flags;
+        public Vector4 BaseColorOpacity;
+        public Vector4 RMSE;
     }
 
     /// <summary>
@@ -52,8 +54,7 @@ namespace XREngine.Rendering.Materials
         public const uint InvalidTextureHandleIndex = 0u;
         private const uint InitialHandleIndex = 1u;
 
-        private static readonly uint[] EmptyMaterialEntryWords = new uint[4];
-        private static readonly uint[] EmptyHandleEntryWords = new uint[4];
+        private const int MaterialEntryUIntCount = 12;
         private readonly HashSet<uint> _activeMaterialIds = [];
         private readonly Dictionary<uint, GPUMaterialHandleIndices> _materialHandleIndices = [];
         private readonly Dictionary<ulong, uint> _handleIndicesByHandle = [];
@@ -78,7 +79,7 @@ namespace XREngine.Rendering.Materials
                 EBufferTarget.ShaderStorageBuffer,
                 Capacity,
                 EComponentType.UInt,
-                4,
+                MaterialEntryUIntCount,
                 false,
                 false)
             {
@@ -122,12 +123,7 @@ namespace XREngine.Rendering.Materials
             entry.NormalHandleIndex = indices.Normal;
             entry.RMHandleIndex = indices.RM;
 
-            Span<uint> scratch = stackalloc uint[4];
-            scratch[0] = entry.AlbedoHandleIndex;
-            scratch[1] = entry.NormalHandleIndex;
-            scratch[2] = entry.RMHandleIndex;
-            scratch[3] = entry.Flags;
-            Buffer.SetDataArrayRawAtIndex(materialID, scratch.ToArray());
+            Buffer.SetDataRawAtIndex(materialID, PackMaterialEntry(entry));
 
             if (!indices.Equals(GPUMaterialHandleIndices.Empty))
                 _materialHandleIndices[materialID] = indices;
@@ -145,7 +141,7 @@ namespace XREngine.Rendering.Materials
                 return false;
 
             ReleaseMaterialHandleRefs(materialID);
-            Buffer.SetDataArrayRawAtIndex(materialID, EmptyMaterialEntryWords);
+            Buffer.SetDataRawAtIndex(materialID, default(GPUMaterialEntryWords));
             return true;
         }
 
@@ -181,14 +177,12 @@ namespace XREngine.Rendering.Materials
                 _handleIndicesByHandle.Add(handle, index);
                 _handlesByIndex.Add(index, handle);
 
-                Span<uint> scratch = stackalloc uint[4];
-                PackHandleEntry(new GPUTextureHandleEntry
+                TextureHandleBuffer.SetDataRawAtIndex(index, PackHandleEntry(new GPUTextureHandleEntry
                 {
                     Handle = handle,
                     Flags = 1u,
                     Padding0 = 0u
-                }, scratch);
-                TextureHandleBuffer.SetDataArrayRawAtIndex(index, scratch.ToArray());
+                }));
             }
 
             _handleRefCounts.TryGetValue(index, out uint refCount);
@@ -239,16 +233,58 @@ namespace XREngine.Rendering.Materials
                 _retiredHandles.Enqueue(new GPUMaterialRetiredHandle(handle));
             }
 
-            TextureHandleBuffer.SetDataArrayRawAtIndex(index, EmptyHandleEntryWords);
+            TextureHandleBuffer.SetDataRawAtIndex(index, default(GPUTextureHandleEntryWords));
             _freeHandleIndices.Enqueue(index);
         }
 
-        private static void PackHandleEntry(GPUTextureHandleEntry entry, Span<uint> dst)
+        private static GPUTextureHandleEntryWords PackHandleEntry(GPUTextureHandleEntry entry)
+            => new()
+            {
+                HandleLo = (uint)(entry.Handle & 0xFFFFFFFFul),
+                HandleHi = (uint)(entry.Handle >> 32),
+                Flags = entry.Flags,
+                Padding0 = entry.Padding0,
+            };
+
+        private static GPUMaterialEntryWords PackMaterialEntry(GPUMaterialEntry entry)
+            => new()
+            {
+                AlbedoHandleIndex = entry.AlbedoHandleIndex,
+                NormalHandleIndex = entry.NormalHandleIndex,
+                RMHandleIndex = entry.RMHandleIndex,
+                Flags = entry.Flags,
+                BaseColorX = BitConverter.SingleToUInt32Bits(entry.BaseColorOpacity.X),
+                BaseColorY = BitConverter.SingleToUInt32Bits(entry.BaseColorOpacity.Y),
+                BaseColorZ = BitConverter.SingleToUInt32Bits(entry.BaseColorOpacity.Z),
+                Opacity = BitConverter.SingleToUInt32Bits(entry.BaseColorOpacity.W),
+                Roughness = BitConverter.SingleToUInt32Bits(entry.RMSE.X),
+                Metallic = BitConverter.SingleToUInt32Bits(entry.RMSE.Y),
+                Specular = BitConverter.SingleToUInt32Bits(entry.RMSE.Z),
+                Emission = BitConverter.SingleToUInt32Bits(entry.RMSE.W),
+            };
+
+        private struct GPUMaterialEntryWords
         {
-            dst[0] = (uint)(entry.Handle & 0xFFFFFFFFul);
-            dst[1] = (uint)(entry.Handle >> 32);
-            dst[2] = entry.Flags;
-            dst[3] = entry.Padding0;
+            public uint AlbedoHandleIndex;
+            public uint NormalHandleIndex;
+            public uint RMHandleIndex;
+            public uint Flags;
+            public uint BaseColorX;
+            public uint BaseColorY;
+            public uint BaseColorZ;
+            public uint Opacity;
+            public uint Roughness;
+            public uint Metallic;
+            public uint Specular;
+            public uint Emission;
+        }
+
+        private struct GPUTextureHandleEntryWords
+        {
+            public uint HandleLo;
+            public uint HandleHi;
+            public uint Flags;
+            public uint Padding0;
         }
 
         private void Resize(uint newCapacity)
