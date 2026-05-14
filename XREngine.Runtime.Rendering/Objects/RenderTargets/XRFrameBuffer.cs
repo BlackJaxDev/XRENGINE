@@ -512,24 +512,19 @@ namespace XREngine.Rendering
                         {
                             if (Target is not XRTexture texture)
                                 break;
-                            texture.Bind();
                             texture.DetachFromFBO(this, Attachment, MipLevel);
                             break;
                         }
                     case XRRenderBuffer buf:
-                        buf.Bind();
                         buf.DetachFromFBO(this, Attachment);
                         break;
                     case XRTexture2DArray arrayRef when LayerIndex >= 0:
-                        arrayRef.Bind();
                         arrayRef.DetachImageFromFBO(this, Attachment, LayerIndex, MipLevel);
                         break;
                     case XRTextureCube cuberef when LayerIndex >= 0 && LayerIndex < 6:
-                        cuberef.Bind();
                         cuberef.DetachFaceFromFBO(this, Attachment, ECubemapFace.PosX + LayerIndex, MipLevel);
                         break;
                     case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr:
-                        arrayref.Bind();
                         arrayref.DetachFromFBO_OVRMultiView(this, Attachment, MipLevel, ovr.Offset, ovr.NumViews);
                         break;
                 }
@@ -602,24 +597,19 @@ namespace XREngine.Rendering
                     {
                         if (Target is not XRTexture texture)
                             break;
-                        texture.Bind();
                         texture.DetachFromFBO(this, Attachment, MipLevel);
                         break;
                     }
                 case XRRenderBuffer buf:
-                    buf.Bind();
                     buf.DetachFromFBO(this, Attachment);
                     break;
                 case XRTexture2DArray arrayRef when LayerIndex >= 0:
-                    arrayRef.Bind();
                     arrayRef.DetachImageFromFBO(this, Attachment, LayerIndex, MipLevel);
                     break;
                 case XRTextureCube cuberef when LayerIndex >= 0 && LayerIndex < 6:
-                    cuberef.Bind();
                     cuberef.DetachFaceFromFBO(this, Attachment, ECubemapFace.PosX + LayerIndex, MipLevel);
                     break;
                 case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr:
-                    arrayref.Bind();
                     arrayref.DetachFromFBO_OVRMultiView(this, Attachment, MipLevel, ovr.Offset, ovr.NumViews);
                     break;
             }

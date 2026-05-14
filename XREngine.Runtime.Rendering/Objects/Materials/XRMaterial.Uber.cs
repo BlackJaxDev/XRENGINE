@@ -45,7 +45,7 @@ public partial class XRMaterial
             return false;
 
         XRShader canonicalShader = ResolveCanonicalUberFragmentShader(activeFragmentShader);
-        string? shaderPath = canonicalShader.Source?.FilePath ?? canonicalShader.FilePath;
+        string? shaderPath = ResolveShaderPathOrName(canonicalShader);
         if (!string.Equals(Path.GetFileName(shaderPath), "UberShader.frag", StringComparison.OrdinalIgnoreCase))
             return false;
 
@@ -56,8 +56,19 @@ public partial class XRMaterial
 
     public void EnsureUberStateInitialized()
     {
+        XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
         if (TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest) && fragmentShader is not null)
+        {
+            if (activeFragmentShader is not null &&
+                !ReferenceEquals(activeFragmentShader, fragmentShader) &&
+                ActiveUberVariant.IsEmpty &&
+                UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+            {
+                SetShader(EShaderType.Fragment, fragmentShader, coerceShaderType: true);
+            }
+
             EnsureUberStateInitialized(fragmentShader, manifest);
+        }
     }
 
     public void ApplyShaderProgramMetadata(XRRenderProgram? program)
@@ -388,8 +399,9 @@ public partial class XRMaterial
             UberShaderVariantBuilder.PreparedUberVariant prepared = UberShaderVariantBuilder.PrepareVariant(this, canonicalShader, manifest);
             SetRequestedUberVariant(prepared.Request);
 
-            if (ActiveUberVariant.Equals(prepared.BindingState) &&
-                ReferenceEquals(GetShader(EShaderType.Fragment), prepared.FragmentShader))
+            if (ActiveUberVariant.VariantHash != 0 &&
+                ActiveUberVariant.VariantHash == prepared.BindingState.VariantHash &&
+                UberShaderVariantBuilder.IsGeneratedVariant(GetShader(EShaderType.Fragment)))
             {
                 return true;
             }
@@ -693,6 +705,17 @@ public partial class XRMaterial
 
         _uberCanonicalFragmentShader = fragmentShader;
         return fragmentShader;
+    }
+
+    private static string? ResolveShaderPathOrName(XRShader shader)
+    {
+        if (!string.IsNullOrWhiteSpace(shader.Source?.FilePath))
+            return shader.Source.FilePath;
+        if (!string.IsNullOrWhiteSpace(shader.FilePath))
+            return shader.FilePath;
+        if (!string.IsNullOrWhiteSpace(shader.Source?.Name))
+            return shader.Source.Name;
+        return shader.Name;
     }
 
     private void RestoreSafeUberFallback()

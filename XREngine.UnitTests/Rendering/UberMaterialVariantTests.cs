@@ -94,9 +94,10 @@ public sealed class UberMaterialVariantTests
         generatedSource.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
         generatedSource.ShouldContain("#define _Color vec4(1.0, 0.5, 0.25, 1.0)");
         generatedSource.ShouldNotContain("uniform vec4 _Color;");
-        generatedSource.ShouldContain("uniform vec4 _EmissionColor;");
+        generatedSource.ShouldNotContain("uniform vec4 _EmissionColor;");
 
         material.ActiveUberVariant.StaticProperties.ShouldContain("_Color=vec4(1.0, 0.5, 0.25, 1.0)");
+        material.ActiveUberVariant.StaticProperties.ShouldNotContain("_EmissionColor=vec4(0.2, 0.1, 0.4, 1.0)");
         material.ActiveUberVariant.EnabledFeatures.ShouldNotContain("emission");
     }
 
@@ -416,6 +417,47 @@ public sealed class UberMaterialVariantTests
         string generatedSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
         generatedSource.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
         generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_MATCAP 1");
+        generatedSource.ShouldNotContain("uniform sampler2D _EmissionMap;");
+        generatedSource.ShouldContain("uniform sampler2D _MatcapMap;");
+    }
+
+    [Test]
+    public void RequestUberVariantRebuild_PrunesKnownFeatureAndPipelineConditionals()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@feature(id="emission", name="Emission", default=on)
+            #ifndef XRENGINE_UBER_DISABLE_EMISSION
+            //@property(name="_EmissionMap", display="Emission Map", slot=texture)
+            uniform sampler2D _EmissionMap;
+            vec3 SampleEmission() { return texture(_EmissionMap, vec2(0.0)).rgb; }
+            #endif
+            #ifdef XRENGINE_UBER_DISABLE_EMISSION
+            vec3 EmissionValue() { return vec3(0.0); }
+            #else
+            vec3 EmissionValue() { return SampleEmission(); }
+            #endif
+            #if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS)
+            layout(location = 0) out vec4 FragColor;
+            #else
+            layout(location = 0) out vec2 Normal;
+            #endif
+            """);
+
+        material.EnsureUberStateInitialized();
+        material.SetUberFeatureEnabled("emission", false).ShouldBeTrue();
+
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        string generatedSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
+        generatedSource.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
+        generatedSource.ShouldNotContain("uniform sampler2D _EmissionMap;");
+        generatedSource.ShouldNotContain("SampleEmission");
+        generatedSource.ShouldContain("vec3 EmissionValue() { return vec3(0.0); }");
+        generatedSource.ShouldContain("layout(location = 0) out vec4 FragColor;");
+        generatedSource.ShouldNotContain("layout(location = 0) out vec2 Normal;");
     }
 
     [Test]

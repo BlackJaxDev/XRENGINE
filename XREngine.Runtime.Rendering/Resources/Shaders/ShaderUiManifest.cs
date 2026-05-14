@@ -528,9 +528,9 @@ namespace XREngine.Rendering
             {
                 string displayName = pendingFeature?.DisplayName ?? FormatDisplayName(featureId);
                 bool guardDefinedEnablesFeature = !isIfndef;
-                bool defaultEnabled = guardDefinedEnablesFeature
-                    ? pendingFeature?.DefaultEnabled ?? definedMacros.Contains(macro)
-                    : !definedMacros.Contains(macro);
+                bool defaultEnabled = pendingFeature?.DefaultEnabled ?? (guardDefinedEnablesFeature
+                    ? definedMacros.Contains(macro)
+                    : !definedMacros.Contains(macro));
 
                 if (!featuresById.TryGetValue(featureId, out FeatureBuilder? feature))
                 {

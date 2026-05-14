@@ -10,6 +10,8 @@ namespace XREngine
     {
         public class TickList
         {
+            private const int MinParallelTickCount = 8;
+
             public TickList(bool parallel, ETickGroup group, int order)
             {
                 _parallel = parallel;
@@ -58,6 +60,12 @@ namespace XREngine
                 //for (int i = 0; i < _methods.Count; i++)
                 //    tasks[i] = Task.Run(() => ExecTick(_methods[i]));
                 //Task.WaitAll(tasks);
+                if (_methods.Count < MinParallelTickCount)
+                {
+                    ExecuteCurrentSequential();
+                    return;
+                }
+
                 _methods.ForEachParallelIList(ExecTick);
                 //Debug.Out($"TickList Parallel: {Math.Round((ElapsedTime - time) * 1000.0f, 2)} ms");
             }
@@ -65,8 +73,13 @@ namespace XREngine
             {
                 Dequeue();
                 //float time = ElapsedTime;
-                _methods.ForEach(ExecTick);
+                ExecuteCurrentSequential();
                 //Debug.Out($"TickList Sequential: {Math.Round((ElapsedTime - time) * 1000.0f, 2)} ms");
+            }
+            private void ExecuteCurrentSequential()
+            {
+                for (int i = 0; i < _methods.Count; i++)
+                    ExecTick(_methods[i]);
             }
             private void ExecTick(TickEntry entry)
             {

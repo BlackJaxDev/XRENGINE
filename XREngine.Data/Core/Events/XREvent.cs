@@ -32,7 +32,8 @@ namespace XREngine.Data.Core
             }
             using (BeginProfiling("XREvent.Actions"))
             {
-                Actions.ForEach(x => x.Invoke());
+                for (int i = 0; i < Actions.Count; i++)
+                    Actions[i].Invoke();
             }
             using (BeginProfiling("XREvent.PersistentCalls"))
             {
@@ -76,14 +77,35 @@ namespace XREngine.Data.Core
         }
 
         public void InvokeParallel()
+            => InvokeParallel(minParallelListeners: 1);
+
+        public void InvokeParallel(int minParallelListeners)
         {
-            WithProfiling("XREvent.InvokeParallel", InvokeParallelInternal);
+            var sample = BeginProfiling("XREvent.InvokeParallel");
+            if (sample is null)
+            {
+                InvokeParallelInternal(minParallelListeners);
+                return;
+            }
+
+            using (sample)
+                InvokeParallelInternal(minParallelListeners);
         }
 
-        private void InvokeParallelInternal()
+        private void InvokeParallelInternal(int minParallelListeners)
         {
             ConsumeQueues("XREvent.ConsumeQueues");
-            Parallel.ForEach(Actions, x => x.Invoke());
+
+            if (Actions.Count < Math.Max(2, minParallelListeners))
+            {
+                for (int i = 0; i < Actions.Count; i++)
+                    Actions[i].Invoke();
+            }
+            else
+            {
+                Parallel.For(0, Actions.Count, i => Actions[i].Invoke());
+            }
+
             InvokePersistentCalls([]);
         }
 

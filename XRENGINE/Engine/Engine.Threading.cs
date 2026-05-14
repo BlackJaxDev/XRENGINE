@@ -20,6 +20,10 @@ namespace XREngine
         /// jobs are deferred to the next frame to keep the window responsive.
         /// </summary>
         private const double RenderThreadJobBudgetMs = 4.0;
+        private static readonly long RenderThreadJobBudgetTicks =
+            (long)Math.Max(1.0, RenderThreadJobBudgetMs * Stopwatch.Frequency / 1000.0);
+        private static ulong _renderThreadJobBudgetFrameId = ulong.MaxValue;
+        private static long _renderThreadJobBudgetConsumedTicks;
 
         #region Public Properties - Threading
 
@@ -477,7 +481,25 @@ namespace XREngine
         private static void ProcessPendingMainThreadWork()
         {
             using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch", ProfilerScopeKind.ConditionalLoop);
-            Jobs.ProcessMainThreadJobs(MaxRenderThreadJobsPerDispatch, RenderThreadJobBudgetMs);
+
+            ulong frameId = Rendering.State.RenderFrameId;
+            if (_renderThreadJobBudgetFrameId != frameId)
+            {
+                _renderThreadJobBudgetFrameId = frameId;
+                _renderThreadJobBudgetConsumedTicks = 0L;
+            }
+
+            long remainingTicks = RenderThreadJobBudgetTicks - _renderThreadJobBudgetConsumedTicks;
+            if (remainingTicks <= 0L)
+                return;
+
+            long startTicks = Stopwatch.GetTimestamp();
+            double remainingMilliseconds = remainingTicks * 1000.0 / Stopwatch.Frequency;
+            Jobs.ProcessMainThreadJobs(MaxRenderThreadJobsPerDispatch, remainingMilliseconds);
+
+            long elapsedTicks = Stopwatch.GetTimestamp() - startTicks;
+            if (elapsedTicks > 0L)
+                _renderThreadJobBudgetConsumedTicks += elapsedTicks;
         }
 
         private static void ExecuteLoggedMainThreadInvoke(Action task, MainThreadInvokeEntry entry, long? queuedAtTimestamp)

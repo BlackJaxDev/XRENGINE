@@ -2356,6 +2356,17 @@ namespace XREngine.Rendering.OpenGL
                     $"fingerprint={cacheKey ?? "<none>"} programId={bindingId}.");
             }
 
+            private static string GetFailedHashFailureReason(ulong hash)
+            {
+                if (!FailedHashDiagnostics.TryGetValue(hash, out FailedHashRecord record) ||
+                    string.IsNullOrWhiteSpace(record.Reason))
+                {
+                    return "Hash is marked failed.";
+                }
+
+                return record.Reason!;
+            }
+
             private void MarkBuildFailed()
             {
                 _asyncCompileDuplicateHashWaitPending = false;
@@ -2822,11 +2833,12 @@ namespace XREngine.Rendering.OpenGL
                     if (Failed.ContainsKey(Hash))
                     {
                         EmitFailedHashSkipLog(cacheKey, bindingId);
+                        string failedHashReason = GetFailedHashFailureReason(Hash);
                         PublishBackendStatus(
                             EShaderProgramBackendStage.Failed,
                             "Source",
                             "hash previously failed",
-                            "Hash is marked failed.",
+                            failedHashReason,
                             fingerprint: cacheKey);
                         MarkBuildFailed();
                         return IsLinked;
