@@ -950,16 +950,16 @@ namespace XREngine
         private ColorF4 _transformCapsuleColor = ColorF4.LightOrange;
 
         // Console log category colors
-        private ColorF4 _consoleGeneralColor = new ColorF4(0.9f, 0.9f, 0.9f, 1.0f);    // White/Gray
-        private ColorF4 _consoleAssetsColor = new ColorF4(0.95f, 0.72f, 0.35f, 1.0f);   // Amber
-        private ColorF4 _consoleMeshesColor = new ColorF4(0.55f, 0.9f, 0.75f, 1.0f);    // Soft Green
-        private ColorF4 _consoleTexturesColor = new ColorF4(0.45f, 0.9f, 0.95f, 1.0f);  // Cyan
-        private ColorF4 _consoleRenderingColor = new ColorF4(0.4f, 0.8f, 1.0f, 1.0f);  // Light Blue
-        private ColorF4 _consoleLightingColor = new ColorF4(1.0f, 0.92f, 0.45f, 1.0f); // Light Yellow
-        private ColorF4 _consoleOpenGLColor = new ColorF4(0.4f, 1.0f, 0.4f, 1.0f);     // Light Green
-        private ColorF4 _consolePhysicsColor = new ColorF4(1.0f, 0.8f, 0.4f, 1.0f);    // Orange
-        private ColorF4 _consoleAnimationColor = new ColorF4(1.0f, 0.6f, 0.8f, 1.0f);  // Pink
-        private ColorF4 _consoleUIColor = new ColorF4(0.8f, 0.6f, 1.0f, 1.0f);         // Purple
+        private ColorF4 _consoleGeneralColor = Debug.GetDefaultCategoryColor(ELogCategory.General);
+        private ColorF4 _consoleAssetsColor = Debug.GetDefaultCategoryColor(ELogCategory.Assets);
+        private ColorF4 _consoleMeshesColor = Debug.GetDefaultCategoryColor(ELogCategory.Meshes);
+        private ColorF4 _consoleTexturesColor = Debug.GetDefaultCategoryColor(ELogCategory.Textures);
+        private ColorF4 _consoleRenderingColor = Debug.GetDefaultCategoryColor(ELogCategory.Rendering);
+        private ColorF4 _consoleLightingColor = Debug.GetDefaultCategoryColor(ELogCategory.Lighting);
+        private ColorF4 _consoleOpenGLColor = Debug.GetDefaultCategoryColor(ELogCategory.OpenGL);
+        private ColorF4 _consolePhysicsColor = Debug.GetDefaultCategoryColor(ELogCategory.Physics);
+        private ColorF4 _consoleAnimationColor = Debug.GetDefaultCategoryColor(ELogCategory.Animation);
+        private ColorF4 _consoleUIColor = Debug.GetDefaultCategoryColor(ELogCategory.UI);
 
         [Category("Theme")]
         [DisplayName("Theme Name")]

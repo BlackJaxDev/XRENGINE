@@ -13,6 +13,19 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class MaskedSoftwareOcclusionCullingTests
 {
     [Test]
+    public void TelemetryKeepsActiveSocModeWhenLaterPassRecordsDisabled()
+    {
+        OcclusionTelemetry.BeginFrame();
+
+        OcclusionTelemetry.RecordActiveMode(EOcclusionCullingMode.CpuSoftwareOcclusion, EMeshSubmissionStrategy.CpuDirect);
+        OcclusionTelemetry.RecordActiveMode(EOcclusionCullingMode.Disabled, EMeshSubmissionStrategy.CpuDirect);
+        OcclusionTelemetry.BeginFrame();
+
+        OcclusionTelemetry.LastEffectiveMode.ShouldBe(EOcclusionCullingMode.CpuSoftwareOcclusion);
+        OcclusionTelemetry.LastSubmissionStrategy.ShouldBe(EMeshSubmissionStrategy.CpuDirect);
+    }
+
+    [Test]
     public void CoveredBufferRectRejectsBehindButAllowsCloser()
     {
         MaskedOcclusionBuffer buffer = new();

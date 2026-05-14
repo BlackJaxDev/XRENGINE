@@ -2,9 +2,11 @@
 
 Last Updated: 2026-05-13
 Owner: Rendering
-Status: Scalar implementation is in place and opt-in for traditional CPU mesh
-rendering plus meshlet command visibility. Tile-mask queries, hot-path env
-caching, frame-keying, and targeted validation are complete. SIMD, stereo,
+Status: Scalar implementation is in place and opt-in via
+`GpuOcclusionCullingMode=CpuSoftwareOcclusion` for traditional CPU mesh
+rendering plus meshlet command visibility. The legacy
+`EnableCpuSoftwareOcclusionCulling` / `XRE_CPU_SOC_OCCLUSION=1` toggle still
+works. Tile-mask queries, hot-path env caching, frame-keying, and targeted validation are complete. SIMD, stereo,
 viewport debug visualization, scene captures, and promotion remain.
 Target Branch: `rendering-masked-software-occlusion`
 
@@ -100,7 +102,8 @@ stereo/OpenVR smoke.
 
 ## Phase 5 - Settings, Telemetry, And Editor Surface
 
-- [x] Add `EnableCpuSoftwareOcclusionCulling` as the master opt-in toggle.
+- [x] Add `EOcclusionCullingMode.CpuSoftwareOcclusion` as the preferred SOC opt-in mode.
+- [x] Preserve `EnableCpuSoftwareOcclusionCulling` as a legacy side opt-in toggle.
 - [x] Add `CpuSocBufferWidth`, `CpuSocBufferHeight`, `CpuSocOccluderTriangleBudget`, `CpuSocMaxOccluders`, `CpuSocMinOccluderScreenArea`, `CpuSocUseAvx2`, `CpuSocDebugVisualization`, and `CpuSocDebugForceVisible`.
 - [x] Expose SOC settings through `Engine.EffectiveSettings`.
 - [x] Mirror SOC settings through `RuntimeEngineFacade`.

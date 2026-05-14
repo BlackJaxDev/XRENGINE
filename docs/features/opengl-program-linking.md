@@ -232,7 +232,7 @@ frame.
 
 ## Rendering Log Diagnostics
 
-Verbose shader-link diagnostics are written to `log_rendering.txt` through the
+Verbose shader-link diagnostics are written to `log_rendering.log` through the
 rendering log category when output verbosity is `Verbose`. The OpenGL log still
 contains the shorter cache/backend messages, but the rendering log is the place
 to diagnose stalls and source/binary size.
@@ -278,7 +278,7 @@ Example records:
 
 Use `profiler-render-stalls.log` to identify frames whose leaf scope is
 `XRWindow.ProcessPendingUploads`, then correlate that frame with `[ShaderLink]`,
-`[ShaderBackend]`, and `[ShaderGLCall]` lines in `log_rendering.txt`.
+`[ShaderBackend]`, and `[ShaderGLCall]` lines in `log_rendering.log`.
 
 ## Validation
 

@@ -39,7 +39,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_CullingPolicy_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs");
 
         source.ShouldContain("private bool ShouldUsePassthroughCulling()");
         source.ShouldContain("VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics");
@@ -53,10 +53,11 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_OcclusionPolicy_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.Occlusion.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs");
 
         source.ShouldContain("if (mode == EOcclusionCullingMode.CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics)");
         source.ShouldContain("return EOcclusionCullingMode.GpuHiZ;");
+        source.ShouldContain("case EOcclusionCullingMode.CpuSoftwareOcclusion:");
         source.ShouldContain("private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)");
         source.ShouldContain("shared.LastBuiltFrameId = ulong.MaxValue;");
     }
@@ -64,17 +65,17 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_MeshPassSafetyNet_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
 
         source.ShouldContain("VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics");
         source.ShouldContain("Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);");
-        source.ShouldContain("CPU mesh safety-net suppressed for profile");
+        source.ShouldContain("CPU mesh safety-net suppressed for policy");
     }
 
     [Test]
     public void Phase3_ViewContractValidation_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.ViewSet.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.ViewSet.cs");
 
         source.ShouldContain("ValidateViewSetContractOrThrow();");
         source.ShouldContain("private void ValidateViewSetContractOrThrow()");
@@ -85,7 +86,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_RenderCommandViewLayoutValidation_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Commands/RenderCommandCollection.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommandCollection.cs");
 
         source.ShouldContain("ValidateViewDescriptorLayout(descriptors.Slice(0, (int)cursor), gpuPass.CommandCapacity);");
         source.ShouldContain("private static void ValidateViewDescriptorLayout(ReadOnlySpan<GPUViewDescriptor> descriptors, uint commandCapacity)");

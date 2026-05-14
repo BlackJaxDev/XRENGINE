@@ -38,7 +38,6 @@ namespace XREngine.Rendering.Commands
             private static readonly Dictionary<string, (long Calls, double TotalMs, double MaxMs)> _stats = new();
             private static long _lastFlushTicks;
             private static string? _logPath;
-            private static int _enabledCached = -1;
 
             public static bool IsEnabled()
             {
@@ -315,9 +314,14 @@ namespace XREngine.Rendering.Commands
                     HiZStageStats.Record("Dispatch.CpuQueryAsync", 0.0);
                     ApplyCpuQueryAsyncOcclusionScaffold(scene, camera, candidates);
                     break;
+
+                case EOcclusionCullingMode.CpuSoftwareOcclusion:
+                    HiZStageStats.Record("Dispatch.CpuSoftwareOcclusion.CpuOnly", 0.0);
+                    RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                    break;
             }
 
-                    RecordOcclusionTiming();
+            RecordOcclusionTiming();
         }
 
         private void LogOcclusionModeActivation(EOcclusionCullingMode mode)

@@ -183,22 +183,8 @@ public static partial class EditorImGuiUI
             var theme = Engine.EditorPreferences?.Theme;
             if (theme is null)
             {
-                // Fallback to default colors if theme is not available
-                return category switch
-                {
-                    ELogCategory.General => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),
-                    ELogCategory.Assets => new Vector4(0.95f, 0.72f, 0.35f, 1.0f),
-                    ELogCategory.Meshes => new Vector4(0.55f, 0.9f, 0.75f, 1.0f),
-                    ELogCategory.Textures => new Vector4(0.45f, 0.9f, 0.95f, 1.0f),
-                    ELogCategory.Rendering => new Vector4(0.4f, 0.8f, 1.0f, 1.0f),
-                    ELogCategory.Lighting => new Vector4(1.0f, 0.92f, 0.45f, 1.0f),
-                    ELogCategory.OpenGL => new Vector4(0.4f, 1.0f, 0.4f, 1.0f),
-                    ELogCategory.Physics => new Vector4(1.0f, 0.8f, 0.4f, 1.0f),
-                    ELogCategory.Animation => new Vector4(1.0f, 0.6f, 0.8f, 1.0f),
-                    ELogCategory.UI => new Vector4(0.8f, 0.6f, 1.0f, 1.0f),
-                    ELogCategory.AI => new Vector4(0.55f, 0.95f, 0.85f, 1.0f),
-                    _ => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),
-                };
+                var fallbackColor = Debug.GetDefaultCategoryColor(category);
+                return new Vector4(fallbackColor.R, fallbackColor.G, fallbackColor.B, fallbackColor.A);
             }
 
             var color = category switch

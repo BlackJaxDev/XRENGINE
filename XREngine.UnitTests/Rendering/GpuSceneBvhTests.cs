@@ -11,6 +11,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Shaders;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -51,6 +52,15 @@ public class GpuSceneBvhTests
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Shader file not found: {fullPath}");
         return File.ReadAllText(fullPath);
+    }
+
+    private static string LoadResolvedShaderSource(string relativePath)
+    {
+        var fullPath = Path.Combine(ShaderBasePath, relativePath);
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException($"Shader file not found: {fullPath}");
+
+        return ShaderSourcePreprocessor.ResolveSource(File.ReadAllText(fullPath), fullPath);
     }
 
     private static bool IsTrue(string? v)
@@ -126,13 +136,16 @@ public class GpuSceneBvhTests
     public void BvhRaycastShader_Loads_Successfully()
     {
         // Act
-        string source = LoadShaderSource("Compute/BVH/bvh_raycast.comp");
+        string source = LoadResolvedShaderSource("Compute/BVH/bvh_raycast.comp");
 
         // Assert
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 450");
         source.ShouldContain("BvhNode");
         source.ShouldContain("TraceRay");
+        source.IndexOf("struct RayInput", StringComparison.Ordinal)
+            .ShouldBeLessThan(source.IndexOf("RayInput gRays[]", StringComparison.Ordinal));
+        source.ShouldNotContain("Ray DecodeRay(RayInput input)");
     }
 
     [Test]
@@ -153,20 +166,24 @@ public class GpuSceneBvhTests
     public void BvhAnyhitShader_Loads_Successfully()
     {
         // Act
-        string source = LoadShaderSource("Compute/BVH/bvh_anyhit.comp");
+        string source = LoadResolvedShaderSource("Compute/BVH/bvh_anyhit.comp");
 
         // Assert
         source.ShouldNotBeNullOrEmpty();
+        source.IndexOf("struct RayInput", StringComparison.Ordinal)
+            .ShouldBeLessThan(source.IndexOf("RayInput gRays[]", StringComparison.Ordinal));
     }
 
     [Test]
     public void BvhClosesthitShader_Loads_Successfully()
     {
         // Act
-        string source = LoadShaderSource("Compute/BVH/bvh_closesthit.comp");
+        string source = LoadResolvedShaderSource("Compute/BVH/bvh_closesthit.comp");
 
         // Assert
         source.ShouldNotBeNullOrEmpty();
+        source.IndexOf("struct RayInput", StringComparison.Ordinal)
+            .ShouldBeLessThan(source.IndexOf("RayInput gRays[]", StringComparison.Ordinal));
     }
 
     [Test]

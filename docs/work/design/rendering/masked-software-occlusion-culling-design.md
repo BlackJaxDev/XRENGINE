@@ -5,10 +5,7 @@
 - Author: rendering team
 - Implementation state: opt-in scalar SOC is implemented for traditional CPU mesh rendering and meshlet command visibility. Rectangle tests now use the masked tile data instead of a per-pixel scan. `CpuSocUseAvx2` is exposed as the planned SIMD selector; current correctness uses the scalar path.
 - Status: Phase A implemented; AVX2, stereo buffers, and promotion validation remain tracked in the TODO.
-- Supersedes the C-CPU-3 scaffold in
-  [render-submission-perf-debug-plan.md](render-submission-perf-debug-plan.md).
-  Existing scaffold (`CpuSoftwareOcclusionCuller`, telemetry counters,
-  `EnableCpuSoftwareOcclusionCulling` toggle) is repurposed; no public API is removed.
+- Supersedes the C-CPU-3 scaffold in [render-submission-perf-debug-plan.md](render-submission-perf-debug-plan.md). Existing scaffold (`CpuSoftwareOcclusionCuller`, telemetry counters, `CpuSoftwareOcclusion` mode plus the legacy `EnableCpuSoftwareOcclusionCulling` toggle) is repurposed; no public API is removed.
 - Implementation TODO:
   [masked-software-occlusion-culling-todo.md](../../todo/rendering/masked-software-occlusion-culling-todo.md).
 
@@ -487,7 +484,8 @@ we don't pay it for mono cameras.
 Engine settings (existing, repurposed):
 
 ```csharp
-EnableCpuSoftwareOcclusionCulling          // master toggle (default false until promotion)
+GpuOcclusionCullingMode=CpuSoftwareOcclusion // preferred SOC opt-in mode
+EnableCpuSoftwareOcclusionCulling          // legacy side toggle (default false until promotion)
 CpuSocBufferWidth                          // default 256
 CpuSocBufferHeight                         // default 128
 CpuSocOccluderTriangleBudget               // default 5000
@@ -499,8 +497,9 @@ CpuSocDebugForceVisible                    // default false (kill-switch)
 ```
 
 All settings above are exposed through engine effective settings and the
-runtime rendering facade. `XRE_CPU_SOC_OCCLUSION=1` remains the environment
-override for the master toggle.
+runtime rendering facade. `XRE_OCCLUSION_CULLING_MODE=CpuSoftwareOcclusion`
+is the preferred environment override; `XRE_CPU_SOC_OCCLUSION=1` remains as
+a legacy toggle.
 
 `RenderingParameters.ExcludeFromCpuOcclusion` already exists and applies to
 the hardware-query path. SOC honors it for both occludee tests and occluder

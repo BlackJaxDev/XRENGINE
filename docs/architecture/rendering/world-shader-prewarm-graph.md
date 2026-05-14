@@ -959,7 +959,7 @@ Never adopt stale binaries that the editor knows are out of date.
 
 ## Diagnostics
 
-Add a prewarm log category, ideally `log_prewarm.txt`, with events such as:
+Add a prewarm log category, ideally `log_prewarm.log`, with events such as:
 
 - `Prewarm.GraphStarted`
 - `Prewarm.ProviderFailed`

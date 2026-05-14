@@ -84,7 +84,7 @@ See live values in [Engine.Rendering.Settings.cs](../../../../XRENGINE/Engine/Su
 
 `EnableNvidiaDlss=false`, `EnableIntelXess*=false`, `GpuOcclusionCullingMode=GpuHiZ`, `SkinnedBoundsRecomputePolicy=Never`, `CalculateSkinnedBoundsInComputeShader=false`, `SkinnedBoundsGpuDirectAabbWrite=false`, `UseGpuBvh=true`, `ZeroReadbackMaterialDrawPath=FullBucketScan`, `MsaaSampleCount=4`.
 
-When `CpuDirect` is forced with `GpuOcclusionCullingMode=GpuHiZ`, CPU mesh draws consume a previous compatible Hi-Z visibility snapshot from a GPU command mirror. The cull dispatch runs zero-readback; the only CPU readback is the next-frame snapshot publication, with temporal hysteresis before CPU draws are skipped.
+When `CpuDirect` is forced with `GpuOcclusionCullingMode=GpuHiZ`, CPU mesh draws do not consume GPU Hi-Z output. Select `CpuQueryAsync` for hardware query occlusion on CPU draws, or `CpuSoftwareOcclusion` / `XRE_CPU_SOC_OCCLUSION=1` for the CPU software rasterizer path.
 
 ### Strategy switching
 
@@ -157,7 +157,7 @@ RenderDoc/Nsight on B1/B2: count `MultiDrawElementsIndirect[Count]`, `glUseProgr
 The P7 conclusion ("occlusion ~18 ms/frame") is **wrong**. Two independent
 checks falsified it:
 
-1. `EOcclusionCullingMode` has only `Disabled / GpuHiZ / CpuQueryAsync`.
+1. At the time, `EOcclusionCullingMode` had only `Disabled / GpuHiZ / CpuQueryAsync`.
    `XRE_OCCLUSION_CULLING_MODE=None` from `Tools/Diagnose-ZeroReadbackHz.ps1`
    does not parse and is silently ignored — variant `C` ran the **same**
    `GpuHiZ` mode as variants `A` and `B`. Its 0.22 drops/s and 60 fps
@@ -652,10 +652,11 @@ occluder (Masked SOC) — never the GPU Hi-Z output.
    `glMultiDrawElementsIndirectCount` with the parameter buffer on GPU.
 3. `GpuIndirectInstrumented` is allowed to read back (it exists for
    debugging) but only at end-of-frame, never on the critical path.
-4. The `EOcclusionCullingMode` enum is interpreted **per submission path**.
-   A mode that doesn't make sense for the active path silently degrades
-   (e.g. `GpuHiZ` selected while CpuDirect forced → falls back to
-   `CpuQueryAsync`, never to GPU-snapshot consumption).
+4. The `EOcclusionCullingMode` enum is explicit. A mode that does not make
+  sense for the active path does not silently select a different culler;
+  for example, `GpuHiZ` selected while `CpuDirect` is forced means no CPU
+  occlusion unless `CpuQueryAsync`, `CpuSoftwareOcclusion`, or the legacy
+  SOC toggle is selected.
 
 ### 10.2 CpuDirect occlusion (target design)
 
@@ -675,11 +676,11 @@ results + hysteresis keeps the CPU off the critical sync.
 
 Todos:
 
-- [x] **C-CPU-1**: Make `Engine.Rendering.Settings.GpuOcclusionCullingMode`
-  getter path-aware. When `Engine.Rendering.ResolveMeshSubmissionStrategy()
-  == CpuDirect`, coerce any `GpuHiZ` return to `CpuQueryAsync`. Keep raw
-  field intact so swapping strategies at runtime still produces the
-  right effective mode. Place coercion alongside the existing
+- [x] **C-CPU-1**: Keep `Engine.Rendering.Settings.GpuOcclusionCullingMode`
+  explicit. `CpuDirect + GpuHiZ` no longer silently coerces to
+  `CpuQueryAsync`; CPU Direct occlusion is enabled only by selecting
+  `CpuQueryAsync`, selecting `CpuSoftwareOcclusion`, or using the legacy
+  `XRE_CPU_SOC_OCCLUSION=1` SOC override. The getter still honors the
   `XRE_OCCLUSION_CULLING_MODE` env override in
   [Engine.Rendering.Settings.cs](../../../../XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs#L1366).
 - [x] **C-CPU-2**: Delete CPU Hi-Z snapshot machinery once C-CPU-1 lands.
@@ -697,8 +698,9 @@ Todos:
   for occluder-driven cull without query latency. Implemented:
   [CpuSoftwareOcclusionCuller.cs](../../../../XREngine.Runtime.Rendering/Rendering/Occlusion/CpuSoftwareOcclusionCuller.cs)
   with `BeginFrame`/`SubmitOccludersFromOpaqueCommands`/`TestVisible` API, opt-in via
+  `EOcclusionCullingMode.CpuSoftwareOcclusion` plus legacy
   `Engine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling` /
-  `XRE_CPU_SOC_OCCLUSION=1` env override, scalar raster/AABB tests,
+  `XRE_CPU_SOC_OCCLUSION=1` overrides, scalar raster/AABB tests,
   occluder self-bypass via `StableQueryKey`, telemetry counters, and
   meshlet command visibility masking. The AVX2 setting is present for a
   future SIMD fast path; scalar remains the correctness path.
@@ -1032,8 +1034,8 @@ deleted.
 | Temporal occlusion hysteresis dict in `GPURenderPassCollection.Occlusion` | dormant | DELETED (C-CPU-2) |
 | `_cpuHiZVisibleMeshCommands` / `_cpuHiZTemporalOcclusion` / `_cpuHiZPendingFence` | unused with flag off | DELETED (C-CPU-2) |
 | `VisualScene3D.ShouldMaintainCpuGpuCommandMirror()` CpuDirect+GpuHiZ branch | gated by `XRE_CPU_HIZ_OCCLUSION` | DELETED, Surfel-GI branch keeps (C-CPU-2) |
-| `Engine.Rendering.Settings.GpuOcclusionCullingMode` getter | env override only | env override + path-coercion (C-CPU-1) |
-| `CpuRenderOcclusionCoordinator` | optional `CpuQueryAsync` mode | DEFAULT for CpuDirect (C-CPU-1 makes this automatic) |
+| `Engine.Rendering.Settings.GpuOcclusionCullingMode` getter | env override only | explicit enum mode, no CpuDirect path-coercion (C-CPU-1) |
+| `CpuRenderOcclusionCoordinator` | optional `CpuQueryAsync` mode | explicit `CpuQueryAsync` mode for CpuDirect |
 | `GpuBvhTree.EnsureBuffers` overflow path | logs + non-BVH fallback | grow capacity, never silently drop commands (C-GPU-4) |
 | `_hiZDepthPyramid` source | main depth attachment | unchanged for now; consider dedicated occluder RT (C-GPU-7) |
 | `_culledSceneToRenderBuffer` consumers on CPU | several (snapshot, GPU debug, hybrid validator) | only `IndirectDebug.*` opt-in diagnostics (C-GPU-1) |

@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using System;
 using System.Collections.Concurrent;
@@ -181,6 +182,32 @@ namespace XREngine
         private static string? _logSessionId;
         private static string? _logsRootDirectory;
         private static string? _logRunDirectory;
+
+        /// <summary>
+        /// Returns the default editor console color for a log category. File log headers use
+        /// this same palette so on-disk category logs stay coordinated with the editor console.
+        /// </summary>
+        public static ColorF4 GetDefaultCategoryColor(ELogCategory category)
+            => category switch
+            {
+                ELogCategory.General => new ColorF4(0.9f, 0.9f, 0.9f, 1.0f),
+                ELogCategory.Assets => new ColorF4(0.95f, 0.72f, 0.35f, 1.0f),
+                ELogCategory.Meshes => new ColorF4(0.55f, 0.9f, 0.75f, 1.0f),
+                ELogCategory.Textures => new ColorF4(0.45f, 0.9f, 0.95f, 1.0f),
+                ELogCategory.Rendering => new ColorF4(0.4f, 0.8f, 1.0f, 1.0f),
+                ELogCategory.Lighting => new ColorF4(1.0f, 0.92f, 0.45f, 1.0f),
+                ELogCategory.OpenGL => new ColorF4(0.4f, 1.0f, 0.4f, 1.0f),
+                ELogCategory.Physics => new ColorF4(1.0f, 0.8f, 0.4f, 1.0f),
+                ELogCategory.Audio => new ColorF4(1.0f, 0.65f, 0.35f, 1.0f),
+                ELogCategory.Animation => new ColorF4(1.0f, 0.6f, 0.8f, 1.0f),
+                ELogCategory.UI => new ColorF4(0.8f, 0.6f, 1.0f, 1.0f),
+                ELogCategory.Vulkan => new ColorF4(0.95f, 0.45f, 0.45f, 1.0f),
+                ELogCategory.Networking => new ColorF4(0.35f, 0.85f, 0.95f, 1.0f),
+                ELogCategory.VR => new ColorF4(0.7f, 0.65f, 1.0f, 1.0f),
+                ELogCategory.Scripting => new ColorF4(0.95f, 0.9f, 0.35f, 1.0f),
+                ELogCategory.AI => new ColorF4(0.55f, 0.95f, 0.85f, 1.0f),
+                _ => new ColorF4(0.9f, 0.9f, 0.9f, 1.0f),
+            };
 
         /// <summary>
         /// Installs debug-time global exception tracing hooks.
@@ -1134,7 +1161,7 @@ namespace XREngine
             lock (LogWriterLock)
             {
                 writer = EnsureLogWriterInternal(category, logToFile);
-                writer?.WriteLine($"{FormatTimestamp(DateTimeOffset.Now)} {message}");
+                writer?.WriteLine(BuildCategoryLogLine(category, message, DateTimeOffset.Now));
             }
 
             // Add to console entries for in-editor viewing
@@ -1160,14 +1187,13 @@ namespace XREngine
             if (LogWriters[category] is null)
             {
                 string logsDirectory = GetLogRunDirectory();
-                string fileSuffix = NormalizeLogNameSegment(category.ToString());
                 string fileName = BuildCategoryLogFileName(category);
                 string filePath = Path.Combine(logsDirectory, fileName);
                 var writer = new StreamWriter(new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
                 {
                     AutoFlush = true
                 };
-                writer.WriteLine($"Log ({fileSuffix}) started {FormatTimestamp(DateTimeOffset.Now)}");
+                writer.WriteLine(BuildCategoryLogHeader(category, DateTimeOffset.Now));
                 LogWriters[category] = writer;
             }
 
@@ -1214,6 +1240,9 @@ namespace XREngine
 
         private static string FormatTimestamp(DateTimeOffset timestamp)
             => timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
+
+        internal static string BuildCategoryLogLine(ELogCategory category, string message, DateTimeOffset timestamp)
+            => $"{FormatTimestamp(timestamp)} [{NormalizeLogNameSegment(category.ToString())}] {message}";
 
         private static void ResetLogWriters()
         {
@@ -1369,7 +1398,23 @@ namespace XREngine
         }
 
         internal static string BuildCategoryLogFileName(ELogCategory category)
-            => $"log_{NormalizeLogNameSegment(category.ToString())}.txt";
+            => $"log_{NormalizeLogNameSegment(category.ToString())}.log";
+
+        internal static string BuildCategoryLogHeader(ELogCategory category, DateTimeOffset timestamp)
+        {
+            string fileSuffix = NormalizeLogNameSegment(category.ToString());
+            string colorHex = GetDefaultCategoryColorHex(category);
+            return $"Log ({fileSuffix}) started {FormatTimestamp(timestamp)} category={category} color={colorHex}";
+        }
+
+        internal static string GetDefaultCategoryColorHex(ELogCategory category)
+        {
+            ColorF4 color = GetDefaultCategoryColor(category);
+            return $"#{ToColorByte(color.R):X2}{ToColorByte(color.G):X2}{ToColorByte(color.B):X2}";
+        }
+
+        private static int ToColorByte(float value)
+            => (int)MathF.Round(Math.Clamp(value, 0.0f, 1.0f) * 255.0f);
 
         internal static string BuildAuxiliaryLogFileName(string? fileName)
         {

@@ -393,11 +393,16 @@ namespace XREngine.Rendering.Commands
                 camera is not null &&
                 occlusionMode == EOcclusionCullingMode.CpuQueryAsync &&
                 RenderPassIsOcclusionTestable(renderPass);
+            bool useCpuSocOcclusion = PrepareCpuSoftwareOcclusion(renderPass, camera);
 
-            // Always record the configured mode so the observability panel reflects reality
-            // (otherwise it stays "Disabled" when every callsite happens to be ineligible).
+            EOcclusionCullingMode appliedOcclusionMode = useCpuQueryOcclusion
+                ? EOcclusionCullingMode.CpuQueryAsync
+                : useCpuSocOcclusion
+                    ? EOcclusionCullingMode.CpuSoftwareOcclusion
+                    : EOcclusionCullingMode.Disabled;
+
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
-                occlusionMode,
+                appliedOcclusionMode,
                 RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
 
             if (useCpuQueryOcclusion)
@@ -412,8 +417,6 @@ namespace XREngine.Rendering.Commands
                     shadowPass: isShadowPass,
                     modeOff: occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
             }
-
-            bool useCpuSocOcclusion = PrepareCpuSoftwareOcclusion(renderPass, camera);
 
             // Phase 2 deferred-probe queue (reused per-thread).
             List<DeferredProbe>? deferredProbes = null;

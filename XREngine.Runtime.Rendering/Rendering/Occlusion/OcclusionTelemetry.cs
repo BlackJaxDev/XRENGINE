@@ -51,7 +51,12 @@ namespace XREngine.Rendering.Occlusion
         private static int _lastFrameGpuPassesWithReadback;
         private static int _lastFrameGpuPassesPassthroughDirty;
 
-        // Most recently observed effective modes (set every frame; sticky for UI).
+        // Effective mode observed during the completed frame. RenderCPU can be
+        // called again later for no-camera passes; aggregate the frame so those
+        // disabled passes do not hide an earlier active path in the debug UI.
+        private static readonly object ActiveModeLock = new();
+        private static EOcclusionCullingMode _currentEffectiveMode = EOcclusionCullingMode.Disabled;
+        private static EMeshSubmissionStrategy _currentSubmissionStrategy;
         private static EOcclusionCullingMode _lastEffectiveMode = EOcclusionCullingMode.Disabled;
         private static EMeshSubmissionStrategy _lastSubmissionStrategy;
 
@@ -169,6 +174,14 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameGpuPassesActive = _gpuPassesActive;
             _lastFrameGpuPassesWithReadback = _gpuPassesWithReadback;
             _lastFrameGpuPassesPassthroughDirty = _gpuPassesPassthroughDirty;
+            lock (ActiveModeLock)
+            {
+                _lastEffectiveMode = _currentEffectiveMode;
+                _lastSubmissionStrategy = _currentSubmissionStrategy;
+                _currentEffectiveMode = EOcclusionCullingMode.Disabled;
+                _currentSubmissionStrategy = default;
+            }
+
             _lastFrameCpuSocTested = _cpuSocTested;
             _lastFrameCpuSocCulled = _cpuSocCulled;
             _lastFrameCpuSocOccludersSelected = _cpuSocOccludersSelected;
@@ -265,11 +278,29 @@ namespace XREngine.Rendering.Occlusion
         public static void RecordGpuPassthroughDirty() =>
             Interlocked.Increment(ref _gpuPassesPassthroughDirty);
 
-        /// <summary>Records the active occlusion mode and submission strategy this frame (latest wins).</summary>
+        /// <summary>Records the active occlusion mode and submission strategy this frame.</summary>
         public static void RecordActiveMode(EOcclusionCullingMode mode, EMeshSubmissionStrategy strategy)
         {
-            _lastEffectiveMode = mode;
-            _lastSubmissionStrategy = strategy;
+            lock (ActiveModeLock)
+            {
+                if (GetModePriority(mode) < GetModePriority(_currentEffectiveMode))
+                    return;
+
+                _currentEffectiveMode = mode;
+                _currentSubmissionStrategy = strategy;
+            }
+        }
+
+        private static int GetModePriority(EOcclusionCullingMode mode)
+        {
+            return mode switch
+            {
+                EOcclusionCullingMode.CpuSoftwareOcclusion => 3,
+                EOcclusionCullingMode.CpuQueryAsync => 3,
+                EOcclusionCullingMode.GpuHiZ => 2,
+                EOcclusionCullingMode.Disabled => 0,
+                _ => 1,
+            };
         }
 
         /// <summary>Records one CPU SOC visibility test.</summary>
