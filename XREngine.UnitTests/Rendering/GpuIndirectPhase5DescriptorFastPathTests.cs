@@ -12,8 +12,8 @@ public sealed class GpuIndirectPhase5DescriptorFastPathTests
     [Test]
     public void Phase5_DescriptorIndexingPolicy_SourceContracts_ArePresent()
     {
-        string profileSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanFeatureProfile.cs");
-        string deviceSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs");
+        string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanFeatureProfile.cs");
+        string deviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs");
 
         profileSource.ShouldContain("ResolveDescriptorIndexingPreference");
         profileSource.ShouldContain("EnableDescriptorIndexing");
@@ -29,8 +29,8 @@ public sealed class GpuIndirectPhase5DescriptorFastPathTests
     [Test]
     public void Phase5_MaterialTableAndResidency_SourceContracts_ArePresent()
     {
-        string passSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
-        string tableSource = ReadWorkspaceFile("XRENGINE/Rendering/Materials/GPUMaterialTable.cs");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string tableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs");
 
         passSource.ShouldContain("PrepareMaterialTableAndValidateResidency");
         passSource.ShouldContain("SetMaterialTable(_materialTable);");
@@ -45,8 +45,8 @@ public sealed class GpuIndirectPhase5DescriptorFastPathTests
     [Test]
     public void Phase5_DescriptorContractValidation_SourceContracts_ArePresent()
     {
-        string contractSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanDescriptorContracts.cs");
-        string programSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
+        string contractSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanDescriptorContracts.cs");
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
 
         contractSource.ShouldContain("internal static class VulkanDescriptorContracts");
         contractSource.ShouldContain("TryValidateContract");

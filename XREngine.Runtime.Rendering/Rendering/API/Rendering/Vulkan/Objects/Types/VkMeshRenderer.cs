@@ -467,10 +467,10 @@ public unsafe partial class VulkanRenderer
 
             // Don't enqueue mesh draw ops when there's no active rendering pipeline;
             // they would be emitted with an invalid pass index and dropped at recording time.
-            if (Engine.Rendering.State.CurrentRenderingPipeline is null)
+            if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
                 return;
 
-            int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = Renderer.GetCurrentDrawFrameBuffer();
 
             // Resolve the effective material and its render options so the
@@ -503,7 +503,7 @@ public unsafe partial class VulkanRenderer
                 depthTestEnabled = dt.Enabled == ERenderParamUsage.Enabled;
                 depthWriteEnabled = depthTestEnabled && dt.UpdateDepth;
                 depthCompareOp = depthTestEnabled
-                    ? ToVulkanCompareOp(Engine.Rendering.State.MapDepthComparison(dt.Function))
+                    ? ToVulkanCompareOp(RuntimeEngine.Rendering.State.MapDepthComparison(dt.Function))
                     : CompareOp.Always;
             }
             else
@@ -604,10 +604,10 @@ public unsafe partial class VulkanRenderer
                 materialOverride,
                 instances,
                 billboardMode,
-                Engine.Rendering.State.RenderingCamera,
-                Engine.Rendering.State.RenderingStereoRightEyeCamera,
-                Engine.Rendering.State.IsStereoPass,
-                Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false);
+                RuntimeEngine.Rendering.State.RenderingCamera,
+                RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera,
+                RuntimeEngine.Rendering.State.IsStereoPass,
+                RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false);
 
             Renderer.EnqueueFrameOp(new MeshDrawOp(
                 Renderer.EnsureValidPassIndex(passIndex, "MeshDraw"),

@@ -59,7 +59,7 @@ public partial class OpenGLRenderer
         => (long)(System.Diagnostics.Stopwatch.Frequency * (milliseconds / 1000.0));
 
     private void QueueFrontLuminanceCallback(Action<bool, float> callback, bool success, float dot)
-        => Engine.EnqueueAppThreadTask(() => callback(success, dot), "GLRenderer.FrontLuminance.Callback");
+        => RuntimeEngine.EnqueueAppThreadTask(() => callback(success, dot), "GLRenderer.FrontLuminance.Callback");
 
     private void QueueCachedFrontLuminanceCallback(Action<bool, float> callback)
         => QueueFrontLuminanceCallback(callback, _hasFrontLuminanceSample, _hasFrontLuminanceSample ? _lastFrontLuminanceSample : 0.0f);
@@ -164,7 +164,7 @@ public partial class OpenGLRenderer
 
     public override unsafe void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
     {
-        using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
+        using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
 
         var glTex = GenericToAPI<GLTexture2DArray>(texture);
         if (glTex is null)
@@ -228,7 +228,7 @@ public partial class OpenGLRenderer
             return true;
         }
 
-        Engine.AddMainThreadCoroutine(FenceCheck);
+        RuntimeEngine.AddMainThreadCoroutine(FenceCheck);
     }
 
     private byte[] _asyncBuffer = XRTexture.AllocateBytes(16, 1, EPixelFormat.Rgba, EPixelType.Float);
@@ -768,7 +768,7 @@ void main()
 
     public override bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
     {
-        using var prof = Engine.Profiler.Start("GLRenderer.UpdateAutoExposureGpu");
+        using var prof = RuntimeEngine.Profiler.Start("GLRenderer.UpdateAutoExposureGpu");
 
         EnsureAutoExposureComputeResources();
         if (!_autoExposureComputeInitialized)
@@ -949,7 +949,7 @@ void main()
 
     public override unsafe void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
     {
-        using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
+        using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
 
         var glTex = GenericToAPI<GLTexture2D>(texture);
         if (glTex is null)
@@ -1007,12 +1007,12 @@ void main()
             return true;
         }
 
-        Engine.AddMainThreadCoroutine(FenceCheck);
+        RuntimeEngine.AddMainThreadCoroutine(FenceCheck);
     }
 
     public override unsafe bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow = true)
     {
-        using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminance");
+        using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminance");
 
         dotLuminance = 1.0f;
         var glTex = GenericToAPI<GLTexture2DArray>(texture);
@@ -1060,7 +1060,7 @@ void main()
     }
     public override unsafe bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow = true)
     {
-        using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminance");
+        using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminance");
 
         dotLuminance = 1.0f;
         var glTex = GenericToAPI<GLTexture2D>(texture);
@@ -1119,7 +1119,7 @@ void main()
 
     public override unsafe void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
     {
-        using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsync");
+        using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsync");
 
         long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         TryServicePendingFrontLuminanceReadback(nowTicks);
@@ -1229,7 +1229,7 @@ void main()
             StartedTicks = nowTicks,
             LastPollTicks = nowTicks
         };
-        Engine.AddMainThreadCoroutine(PollPendingFrontLuminanceReadback, "GLRenderer.FrontLuminanceReadback");
+        RuntimeEngine.AddMainThreadCoroutine(PollPendingFrontLuminanceReadback, "GLRenderer.FrontLuminanceReadback");
     }
 
     /// <summary>
@@ -1238,7 +1238,7 @@ void main()
     /// </summary>
     public unsafe override void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
     {
-        using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsyncCompute");
+        using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsyncCompute");
 
         long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         TryServicePendingFrontLuminanceReadback(nowTicks);
@@ -1358,7 +1358,7 @@ void main()
             StartedTicks = nowTicks,
             LastPollTicks = nowTicks
         };
-        Engine.AddMainThreadCoroutine(PollPendingFrontLuminanceReadback, "GLRenderer.FrontLuminanceReadback");
+        RuntimeEngine.AddMainThreadCoroutine(PollPendingFrontLuminanceReadback, "GLRenderer.FrontLuminanceReadback");
     }
 
     /// <summary>

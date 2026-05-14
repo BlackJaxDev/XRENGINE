@@ -183,7 +183,7 @@ namespace XREngine.Rendering
             program.Uniform(EEngineUniform.CameraNearZ.ToStringFast(), NearZ);
             program.Uniform(EEngineUniform.CameraFarZ.ToStringFast(), FarZ);
 
-            var area = Engine.Rendering.State.RenderArea;
+            var area = RuntimeEngine.Rendering.State.RenderArea;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(0.0f, 0.0f));

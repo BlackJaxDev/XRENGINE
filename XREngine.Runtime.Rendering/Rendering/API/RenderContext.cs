@@ -447,7 +447,7 @@
 //        public void QueueDisposeSelf()
 //        {
 //            //TODO
-//            //Engine.DisposingRenderContexts.Enqueue(this);
+//            //RuntimeEngine.DisposingRenderContexts.Enqueue(this);
 //        }
 
 //        // This code added to correctly implement the disposable pattern.

@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -225,7 +225,7 @@ namespace XREngine.Components
             if (matProg is null)
                 return;
 
-            var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             if (pipeline is null)
                 return;
 
@@ -264,10 +264,10 @@ namespace XREngine.Components
 
         private void RenderDebug()
         {
-            if (Engine.Rendering.State.IsShadowPass)
+            if (RuntimeEngine.Rendering.State.IsShadowPass)
                 return;
 
-            Engine.Rendering.Debug.RenderBox(HalfExtents, Vector3.Zero, Transform.RenderMatrix, false, ColorF4.Red);
+            RuntimeEngine.Rendering.Debug.RenderBox(HalfExtents, Vector3.Zero, Transform.RenderMatrix, false, ColorF4.Red);
         }
 
         public RenderInfo3D RenderInfo { get; }

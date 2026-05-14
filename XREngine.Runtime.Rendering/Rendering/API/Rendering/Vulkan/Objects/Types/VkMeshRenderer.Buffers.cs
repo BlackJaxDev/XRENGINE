@@ -196,7 +196,7 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private XRMaterial ResolveMaterial(XRMaterial? localOverride)
 		{
-			var renderState = Engine.Rendering.State.RenderingPipelineState;
+			var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
 			var globalMaterialOverride = renderState?.GlobalMaterialOverride;
 			var pipelineOverride = renderState?.OverrideMaterial;
 
@@ -212,7 +212,7 @@ public unsafe partial class VulkanRenderer
 					?? pipelineOverride
 					?? localOverride
 					?? MeshRenderer.Material
-					?? Engine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial
+					?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial
 					?? XRMaterial.InvalidMaterial)
 				   ?? new XRMaterial();
 		}

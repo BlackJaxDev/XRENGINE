@@ -20,7 +20,7 @@ using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.XeSS;
 using XREngine.Scene;
-using static XREngine.Engine.Rendering.State;
+using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
@@ -90,10 +90,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public int ProbeCount => _probePositionBuffer is null ? 0 : (int)_probePositionBuffer.ElementCount;
 
     protected static bool GPURenderDispatch
-        => Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+        => RuntimeEngine.Rendering.ResolveGpuRenderDispatchPreference(RuntimeEngine.EffectiveSettings.GPURenderDispatch);
 
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
-        => Engine.Rendering.ResolveMeshSubmissionStrategy();
+        => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
 
     private static bool UseVulkanSafeFeatureProfile
         => VulkanFeatureProfile.IsActive;
@@ -112,7 +112,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     /// </summary>
     internal static bool ResolveOutputHDR()
     {
-        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (pipeline is not null)
         {
             bool? latched = pipeline.EffectiveOutputHDRThisFrame;
@@ -123,12 +123,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
                 ?? pipeline.RenderState.RenderingCamera
                 ?? pipeline.LastSceneCamera
                 ?? pipeline.LastRenderingCamera;
-            return camera?.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+            return camera?.OutputHDROverride ?? RuntimeEngine.Rendering.Settings.OutputHDR;
         }
 
-        var fallbackCamera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera
-            ?? Engine.Rendering.State.RenderingCamera;
-        return fallbackCamera?.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+        var fallbackCamera = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera
+            ?? RuntimeEngine.Rendering.State.RenderingCamera;
+        return fallbackCamera?.OutputHDROverride ?? RuntimeEngine.Rendering.Settings.OutputHDR;
     }
 
     private static EPixelInternalFormat ResolveOutputInternalFormat()
@@ -261,9 +261,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
 
-        EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
+        EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
         return mode == EAntiAliasingMode.Tsr
-            ? Math.Clamp(camera?.TsrRenderScaleOverride ?? Engine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
+            ? Math.Clamp(camera?.TsrRenderScaleOverride ?? RuntimeEngine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
             : null;
     }
 
@@ -287,7 +287,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     {
         get
         {
-            bool preferDlss = Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+            bool preferDlss = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
             if (preferDlss && RuntimeEnableDlssUpscale)
                 return true;
 
@@ -299,10 +299,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     }
 
     private static bool RuntimeEnableDlssUpscale
-        => Engine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported;
+        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported;
 
     private static bool RuntimeEnableXessUpscale
-        => Engine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported;
+        => RuntimeEngine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported;
 
     /// <summary>
     /// True when FXAA should be active for the current rendering camera.
@@ -329,10 +329,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     // whether to include FBOs/textures. True if the global setting requests
     // the mode, ensuring resources are available even when no camera is active.
     private bool EnableMsaa
-        => Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Msaa
-        && Engine.EffectiveSettings.MsaaSampleCount > 1u;
-    private bool EnableFxaa => Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Fxaa;
-    private uint MsaaSampleCount => Math.Max(1u, Engine.EffectiveSettings.MsaaSampleCount);
+        => RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Msaa
+        && RuntimeEngine.EffectiveSettings.MsaaSampleCount > 1u;
+    private bool EnableFxaa => RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Fxaa;
+    private uint MsaaSampleCount => Math.Max(1u, RuntimeEngine.EffectiveSettings.MsaaSampleCount);
 
     private bool NeedsRecreateMsaaTextureInternalSize(XRTexture texture)
     {
@@ -1337,7 +1337,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     /// </summary>
     internal static bool RuntimeEnableMsaaDeferred
         => RuntimeEnableMsaa
-        && (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline2)?.EnableDeferredMsaa == true;
+        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline2)?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = "tonemapping";
     private const string ColorGradingStageKey = "colorGrading";
@@ -1367,15 +1367,15 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public DefaultRenderPipeline2(bool stereo = false) : base(true)
     {
         Stereo = stereo;
-        GlobalIlluminationMode = Engine.UserSettings.GlobalIlluminationMode;
+        GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
         WarmDeferredLightingShaders();
         WarmFirstRenderShaders();
         _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
-        Engine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
-        Engine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
+        RuntimeEngine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
+        RuntimeEngine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
         CommandChain = GenerateCommandChain();
     }
@@ -1417,33 +1417,44 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "ForwardPlus", "LightCullingStereo.comp"), EShaderType.Compute);
         else
             ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "ForwardPlus", "LightCulling.comp"), EShaderType.Compute);
+
+        WarmAtmosphereShaders();
+    }
+
+    private static void WarmAtmosphereShaders()
+    {
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereHalfDepthDownsample.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereAerialPerspective.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereReproject.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereUpscale.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "Atmosphere", "AtmosphereSky.fs"), EShaderType.Fragment);
     }
 
     private bool EnableTransformIdVisualization
-        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransformId;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransformId;
 
     private bool EnableTransparencyAccumulationVisualization
-        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyAccumulation;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyAccumulation;
 
     private bool EnableTransparencyRevealageVisualization
-        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyRevealage;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyRevealage;
 
     private bool EnableTransparencyOverdrawVisualization
-        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
 
     private bool EnableFullOverdrawVisualization
         => !Stereo && ResolveDebugVisualizationSettings()?.FullOverdrawEnabled == true;
 
     private bool EnablePerPixelLinkedListVisualization
-        => ExactTransparencyEnabled && Engine.EditorPreferences.Debug.VisualizePerPixelLinkedListFragments;
+        => ExactTransparencyEnabled && RuntimeEngine.EditorPreferences.Debug.VisualizePerPixelLinkedListFragments;
 
     private bool EnableDepthPeelingLayerVisualization
-        => ExactTransparencyEnabled && Engine.EditorPreferences.Debug.VisualizeDepthPeelingLayer;
+        => ExactTransparencyEnabled && RuntimeEngine.EditorPreferences.Debug.VisualizeDepthPeelingLayer;
 
     protected override void OnDestroying()
     {
-        Engine.Rendering.SettingsChanged -= HandleRenderingSettingsChanged;
-        Engine.Rendering.AntiAliasingSettingsChanged -= HandleAntiAliasingSettingsChanged;
+        RuntimeEngine.Rendering.SettingsChanged -= HandleRenderingSettingsChanged;
+        RuntimeEngine.Rendering.AntiAliasingSettingsChanged -= HandleAntiAliasingSettingsChanged;
         ClearProbeResources();
         base.OnDestroying();
     }
@@ -1453,7 +1464,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (IsDestroyed)
             return;
 
-        Engine.InvokeOnMainThread(() =>
+        RuntimeEngine.InvokeOnMainThread(() =>
         {
             if (IsDestroyed)
                 return;
@@ -1470,7 +1481,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (IsDestroyed)
             return;
 
-        Engine.InvokeOnMainThread(() =>
+        RuntimeEngine.InvokeOnMainThread(() =>
         {
             if (IsDestroyed)
                 return;
@@ -1480,7 +1491,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             foreach (var instance in Instances)
                 InvalidateAntiAliasingResources(instance);
 
-            foreach (var window in Engine.Windows)
+            foreach (var window in RuntimeEngine.Windows)
             {
                 window.InvalidateScenePanelResources();
                 window.RequestRenderStateRecheck(resetCircuitBreaker: true);
@@ -1513,9 +1524,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             return;
         }
 
-        if (Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Tsr)
+        if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Tsr)
         {
-            RequestedInternalResolution = Math.Clamp(Engine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f);
+            RequestedInternalResolution = Math.Clamp(RuntimeEngine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f);
         }
         else
         {
@@ -1526,7 +1537,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private static bool TryResolveVendorInternalResolutionScale(out float scale)
     {
-        bool preferDlss = Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+        bool preferDlss = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
         if (preferDlss && TryResolveDlssInternalResolutionScale(out scale))
             return true;
         if (TryResolveXessInternalResolutionScale(out scale))
@@ -1540,9 +1551,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private static bool TryResolveDlssInternalResolutionScale(out float scale)
     {
-        if (Engine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported)
+        if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported)
         {
-            scale = NvidiaDlssManager.GetRecommendedRenderScale(Engine.Rendering.Settings);
+            scale = NvidiaDlssManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
             return scale < 1.0f;
         }
 
@@ -1552,9 +1563,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private static bool TryResolveXessInternalResolutionScale(out float scale)
     {
-        if (Engine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported)
+        if (RuntimeEngine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported)
         {
-            scale = IntelXessManager.GetRecommendedRenderScale(Engine.Rendering.Settings);
+            scale = IntelXessManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings);
             return scale < 1.0f;
         }
 
@@ -1753,7 +1764,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             return false;
         }
 
-        if (_probeBindingStateFrameId != Engine.Rendering.State.RenderFrameId)
+        if (_probeBindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)
             SyncPbrLightingResourcesForFrame(brdfTexture);
 
         program.Uniform("ForwardPbrResourcesEnabled", _probeBindingResourcesEnabled);
@@ -1782,8 +1793,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         program.Uniform("TetraCount", _probeBindingTetraCount);
         if (_probeBindingTetraCount > 0)
         {
-            ulong frameId = Engine.Rendering.State.RenderFrameId;
-            if (Engine.EditorPreferences.Debug.RenderLightProbeTetrahedra
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (RuntimeEngine.EditorPreferences.Debug.RenderLightProbeTetrahedra
                 && _probeTetrahedraDebugRenderFrameId != frameId)
             {
                 RenderProbeTetrahedra(_cachedReadyProbes, _probeBindingTetraCount);
@@ -1802,7 +1813,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (IsProbeGiSamplingSuppressedForCurrentPass())
             return;
 
-        ulong frameId = Engine.Rendering.State.RenderFrameId;
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
         if (_probeBindingStateFrameId == frameId)
             return;
 
@@ -1924,12 +1935,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             Vector3 p1 = readyProbes[index1].Transform.RenderTranslation;
             Vector3 p2 = readyProbes[index2].Transform.RenderTranslation;
             Vector3 p3 = readyProbes[index3].Transform.RenderTranslation;
-            Engine.Rendering.Debug.RenderLine(p0, p1, ColorF4.Cyan);
-            Engine.Rendering.Debug.RenderLine(p0, p2, ColorF4.Cyan);
-            Engine.Rendering.Debug.RenderLine(p0, p3, ColorF4.Cyan);
-            Engine.Rendering.Debug.RenderLine(p1, p2, ColorF4.Cyan);
-            Engine.Rendering.Debug.RenderLine(p1, p3, ColorF4.Cyan);
-            Engine.Rendering.Debug.RenderLine(p2, p3, ColorF4.Cyan);
+            RuntimeEngine.Rendering.Debug.RenderLine(p0, p1, ColorF4.Cyan);
+            RuntimeEngine.Rendering.Debug.RenderLine(p0, p2, ColorF4.Cyan);
+            RuntimeEngine.Rendering.Debug.RenderLine(p0, p3, ColorF4.Cyan);
+            RuntimeEngine.Rendering.Debug.RenderLine(p1, p2, ColorF4.Cyan);
+            RuntimeEngine.Rendering.Debug.RenderLine(p1, p3, ColorF4.Cyan);
+            RuntimeEngine.Rendering.Debug.RenderLine(p2, p3, ColorF4.Cyan);
         }
     }
 
@@ -2204,9 +2215,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     }
 
     private static bool IsProbeGiSamplingSuppressedForCurrentPass()
-        => Engine.Rendering.State.IsLightProbePass
-        || Engine.Rendering.State.IsSceneCapturePass
-        || Engine.Rendering.State.IsShadowPass;
+        => RuntimeEngine.Rendering.State.IsLightProbePass
+        || RuntimeEngine.Rendering.State.IsSceneCapturePass
+        || RuntimeEngine.Rendering.State.IsShadowPass;
 
     private enum EProbeRefreshKind : byte
     {
@@ -2219,7 +2230,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _pendingProbeRefresh = true;
         _pendingProbeRefreshDeferredByBatchCapture = true;
 
-        ulong earliestFrameId = Engine.Rendering.State.RenderFrameId + 1;
+        ulong earliestFrameId = RuntimeEngine.Rendering.State.RenderFrameId + 1;
         if (_probeRefreshEarliestFrameId < earliestFrameId)
             _probeRefreshEarliestFrameId = earliestFrameId;
     }
@@ -2457,7 +2468,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private void RegisterProbeTextureArrays()
     {
-        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (pipeline is null)
             return;
 
@@ -2472,12 +2483,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (buffer is null)
             return;
 
-        Engine.Rendering.State.CurrentRenderingPipeline?.SetBuffer(buffer);
+        RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.SetBuffer(buffer);
     }
 
     private static bool RemoveProbeBufferResource(string name)
     {
-        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (pipeline is null || !pipeline.Resources.TryGetBuffer(name, out _))
             return false;
 
@@ -2487,7 +2498,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private static bool RemoveProbeTextureResource(string name)
     {
-        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (pipeline is null || !pipeline.Resources.TryGetTexture(name, out _))
             return false;
 
@@ -2551,7 +2562,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         _probeTessellationJob?.Cancel();
         int generation = _probeTessellationGeneration;
         int probeCount = probes.Count;
-        _probeTessellationJob = Engine.Jobs.Schedule(() => RunTetrahedralization(probes, generation, probeCount));
+        _probeTessellationJob = RuntimeEngine.Jobs.Schedule(() => RunTetrahedralization(probes, generation, probeCount));
     }
 
     private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes, int generation, int probeCount)

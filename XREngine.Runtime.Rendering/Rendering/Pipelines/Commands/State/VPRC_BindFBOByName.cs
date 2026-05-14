@@ -61,7 +61,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool clearDepth = DynamicClearDepth?.Invoke() ?? ClearDepth;
 
             if (clearColor || clearDepth || ClearStencil)
-                Engine.Rendering.State.ClearByBoundFBO(clearColor, clearDepth, ClearStencil);
+                RuntimeEngine.Rendering.State.ClearByBoundFBO(clearColor, clearDepth, ClearStencil);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

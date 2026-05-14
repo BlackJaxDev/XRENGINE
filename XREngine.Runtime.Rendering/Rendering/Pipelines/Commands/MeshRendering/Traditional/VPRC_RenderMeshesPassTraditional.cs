@@ -24,9 +24,9 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static void RenderGPU(VPRC_RenderMeshesPassShared command)
     {
-        using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
-        using var prof = Engine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU", ProfilerScopeKind.AlwaysOnHotPathLoop);
-        var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
+        using var prof = RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU", ProfilerScopeKind.AlwaysOnHotPathLoop);
+        var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (activeInstance is null)
         {
             WarnMissingPipeline(nameof(RenderGPU), command.RenderPass);
@@ -39,17 +39,17 @@ internal static class VPRC_RenderMeshesPassTraditional
         // RenderCPU machinery (CPU occlusion BeginPass, per-mesh skip
         // iteration, fallback warning budget) which is pure overhead when
         // the GPU is authoritative for mesh visibility.
-        using (Engine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.NonMeshPrefilter", ProfilerScopeKind.AlwaysOnHotPathLoop))
+        using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.NonMeshPrefilter", ProfilerScopeKind.AlwaysOnHotPathLoop))
             activeInstance.MeshRenderCommands.RenderCPUNonMeshAndExcluded(command.RenderPass);
 
-        using (Engine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.Dispatch", ProfilerScopeKind.AlwaysOnHotPathLoop))
+        using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.Dispatch", ProfilerScopeKind.AlwaysOnHotPathLoop))
             activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
 
         if (activeInstance.MeshRenderCommands.TryGetGpuPass(command.RenderPass, out var gpuPass))
         {
             if (ShouldUseOpenGLZeroReadbackProgramWarmupFallback(command.MeshSubmissionStrategy, gpuPass))
             {
-                Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
+                RuntimeEngine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
                 WarnZeroReadbackProgramWarmupFallback(command.RenderPass, gpuPass.ZeroReadbackProgramPendingCountThisFrame);
                 activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
                 return;
@@ -63,13 +63,13 @@ internal static class VPRC_RenderMeshesPassTraditional
 
             if (allowCpuSafetyNet)
             {
-                Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
+                RuntimeEngine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
                 WarnCpuSafetyNetFallback(command.RenderPass, shaderWarmupFallback);
                 activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
             }
             else
             {
-                Engine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+                RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
                 if (Interlocked.Decrement(ref _forbiddenFallbackLogBudget) >= 0)
                 {
                     XREngine.Debug.LogWarning(
@@ -81,8 +81,8 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static void RenderCPU(VPRC_RenderMeshesPassShared command)
     {
-        using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
-        var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
+        var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (activeInstance is null)
         {
             WarnMissingPipeline(nameof(RenderCPU), command.RenderPass);
@@ -106,8 +106,8 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static bool IsExplicitCpuFallbackAllowed()
     {
-        bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
-            || (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+        bool fallbackRequested = (RuntimeEngine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+            || (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging && RuntimeEngine.EffectiveSettings.EnableGpuIndirectCpuFallback);
 
         if (!fallbackRequested)
             return false;
@@ -134,11 +134,11 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static bool IsActiveRendererOpenGL()
         => AbstractRenderer.Current is OpenGLRenderer
-           || Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is OpenGLRenderer;
+           || RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is OpenGLRenderer;
 
     private static bool IsActiveRendererVulkan()
         => AbstractRenderer.Current is VulkanRenderer
-           || Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is VulkanRenderer;
+           || RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport?.Window?.Renderer is VulkanRenderer;
 
     private static string GetCpuSafetyNetPolicyName()
     {

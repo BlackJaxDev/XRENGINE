@@ -41,6 +41,7 @@ public unsafe partial class VulkanRenderer
         private readonly HashSet<string> _computeWarnings = new(StringComparer.Ordinal);
         private Pipeline _computePipeline;
         private bool _descriptorSetsRequireUpdateAfterBind;
+        private bool _descriptorSetsRequireVariableDescriptorCount;
 
         public override VkObjectType Type => VkObjectType.Program;
         public override bool IsGenerated => IsActive;
@@ -61,6 +62,7 @@ public unsafe partial class VulkanRenderer
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
         public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
         public bool DescriptorSetsRequireUpdateAfterBind => _descriptorSetsRequireUpdateAfterBind;
+        public bool DescriptorSetsRequireVariableDescriptorCount => _descriptorSetsRequireVariableDescriptorCount;
 
         protected override uint CreateObjectInternal() => CacheObject(this);
 
@@ -231,7 +233,7 @@ public unsafe partial class VulkanRenderer
 
         private void OnLinkRequested(XRRenderProgram program)
         {
-            if (Engine.InvokeOnMainThread(() => OnLinkRequested(program), "VkRenderProgram.LinkRequested"))
+            if (RuntimeEngine.InvokeOnMainThread(() => OnLinkRequested(program), "VkRenderProgram.LinkRequested"))
                 return;
 
             if (!Link())
@@ -240,7 +242,7 @@ public unsafe partial class VulkanRenderer
 
         private void OnUseRequested(XRRenderProgram program)
         {
-            if (Engine.InvokeOnMainThread(() => OnUseRequested(program), "VkRenderProgram.UseRequested"))
+            if (RuntimeEngine.InvokeOnMainThread(() => OnUseRequested(program), "VkRenderProgram.UseRequested"))
                 return;
 
             if (!IsLinked)
@@ -461,6 +463,7 @@ public unsafe partial class VulkanRenderer
             _programDescriptorBindings.Clear();
             _programDescriptorBindings.AddRange(result.Bindings);
             _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
+            _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
             _autoUniformBlocks.Clear();
             foreach (VkShader shader in _shaderCache.Values)
             {
@@ -591,6 +594,7 @@ public unsafe partial class VulkanRenderer
 
             _programDescriptorBindings.Clear();
             _descriptorSetsRequireUpdateAfterBind = false;
+            _descriptorSetsRequireVariableDescriptorCount = false;
             IsLinked = false;
         }
 
@@ -775,7 +779,7 @@ public unsafe partial class VulkanRenderer
         {
             if (_computePipeline.Handle != 0)
             {
-                Engine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: true);
+                RuntimeEngine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: true);
                 return _computePipeline;
             }
 
@@ -891,7 +895,7 @@ public unsafe partial class VulkanRenderer
 
             if (pendingWrites.Count == 0)
             {
-                Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
                     Data.Name,
                     "descriptor-set",
                     "<none>",
@@ -929,7 +933,7 @@ public unsafe partial class VulkanRenderer
                     out bool isNewAllocation))
                 {
                     WarnComputeOnce("Failed to acquire cached Vulkan compute descriptor sets.");
-                    Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
                         Data.Name,
                         "descriptor-set",
                         "<cached-compute>",
@@ -953,7 +957,7 @@ public unsafe partial class VulkanRenderer
                     out descriptorSets))
                 {
                     WarnComputeOnce("Failed to allocate transient Vulkan compute descriptor sets.");
-                    Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
                         Data.Name,
                         "descriptor-set",
                         "<transient-compute>",
@@ -1037,7 +1041,7 @@ public unsafe partial class VulkanRenderer
 
         private bool TryUpdateComputeDescriptorSetsWithTemplates(DescriptorSet[] descriptorSets, WriteDescriptorSet[] writeArray)
         {
-            if (Engine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
+            if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
                 return false;
 
             if (_descriptorSetLayouts.Length < descriptorSets.Length)
@@ -1187,7 +1191,7 @@ public unsafe partial class VulkanRenderer
             };
 
         private void RecordComputeDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
-            => Engine.Rendering.Stats.RecordVulkanDescriptorFallback(
+            => RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorFallback(
                 Data.Name,
                 GetDescriptorBindingClass(binding.DescriptorType),
                 binding.Name,
@@ -1196,7 +1200,7 @@ public unsafe partial class VulkanRenderer
                 count);
 
         private void RecordComputeDescriptorFailure(DescriptorBindingInfo binding, string reason, bool skippedDispatch)
-            => Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+            => RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
                 Data.Name,
                 GetDescriptorBindingClass(binding.DescriptorType),
                 binding.Name,
@@ -1480,15 +1484,15 @@ public unsafe partial class VulkanRenderer
             if (!Enum.TryParse(name, ignoreCase: false, out EEngineUniform uniform))
                 return false;
 
-            XRCamera? camera = Engine.Rendering.State.RenderingCamera;
-            XRCamera? rightCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
-            bool stereo = Engine.Rendering.State.IsStereoPass;
-            var area = Engine.Rendering.State.RenderArea;
+            XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
+            XRCamera? rightCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+            bool stereo = RuntimeEngine.Rendering.State.IsStereoPass;
+            var area = RuntimeEngine.Rendering.State.RenderArea;
 
             switch (uniform)
             {
                 case EEngineUniform.UpdateDelta:
-                    value = new ProgramUniformValue(EShaderVarType._float, Engine.Time.Timer.Update.Delta, false);
+                    value = new ProgramUniformValue(EShaderVarType._float, RuntimeEngine.Time.Timer.Update.Delta, false);
                     return true;
                 case EEngineUniform.ViewMatrix:
                 case EEngineUniform.LeftEyeViewMatrix:
@@ -1759,10 +1763,11 @@ public unsafe partial class VulkanRenderer
             }
 
             if (builders.Count == 0)
-                return new DescriptorLayoutBuildResult(Array.Empty<DescriptorSetLayout>(), new List<DescriptorBindingInfo>(), false);
+                return new DescriptorLayoutBuildResult(Array.Empty<DescriptorSetLayout>(), new List<DescriptorBindingInfo>(), false, false);
 
             List<DescriptorSetLayout> layouts = new();
             bool requiresUpdateAfterBind = false;
+            bool requiresVariableDescriptorCount = false;
             uint maxDeclaredSet = builders.Values.Max(b => b.Set);
             uint maxSet = Math.Max(maxDeclaredSet, DescriptorSetTierCount - 1);
 
@@ -1776,10 +1781,16 @@ public unsafe partial class VulkanRenderer
                     ? [.. setBuilders.Select(b => b.ToBinding())]
                     : Array.Empty<DescriptorSetLayoutBinding>();
 
-                if (!renderer.TryAcquireCachedDescriptorSetLayout(vkBindings, out DescriptorSetLayout layout, out bool usesUpdateAfterBind))
+                if (!renderer.TryAcquireCachedDescriptorSetLayout(
+                    setIndex,
+                    vkBindings,
+                    out DescriptorSetLayout layout,
+                    out bool usesUpdateAfterBind,
+                    out bool usesVariableDescriptorCount))
                     throw new InvalidOperationException($"Failed to create descriptor set layout for program '{programName}'.");
 
                 requiresUpdateAfterBind |= usesUpdateAfterBind;
+                requiresVariableDescriptorCount |= usesVariableDescriptorCount;
                 layouts.Add(layout);
             }
 
@@ -1789,7 +1800,7 @@ public unsafe partial class VulkanRenderer
                 .Select(b => b.ToDescriptorBindingInfo())
                 .ToList();
 
-            return new DescriptorLayoutBuildResult(layouts.ToArray(), mergedBindings, requiresUpdateAfterBind);
+            return new DescriptorLayoutBuildResult(layouts.ToArray(), mergedBindings, requiresUpdateAfterBind, requiresVariableDescriptorCount);
         }
 
         private sealed class DescriptorSetLayoutBindingBuilder
@@ -1806,16 +1817,17 @@ public unsafe partial class VulkanRenderer
                 Set = info.Set;
                 Binding = info.Binding;
                 DescriptorType = info.DescriptorType;
-                Count = Math.Max(info.Count, 1u);
+                Count = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(info);
                 Name = string.IsNullOrWhiteSpace(info.Name) ? string.Empty : info.Name;
                 StageFlags = info.StageFlags;
             }
 
             public void Merge(DescriptorBindingInfo info)
             {
-                if (info.DescriptorType != DescriptorType || Math.Max(info.Count, 1u) != Count)
+                uint incomingCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(info);
+                if (info.DescriptorType != DescriptorType || incomingCount != Count)
                 {
-                    Debug.VulkanWarning($"Ignoring conflicting descriptor definition for set {Set}, binding {Binding}. Existing: {DescriptorType} x{Count}, incoming: {info.DescriptorType} x{Math.Max(info.Count, 1u)}.");
+                    Debug.VulkanWarning($"Ignoring conflicting descriptor definition for set {Set}, binding {Binding}. Existing: {DescriptorType} x{Count}, incoming: {info.DescriptorType} x{incomingCount}.");
                     return;
                 }
 
@@ -1838,7 +1850,7 @@ public unsafe partial class VulkanRenderer
                 => new(Set, Binding, DescriptorType, StageFlags, Count, Name);
         }
 
-        private readonly record struct DescriptorLayoutBuildResult(DescriptorSetLayout[] Layouts, List<DescriptorBindingInfo> Bindings, bool RequiresUpdateAfterBind);
+        private readonly record struct DescriptorLayoutBuildResult(DescriptorSetLayout[] Layouts, List<DescriptorBindingInfo> Bindings, bool RequiresUpdateAfterBind, bool RequiresVariableDescriptorCount);
 
         private static readonly EProgramStageMask[] StageOrder =
         {

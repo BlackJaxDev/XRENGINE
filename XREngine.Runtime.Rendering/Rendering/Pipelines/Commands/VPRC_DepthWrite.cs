@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            Engine.Rendering.State.AllowDepthWrite(Allow);
+            RuntimeEngine.Rendering.State.AllowDepthWrite(Allow);
         }
     }
 }

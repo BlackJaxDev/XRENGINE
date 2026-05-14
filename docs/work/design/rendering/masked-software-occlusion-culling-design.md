@@ -3,7 +3,8 @@
 ## Status
 
 - Author: rendering team
-- Status: design — implementation gated on this doc landing.
+- Implementation state: opt-in scalar SOC is implemented for traditional CPU mesh rendering and meshlet command visibility. Rectangle tests now use the masked tile data instead of a per-pixel scan. `CpuSocUseAvx2` is exposed as the planned SIMD selector; current correctness uses the scalar path.
+- Status: Phase A implemented; AVX2, stereo buffers, and promotion validation remain tracked in the TODO.
 - Supersedes the C-CPU-3 scaffold in
   [render-submission-perf-debug-plan.md](render-submission-perf-debug-plan.md).
   Existing scaffold (`CpuSoftwareOcclusionCuller`, telemetry counters,
@@ -103,7 +104,10 @@ hardware queries cannot:
   marks visible), shadow passes (currently disabled there too), and
   transparent / non-standard-depth passes.
 - Not replacing GPU Hi-Z. GPU indirect / Hi-Z keeps its role in the GPU
-  submission strategies; SOC is for the CpuDirect path.
+  submission strategies. Current SOC scope is traditional `CpuDirect`
+  draws plus meshlet command visibility; non-meshlet GPU indirect
+  zero-readback remains GPU-culling-owned unless a future SSBO mask is
+  added to its compute cull path.
 - Not a "perfect" rasterizer. Conservative, tile-aligned, no
   perspective-correct attribute interpolation — only depth, only inside
   bounds, only with rounding that errs toward "visible."
@@ -214,7 +218,7 @@ XREngine.Runtime.Rendering/
       MaskedOcclusionRasterizer.cs    // Scalar + AVX2 triangle raster
       MaskedOcclusionAabbTester.cs    // AABB → screen rect → depth compare
       OccluderSelector.cs             // Per-frame occluder selection
-      CpuSoftwareOcclusionCuller.cs   // Public facade (exists as scaffold)
+      CpuSoftwareOcclusionCuller.cs   // Public facade
       ESoftwareOccluderClassification.cs
       MaskedOcclusionTelemetry.cs     // Extension of OcclusionTelemetry
   Rendering/Commands/
@@ -494,10 +498,9 @@ CpuSocDebugVisualization                   // default false (overlay)
 CpuSocDebugForceVisible                    // default false (kill-switch)
 ```
 
-Current settings only include `EnableCpuSoftwareOcclusionCulling` and the
-`XRE_CPU_SOC_OCCLUSION=1` override. The `CpuSoc*` settings above are added
-as part of implementation and must also be exposed through
-`RuntimeEngineFacade`.
+All settings above are exposed through engine effective settings and the
+runtime rendering facade. `XRE_CPU_SOC_OCCLUSION=1` remains the environment
+override for the master toggle.
 
 `RenderingParameters.ExcludeFromCpuOcclusion` already exists and applies to
 the hardware-query path. SOC honors it for both occludee tests and occluder
@@ -570,17 +573,16 @@ mutation state.
 A mesh selected as an occluder must not be tested against the buffer it
 rasterized into — otherwise it occludes itself. Solution: tag the selected
 commands' `StableQueryKey`s in an instance-field `HashSet<uint>` that is
-cleared each frame; `TestVisible(stableQueryKey, ...)` on those keys is a
-no-op (always visible). Cost: O(1) lookup per test, negligible, with no
+cleared each frame; `TestVisible(stableQueryKey, ...)` on those keys is an
+always-visible fast path. Cost: O(1) lookup per test, negligible, with no
 steady-state allocation.
 
 ## Threading
 
 Phase 1: single-threaded. Selector, rasterizer, and tester all run on the
 calling thread (the render-thread orchestrator that already calls
-`RenderCPU`). The current scaffold uses a defensive lock, but the real
-implementation should be render-thread-confined in Phase 1; do not take a
-lock inside the per-command `TestVisible` hot path.
+`RenderCPU`). The implementation is render-thread-confined in Phase 1 and
+does not take a lock inside the per-command `TestVisible` hot path.
 
 Phase 2 (post-validation): job-parallelize the rasterizer across tile-rows
 and parallelize `TestVisible` across command chunks via existing
@@ -662,7 +664,7 @@ Acceptance for the Sponza diagnostic:
 | Stereo correctness                                  | OR-combine across eyes; per-eye buffers; AABB test surveys both.        |
 | Hot-path allocations                                | All buffers pooled / instance-fields; no per-call allocs in `TestVisible`. |
 | Render-thread blocking                              | Phase 1 single-threaded; budget enforced at ≤0.6 ms total.              |
-| Self-occlusion of selected occluders                | Tag occluder keys; `TestVisible` no-op on tagged keys.                  |
+| Self-occlusion of selected occluders                | Tag occluder keys; `TestVisible` returns visible on tagged keys.        |
 | Near-plane clipping precision                       | Use reference's per-call `CLIP_PLANE_NEAR` enable; emit clipped-triangle pairs in scalar path before AVX2 rasterizes. |
 | Ported-source license obligations                   | Preserve Apache-2.0 headers / notices for any translated reference code. |
 

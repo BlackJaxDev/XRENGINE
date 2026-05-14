@@ -58,10 +58,10 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
 
     protected override void Execute()
     {
-        if (Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass)
+        if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
-        if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+        if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
             return;
 
         // Resolve effective settings: the post-processing stage on the active
@@ -128,7 +128,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
         material?.SetFloat(0, lineWidth);
         material?.SetInt(1, (int)visualizedLines);
 
-        using (Engine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
+        using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
         using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
         {
             _linesRenderer.Render(null, visualizedLines);

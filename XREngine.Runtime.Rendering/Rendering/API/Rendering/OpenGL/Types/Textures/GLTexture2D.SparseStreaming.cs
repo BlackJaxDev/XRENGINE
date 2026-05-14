@@ -20,7 +20,7 @@ public partial class GLTexture2D
 
     private SparseTextureStreamingTransitionResult ApplySparseTextureStreamingTransition(SparseTextureStreamingTransitionRequest request)
     {
-        if (!Engine.IsRenderThread)
+        if (!RuntimeEngine.IsRenderThread)
             return SparseTextureStreamingTransitionResult.Unsupported("Sparse texture transitions must run on the render thread.");
 
         if (request.ResidentMipmaps is null || request.ResidentMipmaps.Length == 0)
@@ -514,11 +514,11 @@ public partial class GLTexture2D
             return;
 
         if (_allocatedVRAMBytes > 0)
-            Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+            RuntimeEngine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
 
         _allocatedVRAMBytes = committedBytes;
         if (committedBytes > 0)
-            Engine.Rendering.Stats.AddTextureAllocation(committedBytes);
+            RuntimeEngine.Rendering.Stats.AddTextureAllocation(committedBytes);
     }
 
 }

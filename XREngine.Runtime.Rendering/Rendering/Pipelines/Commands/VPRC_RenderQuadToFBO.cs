@@ -32,7 +32,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (SourceQuadFBOName is null)
                 return;
 
-            var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+            var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             if (activeInstance is null)
             {
                 Debug.RenderingWarningEvery(
@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             int passIndex = ResolvePassIndex($"QuadBlit_{SourceQuadFBOName}_to_{destination}");
             using var passScope = passIndex != int.MinValue
-                ? Engine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
 
             XRQuadFrameBuffer? sourceFBO = activeInstance.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);

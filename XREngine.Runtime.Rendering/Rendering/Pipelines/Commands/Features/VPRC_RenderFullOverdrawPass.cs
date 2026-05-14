@@ -26,15 +26,15 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
 
     protected override bool ShouldExecuteThisFrame()
     {
-        if (Engine.Rendering.State.IsSceneCapturePass ||
-            Engine.Rendering.State.IsLightProbePass ||
-            Engine.Rendering.State.IsShadowPass ||
+        if (RuntimeEngine.Rendering.State.IsSceneCapturePass ||
+            RuntimeEngine.Rendering.State.IsLightProbePass ||
+            RuntimeEngine.Rendering.State.IsShadowPass ||
             RenderPasses.Length == 0)
         {
             return false;
         }
 
-        XRRenderPipelineInstance? activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (activeInstance is null)
             return false;
 
@@ -84,7 +84,7 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
             int pass = RenderPasses[i];
             material.RenderPass = pass;
 
-            using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(pass);
+            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(pass);
             commands.RenderCPUFiltered(
                 pass,
                 static command => command is IRenderCommandMesh,

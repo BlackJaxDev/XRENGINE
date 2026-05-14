@@ -200,7 +200,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             get
             {
-                if (!Engine.Rendering.Settings.UsePointShadowAtlas)
+                if (!RuntimeEngine.Rendering.Settings.UsePointShadowAtlas)
                     return false;
 
                 return ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat).Encoding == EShadowMapEncoding.Depth;
@@ -404,7 +404,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     .PushPointLightLayeredShadowPass(plan.IsInstancedLayered, faceMatrices[..faceCount], faceIndices[..faceCount]);
                 _viewports[0].Render(ShadowMap, null, null, true, layeredMaterial);
                 SetField(ref _lastRenderedShadowFaceMask, faceMask, nameof(LastRenderedShadowFaceMask));
-                SetField(ref _lastShadowRenderFrame, Engine.Rendering.State.RenderFrameId, nameof(LastShadowRenderFrame));
+                SetField(ref _lastShadowRenderFrame, RuntimeEngine.Rendering.State.RenderFrameId, nameof(LastShadowRenderFrame));
                 GenerateMomentShadowMipmapsIfNeeded();
                 return;
             }
@@ -426,7 +426,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (requestedMode == EPointShadowRenderMode.Sequential)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.SequentialRequested);
 
-            if (!Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLLayeredFramebuffers)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedLayeredFramebuffer);
 
             return requestedMode switch
@@ -449,8 +449,8 @@ namespace XREngine.Components.Capture.Lights.Types
             if (!hasGroupedAtlasAllocation)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.MissingGroupedAtlasAllocation);
 
-            if (!Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
-                faceCount > Engine.Rendering.State.MaxOpenGLViewports)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                faceCount > RuntimeEngine.Rendering.State.MaxOpenGLViewports)
             {
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedViewportScissorArray);
             }
@@ -465,7 +465,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private static PointShadowRenderPlan CreateAtlasInstancedShadowRenderPlan(EPointShadowRenderMode requestedMode)
         {
-            if (!Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedVertexStageViewportIndexWrites);
 
             return new PointShadowRenderPlan
@@ -478,7 +478,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private static PointShadowRenderPlan CreateAtlasGeometryShadowRenderPlan(EPointShadowRenderMode requestedMode)
         {
-            if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedGeometryStageViewportIndexWrites);
 
             return new PointShadowRenderPlan
@@ -491,10 +491,10 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private static PointShadowRenderPlan CreateInstancedShadowRenderPlan(EPointShadowRenderMode requestedMode)
         {
-            if (!Engine.Rendering.State.SupportsOpenGLViewportArray)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedViewportArray);
 
-            if (!Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedVertexStageLayerWrites);
 
             return new PointShadowRenderPlan
@@ -507,7 +507,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private static PointShadowRenderPlan CreateGeometryShadowRenderPlan(EPointShadowRenderMode requestedMode)
         {
-            if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedGeometryShader);
 
             return new PointShadowRenderPlan
@@ -589,7 +589,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             SetField(ref _lastRenderedShadowFaceMask, renderedMask, nameof(LastRenderedShadowFaceMask));
             if (renderedMask != 0)
-                SetField(ref _lastShadowRenderFrame, Engine.Rendering.State.RenderFrameId, nameof(LastShadowRenderFrame));
+                SetField(ref _lastShadowRenderFrame, RuntimeEngine.Rendering.State.RenderFrameId, nameof(LastShadowRenderFrame));
         }
 
         private void LogShadowRenderModeFallbackIfNeeded(in PointShadowRenderPlan plan)
@@ -618,16 +618,16 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             if (!UsesPointShadowAtlasForCurrentEncoding ||
                 _shadowRenderMode == EPointShadowRenderMode.Sequential ||
-                !Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
-                ShadowFaceCount > Engine.Rendering.State.MaxOpenGLViewports)
+                !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                ShadowFaceCount > RuntimeEngine.Rendering.State.MaxOpenGLViewports)
             {
                 return false;
             }
 
             return _shadowRenderMode switch
             {
-                EPointShadowRenderMode.InstancedLayered => Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex,
-                EPointShadowRenderMode.GeometryShader => Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
+                EPointShadowRenderMode.InstancedLayered => RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex,
+                EPointShadowRenderMode.GeometryShader => RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
                 _ => false,
             };
         }
@@ -1052,7 +1052,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             base.SetUniforms(program, targetStructName);
 
-            string prefix = targetStructName ?? Engine.Rendering.Constants.LightsStructName;
+            string prefix = targetStructName ?? RuntimeEngine.Rendering.Constants.LightsStructName;
             string flatPrefix = $"{prefix}.";
             string basePrefix = $"{prefix}.Base.";
             Vector3 lightPosition = Transform.RenderTranslation;
@@ -1092,7 +1092,7 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform("ShadowMomentPositiveExponent", selection.PositiveExponent);
             program.Uniform("ShadowMomentNegativeExponent", selection.NegativeExponent);
             program.Uniform("ShadowMomentMipBias", ShadowMomentMipBias);
-            var state = Engine.Rendering.State.RenderingPipelineState;
+            var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
             if (state?.PointLightLayeredShadowPass == true && state.PointLightShadowFaceCount > 0)
             {
                 int layeredFaceCount = Math.Min(ShadowFaceCount, state.PointLightShadowFaceCount);

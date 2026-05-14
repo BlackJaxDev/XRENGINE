@@ -14,6 +14,7 @@ struct Meshlet
 
 layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
 layout(std430, binding = 5) buffer TransformBuffer { mat4 worldMatrices[]; };
+layout(std430, binding = 7) buffer CommandVisibilityBuffer { uint commandVisibility[]; };
 
 struct TaskPayload { uint meshletIndices[GROUP_SIZE]; uint count; };
 
@@ -24,6 +25,7 @@ shared uint sIndices[GROUP_SIZE];
 
 uniform vec4 FrustumPlanes[6];
 uniform uint RenderPass;
+uniform uint UseCpuCommandVisibility;
 
 vec4 TransformSphere(in Meshlet m)
 {
@@ -60,12 +62,16 @@ void main()
         Meshlet m = meshlets[idx];
         if (m.Meta.z == RenderPass)
         {
-            vec4 worldSphere = TransformSphere(m);
-            if (!FrustumCulled(worldSphere))
+            bool commandVisible = UseCpuCommandVisibility == 0u || commandVisibility[m.Meta.x] != 0u;
+            if (commandVisible)
             {
-                uint dst = atomicAdd(sVisibleCount, 1u);
-                if (dst < GROUP_SIZE)
-                    sIndices[dst] = idx;
+                vec4 worldSphere = TransformSphere(m);
+                if (!FrustumCulled(worldSphere))
+                {
+                    uint dst = atomicAdd(sVisibleCount, 1u);
+                    if (dst < GROUP_SIZE)
+                        sIndices[dst] = idx;
+                }
             }
         }
     }

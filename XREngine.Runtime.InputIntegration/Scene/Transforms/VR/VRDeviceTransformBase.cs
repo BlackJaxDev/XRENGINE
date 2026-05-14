@@ -67,9 +67,9 @@ namespace XREngine.Data.Components.Scene
         /// <summary>
         /// Occurs directly before rendering to recalculate the render matrix based on the VR state.
         /// </summary>
-        private void VRState_RecalcMatrixOnDraw()
+        private void VRState_RecalcMatrixOnDraw(RuntimeVrPoseTiming timing)
         {
-            if (!TryGetTrackedLocalPose(RuntimeVrPoseTiming.Recalc, out Matrix4x4 mtx))
+            if (!TryGetTrackedLocalPose(timing, out Matrix4x4 mtx))
             {
                 VrDevice? device = Device;
                 if (device is null)

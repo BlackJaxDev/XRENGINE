@@ -12,7 +12,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Vulkan;
-using static XREngine.Engine.Rendering.State;
+using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
@@ -70,7 +70,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     public const string SurfelDebugFBOName = "SurfelDebugFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
 
-    private bool _gpuRenderDispatch = Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+    private bool _gpuRenderDispatch = RuntimeEngine.Rendering.ResolveGpuRenderDispatchPreference(RuntimeEngine.EffectiveSettings.GPURenderDispatch);
 
     private static bool EnableComputeDependentPasses
         => VulkanFeatureProfile.EnableComputeDependentPasses;
@@ -81,7 +81,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     public bool GpuRenderDispatch
     {
         get => _gpuRenderDispatch;
-        set => SetField(ref _gpuRenderDispatch, Engine.Rendering.ResolveGpuRenderDispatchPreference(value));
+        set => SetField(ref _gpuRenderDispatch, RuntimeEngine.Rendering.ResolveGpuRenderDispatchPreference(value));
     }
 
     private ESurfelDebugVisualization _visualizationMode = ESurfelDebugVisualization.Normal;
@@ -96,7 +96,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
         {
             if (SetField(ref _visualizationMode, value))
             {
-                Engine.InvokeOnMainThread(() =>
+                RuntimeEngine.InvokeOnMainThread(() =>
                 {
                     CommandChain = GenerateCommandChain();
                     foreach (var instance in Instances)
@@ -686,6 +686,6 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
         base.OnPropertyChanged(propName, prev, field);
 
         if (propName == nameof(GpuRenderDispatch))
-            Engine.Rendering.ApplyGpuRenderDispatchToPipeline(this, GpuRenderDispatch);
+            RuntimeEngine.Rendering.ApplyGpuRenderDispatchToPipeline(this, GpuRenderDispatch);
     }
 }

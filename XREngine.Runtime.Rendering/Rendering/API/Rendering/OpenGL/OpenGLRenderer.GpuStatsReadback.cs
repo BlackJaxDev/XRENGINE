@@ -35,9 +35,9 @@ namespace XREngine.Rendering.OpenGL
 
         public override void PollGpuRenderStatsReadbacks()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
-                Engine.EnqueueMainThreadTask(PollGpuRenderStatsReadbacks, "OpenGLRenderer.PollGpuRenderStatsReadbacks");
+                RuntimeEngine.EnqueueMainThreadTask(PollGpuRenderStatsReadbacks, "OpenGLRenderer.PollGpuRenderStatsReadbacks");
                 return;
             }
 
@@ -83,12 +83,12 @@ namespace XREngine.Rendering.OpenGL
             bool publishDraws,
             bool publishTriangles)
         {
-            if (!Engine.Rendering.Stats.EnableTracking || sourceBuffer is null || byteCount == 0u || elementCount == 0u)
+            if (!RuntimeEngine.Rendering.Stats.EnableTracking || sourceBuffer is null || byteCount == 0u || elementCount == 0u)
                 return false;
 
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
-                Engine.EnqueueMainThreadTask(
+                RuntimeEngine.EnqueueMainThreadTask(
                     () => QueueGpuRenderStatsReadback(sourceBuffer, sourceByteOffset, byteCount, elementCount, kind, publishDraws, publishTriangles),
                     "OpenGLRenderer.QueueGpuRenderStatsReadback");
                 return false;
@@ -191,7 +191,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 PublishGpuRenderStatsReadback(slot, values);
-                Engine.Rendering.Stats.RecordGpuReadbackBytes(slot.ByteCount);
+                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(slot.ByteCount);
             }
             finally
             {
@@ -222,7 +222,7 @@ namespace XREngine.Rendering.OpenGL
                         drawCount += values[i];
 
                     if (drawCount > 0ul)
-                        Engine.Rendering.Stats.IncrementDrawCalls(SaturateToInt(drawCount));
+                        RuntimeEngine.Rendering.Stats.IncrementDrawCalls(SaturateToInt(drawCount));
                     break;
                 }
 
@@ -232,14 +232,14 @@ namespace XREngine.Rendering.OpenGL
                     {
                         uint draws = values[(int)GpuStatsLayout.StatsDrawCount];
                         if (draws > 0u)
-                            Engine.Rendering.Stats.IncrementDrawCalls(SaturateToInt(draws));
+                            RuntimeEngine.Rendering.Stats.IncrementDrawCalls(SaturateToInt(draws));
                     }
 
                     if (slot.PublishTriangles && values.Length > (int)GpuStatsLayout.StatsTriangleCount)
                     {
                         uint triangles = values[(int)GpuStatsLayout.StatsTriangleCount];
                         if (triangles > 0u)
-                            Engine.Rendering.Stats.AddTrianglesRendered(SaturateToInt(triangles));
+                            RuntimeEngine.Rendering.Stats.AddTrianglesRendered(SaturateToInt(triangles));
                     }
                     break;
                 }
@@ -262,7 +262,7 @@ namespace XREngine.Rendering.OpenGL
             // draw caused NVIDIA's driver to corrupt its internal sync-object list (verified via
             // dotnet-dump: render thread faulted inside glClientWaitSync at nvoglv64.dll+0x108f0cd
             // with FAST_FAIL_CORRUPT_LIST_ENTRY). Skip the readback under that strategy.
-            if (Engine.Rendering.ResolveMeshSubmissionStrategy() == Data.Rendering.EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == Data.Rendering.EMeshSubmissionStrategy.GpuIndirectZeroReadback)
                 return;
 
             QueueGpuRenderDrawCountReadback(_boundParameterBufferForStats, (uint)countByteOffset, 1u);

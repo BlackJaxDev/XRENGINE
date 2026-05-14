@@ -14,7 +14,7 @@ namespace XREngine.Scene
 
         public void Clear()
         {
-            using var sample = Engine.Profiler.Start("Lights3DCollection.Clear");
+            using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.Clear");
 
             DynamicSpotLights.Clear();
             DynamicPointLights.Clear();

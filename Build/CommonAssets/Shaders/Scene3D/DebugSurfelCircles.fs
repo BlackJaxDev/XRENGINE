@@ -55,11 +55,14 @@ layout(std430, binding = 4) buffer GridIndices
     uint indices[];
 };
 
-// GPU commands buffer for world matrix reconstruction
+// TransformBuffer for world matrix reconstruction
 layout(std430, binding = 5) buffer CulledCommandsBuffer { float culled[]; };
+layout(std430, binding = 6) buffer TransformBuffer { float transforms[]; };
 uniform bool hasCulledCommands;
 uniform uint culledFloatCount;
 uniform uint culledCommandFloats;
+uniform bool useTransformAtlas;
+uniform uint transformAtlasCount;
 
 vec3 ReconstructWorldPosition(vec2 uv, float depth)
 {
@@ -88,20 +91,19 @@ bool WorldToCell(vec3 p, out uint cell)
 
 bool TryLoadWorldMatrix(uint commandIndex, out mat4 M)
 {
-    if (!hasCulledCommands)
+    if (!useTransformAtlas)
         return false;
 
-    uint stride = max(culledCommandFloats, 48u);
-    uint base = commandIndex * stride;
-    if (base + 15u >= culledFloatCount)
+    uint base = commandIndex * 16u;
+    if (base + 15u >= transformAtlasCount)
         return false;
 
-    // GPU command buffer stores matrices in row-major order (matching System.Numerics.Matrix4x4).
+    // TransformBuffer stores matrices in row-major order (matching System.Numerics.Matrix4x4).
     // GLSL mat4 constructor takes columns, so we read rows and construct columns.
-    vec4 r0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);
-    vec4 r1 = vec4(culled[base+4],  culled[base+5],  culled[base+6],  culled[base+7]);
-    vec4 r2 = vec4(culled[base+8],  culled[base+9],  culled[base+10], culled[base+11]);
-    vec4 r3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);
+    vec4 r0 = vec4(transforms[base+0],  transforms[base+1],  transforms[base+2],  transforms[base+3]);
+    vec4 r1 = vec4(transforms[base+4],  transforms[base+5],  transforms[base+6],  transforms[base+7]);
+    vec4 r2 = vec4(transforms[base+8],  transforms[base+9],  transforms[base+10], transforms[base+11]);
+    vec4 r3 = vec4(transforms[base+12], transforms[base+13], transforms[base+14], transforms[base+15]);
     // Transpose: mat4 takes columns, so column i = (r0[i], r1[i], r2[i], r3[i])
     M = mat4(
         vec4(r0.x, r1.x, r2.x, r3.x),

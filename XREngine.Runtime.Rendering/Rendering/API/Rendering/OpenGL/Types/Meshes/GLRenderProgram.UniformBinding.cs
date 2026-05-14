@@ -129,11 +129,11 @@ namespace XREngine.Rendering.OpenGL
             {
                 long start = System.Diagnostics.Stopwatch.GetTimestamp();
                 bool restoredMetadata;
-                using (Engine.Profiler.Start("GLRenderProgram.Link.RestoreCachedUniformMetadata", ProfilerScopeKind.OneOffInvoke))
+                using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.RestoreCachedUniformMetadata", ProfilerScopeKind.OneOffInvoke))
                     restoredMetadata = TryRestoreCachedUniformMetadata(_cachedProgram?.Uniforms);
                 if (!restoredMetadata)
                 {
-                    using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
+                    using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
                     CacheActiveUniforms();
                     PromoteCurrentUniformMetadataToCachedProgram();
                 }
@@ -370,14 +370,14 @@ namespace XREngine.Rendering.OpenGL
                 if (appliedRequirements == EUniformRequirements.None)
                     return;
 
-                ulong frameId = Engine.Rendering.State.RenderFrameId;
-                XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-                XRCamera? camera = Engine.Rendering.State.RenderingCamera;
-                XRCamera? stereoRightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
-                IRuntimeRenderWorld? world = Engine.Rendering.State.RenderingWorld;
-                bool stereoPass = Engine.Rendering.State.IsStereoPass;
-                bool useUnjitteredProjection = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
-                var renderArea = Engine.Rendering.State.RenderArea;
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
+                XRCamera? stereoRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+                IRuntimeRenderWorld? world = RuntimeEngine.Rendering.State.RenderingWorld;
+                bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
+                bool useUnjitteredProjection = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                var renderArea = RuntimeEngine.Rendering.State.RenderArea;
 
                 if (MatchesEngineUniformContext(frameId, pipeline, camera, stereoRightEyeCamera, world, stereoPass, useUnjitteredProjection, renderArea))
                 {
@@ -417,14 +417,14 @@ namespace XREngine.Rendering.OpenGL
 
             private bool MatchesCurrentEngineUniformContext()
             {
-                ulong frameId = Engine.Rendering.State.RenderFrameId;
-                XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-                XRCamera? camera = Engine.Rendering.State.RenderingCamera;
-                XRCamera? stereoRightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
-                IRuntimeRenderWorld? world = Engine.Rendering.State.RenderingWorld;
-                bool stereoPass = Engine.Rendering.State.IsStereoPass;
-                bool useUnjitteredProjection = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
-                var renderArea = Engine.Rendering.State.RenderArea;
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
+                XRCamera? stereoRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+                IRuntimeRenderWorld? world = RuntimeEngine.Rendering.State.RenderingWorld;
+                bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
+                bool useUnjitteredProjection = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                var renderArea = RuntimeEngine.Rendering.State.RenderArea;
 
                 return MatchesEngineUniformContext(frameId, pipeline, camera, stereoRightEyeCamera, world, stereoPass, useUnjitteredProjection, renderArea);
             }
@@ -453,7 +453,7 @@ namespace XREngine.Rendering.OpenGL
             private bool ValidateUniformType(int location, params GLEnum[] expectedTypes)
             {
                 /*
-                using var sample = Engine.Profiler.Start("GLRenderProgram.ValidateUniformType (by location)", ProfilerScopeKind.ConditionalLoop);
+                using var sample = RuntimeEngine.Profiler.Start("GLRenderProgram.ValidateUniformType (by location)", ProfilerScopeKind.ConditionalLoop);
 
                 if (location < 0)
                     return false;
@@ -467,7 +467,7 @@ namespace XREngine.Rendering.OpenGL
             private bool ValidateUniformType(string name, int? location, params GLEnum[] expectedTypes)
             {
                 /*
-                using var sample = Engine.Profiler.Start("GLRenderProgram.ValidateUniformType (by name)", ProfilerScopeKind.ConditionalLoop);
+                using var sample = RuntimeEngine.Profiler.Start("GLRenderProgram.ValidateUniformType (by name)", ProfilerScopeKind.ConditionalLoop);
 
                 if (!_uniformMetadata.TryGetValue(name, out var meta))
                     return true;

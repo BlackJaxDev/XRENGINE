@@ -27,7 +27,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
+            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
             var instance = ActivePipelineInstance;
 
             if (Filter is null)

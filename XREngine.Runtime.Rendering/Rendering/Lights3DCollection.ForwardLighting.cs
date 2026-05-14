@@ -443,9 +443,9 @@ namespace XREngine.Scene
 
         private static void SetForwardLightingCameraUniforms(XRRenderProgram program)
         {
-            bool stereoPass = Engine.Rendering.State.IsStereoPass;
-            bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
-            XRCamera? leftCamera = Engine.Rendering.State.RenderingCamera;
+            bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
+            bool useUnjittered = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+            XRCamera? leftCamera = RuntimeEngine.Rendering.State.RenderingCamera;
             program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)(leftCamera?.DepthMode ?? XRCamera.EDepthMode.Normal));
 
             SetForwardLightingCameraUniforms(
@@ -473,7 +473,7 @@ namespace XREngine.Scene
 
             SetForwardLightingCameraUniforms(
                 program,
-                Engine.Rendering.State.RenderingStereoRightEyeCamera,
+                RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera,
                 EEngineUniform.RightEyeViewMatrix,
                 EEngineUniform.RightEyeInverseViewMatrix,
                 EEngineUniform.RightEyeInverseProjMatrix,
@@ -542,13 +542,13 @@ namespace XREngine.Scene
             program.Uniform("GlobalAmbient", (Vector3)World.GetEffectiveAmbientColor());
 
             // Camera position for specular calculations
-            program.Uniform("CameraPosition", Engine.Rendering.State.RenderingCamera?.Transform.RenderTranslation ?? Vector3.Zero);
+            program.Uniform("CameraPosition", RuntimeEngine.Rendering.State.RenderingCamera?.Transform.RenderTranslation ?? Vector3.Zero);
             // Forward contact shadows project world-space ray samples into the
             // prepass depth texture, so the lighting upload owns these matrices
             // instead of relying on every material to request Camera uniforms.
             SetForwardLightingCameraUniforms(program);
 
-            var area = Engine.Rendering.State.RenderArea;
+            var area = RuntimeEngine.Rendering.State.RenderArea;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
@@ -564,25 +564,25 @@ namespace XREngine.Scene
             BindForwardLightBuffers(program);
 
             // Forward+ bindings (optional). Shaders may ignore these if they don't declare Forward+ support.
-            program.Uniform("ForwardPlusEnabled", Engine.Rendering.State.ForwardPlusEnabled);
-            if (Engine.Rendering.State.ForwardPlusEnabled)
+            program.Uniform("ForwardPlusEnabled", RuntimeEngine.Rendering.State.ForwardPlusEnabled);
+            if (RuntimeEngine.Rendering.State.ForwardPlusEnabled)
             {
-                program.Uniform("ForwardPlusScreenSize", Engine.Rendering.State.ForwardPlusScreenSize);
-                program.Uniform("ForwardPlusTileSize", Engine.Rendering.State.ForwardPlusTileSize);
-                program.Uniform("ForwardPlusTileCountX", Engine.Rendering.State.ForwardPlusTileCountX);
-                program.Uniform("ForwardPlusTileCountY", Engine.Rendering.State.ForwardPlusTileCountY);
-                program.Uniform("ForwardPlusMaxLightsPerTile", Engine.Rendering.State.ForwardPlusMaxLightsPerTile);
+                program.Uniform("ForwardPlusScreenSize", RuntimeEngine.Rendering.State.ForwardPlusScreenSize);
+                program.Uniform("ForwardPlusTileSize", RuntimeEngine.Rendering.State.ForwardPlusTileSize);
+                program.Uniform("ForwardPlusTileCountX", RuntimeEngine.Rendering.State.ForwardPlusTileCountX);
+                program.Uniform("ForwardPlusTileCountY", RuntimeEngine.Rendering.State.ForwardPlusTileCountY);
+                program.Uniform("ForwardPlusMaxLightsPerTile", RuntimeEngine.Rendering.State.ForwardPlusMaxLightsPerTile);
 
                 // Keep bindings in sync with the compute shader: 20 (local lights), 21 (visible indices).
-                program.BindBuffer(Engine.Rendering.State.ForwardPlusLocalLightsBuffer!, 20u);
-                program.BindBuffer(Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer!, 21u);
+                program.BindBuffer(RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer!, 20u);
+                program.BindBuffer(RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer!, 21u);
             }
-            program.Uniform("ForwardPlusEyeCount", Engine.Rendering.State.IsStereoPass ? 2 : 1);
+            program.Uniform("ForwardPlusEyeCount", RuntimeEngine.Rendering.State.IsStereoPass ? 2 : 1);
 
             const int forwardAmbientOcclusionUnit = 14;
             XRTexture? ambientOcclusionTexture = null;
-            var currentPipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-            var ambientOcclusionCamera = Engine.Rendering.State.RenderingCamera
+            var currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            var ambientOcclusionCamera = RuntimeEngine.Rendering.State.RenderingCamera
                 ?? currentPipeline?.RenderState.SceneCamera
                 ?? currentPipeline?.LastSceneCamera
                 ?? currentPipeline?.LastRenderingCamera;
@@ -624,7 +624,7 @@ namespace XREngine.Scene
             bool forwardContactPrePass2DAvailable = false;
             bool forwardContactPrePassArrayAvailable = false;
             bool forwardContactPrePassAvailable = false;
-            if (Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled && currentPipeline is not null)
+            if (RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled && currentPipeline is not null)
             {
                 currentPipeline.TryGetTexture(DefaultRenderPipeline.ForwardContactDepthViewTextureName, out forwardContactDepthTexture);
                 currentPipeline.TryGetTexture(DefaultRenderPipeline.ForwardContactNormalTextureName, out forwardContactNormalTexture);
@@ -934,7 +934,7 @@ namespace XREngine.Scene
             }
 
             int pointShadowSlot = 0;
-            bool usePointAtlas = Engine.Rendering.Settings.UsePointShadowAtlas;
+            bool usePointAtlas = RuntimeEngine.Rendering.Settings.UsePointShadowAtlas;
             EShadowMapEncoding pointAtlasEncoding = EShadowMapEncoding.Depth;
             for (int i = 0; i < pointLightCount; i++)
             {
@@ -1018,7 +1018,7 @@ namespace XREngine.Scene
                 program.Sampler(_pointShadowMapNames[pointShadowSlot], DummyPointShadowMap, pointShadowStartUnit + pointShadowSlot);
 
             int spotShadowSlot = 0;
-            bool useSpotAtlas = Engine.Rendering.Settings.UseSpotShadowAtlas;
+            bool useSpotAtlas = RuntimeEngine.Rendering.Settings.UseSpotShadowAtlas;
             EShadowMapEncoding spotAtlasEncoding = EShadowMapEncoding.Depth;
             for (int i = 0; i < spotLightCount; i++)
             {
@@ -1260,7 +1260,7 @@ namespace XREngine.Scene
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][ForwardBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMapTex={6} cascadeTex={7} atlasRequests={8} atlasRenderedThisFrame={9} atlasPages={10} c0={11} c1={12} c2={13} c3={14}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 requested,
                 shaderAtlasEnabled,

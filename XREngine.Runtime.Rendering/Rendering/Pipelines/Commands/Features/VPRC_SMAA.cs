@@ -525,7 +525,7 @@ void main()
             return ResolveSourceFormat(arrayView.ViewedTexture.Textures[0]);
         }
 
-        if (Engine.Rendering.Settings.OutputHDR)
+        if (RuntimeEngine.Rendering.Settings.OutputHDR)
             return (EPixelInternalFormat.Rgba16f, ESizedInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat);
 
         return (EPixelInternalFormat.Rgba8, ESizedInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);

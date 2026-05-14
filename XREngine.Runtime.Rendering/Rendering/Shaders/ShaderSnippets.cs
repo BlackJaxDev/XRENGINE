@@ -128,10 +128,10 @@ public static partial class ShaderSnippets
     private static RuntimeResolverOptions CreateResolverOptions()
     {
         List<string> additionalRoots = [];
-        if (!string.IsNullOrWhiteSpace(Engine.Assets?.EngineAssetsPath))
-            additionalRoots.Add(Path.Combine(Engine.Assets.EngineAssetsPath, "Shaders"));
-        if (!string.IsNullOrWhiteSpace(Engine.Assets?.GameAssetsPath))
-            additionalRoots.Add(Path.Combine(Engine.Assets.GameAssetsPath, "Shaders"));
+        if (!string.IsNullOrWhiteSpace(RuntimeEngine.Assets?.EngineAssetsPath))
+            additionalRoots.Add(Path.Combine(RuntimeEngine.Assets.EngineAssetsPath, "Shaders"));
+        if (!string.IsNullOrWhiteSpace(RuntimeEngine.Assets?.GameAssetsPath))
+            additionalRoots.Add(Path.Combine(RuntimeEngine.Assets.GameAssetsPath, "Shaders"));
 
         return new RuntimeResolverOptions
         {

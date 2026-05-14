@@ -18,11 +18,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            using var passScope = Engine.Rendering.State.CurrentRenderGraphPassIndex == int.MinValue
-                ? Engine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.PreRender)
+            using var passScope = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex == int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.PreRender)
                 : default;
 
-            Engine.Rendering.State.Clear(Color, Depth, Stencil);
+            RuntimeEngine.Rendering.State.Clear(Color, Depth, Stencil);
         }
     }
 }

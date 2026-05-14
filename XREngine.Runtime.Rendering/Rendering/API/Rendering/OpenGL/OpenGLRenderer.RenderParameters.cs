@@ -40,7 +40,7 @@ public partial class OpenGLRenderer
         Api.ColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
 
         var winding = parameters.Winding;
-        if (Engine.Rendering.State.ReverseWinding)
+        if (RuntimeEngine.Rendering.State.ReverseWinding)
             winding = winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;
         Api.FrontFace(ToGLEnum(winding));
 
@@ -187,7 +187,7 @@ public partial class OpenGLRenderer
         if (currentDrawFbo is not null)
             return currentDrawFbo.IsMultisampled;
 
-        XRFrameBuffer? outputFbo = Engine.Rendering.State.RenderingTargetOutputFBO;
+        XRFrameBuffer? outputFbo = RuntimeEngine.Rendering.State.RenderingTargetOutputFBO;
         if (outputFbo is not null)
             return outputFbo.IsMultisampled;
 
@@ -206,7 +206,7 @@ public partial class OpenGLRenderer
         {
             Api.Enable(EnableCap.CullFace);
             var cullMode = r.CullMode;
-            if (Engine.Rendering.State.ReverseCulling)
+            if (RuntimeEngine.Rendering.State.ReverseCulling)
                 cullMode = cullMode switch
                 {
                     ECullMode.Front => ECullMode.Back,
@@ -223,7 +223,7 @@ public partial class OpenGLRenderer
         {
             case ERenderParamUsage.Enabled:
                 Api.Enable(EnableCap.DepthTest);
-                Api.DepthFunc(ToGLEnum(Engine.Rendering.State.MapDepthComparison(r.DepthTest.Function)));
+                Api.DepthFunc(ToGLEnum(RuntimeEngine.Rendering.State.MapDepthComparison(r.DepthTest.Function)));
                 Api.DepthMask(r.DepthTest.UpdateDepth);
                 break;
 

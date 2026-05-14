@@ -171,8 +171,8 @@ namespace XREngine.Rendering.Vulkan
             return
                 $"ops={ops.Length} C/D/B/Comp={clearCount}/{drawCount}/{blitCount}/{computeCount}; " +
                 $"writers scene={sceneSwapchainWriters} overlay={overlaySwapchainWriters} forcedDiag={forcedDiagnosticSwapchainWriters} fboOnlyD/B={fboOnlyDrawOps}/{fboOnlyBlitOps}; " +
-                $"swapchain={swapchainWriterSummary}; descriptorSkips={Engine.Rendering.Stats.VulkanDescriptorBindSkips} descriptorFallbacks={Engine.Rendering.Stats.VulkanDescriptorFallbacksCurrentFrame} descriptorFailures={Engine.Rendering.Stats.VulkanDescriptorBindingFailuresCurrentFrame} oomFallbacks={Engine.Rendering.Stats.VulkanOomFallbackCount}; " +
-                $"validationCurrent={Engine.Rendering.Stats.VulkanValidationMessageCountCurrentFrame}/{Engine.Rendering.Stats.VulkanValidationErrorCountCurrentFrame}; " +
+                $"swapchain={swapchainWriterSummary}; descriptorSkips={RuntimeEngine.Rendering.Stats.VulkanDescriptorBindSkips} descriptorFallbacks={RuntimeEngine.Rendering.Stats.VulkanDescriptorFallbacksCurrentFrame} descriptorFailures={RuntimeEngine.Rendering.Stats.VulkanDescriptorBindingFailuresCurrentFrame} oomFallbacks={RuntimeEngine.Rendering.Stats.VulkanOomFallbackCount}; " +
+                $"validationCurrent={RuntimeEngine.Rendering.Stats.VulkanValidationMessageCountCurrentFrame}/{RuntimeEngine.Rendering.Stats.VulkanValidationErrorCountCurrentFrame}; " +
                 $"{failureSummary}; {passSummary}; {registrySummary}; {physicalSummary}; opList=[{opSummary}]";
         }
 
@@ -288,12 +288,12 @@ namespace XREngine.Rendering.Vulkan
 
             if (!shouldBind)
             {
-                Engine.Rendering.Stats.RecordVulkanBindChurn(pipelineBindSkips: 1);
+                RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(pipelineBindSkips: 1);
                 return;
             }
 
             Api!.CmdBindPipeline(commandBuffer, bindPoint, pipeline);
-            Engine.Rendering.Stats.RecordVulkanBindChurn(pipelineBinds: 1);
+            RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(pipelineBinds: 1);
         }
 
         internal void BindDescriptorSetsTracked(
@@ -350,7 +350,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (!shouldBind)
             {
-                Engine.Rendering.Stats.RecordVulkanBindChurn(descriptorBindSkips: 1);
+                RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(descriptorBindSkips: 1);
                 return;
             }
 
@@ -358,7 +358,7 @@ namespace XREngine.Rendering.Vulkan
             fixed (uint* offsetPtr = dynamicOffsets)
                 Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, (uint)dynamicOffsets.Length, offsetPtr);
 
-            Engine.Rendering.Stats.RecordVulkanBindChurn(descriptorBinds: 1);
+            RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(descriptorBinds: 1);
         }
 
         internal void PushConstantsTracked<T>(
@@ -379,7 +379,7 @@ namespace XREngine.Rendering.Vulkan
                 offset,
                 (uint)sizeof(T),
                 &localValue);
-            Engine.Rendering.Stats.RecordVulkanBindChurn(pushConstantWrites: 1);
+            RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(pushConstantWrites: 1);
         }
 
         internal void BindVertexBuffersTracked(
@@ -416,7 +416,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (!shouldBind)
             {
-                Engine.Rendering.Stats.RecordVulkanBindChurn(vertexBufferBindSkips: 1);
+                RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(vertexBufferBindSkips: 1);
                 return;
             }
 
@@ -424,7 +424,7 @@ namespace XREngine.Rendering.Vulkan
             fixed (ulong* offsetPtr = offsets)
                 Api!.CmdBindVertexBuffers(commandBuffer, firstBinding, (uint)buffers.Length, bufferPtr, offsetPtr);
 
-            Engine.Rendering.Stats.RecordVulkanBindChurn(vertexBufferBinds: 1);
+            RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(vertexBufferBinds: 1);
         }
 
         internal void BindIndexBufferTracked(CommandBuffer commandBuffer, Silk.NET.Vulkan.Buffer indexBuffer, ulong offset, IndexType indexType)
@@ -449,12 +449,12 @@ namespace XREngine.Rendering.Vulkan
 
             if (!shouldBind)
             {
-                Engine.Rendering.Stats.RecordVulkanBindChurn(indexBufferBindSkips: 1);
+                RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(indexBufferBindSkips: 1);
                 return;
             }
 
             Api!.CmdBindIndexBuffer(commandBuffer, indexBuffer, offset, indexType);
-            Engine.Rendering.Stats.RecordVulkanBindChurn(indexBufferBinds: 1);
+            RuntimeEngine.Rendering.Stats.RecordVulkanBindChurn(indexBufferBinds: 1);
         }
 
         private void DestroyCommandBuffers()
@@ -591,12 +591,12 @@ namespace XREngine.Rendering.Vulkan
                     Result resetResult = Api!.ResetDescriptorPool(device, descriptorPool, 0);
                     if (resetResult == Result.Success)
                     {
-                        Engine.Rendering.Stats.RecordVulkanDescriptorPoolReset();
+                        RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolReset();
                     }
                     else
                     {
                         Api!.DestroyDescriptorPool(device, descriptorPool, null);
-                        Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                        RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
                         resources.DescriptorPools[i] = default;
                     }
                 }
@@ -706,7 +706,7 @@ namespace XREngine.Rendering.Vulkan
                 if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
                     return false;
 
-                Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+                RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
                 resources.DescriptorPools.Add(descriptorPool);
                 resources.ActiveDescriptorPool = descriptorPool;
                 resources.DescriptorPoolsInitialized = true;
@@ -1079,14 +1079,14 @@ namespace XREngine.Rendering.Vulkan
                 swapchainClearWrites,
                 swapchainDrawWrites,
                 swapchainBlitWrites,
-                Engine.Rendering.Stats.VulkanRequestedDraws,
-                Engine.Rendering.Stats.VulkanCulledDraws,
-                Engine.Rendering.Stats.VulkanEmittedIndirectDraws,
-                Engine.Rendering.Stats.VulkanConsumedDraws,
-                Engine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
-                Engine.Rendering.Stats.GpuTransparencyMaskedVisible,
-                Engine.Rendering.Stats.GpuTransparencyApproximateVisible,
-                Engine.Rendering.Stats.GpuTransparencyExactVisible);
+                RuntimeEngine.Rendering.Stats.VulkanRequestedDraws,
+                RuntimeEngine.Rendering.Stats.VulkanCulledDraws,
+                RuntimeEngine.Rendering.Stats.VulkanEmittedIndirectDraws,
+                RuntimeEngine.Rendering.Stats.VulkanConsumedDraws,
+                RuntimeEngine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparencyMaskedVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparencyApproximateVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparencyExactVisible);
 
             LogSwapchainWritersByPipeline("PreOverlay");
 
@@ -1134,7 +1134,7 @@ namespace XREngine.Rendering.Vulkan
             void ApplyPipelineOverride(in FrameOpContext context)
             {
                 activePipelineOverrideScope?.Dispose();
-                activePipelineOverrideScope = Engine.Rendering.State.PushRenderingPipelineOverride(context.PipelineInstance);
+                activePipelineOverrideScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(context.PipelineInstance);
             }
 
             void EndActiveRenderPass()
@@ -1571,7 +1571,7 @@ namespace XREngine.Rendering.Vulkan
                     EmitPlannedBufferBarriers(commandBuffer, bufferBarriers);
                     CmdEndLabel(commandBuffer);
 
-                    Engine.Rendering.Stats.RecordVulkanBarrierPlannerPass(
+                    RuntimeEngine.Rendering.Stats.RecordVulkanBarrierPlannerPass(
                         imageBarrierCount: imageBarriers.Count,
                         bufferBarrierCount: bufferBarriers.Count,
                         queueOwnershipTransfers: queueOwnershipTransfers,
@@ -1800,7 +1800,7 @@ namespace XREngine.Rendering.Vulkan
                             bool usedParallel = _enableParallelSecondaryCommandBufferRecording &&
                                 indirectBucket.Count >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
 
-                            Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
+                            RuntimeEngine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
                                 usedSecondary: true,
                                 usedParallel,
                                 opCount: indirectBucket.Count);
@@ -1812,7 +1812,7 @@ namespace XREngine.Rendering.Vulkan
                             RecordIndirectDrawOp(commandBuffer, indirectOp);
                             CmdEndLabel(commandBuffer);
 
-                            Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
+                            RuntimeEngine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
                                 usedSecondary: false,
                                 usedParallel: false,
                                 opCount: 1);
@@ -2024,7 +2024,7 @@ namespace XREngine.Rendering.Vulkan
                         firstFailure);
                 }
 
-                Engine.Rendering.Stats.RecordVulkanFrameDiagnostics(
+                RuntimeEngine.Rendering.Stats.RecordVulkanFrameDiagnostics(
                     droppedFrameOps,
                     droppedDrawOps,
                     droppedComputeOps,
@@ -2114,7 +2114,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void RecordFrameOpInSecondary(CommandBuffer secondaryCommandBuffer, uint imageIndex, FrameOp runOp)
         {
-            using IDisposable? _ = Engine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
+            using IDisposable? _ = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
             switch (runOp)
             {
                 case BlitOp blitOp:
@@ -2460,11 +2460,11 @@ namespace XREngine.Rendering.Vulkan
                     0,
                     null);
 
-                Engine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
+                RuntimeEngine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
             }
             else
             {
-                Engine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount: 0, redundantCount: 1);
+                RuntimeEngine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount: 0, redundantCount: 1);
                 Debug.VulkanWarningEvery(
                     "Vulkan.IndirectBarrier.Overlap",
                     TimeSpan.FromSeconds(2),
@@ -2505,7 +2505,7 @@ namespace XREngine.Rendering.Vulkan
                     op.DrawCount,
                     op.Stride);
 
-                Engine.Rendering.Stats.RecordVulkanIndirectSubmission(
+                RuntimeEngine.Rendering.Stats.RecordVulkanIndirectSubmission(
                     usedCountPath: true,
                     usedLoopFallback: false,
                     apiCalls: 1,
@@ -2521,7 +2521,7 @@ namespace XREngine.Rendering.Vulkan
                     op.DrawCount,
                     op.Stride);
 
-                Engine.Rendering.Stats.RecordVulkanIndirectSubmission(
+                RuntimeEngine.Rendering.Stats.RecordVulkanIndirectSubmission(
                     usedCountPath: false,
                     usedLoopFallback: false,
                     apiCalls: 1,
@@ -2567,7 +2567,7 @@ namespace XREngine.Rendering.Vulkan
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] Skipping compute dispatch for '{0}' — descriptor binding failed.",
                     op.Program.Data.Name ?? "UnnamedProgram");
-                Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
                     op.Program.Data.Name,
                     "descriptor-set",
                     "<compute-dispatch>",
@@ -3413,7 +3413,7 @@ namespace XREngine.Rendering.Vulkan
                 return transferQueue;
 
             // Keep default graphics submission behavior unless OpenXR is actively running.
-            if (!HasSecondaryGraphicsQueue || !Engine.VRState.IsOpenXRActive)
+            if (!HasSecondaryGraphicsQueue || !RuntimeEngine.VRState.IsOpenXRActive)
                 return graphicsQueue;
 
             // Alternate between primary and secondary graphics queues.

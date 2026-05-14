@@ -1251,12 +1251,12 @@ namespace XREngine.Components.Lights
             int count = 0;
             destination[count++] = primaryCamera.WorldFrustum();
 
-            if (!Engine.VRState.IsInVR)
+            if (!RuntimeEngine.VRState.IsInVR)
                 return count;
 
             IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
-            AddEyeFrustum(Engine.VRState.LeftEyeViewport, primaryCamera, world, destination, ref count);
-            AddEyeFrustum(Engine.VRState.RightEyeViewport, primaryCamera, world, destination, ref count);
+            AddEyeFrustum(RuntimeEngine.VRState.LeftEyeViewport, primaryCamera, world, destination, ref count);
+            AddEyeFrustum(RuntimeEngine.VRState.RightEyeViewport, primaryCamera, world, destination, ref count);
             return count;
         }
 
@@ -1294,9 +1294,9 @@ namespace XREngine.Components.Lights
             uint requested = Math.Max(ShadowMapResolutionWidth, ShadowMapResolutionHeight);
             return ShadowAtlasManager.NormalizeTileResolution(
                 requested,
-                Engine.Rendering.Settings.MinShadowAtlasTileResolution,
-                Engine.Rendering.Settings.MaxShadowAtlasTileResolution,
-                Engine.Rendering.Settings.ShadowAtlasPageSize);
+                RuntimeEngine.Rendering.Settings.MinShadowAtlasTileResolution,
+                RuntimeEngine.Rendering.Settings.MaxShadowAtlasTileResolution,
+                RuntimeEngine.Rendering.Settings.ShadowAtlasPageSize);
         }
 
         /// <summary>
@@ -1551,7 +1551,7 @@ namespace XREngine.Components.Lights
             if (_cascadeLayeredShadowFrameBuffer is null)
                 return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingLayeredFramebuffer);
 
-            if (!Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLLayeredFramebuffers)
                 return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedLayeredFramebuffer);
 
             EDirectionalCascadeShadowRenderMode selectedMode = requestedMode == EDirectionalCascadeShadowRenderMode.Auto
@@ -1577,8 +1577,8 @@ namespace XREngine.Components.Lights
             if (!hasGroupedAtlasAllocation)
                 return CreateSequentialCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingGroupedAtlasAllocation);
 
-            if (!Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
-                cascadeCount > Engine.Rendering.State.MaxOpenGLViewports)
+            if (!RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                cascadeCount > RuntimeEngine.Rendering.State.MaxOpenGLViewports)
             {
                 return CreateSequentialCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedViewportScissorArray);
             }
@@ -1602,15 +1602,15 @@ namespace XREngine.Components.Lights
         {
             if (backend == DirectionalCascadeShadowBackend.AtlasPage)
             {
-                if (!Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
+                if (!RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
                     return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageViewportIndexWrites);
             }
             else
             {
-                if (!Engine.Rendering.State.SupportsOpenGLViewportArray)
+                if (!RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray)
                     return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedViewportArray);
 
-                if (!Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
+                if (!RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
                     return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedVertexStageLayerWrites);
             }
 
@@ -1633,10 +1633,10 @@ namespace XREngine.Components.Lights
         {
             if (backend == DirectionalCascadeShadowBackend.AtlasPage)
             {
-                if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
+                if (!RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
                     return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedGeometryStageViewportIndexWrites);
             }
-            else if (!Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
+            else if (!RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
             {
                 return CreateSequentialCascadeShadowRenderPlan(requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.UnsupportedGeometryShader);
             }
@@ -1675,16 +1675,16 @@ namespace XREngine.Components.Lights
         {
             if (backend == DirectionalCascadeShadowBackend.AtlasPage)
             {
-                if (Engine.Rendering.State.SupportsOpenGLViewportScissorArray &&
-                    cascadeCount <= Engine.Rendering.State.MaxOpenGLViewports &&
-                    Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
+                if (RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray &&
+                    cascadeCount <= RuntimeEngine.Rendering.State.MaxOpenGLViewports &&
+                    RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
                 {
                     return EDirectionalCascadeShadowRenderMode.InstancedLayered;
                 }
 
-                if (Engine.Rendering.State.SupportsOpenGLViewportScissorArray &&
-                    cascadeCount <= Engine.Rendering.State.MaxOpenGLViewports &&
-                    Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
+                if (RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray &&
+                    cascadeCount <= RuntimeEngine.Rendering.State.MaxOpenGLViewports &&
+                    RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex)
                 {
                     return EDirectionalCascadeShadowRenderMode.GeometryShader;
                 }
@@ -1692,13 +1692,13 @@ namespace XREngine.Components.Lights
                 return EDirectionalCascadeShadowRenderMode.Sequential;
             }
 
-            if (Engine.Rendering.State.SupportsOpenGLViewportArray &&
-                Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
+            if (RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray &&
+                RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering)
             {
                 return EDirectionalCascadeShadowRenderMode.InstancedLayered;
             }
 
-            if (Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
+            if (RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering)
                 return EDirectionalCascadeShadowRenderMode.GeometryShader;
 
             return EDirectionalCascadeShadowRenderMode.Sequential;
@@ -1777,18 +1777,18 @@ namespace XREngine.Components.Lights
             if (!UsesDirectionalShadowAtlasForCurrentEncoding ||
                 cascadeCount <= 1 ||
                 _cascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential ||
-                !Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
-                cascadeCount > Engine.Rendering.State.MaxOpenGLViewports)
+                !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                cascadeCount > RuntimeEngine.Rendering.State.MaxOpenGLViewports)
             {
                 return false;
             }
 
             return _cascadeShadowRenderMode switch
             {
-                EDirectionalCascadeShadowRenderMode.InstancedLayered => Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex,
-                EDirectionalCascadeShadowRenderMode.GeometryShader => Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
-                EDirectionalCascadeShadowRenderMode.Auto => Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex ||
-                    Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
+                EDirectionalCascadeShadowRenderMode.InstancedLayered => RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex,
+                EDirectionalCascadeShadowRenderMode.GeometryShader => RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
+                EDirectionalCascadeShadowRenderMode.Auto => RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex ||
+                    RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
                 _ => false,
             };
         }
@@ -2206,13 +2206,13 @@ namespace XREngine.Components.Lights
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][CascadeClear] frame={0} light='{1}' reason={2} casts={3} cascadesEnabled={4} shadowCamera={5} useDirAtlas={6}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 SceneNode?.Name ?? Name ?? GetType().Name,
                 reason,
                 CastsShadows,
                 EnableCascadedShadows,
                 ShadowCamera is not null,
-                Engine.Rendering.Settings.UseDirectionalShadowAtlas);
+                RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas);
         }
 
         private void LogCascadeUpdate(
@@ -2235,7 +2235,7 @@ namespace XREngine.Components.Lights
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][CascadeUpdate] frame={0} light='{1}' sourceCamera={2} sourcePos={3} sourceNear={4:F3} sourceFar={5:F3} sourceShadowMax={6:F3} rangeNear={7:F3} rangeFar={8:F3} totalDepth={9:F3} activeCascades={10} requestedCascades={11} atlasSetting={12} cascadeTex={13}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 SceneNode?.Name ?? Name ?? GetType().Name,
                 sourceCamera.GetHashCode(),
                 FormatVector(sourcePosition),
@@ -2247,7 +2247,7 @@ namespace XREngine.Components.Lights
                 totalDepth,
                 cascadeCount,
                 CascadeCount,
-                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
                 _cascadeShadowMapTexture is not null);
 
             int detailCount = Math.Min(cascadeCount, Math.Min(4, slices.Length));
@@ -2258,7 +2258,7 @@ namespace XREngine.Components.Lights
                     EOutputVerbosity.Normal,
                     false,
                     "[DirectionalShadowAudit][CascadeSlice] frame={0} light='{1}' slot={2} cascadeIndex={3} splitFar={4:F3} blendWidth={5:F3} texelWorld={6:F6} center={7} halfExtents={8} biasMin={9:E3} biasMax={10:F3} receiverOffset={11:F6}",
-                    Engine.Rendering.State.RenderFrameId,
+                    RuntimeEngine.Rendering.State.RenderFrameId,
                     SceneNode?.Name ?? Name ?? GetType().Name,
                     i,
                     slice.CascadeIndex,
@@ -2291,7 +2291,7 @@ namespace XREngine.Components.Lights
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][AtlasTileRender] frame={0} light='{1}' projection={2} cascadeOrFace={3} rect={4},{5},{6}x{7} collectVisibleNow={8} camera={9} splitFar={10:F3}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 SceneNode?.Name ?? Name ?? GetType().Name,
                 projection,
                 cascadeIndex,
@@ -2320,7 +2320,7 @@ namespace XREngine.Components.Lights
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][AtlasGroupedRender] frame={0} light='{1}' cascades={2} page={3} mode={4} backend={5} collectVisibleNow={6} camera={7}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 SceneNode?.Name ?? Name ?? GetType().Name,
                 group.CascadeCount,
                 group.PageIndex,
@@ -2343,9 +2343,9 @@ namespace XREngine.Components.Lights
                 EOutputVerbosity.Normal,
                 false,
                 "[DirectionalShadowAudit][LegacyRender] frame={0} light='{1}' useDirAtlas={2} renderCascades={3} hasShadowMap={4} hasShadowMaterial={5} cascadeRenderCount={6} activeCascades={7} cascadeTex={8}",
-                Engine.Rendering.State.RenderFrameId,
+                RuntimeEngine.Rendering.State.RenderFrameId,
                 SceneNode?.Name ?? Name ?? GetType().Name,
-                Engine.Rendering.Settings.UseDirectionalShadowAtlas,
+                RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
                 renderCascades,
                 hasShadowMap,
                 hasShadowMaterial,

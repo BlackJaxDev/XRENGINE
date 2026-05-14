@@ -1,4 +1,4 @@
-// Placeholder sorting shader adapted to 48-float command struct.
+// Placeholder sorting shader adapted to the compact 20-lane command struct.
 // Currently a no-op (pass-through) until a proper index-based GPU sort is implemented.
 #version 460 core
 
@@ -11,11 +11,11 @@ uniform int SortByDistance; // (unused placeholder)
 uniform int SortDirection;  // (unused placeholder)
 uniform int SortAlgorithm;  // (unused placeholder)
 
-const int COMMAND_FLOATS = 48; // Updated for PrevWorldMatrix
+const int COMMAND_FLOATS = 20;
 
 void main()
 {
     // Intentionally empty: future implementation will sort an index list instead
-    // of shuffling 128-byte structs in-place.
+    // of shuffling command structs in-place.
     if (gl_GlobalInvocationID.x >= CommandCount) return;
 }

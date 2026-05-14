@@ -66,7 +66,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             try
             {
                 using var areaScope = pipeline.RenderState.PushRenderArea(width, height);
-                using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(renderPass);
+                using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(renderPass);
                 using var cameraScope = pipeline.RenderState.PushRenderingCamera(camera);
                 if (meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
                     collection.RenderGPU(renderPass, meshSubmissionStrategy);
@@ -85,9 +85,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         internal static StateObject PushSceneCapturePass()
         {
-            bool previous = Engine.Rendering.State.IsSceneCapturePass;
-            Engine.Rendering.State.IsSceneCapturePass = true;
-            return StateObject.New(() => Engine.Rendering.State.IsSceneCapturePass = previous);
+            bool previous = RuntimeEngine.Rendering.State.IsSceneCapturePass;
+            RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
+            return StateObject.New(() => RuntimeEngine.Rendering.State.IsSceneCapturePass = previous);
         }
     }
 }

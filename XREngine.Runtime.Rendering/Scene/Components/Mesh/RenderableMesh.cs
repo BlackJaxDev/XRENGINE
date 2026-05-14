@@ -150,7 +150,7 @@ namespace XREngine.Components.Scene.Mesh
         public IRuntimeRenderWorld? World => Component.SceneNode.World as IRuntimeRenderWorld;
         public LinkedList<RenderableLOD> LODs { get; private set; } = new();
 
-        private bool _renderBounds = Engine.EditorPreferences.Debug.RenderMesh3DBounds;
+        private bool _renderBounds = RuntimeEngine.EditorPreferences.Debug.RenderMesh3DBounds;
         public bool RenderBounds
         {
             get => _renderBounds;
@@ -184,7 +184,7 @@ namespace XREngine.Components.Scene.Mesh
         private int _pendingRenderMatrixQueued;
 
         public bool IsSkinned
-            => (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            => (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
 
         void ComponentPropertyChanged(object? s, IXRPropertyChangedEventArgs e)
         {
@@ -278,7 +278,7 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             _lastRenderSkinningEnabled = IsSkinned;
-            Engine.Rendering.SettingsChanged += Rendering_SettingsChanged;
+            RuntimeEngine.Rendering.SettingsChanged += Rendering_SettingsChanged;
         }
 
         internal RenderableLOD[] GetLodSnapshot()
@@ -429,10 +429,10 @@ namespace XREngine.Components.Scene.Mesh
 
         private void DoRenderBounds()
         {
-            if (Engine.Rendering.State.IsShadowPass)
+            if (RuntimeEngine.Rendering.State.IsShadowPass)
                 return;
 
-            var debug = Engine.EditorPreferences.Debug;
+            var debug = RuntimeEngine.EditorPreferences.Debug;
             bool showTransparencyModeOverlay = debug.VisualizeTransparencyModeOverlay;
             bool showTransparencyClassificationOverlay = debug.VisualizeTransparencyClassificationOverlay;
 
@@ -440,7 +440,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             XRMaterial? material = CurrentLODRenderer?.Material;
-            ColorF4 boundsColor = Engine.EditorPreferences.Theme.Bounds3DColor;
+            ColorF4 boundsColor = RuntimeEngine.EditorPreferences.Theme.Bounds3DColor;
 
             if (showTransparencyModeOverlay && material is not null)
                 boundsColor = GetTransparencyModeColor(material.GetEffectiveTransparencyMode());
@@ -450,23 +450,23 @@ namespace XREngine.Components.Scene.Mesh
             var box = (RenderInfo as IOctreeItem)?.WorldCullingVolume;
             if (box is not null)
             {
-                Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, boundsColor);
+                RuntimeEngine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, boundsColor);
 
                 if (material is not null && (showTransparencyModeOverlay || showTransparencyClassificationOverlay))
                 {
                     string label = showTransparencyModeOverlay
                         ? material.GetEffectiveTransparencyMode().ToString()
                         : GetTransparencyClassificationLabel(material.GetEffectiveTransparencyMode());
-                    Engine.Rendering.Debug.RenderText(box.Value.LocalCenter, label, boundsColor);
+                    RuntimeEngine.Rendering.Debug.RenderText(box.Value.LocalCenter, label, boundsColor);
                 }
             }
 
             if (RootBone is not null)
             {
                 Vector3 rootTranslation = RootBone.RenderTranslation;
-                Engine.Rendering.Debug.RenderPoint(rootTranslation, ColorF4.Red);
+                RuntimeEngine.Rendering.Debug.RenderPoint(rootTranslation, ColorF4.Red);
                 if (RootBone.Name is not null)
-                    Engine.Rendering.Debug.RenderText(rootTranslation, RootBone.Name, ColorF4.Black);
+                    RuntimeEngine.Rendering.Debug.RenderText(rootTranslation, RootBone.Name, ColorF4.Black);
             }
         }
 
@@ -511,7 +511,7 @@ namespace XREngine.Components.Scene.Mesh
         private bool BeforeAdd(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             var rend = CurrentLODRenderer;
-            bool skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             TransformBase tfm = skinned ? RootBone ?? Component.Transform : Component.Transform;
             float distance = camera?.DistanceFromRenderNearPlane(tfm.RenderTranslation) ?? 0.0f;
 
@@ -519,7 +519,7 @@ namespace XREngine.Components.Scene.Mesh
                 UpdateLOD(distance);
 
             rend = CurrentLODRenderer;
-            skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (skinned)
             {
                 if (!EnsureSkinnedBounds())
@@ -546,7 +546,7 @@ namespace XREngine.Components.Scene.Mesh
             var mat = rend?.Material;
             if (mat is not null)
             {
-                if (ShouldRecordImportedTextureStreamingUsage(passes.IsShadowPass, Engine.Rendering.State.IsMainPass))
+                if (ShouldRecordImportedTextureStreamingUsage(passes.IsShadowPass, RuntimeEngine.Rendering.State.IsMainPass))
                     XRTexture2D.RecordImportedTextureStreamingUsage(mat, BuildImportedTextureStreamingUsage(rend?.Mesh, camera as XRCamera, distance));
                 _rc.RenderPass = mat.RenderPass;
             }
@@ -567,17 +567,17 @@ namespace XREngine.Components.Scene.Mesh
             if (box is null)
                 return;
 
-            ColorF4 boundsColor = Engine.EditorPreferences.Theme.MeshBoundsContainedColor;
-            Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, boundsColor);
+            ColorF4 boundsColor = RuntimeEngine.EditorPreferences.Theme.MeshBoundsContainedColor;
+            RuntimeEngine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, boundsColor);
         }
 
         private bool ShouldQueueCollectedMeshBoundsDebug(RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
             if (!RenderBounds ||
                 passes.IsShadowPass ||
-                Engine.Rendering.State.IsShadowPass ||
-                Engine.Rendering.State.IsLightProbePass ||
-                Engine.Rendering.State.IsSceneCapturePass)
+                RuntimeEngine.Rendering.State.IsShadowPass ||
+                RuntimeEngine.Rendering.State.IsLightProbePass ||
+                RuntimeEngine.Rendering.State.IsSceneCapturePass)
             {
                 return false;
             }
@@ -585,7 +585,7 @@ namespace XREngine.Components.Scene.Mesh
             if (camera is not XRCamera xrCamera || !HasNonShadowViewport(xrCamera))
                 return false;
 
-            var debug = Engine.EditorPreferences.Debug;
+            var debug = RuntimeEngine.EditorPreferences.Debug;
             return debug.RenderMesh3DBounds &&
                    !debug.VisualizeTransparencyModeOverlay &&
                    !debug.VisualizeTransparencyClassificationOverlay;
@@ -815,7 +815,7 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private static Matrix4x4 GetCurrentCullingBasisMatrix(TransformBase transform)
-            => Engine.IsRenderThread ? transform.RenderMatrix : transform.WorldMatrix;
+            => RuntimeEngine.IsRenderThread ? transform.RenderMatrix : transform.WorldMatrix;
 
         private static Vector3 TransformPosition(in Vector3 position, in Matrix4x4 matrix)
             => AffineMatrix4x3.TryFromMatrix4x4(matrix, out AffineMatrix4x3 affine)
@@ -1034,6 +1034,10 @@ namespace XREngine.Components.Scene.Mesh
         private bool TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result result)
             => SkinnedMeshBoundsCalculator.Instance.TryCompute(this, out result);
 
+        private static bool ShouldUseGpuResidentSkinnedBoundsPath()
+            => RuntimeEngine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite ||
+               RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
         private bool ApplySkinnedBoundsResult(SkinnedMeshBoundsCalculator.Result result, bool markBvhDirty)
         {
             var positions = result.Positions ?? [];
@@ -1059,6 +1063,40 @@ namespace XREngine.Components.Scene.Mesh
                 // to transform them to world space for culling.
                 RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
             }
+            return true;
+        }
+
+        private bool ApplyGpuResidentSkinnedBoundsDispatchLocked()
+        {
+            var visualScene = World?.VisualScene;
+            if (visualScene is null)
+                return false;
+
+            if (!SkinnedMeshBoundsCalculator.Instance.DispatchPathADirectWrite(
+                this,
+                visualScene.GPUCommands,
+                _pathAScratchIndices))
+            {
+                return false;
+            }
+
+            SkinnedMeshBoundsCalculator.Instance.RegisterSkinnedMesh(this);
+
+            _skinnedVertexPositions = [];
+            _skinnedVertexCount = 0;
+            _skinnedLocalBounds = _bindPoseBounds;
+            _skinnedBoundsDirty = false;
+            _hasSkinnedBounds = true;
+            _skinnedBoundsAreWorldSpace = false;
+
+            Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
+            SetSkinnedRootRenderMatrix(basis);
+            if (RenderInfo is not null)
+            {
+                RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
+                RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
+            }
+
             return true;
         }
 
@@ -1143,7 +1181,7 @@ namespace XREngine.Components.Scene.Mesh
                     long applyStartTicks = Stopwatch.GetTimestamp();
                     if (ApplySkinnedBoundsResult(refresh.Result, markBvhDirty: true))
                     {
-                        _lastSkinnedBoundsRefreshTicks = Engine.ElapsedTicks;
+                        _lastSkinnedBoundsRefreshTicks = RuntimeEngine.ElapsedTicks;
                         _skinnedBoundsDirty = refresh.Revision != _skinnedBoundsRevision;
                         ApplyCachedSkinnedBoundsLocked();
                         succeeded = true;
@@ -1151,8 +1189,8 @@ namespace XREngine.Components.Scene.Mesh
                     else if (!_hasSkinnedBounds)
                     {
                         _skinnedBoundsDirty = AllowsInitialRuntimeSkinnedBoundsBuild(
-                            Engine.EffectiveSettings.SkinnedBoundsRecomputePolicy,
-                            Engine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever);
+                            RuntimeEngine.EffectiveSettings.SkinnedBoundsRecomputePolicy,
+                            RuntimeEngine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever);
                     }
 
                     applyTicks = Math.Max(0L, Stopwatch.GetTimestamp() - applyStartTicks);
@@ -1160,8 +1198,8 @@ namespace XREngine.Components.Scene.Mesh
                 else if (!_hasSkinnedBounds)
                 {
                     _skinnedBoundsDirty = AllowsInitialRuntimeSkinnedBoundsBuild(
-                        Engine.EffectiveSettings.SkinnedBoundsRecomputePolicy,
-                        Engine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever);
+                        RuntimeEngine.EffectiveSettings.SkinnedBoundsRecomputePolicy,
+                        RuntimeEngine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever);
                 }
 
                 return true;
@@ -1173,7 +1211,7 @@ namespace XREngine.Components.Scene.Mesh
             }
             finally
             {
-                Engine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
+                RuntimeEngine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
                 _skinnedBoundsRefreshTask = null;
             }
         }
@@ -1204,8 +1242,8 @@ namespace XREngine.Components.Scene.Mesh
         {
             var tcs = new TaskCompletionSource<SkinnedBoundsRefreshResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             long queuedTicks = Stopwatch.GetTimestamp();
-            Engine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredScheduled();
-            Engine.Jobs.Schedule(() => RunSkinnedBoundsJob(snapshot, revision, queuedTicks, tcs), priority: JobPriority.Low);
+            RuntimeEngine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredScheduled();
+            RuntimeEngine.Jobs.Schedule(() => RunSkinnedBoundsJob(snapshot, revision, queuedTicks, tcs), priority: JobPriority.Low);
             return tcs.Task;
         }
 
@@ -1246,11 +1284,11 @@ namespace XREngine.Components.Scene.Mesh
             {
                 TryFinalizeSkinnedBoundsRefreshLocked();
 
-                ESkinnedBoundsRecomputePolicy policy = Engine.EffectiveSettings.SkinnedBoundsRecomputePolicy;
-                bool allowInitialBuildWhenNever = Engine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever;
+                ESkinnedBoundsRecomputePolicy policy = RuntimeEngine.EffectiveSettings.SkinnedBoundsRecomputePolicy;
+                bool allowInitialBuildWhenNever = RuntimeEngine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever;
                 bool allowMissingBoundsRefresh = AllowsInitialRuntimeSkinnedBoundsBuild(policy, allowInitialBuildWhenNever);
                 bool refreshInFlight = _skinnedBoundsRefreshTask is not null;
-                long nowTicks = Engine.ElapsedTicks;
+                long nowTicks = RuntimeEngine.ElapsedTicks;
                 if (ShouldScheduleSkinnedBoundsRefresh(
                     policy,
                     allowInitialBuildWhenNever,
@@ -1260,11 +1298,26 @@ namespace XREngine.Components.Scene.Mesh
                     nowTicks,
                     _lastSkinnedBoundsRefreshTicks))
                 {
-                    if (Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader && Engine.IsRenderThread)
+                    if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader && RuntimeEngine.IsRenderThread)
                     {
                         long gpuStartTicks = Stopwatch.GetTimestamp();
                         int revision = _skinnedBoundsRevision;
-                        if (TryComputeSkinnedBoundsOnGpu(out var gpuResult))
+                        bool useGpuResidentBounds = ShouldUseGpuResidentSkinnedBoundsPath();
+                        if (useGpuResidentBounds)
+                        {
+                            if (ApplyGpuResidentSkinnedBoundsDispatchLocked())
+                            {
+                                _lastSkinnedBoundsRefreshTicks = nowTicks;
+                                _skinnedBoundsDirty = revision != _skinnedBoundsRevision;
+                                long gpuTicks = Math.Max(0L, Stopwatch.GetTimestamp() - gpuStartTicks);
+                                RuntimeEngine.Rendering.Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks: 0L);
+                            }
+                            else if (!_hasSkinnedBounds)
+                            {
+                                _skinnedBoundsDirty = allowMissingBoundsRefresh;
+                            }
+                        }
+                        else if (TryComputeSkinnedBoundsOnGpu(out var gpuResult))
                         {
                             long applyStartTicks = Stopwatch.GetTimestamp();
                             if (ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true))
@@ -1274,22 +1327,7 @@ namespace XREngine.Components.Scene.Mesh
                                 ApplyCachedSkinnedBoundsLocked();
                                 long applyTicks = Math.Max(0L, Stopwatch.GetTimestamp() - applyStartTicks);
                                 long gpuTicks = Math.Max(0L, applyStartTicks - gpuStartTicks);
-                                Engine.Rendering.Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
-
-                                // Path A: also push world-space AABBs straight into the GPU
-                                // command-AABB buffer (BVH leaf bounds) when enabled. Registers
-                                // this mesh so VPRC_BuildAccelerationStructure can re-dispatch
-                                // it every frame the BVH is rebuilt.
-                                if (Engine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite)
-                                {
-                                    var visualScene = World?.VisualScene;
-                                    if (visualScene is not null)
-                                    {
-                                        SkinnedMeshBoundsCalculator.Instance.RegisterSkinnedMesh(this);
-                                        SkinnedMeshBoundsCalculator.Instance.DispatchPathADirectWrite(
-                                            this, visualScene.GPUCommands, _pathAScratchIndices);
-                                    }
-                                }
+                                RuntimeEngine.Rendering.Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
                             }
                             else if (!_hasSkinnedBounds)
                             {
@@ -1361,7 +1399,7 @@ namespace XREngine.Components.Scene.Mesh
             if (_skinnedBvhTask is not null)
                 return;
 
-            if (Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
+            if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
             {
                 _skinnedBvhTask = SkinnedMeshBvhScheduler.Instance.Schedule(this, _skinnedBvhVersion);
             }
@@ -1430,7 +1468,7 @@ namespace XREngine.Components.Scene.Mesh
 
         public void Dispose()
         {
-            Engine.Rendering.SettingsChanged -= Rendering_SettingsChanged;
+            RuntimeEngine.Rendering.SettingsChanged -= Rendering_SettingsChanged;
             UntrackAllBones();
             SkinnedMeshBoundsCalculator.Instance.UnregisterSkinnedMesh(this, World?.VisualScene?.GPUCommands);
             RenderableLOD[] lods;
@@ -1679,7 +1717,7 @@ namespace XREngine.Components.Scene.Mesh
                     if (CurrentLOD is not null)
                     {
                         var rend = CurrentLODRenderer;
-                        bool skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+                        bool skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
                         _lastRenderSkinningEnabled = skinned;
                         _rc.WorldMatrix = skinned ? Matrix4x4.Identity : Component.Transform.RenderMatrix;
                     }
@@ -1692,7 +1730,7 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void RootBone_WorldMatrixChanged(TransformBase rootBone, Matrix4x4 renderMatrix)
         {
-            if (Engine.IsRenderThread)
+            if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(componentMatrix: null, rootMatrix: renderMatrix);
                 return;
@@ -1703,7 +1741,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void RootBone_WorldMatrixPreviewChanged(TransformBase rootBone, Matrix4x4 worldMatrix)
         {
-            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (!hasSkinning)
                 return;
 
@@ -1717,7 +1755,7 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void Component_WorldMatrixChanged(TransformBase component, Matrix4x4 renderMatrix)
         {
-            if (Engine.IsRenderThread)
+            if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(componentMatrix: renderMatrix, rootMatrix: null);
                 return;
@@ -1728,7 +1766,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void Component_WorldMatrixPreviewChanged(TransformBase component, Matrix4x4 worldMatrix)
         {
-            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
                 if (RootBone is not null)
@@ -1743,7 +1781,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ApplyImmediateRenderMatrixUpdate(Matrix4x4? componentMatrix, Matrix4x4? rootMatrix)
         {
-            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
                 Matrix4x4 basis = RootBone is null
@@ -1808,7 +1846,7 @@ namespace XREngine.Components.Scene.Mesh
                 rootMatrix = _pendingRootBoneRenderMatrix;
             }
 
-            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
                 Matrix4x4 basis = RootBone is null ? componentMatrix : rootMatrix;

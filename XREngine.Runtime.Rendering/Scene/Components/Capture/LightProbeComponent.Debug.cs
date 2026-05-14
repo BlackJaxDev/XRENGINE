@@ -9,7 +9,7 @@ namespace XREngine.Components.Capture.Lights
 
         private void RenderCameraOrientationDebug()
         {
-            using var prof = Engine.Profiler.Start("LightProbeComponent.RenderCameraOrientationDebug");
+            using var prof = RuntimeEngine.Profiler.Start("LightProbeComponent.RenderCameraOrientationDebug");
 
             const float forwardOffset = 0.7f;
             const float frameHalfExtent = 0.18f;
@@ -31,7 +31,7 @@ namespace XREngine.Components.Capture.Lights
                 FaceDebugInfo faceInfo = i < s_faceDebugInfos.Length ? s_faceDebugInfos[i] : s_faceDebugInfos[^1];
 
                 RenderFaceFrame(cameraOrigin, faceRight, faceUp, faceForward, frameHalfExtent, frameInset, faceInfo.Color);
-                Engine.Rendering.Debug.RenderText(cameraOrigin + faceUp * labelLift, $"{faceInfo.Name} face", faceInfo.Color);
+                RuntimeEngine.Rendering.Debug.RenderText(cameraOrigin + faceUp * labelLift, $"{faceInfo.Name} face", faceInfo.Color);
 
                 RenderAxisPair(cameraOrigin, faceRight, ColorF4.Red, "+X", "-X", axisLength, axisOffset, arrowSize);
                 RenderAxisPair(cameraOrigin, faceUp, ColorF4.Green, "+Y", "-Y", axisLength, axisOffset, arrowSize);
@@ -41,7 +41,7 @@ namespace XREngine.Components.Capture.Lights
 
         private void RenderVolumesDebug()
         {
-            using var prof = Engine.Profiler.Start("LightProbeComponent.RenderVolumesDebug");
+            using var prof = RuntimeEngine.Profiler.Start("LightProbeComponent.RenderVolumesDebug");
 
             Vector3 probeOrigin = Transform.RenderTranslation;
 
@@ -53,22 +53,22 @@ namespace XREngine.Components.Capture.Lights
 
             if (InfluenceShape == EInfluenceShape.Sphere)
             {
-                Engine.Rendering.Debug.RenderSphere(influenceCenter, InfluenceSphereOuterRadius, false, outerColor);
+                RuntimeEngine.Rendering.Debug.RenderSphere(influenceCenter, InfluenceSphereOuterRadius, false, outerColor);
                 if (InfluenceSphereInnerRadius > 0.0001f)
-                    Engine.Rendering.Debug.RenderSphere(influenceCenter, InfluenceSphereInnerRadius, false, innerColor);
+                    RuntimeEngine.Rendering.Debug.RenderSphere(influenceCenter, InfluenceSphereInnerRadius, false, innerColor);
             }
             else
             {
                 Matrix4x4 influenceTransform = Matrix4x4.Identity;
-                Engine.Rendering.Debug.RenderBox(InfluenceBoxOuterExtents, influenceCenter, influenceTransform, false, outerColor);
-                Engine.Rendering.Debug.RenderBox(InfluenceBoxInnerExtents, influenceCenter, influenceTransform, false, innerColor);
+                RuntimeEngine.Rendering.Debug.RenderBox(InfluenceBoxOuterExtents, influenceCenter, influenceTransform, false, outerColor);
+                RuntimeEngine.Rendering.Debug.RenderBox(InfluenceBoxInnerExtents, influenceCenter, influenceTransform, false, innerColor);
             }
 
             // Proxy box visualization (parallax volume)
             ColorF4 proxyColor = new(1.0f, 0.6f, 0.2f, alpha);
             Matrix4x4 proxyRotation = Matrix4x4.CreateFromQuaternion(ProxyBoxRotation);
             Vector3 proxyCenter = probeOrigin + ProxyBoxCenterOffset;
-            Engine.Rendering.Debug.RenderBox(ProxyBoxHalfExtents, proxyCenter, proxyRotation, false, proxyColor);
+            RuntimeEngine.Rendering.Debug.RenderBox(ProxyBoxHalfExtents, proxyCenter, proxyRotation, false, proxyColor);
         }
 
         private static void RenderAxisPair(
@@ -88,19 +88,19 @@ namespace XREngine.Components.Capture.Lights
             Vector3 positiveStart = origin + normalized * offset;
             Vector3 positiveEnd = origin + normalized * (offset + length);
             RenderArrow(positiveStart, positiveEnd, normalized, color, arrowSize);
-            Engine.Rendering.Debug.RenderText(positiveEnd + normalized * (offset * 0.5f), positiveLabel, color);
+            RuntimeEngine.Rendering.Debug.RenderText(positiveEnd + normalized * (offset * 0.5f), positiveLabel, color);
 
             Vector3 negDir = -normalized;
             Vector3 negativeStart = origin + negDir * offset;
             Vector3 negativeEnd = origin + negDir * (offset + length);
             var negativeColor = color * 0.7f;
             RenderArrow(negativeStart, negativeEnd, negDir, negativeColor, arrowSize * 0.75f);
-            Engine.Rendering.Debug.RenderText(negativeEnd + negDir * (offset * 0.5f), negativeLabel, negativeColor);
+            RuntimeEngine.Rendering.Debug.RenderText(negativeEnd + negDir * (offset * 0.5f), negativeLabel, negativeColor);
         }
 
         private static void RenderArrow(Vector3 start, Vector3 end, Vector3 direction, ColorF4 color, float arrowSize)
         {
-            Engine.Rendering.Debug.RenderLine(start, end, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(start, end, color);
 
             Vector3 dirNorm = Vector3.Normalize(direction);
             Vector3 ortho = Math.Abs(Vector3.Dot(dirNorm, Vector3.UnitY)) > 0.9f
@@ -114,10 +114,10 @@ namespace XREngine.Components.Capture.Lights
             Vector3 wingC = headBase + ortho2 * arrowSize * 0.5f;
             Vector3 wingD = headBase - ortho2 * arrowSize * 0.5f;
 
-            Engine.Rendering.Debug.RenderLine(end, wingA, color);
-            Engine.Rendering.Debug.RenderLine(end, wingB, color);
-            Engine.Rendering.Debug.RenderLine(end, wingC, color);
-            Engine.Rendering.Debug.RenderLine(end, wingD, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(end, wingA, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(end, wingB, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(end, wingC, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(end, wingD, color);
         }
 
         private static void RenderFaceFrame(Vector3 origin, Vector3 right, Vector3 up, Vector3 forward, float halfExtent, float inset, ColorF4 color)
@@ -127,20 +127,20 @@ namespace XREngine.Components.Capture.Lights
             Vector3 bottomLeft = origin + (-right * halfExtent) - (up * halfExtent);
             Vector3 bottomRight = origin + (right * halfExtent) - (up * halfExtent);
 
-            Engine.Rendering.Debug.RenderLine(topLeft, topRight, color);
-            Engine.Rendering.Debug.RenderLine(topRight, bottomRight, color);
-            Engine.Rendering.Debug.RenderLine(bottomRight, bottomLeft, color);
-            Engine.Rendering.Debug.RenderLine(bottomLeft, topLeft, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(topLeft, topRight, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(topRight, bottomRight, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(bottomRight, bottomLeft, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(bottomLeft, topLeft, color);
 
             Vector3 crossHorizontalStart = origin + (-right * (halfExtent - inset));
             Vector3 crossHorizontalEnd = origin + (right * (halfExtent - inset));
             Vector3 crossVerticalStart = origin + (-up * (halfExtent - inset));
             Vector3 crossVerticalEnd = origin + (up * (halfExtent - inset));
 
-            Engine.Rendering.Debug.RenderLine(crossHorizontalStart, crossHorizontalEnd, color * 0.9f);
-            Engine.Rendering.Debug.RenderLine(crossVerticalStart, crossVerticalEnd, color * 0.9f);
+            RuntimeEngine.Rendering.Debug.RenderLine(crossHorizontalStart, crossHorizontalEnd, color * 0.9f);
+            RuntimeEngine.Rendering.Debug.RenderLine(crossVerticalStart, crossVerticalEnd, color * 0.9f);
 
-            Engine.Rendering.Debug.RenderLine(origin, origin + forward * inset, color);
+            RuntimeEngine.Rendering.Debug.RenderLine(origin, origin + forward * inset, color);
         }
 
         #endregion

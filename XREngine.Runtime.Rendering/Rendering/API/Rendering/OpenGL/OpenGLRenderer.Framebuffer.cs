@@ -247,8 +247,8 @@ public partial class OpenGLRenderer
     {
         int count = Math.Min(viewports.Length, scissors.Length);
         if (count <= 0 ||
-            !Engine.Rendering.State.SupportsOpenGLViewportScissorArray ||
-            count > Engine.Rendering.State.MaxOpenGLViewports)
+            !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+            count > RuntimeEngine.Rendering.State.MaxOpenGLViewports)
         {
             return false;
         }
@@ -279,11 +279,11 @@ public partial class OpenGLRenderer
         if (count <= 1)
             return;
 
-        BoundingRectangle region = Engine.Rendering.State.RenderArea;
+        BoundingRectangle region = RuntimeEngine.Rendering.State.RenderArea;
         if (region.Width <= 0 || region.Height <= 0)
             region = new BoundingRectangle(0, 0, Window.Size.X, Window.Size.Y);
 
-        for (int i = 1; i < Math.Min(count, Engine.Rendering.State.MaxOpenGLViewports); i++)
+        for (int i = 1; i < Math.Min(count, RuntimeEngine.Rendering.State.MaxOpenGLViewports); i++)
         {
             Api.ViewportIndexed((uint)i, region.X, region.Y, region.Width, region.Height);
             Api.ScissorIndexed((uint)i, region.X, region.Y, (uint)region.Width, (uint)region.Height);

@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            Engine.Rendering.State.ColorMask(Red, Green, Blue, Alpha);
+            RuntimeEngine.Rendering.State.ColorMask(Red, Green, Blue, Alpha);
         }
 
         public void Set(bool red, bool green, bool blue, bool alpha)

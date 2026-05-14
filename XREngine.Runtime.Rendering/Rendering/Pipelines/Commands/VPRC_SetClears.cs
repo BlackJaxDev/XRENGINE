@@ -19,13 +19,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected override void Execute()
         {
             if (DefaultColor is not null)
-                Engine.Rendering.State.ClearColor(DefaultColor.Value);
+                RuntimeEngine.Rendering.State.ClearColor(DefaultColor.Value);
 
             if (DefaultDepth is not null)
-                Engine.Rendering.State.ClearDepth(DefaultDepth.Value);
+                RuntimeEngine.Rendering.State.ClearDepth(DefaultDepth.Value);
 
             if (DefaultStencil is not null)
-                Engine.Rendering.State.ClearStencil(DefaultStencil.Value);
+                RuntimeEngine.Rendering.State.ClearStencil(DefaultStencil.Value);
         }
     }
 }

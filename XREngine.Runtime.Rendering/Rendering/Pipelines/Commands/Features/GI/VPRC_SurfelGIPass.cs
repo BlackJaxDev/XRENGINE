@@ -17,16 +17,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     public enum ESurfelTransformSource
     {
         /// <summary>
-        /// Bind the full GPU indirect commands buffer (48 floats per command, binding 5).
-        /// Works whenever GPUCommands is populated (both GPU and CPU dispatch modes
-        /// after the VisualScene3D always-populate fix).
+        /// Bind GPUScene.TransformBuffer directly (16 floats per transform, binding 6).
         /// </summary>
         GpuCommands,
 
         /// <summary>
-        /// Build a compact transform-only SSBO (16 floats per transform, binding 6)
-        /// extracted from the GPU commands buffer each frame. Lower memory footprint
-        /// on the GPU at the cost of a per-frame CPU copy.
+        /// Historical transform-atlas mode. Phase C aliases this to GPUScene.TransformBuffer.
         /// </summary>
         CompactTransformAtlas,
     }
@@ -63,7 +59,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private const uint GroupSize = 16u;
 
-        private const uint CulledCommandFloats = 48u;
+        private const uint CulledCommandFloats = GPUScene.CommandFloatCount;
 
         // Keep this moderate to avoid memory spikes; 131072 * 64 bytes ~= 8 MB.
         public const uint MaxSurfelsConst = 131072u;
@@ -154,7 +150,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         protected override bool ShouldExecuteThisFrame()
-            => Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
+            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
             {
                 DefaultRenderPipeline pipeline => pipeline.UsesSurfelGI,
                 DefaultRenderPipeline2 pipeline => pipeline.UsesSurfelGI,
@@ -551,53 +547,30 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void BindCulledCommandsIfAvailable(XRRenderProgram program)
         {
-            // NOTE: SurfelGI uses TransformId as the *command index*.
-            // Therefore, we must bind the full commands buffer indexed by commandIndex,
-            // not the compacted culled-visible commands list.
             var scene = ActivePipelineInstance.RenderState.Scene;
             var gpuScene = scene?.GPUCommands;
-
-            if (TransformSource == ESurfelTransformSource.CompactTransformAtlas)
+            XRDataBuffer? transforms = gpuScene?.TransformBuffer;
+            if (transforms is null)
             {
-                BuildCompactTransformAtlas(gpuScene);
-                if (_transformAtlasBuffer is not null && _transformAtlasElementCount > 0)
-                {
-                    _transformAtlasBuffer.BindTo(program, 6u);
-                    program.Uniform("useTransformAtlas", true);
-                    program.Uniform("transformAtlasCount", _transformAtlasElementCount * 16u);
-                    // Still set the GPU commands uniforms so the shader doesn't use stale state.
-                    program.Uniform("hasCulledCommands", false);
-                    program.Uniform("culledFloatCount", 0u);
-                    program.Uniform("culledCommandFloats", CulledCommandFloats);
-                    return;
-                }
-                // Fall through to GPU commands path if atlas build failed.
-            }
-
-            // GPU commands path (also the fallback).
-            program.Uniform("useTransformAtlas", false);
-            program.Uniform("transformAtlasCount", 0u);
-
-            XRDataBuffer? commands = gpuScene is null ? null : gpuScene.AllLoadedCommandsBuffer;
-            if (commands is null)
-            {
+                program.Uniform("useTransformAtlas", false);
+                program.Uniform("transformAtlasCount", 0u);
                 program.Uniform("hasCulledCommands", false);
                 program.Uniform("culledFloatCount", 0u);
                 program.Uniform("culledCommandFloats", CulledCommandFloats);
                 return;
             }
 
-            commands.BindTo(program, 5u);
-            program.Uniform("hasCulledCommands", true);
-            // Shader interprets the SSBO as a flat float array; bounds checks are in float units.
-            // ElementCount here is the number of commands, not the number of floats.
-            program.Uniform("culledFloatCount", commands.ElementCount * CulledCommandFloats);
+            transforms.BindTo(program, 6u);
+            program.Uniform("useTransformAtlas", true);
+            program.Uniform("transformAtlasCount", transforms.ElementCount * 16u);
+            program.Uniform("hasCulledCommands", false);
+            program.Uniform("culledFloatCount", 0u);
             program.Uniform("culledCommandFloats", CulledCommandFloats);
         }
 
         /// <summary>
         /// Builds a compact SSBO containing only world matrices (16 floats each)
-        /// extracted from the full GPU commands buffer (48 floats each).
+        /// copied from GPUScene.TransformBuffer.
         /// </summary>
         private void BuildCompactTransformAtlas(GPUScene? gpuScene)
         {
@@ -638,17 +611,16 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             _transformAtlasElementCount = commandCount;
 
-            // Extract WorldMatrix (first 64 bytes of each 192-byte command) into the compact buffer.
-            XRDataBuffer commandsBuffer = gpuScene.AllLoadedCommandsBuffer;
-            if (!commandsBuffer.TryGetAddress(out VoidPtr srcAddr) ||
+            XRDataBuffer transformBuffer = gpuScene.TransformBuffer;
+            if (!transformBuffer.TryGetAddress(out VoidPtr srcAddr) ||
                 !_transformAtlasBuffer.TryGetAddress(out VoidPtr dstAddr))
             {
                 _transformAtlasElementCount = 0;
                 return;
             }
 
-            const uint srcStride = 48u * sizeof(float); // 192 bytes per GPU command
-            const uint dstStride = 16u * sizeof(float); // 64 bytes per world matrix
+            const uint srcStride = 16u * sizeof(float);
+            const uint dstStride = 16u * sizeof(float);
 
             for (uint i = 0; i < commandCount; i++)
                 Memory.Move(dstAddr + i * dstStride, srcAddr + i * srcStride, dstStride);

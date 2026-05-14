@@ -84,7 +84,7 @@ namespace XREngine.Rendering.Vulkan
                 EnsureFrameBufferAttachmentsRegistered(outFBO);
             }
 
-            int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             EnqueueFrameOp(new BlitOp(
                 EnsureValidPassIndex(passIndex, "Blit"),
                 inFBO,

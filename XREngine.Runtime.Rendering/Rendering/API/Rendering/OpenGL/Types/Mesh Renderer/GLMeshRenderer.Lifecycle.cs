@@ -74,10 +74,10 @@ namespace XREngine.Rendering.OpenGL
                 _shadowMaterialCache = null;
                 Data.ResetVertexShaderSource();
 
-                if (Engine.IsRenderThread)
+                if (RuntimeEngine.IsRenderThread)
                     RegenerateProgramsAndBuffers();
                 else
-                    Engine.EnqueueMainThreadTask(RegenerateProgramsAndBuffers, "GLMeshRenderer.MaterialChanged");
+                    RuntimeEngine.EnqueueMainThreadTask(RegenerateProgramsAndBuffers, "GLMeshRenderer.MaterialChanged");
             }
 
             private void RegenerateProgramsAndBuffers()

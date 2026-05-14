@@ -20,7 +20,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool ClearStencil { get; set; } = true;
         public bool CullWithFrustum { get; set; } = true;
         public bool CollectMirrors { get; set; }
-        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = Engine.Rendering.ResolveMeshSubmissionStrategy();
+        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
         public bool GPUDispatch
         {
             get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
@@ -45,7 +45,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             using var bindScope = _targetFbo.BindForWritingState();
             if (ClearColor || ClearDepth || ClearStencil)
-                Engine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
+                RuntimeEngine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
 
             int width = Math.Max(1, (int)(textureArray.Width >> Math.Max(0, MipLevel)));
             int height = Math.Max(1, (int)(textureArray.Height >> Math.Max(0, MipLevel)));

@@ -5,7 +5,7 @@
 
 layout(local_size_x = 256) in;
 
-// Command layout: 48 floats per command (see GPURenderCulling.comp)
+// Command layout: 20 32-bit lanes per compact command.
 layout(std430, binding = 0) buffer InputCommandsBuffer { float inCommands[]; };
 layout(std430, binding = 1) buffer OutputCommandsBuffer { float outCommands[]; };
 
@@ -59,8 +59,8 @@ uniform uint IsReversedDepth; // 1 if camera uses reversed Z
 uniform int MaxOutputCommands;
 uniform int UseHotCommands;
 
-const int COMMAND_FLOATS = 48;
-const int HOT_UINTS = 16;
+const int COMMAND_FLOATS = 20;
+const int HOT_UINTS = 20;
 
 bool IsValidCommand(int base)
 {
@@ -72,7 +72,7 @@ bool IsValidCommand(int base)
         instanceCount = inHotCommands[hotBase + 7];
     }
     else
-        instanceCount = floatBitsToUint(inCommands[base + 39]);
+        instanceCount = floatBitsToUint(inCommands[base + 7]);
 
     return instanceCount != 0u;
 }
@@ -236,8 +236,8 @@ void main()
     }
     else
     {
-        center = vec3(inCommands[base + 32], inCommands[base + 33], inCommands[base + 34]);
-        radius = inCommands[base + 35];
+        center = vec3(inCommands[base + 0], inCommands[base + 1], inCommands[base + 2]);
+        radius = inCommands[base + 3];
     }
 
     bool occluded = HiZOccluded(center, radius);
@@ -265,6 +265,6 @@ void main()
 
     uint instanceCount = UseHotCommands != 0
         ? inHotCommands[hotBase + 7]
-        : floatBitsToUint(inCommands[base + 39]);
+        : floatBitsToUint(inCommands[base + 7]);
     atomicAdd(OutInstanceCount, instanceCount);
 }

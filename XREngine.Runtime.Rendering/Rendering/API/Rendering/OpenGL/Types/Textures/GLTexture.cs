@@ -109,7 +109,7 @@ namespace XREngine.Rendering.OpenGL
 
             // Batch texture parameter updates into one render-thread job so large
             // streaming bursts do not flood the queue with one invoke per texture.
-            Engine.EnqueueMainThreadTask(FlushQueuedPropertyUpdates, "GLTexture.UpdateProperty");
+            RuntimeEngine.EnqueueMainThreadTask(FlushQueuedPropertyUpdates, "GLTexture.UpdateProperty");
         }
 
         private static void FlushQueuedPropertyUpdates()
@@ -181,7 +181,7 @@ namespace XREngine.Rendering.OpenGL
             => Data.WidthHeightDepth;
 
         protected virtual void SetParameters()
-            => Engine.InvokeOnMainThread(SetParametersInternal, "GLTexture.SetParameters", true);
+            => RuntimeEngine.InvokeOnMainThread(SetParametersInternal, "GLTexture.SetParameters", true);
 
         private void SetParametersInternal()
         {
@@ -298,12 +298,12 @@ namespace XREngine.Rendering.OpenGL
                 return;
             }
 
-            using var sample = Engine.Profiler.Start("GLTexture.VerifySettings");
-            using (Engine.Profiler.Start("GLTexture.VerifySettings.SetParameters"))
+            using var sample = RuntimeEngine.Profiler.Start("GLTexture.VerifySettings");
+            using (RuntimeEngine.Profiler.Start("GLTexture.VerifySettings.SetParameters"))
                 SetParameters();
 
             IsInvalidated = false;
-            using (Engine.Profiler.Start("GLTexture.VerifySettings.PushData"))
+            using (RuntimeEngine.Profiler.Start("GLTexture.VerifySettings.PushData"))
                 PushData();
         }
 

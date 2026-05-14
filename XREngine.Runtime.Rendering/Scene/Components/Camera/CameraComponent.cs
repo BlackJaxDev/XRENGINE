@@ -464,7 +464,7 @@ namespace XREngine.Components
                 {
                     //case nameof(LocalPlayerIndex):
                     //    if (LocalPlayerIndex is not null)
-                    //        Engine.State.GetLocalPlayer(LocalPlayerIndex.Value)?.Cameras.Remove(this);
+                    //        RuntimeEngine.State.GetLocalPlayer(LocalPlayerIndex.Value)?.Cameras.Remove(this);
                     //    break;
                     case nameof(DefaultRenderTarget):
                         if (DefaultRenderTarget is not null && World is not null)
@@ -653,7 +653,7 @@ namespace XREngine.Components
         //            return true;
         //    });
         //    Matrix4x4 mirrorScaleZ = Matrix4x4.CreateScale(1, 1, -1);
-        //    foreach (var mirror in Engine.State.GetComponents<MirrorComponent>())
+        //    foreach (var mirror in RuntimeEngine.State.GetComponents<MirrorComponent>())
         //    {
         //        if (mirror.CullWithFrustum && !lastFrustum.Intersects(mirror.WorldVolume))
         //            continue;

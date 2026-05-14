@@ -45,6 +45,8 @@ public unsafe partial class OpenXRAPI
         if (otherExtensions.Length > 0)
             extensions = [.. extensions, .. otherExtensions];
 
+        extensions = [.. extensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName];
+
         return [.. extensions, .. HTC_Extensions];
     }
 }

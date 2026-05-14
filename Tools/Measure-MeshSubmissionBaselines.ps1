@@ -3,17 +3,51 @@
 param(
     [int]$WarmupSec = 25,
     [int]$CaptureSec = 60,
-    [string[]]$Strategies = @('CpuDirect','GpuIndirectInstrumented','GpuIndirectZeroReadback')
+    [string[]]$Strategies = @('CpuDirect','GpuIndirectInstrumented','GpuIndirectZeroReadback'),
+    [ValidateSet('Debug', 'Release')]
+    [string]$Configuration = 'Debug',
+    [switch]$NoClearCachesBetweenVariants
 )
 
 $ErrorActionPreference = 'Continue'
-$exe = Join-Path $PSScriptRoot '..\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.exe'
-$exe = (Resolve-Path $exe).Path
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$exe = Join-Path $repoRoot "Build\Editor\$Configuration\AnyCPU\$Configuration\net10.0-windows7.0\XREngine.Editor.exe"
+if (-not (Test-Path -LiteralPath $exe)) {
+    throw "Editor executable not found for $Configuration. Build XREngine.Editor first: $exe"
+}
+$exe = (Resolve-Path -LiteralPath $exe).Path
+
+$validStrategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshlet')
+
+function Clear-VariantCaches {
+    param([string]$Name)
+
+    if ($NoClearCachesBetweenVariants) {
+        return
+    }
+
+    $cacheDir = Join-Path $repoRoot 'Build\Cache\OpenGL\ShaderPrograms'
+    $fullPath = [System.IO.Path]::GetFullPath($cacheDir)
+    $rootWithSeparator = $repoRoot.TrimEnd('\') + '\'
+    if (-not $fullPath.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to clear cache outside repo root: $fullPath"
+    }
+
+    if (Test-Path -LiteralPath $fullPath) {
+        Write-Host "[measure] $Name clearing cache $fullPath" -ForegroundColor DarkGray
+        Remove-Item -LiteralPath $fullPath -Recurse -Force
+    }
+}
 
 function Measure-Strategy {
     param([string]$Strategy)
-    Write-Host "[measure] $Strategy launching..." -ForegroundColor Cyan
+    if ($validStrategies -notcontains $Strategy) {
+        throw "Invalid mesh submission strategy '$Strategy'. Allowed values: $($validStrategies -join ', ')"
+    }
+
+    Clear-VariantCaches -Name $Strategy
+
+    Write-Host "[measure] $Strategy launching ($Configuration)..." -ForegroundColor Cyan
     $env:XRE_WORLD_MODE = 'UnitTesting'
     $env:XRE_PROFILER_ENABLED = '1'
     $env:XRE_FORCE_MESH_SUBMISSION_STRATEGY = $Strategy

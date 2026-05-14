@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using XREngine;
+using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
@@ -12,10 +13,13 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
-    // These are invoked by Engine.VRState so OpenXR can participate in the same engine callback hooks
+    // These are invoked by RuntimeEngine.VRState so OpenXR can participate in the same engine callback hooks
     // (RenderViewportsCallback, Timer.CollectVisible, Timer.SwapBuffers) as the OpenVR path.
     internal void EngineRenderTick()
         => Window_RenderViewportsCallback();
+
+    internal void EnginePostRenderTick()
+        => Window_PostRenderViewportsCallback();
 
     internal void EngineCollectVisibleTick()
         => OpenXrCollectVisible();
@@ -30,13 +34,20 @@ public unsafe partial class OpenXRAPI
     /// <param name="renderCallback">Callback function to render content to each eye's texture.</param>
     public void RenderFrame(DelRenderToFBO? renderCallback)
     {
+        AssertOpenXrRenderThread(nameof(RenderFrame));
         long submitStart = Stopwatch.GetTimestamp();
         // Render thread: only submit if the CollectVisible thread prepared a frame.
         if (!_sessionBegun)
             return;
 
         if (Interlocked.Exchange(ref _framePrepared, 0) == 0)
+        {
+            // In DedicatedThread mode the pacing thread is responsible for publishing the next frame.
+            // If we got here without one, the render thread is effectively starved by the pacing thread.
+            if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.DedicatedThread && _sessionBegun)
+                RuntimeEngine.Rendering.Stats.RecordVrXrPacingHandoffStall();
             return;
+        }
 
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
@@ -58,12 +69,13 @@ public unsafe partial class OpenXRAPI
                 LayerCount = 0,
                 Layers = null
             };
-            var endResult = CheckResult(Api.EndFrame(_session, in frameEndInfoNoLayers), "xrEndFrame");
+            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers) => {endResult}");
 
             Volatile.Write(ref _pendingXrFrame, 0);
             Volatile.Write(ref _pendingXrFrameCollected, 0);
+            SignalPacingThreadFrameSubmitted();
             return;
         }
 
@@ -100,12 +112,13 @@ public unsafe partial class OpenXRAPI
                 LayerCount = 0,
                 Layers = null
             };
-            var endResult = CheckResult(Api.EndFrame(_session, in frameEndInfoNoLayers), "xrEndFrame");
+            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; eye failure) => {endResult}");
 
             Volatile.Write(ref _pendingXrFrame, 0);
             Volatile.Write(ref _pendingXrFrameCollected, 0);
+            SignalPacingThreadFrameSubmitted();
             return;
         }
 
@@ -130,16 +143,17 @@ public unsafe partial class OpenXRAPI
             Layers = layers
         };
 
-        var endFrameResult = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
+        var endFrameResult = EndFrameWithTiming(in frameEndInfo);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(layer) => {endFrameResult}");
 
         long submitEnd = Stopwatch.GetTimestamp();
         double submitMs = (submitEnd - submitStart) * 1000.0 / Stopwatch.Frequency;
-        Engine.Rendering.Stats.RecordVrRenderSubmitTime(TimeSpan.FromMilliseconds(submitMs));
+        RuntimeEngine.Rendering.Stats.RecordVrRenderSubmitTime(TimeSpan.FromMilliseconds(submitMs));
 
         Volatile.Write(ref _pendingXrFrame, 0);
         Volatile.Write(ref _pendingXrFrameCollected, 0);
+        SignalPacingThreadFrameSubmitted();
     }
 
     /// <summary>
@@ -147,6 +161,7 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     private bool RenderEye(uint viewIndex, DelRenderToFBO renderCallback, CompositionLayerProjectionView* projectionViews)
     {
+        AssertOpenXrRenderThread(nameof(RenderEye));
         uint imageIndex = 0;
         var acquireInfo = new SwapchainImageAcquireInfo
         {
@@ -245,6 +260,7 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     private void Window_RenderViewportsCallback()
     {
+        MarkOpenXrRenderThread();
         // Do NOT force a context switch here.
         // If we accidentally switch into a different (non-sharing) WGL context, engine-owned textures will become
         // invalid on this thread ("<texture> does not refer to an existing texture object"), which then cascades
@@ -294,33 +310,39 @@ public unsafe partial class OpenXRAPI
                 _ = LocateViews(OpenXrPoseTiming.Late);
                 UpdateActionPoseCaches(OpenXrPoseTiming.Late);
 
+                System.Numerics.Matrix4x4 lateHead;
+                lock (_openXrPoseLock)
+                    lateHead = _openXrLateHeadLocalPose;
+
+                var (posDist, rotDeg) = ComputePoseDelta(predHead, lateHead);
+                RuntimeEngine.Rendering.Stats.RecordVrXrPredictedToLatePoseDelta(posDist, rotDeg);
+
                 // Debug: log pose delta between predicted and late sampling.
                 int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
                 if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 {
-                    System.Numerics.Matrix4x4 lateHead;
-                    lock (_openXrPoseLock)
-                        lateHead = _openXrLateHeadLocalPose;
-
                     var posDelta = lateHead.Translation - predHead.Translation;
-                    float posDist = posDelta.Length() * 1000f; // mm
-                    Debug.Out($"OpenXR[{frameNo}] LateUpdate: posDelta={posDist:F2}mm ({posDelta.X:F4},{posDelta.Y:F4},{posDelta.Z:F4})");
+                    Debug.Out($"OpenXR[{frameNo}] LateUpdate: posDelta={posDist:F2}mm rotDelta={rotDeg:F2}deg ({posDelta.X:F4},{posDelta.Y:F4},{posDelta.Z:F4})");
                 }
             }
 
             // Match OpenVR timing: allow the engine to update any VR/locomotion transforms right before rendering.
             // (OpenXR runs its own render callback path, so we need to invoke the same hook here.)
-            PoseTimingForRecalc = OpenXrPoseTiming.Late;
-            Engine.VRState.InvokeRecalcMatrixOnDraw();
+            RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Late);
 
             if (!_sessionBegun)
                 return;
 
+            // Lazily start the dedicated pacing thread when the session is ready and the mode is enabled.
+            // The render thread then only signals it after xrEndFrame instead of running prep inline.
+            EnsureOpenXrPacingThreadStarted();
+
             // Render the frame whose visibility buffers were published by the CollectVisible thread.
             RenderFrame(null);
 
-            // After submitting the current frame (if any), prepare the next frame's timing + views.
-            PrepareNextFrameOnRenderThread();
+            // Inline prep (pre-desktop-render) is the legacy InRenderCallback path.
+            if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.InRenderCallback)
+                PrepareNextFrameOnRenderThread();
         }
         finally
         {
@@ -343,6 +365,32 @@ public unsafe partial class OpenXRAPI
                 SanitizeGlStateForEngineRendering();
             }
         }
+    }
+
+    private void Window_PostRenderViewportsCallback()
+    {
+        MarkOpenXrRenderThread();
+
+        // PostRenderCallback (default) runs prep inline here; InRenderCallback already ran it pre-desktop;
+        // DedicatedThread mode leaves prep to the pacing thread (signaled after xrEndFrame in RenderFrame).
+        if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.PostRenderCallback
+            && OpenXrPrepareFrameAfterDesktopRender)
+        {
+            PrepareNextFrameOnRenderThread();
+        }
+    }
+
+    private static (double Millimeters, double Degrees) ComputePoseDelta(System.Numerics.Matrix4x4 predicted, System.Numerics.Matrix4x4 late)
+    {
+        var posDelta = late.Translation - predicted.Translation;
+        double millimeters = posDelta.Length() * 1000.0;
+
+        System.Numerics.Quaternion predRot = System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromRotationMatrix(predicted));
+        System.Numerics.Quaternion lateRot = System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromRotationMatrix(late));
+        System.Numerics.Quaternion delta = System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.Inverse(predRot) * lateRot);
+        double w = Math.Clamp(Math.Abs(delta.W), 0.0, 1.0);
+        double degrees = 2.0 * Math.Acos(w) * (180.0 / Math.PI);
+        return (millimeters, degrees);
     }
 
     private readonly struct GlStateSnapshot
@@ -524,9 +572,9 @@ public unsafe partial class OpenXRAPI
 
             // Prefer the VRState-driven world/rig when it exists, regardless of runtime.
             // The VRState rig (HMD + per-eye cameras) should be runtime-agnostic; its transforms/params decide
-            // whether to source tracking/FOV from OpenVR or OpenXR based on Engine.VRState.ActiveRuntime.
-            var vrInfo = Engine.VRState.ViewInformation;
-            bool hasVrRig = Engine.VRState.IsInVR &&
+            // whether to source tracking/FOV from OpenVR or OpenXR based on RuntimeEngine.VRState.ActiveRuntime.
+            var vrInfo = RuntimeEngine.VRState.ViewInformation;
+            bool hasVrRig = RuntimeEngine.VRState.IsInVR &&
                             (vrInfo.World is not null || vrInfo.HMDNode is not null);
             bool canReuseVrStateEyeCameras = hasVrRig;
 
@@ -547,7 +595,7 @@ public unsafe partial class OpenXRAPI
             _openXrFrameBaseCamera = baseCamera;
             _openXrFrameWorld = world;
 
-            // IMPORTANT: Engine.Rendering.State.RenderingWorld (and various pipeline passes) resolve the active
+            // IMPORTANT: RuntimeEngine.Rendering.State.RenderingWorld (and various pipeline passes) resolve the active
             // world through RenderState.WindowViewport.World. When we pass worldOverride into CollectVisible/Render,
             // the viewport's World property still needs to return the same world or lighting can be skipped.
             _openXrLeftViewport?.WorldInstanceOverride = _openXrFrameWorld;
@@ -597,8 +645,9 @@ public unsafe partial class OpenXRAPI
                 }
             }
 
-            UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
-            UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
+            float leftFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
+            float rightFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
+            RuntimeEngine.Rendering.Stats.RecordVrXrCollectFrustumExpansionDegrees(Math.Max(leftFrustumPadding, rightFrustumPadding));
 
             // NOTE: Do not call World.Lights.UpdateCameraLightIntersections() for the OpenXR eye cameras.
             // That data is stored on the light components (not scoped per camera), so updating it here can
@@ -642,18 +691,18 @@ public unsafe partial class OpenXRAPI
                 rightBuildTicks = Stopwatch.GetTimestamp() - rightStarted;
             }
 
-            Engine.Rendering.Stats.RecordVrPerViewVisibleCounts(
+            RuntimeEngine.Rendering.Stats.RecordVrPerViewVisibleCounts(
                 (uint)Math.Max(0, leftAdded),
                 (uint)Math.Max(0, rightAdded));
-            Engine.Rendering.Stats.RecordVrPerViewDrawCounts(
+            RuntimeEngine.Rendering.Stats.RecordVrPerViewDrawCounts(
                 (uint)Math.Max(0, leftAdded),
                 (uint)Math.Max(0, rightAdded));
-            Engine.Rendering.Stats.RecordVrCommandBuildTimes(
+            RuntimeEngine.Rendering.Stats.RecordVrCommandBuildTimes(
                 TimeSpan.FromSeconds(leftBuildTicks / (double)Stopwatch.Frequency),
                 TimeSpan.FromSeconds(rightBuildTicks / (double)Stopwatch.Frequency));
 
-            int dbg = Interlocked.Increment(ref _openXrDebugFrameIndex);
-            if (dbg == 1 || (dbg % OpenXrDebugLogEveryNFrames) == 0)
+            int dbg = OpenXrDebugLifecycle ? Interlocked.Increment(ref _openXrDebugFrameIndex) : 0;
+            if (OpenXrDebugLifecycle && (dbg == 1 || (dbg % OpenXrDebugLogEveryNFrames) == 0))
             {
                 Debug.Out($"OpenXR CollectVisible: leftAdded={leftAdded}, rightAdded={rightAdded}, CullWithFrustum(L/R)={_openXrLeftViewport!.CullWithFrustum}/{_openXrRightViewport!.CullWithFrustum}");
             }
@@ -963,6 +1012,21 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
+        long relocateTicks = 0;
+        if (OpenXrCollectPosePolicy == OpenXrCollectVisiblePosePolicy.RelocatePredicted)
+        {
+            long relocateStart = Stopwatch.GetTimestamp();
+            if (!LocateViews(OpenXrPoseTiming.Predicted))
+            {
+                EndBegunFrameWithoutLayers(frameNo, "Relocate predicted LocateViews failed");
+                return;
+            }
+            relocateTicks = Stopwatch.GetTimestamp() - relocateStart;
+        }
+
+        RuntimeEngine.Rendering.Stats.RecordVrXrRelocatePredictedTime(
+            TimeSpan.FromSeconds(relocateTicks / (double)Stopwatch.Frequency));
+
         try
         {
             // Predicted controller/tracker poses for the upcoming frame.
@@ -971,8 +1035,7 @@ public unsafe partial class OpenXRAPI
             // The CollectVisible thread will consume this frame's predicted views.
             // Update the VR rig immediately after LocateViews so any VRState-provided cameras/transforms
             // reflect the same predicted pose when building visibility buffers.
-            PoseTimingForRecalc = OpenXrPoseTiming.Predicted;
-            Engine.VRState.InvokeRecalcMatrixOnDraw();
+            RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted);
         }
         catch (Exception ex)
         {
@@ -1009,7 +1072,7 @@ public unsafe partial class OpenXRAPI
                 Layers = null
             };
 
-            var endResult = CheckResult(Api.EndFrame(_session, in frameEndInfoNoLayers), "xrEndFrame");
+            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Prepare: aborted frame ({reason}), EndFrame(no layers) => {endResult}");
         }
@@ -1019,6 +1082,8 @@ public unsafe partial class OpenXRAPI
             Volatile.Write(ref _frameSkipRender, 0);
             Volatile.Write(ref _pendingXrFrame, 0);
             Volatile.Write(ref _pendingXrFrameCollected, 0);
+            // Even an aborted prep still consumes the pacing-thread's wake; signal so it can retry next cycle.
+            SignalPacingThreadFrameSubmitted();
         }
     }
 }

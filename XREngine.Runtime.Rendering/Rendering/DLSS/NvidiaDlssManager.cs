@@ -116,10 +116,10 @@ namespace XREngine.Rendering.DLSS
             // The original static ctor probe could run before either of those, permanently caching false.
             int nativeFailureGeneration = Native.BridgeFailureGeneration;
             if (_probed &&
-                _lastIsNvidia == Engine.Rendering.State.IsNVIDIA &&
-                _lastIsVulkan == Engine.Rendering.State.IsVulkan &&
+                _lastIsNvidia == RuntimeEngine.Rendering.State.IsNVIDIA &&
+                _lastIsVulkan == RuntimeEngine.Rendering.State.IsVulkan &&
                 _lastNativeFailureGeneration == nativeFailureGeneration &&
-                string.Equals(_lastBridgeFingerprint, Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint, StringComparison.Ordinal))
+                string.Equals(_lastBridgeFingerprint, RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint, StringComparison.Ordinal))
                 return;
 
             DetectSupport();
@@ -128,13 +128,13 @@ namespace XREngine.Rendering.DLSS
         private static void DetectSupport()
         {
             _probed = true;
-            _lastIsNvidia = Engine.Rendering.State.IsNVIDIA;
-            _lastIsVulkan = Engine.Rendering.State.IsVulkan;
+            _lastIsNvidia = RuntimeEngine.Rendering.State.IsNVIDIA;
+            _lastIsVulkan = RuntimeEngine.Rendering.State.IsVulkan;
             _lastNativeFailureGeneration = Native.BridgeFailureGeneration;
-            _lastBridgeFingerprint = Engine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint;
+            _lastBridgeFingerprint = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.Fingerprint;
             _lastError = null;
 
-            bool usingVulkan = Engine.Rendering.State.IsVulkan;
+            bool usingVulkan = RuntimeEngine.Rendering.State.IsVulkan;
             string? bridgeFailure = null;
             bool usingBridge = !usingVulkan && TryIsBridgeCapable(out bridgeFailure);
             if (!usingVulkan && !usingBridge)
@@ -151,7 +151,7 @@ namespace XREngine.Rendering.DLSS
                 return;
             }
 
-            if (!Engine.Rendering.State.IsNVIDIA)
+            if (!RuntimeEngine.Rendering.State.IsNVIDIA)
             {
                 _lastError = "No NVIDIA GPU detected.";
                 _cachedIsSupported = false;
@@ -173,12 +173,12 @@ namespace XREngine.Rendering.DLSS
 
         private static bool TryIsBridgeCapable(out string? failureReason)
         {
-            var snapshot = Engine.Rendering.VulkanUpscaleBridgeSnapshot;
+            var snapshot = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot;
             failureReason = null;
 
-            if (!Engine.Rendering.VulkanUpscaleBridgeRequested || !snapshot.EnvironmentEnabled)
+            if (!RuntimeEngine.Rendering.VulkanUpscaleBridgeRequested || !snapshot.EnvironmentEnabled)
             {
-                failureReason = $"{Engine.Rendering.VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge (clear it or set it to 1 to re-enable)";
+                failureReason = $"{RuntimeEngine.Rendering.VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge (clear it or set it to 1 to re-enable)";
                 return false;
             }
 
@@ -256,7 +256,7 @@ namespace XREngine.Rendering.DLSS
         {
             EnsureDetected();
 
-            if (!Engine.EffectiveSettings.EnableNvidiaDlss || !_cachedIsSupported)
+            if (!RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || !_cachedIsSupported)
                 return MaxScale;
 
             static float ScaleForMode(EDlssQualityMode mode)
@@ -272,9 +272,9 @@ namespace XREngine.Rendering.DLSS
                 };
             }
 
-            return Engine.Rendering.Settings.DlssQuality == EDlssQualityMode.Custom
-                ? Math.Clamp(Engine.Rendering.Settings.DlssCustomScale, MinScale, MaxScale)
-                : Math.Clamp(ScaleForMode(Engine.Rendering.Settings.DlssQuality), MinScale, MaxScale);
+            return RuntimeEngine.Rendering.Settings.DlssQuality == EDlssQualityMode.Custom
+                ? Math.Clamp(RuntimeEngine.Rendering.Settings.DlssCustomScale, MinScale, MaxScale)
+                : Math.Clamp(ScaleForMode(RuntimeEngine.Rendering.Settings.DlssQuality), MinScale, MaxScale);
         }
     }
 }

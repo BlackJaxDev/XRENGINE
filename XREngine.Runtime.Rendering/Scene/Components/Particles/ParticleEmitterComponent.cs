@@ -14,7 +14,7 @@ using XREngine.Scene.Components.Particles.Enums;
 using XREngine.Scene.Components.Particles.Interfaces;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
-using static XREngine.Engine;
+using static XREngine.RuntimeEngine;
 
 namespace XREngine.Scene.Components.Particles;
 

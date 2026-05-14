@@ -32,7 +32,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void MakeIndexBuffers()
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.MakeIndexBuffers", ProfilerScopeKind.OneOffInvoke);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.MakeIndexBuffers", ProfilerScopeKind.OneOffInvoke);
                 Dbg("MakeIndexBuffers begin", "Buffers");
 
                 var mesh = Mesh;
@@ -130,7 +130,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void CollectBuffers()
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.CollectBuffers", ProfilerScopeKind.OneOffInvoke);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.CollectBuffers", ProfilerScopeKind.OneOffInvoke);
                 _bufferCache = [];
                 _ssboBufferCache = [];
                 _allBuffersList = [];
@@ -147,20 +147,20 @@ namespace XREngine.Rendering.OpenGL
                     AddCollectedBuffer(pair.Key, pair.Value);
 
                 XRMesh? mesh = Mesh;
-                bool allowSkinning = Engine.Rendering.Settings.AllowSkinning;
-                bool allowBlendshapes = Engine.Rendering.Settings.AllowBlendshapes;
+                bool allowSkinning = RuntimeEngine.Rendering.Settings.AllowSkinning;
+                bool allowBlendshapes = RuntimeEngine.Rendering.Settings.AllowBlendshapes;
                 bool hasSkinning = mesh?.HasSkinning == true;
                 bool hasBlendshapes = mesh?.BlendshapeCount > 0;
                 bool useComputeSkinning = hasSkinning
                     && allowSkinning
-                    && Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+                    && RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
                 bool useVertexSkinning = hasSkinning && allowSkinning && !useComputeSkinning;
                 bool optimizeSkinningTo4Weights = useVertexSkinning
-                    && (Engine.Rendering.Settings.OptimizeSkinningTo4Weights
-                        || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && (mesh?.MaxWeightCount ?? int.MaxValue) <= 4));
+                    && (RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights
+                        || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && (mesh?.MaxWeightCount ?? int.MaxValue) <= 4));
                 bool useComputeBlendshapes = hasBlendshapes
                     && allowBlendshapes
-                    && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+                    && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
                 bool useVertexBlendshapes = hasBlendshapes && allowBlendshapes && !useComputeBlendshapes;
 
                 if (!useVertexSkinning)
@@ -244,7 +244,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void BindSSBOs(GLRenderProgram program)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSSBOs", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.BindSSBOs", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 int count = _ssboBufferCache.Count;
                 for (int i = 0; i < count; i++)
                     _ssboBufferCache[i].BindSSBO(program);
@@ -294,14 +294,14 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void BindSkinnedVertexBuffers(GLRenderProgram vertexProgram)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSkinnedVertexBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.BindSkinnedVertexBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 var mesh = MeshRenderer.Mesh;
                 bool useComputeSkinning = mesh?.HasSkinning == true
-                    && Engine.Rendering.Settings.AllowSkinning
-                    && Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+                    && RuntimeEngine.Rendering.Settings.AllowSkinning
+                    && RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
                 bool useComputeBlendshapes = mesh?.BlendshapeCount > 0
-                    && Engine.Rendering.Settings.AllowBlendshapes
-                    && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+                    && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+                    && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
 
                 if (!useComputeSkinning && !useComputeBlendshapes)
                 {
@@ -409,7 +409,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void BindSkinnedInterleavedBuffer(GLRenderProgram vertexProgram, XRDataBuffer skinnedInterleavedBuffer)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSkinnedInterleavedBuffer", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.BindSkinnedInterleavedBuffer", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedInterleavedBuffer);
                 if (glBuffer is null)
                     return;
@@ -443,7 +443,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void BindBuffers(GLRenderProgram program)
             {
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.BindBuffers", ProfilerScopeKind.ConditionalLoop);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers", ProfilerScopeKind.ConditionalLoop);
                 var mesh = Mesh;
                 if (BuffersBound)
                 {
@@ -463,7 +463,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindVAO", ProfilerScopeKind.ConditionalLoop))
+                using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.BindVAO", ProfilerScopeKind.ConditionalLoop))
                 {
                     Renderer.BindMeshRenderer(this);
                 }
@@ -473,11 +473,11 @@ namespace XREngine.Rendering.OpenGL
                 // Track whether at least one vertex attribute was successfully bound.
                 // If none bind (e.g. wrong program or OOM-corrupted state), we must not mark BuffersBound.
                 int attributesBound = 0;
-                using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindAttributes", ProfilerScopeKind.ConditionalLoop))
+                using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.BindAttributes", ProfilerScopeKind.ConditionalLoop))
                 {
                     foreach (GLDataBuffer buffer in _bufferCache.Values)
                     {
-                        using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.Buffer", ProfilerScopeKind.ConditionalLoop))
+                        using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.Buffer", ProfilerScopeKind.ConditionalLoop))
                         {
                             buffer.Generate();
                             if (buffer.TryGetAttributeLocation(program, out _))
@@ -496,7 +496,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindIndexBuffers", ProfilerScopeKind.ConditionalLoop))
+                using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.BindIndexBuffers", ProfilerScopeKind.ConditionalLoop))
                 {
                     if (TriangleIndicesBuffer is not null)
                         Api.VertexArrayElementBuffer(BindingId, TriangleIndicesBuffer.BindingId);
@@ -507,7 +507,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 CaptureVertexArrayBindingSnapshot();
 
-                using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.UnbindVAO", ProfilerScopeKind.ConditionalLoop))
+                using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.UnbindVAO", ProfilerScopeKind.ConditionalLoop))
                 {
                     Renderer.BindMeshRenderer(null);
                 }

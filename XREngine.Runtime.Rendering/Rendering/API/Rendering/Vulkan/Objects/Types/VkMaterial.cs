@@ -425,10 +425,13 @@ namespace XREngine.Rendering.Vulkan
                         return false;
                     }
 
-                    Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
                 }
 
                 DescriptorSetLayout[] layoutArray = [.. program.DescriptorSetLayouts];
+                uint[] variableDescriptorCounts = program.DescriptorSetsRequireVariableDescriptorCount
+                    ? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, layoutArray.Length)
+                    : [];
                 DescriptorSet[][] descriptorSets = new DescriptorSet[frameCount][];
                 for (int frame = 0; frame < frameCount; frame++)
                 {
@@ -436,10 +439,19 @@ namespace XREngine.Rendering.Vulkan
 
                     fixed (DescriptorSetLayout* layoutPtr = layoutArray)
                     fixed (DescriptorSet* setPtr = frameSets)
+                    fixed (uint* variableDescriptorCountPtr = variableDescriptorCounts)
                     {
+                        DescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountInfo = new()
+                        {
+                            SType = StructureType.DescriptorSetVariableDescriptorCountAllocateInfo,
+                            DescriptorSetCount = (uint)layoutArray.Length,
+                            PDescriptorCounts = variableDescriptorCountPtr,
+                        };
+
                         DescriptorSetAllocateInfo allocInfo = new()
                         {
                             SType = StructureType.DescriptorSetAllocateInfo,
+                            PNext = program.DescriptorSetsRequireVariableDescriptorCount ? &variableDescriptorCountInfo : null,
                             DescriptorPool = descriptorPool,
                             DescriptorSetCount = (uint)setCount,
                             PSetLayouts = layoutPtr,
@@ -448,7 +460,7 @@ namespace XREngine.Rendering.Vulkan
                         if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
                         {
                             Api.DestroyDescriptorPool(Device, descriptorPool, null);
-                            Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                            RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
                             WarnOnce("Failed to allocate Vulkan descriptor sets for material.");
                             return false;
                         }
@@ -460,7 +472,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!TryCreateUniformResources(bindings, frameCount, out Dictionary<(uint set, uint binding), UniformBindingResource> uniformResources))
                 {
                     Api!.DestroyDescriptorPool(Device, descriptorPool, null);
-                    Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
                     return false;
                 }
 
@@ -493,7 +505,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 foreach (DescriptorBindingInfo binding in bindings)
                 {
-                    uint descriptorCount = Math.Max(binding.Count, 1u);
+                    uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
 
                     switch (binding.DescriptorType)
                     {
@@ -503,7 +515,7 @@ namespace XREngine.Rendering.Vulkan
                         case DescriptorType.InputAttachment:
                         case DescriptorType.UniformTexelBuffer:
                         case DescriptorType.StorageTexelBuffer:
-                            if (descriptorCount > 32)
+                            if (descriptorCount > 32 && !VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding))
                                 return false;
                             break;
 
@@ -557,7 +569,7 @@ namespace XREngine.Rendering.Vulkan
                 if (state.DescriptorPool.Handle != 0)
                 {
                     Api!.DestroyDescriptorPool(Device, state.DescriptorPool, null);
-                    Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
                 }
             }
 
@@ -578,7 +590,7 @@ namespace XREngine.Rendering.Vulkan
                 Dictionary<DescriptorType, uint> counts = new();
                 foreach (DescriptorBindingInfo binding in bindings)
                 {
-                    uint count = Math.Max(binding.Count, 1u) * (uint)frameCount;
+                    uint count = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding) * (uint)frameCount;
                     if (counts.TryGetValue(binding.DescriptorType, out uint existing))
                         counts[binding.DescriptorType] = existing + count;
                     else
@@ -658,7 +670,7 @@ namespace XREngine.Rendering.Vulkan
                     if (binding.Set >= state.DescriptorSets[frameIndex].Length)
                         return false;
 
-                    uint descriptorCount = Math.Max(binding.Count, 1u);
+                    uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
 
                     switch (binding.DescriptorType)
                     {
@@ -769,7 +781,7 @@ namespace XREngine.Rendering.Vulkan
 
             private bool TryUpdateDescriptorSetsWithTemplates(ProgramDescriptorState state, int frameIndex, WriteDescriptorSet[] writeArray)
             {
-                if (Engine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
+                if (RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend != EVulkanDescriptorUpdateBackend.Template)
                     return false;
 
                 if (state.Program.DescriptorSetLayouts.Count < state.DescriptorSets[frameIndex].Length)
@@ -996,8 +1008,11 @@ namespace XREngine.Rendering.Vulkan
                 if (Data.Textures.Count <= 0)
                     return false;
 
-                // Use binding index + array offset to pick the texture slot.
-                int index = (int)binding.Binding + arrayIndex;
+                // Bindless material arrays are a global descriptor-space view, so their array index maps
+                // directly to the material texture slot. Traditional bindings keep the old binding+offset rule.
+                int index = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding)
+                    ? arrayIndex
+                    : (int)binding.Binding + arrayIndex;
                 if (index < 0 || index >= Data.Textures.Count)
                     return false;
 
@@ -1226,7 +1241,7 @@ namespace XREngine.Rendering.Vulkan
                 };
 
             private void RecordDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
-                => Engine.Rendering.Stats.RecordVulkanDescriptorFallback(
+                => RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorFallback(
                     Data.Name,
                     GetDescriptorBindingClass(binding.DescriptorType),
                     binding.Name,
@@ -1235,7 +1250,7 @@ namespace XREngine.Rendering.Vulkan
                     count);
 
             private void RecordDescriptorFailure(DescriptorBindingInfo binding, string reason)
-                => Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                => RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
                     Data.Name,
                     GetDescriptorBindingClass(binding.DescriptorType),
                     binding.Name,

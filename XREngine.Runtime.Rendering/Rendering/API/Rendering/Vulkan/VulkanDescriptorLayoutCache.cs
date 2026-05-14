@@ -23,26 +23,32 @@ public unsafe partial class VulkanRenderer
         public required DescriptorLayoutBindingSignature[] Signature;
         public required ulong SchemaHash;
         public required bool UsesUpdateAfterBind;
+        public required bool UsesVariableDescriptorCount;
         public int RefCount;
     }
 
     private readonly record struct DescriptorLayoutBindingSignature(
+        uint Set,
         uint Binding,
         DescriptorType DescriptorType,
         uint DescriptorCount,
-        ShaderStageFlags StageFlags);
+        ShaderStageFlags StageFlags,
+        bool VariableDescriptorCount);
 
     internal bool SupportsDescriptorIndexing => _supportsDescriptorIndexing;
 
     internal bool TryAcquireCachedDescriptorSetLayout(
+        uint setIndex,
         DescriptorSetLayoutBinding[] bindings,
         out DescriptorSetLayout layout,
-        out bool usesUpdateAfterBind)
+        out bool usesUpdateAfterBind,
+        out bool usesVariableDescriptorCount)
     {
         layout = default;
         usesUpdateAfterBind = false;
+        usesVariableDescriptorCount = false;
 
-        DescriptorLayoutBindingSignature[] signature = BuildLayoutSignature(bindings);
+        DescriptorLayoutBindingSignature[] signature = BuildLayoutSignature(setIndex, bindings);
         ulong schemaHash = ComputeLayoutSchemaHash(signature);
 
         lock (_descriptorSetLayoutCacheLock)
@@ -57,11 +63,12 @@ public unsafe partial class VulkanRenderer
                     cached.RefCount++;
                     layout = cached.Layout;
                     usesUpdateAfterBind = cached.UsesUpdateAfterBind;
+                    usesVariableDescriptorCount = cached.UsesVariableDescriptorCount;
                     return true;
                 }
             }
 
-            if (!TryCreateDescriptorSetLayout(bindings, out layout, out usesUpdateAfterBind))
+            if (!TryCreateDescriptorSetLayout(setIndex, bindings, out layout, out usesUpdateAfterBind, out usesVariableDescriptorCount))
                 return false;
 
             CachedDescriptorSetLayout created = new()
@@ -70,6 +77,7 @@ public unsafe partial class VulkanRenderer
                 Signature = signature,
                 SchemaHash = schemaHash,
                 UsesUpdateAfterBind = usesUpdateAfterBind,
+                UsesVariableDescriptorCount = usesVariableDescriptorCount,
                 RefCount = 1
             };
 
@@ -125,17 +133,19 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private static DescriptorLayoutBindingSignature[] BuildLayoutSignature(DescriptorSetLayoutBinding[] bindings)
+    private static DescriptorLayoutBindingSignature[] BuildLayoutSignature(uint setIndex, DescriptorSetLayoutBinding[] bindings)
     {
         DescriptorLayoutBindingSignature[] signature = new DescriptorLayoutBindingSignature[bindings.Length];
         for (int i = 0; i < bindings.Length; i++)
         {
             DescriptorSetLayoutBinding binding = bindings[i];
             signature[i] = new DescriptorLayoutBindingSignature(
+                setIndex,
                 binding.Binding,
                 binding.DescriptorType,
                 binding.DescriptorCount,
-                binding.StageFlags);
+                binding.StageFlags,
+                VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(setIndex, binding));
         }
 
         return signature;
@@ -154,9 +164,11 @@ public unsafe partial class VulkanRenderer
         foreach (DescriptorLayoutBindingSignature part in signature)
         {
             Mix(ref hash, part.Binding);
+            Mix(ref hash, part.Set);
             Mix(ref hash, (ulong)part.DescriptorType);
             Mix(ref hash, part.DescriptorCount);
             Mix(ref hash, (ulong)part.StageFlags);
+            Mix(ref hash, part.VariableDescriptorCount ? 1ul : 0ul);
         }
 
         return hash;
@@ -177,12 +189,15 @@ public unsafe partial class VulkanRenderer
     }
 
     private bool TryCreateDescriptorSetLayout(
+        uint setIndex,
         DescriptorSetLayoutBinding[] bindings,
         out DescriptorSetLayout layout,
-        out bool usesUpdateAfterBind)
+        out bool usesUpdateAfterBind,
+        out bool usesVariableDescriptorCount)
     {
         layout = default;
         usesUpdateAfterBind = false;
+        usesVariableDescriptorCount = false;
 
         DescriptorSetLayoutBinding[] layoutBindings = bindings.Length == 0
             ? Array.Empty<DescriptorSetLayoutBinding>()
@@ -235,6 +250,7 @@ public unsafe partial class VulkanRenderer
                 for (int i = 0; i < layoutBindings.Length; i++)
                 {
                     DescriptorBindingFlags flagsForBinding = 0;
+                    bool isVariableDescriptorBinding = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(setIndex, layoutBindings[i]);
 
                     if (_supportsDescriptorBindingPartiallyBound)
                         flagsForBinding |= DescriptorBindingFlags.PartiallyBoundBit;
@@ -243,6 +259,12 @@ public unsafe partial class VulkanRenderer
                     {
                         flagsForBinding |= DescriptorBindingFlags.UpdateAfterBindBit;
                         hasUpdateAfterBindBinding = true;
+                    }
+
+                    if (isVariableDescriptorBinding)
+                    {
+                        flagsForBinding |= DescriptorBindingFlags.VariableDescriptorCountBit;
+                        usesVariableDescriptorCount = true;
                     }
 
                     bindingFlags[i] = flagsForBinding;

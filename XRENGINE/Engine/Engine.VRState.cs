@@ -16,6 +16,7 @@ using XREngine.Components.Animation;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
@@ -361,8 +362,8 @@ namespace XREngine
 
             // Expose the same "RecalcMatrixOnDraw" hook so OpenXR can keep locomotion/VR rigs updated
             // at the same point in the frame as the OpenVR path.
-            internal static void InvokeRecalcMatrixOnDraw()
-                => RecalcMatrixOnDraw?.Invoke();
+            internal static void InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming timing)
+                => RecalcMatrixOnDraw?.Invoke(timing);
 
             private static void CreateActions(IActionManifest actionManifest, VR vr)
             {
@@ -461,9 +462,11 @@ namespace XREngine
                     return;
 
                 _renderWindow?.RenderViewportsCallback -= Render;
+                _renderWindow?.PostRenderViewportsCallback -= PostRender;
 
                 _renderWindow = window;
                 window.RenderViewportsCallback += Render;
+                window.PostRenderViewportsCallback += PostRender;
             }
 
             public static void InitRenderEmulated(XRWindow window)
@@ -795,7 +798,7 @@ namespace XREngine
                     _ = OpenVRApi.UpdateDraw(Origin);
 
                 //Update VR-related transforms
-                RecalcMatrixOnDraw?.Invoke();
+                RecalcMatrixOnDraw?.Invoke(RuntimeVrPoseTiming.Recalc);
 
                 if (_openVrRuntimeActiveForRender && IsOpenVRActive)
                     IsPowerSaving = OpenVRApi.CVR.ShouldApplicationReduceRenderingWork();
@@ -807,6 +810,12 @@ namespace XREngine
 
                 if (_openVrRuntimeActiveForRender && IsOpenVRActive && Rendering.Settings.LogVRFrameTimes)
                     ReadStats();
+            }
+
+            private static void PostRender()
+            {
+                if (IsOpenXRActive)
+                    OpenXRApi?.EnginePostRenderTick();
             }
 
             private static void RenderTwoPass()
@@ -1011,7 +1020,7 @@ namespace XREngine
             /// <summary>
             /// VR-related transforms must subscribe to this event to recalculate their matrices directly before drawing.
             /// </summary>
-            public static event Action? RecalcMatrixOnDraw;
+            public static event Action<RuntimeVrPoseTiming>? RecalcMatrixOnDraw;
 
             public static uint LastFrameSampleIndex { get; private set; } = 0;
 

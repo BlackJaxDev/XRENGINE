@@ -25,7 +25,7 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
         }
     }
 
-    public event Action? RecalcMatrixOnDraw
+    public event Action<RuntimeVrPoseTiming>? RecalcMatrixOnDraw
     {
         add
         {
@@ -232,7 +232,7 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
     }
 
     private static OpenXRAPI.OpenXrPoseTiming MapPoseTiming(OpenXRAPI openXrApi, RuntimeVrPoseTiming timing)
-        => timing == RuntimeVrPoseTiming.Recalc
-            ? openXrApi.PoseTimingForRecalc
+        => timing == RuntimeVrPoseTiming.Late || timing == RuntimeVrPoseTiming.Recalc
+            ? OpenXRAPI.OpenXrPoseTiming.Late
             : OpenXRAPI.OpenXrPoseTiming.Predicted;
 }

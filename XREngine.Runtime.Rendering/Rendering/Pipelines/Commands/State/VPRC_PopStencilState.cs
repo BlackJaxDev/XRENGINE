@@ -9,11 +9,11 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         protected override void Execute()
         {
-            Engine.Rendering.State.EnableStencilTest(false);
-            Engine.Rendering.State.StencilMask(0xFF);
-            Engine.Rendering.State.StencilFunc(
+            RuntimeEngine.Rendering.State.EnableStencilTest(false);
+            RuntimeEngine.Rendering.State.StencilMask(0xFF);
+            RuntimeEngine.Rendering.State.StencilFunc(
                 Rendering.Models.Materials.EComparison.Always, 0, 0xFF);
-            Engine.Rendering.State.StencilOp(
+            RuntimeEngine.Rendering.State.StencilOp(
                 Rendering.Models.Materials.EStencilOp.Keep,
                 Rendering.Models.Materials.EStencilOp.Keep,
                 Rendering.Models.Materials.EStencilOp.Keep);

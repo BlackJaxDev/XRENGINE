@@ -36,7 +36,7 @@ namespace XREngine.Rendering
 
         public override void SetUniforms(XRRenderProgram program)
         {
-            XRCamera? camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera;
+            XRCamera? camera = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera;
             if (camera is null)
                 return;
 

@@ -83,7 +83,7 @@ public class GpuIndirectRenderDispatchTests
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
-        source.ShouldContain("COMMAND_FLOATS = 48");
+        source.ShouldContain("COMMAND_FLOATS = 20");
         source.ShouldContain("DRAW_COMMAND_UINTS = 5");
         source.ShouldContain("CulledCommandsBuffer");
         source.ShouldContain("IndirectDrawBuffer");
@@ -97,7 +97,9 @@ public class GpuIndirectRenderDispatchTests
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
-        source.ShouldContain("COMMAND_FLOATS = 48");
+        source.ShouldContain("COMMAND_FLOATS = 20");
+        source.ShouldContain("DrawMetadataBuffer");
+        source.ShouldContain("BoundsBuffer");
         source.ShouldContain("FrustumPlanes");
         source.ShouldContain("FrustumSphereVisible");
         source.ShouldContain("CulledCount");
@@ -237,53 +239,46 @@ public class GpuIndirectRenderDispatchTests
     #region Command Buffer Layout Tests (Matching Shader)
 
     /// <summary>
-    /// GPUIndirectRenderCommand layout from GPURenderCulling.comp and GPURenderIndirect.comp:
-    /// 00-15: WorldMatrix (mat4), 16-31: PrevWorldMatrix (mat4), 32-35: BoundingSphere,
-    /// 36: MeshID, 37: SubmeshID, 38: MaterialID, 39: InstanceCount, 40: RenderPass,
-    /// 41: ShaderProgramID, 42: RenderDistance, 43: LayerMask, 44: LODLevel,
-    /// 45: Flags, 46-47: Reserved
+    /// Compact GPUIndirectRenderCommand compatibility layout:
+    /// 00-03: BoundingSphere, 04: MeshID, 05: SubmeshID, 06: MaterialID,
+    /// 07: InstanceCount, 08: RenderPass, 09: ShaderProgramID, 10: RenderDistance,
+    /// 11: LayerMask, 12: LODLevel, 13: Flags, 14: LogicalMeshID,
+    /// 15: TransformID, 16: SkinID, 17: StateClassID, 18: BoundsID, 19: DrawID.
     /// </summary>
     [Test]
     public void CommandBuffer_FieldOffsets_MatchShaderLayout()
     {
-        // World Matrix at offset 0-15
-        int worldMatrixEnd = 16;
-        worldMatrixEnd.ShouldBe(16);
+        int boundingSphereStart = 0;
+        int meshIdOffset = 4;
+        int materialIdOffset = 6;
+        int instanceCountOffset = 7;
+        int renderPassOffset = 8;
+        int renderDistanceOffset = 10;
+        int layerMaskOffset = 11;
+        int flagsOffset = 13;
+        int transformIdOffset = 15;
+        int drawIdOffset = 19;
 
-        // PrevWorldMatrix at offset 16-31
-        int prevMatrixEnd = 32;
-        prevMatrixEnd.ShouldBe(32);
-
-        // BoundingSphere at offset 32-35
-        int boundingSphereStart = 32;
-        boundingSphereStart.ShouldBe(32);
-
-        // Individual fields
-        int meshIdOffset = 36;
-        int materialIdOffset = 38;
-        int instanceCountOffset = 39;
-        int renderPassOffset = 40;
-        int renderDistanceOffset = 42;
-        int layerMaskOffset = 43;
-        int flagsOffset = 45;
-
-        meshIdOffset.ShouldBe(36);
-        materialIdOffset.ShouldBe(38);
-        instanceCountOffset.ShouldBe(39);
-        renderPassOffset.ShouldBe(40);
-        renderDistanceOffset.ShouldBe(42);
-        layerMaskOffset.ShouldBe(43);
-        flagsOffset.ShouldBe(45);
+        boundingSphereStart.ShouldBe(0);
+        meshIdOffset.ShouldBe(4);
+        materialIdOffset.ShouldBe(6);
+        instanceCountOffset.ShouldBe(7);
+        renderPassOffset.ShouldBe(8);
+        renderDistanceOffset.ShouldBe(10);
+        layerMaskOffset.ShouldBe(11);
+        flagsOffset.ShouldBe(13);
+        transformIdOffset.ShouldBe(15);
+        drawIdOffset.ShouldBe(19);
     }
 
     [Test]
-    public void CommandBuffer_TotalSize_Is192Bytes()
+    public void CommandBuffer_TotalSize_Is80Bytes()
     {
-        const int COMMAND_FLOATS = 48;
+        const int COMMAND_FLOATS = 20;
         const int FLOAT_SIZE = 4;
 
         int totalBytes = COMMAND_FLOATS * FLOAT_SIZE;
-        totalBytes.ShouldBe(192);
+        totalBytes.ShouldBe(80);
     }
 
     #endregion
@@ -444,10 +439,10 @@ public class GpuIndirectRenderDispatchTests
     }
 
     [Test]
-    public void CulledCommandBuffer_CommandFloatCount_Is48Floats()
+    public void CulledCommandBuffer_CommandFloatCount_Is20Lanes()
     {
-        // Each command is 192 bytes = 48 floats (includes world matrix, prev matrix, bounds, IDs, etc.)
-        GPUScene.CommandFloatCount.ShouldBe(48);
+        // Each command is 80 bytes = 20 lanes; matrices live in TransformBuffer.
+        GPUScene.CommandFloatCount.ShouldBe(20);
     }
 
     [Test]
@@ -720,13 +715,10 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void WorldMatrix_Identity_DoesNotTransformPosition()
     {
-        var cmd = new GPUIndirectRenderCommand
-        {
-            WorldMatrix = Matrix4x4.Identity
-        };
+        var transform = new TransformGpu(Matrix4x4.Identity);
 
         var localPos = new Vector3(1, 2, 3);
-        var worldPos = Vector3.Transform(localPos, cmd.WorldMatrix);
+        var worldPos = Vector3.Transform(localPos, transform.WorldMatrix);
 
         worldPos.X.ShouldBe(1f, 0.001f);
         worldPos.Y.ShouldBe(2f, 0.001f);
@@ -736,13 +728,10 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void WorldMatrix_Translation_MovesPosition()
     {
-        var cmd = new GPUIndirectRenderCommand
-        {
-            WorldMatrix = Matrix4x4.CreateTranslation(10, 20, 30)
-        };
+        var transform = new TransformGpu(Matrix4x4.CreateTranslation(10, 20, 30));
 
         var localPos = new Vector3(1, 2, 3);
-        var worldPos = Vector3.Transform(localPos, cmd.WorldMatrix);
+        var worldPos = Vector3.Transform(localPos, transform.WorldMatrix);
 
         worldPos.X.ShouldBe(11f, 0.001f);
         worldPos.Y.ShouldBe(22f, 0.001f);
@@ -752,13 +741,10 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void WorldMatrix_Scale_ScalesPosition()
     {
-        var cmd = new GPUIndirectRenderCommand
-        {
-            WorldMatrix = Matrix4x4.CreateScale(2f)
-        };
+        var transform = new TransformGpu(Matrix4x4.CreateScale(2f));
 
         var localPos = new Vector3(1, 2, 3);
-        var worldPos = Vector3.Transform(localPos, cmd.WorldMatrix);
+        var worldPos = Vector3.Transform(localPos, transform.WorldMatrix);
 
         worldPos.X.ShouldBe(2f, 0.001f);
         worldPos.Y.ShouldBe(4f, 0.001f);
@@ -766,21 +752,18 @@ public class GpuIndirectRenderDispatchTests
     }
 
     [Test]
-    public void PrevWorldMatrix_StoredForMotionVectors()
+    public void PrevTransformGpu_StoredForMotionVectors()
     {
         var prevMatrix = Matrix4x4.CreateTranslation(5, 5, 5);
         var currMatrix = Matrix4x4.CreateTranslation(10, 10, 10);
 
-        var cmd = new GPUIndirectRenderCommand
-        {
-            WorldMatrix = currMatrix,
-            PrevWorldMatrix = prevMatrix
-        };
+        var current = new TransformGpu(currMatrix);
+        var previous = new TransformGpu(prevMatrix);
 
         // Motion vector calculation would use the difference
         var localPos = new Vector3(0, 0, 0);
-        var prevWorld = Vector3.Transform(localPos, cmd.PrevWorldMatrix);
-        var currWorld = Vector3.Transform(localPos, cmd.WorldMatrix);
+        var prevWorld = Vector3.Transform(localPos, previous.WorldMatrix);
+        var currWorld = Vector3.Transform(localPos, current.WorldMatrix);
 
         var motion = currWorld - prevWorld;
         motion.X.ShouldBe(5f, 0.001f);

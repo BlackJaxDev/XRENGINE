@@ -356,7 +356,7 @@ internal sealed class VulkanResourceAllocator
         uint width;
         uint height;
 
-        var viewport = Engine.Rendering.State.RenderingViewport;
+        var viewport = RuntimeEngine.Rendering.State.RenderingViewport;
         uint windowWidth = viewport is null ? 1u : (uint)Math.Max(1, viewport.Width);
         uint windowHeight = viewport is null ? 1u : (uint)Math.Max(1, viewport.Height);
         uint internalWidth = viewport is null ? windowWidth : (uint)Math.Max(1, viewport.InternalWidth);

@@ -83,7 +83,7 @@ namespace XREngine.Rendering
 
             // Pre-generate GL resources immediately when on the render thread to avoid
             // inline-generate fallback stalls on the first frame these quads are drawn.
-            if (Engine.IsRenderThread)
+            if (RuntimeEngine.IsRenderThread)
                 defaultVer.Generate();
         }
 
@@ -109,7 +109,7 @@ namespace XREngine.Rendering
             => FullScreenMesh.TryPrepareForRendering(forceNoStereo);
 
         /// <summary>
-        /// Renders the FBO to the entire region set by Engine.Rendering.State.PushRenderArea().
+        /// Renders the FBO to the entire region set by RuntimeEngine.Rendering.State.PushRenderArea().
         /// </summary>
         public bool Render(XRFrameBuffer? target = null, bool forceNoStereo = false)
         {
@@ -119,7 +119,7 @@ namespace XREngine.Rendering
                 if (!TryPrepareForRendering(forceNoStereo))
                     return false;
 
-                var state = Engine.Rendering.State.RenderingPipelineState;
+                var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
                 if (state != null)
                 {
                     using (state.PushRenderingCamera(null))

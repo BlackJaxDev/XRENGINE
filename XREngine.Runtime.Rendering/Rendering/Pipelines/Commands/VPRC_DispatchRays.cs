@@ -78,7 +78,7 @@ public class VPRC_DispatchRays : ViewportRenderCommand
         if (!TryResolveDispatchDimensions(out width, out height, out depth, out failure))
             return false;
 
-        if (!Engine.Rendering.State.IsVulkan)
+        if (!RuntimeEngine.Rendering.State.IsVulkan)
         {
             failure = "Ray dispatch currently requires the Vulkan renderer.";
             return false;

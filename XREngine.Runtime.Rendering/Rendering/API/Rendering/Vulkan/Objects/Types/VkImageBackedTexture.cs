@@ -344,7 +344,7 @@ public unsafe partial class VulkanRenderer
             // (the logical allocation is gone even if the GPU handle lingers).
             if (_ownsImageMemory && _allocatedVRAMBytes > 0)
             {
-                Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
                 _allocatedVRAMBytes = 0;
             }
 
@@ -589,7 +589,7 @@ public unsafe partial class VulkanRenderer
 
             // Record the allocation for VRAM usage statistics.
             _allocatedVRAMBytes = (long)memRequirements.Size;
-            Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+            RuntimeEngine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
         }
 
         #endregion
@@ -1415,7 +1415,7 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         private void OnPushDataRequested()
         {
-            if (Engine.InvokeOnMainThread(OnPushDataRequested, "VkTexture2D.PushData"))
+            if (RuntimeEngine.InvokeOnMainThread(OnPushDataRequested, "VkTexture2D.PushData"))
                 return;
 
             PushTextureData();
@@ -1427,7 +1427,7 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         private void OnGenerateMipmapsRequested()
         {
-            if (Engine.InvokeOnMainThread(OnGenerateMipmapsRequested, "VkTexture2D.GenerateMipmaps"))
+            if (RuntimeEngine.InvokeOnMainThread(OnGenerateMipmapsRequested, "VkTexture2D.GenerateMipmaps"))
                 return;
 
             GenerateMipmapsGPU();

@@ -128,7 +128,7 @@ public class CameraProjectionTransition : XRBase
         _targetParameters = orthoParams;
         
         // Register for updates
-        Engine.Time.Timer.UpdateFrame += OnUpdate;
+        RuntimeEngine.Time.Timer.UpdateFrame += OnUpdate;
     }
 
     /// <summary>
@@ -190,7 +190,7 @@ public class CameraProjectionTransition : XRBase
         
         _targetParameters = null; // We'll update the existing parameters
         
-        Engine.Time.Timer.UpdateFrame += OnUpdate;
+        RuntimeEngine.Time.Timer.UpdateFrame += OnUpdate;
     }
 
     /// <summary>
@@ -201,7 +201,7 @@ public class CameraProjectionTransition : XRBase
         if (!_isTransitioning)
             return;
             
-        Engine.Time.Timer.UpdateFrame -= OnUpdate;
+        RuntimeEngine.Time.Timer.UpdateFrame -= OnUpdate;
         _isTransitioning = false;
     }
 
@@ -210,7 +210,7 @@ public class CameraProjectionTransition : XRBase
         if (!_isTransitioning)
             return;
 
-        _elapsedTime += Engine.Time.Timer.Update.Delta;
+        _elapsedTime += RuntimeEngine.Time.Timer.Update.Delta;
         float t = Math.Clamp(_elapsedTime / _duration, 0f, 1f);
         
         // Use smooth step for easing
@@ -241,7 +241,7 @@ public class CameraProjectionTransition : XRBase
 
     private void CompleteTransition()
     {
-        Engine.Time.Timer.UpdateFrame -= OnUpdate;
+        RuntimeEngine.Time.Timer.UpdateFrame -= OnUpdate;
         _isTransitioning = false;
 
         // Switch to the final target parameters if needed

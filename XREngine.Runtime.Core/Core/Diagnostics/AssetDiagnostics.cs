@@ -32,6 +32,33 @@ public static class AssetDiagnostics
     private static readonly object _missingAssetLock = new();
     private static readonly Dictionary<string, MissingAssetAggregate> _missingAssets = new(StringComparer.OrdinalIgnoreCase);
 
+    public readonly struct RebasedAssetInfo
+    {
+        public string OriginalPath { get; init; }
+        public string ResolvedPath { get; init; }
+        public string Category { get; init; }
+        public string? LastContext { get; init; }
+        public int Count { get; init; }
+        public DateTime FirstSeenUtc { get; init; }
+        public DateTime LastSeenUtc { get; init; }
+    }
+
+    private sealed class RebasedAssetAggregate
+    {
+        public string OriginalPath = string.Empty;
+        public string ResolvedPath = string.Empty;
+        public string Category = string.Empty;
+        public string? LastContext;
+        public int Count;
+        public DateTime FirstSeenUtc;
+        public DateTime LastSeenUtc;
+    }
+
+    private static readonly object _rebasedAssetLock = new();
+    private static readonly Dictionary<string, RebasedAssetAggregate> _rebasedAssets = new(StringComparer.OrdinalIgnoreCase);
+
+    private static int _pendingDisplayFlag;
+
     public static void RecordMissingAsset(string? assetPath, string? category, string? context = null)
     {
         string normalizedPath = NormalizePath(assetPath);
@@ -61,7 +88,94 @@ public static class AssetDiagnostics
                 aggregate.Contexts.Add(context);
             }
         }
+
+        System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 1);
     }
+
+    /// <summary>
+    /// Records that an asset reference was found in non-portable form (for example an absolute
+    /// path baked from a different machine layout, or a stale path that had to be rebased onto a
+    /// known asset root). Used by the editor to surface workspace-portability issues without
+    /// failing the load.
+    /// </summary>
+    public static void RecordRebasedAsset(string? originalPath, string? resolvedPath, string? category, string? context = null)
+    {
+        if (string.IsNullOrWhiteSpace(originalPath))
+            return;
+
+        string normalizedOriginal = NormalizePath(originalPath);
+        string normalizedResolved = NormalizePath(resolvedPath);
+        string normalizedCategory = string.IsNullOrWhiteSpace(category) ? "Unknown" : category.Trim();
+        string key = BuildRebasedKey(normalizedCategory, normalizedOriginal, normalizedResolved);
+        DateTime nowUtc = DateTime.UtcNow;
+
+        lock (_rebasedAssetLock)
+        {
+            if (!_rebasedAssets.TryGetValue(key, out var aggregate))
+            {
+                aggregate = new RebasedAssetAggregate
+                {
+                    OriginalPath = normalizedOriginal,
+                    ResolvedPath = normalizedResolved,
+                    Category = normalizedCategory,
+                    FirstSeenUtc = nowUtc
+                };
+                _rebasedAssets[key] = aggregate;
+            }
+
+            aggregate.Count++;
+            aggregate.LastSeenUtc = nowUtc;
+            if (!string.IsNullOrWhiteSpace(context))
+                aggregate.LastContext = context;
+        }
+
+        System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 1);
+    }
+
+    public static IReadOnlyList<RebasedAssetInfo> GetTrackedRebasedAssets()
+    {
+        lock (_rebasedAssetLock)
+        {
+            if (_rebasedAssets.Count == 0)
+                return Array.Empty<RebasedAssetInfo>();
+
+            var snapshot = new RebasedAssetInfo[_rebasedAssets.Count];
+            int index = 0;
+            foreach (var aggregate in _rebasedAssets.Values)
+            {
+                snapshot[index++] = new RebasedAssetInfo
+                {
+                    OriginalPath = aggregate.OriginalPath,
+                    ResolvedPath = aggregate.ResolvedPath,
+                    Category = aggregate.Category,
+                    LastContext = aggregate.LastContext,
+                    Count = aggregate.Count,
+                    FirstSeenUtc = aggregate.FirstSeenUtc,
+                    LastSeenUtc = aggregate.LastSeenUtc
+                };
+            }
+
+            return snapshot;
+        }
+    }
+
+    public static void ClearTrackedRebasedAssets()
+    {
+        lock (_rebasedAssetLock)
+        {
+            _rebasedAssets.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Returns true once when new missing/rebased asset diagnostics have been recorded since the
+    /// last call. The editor uses this to auto-open the Missing Assets panel after a load.
+    /// </summary>
+    public static bool ConsumePendingDisplayFlag()
+        => System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 0) != 0;
+
+    private static string BuildRebasedKey(string category, string originalPath, string resolvedPath)
+        => string.Concat(category, "::", originalPath, "->", resolvedPath);
 
     public static IReadOnlyList<MissingAssetInfo> GetTrackedMissingAssets()
     {

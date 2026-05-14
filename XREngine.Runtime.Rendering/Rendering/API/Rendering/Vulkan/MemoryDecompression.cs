@@ -93,7 +93,7 @@ public unsafe partial class VulkanRenderer
         {
             using var scope = NewCommandScope();
             _nvMemoryDecompression!.CmdDecompressMemory(scope.CommandBuffer, regions);
-            Engine.Rendering.Stats.RecordRtxIoDecompression(compressedBytes, decompressedBytes, stopwatch.Elapsed);
+            RuntimeEngine.Rendering.Stats.RecordRtxIoDecompression(compressedBytes, decompressedBytes, stopwatch.Elapsed);
             return true;
         }
         catch (Exception ex)
@@ -123,7 +123,7 @@ public unsafe partial class VulkanRenderer
                 indirectCommandsAddress,
                 indirectCommandsCountAddress,
                 stride);
-            Engine.Rendering.Stats.RecordRtxIoDecompression(0, 0, stopwatch.Elapsed);
+            RuntimeEngine.Rendering.Stats.RecordRtxIoDecompression(0, 0, stopwatch.Elapsed);
             return true;
         }
         catch (Exception ex)

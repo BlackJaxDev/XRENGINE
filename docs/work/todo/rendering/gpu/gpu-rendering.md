@@ -1,11 +1,13 @@
 # GPU-Driven Rendering Pipeline — Zero-Readback Architecture TODO
 
-Last Updated: 2026-05-08
-Status: Active development - core pipeline functional, LOD system and zero-readback completion remain.
+Last Updated: 2026-05-13
+Status: Active development - Phase C SoA scene database is in place; Phase D bindless/descriptor material indirection and meshlet atlas integration remain.
 
 Update 2026-05-08: default mesh passes now resolve an explicit `EMeshSubmissionStrategy`. `GpuIndirectInstrumented` owns diagnostic readbacks and CPU safety-net fallback; `GpuIndirectZeroReadback` owns the production material-tier scatter path and must not perform steady-state CPU readbacks. See [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md).
 
 Update 2026-05-08: zero-readback material dispatch now exposes `EZeroReadbackMaterialDrawPath` as a setting/env-var controlled selector: `FullBucketScan`, `ActiveBucketList`, `MaterialTable`, and `BindlessMaterialTable`. The active-list and material-table paths intentionally read back compact active bucket IDs so they can be profiled separately from the original full bucket scan; the bindless path is capability-gated and still needs real GL texture handle population before it can become texture-correct.
+
+Update 2026-05-13: Phase C split the renderable data model. `GPUScene` owns `DrawMetadataBuffer`, `BoundsBuffer`, `TransformBuffer`, `PrevTransformBuffer`, `SkinningPaletteBuffer`, and `MaterialStateBuffer`; `GPUIndirectRenderCommand` is now a compact 20-lane compatibility envelope. Culling reads draw metadata + bounds, material scatter buckets by `StateClassID`, and vertex shaders fetch model matrices from `TransformBuffer[TransformID]`.
 
 ## Executive Summary
 
@@ -44,14 +46,14 @@ Both paths share the same scene representation (`GPUScene`), BVH, and culling in
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │ CPU: GPUScene — command add/remove/update (subdata to GPU)        │
-│   192-byte GPUIndirectRenderCommand per renderable                │
-│   (WorldMatrix, PrevWorldMatrix, BoundingSphere, MeshID,          │
-│    SubmeshID, MaterialID, InstanceCount, RenderPass,              │
-│    ShaderProgramID, RenderDistance, LayerMask, LODLevel, Flags)   │
+│   Phase C SoA scene database per renderable                       │
+│   DrawMetadata + Bounds + Transform/PrevTransform buffers         │
+│   Compact 20-lane GPUIndirectRenderCommand compatibility output   │
+│   StateClassID is the primary material batching key               │
 └───────────────────────┬───────────────────────────────────────────┘
                         │ PushSubData
            ┌────────────▼─────────────┐
-           │ bvh_aabb_from_commands   │  Sphere → AABB extraction
+           │ bvh_aabb_from_commands   │  BoundsBuffer → AABB extraction
            └────────────┬─────────────┘
            ┌────────────▼─────────────┐
            │ bvh_build (4-stage LBVH) │  Morton sort → leaf → internal → parent → root
@@ -81,7 +83,7 @@ Both paths share the same scene representation (`GPUScene`), BVH, and culling in
            │   Detect material boundaries                  │
            │   Emit DrawElementsIndirectCommand per batch   │
            │   Write BatchRangeBuffer + BatchCountBuffer   │
-           │   Write InstanceTransformBuffer               │
+           │   Write indirect commands with DrawID baseInstance       │
            └────────────┬──────────────────────────────────┘
                         │
            ┌────────────▼──────────────────────────────────┐
@@ -127,7 +129,7 @@ Meshes are appended incrementally with ref counting. Power-of-2 growth, `PushSub
 | Shader | Purpose | Dispatch |
 |--------|---------|----------|
 | `GPURenderResetCounters.comp` | Zero atomic counters | 1×1×1 |
-| `bvh_aabb_from_commands.comp` | Sphere→AABB extraction | N commands |
+| `bvh_aabb_from_commands.comp` | BoundsBuffer→AABB extraction | N commands |
 | `bvh_build.comp` | 4-stage LBVH construction | N commands |
 | `bvh_refit.comp` | Bottom-up bounds propagation | N commands |
 | `bvh_sah_refine.comp` | Shallow node SAH refinement | conditional |
@@ -135,9 +137,10 @@ Meshes are appended incrementally with ref counting. Power-of-2 growth, `PushSub
 | `GPURenderCulling.comp` | Flat frustum cull (non-BVH) | N commands |
 | `GPURenderCullingSoA.comp` | SoA variant of frustum cull | N commands |
 | `GPURenderHiZSoACulling.comp` | Hi-Z occlusion + frustum | N commands |
-| `GPURenderBuildKeys.comp` | Sort key extraction | N visible |
+| `GPURenderBuildKeys.comp` | Sort key extraction; `StateClassID` is the material-state primary key | N visible |
 | `GPURenderRadixIndexSort.comp` | 4-pass LSD radix sort | N visible |
-| `GPURenderBuildBatches.comp` | Batch boundary detection + indirect command emit | 1×1×1 |
+| `GPURenderMaterialScatter.comp` | Zero-readback scatter into per-StateClass indirect buckets | N visible |
+| `GPURenderBuildBatches.comp` | Debug-only batch boundary inspection + indirect command emit | 1×1×1 |
 | `GPURenderBuildHotCommands.comp` | Optional SoA compaction | N visible |
 | `GPURenderCopyCount3.comp` | Copy count for parameter buffer | 1×1×1 |
 | `GPURenderCopyCommands.comp` | Command staging copy | N commands |
@@ -145,12 +148,14 @@ Meshes are appended incrementally with ref counting. Power-of-2 growth, `PushSub
 
 ### Draw Submission (Current)
 
-`HybridRenderingManager.RenderTraditionalBatched()`:
+`GpuIndirectZeroReadback`:
 
-1. Reads batch ranges from GPU → `List<DrawBatch>` (CPU readback)
-2. Coalesces contiguous same-material batches
-3. For each batch: resolves `XRMaterial`, binds shader program, sets uniforms, calls `MultiDrawElementsIndirectWithOffset`
-4. Supports `MultiDrawElementsIndirectCount` via `GL_ARB_indirect_parameters` / `VK_KHR_draw_indirect_count` when batch ranges are NOT used
+1. Culling writes compact visible commands whose `baseInstance` is the stable `DrawID`.
+2. `GPURenderMaterialScatter.comp` buckets visible draws by `StateClassID` and mesh tier.
+3. The CPU loops known state-class buckets and issues `MultiDrawElementsIndirectCount` with GPU-written counts.
+4. Vertex shaders resolve `DrawMetadata[DrawID].TransformID` and fetch the model matrix from `TransformBuffer`.
+
+`GpuIndirectInstrumented` keeps debug-only readback/batch-inspection paths for bring-up, and `CpuDirect` remains the explicit CPU traversal path.
 
 ### Extension Support
 
@@ -165,7 +170,7 @@ Meshes are appended incrementally with ref counting. Power-of-2 growth, `PushSub
 
 ## CPU Readback Audit
 
-Every site where the CPU reads data back from the GPU in the rendering hot path.
+Historical audit of sites where the CPU read data back from the GPU in the rendering hot path. Phase B moved the shipping `GpuIndirectZeroReadback` path off these reads; remaining readbacks are diagnostic/fallback work or explicit follow-ups called out in the production roadmap.
 
 ### Critical Path Readbacks (Always Executed)
 
@@ -245,12 +250,12 @@ The LOD infrastructure is CPU-side scaffolding only. The GPU pipeline renders ex
 | `MeshletCulling.task` shader | Complete | Per-meshlet frustum culling, atomic visibility counter |
 | `MeshletRender.mesh` shader | Complete | Cooperative vertex/triangle output, MVP transform |
 | `MeshletShading.fs` shader | Complete | PBR shading with directional light |
-| `VPRC_RenderMeshesPassMeshlet` | **STUBBED** | Logs warning, falls back to traditional path |
+| `VPRC_RenderMeshesPassMeshlet` | Wired | Dispatches the GPU meshlet path with `UseMeshletPipeline=true`; stale "stubbed" audit fixed 2026-05-13. |
 | `HasMeshShaderExt` capability flag | Complete | Runtime detection of `GL_NV_mesh_shader` |
 
 ### What Does NOT Exist
 
-- **Meshlet rendering integration** — `VPRC_RenderMeshesPassMeshlet` is a stub, no actual meshlet rendering occurs in the pipeline
+- **Meshlet atlas integration** — `VPRC_RenderMeshesPassMeshlet` is wired, but meshlet descriptors still live outside the primary atlas/SoA scene database
 - **Meshlet occlusion culling** — task shader does frustum only, no Hi-Z or per-meshlet occlusion
 - **Meshlet LOD** — no cluster group / DAG-based LOD for meshlets
 - **Meshlet BVH** — meshlet culling uses flat iteration, not BVH traversal
@@ -666,7 +671,7 @@ Primary files:
 
 #### 10B — Implement VPRC_RenderMeshesPassMeshlet
 
-- [ ] Replace stub with actual meshlet dispatch.
+- [x] Replace stale stub path with actual meshlet dispatch. Done 2026-05-13: the pass no longer runs the CPU mesh pass first and now exposes meshlet correctness directly.
 - [ ] After LOD selection, expand visible commands into meshlet ranges.
 - [ ] Use `DrawMeshTasksIndirectCount` (or `DrawMeshTasksIndirect` with GPU-written count) to dispatch task shader groups.
 - [ ] Task shader: per-meshlet frustum + occlusion cull (already exists in `MeshletCulling.task`, needs Hi-Z integration).
@@ -699,7 +704,7 @@ Primary files:
 Acceptance criteria:
 
 - Meshlet path renders correctly on NV mesh shader hardware.
-- No fallback to traditional path when mesh shaders are available and enabled.
+- No CPU pre-pass fallback masking meshlet correctness when mesh shaders are available and enabled.
 - Meshlet path shares BVH cull and LOD selection with traditional path.
 - Performance is equal or better than traditional path on mesh-shader-capable GPUs.
 
@@ -830,7 +835,7 @@ Acceptance criteria:
 
 ### Pending Tests — Phase 7 (Zero-Readback)
 
-- [ ] `ZeroReadback_ShippingMode_ZeroGpuReadbackBytes_FullFrame`
+- [x] `ZeroReadback_ShippingMode_ZeroGpuReadbackBytes_FullFrame`
 - [ ] `ZeroReadback_PerMaterialScatter_CorrectDrawCounts`
 - [ ] `ZeroReadback_PerMaterialScatter_EmptyMaterial_ZeroDraws`
 - [ ] `ZeroReadback_TransparencyDomains_SplitWithoutReadback`

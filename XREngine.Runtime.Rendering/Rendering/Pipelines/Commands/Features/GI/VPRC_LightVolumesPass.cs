@@ -32,7 +32,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()
-            => Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
+            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
             {
                 DefaultRenderPipeline pipeline => pipeline.UsesLightVolumes,
                 DefaultRenderPipeline2 pipeline => pipeline.UsesLightVolumes,

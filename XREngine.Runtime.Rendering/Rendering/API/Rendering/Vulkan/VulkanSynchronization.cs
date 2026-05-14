@@ -36,7 +36,7 @@ public unsafe partial class VulkanRenderer
 
     private void InitializeSynchronizationBackend()
     {
-        EVulkanSynchronizationBackend requestedBackend = Engine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
+        EVulkanSynchronizationBackend requestedBackend = RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
         if (requestedBackend == EVulkanSynchronizationBackend.Sync2 && SupportsSynchronization2)
         {
             _activeSynchronizationBackend = EVulkanSynchronizationBackend.Sync2;
@@ -85,7 +85,7 @@ public unsafe partial class VulkanRenderer
             : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
 
         if (result == Result.Success)
-            Engine.Rendering.Stats.RecordVulkanQueueSubmit();
+            RuntimeEngine.Rendering.Stats.RecordVulkanQueueSubmit();
 
         return result;
     }

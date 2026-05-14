@@ -41,6 +41,24 @@ The drop log records only frames slower than the threshold, so "0 drops" can mea
 
 Goal: GPU-indirect paths within 20% of CpuDirect fps on B1 (two static Sponzas) and B2 (Sponzas + 100 skinned avatars). On B1 (Debug) this is now satisfied; B2 untested.
 
+### Release acceptance targets (A5 baseline)
+
+All numbers measured via `Measurement-Baseline-Release-All` (Release build, 25 s warmup, 60 s capture, cold shader-program cache per variant). A run is acceptable only if **every** target below is met for the named strategy.
+
+| Strategy | Workload | Median fps | p10 fps | Drop events / 60 s | Single-chunk upload spikes |
+| --- | --- | ---: | ---: | ---: | --- |
+| CpuDirect | B1 (two static Sponzas) | ≥ 80 | ≥ 60 | < 30 | No `[GLUploadQueue] single-chunk upload exceeded hard budget` warnings |
+| GpuIndirectInstrumented | B1 | ≥ 64 (within 20% of CpuDirect) | ≥ 48 | < 60 | Same |
+| GpuIndirectZeroReadback | B1 | ≥ 64 | ≥ 48 | < 60 | Same |
+| CpuDirect | B2 (Sponzas + 100 skinned avatars) | ≥ 60 | ≥ 45 | < 60 | Same |
+| GpuIndirect* | B2 | ≥ 48 (within 20% of CpuDirect) | ≥ 36 | < 90 | Same |
+
+Secondary signals (informational, not blocking):
+
+- `profiler-render-stalls.log` shows no stall > 50 ms during the capture window.
+- `profiler-main-thread-invokes.log` shows no per-second spike > 200 invokes.
+- `XRWindow.ProcessPendingUploads` cumulative time across drops < 1.0 s over the capture window.
+
 ## 2. Submission Paths
 
 | Path | Per-frame cost driver |
@@ -79,7 +97,16 @@ Run from VS Code:
 - `Measurement-Baseline-CpuDirect`
 - `Measurement-Baseline-GpuIndirectInstrumented`
 - `Measurement-Baseline-GpuIndirectZeroReadback`
+- `Measurement-Baseline-Release-All` — builds Release and runs all three strategies through `Tools/Measure-MeshSubmissionBaselines.ps1 -Configuration Release`.
 - `Measurement-PushSubDataBreakdown-GpuIndirectInstrumented` (sets `XRE_PUSHSUBDATA_BREAKDOWN=1`)
+
+Release command-line target:
+
+```powershell
+pwsh Tools/Measure-MeshSubmissionBaselines.ps1 -Configuration Release -WarmupSec 25 -CaptureSec 60
+```
+
+The measurement script launches one editor process per strategy and clears the OpenGL shader-program binary cache between variants by default. Use `-NoClearCachesBetweenVariants` only when intentionally measuring warm-cache behavior.
 
 Logs land in `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`:
 
@@ -171,7 +198,10 @@ shader-cache entries (per `profiler-render-stalls.log`).
   scene-load.
 - **C-MEAS-1** Rewrite `Tools/Diagnose-ZeroReadbackHz.ps1` to clear
   caches between variants and validate env-var parsing so the
-  contamination cannot recur. Single-process per variant.
+  contamination cannot recur. Single-process per variant. **Done
+  2026-05-13:** `None` was replaced with `Disabled`; enum overrides now
+  validate before launch; OpenGL shader-program cache clears between
+  variants unless `-NoClearCachesBetweenVariants` is set.
 
 **Files touched during this diagnosis** (kept as instrumentation,
 expected to be reverted/cleaned after C-DRP-1 lands):
@@ -663,19 +693,15 @@ Todos:
   [RenderCommandCollection.cs](../../../../XREngine.Runtime.Rendering/Rendering/Commands/RenderCommandCollection.cs)
   and the CpuDirect+GpuHiZ branch in
   [VisualScene3D.ShouldMaintainCpuGpuCommandMirror](../../../../XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs#L204).
-- [ ] **C-CPU-3** (scaffolded; rasterizer deferred): CPU software-rasterizer
-  occluder pass (Masked SOC port) for occluder-driven cull without
-  query latency. **Scaffold landed**:
+- [x] **C-CPU-3**: CPU software-rasterizer occluder pass (Masked SOC-style)
+  for occluder-driven cull without query latency. Implemented:
   [CpuSoftwareOcclusionCuller.cs](../../../../XREngine.Runtime.Rendering/Rendering/Occlusion/CpuSoftwareOcclusionCuller.cs)
-  with `BeginFrame`/`SubmitOccluder`/`TestVisible` API, opt-in via
+  with `BeginFrame`/`SubmitOccludersFromOpaqueCommands`/`TestVisible` API, opt-in via
   `Engine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling` /
-  `XRE_CPU_SOC_OCCLUSION=1` env override, telemetry counters
-  `OcclusionTelemetry.CpuSocTested` / `CpuSocCulled`. Rasterizer body is
-  intentionally a no-op (`TestVisible` returns true conservatively); a
-  faithful Masked SOC port is multi-thousand lines of SIMD-heavy code
-  and is the follow-up. Wiring into cull decision sites and occluder
-  geometry tagging is also pending. Lower priority than C-GPU-* items
-  because hardware queries cover most cases.
+  `XRE_CPU_SOC_OCCLUSION=1` env override, scalar raster/AABB tests,
+  occluder self-bypass via `StableQueryKey`, telemetry counters, and
+  meshlet command visibility masking. The AVX2 setting is present for a
+  future SIMD fast path; scalar remains the correctness path.
 - [x] **C-CPU-4**: Stable per-command identity for CPU occlusion queries.
   Added `RenderCommand.StableQueryKey` (uint, assigned at construction
   via `Interlocked.Increment`) in

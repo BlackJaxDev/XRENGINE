@@ -27,7 +27,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool ClearStencil { get; set; } = true;
         public bool CullWithFrustum { get; set; } = true;
         public bool CollectMirrors { get; set; }
-        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = Engine.Rendering.ResolveMeshSubmissionStrategy();
+        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
         public bool GPUDispatch
         {
             get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
@@ -53,7 +53,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             using var captureScope = VPRCRenderTargetHelpers.PushSceneCapturePass();
             using var bindScope = _targetFbo.BindForWritingState();
             if (ClearColor || ClearDepth || ClearStencil)
-                Engine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
+                RuntimeEngine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
 
             RenderCommandCollection commands = _faceCommands ?? instance.MeshRenderCommands;
             VPRCRenderTargetHelpers.RenderPass(instance, commands, faceCamera, RenderPass, extent, extent, MeshSubmissionStrategy);

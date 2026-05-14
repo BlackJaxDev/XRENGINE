@@ -41,7 +41,7 @@ namespace XREngine.Rendering.OpenGL
             private GLRenderProgram? _combinedProgram;
             private GLRenderProgram? _separatedVertexProgram;
             private GLRenderProgram? _forcedGeneratedVertexProgram;
-            private int _shaderConfigVersion = Engine.Rendering.Settings.ShaderConfigVersion;
+            private int _shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
             private XRMaterial? _programMaterialStateKey;
             private long _programMaterialShaderStateRevision;
             private string _lastPrepareResult = "NeverCalled";
@@ -302,8 +302,8 @@ namespace XREngine.Rendering.OpenGL
                 var meshRenderer = Data?.Parent;
                 XRMesh? mesh = meshRenderer?.Mesh;
                 bool buffersReady = AreBuffersReadyForRendering();
-                bool allowSkinning = Engine.Rendering.Settings.AllowSkinning;
-                bool computeSkinningSetting = Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+                bool allowSkinning = RuntimeEngine.Rendering.Settings.AllowSkinning;
+                bool computeSkinningSetting = RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
                 bool computeSkinning = (mesh?.HasSkinning ?? false) && allowSkinning && computeSkinningSetting;
                 Debug.OpenGL(
                     $"[ModelDrawDiag.GL] phase={phase} #{count} phaseLog={phaseCount} glRenderer={_instanceId} renderer='{meshRenderer?.Name ?? "<null>"}' " +
@@ -428,10 +428,10 @@ namespace XREngine.Rendering.OpenGL
 
             private string GetBatchedTextRasterStateSummary()
             {
-                var camera = Engine.Rendering.State.RenderingCamera;
+                var camera = RuntimeEngine.Rendering.State.RenderingCamera;
                 var viewProjection = camera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
                 string cameraName = camera?.Transform.SceneNode?.Name ?? camera?.GetType().Name ?? "<null>";
-                return $"depth={Api.IsEnabled(EnableCap.DepthTest)}, stencil={Api.IsEnabled(EnableCap.StencilTest)}, scissor={Api.IsEnabled(EnableCap.ScissorTest)}, cull={Api.IsEnabled(EnableCap.CullFace)}, discard={Api.IsEnabled(EnableCap.RasterizerDiscard)}, blend={Api.IsEnabled(EnableCap.Blend)}, area={Engine.Rendering.State.RenderArea}, camera='{cameraName}', vp=({viewProjection.M11:F4},{viewProjection.M22:F4},{viewProjection.M41:F4},{viewProjection.M42:F4})";
+                return $"depth={Api.IsEnabled(EnableCap.DepthTest)}, stencil={Api.IsEnabled(EnableCap.StencilTest)}, scissor={Api.IsEnabled(EnableCap.ScissorTest)}, cull={Api.IsEnabled(EnableCap.CullFace)}, discard={Api.IsEnabled(EnableCap.RasterizerDiscard)}, blend={Api.IsEnabled(EnableCap.Blend)}, area={RuntimeEngine.Rendering.State.RenderArea}, camera='{cameraName}', vp=({viewProjection.M11:F4},{viewProjection.M22:F4},{viewProjection.M41:F4},{viewProjection.M42:F4})";
             }
 
             private static uint GetBufferBindingId(GLDataBuffer? buffer)
@@ -638,8 +638,8 @@ namespace XREngine.Rendering.OpenGL
                         ToGLEnum(ActiveMeshRenderer.TrianglesElementType),
                         null,
                         instances);
-                    Engine.Rendering.Stats.IncrementDrawCalls();
-                    Engine.Rendering.Stats.AddTrianglesRendered((int)(patchControlPoints / 3u * instances));
+                    RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
+                    RuntimeEngine.Rendering.Stats.AddTrianglesRendered((int)(patchControlPoints / 3u * instances));
                 }
 
                 return;
@@ -657,8 +657,8 @@ namespace XREngine.Rendering.OpenGL
                 GLRenderQuery? samplesProbe = ActiveMeshRenderer.BeginBatchedTextSamplesProbe();
                 Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
                 ActiveMeshRenderer.EndBatchedTextSamplesProbe(samplesProbe, instances, triangles);
-                Engine.Rendering.Stats.IncrementDrawCalls();
-                Engine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
+                RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
             }
             else
             {
@@ -677,7 +677,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, lineEbo);
                 Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
-                Engine.Rendering.Stats.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
             }
 
             uint points = pointBuffer?.Data?.ElementCount ?? 0u;
@@ -688,7 +688,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, pointEbo);
                 Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
-                Engine.Rendering.Stats.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
             }
         }
 

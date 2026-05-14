@@ -534,8 +534,8 @@ namespace XREngine.Rendering.OpenGL
                     $"[GLMeshGenerationQueue] Slow renderer prep: result={result}, totalMs={totalMs:F2}, " +
                     $"generateMs={generateMs:F2}, tryPrepareMs={prepareMs:F2}, pending={renderer.Renderer.MeshGenerationQueue.PendingCount}, " +
                     $"priority={renderer.MeshRenderer.GenerationPriority}, generated={renderer.IsGenerated}, prepared={renderer.IsPreparedForRendering}, " +
-                    $"shadowPass={Engine.Rendering.State.IsShadowPass}, directionalAtlasGrouped={Engine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass}, " +
-                    $"pointAtlasGrouped={Engine.Rendering.State.IsPointLightAtlasGroupedShadowPass}, renderer='{renderer.GetDescribingName()}', " +
+                    $"shadowPass={RuntimeEngine.Rendering.State.IsShadowPass}, directionalAtlasGrouped={RuntimeEngine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass}, " +
+                    $"pointAtlasGrouped={RuntimeEngine.Rendering.State.IsPointLightAtlasGroupedShadowPass}, renderer='{renderer.GetDescribingName()}', " +
                     $"mesh='{renderer.Mesh?.Name ?? "<null>"}', material='{renderer.MeshRenderer.Material?.Name ?? "<null>"}'.");
             }
 

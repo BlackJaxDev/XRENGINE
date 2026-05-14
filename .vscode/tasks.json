@@ -18,6 +18,24 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "Build-Editor-Release",
+			"command": "dotnet",
+			"type": "shell",
+			"args": [
+				"build",
+				"${workspaceFolder}/XREngine.Editor/XREngine.Editor.csproj",
+				"-c",
+				"Release",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary"
+			],
+			"group": "build",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": "$msCompile"
+		},
+		{
 			"label": "Build-Server",
 			"command": "dotnet",
 			"type": "shell",
@@ -527,6 +545,25 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Measurement-Baseline-Release-All",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Measure-MeshSubmissionBaselines.ps1",
+				"-Configuration",
+				"Release"
+			],
+			"dependsOn": "Build-Editor-Release",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Measurement-PushSubDataBreakdown-GpuIndirectInstrumented",
 			"type": "shell",
 			"command": "cmd",
@@ -563,7 +600,7 @@
 			"args": [
 				"/d",
 				"/c",
-				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect && set XRE_P3_LOGGING=1 && set XRE_OCCLUSION_CULLING_MODE=None && set XRE_WINDOW_TITLE=XRE Editor (P3 CpuDirect, Occlusion=None) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect && set XRE_P3_LOGGING=1 && set XRE_OCCLUSION_CULLING_MODE=Disabled && set XRE_WINDOW_TITLE=XRE Editor (P3 CpuDirect, Occlusion=Disabled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
 			],
 			"dependsOn": "Build-Editor",
 			"presentation": {
@@ -578,7 +615,7 @@
 			"args": [
 				"/d",
 				"/c",
-				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback && set XRE_P3_LOGGING=1 && set XRE_OCCLUSION_CULLING_MODE=None && set XRE_WINDOW_TITLE=XRE Editor (P3 ZeroReadback, Occlusion=None) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_PROFILER_ENABLED=1 && set XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback && set XRE_P3_LOGGING=1 && set XRE_OCCLUSION_CULLING_MODE=Disabled && set XRE_WINDOW_TITLE=XRE Editor (P3 ZeroReadback, Occlusion=Disabled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
 			],
 			"dependsOn": "Build-Editor",
 			"presentation": {

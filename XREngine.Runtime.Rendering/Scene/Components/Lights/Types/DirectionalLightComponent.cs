@@ -74,7 +74,7 @@ namespace XREngine.Components.Lights
         {
             get
             {
-                if (!Engine.Rendering.Settings.UseDirectionalShadowAtlas)
+                if (!RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
                     return false;
 
                 return ResolveDirectionalSamplingShadowMapFormat().DemotionReason != SkipReason.UnsupportedEncoding;
@@ -202,7 +202,7 @@ namespace XREngine.Components.Lights
         {
             base.SetUniforms(program, targetStructName);
 
-            string prefix = targetStructName ?? Engine.Rendering.Constants.LightsStructName;
+            string prefix = targetStructName ?? RuntimeEngine.Rendering.Constants.LightsStructName;
             string flatPrefix = $"{prefix}.";
             string basePrefix = $"{prefix}.Base.";
 

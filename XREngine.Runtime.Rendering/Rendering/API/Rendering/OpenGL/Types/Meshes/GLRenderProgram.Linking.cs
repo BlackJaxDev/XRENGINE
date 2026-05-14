@@ -36,7 +36,7 @@ namespace XREngine.Rendering.OpenGL
             private GLShader GetAndGenerate(XRShader data)
             {
                 GLShader shader = Renderer.GenericToAPI<GLShader>(data)!;
-                //Engine.EnqueueMainThreadTask(shader.Generate);
+                //RuntimeEngine.EnqueueMainThreadTask(shader.Generate);
                 ShaderCached(shader);
                 return shader;
             }
@@ -114,7 +114,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void UseRequested(XRRenderProgram program)
             {
-                if (Engine.InvokeOnMainThread(() => UseRequested(program), "GLRenderProgram.UseRequested"))
+                if (RuntimeEngine.InvokeOnMainThread(() => UseRequested(program), "GLRenderProgram.UseRequested"))
                     return;
 
                 if (!IsLinked)
@@ -128,7 +128,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void LinkRequested(XRRenderProgram program)
             {
-                if (Engine.InvokeOnMainThread(() => LinkRequested(program), "GLRenderProgram.LinkRequested"))
+                if (RuntimeEngine.InvokeOnMainThread(() => LinkRequested(program), "GLRenderProgram.LinkRequested"))
                     return;
 
                 if (!Link())
@@ -565,16 +565,16 @@ namespace XREngine.Rendering.OpenGL
                 bool isCached = false;
                 BinaryProgram binProg = default;
                 GLProgramCompileLinkQueue.ShaderInput[]? compileInputs = null;
-                using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup", ProfilerScopeKind.OneOffInvoke))
+                using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheLookup", ProfilerScopeKind.OneOffInvoke))
                 {
-                    using (Engine.Profiler.Start("GLRenderProgram.Link.CalcHash", ProfilerScopeKind.OneOffInvoke))
+                    using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CalcHash", ProfilerScopeKind.OneOffInvoke))
                         hash = CalcShaderSourceHash();
 
                     bool bypassBinaryCache = ShouldBypassBinaryCacheForLiveUberVariant();
-                    if (!bypassBinaryCache && Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                    if (!bypassBinaryCache && RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching)
                     {
                         cacheKey = BuildBinaryCacheKey(hash);
-                        using (Engine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup", ProfilerScopeKind.OneOffInvoke))
+                        using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup", ProfilerScopeKind.OneOffInvoke))
                             isCached = BinaryCache?.TryGetValue(cacheKey, out binProg) ?? false;
                     }
                 }
@@ -615,7 +615,7 @@ namespace XREngine.Rendering.OpenGL
                 if (Volatile.Read(ref _linkPreparationPendingGeneration) == generation)
                     return;
 
-                if (!Engine.IsRenderThread)
+                if (!RuntimeEngine.IsRenderThread)
                 {
                     try
                     {
@@ -703,7 +703,7 @@ namespace XREngine.Rendering.OpenGL
 
             private bool ShouldDeferLinkPreparationOnRenderThread()
             {
-                if (!Engine.IsRenderThread || _linkDataPrepared || IsLinkPreparationPending || _shaderCache.IsEmpty)
+                if (!RuntimeEngine.IsRenderThread || _linkDataPrepared || IsLinkPreparationPending || _shaderCache.IsEmpty)
                     return false;
 
                 if (Renderer.ProgramCompileLinkQueue is { IsAvailable: true })
@@ -712,7 +712,7 @@ namespace XREngine.Rendering.OpenGL
                 if (Renderer.UseDriverParallelShaderCompile)
                     return true;
 
-                return Engine.Rendering.Settings.AsyncProgramBinaryUpload &&
+                return RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload &&
                        Renderer.ProgramBinaryUploadQueue is { IsAvailable: true };
             }
 
@@ -923,7 +923,7 @@ namespace XREngine.Rendering.OpenGL
                     if (delete.Renderer.ShouldOrphanGLHandlesForShutdown)
                         continue;
 
-                    if (Engine.Rendering.State.RenderFrameId < delete.EarliestFrameId)
+                    if (RuntimeEngine.Rendering.State.RenderFrameId < delete.EarliestFrameId)
                     {
                         DeferredProgramHandleDeletes.Enqueue(delete);
                         break;
@@ -955,7 +955,7 @@ namespace XREngine.Rendering.OpenGL
                 DeferredProgramHandleDeletes.Enqueue(new DeferredProgramHandleDelete(
                     renderer,
                     programId,
-                    Engine.Rendering.State.RenderFrameId + 2UL));
+                    RuntimeEngine.Rendering.State.RenderFrameId + 2UL));
             }
 
             private static void ProcessDeferredAsyncLinkCleanups(int maxPrograms)
@@ -995,7 +995,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     case EAsyncLinkPhase.Compiling:
                     {
-                        using var prof = Engine.Profiler.Start("GLRenderProgram.ContinueAsyncLink.PollCompile", ProfilerScopeKind.ConditionalLoop);
+                        using var prof = RuntimeEngine.Profiler.Start("GLRenderProgram.ContinueAsyncLink.PollCompile", ProfilerScopeKind.ConditionalLoop);
 
                         bool anyPending = false;
                         bool anyFailed = false;
@@ -1105,7 +1105,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                     case EAsyncLinkPhase.Linking:
                     {
-                        using var prof = Engine.Profiler.Start("GLRenderProgram.ContinueAsyncLink.PollLink", ProfilerScopeKind.ConditionalLoop);
+                        using var prof = RuntimeEngine.Profiler.Start("GLRenderProgram.ContinueAsyncLink.PollLink", ProfilerScopeKind.ConditionalLoop);
 
                         uint linkedProgramId = _asyncLinkedProgramId != 0 ? _asyncLinkedProgramId : bindingId;
 
@@ -1817,8 +1817,8 @@ namespace XREngine.Rendering.OpenGL
                     binaryBytes,
                     binaryFormat ?? "<none>",
                     fingerprint ?? _activeBuildFingerprint ?? "<none>",
-                    Engine.Rendering.State.RenderFrameId,
-                    Engine.IsRenderThread,
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    RuntimeEngine.IsRenderThread,
                     FormatRenderingDetail(detail));
             }
 
@@ -1899,7 +1899,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void LogRenderingProgramGlCall(string callName, uint programId, double elapsedMilliseconds, string? detail = null)
             {
-                bool renderThread = Engine.IsRenderThread;
+                bool renderThread = RuntimeEngine.IsRenderThread;
                 Debug.Rendering(
                     EOutputVerbosity.Verbose,
                     false,
@@ -1927,7 +1927,7 @@ namespace XREngine.Rendering.OpenGL
                 action();
                 double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
 
-                bool renderThread = Engine.IsRenderThread;
+                bool renderThread = RuntimeEngine.IsRenderThread;
                 Debug.Rendering(
                     EOutputVerbosity.Verbose,
                     false,
@@ -2377,7 +2377,7 @@ namespace XREngine.Rendering.OpenGL
 
             public bool Link(bool force = false, bool nonBlocking = false)
             {
-                using var prof = Engine.Profiler.Start("GLRenderProgram.Link", ProfilerScopeKind.ConditionalLoop);
+                using var prof = RuntimeEngine.Profiler.Start("GLRenderProgram.Link", ProfilerScopeKind.ConditionalLoop);
 
                 if (IsLinked && !_replacementProgramPending)
                     return true;
@@ -2466,7 +2466,7 @@ namespace XREngine.Rendering.OpenGL
                             AdoptLinkedBuildProgram(pendingId2);
                             IsLinked = true;
                             long reflectionStart = Stopwatch.GetTimestamp();
-                            using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
+                            using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
                             CacheActiveUniforms();
                             double reflectionMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - reflectionStart);
                             CacheBinary(pendingId2);
@@ -2583,19 +2583,19 @@ namespace XREngine.Rendering.OpenGL
                     cacheKey = null;
                     if (!_hashComputed)
                     {
-                        using (Engine.Profiler.Start("GLRenderProgram.Link.CacheLookup", ProfilerScopeKind.OneOffInvoke))
+                        using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheLookup", ProfilerScopeKind.OneOffInvoke))
                         {
-                            using (Engine.Profiler.Start("GLRenderProgram.Link.CalcHash", ProfilerScopeKind.OneOffInvoke))
+                            using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CalcHash", ProfilerScopeKind.OneOffInvoke))
                                 Hash = CalcShaderSourceHash();
                         }
                         _hashComputed = true;
                     }
 
                     bool bypassBinaryCache = ShouldBypassBinaryCacheForLiveUberVariant();
-                    if (!bypassBinaryCache && Engine.Rendering.Settings.AllowBinaryProgramCaching)
+                    if (!bypassBinaryCache && RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching)
                     {
                         cacheKey = BuildBinaryCacheKey(Hash);
-                        using (Engine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup", ProfilerScopeKind.OneOffInvoke))
+                        using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup", ProfilerScopeKind.OneOffInvoke))
                             isCached = BinaryCache?.TryGetValue(cacheKey, out binProg) ?? false;
                     }
                 }
@@ -2603,7 +2603,7 @@ namespace XREngine.Rendering.OpenGL
                 if (isCached)
                 {
                     _asyncCompileDuplicateHashWaitPending = false;
-                    using var cacheLoadProf = Engine.Profiler.Start("GLRenderProgram.Link.LoadCachedBinary", ProfilerScopeKind.OneOffInvoke);
+                    using var cacheLoadProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.LoadCachedBinary", ProfilerScopeKind.OneOffInvoke);
                     _cachedProgram = binProg;
                     GLEnum format = binProg.Format;
                     ShaderProgramLifecycleDiagnostics.RecordBinaryCacheHit();
@@ -2623,7 +2623,7 @@ namespace XREngine.Rendering.OpenGL
                     if (TryUseSharedLinkedProgram(binProg))
                         return true;
 
-                    if (!Engine.Rendering.Stats.CanAllocateVram(binProg.Length, 0, out long projectedBytes, out long budgetBytes))
+                    if (!RuntimeEngine.Rendering.Stats.CanAllocateVram(binProg.Length, 0, out long projectedBytes, out long budgetBytes))
                     {
                         Debug.OpenGLWarning($"[VRAM Budget] Skipping cached program binary load for hash {Hash} ({binProg.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes. Deleting from cache.");
                         DeleteFromBinaryShaderCache(binProg.CacheKey, format);
@@ -2632,10 +2632,10 @@ namespace XREngine.Rendering.OpenGL
                     {
                         var uploadQueue = Renderer.ProgramBinaryUploadQueue;
                         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(new OpenGLShaderLinkBackendContext(
-                            Engine.Rendering.Settings.OpenGLShaderLinkStrategy,
-                            Engine.Rendering.Settings.AsyncProgramCompilation,
-                            Engine.Rendering.Settings.AllowBinaryProgramCaching,
-                            Engine.Rendering.Settings.AsyncProgramBinaryUpload,
+                            RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy,
+                            RuntimeEngine.Rendering.Settings.AsyncProgramCompilation,
+                            RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching,
+                            RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload,
                             HasBinaryCacheHit: true,
                             BinaryUploadAvailable: uploadQueue is { IsAvailable: true },
                             BinaryUploadCanEnqueue: uploadQueue is { CanEnqueue: true },
@@ -2726,7 +2726,7 @@ namespace XREngine.Rendering.OpenGL
                             binaryBytes: binProg.Length,
                             binaryFormat: format.ToString());
                         long binaryStart = Stopwatch.GetTimestamp();
-                        using (Engine.Profiler.Start("GLRenderProgram.Link.ProgramBinary", ProfilerScopeKind.OneOffInvoke))
+                        using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.ProgramBinary", ProfilerScopeKind.OneOffInvoke))
                         {
                             fixed (byte* ptr = binProg.Binary)
                             {
@@ -2839,12 +2839,12 @@ namespace XREngine.Rendering.OpenGL
                         PublishBackendStatus(
                             EShaderProgramBackendStage.CacheMiss,
                             "BinaryCache",
-                            Engine.Rendering.Settings.AllowBinaryProgramCaching ? "binary cache miss" : "binary cache disabled",
+                            RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching ? "binary cache miss" : "binary cache disabled",
                             fingerprint: cacheKey);
                         LogRenderingProgramBuildEvent(
                             "BINARY_CACHE_MISS",
                             "BinaryCache",
-                            Engine.Rendering.Settings.AllowBinaryProgramCaching ? "binary cache miss" : "binary cache disabled",
+                            RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching ? "binary cache miss" : "binary cache disabled",
                             cacheKey,
                             bindingId,
                             _preparedCompileInputs);
@@ -2900,7 +2900,7 @@ namespace XREngine.Rendering.OpenGL
                     // hazards, which fall through to the synchronous path below.
                     bool wantsSharedSourceInputs = compileQueue is { IsAvailable: true } &&
                         (Renderer.UseSharedContextProgramCompileLinkQueue ||
-                         Engine.Rendering.Settings.OpenGLShaderLinkStrategy == EOpenGLShaderLinkStrategy.SharedContext ||
+                         RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy == EOpenGLShaderLinkStrategy.SharedContext ||
                          Renderer.UseDriverParallelShaderCompile ||
                          isKnownAsyncLinkHazard);
                     if (wantsSharedSourceInputs && inputs is null)
@@ -2924,10 +2924,10 @@ namespace XREngine.Rendering.OpenGL
                         ShouldPreferSharedContextForLargeSource(inputs);
 
                     OpenGLShaderLinkBackendSelection sourceSelection = OpenGLShaderLinkBackendSelector.Select(new OpenGLShaderLinkBackendContext(
-                        Engine.Rendering.Settings.OpenGLShaderLinkStrategy,
-                        Engine.Rendering.Settings.AsyncProgramCompilation,
-                        Engine.Rendering.Settings.AllowBinaryProgramCaching,
-                        Engine.Rendering.Settings.AsyncProgramBinaryUpload,
+                        RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy,
+                        RuntimeEngine.Rendering.Settings.AsyncProgramCompilation,
+                        RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching,
+                        RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload,
                         HasBinaryCacheHit: false,
                         BinaryUploadAvailable: Renderer.ProgramBinaryUploadQueue is { IsAvailable: true },
                         BinaryUploadCanEnqueue: Renderer.ProgramBinaryUploadQueue is { CanEnqueue: true },
@@ -3117,7 +3117,7 @@ namespace XREngine.Rendering.OpenGL
                         inputs);
 
                     long sourceCompileStart = Stopwatch.GetTimestamp();
-                    using (Engine.Profiler.Start("GLRenderProgram.Link.GenerateShaders", ProfilerScopeKind.OneOffInvoke))
+                    using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.GenerateShaders", ProfilerScopeKind.OneOffInvoke))
                     {
                         if (TryResolveUberVariantHash(out ulong variantHash))
                             BeginUberBackendCompileTracking(variantHash);
@@ -3126,7 +3126,7 @@ namespace XREngine.Rendering.OpenGL
                         {
                             shader.PrepareCompileVariant(Data.Separable);
                             if (shader.Data.GenerateAsync)
-                                Engine.EnqueueMainThreadTask(shader.Generate);
+                                RuntimeEngine.EnqueueMainThreadTask(shader.Generate);
                             else
                                 shader.Generate();
                         }
@@ -3190,7 +3190,7 @@ namespace XREngine.Rendering.OpenGL
                     List<uint> attachedShaderIds = [];
                     bool noErrors = true;
                     bool sourceBuildFailed = false;
-                    using (Engine.Profiler.Start("GLRenderProgram.Link.AttachShaders", ProfilerScopeKind.OneOffInvoke))
+                    using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.AttachShaders", ProfilerScopeKind.OneOffInvoke))
                     {
                         foreach (GLShader shader in shaderCache)
                         {
@@ -3222,7 +3222,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         BeginUberBackendLinkTracking(compileMilliseconds);
                         long linkStartTimestamp = Stopwatch.GetTimestamp();
-                        using var linkProf = Engine.Profiler.Start("GLRenderProgram.Link.DriverLinkProgram", ProfilerScopeKind.OneOffInvoke);
+                        using var linkProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.DriverLinkProgram", ProfilerScopeKind.OneOffInvoke);
                         EnsureProgramBinaryRetrievableHintForSourceBuild(bindingId, _activeBuildBackend ?? "SynchronousSource");
                         MeasureRenderingProgramGlCall(
                             "glLinkProgram",
@@ -3286,7 +3286,7 @@ namespace XREngine.Rendering.OpenGL
                             AdoptLinkedBuildProgram(bindingId);
                             IsLinked = true;
                             long reflectionStart = Stopwatch.GetTimestamp();
-                            using var uniformsProf = Engine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
+                            using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
                             CacheActiveUniforms();
                             double reflectionMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - reflectionStart);
                             CacheBinary(bindingId);
@@ -3315,11 +3315,11 @@ namespace XREngine.Rendering.OpenGL
                         sourceBuildFailed = true;
                     }
 
-                    using (Engine.Profiler.Start("GLRenderProgram.Link.DetachShaders", ProfilerScopeKind.OneOffInvoke))
+                    using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.DetachShaders", ProfilerScopeKind.OneOffInvoke))
                     {
                         DetachShaders(bindingId, [.. attachedShaderIds]);
                     }
-                    using (Engine.Profiler.Start("GLRenderProgram.Link.DestroyShaderObjects", ProfilerScopeKind.OneOffInvoke))
+                    using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.DestroyShaderObjects", ProfilerScopeKind.OneOffInvoke))
                     {
                         _shaderCache.ForEach(x =>
                         {
@@ -3362,7 +3362,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void Relink()
             {
-                if (Engine.InvokeOnMainThread(Relink, "GLRenderProgram.Relink"))
+                if (RuntimeEngine.InvokeOnMainThread(Relink, "GLRenderProgram.Relink"))
                     return;
 
                 if (IsLinked && TryGetBindingId(out _))

@@ -208,7 +208,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             BloomRect4.Width = (int)(width * 0.0625f);
             BloomRect4.Height = (int)(height * 0.0625f);
 
-            bool useHdr = Engine.Rendering.Settings.OutputHDR;
+            bool useHdr = RuntimeEngine.Rendering.Settings.OutputHDR;
             var internalFormat = useHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
             var sizedInternalFormat = useHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
             var pixelFormat = EPixelFormat.Rgba;
@@ -282,7 +282,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected override void Execute()
         {
             // Scene captures (light probes, reflection probes) don't need bloom.
-            if (Engine.Rendering.State.IsSceneCapturePass)
+            if (RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
             var instance = ActivePipelineInstance;
@@ -459,7 +459,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("BloomThreshold", 0.138f);
             program.Uniform("BloomSoftKnee", 0.5f);
             program.Uniform("BloomIntensity", 0.530f);
-            program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
+            program.Uniform("Luminance", RuntimeEngine.Rendering.Settings.DefaultLuminance);
             program.Uniform("UseKarisAverage", firstLevel);
         }
 

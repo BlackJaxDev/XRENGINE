@@ -121,7 +121,7 @@ public partial class GLTexture2D
             }
 
             long requestedBytes = CalculateTextureVRAMSize(width, height, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
-            if (!Engine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+            if (!RuntimeEngine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
             {
                 Debug.OpenGLWarning($"[VRAM Budget] Skipping 2D texture allocation for '{Data.Name ?? BindingId.ToString()}' ({requestedBytes} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
                 return null;
@@ -129,7 +129,7 @@ public partial class GLTexture2D
 
             if (_allocatedVRAMBytes > 0)
             {
-                Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
                 _allocatedVRAMBytes = 0;
             }
 
@@ -197,7 +197,7 @@ public partial class GLTexture2D
             int storageGeneration = AdvanceStorageGeneration();
 
             _allocatedVRAMBytes = CalculateTextureVRAMSize(width, height, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
-            Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+            RuntimeEngine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
             TextureRuntimeDiagnostics.LogStorageAllocated(
                 RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
                 GetDescribingName(),

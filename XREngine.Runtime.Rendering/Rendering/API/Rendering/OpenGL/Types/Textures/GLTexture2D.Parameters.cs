@@ -87,7 +87,7 @@ public partial class GLTexture2D
             return _supportsTextureFilterAnisotropic.Value;
         }
 
-        string[] extensions = Engine.Rendering.State.OpenGLExtensions;
+        string[] extensions = RuntimeEngine.Rendering.State.OpenGLExtensions;
         bool supported = Array.IndexOf(extensions, TextureFilterAnisotropicExtension) >= 0;
         float driverMax = 1.0f;
         if (supported)

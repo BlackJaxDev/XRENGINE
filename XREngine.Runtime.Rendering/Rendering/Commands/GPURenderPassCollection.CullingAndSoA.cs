@@ -23,7 +23,7 @@ namespace XREngine.Rendering.Commands
 
         // Set true to bypass GPU frustum/flag culling and treat all commands as visible (debug only).
         // Default is OFF; passthrough must be explicitly enabled in debug preferences.
-        public bool ForcePassthroughCulling => Engine.EditorPreferences?.Debug?.ForceGpuPassthroughCulling ?? false;
+        public bool ForcePassthroughCulling => RuntimeEngine.EditorPreferences?.Debug?.ForceGpuPassthroughCulling ?? false;
 
         private enum CullFrameMode
         {
@@ -92,7 +92,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            Engine.Rendering.Stats.RecordGpuReadbackBytes(values.Length * sizeof(uint));
+            RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(values.Length * sizeof(uint));
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
@@ -172,7 +172,7 @@ namespace XREngine.Rendering.Commands
                     if (!buf.IsMapped)
                         return buf.GetDataRawAtIndex<uint>(index);
                     mappedTemporarily = true;
-                    Engine.Rendering.Stats.RecordGpuBufferMapped();
+                    RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
                 }
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
@@ -180,7 +180,7 @@ namespace XREngine.Rendering.Commands
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
                     throw new InvalidOperationException("ReadUIntAt failed - buffer mapped address is null");
-                Engine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
+                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
                 return ((uint*)addr.Pointer)[index];
             }
             finally
@@ -240,7 +240,7 @@ namespace XREngine.Rendering.Commands
                     if (!buf.IsMapped)
                         return buf.GetDataRawAtIndex<uint>(0);
                     mappedTemporarily = true;
-                    Engine.Rendering.Stats.RecordGpuBufferMapped();
+                    RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
                 }
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
@@ -248,7 +248,7 @@ namespace XREngine.Rendering.Commands
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
                     throw new InvalidOperationException("ReadUInt failed - buffer mapped address is null");
-                Engine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
+                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
                 return *((uint*)addr.Pointer);
             }
             finally
@@ -302,7 +302,7 @@ namespace XREngine.Rendering.Commands
 
         private void ResetVisibleCounters()
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.ResetVisibleCounters");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ResetVisibleCounters");
 
             VisibleCommandCount = 0;
             VisibleInstanceCount = 0;
@@ -319,7 +319,7 @@ namespace XREngine.Rendering.Commands
 
         private void UpdateVisibleCountersFromBuffer(XRDataBuffer? countBuffer)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.UpdateVisibleCountersFromBuffer");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.UpdateVisibleCountersFromBuffer");
 
             if (IsCpuReadbackCountDisabledForPass())
             {
@@ -478,8 +478,8 @@ namespace XREngine.Rendering.Commands
                     return;
 
                 cullStopwatch.Stop();
-                Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                    Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Cull,
+                RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                    RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Cull,
                     cullStopwatch.Elapsed);
             }
             
@@ -593,7 +593,7 @@ namespace XREngine.Rendering.Commands
             if (_extractSoAComputeShader is null)
                 return false;
 
-            return Engine.EffectiveSettings.GpuCullingDataLayout switch
+            return RuntimeEngine.EffectiveSettings.GpuCullingDataLayout switch
             {
                 EGpuCullingDataLayout.SoA => true,
                 EGpuCullingDataLayout.Auto => commandCount >= 4096u,
@@ -623,7 +623,7 @@ namespace XREngine.Rendering.Commands
         }
 
         private static void RecordCpuFallbackUsage(uint recoveredCommands)
-            => Engine.Rendering.Stats.RecordGpuCpuFallback(1, (int)Math.Min(recoveredCommands, int.MaxValue));
+            => RuntimeEngine.Rendering.Stats.RecordGpuCpuFallback(1, (int)Math.Min(recoveredCommands, int.MaxValue));
 
         private bool ShouldUsePassthroughCulling()
         {
@@ -658,8 +658,8 @@ namespace XREngine.Rendering.Commands
             if (VulkanFeatureProfile.EnforceStrictNoFallbacks)
                 return false;
 
-            bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
-                || (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+            bool fallbackRequested = (RuntimeEngine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+                || (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging && RuntimeEngine.EffectiveSettings.EnableGpuIndirectCpuFallback);
 
             if (!fallbackRequested)
                 return false;
@@ -693,7 +693,7 @@ namespace XREngine.Rendering.Commands
         /// </remarks>
         private void FrustumCull(GPUScene scene, XRCamera? camera, uint numCommands)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.FrustumCull");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.FrustumCull");
 
             _skipGpuSubmissionThisPass = false;
             _skipGpuSubmissionReason = null;
@@ -774,12 +774,13 @@ namespace XREngine.Rendering.Commands
 
             _cullingComputeShader.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
 
-            // Bind buffers
-            _cullingComputeShader.BindBuffer(src, 0);
-            _cullingComputeShader.BindBuffer(dst, 1);
-            BindStorageBuffer(_cullingComputeShader, _culledCountBuffer!, 2);
+            // Bind Phase C SoA scene buffers.
+            scene.DrawMetadataBuffer.BindTo(_cullingComputeShader, 0);
+            scene.BoundsBuffer.BindTo(_cullingComputeShader, 1);
+            _cullingComputeShader.BindBuffer(dst, 2);
+            BindStorageBuffer(_cullingComputeShader, _culledCountBuffer!, 3);
             if (_cullingOverflowFlagBuffer is not null)
-                _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
+                _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 4);
             if (useHotCommands)
             {
                 _cullingComputeShader.BindBuffer(_sourceHotCommandBuffer!, 9);
@@ -1022,26 +1023,24 @@ namespace XREngine.Rendering.Commands
 
             _bvhFrustumCullProgram.Uniform("UseHotCommands", useHotCommands ? 1u : 0u);
 
-            // Bind command buffers (same as linear culling)
-            _bvhFrustumCullProgram.BindBuffer(src, 0);
-            _bvhFrustumCullProgram.BindBuffer(dst, 1);
-            BindStorageBuffer(_bvhFrustumCullProgram, _culledCountBuffer!, 2);
+            // Bind Phase C SoA scene buffers (metadata + bounds) and compact command output.
+            scene.DrawMetadataBuffer.BindTo(_bvhFrustumCullProgram, 0);
+            scene.BoundsBuffer.BindTo(_bvhFrustumCullProgram, 1);
+            _bvhFrustumCullProgram.BindBuffer(dst, 2);
+            BindStorageBuffer(_bvhFrustumCullProgram, _culledCountBuffer!, 3);
             if (_cullingOverflowFlagBuffer is not null)
-                _bvhFrustumCullProgram.BindBuffer(_cullingOverflowFlagBuffer, 3);
+                _bvhFrustumCullProgram.BindBuffer(_cullingOverflowFlagBuffer, 4);
 
             // Bind BVH buffers
-            _bvhFrustumCullProgram.BindBuffer(bvhNodes, 4);
-            _bvhFrustumCullProgram.BindBuffer(bvhRanges, 5);
-            _bvhFrustumCullProgram.BindBuffer(bvhMorton, 6);
-            if (useHotCommands)
-            {
-                _bvhFrustumCullProgram.BindBuffer(_sourceHotCommandBuffer!, 9);
-                _bvhFrustumCullProgram.BindBuffer(_culledHotCommandBuffer!, 10);
-            }
+            _bvhFrustumCullProgram.BindBuffer(bvhNodes, 5);
+            _bvhFrustumCullProgram.BindBuffer(bvhRanges, 6);
+            _bvhFrustumCullProgram.BindBuffer(bvhMorton, 7);
 
             // Bind optional buffers
             if (_statsBuffer is not null)
                 _bvhFrustumCullProgram.BindBuffer(_statsBuffer, 8);
+            if (useHotCommands)
+                _bvhFrustumCullProgram.BindBuffer(_culledHotCommandBuffer!, 10);
             BindViewSetBuffers(_bvhFrustumCullProgram);
 
             // Dispatch based on leaf count (each thread processes one leaf)
@@ -1132,7 +1131,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="numCommands"></param>
         private void PassthroughCull(GPUScene scene, uint numCommands)
         {
-            using var profilerScope = Engine.Profiler.Start("GpuIndirect.PassthroughCull");
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.PassthroughCull");
 
             _skipGpuSubmissionThisPass = false;
             _skipGpuSubmissionReason = null;
@@ -1503,11 +1502,10 @@ namespace XREngine.Rendering.Commands
             }
 
             _extractSoAComputeShader.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
-            _extractSoAComputeShader.BindBuffer(scene.AllLoadedCommandsBuffer, 0);
-            _extractSoAComputeShader.BindBuffer(spheres, 1);
-            _extractSoAComputeShader.BindBuffer(meta, 2);
-            if (useHotCommands)
-                _extractSoAComputeShader.BindBuffer(_sourceHotCommandBuffer!, 3);
+            scene.DrawMetadataBuffer.BindTo(_extractSoAComputeShader, 0);
+            scene.BoundsBuffer.BindTo(_extractSoAComputeShader, 1);
+            _extractSoAComputeShader.BindBuffer(spheres, 2);
+            _extractSoAComputeShader.BindBuffer(meta, 3);
 
             uint groups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
             _extractSoAComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
@@ -2063,8 +2061,8 @@ namespace XREngine.Rendering.Commands
             //        shader.Sampler(_hiZDepthPyramid.Name ?? "HiZDepthPyramid", _hiZDepthPyramid, 0);
             //}
 
-            shader.BindBuffer(spheres, 0);
-            shader.BindBuffer(meta, 1);
+            scene.DrawMetadataBuffer.BindTo(shader, 0);
+            scene.BoundsBuffer.BindTo(shader, 1);
             shader.BindBuffer(_soaIndexList, 2);
             BindStorageBuffer(shader, _culledCountBuffer, 3);
 

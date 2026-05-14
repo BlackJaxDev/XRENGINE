@@ -67,12 +67,12 @@ public unsafe partial class OpenXRAPI
 
     private void HookEngineTimerEvents()
     {
-        // Hooking is owned by Engine.VRState to ensure OpenVR/OpenXR share the same engine callback entrypoints.
+        // Hooking is owned by RuntimeEngine.VRState to ensure OpenVR/OpenXR share the same engine callback entrypoints.
     }
 
     private void UnhookEngineTimerEvents()
     {
-        // Hooking is owned by Engine.VRState to ensure OpenVR/OpenXR share the same engine callback entrypoints.
+        // Hooking is owned by RuntimeEngine.VRState to ensure OpenVR/OpenXR share the same engine callback entrypoints.
     }
 
     private XRViewport? TryGetSourceViewport()

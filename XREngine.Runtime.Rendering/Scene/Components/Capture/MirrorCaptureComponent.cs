@@ -42,7 +42,7 @@ namespace XREngine.Components.Lights
 
         private void PreRender()
         {
-            XRCamera? camera = Engine.Rendering.State.RenderingCamera;
+            XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
             UpdateRenderTransform(Transform);
             if (camera is not null && ShouldUpdateCamera(camera))
                 UpdateMirrorCamera(camera, true);
@@ -51,7 +51,7 @@ namespace XREngine.Components.Lights
 
         private bool ShouldUpdateCamera(XRCamera camera) => 
             _renderingCameras.TryRemove(camera) ||
-            camera == Engine.VRState.ViewInformation.RightEyeCamera; //Band-aid fix for two-pass VR
+            camera == RuntimeEngine.VRState.ViewInformation.RightEyeCamera; //Band-aid fix for two-pass VR
 
         /// <summary>
         /// All cameras that have captured this mirror, and will need a mirrored camera matrix.
@@ -112,12 +112,12 @@ namespace XREngine.Components.Lights
         {
             base.OnComponentActivated();
             InitializeForCapture();
-            Engine.Time.Timer.SwapBuffers += SwapBuffers;
+            RuntimeEngine.Time.Timer.SwapBuffers += SwapBuffers;
         }
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            Engine.Time.Timer.SwapBuffers -= SwapBuffers;
+            RuntimeEngine.Time.Timer.SwapBuffers -= SwapBuffers;
         }
 
         private uint? _textureWidthOverride = 2560u;
@@ -300,7 +300,7 @@ namespace XREngine.Components.Lights
 
         public void SwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("MirrorCaptureComponent.SwapBuffers");
+            using var sample = RuntimeEngine.Profiler.Start("MirrorCaptureComponent.SwapBuffers");
             (_collectedCameras, _renderingCameras) = (_renderingCameras, _collectedCameras);
             _collectedCameras.Clear();
             Viewport?.SwapBuffers();
@@ -318,9 +318,9 @@ namespace XREngine.Components.Lights
                 (_environmentTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (GetDepthAttachment(), EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
 
-            Engine.Rendering.State.PushMirrorPass();
+            RuntimeEngine.Rendering.State.PushMirrorPass();
             Viewport!.Render(RenderFBO, null, null, false, null);
-            Engine.Rendering.State.PopMirrorPass();
+            RuntimeEngine.Rendering.State.PopMirrorPass();
         }
 
         private IFrameBufferAttachement GetDepthAttachment()

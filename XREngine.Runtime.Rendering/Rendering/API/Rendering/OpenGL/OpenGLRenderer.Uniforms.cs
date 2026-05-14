@@ -75,10 +75,10 @@ public partial class OpenGLRenderer
             return;
 
         // Mirror GLMaterial.SetEngineUniforms minimal camera bits
-        bool stereoPass = Engine.Rendering.State.IsStereoPass;
+        bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
         if (stereoPass)
         {
-            var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
+            var rightCam = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
             PassCameraUniforms(glProgram, camera, EEngineUniform.LeftEyeViewMatrix, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeInverseProjMatrix, EEngineUniform.LeftEyeProjMatrix, EEngineUniform.LeftEyeViewProjectionMatrix);
             PassCameraUniforms(glProgram, rightCam, EEngineUniform.RightEyeViewMatrix, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeInverseProjMatrix, EEngineUniform.RightEyeProjMatrix, EEngineUniform.RightEyeViewProjectionMatrix);
         }
@@ -102,7 +102,7 @@ public partial class OpenGLRenderer
             viewMatrix = camera.Transform.InverseRenderMatrix;
             inverseViewMatrix = camera.Transform.RenderMatrix;
             // Use unjittered projection when rendering motion vectors to match fragment shader expectations
-            bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+            bool useUnjittered = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
             projMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
             inverseProjMatrix = useUnjittered ? camera.InverseProjectionMatrixUnjittered : camera.InverseProjectionMatrix;
             viewProjectionMatrix = useUnjittered ? camera.ViewProjectionMatrixUnjittered : camera.ViewProjectionMatrix;

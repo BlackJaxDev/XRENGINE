@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Silk.NET.OpenGL;
 using XREngine.Data.Rendering;
-using State = XREngine.Engine.Rendering.State;
+using State = XREngine.RuntimeEngine.Rendering.State;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
@@ -95,12 +95,12 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         if (mesh is null || mesh.VertexCount <= 0)
             return;
 
-        bool doSkinning = Engine.Rendering.Settings.CalculateSkinningInComputeShader
+        bool doSkinning = RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
             && mesh.HasSkinning
-            && Engine.Rendering.Settings.AllowSkinning;
+            && RuntimeEngine.Rendering.Settings.AllowSkinning;
         bool doBlendshapes = mesh.BlendshapeCount > 0
-            && Engine.Rendering.Settings.AllowBlendshapes
-            && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || doSkinning);
+            && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+            && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || doSkinning);
         if (!doSkinning && !doBlendshapes)
             return;
 
@@ -112,13 +112,13 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         bool useExternalBoneSource = doSkinning && renderer.HasExternalBoneMatrixSource;
         bool usePackedGlobalBones = doSkinning
             && !useExternalBoneSource
-            && Engine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning
+            && RuntimeEngine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning
             && !renderer.HasGpuDrivenBoneSource;
         bool useSharedBoneBuffers = useExternalBoneSource || usePackedGlobalBones;
-        bool useGlobalBlendWeights = doBlendshapes && Engine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
+        bool useGlobalBlendWeights = doBlendshapes && RuntimeEngine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
 
         bool isInterleaved = mesh.Interleaved;
-        bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && mesh.MaxWeightCount <= 4);
+        bool optimizeTo4Weights = RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && mesh.MaxWeightCount <= 4);
 
         lock (_syncRoot)
         {
@@ -197,10 +197,10 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 activeProgram.Uniform("hasNormals", mesh.HasNormals ? 1 : 0);
                 activeProgram.Uniform("hasTangents", mesh.HasTangents ? 1 : 0);
                 activeProgram.Uniform("hasBlendshapes", doBlendshapes ? 1 : 0);
-                activeProgram.Uniform("allowBlendshapes", Engine.Rendering.Settings.AllowBlendshapes ? 1 : 0);
-                activeProgram.Uniform("absoluteBlendshapePositions", Engine.Rendering.Settings.UseAbsoluteBlendshapePositions ? 1 : 0);
+                activeProgram.Uniform("allowBlendshapes", RuntimeEngine.Rendering.Settings.AllowBlendshapes ? 1 : 0);
+                activeProgram.Uniform("absoluteBlendshapePositions", RuntimeEngine.Rendering.Settings.UseAbsoluteBlendshapePositions ? 1 : 0);
                 activeProgram.Uniform("maxBlendshapeAccumulation", mesh.MaxBlendshapeAccumulation ? 1 : 0);
-                activeProgram.Uniform("useIntegerUniforms", Engine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
+                activeProgram.Uniform("useIntegerUniforms", RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
                 activeProgram.Uniform("optimized4", optimizeTo4Weights ? 1 : 0);
 
                 // Global-packed animation input base offsets (0 when using per-renderer buffers).
@@ -241,7 +241,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         if (commands is null)
             return;
 
-        if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader)
+        if (!RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader && !RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader)
             return;
 
         var dispatched = new HashSet<XRMeshRenderer>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
@@ -261,8 +261,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             return;
 
         // Optionally pre-pack all visible renderers into global buffers for this frame.
-        bool globalBones = Engine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning;
-        bool globalBlend = Engine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
+        bool globalBones = RuntimeEngine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning;
+        bool globalBlend = RuntimeEngine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
         if (globalBones || globalBlend)
         {
             lock (_syncRoot)
@@ -275,17 +275,17 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                     if (mesh is null)
                         continue;
 
-                    bool skinningInCompute = Engine.Rendering.Settings.CalculateSkinningInComputeShader
+                    bool skinningInCompute = RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
                         && mesh.HasSkinning
-                        && Engine.Rendering.Settings.AllowSkinning;
+                        && RuntimeEngine.Rendering.Settings.AllowSkinning;
                     bool needsBones = globalBones
                         && !renderer.HasExternalBoneMatrixSource
                         && !renderer.HasGpuDrivenBoneSource
                         && skinningInCompute;
                     bool needsBlend = globalBlend
                         && mesh.BlendshapeCount > 0
-                        && Engine.Rendering.Settings.AllowBlendshapes
-                        && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || skinningInCompute);
+                        && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+                        && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || skinningInCompute);
                     if (!needsBones && !needsBlend)
                         continue;
 

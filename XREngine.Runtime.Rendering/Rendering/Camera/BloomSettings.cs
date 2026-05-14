@@ -145,7 +145,7 @@ namespace XREngine.Rendering
             program.Uniform("BloomIntensity", intensity);
             program.Uniform("BloomThreshold", threshold);
             program.Uniform("SoftKnee", softKnee);
-            program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
+            program.Uniform("Luminance", RuntimeEngine.Rendering.Settings.DefaultLuminance);
         }
 
         public void SetDownsampleUniforms(XRRenderProgram program, bool firstLevel)
@@ -165,7 +165,7 @@ namespace XREngine.Rendering
             program.Uniform("BloomThreshold", threshold);
             program.Uniform("BloomSoftKnee", softKnee);
             program.Uniform("BloomIntensity", intensity);
-            program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
+            program.Uniform("Luminance", RuntimeEngine.Rendering.Settings.DefaultLuminance);
             program.Uniform("UseKarisAverage", firstLevel);
         }
 

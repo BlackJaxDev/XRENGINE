@@ -41,7 +41,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 
     public bool TryCompute(RenderableMesh mesh, out Result result)
     {
-        if (Engine.IsRenderThread)
+        if (RuntimeEngine.IsRenderThread)
             return TryComputeOnRenderThread(mesh, out result);
 
         // Never block worker/update threads waiting for render-thread execution.
@@ -194,7 +194,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             Matrix4x4 basis = mesh.RootBone?.RenderMatrix ?? mesh.Component.Transform.RenderMatrix;
             // Empty positions array signals "GPU-only fast path": consumers that need
             // CPU triangle data (e.g. SkinnedMeshBvhScheduler with cooked CPU BVH) must
-            // fall back via Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader.
+            // fall back via RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader.
             result = new Result(Array.Empty<Vector3>(), localBounds, basis);
             return true;
         }
@@ -217,7 +217,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     {
         if (mesh is null || targetScene is null || scratchIndices is null)
             return false;
-        if (!Engine.IsRenderThread)
+        if (!RuntimeEngine.IsRenderThread)
             return false;
 
         var renderer = mesh.CurrentLODRenderer;
@@ -324,7 +324,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     /// </summary>
     public void RefreshAllSkinnedAabbs(GPUScene targetScene)
     {
-        if (targetScene is null || !Engine.IsRenderThread)
+        if (targetScene is null || !RuntimeEngine.IsRenderThread)
             return;
 
         RenderableMesh[] snapshot;
@@ -367,7 +367,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         if (mesh.MaxWeightCount <= 4)
             return true;
 
-        return Engine.Rendering.Settings.OptimizeSkinningTo4Weights;
+        return RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights;
     }
 
     internal static AABB CalculateBounds(IReadOnlyList<Vector3> positions)

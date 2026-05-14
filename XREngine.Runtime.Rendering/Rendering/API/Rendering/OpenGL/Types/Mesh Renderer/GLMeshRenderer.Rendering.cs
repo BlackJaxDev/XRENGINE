@@ -37,7 +37,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public GLMaterial GetRenderMaterial(XRMaterial? localMaterialOverride = null, uint instances = 1)
             {
-                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
                 var globalMaterialOverride = renderState?.GlobalMaterialOverride;
                 var pipelineOverrideMaterial = renderState?.OverrideMaterial;
 
@@ -122,7 +122,7 @@ namespace XREngine.Rendering.OpenGL
                     return mat;
 
                 Debug.OpenGLWarning("No material found for mesh renderer, using invalid material.");
-                return Renderer.GenericToAPI<GLMaterial>(Engine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial)!;
+                return Renderer.GenericToAPI<GLMaterial>(RuntimeEngine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial)!;
             }
 
             private XRMaterial ResolveDirectionalCascadeShadowMaterial(
@@ -133,7 +133,7 @@ namespace XREngine.Rendering.OpenGL
                 EDirectionalCascadeShadowMaterialKind overrideKind = globalMaterialOverride.DirectionalCascadeShadowMaterialKind;
                 bool instancedLayeredOverride =
                     IsDirectionalCascadeInstancedMaterialKind(overrideKind) &&
-                    Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass;
+                    RuntimeEngine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass;
 
                 if (instancedLayeredOverride && CanUseDirectionalCascadeInstancedMaterial(shadowSourceMaterial, instances))
                     return globalMaterialOverride;
@@ -163,7 +163,7 @@ namespace XREngine.Rendering.OpenGL
                 EPointShadowMaterialKind overrideKind = globalMaterialOverride.PointShadowMaterialKind;
                 bool instancedLayeredOverride =
                     IsPointLightInstancedMaterialKind(overrideKind) &&
-                    Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass;
+                    RuntimeEngine.Rendering.State.IsPointLightInstancedLayeredShadowPass;
 
                 if (instancedLayeredOverride && CanUsePointLightInstancedMaterial(shadowSourceMaterial, instances))
                 {
@@ -260,7 +260,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool IsPointLightShadowGeometryPass()
             {
-                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
                 return renderState?.ShadowPass == true
                     && renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
                     && globalMaterialOverride.GeometryShaders.Count > 0
@@ -269,7 +269,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool IsShadowGeometryPass()
             {
-                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
                 return renderState?.ShadowPass == true
                     && (renderState.DirectionalCascadeLayeredShadowPass ||
                     renderState.PointLightLayeredShadowPass ||
@@ -329,11 +329,11 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                using var prof = Engine.Profiler.Start("GLMeshRenderer.Render", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.Render", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
                 if (!IsGenerated)
                 {
-                    bool shadowPass = Engine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false;
+                    bool shadowPass = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false;
                     bool isRenderPipelinePriority = MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline;
                     bool throttleRenderPipelineGeneration = isRenderPipelinePriority && Renderer.MeshGenerationQueue.ThrottlePriorityGeneration;
 
@@ -355,7 +355,7 @@ namespace XREngine.Rendering.OpenGL
                         return; // Skip rendering until generated
                     }
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.Generate", ProfilerScopeKind.OneOffInvoke))
+                    using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.Generate", ProfilerScopeKind.OneOffInvoke))
                     {
                         if (!_inlineGenerateFallbackLogged)
                         {
@@ -388,7 +388,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                using (Engine.Profiler.Start("GLMeshRenderer.Render.ProgramSetup", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.ProgramSetup", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
                     EnsureProgramsMatchRenderSettings();
                     EnsureProgramsMatchMaterialShaderState();
@@ -436,7 +436,7 @@ namespace XREngine.Rendering.OpenGL
 
                     SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
 
-                    using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                    using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         material.SetUniforms(mat);
                         if (renderOptionsOverride is not null)
@@ -456,7 +456,7 @@ namespace XREngine.Rendering.OpenGL
 
                     try
                     {
-                        using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                        using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.Draw", ProfilerScopeKind.AlwaysOnHotPathLoop))
                         {
                             LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
                             LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
@@ -487,12 +487,12 @@ namespace XREngine.Rendering.OpenGL
             private static uint ResolveDirectionalCascadeLayeredInstanceCount(XRMaterial material, uint instances)
             {
                 if (!IsDirectionalCascadeInstancedMaterialKind(material.DirectionalCascadeShadowMaterialKind) ||
-                    !Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
+                    !RuntimeEngine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
                 {
                     return instances;
                 }
 
-                int layerCount = Math.Clamp(Engine.Rendering.State.DirectionalCascadeShadowLayerCount, 0, 8);
+                int layerCount = Math.Clamp(RuntimeEngine.Rendering.State.DirectionalCascadeShadowLayerCount, 0, 8);
                 if (layerCount <= 1)
                     return instances;
 
@@ -503,12 +503,12 @@ namespace XREngine.Rendering.OpenGL
             private static uint ResolvePointLightLayeredInstanceCount(XRMaterial material, uint instances)
             {
                 if (!IsPointLightInstancedMaterialKind(material.PointShadowMaterialKind) ||
-                    !Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
+                    !RuntimeEngine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
                 {
                     return instances;
                 }
 
-                int faceCount = Math.Clamp(Engine.Rendering.State.PointLightShadowFaceCount, 0, 6);
+                int faceCount = Math.Clamp(RuntimeEngine.Rendering.State.PointLightShadowFaceCount, 0, 6);
                 if (faceCount <= 1)
                     return instances;
 
@@ -533,11 +533,11 @@ namespace XREngine.Rendering.OpenGL
                 GLRenderProgram? materialProgram,
                 EMeshBillboardMode billboardMode)
             {
-                bool stereoPass = Engine.Rendering.State.IsStereoPass;
-                var cam = Engine.Rendering.State.RenderingCamera;
+                bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
+                var cam = RuntimeEngine.Rendering.State.RenderingCamera;
                 if (stereoPass)
                 {
-                    var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
+                    var rightCam = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
                     PassCameraUniforms(vertexProgram, cam, EEngineUniform.LeftEyeViewMatrix, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeInverseProjMatrix, EEngineUniform.LeftEyeProjMatrix, EEngineUniform.LeftEyeViewProjectionMatrix);
                     PassCameraUniforms(vertexProgram, rightCam, EEngineUniform.RightEyeViewMatrix, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeInverseProjMatrix, EEngineUniform.RightEyeProjMatrix, EEngineUniform.RightEyeViewProjectionMatrix);
                 }
@@ -563,7 +563,7 @@ namespace XREngine.Rendering.OpenGL
 
                 // CPU draw path has gl_BaseInstance==0; provide a per-draw TransformId uniform so
                 // deferred shaders can write stable per-transform IDs into the GBuffer.
-                uint transformId = Engine.Rendering.State.CurrentTransformId;
+                uint transformId = RuntimeEngine.Rendering.State.CurrentTransformId;
                 vertexProgram.Uniform("TransformId", transformId);
                 materialProgram?.Uniform("TransformId", transformId);
                 vertexProgram.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
@@ -577,7 +577,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static void SetDirectionalCascadeLayeredUniforms(GLRenderProgram vertexProgram)
             {
-                var state = Engine.Rendering.State.RenderingPipelineState;
+                var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
                 if (state?.DirectionalCascadeInstancedLayeredShadowPass != true)
                     return;
 
@@ -593,7 +593,7 @@ namespace XREngine.Rendering.OpenGL
             private static void SetDirectionalCascadeLayeredVertexUniforms(GLRenderProgram vertexProgram, XRMaterial material)
             {
                 if (!IsDirectionalCascadeInstancedMaterialKind(material.DirectionalCascadeShadowMaterialKind) ||
-                    !Engine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
+                    !RuntimeEngine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
                 {
                     return;
                 }
@@ -606,7 +606,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static void SetPointLightLayeredUniforms(GLRenderProgram vertexProgram)
             {
-                var state = Engine.Rendering.State.RenderingPipelineState;
+                var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
                 if (state?.PointLightInstancedLayeredShadowPass != true)
                     return;
 
@@ -624,7 +624,7 @@ namespace XREngine.Rendering.OpenGL
             private static void SetPointLightLayeredVertexUniforms(GLRenderProgram vertexProgram, XRMaterial material)
             {
                 if (!IsPointLightInstancedMaterialKind(material.PointShadowMaterialKind) ||
-                    !Engine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
+                    !RuntimeEngine.Rendering.State.IsPointLightInstancedLayeredShadowPass)
                 {
                     return;
                 }
@@ -660,7 +660,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     viewMatrix = camera.Transform.InverseRenderMatrix;
                     inverseViewMatrix = camera.Transform.RenderMatrix;
-                    bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                    bool useUnjittered = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
                     projMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
                     inverseProjMatrix = useUnjittered ? camera.InverseProjectionMatrixUnjittered : camera.InverseProjectionMatrix;
                     viewProjectionMatrix = useUnjittered ? camera.ViewProjectionMatrixUnjittered : camera.ViewProjectionMatrix;

@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
 using XREngine;
+using XREngine.Components.Capture;
 using XREngine.Components.Capture.Lights;
 using XREngine.Core.Files;
 using XREngine.Data.Rendering;

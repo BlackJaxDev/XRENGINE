@@ -102,7 +102,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
     public VulkanUpscaleBridge(XRViewport viewport)
     {
         _viewport = viewport ?? throw new ArgumentNullException(nameof(viewport));
-        QueueModel = Engine.Rendering.VulkanUpscaleBridgeQueueModel;
+        QueueModel = RuntimeEngine.Rendering.VulkanUpscaleBridgeQueueModel;
 
         _viewport.Resized += HandleViewportResized;
         _viewport.InternalResolutionResized += HandleInternalResolutionResized;
@@ -208,7 +208,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
         if (_disposed)
             return;
 
-        if (!Engine.EffectiveSettings.EnableNvidiaDlss && !Engine.EffectiveSettings.EnableIntelXess)
+        if (!RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && !RuntimeEngine.EffectiveSettings.EnableIntelXess)
         {
             DestroyInteropResources();
             SidecarDeviceOwned = false;
@@ -225,7 +225,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
         if (_disposed)
             return;
 
-        if (!Engine.Rendering.VulkanUpscaleBridgeRequested)
+        if (!RuntimeEngine.Rendering.VulkanUpscaleBridgeRequested)
         {
             DestroyInteropResources();
             SidecarDeviceOwned = false;
@@ -569,8 +569,8 @@ public sealed class VulkanUpscaleBridge : IDisposable
     private static VulkanUpscaleBridgeFrameResources BuildFrameResources(XRRenderPipelineInstance pipeline)
     {
         EAntiAliasingMode antiAliasingMode = pipeline.EffectiveAntiAliasingModeThisFrame
-            ?? Engine.EffectiveSettings.AntiAliasingMode;
-        uint msaaSampleCount = Math.Max(1u, pipeline.EffectiveMsaaSampleCountThisFrame ?? Engine.EffectiveSettings.MsaaSampleCount);
+            ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
+        uint msaaSampleCount = Math.Max(1u, pipeline.EffectiveMsaaSampleCountThisFrame ?? RuntimeEngine.EffectiveSettings.MsaaSampleCount);
         bool stereo = pipeline.Pipeline switch
         {
             DefaultRenderPipeline { Stereo: true } => true,
@@ -583,15 +583,15 @@ public sealed class VulkanUpscaleBridge : IDisposable
             DisplayHeight: Math.Max(1, pipeline.LastWindowViewport?.Height ?? 0),
             InternalWidth: Math.Max(1, pipeline.LastWindowViewport?.InternalWidth ?? 0),
             InternalHeight: Math.Max(1, pipeline.LastWindowViewport?.InternalHeight ?? 0),
-            OutputHdr: pipeline.EffectiveOutputHDRThisFrame ?? Engine.Rendering.Settings.OutputHDR,
+            OutputHdr: pipeline.EffectiveOutputHDRThisFrame ?? RuntimeEngine.Rendering.Settings.OutputHDR,
             AntiAliasingMode: antiAliasingMode,
             MsaaSampleCount: antiAliasingMode == EAntiAliasingMode.Msaa ? msaaSampleCount : 1u,
             Stereo: stereo,
-            EnableDlss: Engine.EffectiveSettings.EnableNvidiaDlss,
-            DlssQuality: Engine.EffectiveSettings.DlssQuality,
-            EnableXess: Engine.EffectiveSettings.EnableIntelXess,
-            XessQuality: Engine.EffectiveSettings.XessQuality,
-            QueueModel: Engine.Rendering.VulkanUpscaleBridgeQueueModel);
+            EnableDlss: RuntimeEngine.EffectiveSettings.EnableNvidiaDlss,
+            DlssQuality: RuntimeEngine.EffectiveSettings.DlssQuality,
+            EnableXess: RuntimeEngine.EffectiveSettings.EnableIntelXess,
+            XessQuality: RuntimeEngine.EffectiveSettings.XessQuality,
+            QueueModel: RuntimeEngine.Rendering.VulkanUpscaleBridgeQueueModel);
     }
 
     private EVulkanUpscaleBridgeState DetermineAvailability(
@@ -599,9 +599,9 @@ public sealed class VulkanUpscaleBridge : IDisposable
         in VulkanUpscaleBridgeFrameResources frameResources,
         out string reason)
     {
-        if (!Engine.Rendering.VulkanUpscaleBridgeRequested)
+        if (!RuntimeEngine.Rendering.VulkanUpscaleBridgeRequested)
         {
-            reason = $"{Engine.Rendering.VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge";
+            reason = $"{RuntimeEngine.Rendering.VulkanUpscaleBridgeEnvVar}=0 disabled the OpenGL->Vulkan upscale bridge";
             return EVulkanUpscaleBridgeState.Disabled;
         }
 
@@ -684,7 +684,7 @@ public sealed class VulkanUpscaleBridge : IDisposable
             return true;
         }
 
-        bool preferDlss = Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+        bool preferDlss = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
         string? dlssFailure = frameResources.EnableDlss ? NvidiaDlssManager.LastError : null;
         string? xessFailure = frameResources.EnableXess ? IntelXessManager.LastError : null;
         reason = preferDlss

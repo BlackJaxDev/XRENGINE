@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override bool ShouldExecuteThisFrame()
         {
-            XRRenderPipelineInstance? instance = Engine.Rendering.State.CurrentRenderingPipeline;
+            XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             if (instance is null)
                 return false;
 
@@ -67,7 +67,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             int passIndex = ResolvePassIndex(nameof(VPRC_RenderScreenSpaceUI));
             using var passScope = passIndex != int.MinValue
-                ? Engine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
 
             var ui = ActivePipelineInstance.RenderState.ScreenSpaceUserInterface;

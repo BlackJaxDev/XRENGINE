@@ -111,7 +111,7 @@ namespace XREngine.Rendering
 
         public void SetUniforms(XRRenderProgram program, Vector2 texelSize)
         {
-            var camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera;
+            var camera = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera;
 
             bool usePhysical = _mode == DepthOfFieldControlMode.Physical
                 && camera?.Parameters is XRPhysicalCameraParameters;
@@ -156,7 +156,7 @@ namespace XREngine.Rendering
             float focusDistMm = focusDistM * 1000.0f;
             float fMm = MathF.Max(0.001f, physical.FocalLengthMm);
             float cocRefMm = MathF.Max(0.0001f, _physicalCircleOfConfusionMm);
-            float renderHeightPx = MathF.Max(1.0f, Engine.Rendering.State.RenderArea.Height);
+            float renderHeightPx = MathF.Max(1.0f, RuntimeEngine.Rendering.State.RenderArea.Height);
             float sensorHeightMm = MathF.Max(0.001f, physical.SensorHeightMm);
             float pixelsPerMm = renderHeightPx / sensorHeightMm;
 

@@ -739,7 +739,7 @@ namespace XREngine.Rendering.OpenGL
                 action();
                 double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
 
-                bool renderThread = Engine.IsRenderThread;
+                bool renderThread = RuntimeEngine.IsRenderThread;
                 Debug.Rendering(
                     EOutputVerbosity.Verbose,
                     false,
@@ -774,7 +774,7 @@ namespace XREngine.Rendering.OpenGL
                     summary.StageList,
                     summary.SourceBytes,
                     summary.SourceLines,
-                    Engine.IsRenderThread,
+                    RuntimeEngine.IsRenderThread,
                     FormatRenderingDetail(detail));
             }
 

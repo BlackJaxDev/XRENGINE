@@ -93,7 +93,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     protected override bool ShouldExecuteThisFrame()
     {
-        XRRenderPipelineInstance? activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         return activeInstance?.MeshRenderCommands.HasRenderingCommands(RenderPass) == true;
     }
 

@@ -140,6 +140,8 @@ namespace XREngine
                 .WithNodeDeserializer(new ViewportRenderCommandContainerYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(new LayerMaskYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(new InterfaceCollectionYamlNodeDeserializer(), w => w.OnTop())
+                .WithNodeDeserializer(new XRShaderScalarYamlNodeDeserializer(), w => w.OnTop())
+                .WithNodeDeserializer(new XRShaderCollectionYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(
                     inner => new DepthTrackingNodeDeserializer(inner),
                     s => s.InsteadOf<ObjectNodeDeserializer>())
@@ -232,6 +234,27 @@ namespace XREngine
             for (int i = 0; i < lines.Length; i++)
             {
                 string line = lines[i];
+                if (TryMatchShaderSequenceHeader(line, out string? shaderSequenceIndentation, out string? shaderSequencePropertyName)
+                    && TryNormalizeNullShaderSequenceEntries(
+                        lines,
+                        i,
+                        shaderSequenceIndentation,
+                        shaderSequencePropertyName,
+                        out List<string>? shaderSequenceLines,
+                        out int shaderSequenceEndIndex))
+                {
+                    if (normalizedLines is null)
+                    {
+                        normalizedLines = new List<string>(lines.Length);
+                        for (int priorIndex = 0; priorIndex < i; priorIndex++)
+                            normalizedLines.Add(lines[priorIndex]);
+                    }
+
+                    normalizedLines.AddRange(shaderSequenceLines);
+                    i = shaderSequenceEndIndex - 1;
+                    continue;
+                }
+
                 if (!TryMatchLegacyLayerMaskHeader(line, out string? indentation, out string? propertyName)
                     || i + 1 >= lines.Length
                     || !TryMatchLegacyLayerMaskValue(lines[i + 1], indentation, out int value)
@@ -257,14 +280,147 @@ namespace XREngine
                 : string.Join(newline, normalizedLines);
         }
 
+        private static bool TryMatchShaderSequenceHeader(string line, out string indentation, out string propertyName)
+        {
+            indentation = string.Empty;
+            propertyName = string.Empty;
+
+            int contentIndex = GetContentIndex(line);
+            string content = line[contentIndex..];
+            if (!content.EndsWith(':'))
+                return false;
+
+            string candidateName = content[..^1].TrimEnd();
+            if (candidateName is not "Shaders"
+                && candidateName is not "NonVertexShadersOverride")
+            {
+                return false;
+            }
+
+            indentation = line[..contentIndex];
+            propertyName = candidateName;
+            return true;
+        }
+
+        private static bool TryNormalizeNullShaderSequenceEntries(
+            string[] lines,
+            int headerIndex,
+            string indentation,
+            string propertyName,
+            [NotNullWhen(true)] out List<string>? normalizedBlock,
+            out int endIndex)
+        {
+            normalizedBlock = null;
+            endIndex = headerIndex + 1;
+
+            int headerIndent = indentation.Length;
+            int? itemIndent = null;
+            bool removedNullItem = false;
+            bool keptItem = false;
+            List<string> body = [];
+
+            for (int i = headerIndex + 1; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    body.Add(line);
+                    endIndex = i + 1;
+                    continue;
+                }
+
+                int contentIndex = GetContentIndex(line);
+                if (contentIndex < headerIndent)
+                    break;
+
+                string content = line[contentIndex..].TrimEnd();
+                if (contentIndex == headerIndent
+                    && !content.StartsWith("-", StringComparison.Ordinal)
+                    && !content.StartsWith("#", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                if (content.StartsWith('-'))
+                {
+                    itemIndent ??= contentIndex;
+                    if (contentIndex == itemIndent.Value)
+                    {
+                        if (IsNullSequenceItem(content)
+                            && !BareSequenceItemHasNestedContent(content, lines, i, headerIndent, contentIndex))
+                        {
+                            removedNullItem = true;
+                            endIndex = i + 1;
+                            continue;
+                        }
+
+                        keptItem = true;
+                    }
+                }
+
+                body.Add(line);
+                endIndex = i + 1;
+            }
+
+            if (!removedNullItem)
+                return false;
+
+            normalizedBlock = [];
+            if (keptItem)
+            {
+                normalizedBlock.Add(lines[headerIndex]);
+                normalizedBlock.AddRange(body);
+            }
+            else
+            {
+                normalizedBlock.Add($"{indentation}{propertyName}: []");
+            }
+
+            return true;
+        }
+
+        private static bool IsNullSequenceItem(string content)
+        {
+            string trimmed = content.Trim();
+            return trimmed is "-" or "- null" or "- ~";
+        }
+
+        private static bool BareSequenceItemHasNestedContent(
+            string content,
+            string[] lines,
+            int itemIndex,
+            int headerIndent,
+            int itemIndent)
+        {
+            if (content.Trim() != "-")
+                return false;
+
+            for (int i = itemIndex + 1; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                int contentIndex = GetContentIndex(line);
+                if (contentIndex <= headerIndent || contentIndex <= itemIndent)
+                    return false;
+
+                string nestedContent = line[contentIndex..].TrimStart();
+                if (nestedContent.StartsWith("#", StringComparison.Ordinal))
+                    continue;
+
+                return true;
+            }
+
+            return false;
+        }
+
         private static bool TryMatchLegacyLayerMaskHeader(string line, out string indentation, out string propertyName)
         {
             indentation = string.Empty;
             propertyName = string.Empty;
 
-            int contentIndex = 0;
-            while (contentIndex < line.Length && (line[contentIndex] == ' ' || line[contentIndex] == '\t'))
-                contentIndex++;
+            int contentIndex = GetContentIndex(line);
 
             string content = line[contentIndex..];
             if (!content.EndsWith(':'))
@@ -287,9 +443,7 @@ namespace XREngine
         {
             value = default;
 
-            int contentIndex = 0;
-            while (contentIndex < line.Length && (line[contentIndex] == ' ' || line[contentIndex] == '\t'))
-                contentIndex++;
+            int contentIndex = GetContentIndex(line);
 
             if (contentIndex <= headerIndentation.Length)
                 return false;
@@ -310,14 +464,20 @@ namespace XREngine
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
-                int contentIndex = 0;
-                while (contentIndex < line.Length && (line[contentIndex] == ' ' || line[contentIndex] == '\t'))
-                    contentIndex++;
+                int contentIndex = GetContentIndex(line);
 
                 return contentIndex > headerIndentation.Length;
             }
 
             return false;
+        }
+
+        private static int GetContentIndex(string line)
+        {
+            int contentIndex = 0;
+            while (contentIndex < line.Length && (line[contentIndex] == ' ' || line[contentIndex] == '\t'))
+                contentIndex++;
+            return contentIndex;
         }
 
         [RequiresUnreferencedCode("Calls System.Reflection.Assembly.GetTypes()")]

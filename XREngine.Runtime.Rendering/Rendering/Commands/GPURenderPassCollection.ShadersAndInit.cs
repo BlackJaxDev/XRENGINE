@@ -18,7 +18,7 @@ namespace XREngine.Rendering.Commands
 
         private static void EnsurePersistentReadbackMapping(XRDataBuffer buffer)
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 Debug.RenderingWarning("Persistent GPU readback mapping requested off the render thread.");
                 return;
@@ -167,7 +167,9 @@ namespace XREngine.Rendering.Commands
 
             _cullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCulling.comp", EShaderType.Compute));
             _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildKeys.comp", EShaderType.Compute));
+#if XRE_DEBUG_BATCH_RANGE_READBACK
             _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildBatches.comp", EShaderType.Compute));
+#endif
             _materialScatterComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderMaterialScatter.comp", EShaderType.Compute));
             _buildActiveMaterialBucketsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildActiveMaterialBuckets.comp", EShaderType.Compute));
             _classifyTransparencyComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClassifyTransparencyDomains.comp", EShaderType.Compute));
@@ -713,7 +715,7 @@ namespace XREngine.Rendering.Commands
 
             if (IndirectDebug.ValidateLiveHandles && !remapPending)
             {
-                bool logBuffers = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+                bool logBuffers = RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
                 if (!logBuffers)
                     return;
 
@@ -865,11 +867,13 @@ namespace XREngine.Rendering.Commands
         private void EnsureGpuDrivenBatchingBuffers(uint capacity)
         {
             EnsureSortKeyBuffer(capacity);
+#if XRE_DEBUG_BATCH_RANGE_READBACK
             EnsureSortScratchBuffer(capacity);
             EnsureBatchRangeBuffer(capacity);
             EnsureBatchCountBuffer();
-            EnsureInstanceDataBuffers(capacity);
             EnsureMaterialAggregationBuffer(1u);
+#endif
+            EnsureInstanceDataBuffers(capacity);
         }
 
         private void EnsureMaterialScatterBuffers(uint materialCount, uint capacity)

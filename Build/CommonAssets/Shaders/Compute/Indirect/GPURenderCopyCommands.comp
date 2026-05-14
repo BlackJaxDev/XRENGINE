@@ -1,7 +1,7 @@
 #version 460
 
 // Copy render commands from input SSBO to output SSBO (passthrough culling path)
-// One thread copies one command (32 floats / 128 bytes).
+// One thread copies one compact command.
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -14,13 +14,13 @@ uniform uint OutputCapacity;
 uniform int BoundsCheckEnabled;
 uniform int ActiveViewCount;
 
-// Input command buffer: tightly packed float[48] per command (GPUIndirectRenderCommand)
+// Input command buffer: tightly packed float[20] per command (GPUIndirectRenderCommand)
 layout(std430, binding = 0) readonly buffer InCommands
 {
     float InData[];
 };
 
-// Output command buffer: tightly packed float[48] per command
+// Output command buffer: tightly packed float[20] per command
 layout(std430, binding = 1) writeonly buffer OutCommands
 {
     float OutData[];
@@ -80,9 +80,9 @@ layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCou
 
 #define FLAG_TRANSPARENT    (1u<<0)
 
-const uint CommandStride = 48u;
-const uint RenderPassIndex = 40u;
-const uint InstanceCountIndex = 39u;
+const uint CommandStride = 20u;
+const uint RenderPassIndex = 8u;
+const uint InstanceCountIndex = 7u;
 
 bool ViewMaskContains(uvec2 mask, uint viewId)
 {
@@ -205,7 +205,7 @@ void main()
     for (uint i = 0u; i < CommandStride; ++i)
         OutData[outBase + i] = InData[inBase + i];
 
-    uint flags = floatBitsToUint(InData[inBase + 45u]);
-    vec3 center = vec3(InData[inBase + 32u], InData[inBase + 33u], InData[inBase + 34u]);
+    uint flags = floatBitsToUint(InData[inBase + 13u]);
+    vec3 center = vec3(InData[inBase + 0u], InData[inBase + 1u], InData[inBase + 2u]);
     AppendPerView(cmdIndex, outIndex, center, flags);
 }

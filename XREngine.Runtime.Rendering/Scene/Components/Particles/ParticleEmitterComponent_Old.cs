@@ -1,4 +1,4 @@
-﻿//using System.Collections;
+//using System.Collections;
 //using System.ComponentModel;
 //using System.Numerics;
 //using System.Runtime.InteropServices;
@@ -266,16 +266,16 @@
 //        public void Initialize(BaseParticleEmitterComponent component)
 //        {
 //            Vector3 rand = new Vector3(
-//                (float)Engine.Random.NextDouble(), 
-//                (float)Engine.Random.NextDouble(), 
-//                (float)Engine.Random.NextDouble());
+//                (float)RuntimeEngine.Random.NextDouble(), 
+//                (float)RuntimeEngine.Random.NextDouble(), 
+//                (float)RuntimeEngine.Random.NextDouble());
 
 //            Position = component.WorldPoint;
 //            Color = new ColorF4(rand.X, rand.Y, rand.Z, 1.0f);
 //            rand.Y += 0.5f;
 //            Velocity = component.WorldMatrix.UpVec * 10.0f + (rand - 0.5f) * 5.0f;
 //            Life = component.NewParticleLifeSeconds;
-//            Scale = (float)Engine.Random.NextDouble() + 1.0f;
+//            Scale = (float)RuntimeEngine.Random.NextDouble() + 1.0f;
 //        }
 //        public unsafe void Update(float delta, XRDataBuffer[] instBufs, int instanceIndex, BaseParticleEmitterComponent component)
 //        {

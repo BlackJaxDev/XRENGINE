@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using XREngine.Core;
 using XREngine.Core.Files;
+using XREngine.Diagnostics;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
@@ -108,9 +109,7 @@ namespace XREngine
             // Always handle scalar XRAsset references, even during replay.
             // This prevents ScalarNodeDeserializer from attempting invalid string->XRAsset conversions.
             if (reader.Accept<Scalar>(out var scalarPeek))
-            {
-                return TryHandleScalarXRAsset(reader, expectedType, scalarPeek.Value, out value);
-            }
+                return TryHandleScalarXRAsset(reader, expectedType, scalarPeek, out value);
 
             // Let the normal object deserializer own each file's document root. Nested
             // asset loads can occur while another YAML parse is already active, so parser
@@ -151,10 +150,12 @@ namespace XREngine
         /// <summary>
         /// Handles scalar values for XRAsset types (null, GUID references, or file paths).
         /// </summary>
-        private static bool TryHandleScalarXRAsset(IParser reader, Type expectedType, string? scalarValue, out object? value)
+        internal static bool TryHandleScalarXRAsset(IParser reader, Type expectedType, Scalar scalar, out object? value)
         {
+            string? scalarValue = scalar.Value;
+
             // Handle nulls: '~' or 'null'
-            if (scalarValue is null || scalarValue == "~" || string.Equals(scalarValue, "null", StringComparison.OrdinalIgnoreCase))
+            if (IsNullScalar(scalar))
             {
                 reader.Consume<Scalar>();
                 value = null;
@@ -166,15 +167,39 @@ namespace XREngine
             {
                 reader.Consume<Scalar>();
                 value = ResolveExternalReference(guid, expectedType);
+                if (value is null)
+                {
+                    AssetDiagnostics.RecordMissingAsset(
+                        scalarValue,
+                        expectedType.Name,
+                        $"XRAssetDeserializer (GUID; file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}')");
+                    throw BuildUnresolvedScalarException(scalar, expectedType, scalarValue!,
+                        $"GUID '{guid}' could not be resolved to a loaded asset or asset file" +
+                        (AssetDeserializationContext.CurrentFilePath is { } cf ? $" (while reading '{cf}')." : "."));
+                }
                 return true;
             }
 
             // Best-effort: interpret scalar as a file path to an asset.
             // This avoids ScalarNodeDeserializer attempting an invalid string->XRAsset conversion.
             string candidate = scalarValue.Trim('"', '\'');
-            if (TryResolveAssetPathFromScalar(candidate, out var resolvedPath))
+            if (TryResolveAssetPathFromScalar(candidate, out var resolvedPath, out var resolution))
             {
                 reader.Consume<Scalar>();
+
+                // Record any non-portable form so the editor can surface workspace-portability
+                // issues (absolute paths get baked from a different machine layout, or simply
+                // any absolute path that should be saved as a relative path on the next save).
+                if (resolution != ScalarPathResolution.Relative)
+                {
+                    AssetDiagnostics.RecordRebasedAsset(
+                        candidate,
+                        resolvedPath,
+                        expectedType.Name,
+                        resolution == ScalarPathResolution.AbsoluteRebased
+                            ? $"Rebased absolute path (file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}')"
+                            : $"Absolute path (will be made portable on next save; file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}')");
+                }
 
                 // Backing text files (for example XRShader.Source) should stay local to the
                 // parent asset deserialize. Loading them through AssetManager would register the
@@ -198,15 +223,43 @@ namespace XREngine
                 {
                     AssetLoadProgressContext.CompleteReferencedAssetLoad(resolvedPath, expectedType);
                 }
+                if (value is null)
+                {
+                    AssetDiagnostics.RecordMissingAsset(
+                        scalarValue,
+                        expectedType.Name,
+                        $"XRAssetDeserializer (load failed; resolved='{resolvedPath}', file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}')");
+                    throw BuildUnresolvedScalarException(scalar, expectedType, scalarValue!,
+                        $"Asset at path '{resolvedPath}' failed to load as {expectedType.FullName}.");
+                }
                 return true;
             }
 
-            // Unknown scalar format for an XRAsset reference. Consume it and return null.
-            // This is safer than falling through to ScalarNodeDeserializer (which will throw).
+            // Unknown scalar format for an XRAsset reference. Throw a descriptive error so the
+            // caller (and any strict-nullability enforcement above) gets actionable diagnostics
+            // instead of a cryptic "Yaml value is null when target property requires non null values".
             reader.Consume<Scalar>();
-            value = null;
-            return true;
+            AssetDiagnostics.RecordMissingAsset(
+                scalarValue,
+                expectedType.Name,
+                $"XRAssetDeserializer (unresolvable scalar; file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}')");
+            throw BuildUnresolvedScalarException(scalar, expectedType, scalarValue!,
+                $"Scalar value '{scalarValue}' is not a valid {expectedType.Name} reference " +
+                "(expected null/~, a GUID, or an existing absolute/relative asset path)" +
+                (AssetDeserializationContext.CurrentFilePath is { } cf2 ? $" while reading '{cf2}'." : "."));
         }
+
+        private static YamlException BuildUnresolvedScalarException(Scalar scalar, Type expectedType, string scalarValue, string detail)
+            => new(
+                scalar.Start,
+                scalar.End,
+                $"Unresolved {expectedType.Name} reference: \"{scalarValue}\". {detail}");
+
+        internal static bool IsNullScalar(Scalar scalar)
+            => scalar.Value is null
+               || scalar.Value == "~"
+               || string.Equals(scalar.Value, "null", StringComparison.OrdinalIgnoreCase)
+               || (scalar.Value.Length == 0 && scalar.Style == ScalarStyle.Plain);
 
         private static bool TryLoadUntrackedTextAsset(string resolvedPath, Type expectedType, out object? value)
         {
@@ -239,8 +292,25 @@ namespace XREngine
         }
 
         private static bool TryResolveAssetPathFromScalar(string scalar, [NotNullWhen(true)] out string? resolvedPath)
+            => TryResolveAssetPathFromScalar(scalar, out resolvedPath, out _);
+
+        /// <summary>
+        /// Describes how a scalar asset-path string was resolved.
+        /// </summary>
+        internal enum ScalarPathResolution
+        {
+            /// <summary>Scalar was a relative path resolved under a known asset root (portable).</summary>
+            Relative,
+            /// <summary>Scalar was an absolute path and the file existed at that exact location.</summary>
+            AbsoluteExisting,
+            /// <summary>Scalar was an absolute path baked from a different machine layout and had to be rebased onto a known asset root.</summary>
+            AbsoluteRebased,
+        }
+
+        private static bool TryResolveAssetPathFromScalar(string scalar, [NotNullWhen(true)] out string? resolvedPath, out ScalarPathResolution resolution)
         {
             resolvedPath = null;
+            resolution = ScalarPathResolution.Relative;
             if (string.IsNullOrWhiteSpace(scalar))
                 return false;
 
@@ -253,6 +323,16 @@ namespace XREngine
                     if (File.Exists(full))
                     {
                         resolvedPath = full;
+                        resolution = ScalarPathResolution.AbsoluteExisting;
+                        return true;
+                    }
+
+                    // Absolute path was baked on a different machine layout (different workspace
+                    // root). Try to rebase the tail under current known asset roots.
+                    if (TryRebaseAbsoluteAssetPath(scalar, out string? rebased))
+                    {
+                        resolvedPath = rebased;
+                        resolution = ScalarPathResolution.AbsoluteRebased;
                         return true;
                     }
                     return false;
@@ -265,6 +345,7 @@ namespace XREngine
                     if (File.Exists(candidate))
                     {
                         resolvedPath = candidate;
+                        resolution = ScalarPathResolution.Relative;
                         return true;
                     }
                 }
@@ -276,6 +357,7 @@ namespace XREngine
                     if (File.Exists(candidate))
                     {
                         resolvedPath = candidate;
+                        resolution = ScalarPathResolution.Relative;
                         return true;
                     }
                 }
@@ -283,6 +365,82 @@ namespace XREngine
             catch
             {
                 return false;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Attempts to recover from an absolute asset path that was serialized under a different
+        /// workspace layout (for example, a clone at a different root) by extracting the tail
+        /// after a known asset segment and rebasing it under the current EngineAssetsPath /
+        /// GameAssetsPath.
+        /// </summary>
+        private static bool TryRebaseAbsoluteAssetPath(string absolutePath, [NotNullWhen(true)] out string? rebased)
+        {
+            rebased = null;
+
+            string normalized = absolutePath.Replace('\\', '/');
+
+            // Ordered by specificity: deeper segments first.
+            ReadOnlySpan<string> segments = new[]
+            {
+                "/Build/CommonAssets/",
+                "/CommonAssets/",
+                "/Assets/",
+            };
+
+            string? engineRoot = string.IsNullOrWhiteSpace(Engine.Assets.EngineAssetsPath)
+                ? null
+                : Path.GetFullPath(Engine.Assets.EngineAssetsPath);
+            string? gameRoot = string.IsNullOrWhiteSpace(Engine.Assets.GameAssetsPath)
+                ? null
+                : Path.GetFullPath(Engine.Assets.GameAssetsPath);
+
+            foreach (string segment in segments)
+            {
+                int index = normalized.LastIndexOf(segment, StringComparison.OrdinalIgnoreCase);
+                if (index < 0)
+                    continue;
+
+                string tail = normalized[(index + segment.Length)..].TrimStart('/');
+                if (string.IsNullOrWhiteSpace(tail))
+                    continue;
+
+                // Engine/CommonAssets segments map to EngineAssetsPath; "/Assets/" maps to GameAssetsPath.
+                bool isEngineSegment = segment.Contains("CommonAssets", StringComparison.OrdinalIgnoreCase);
+
+                if (isEngineSegment && engineRoot is not null)
+                {
+                    string candidate = Path.GetFullPath(Path.Combine(engineRoot, tail));
+                    if (File.Exists(candidate))
+                    {
+                        rebased = candidate;
+                        return true;
+                    }
+                }
+
+                if (!isEngineSegment && gameRoot is not null)
+                {
+                    string candidate = Path.GetFullPath(Path.Combine(gameRoot, tail));
+                    if (File.Exists(candidate))
+                    {
+                        rebased = candidate;
+                        return true;
+                    }
+                }
+
+                // Cross-try the other root as a fallback (some assets are misclassified).
+                string? otherRoot = isEngineSegment ? gameRoot : engineRoot;
+                if (otherRoot is not null)
+                {
+                    string candidate = Path.GetFullPath(Path.Combine(otherRoot, tail));
+                    if (File.Exists(candidate))
+                    {
+                        rebased = candidate;
+                        return true;
+                    }
+                }
             }
 
             return false;

@@ -60,7 +60,7 @@ public class MortonCodeAndSortingTests
         source.ShouldContain("SortDirection");
         source.ShouldContain("sortKeys");
         source.ShouldContain("packedPassPipelineState");
-        source.ShouldContain("COMMAND_FLOATS = 48");
+        source.ShouldContain("COMMAND_FLOATS = 20");
         source.ShouldContain("KEY_UINTS = 4");
     }
 
@@ -95,10 +95,11 @@ public class MortonCodeAndSortingTests
     {
         string source = LoadShaderSource("Compute/Indirect/GPURenderBuildKeys.comp");
 
-        // Verify material + mesh lanes are emitted for downstream batching/sorting.
-        source.ShouldContain("uint materialID = floatBitsToUint(culled[base + 38u])");
-        source.ShouldContain("uint meshID = floatBitsToUint(culled[base + 36u])");
-        source.ShouldContain("primarySortKey = materialID");
+        // Verify material/state + mesh lanes are emitted for downstream batching/sorting.
+        source.ShouldContain("uint materialID = floatBitsToUint(culled[base + 6u])");
+        source.ShouldContain("uint meshID = floatBitsToUint(culled[base + 4u])");
+        source.ShouldContain("uint stateClassID = floatBitsToUint(culled[base + 17u])");
+        source.ShouldContain("primarySortKey = stateClassID");
         source.ShouldContain("secondarySortKey = meshID");
         source.ShouldContain("sortKeys[outBase + 1u] = primarySortKey");
         source.ShouldContain("sortKeys[outBase + 2u] = secondarySortKey");

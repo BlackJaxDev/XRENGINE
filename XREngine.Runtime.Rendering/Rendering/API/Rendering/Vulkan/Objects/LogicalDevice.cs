@@ -529,8 +529,14 @@ public unsafe partial class VulkanRenderer
             nvCopyMemoryIndirectRequestedByProfile &&
             nvCopyMemoryIndirectFeatureSupported;
 
+        bool bufferDeviceAddressExtensionEnabled = extensionsArray.Contains("VK_KHR_buffer_device_address");
         QueryBufferDeviceAddressCapabilities(out bool bufferDeviceAddressFeatureSupported);
-        bool enableBufferDeviceAddress = enableNvCopyMemoryIndirect && bufferDeviceAddressFeatureSupported;
+        bool bufferDeviceAddressRequestedBySceneDatabase =
+            VulkanFeatureProfile.ActiveGeometryFetchMode == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype ||
+            VulkanFeatureProfile.EnableBindlessMaterialTable;
+        bool enableBufferDeviceAddress =
+            bufferDeviceAddressFeatureSupported &&
+            (enableNvCopyMemoryIndirect || bufferDeviceAddressRequestedBySceneDatabase || bufferDeviceAddressExtensionEnabled);
 
         bool dynamicRenderingExtensionEnabled = extensionsArray.Contains("VK_KHR_dynamic_rendering");
         QueryDynamicRenderingCapabilities(
@@ -750,8 +756,8 @@ public unsafe partial class VulkanRenderer
         _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
         _supportsTimelineSemaphores = enableTimelineSemaphoreFeature;
         _supportsSynchronization2 = enableSynchronization2Feature;
-        Engine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
-        Engine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
+        RuntimeEngine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
+        RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
 
         if (descriptorIndexingExtensionEnabled && !enableDescriptorIndexing)
         {
@@ -805,6 +811,14 @@ public unsafe partial class VulkanRenderer
             {
                 Debug.VulkanWarning(
                     "[Vulkan] VK_NV_copy_memory_indirect enabled but buffer device address is unavailable; indirect copy commands will be disabled.");
+            }
+
+            if (bufferDeviceAddressRequestedBySceneDatabase && !enableBufferDeviceAddress)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Scene-database bufferDeviceAddress was requested (geometryFetch={0}, bindlessMaterialTable={1}) but the feature is unavailable.",
+                    VulkanFeatureProfile.ActiveGeometryFetchMode,
+                    VulkanFeatureProfile.EnableBindlessMaterialTable);
             }
 
             if (!enableIndexTypeUint8Feature)
@@ -956,9 +970,9 @@ public unsafe partial class VulkanRenderer
 
         CreateVulkanPipelineCache();
 
-        Engine.Rendering.State.HasVulkanMemoryDecompression = SupportsNvMemoryDecompression;
-        Engine.Rendering.State.HasVulkanCopyMemoryIndirect = SupportsNvCopyMemoryIndirect;
-        Engine.Rendering.State.HasVulkanRtxIo = SupportsNvMemoryDecompression || SupportsNvCopyMemoryIndirect;
+        RuntimeEngine.Rendering.State.HasVulkanMemoryDecompression = SupportsNvMemoryDecompression;
+        RuntimeEngine.Rendering.State.HasVulkanCopyMemoryIndirect = SupportsNvCopyMemoryIndirect;
+        RuntimeEngine.Rendering.State.HasVulkanRtxIo = SupportsNvMemoryDecompression || SupportsNvCopyMemoryIndirect;
 
         if (descriptorIndexingExtensionLoaded && _supportsDescriptorIndexing)
             Debug.Vulkan("[Vulkan] VK_EXT_descriptor_indexing enabled for descriptor update-after-bind support.");
@@ -972,12 +986,12 @@ public unsafe partial class VulkanRenderer
         Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
 
         bool hasAccelerationStructure = IsDeviceExtensionSupported("VK_KHR_acceleration_structure");
-        bool hasRayTracingPipeline = IsDeviceExtensionSupported("VK_KHR_ray_tracing_pipeline") && Engine.Rendering.State.HasVulkanRayTracing;
+        bool hasRayTracingPipeline = IsDeviceExtensionSupported("VK_KHR_ray_tracing_pipeline") && RuntimeEngine.Rendering.State.HasVulkanRayTracing;
 
         LogCapability("AccelerationStructure", hasAccelerationStructure, "Optional");
         LogCapability("DescriptorIndexing", _supportsDescriptorIndexing, "Optional");
         LogCapability("DrawIndirectCount", _supportsDrawIndirectCount, "Optional");
-        LogCapability("Multiview", Engine.Rendering.State.HasVulkanMultiView, "Optional");
+        LogCapability("Multiview", RuntimeEngine.Rendering.State.HasVulkanMultiView, "Optional");
         LogCapability("RayTracingPipeline", hasRayTracingPipeline, "DisabledByProfile");
         LogCapability("TimelineSemaphore", _supportsTimelineSemaphores, "Required");
         LogCapability("Synchronization2", _supportsSynchronization2Feature, "Optional");

@@ -45,7 +45,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             int passIndex = ResolvePassIndex($"Blit_{SourceFBOName}_to_{DestinationFBOName}");
             using var passScope = passIndex != int.MinValue
-                ? Engine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
 
             var source = ActivePipelineInstance.GetFBO<XRFrameBuffer>(SourceFBOName);

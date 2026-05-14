@@ -1008,7 +1008,7 @@ public partial class DefaultRenderPipeline
             return;
         }
 
-        var camera = Engine.Rendering.State.RenderingCamera;
+        var camera = RuntimeEngine.Rendering.State.RenderingCamera;
         if (camera is not null)
         {
             Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
@@ -1029,7 +1029,7 @@ public partial class DefaultRenderPipeline
     private IFrameBufferAttachement EnsureTextureAttachment(string textureName, Func<XRTexture> factory)
     {
         XRTexture? texture = null;
-        bool hasConcreteTexture = Engine.Rendering.State.CurrentRenderingPipeline?.Resources.TryGetTexture(textureName, out texture) == true;
+        bool hasConcreteTexture = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Resources.TryGetTexture(textureName, out texture) == true;
         if (hasConcreteTexture && texture is IFrameBufferAttachement attachment)
             return attachment;
 
@@ -1037,7 +1037,7 @@ public partial class DefaultRenderPipeline
         // invalidation, the registry can be empty or hold a stale non-attachable
         // survivor under the same name. Rebuild the concrete texture instead of
         // trusting variable aliases or dangling view instances.
-        if (Engine.Rendering.State.CurrentRenderingPipeline is { } instance)
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is { } instance)
         {
             string reason = hasConcreteTexture && texture is not null
                 ? $"cached concrete texture type '{texture.GetType().Name}' is not FBO-attachable"

@@ -79,16 +79,16 @@ namespace XREngine.Components.Capture.Lights
                     viewport.Camera.TsrRenderScaleOverride = 1.0f;
                 }
 
-                viewport.RenderPipeline ??= Engine.Rendering.NewRenderPipeline();
+                viewport.RenderPipeline ??= RuntimeEngine.Rendering.NewRenderPipeline();
                 viewport.SetRenderPipelineFromCamera = false;
             }
         }
 
         public void InitializeStatic()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
-                Engine.EnqueueMainThreadTask(InitializeStatic, "LightProbe.InitializeStatic");
+                RuntimeEngine.EnqueueMainThreadTask(InitializeStatic, "LightProbe.InitializeStatic");
                 return;
             }
 
@@ -403,7 +403,7 @@ namespace XREngine.Components.Capture.Lights
                 return false;
 
             int extent = Math.Max(1, (int)_irradianceTextureCubemap.Extent);
-            using StateObject? renderArea = Engine.Rendering.State.RenderingPipelineState?.PushRenderArea(extent, extent);
+            using StateObject? renderArea = RuntimeEngine.Rendering.State.RenderingPipelineState?.PushRenderArea(extent, extent);
             if (renderArea is null)
                 AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(extent, extent)));
 
@@ -411,7 +411,7 @@ namespace XREngine.Components.Capture.Lights
             {
                 _irradianceCubeFBO.SetRenderTargets((_irradianceTextureCubemap, EFrameBufferAttachment.ColorAttachment0, 0, faceIndex));
                 using var bindScope = _irradianceCubeFBO.BindForWritingState();
-                Engine.Rendering.State.ClearByBoundFBO(true, false, false);
+                RuntimeEngine.Rendering.State.ClearByBoundFBO(true, false, false);
                 if (!_irradianceCubeFBO.RenderFullscreen((ECubemapFace)faceIndex))
                     return false;
             }
@@ -437,7 +437,7 @@ namespace XREngine.Components.Capture.Lights
                 _prefilterCubeFBO.Material?.SetFloat(0, roughness);
                 _prefilterCubeFBO.Material?.SetInt(1, _prefilterSourceDimension);
 
-                using StateObject? renderArea = Engine.Rendering.State.RenderingPipelineState?.PushRenderArea(mipExtent, mipExtent);
+                using StateObject? renderArea = RuntimeEngine.Rendering.State.RenderingPipelineState?.PushRenderArea(mipExtent, mipExtent);
                 if (renderArea is null)
                     AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(mipExtent, mipExtent)));
 
@@ -445,7 +445,7 @@ namespace XREngine.Components.Capture.Lights
                 {
                     _prefilterCubeFBO.SetRenderTargets((_prefilterTextureCubemap, EFrameBufferAttachment.ColorAttachment0, mip, faceIndex));
                     using var bindScope = _prefilterCubeFBO.BindForWritingState();
-                    Engine.Rendering.State.ClearByBoundFBO(true, false, false);
+                    RuntimeEngine.Rendering.State.ClearByBoundFBO(true, false, false);
                     if (!_prefilterCubeFBO.RenderFullscreen((ECubemapFace)faceIndex))
                         return false;
                 }
@@ -560,13 +560,13 @@ namespace XREngine.Components.Capture.Lights
 
         private void RetryPendingIblGeneration()
         {
-            if (!Engine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread)
             {
                 if (_iblRetryQueuedOnRenderThread)
                     return;
 
                 _iblRetryQueuedOnRenderThread = true;
-                Engine.EnqueueMainThreadTask(() =>
+                RuntimeEngine.EnqueueMainThreadTask(() =>
                 {
                     _iblRetryQueuedOnRenderThread = false;
                     RetryPendingIblGeneration();
@@ -582,7 +582,7 @@ namespace XREngine.Components.Capture.Lights
 
             _iblRetryAttempts++;
             bool finalAttempt = _iblRetryAttempts >= MaxIblGenerationRetryAttempts;
-            Engine.Rendering.State.IsLightProbePass = true;
+            RuntimeEngine.Rendering.State.IsLightProbePass = true;
 
             try
             {
@@ -597,7 +597,7 @@ namespace XREngine.Components.Capture.Lights
             }
             finally
             {
-                Engine.Rendering.State.IsLightProbePass = false;
+                RuntimeEngine.Rendering.State.IsLightProbePass = false;
             }
         }
 
@@ -606,7 +606,7 @@ namespace XREngine.Components.Capture.Lights
             if (!fbo.TryPrepareForRendering(forceNoStereo: true))
                 return false;
 
-            var pipelineState = Engine.Rendering.State.RenderingPipelineState;
+            var pipelineState = RuntimeEngine.Rendering.State.RenderingPipelineState;
             BoundingRectangle previousCrop = pipelineState?.CurrentCropRegion ?? BoundingRectangle.Empty;
             bool hadCrop = previousCrop.Width > 0 && previousCrop.Height > 0;
             bool rendered;
@@ -619,8 +619,8 @@ namespace XREngine.Components.Capture.Lights
                 if (renderArea is null)
                     AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
 
-                Engine.Rendering.State.ClearColor(ColorF4.Black);
-                Engine.Rendering.State.ClearByBoundFBO();
+                RuntimeEngine.Rendering.State.ClearColor(ColorF4.Black);
+                RuntimeEngine.Rendering.State.ClearByBoundFBO();
                 rendered = fbo.Render(null, true);
             }
 
@@ -652,7 +652,7 @@ namespace XREngine.Components.Capture.Lights
         public override void Render()
         {
             _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
-            Engine.Rendering.State.IsLightProbePass = true;
+            RuntimeEngine.Rendering.State.IsLightProbePass = true;
 
             try
             {
@@ -669,20 +669,20 @@ namespace XREngine.Components.Capture.Lights
             }
             finally
             {
-                Engine.Rendering.State.IsLightProbePass = false;
+                RuntimeEngine.Rendering.State.IsLightProbePass = false;
             }
         }
 
         public override void ExecuteCaptureFace(int faceIndex)
         {
-            Engine.Rendering.State.IsLightProbePass = true;
+            RuntimeEngine.Rendering.State.IsLightProbePass = true;
             try
             {
                 base.ExecuteCaptureFace(faceIndex);
             }
             finally
             {
-                Engine.Rendering.State.IsLightProbePass = false;
+                RuntimeEngine.Rendering.State.IsLightProbePass = false;
             }
         }
 
@@ -690,7 +690,7 @@ namespace XREngine.Components.Capture.Lights
         {
             EnsureCaptureResourcesInitialized();
             _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
-            Engine.Rendering.State.IsLightProbePass = true;
+            RuntimeEngine.Rendering.State.IsLightProbePass = true;
 
             try
             {
@@ -700,7 +700,7 @@ namespace XREngine.Components.Capture.Lights
             }
             finally
             {
-                Engine.Rendering.State.IsLightProbePass = false;
+                RuntimeEngine.Rendering.State.IsLightProbePass = false;
             }
         }
 

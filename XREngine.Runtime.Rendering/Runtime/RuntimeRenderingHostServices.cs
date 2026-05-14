@@ -10,6 +10,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Scene;
 namespace XREngine.Rendering;
 
@@ -490,6 +491,46 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderVrXrWaitFrameBlockTime(TimeSpan waitTime)
+        {
+        }
+
+        public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime)
+        {
+        }
+
+        public void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
+        {
+        }
+
+        public void RecordRenderVrXrPredictedDisplayLeadTime(double leadTimeMs)
+        {
+        }
+
+        public void RecordRenderVrXrMissedDeadlineFrame()
+        {
+        }
+
+        public void RecordRenderVrXrTrackingLossFrame()
+        {
+        }
+
+        public void RecordRenderVrXrRelocatePredictedTime(TimeSpan elapsed)
+        {
+        }
+
+        public void RecordRenderVrXrCollectFrustumExpansionDegrees(double degrees)
+        {
+        }
+
+        public void RecordRenderVrXrPacingThreadIdleTime(TimeSpan elapsed)
+        {
+        }
+
+        public void RecordRenderVrXrPacingHandoffStall()
+        {
+        }
+
         public void RecordRenderVulkanAdhocBarrier(int emittedCount, int redundantCount)
         {
         }
@@ -667,6 +708,18 @@ public static class RuntimeRenderingHostServices
         public float VrFoveationVisibilityMargin => RuntimeRenderingHostServiceDefaults.VrFoveationVisibilityMargin;
         public bool VrFoveationForceFullResForUiAndNearField => RuntimeRenderingHostServiceDefaults.VrFoveationForceFullResForUiAndNearField;
         public float VrFoveationFullResNearDistanceMeters => RuntimeRenderingHostServiceDefaults.VrFoveationFullResNearDistanceMeters;
+        public bool OpenXrCullWithFrustum => RuntimeRenderingHostServiceDefaults.OpenXrCullWithFrustum;
+        public bool OpenXrDebugGl => RuntimeRenderingHostServiceDefaults.OpenXrDebugGl;
+        public bool OpenXrDebugClearOnly => RuntimeRenderingHostServiceDefaults.OpenXrDebugClearOnly;
+        public bool OpenXrDebugLifecycle => RuntimeRenderingHostServiceDefaults.OpenXrDebugLifecycle;
+        public bool OpenXrDebugRenderRightThenLeft => RuntimeRenderingHostServiceDefaults.OpenXrDebugRenderRightThenLeft;
+        public bool OpenXrPrepareFrameAfterDesktopRender => RuntimeRenderingHostServiceDefaults.OpenXrPrepareFrameAfterDesktopRender;
+        public float OpenXrDeadlineSafetyMarginMs => RuntimeRenderingHostServiceDefaults.OpenXrDeadlineSafetyMarginMs;
+        public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
+        public float OpenXrCollectVisibleFrustumPaddingDegrees => RuntimeRenderingHostServiceDefaults.OpenXrCollectVisibleFrustumPaddingDegrees;
+        public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
+        public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
+        public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => OpenXRAPI.OpenXrRenderPacingMode.PostRenderCallback;
 
         public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         {

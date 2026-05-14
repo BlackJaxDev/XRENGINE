@@ -1,3 +1,4 @@
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.RenderGraph;
@@ -46,8 +47,9 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
         // Path A: when enabled, push skinned-mesh world-space AABBs straight into the
         // command-AABB buffer (BVH leaf bounds) via the reduce shader before we build
         // the BVH. Bypasses the CPU 8-corner transform for these slots.
-        if (Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader
-            && Engine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite)
+        if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader
+            && (RuntimeEngine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite ||
+                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback))
         {
             SkinnedMeshBoundsCalculator.Instance.RefreshAllSkinnedAabbs(gpuScene);
         }

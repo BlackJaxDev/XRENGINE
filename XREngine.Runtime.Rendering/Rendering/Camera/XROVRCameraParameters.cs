@@ -49,9 +49,9 @@ namespace XREngine.Rendering
         protected override Matrix4x4 CalculateProjectionMatrix()
         {
             // OpenXR: use per-eye asymmetric FOV from xrLocateViews (stored in OpenXRAPI).
-            if (Engine.VRState.IsOpenXRActive)
+            if (RuntimeEngine.VRState.IsOpenXRActive)
             {
-                var oxr = Engine.VRState.OpenXRApi;
+                var oxr = RuntimeEngine.VRState.OpenXRApi;
                 if (oxr is not null &&
                     oxr.TryGetEyeFovAngles(LeftEye, out float angleLeft, out float angleRight, out float angleUp, out float angleDown))
                 {
@@ -68,7 +68,7 @@ namespace XREngine.Rendering
                 }
             }
 
-            var api = Engine.VRState.OpenVRApi;
+            var api = RuntimeEngine.VRState.OpenVRApi;
             if (!api.IsHeadsetPresent || api.CVR is null)
                 return Matrix4x4.CreatePerspectiveFieldOfView(float.DegreesToRadians(90.0f), 1.0f, NearZ, FarZ);
 

@@ -22,7 +22,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private bool TryRunStreamline()
         {
-            if (!NvidiaDlssManager.IsSupported || !Engine.Rendering.Settings.EnableNvidiaDlss)
+            if (!NvidiaDlssManager.IsSupported || !RuntimeEngine.Rendering.Settings.EnableNvidiaDlss)
                 return false;
 
             if (FrameBufferName is null)

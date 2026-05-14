@@ -7,10 +7,10 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         protected override void Execute()
         {
-            if (Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass)
+            if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass)
                 return;
 
-            using (Engine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
+            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
                 ActivePipelineInstance.RenderState.WindowViewport?.World?.DebugRenderPhysics();
         }

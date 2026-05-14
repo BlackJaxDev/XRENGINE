@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            Engine.Rendering.State.DepthFunc(Comp);
+            RuntimeEngine.Rendering.State.DepthFunc(Comp);
         }
     }
 }

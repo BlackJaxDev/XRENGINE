@@ -44,14 +44,14 @@ public partial class OpenGLRenderer
             Debug.OpenGL($"OpenGL Renderer: {renderer}");
             Debug.OpenGL($"OpenGL Shading Language Version: {shadingLanguageVersion}");
 
-            Engine.Rendering.State.IsNVIDIA = vendor.Contains("NVIDIA");
-            Engine.Rendering.State.IsIntel = vendor.Contains("Intel");
-            Engine.Rendering.State.IsVulkan = false;
-            Engine.Rendering.State.OpenGLVendor = vendor;
-            Engine.Rendering.State.OpenGLRendererName = renderer;
-            Engine.Rendering.State.VulkanDeviceName = null;
-            Engine.Rendering.State.VulkanVendorId = 0;
-            Engine.Rendering.State.VulkanDeviceId = 0;
+            RuntimeEngine.Rendering.State.IsNVIDIA = vendor.Contains("NVIDIA");
+            RuntimeEngine.Rendering.State.IsIntel = vendor.Contains("Intel");
+            RuntimeEngine.Rendering.State.IsVulkan = false;
+            RuntimeEngine.Rendering.State.OpenGLVendor = vendor;
+            RuntimeEngine.Rendering.State.OpenGLRendererName = renderer;
+            RuntimeEngine.Rendering.State.VulkanDeviceName = null;
+            RuntimeEngine.Rendering.State.VulkanVendorId = 0;
+            RuntimeEngine.Rendering.State.VulkanDeviceId = 0;
 
             // Cache full extension list once so ImGui/debug panels can display it without re-enumerating each frame.
             // Also probe for GL_NV_ray_tracing support early so features can decide whether to attempt the RT path.
@@ -72,7 +72,7 @@ public partial class OpenGLRenderer
                 Debug.OpenGLWarning($"Failed to query GL extensions for NV ray tracing: {ex.Message}");
             }
 
-            Engine.Rendering.State.OpenGLExtensions = extensions;
+            RuntimeEngine.Rendering.State.OpenGLExtensions = extensions;
             int glMajor = 0;
             int glMinor = 0;
             try
@@ -91,38 +91,38 @@ public partial class OpenGLRenderer
             bool HasExtension(string extensionName)
                 => extensions.Any(e => string.Equals(e, extensionName, StringComparison.Ordinal));
 
-            Engine.Rendering.State.SupportsOpenGLLayeredFramebuffers =
+            RuntimeEngine.Rendering.State.SupportsOpenGLLayeredFramebuffers =
                 VersionAtLeast(3, 2) ||
                 HasExtension("GL_ARB_geometry_shader4") ||
                 HasExtension("GL_EXT_geometry_shader4");
-            Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering =
+            RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering =
                 VersionAtLeast(3, 2) ||
                 HasExtension("GL_ARB_geometry_shader4") ||
                 HasExtension("GL_EXT_geometry_shader4");
-            Engine.Rendering.State.SupportsOpenGLViewportArray =
+            RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray =
                 VersionAtLeast(4, 1) ||
                 HasExtension("GL_ARB_viewport_array") ||
                 HasExtension("GL_NV_viewport_array");
-            Engine.Rendering.State.SupportsOpenGLViewportScissorArray =
-                Engine.Rendering.State.SupportsOpenGLViewportArray;
-            Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering =
+            RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray =
+                RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray;
+            RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering =
                 VersionAtLeast(4, 5) ||
                 HasExtension("GL_ARB_shader_viewport_layer_array") ||
                 HasExtension("GL_AMD_vertex_shader_layer") ||
                 HasExtension("GL_NV_viewport_array2");
-            Engine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex =
-                Engine.Rendering.State.SupportsOpenGLViewportArray &&
-                Engine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering;
-            Engine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex =
-                Engine.Rendering.State.SupportsOpenGLViewportArray &&
-                Engine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering;
+            RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex =
+                RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray &&
+                RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering;
+            RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex =
+                RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray &&
+                RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering;
             try
             {
-                Engine.Rendering.State.MaxOpenGLViewports = Math.Max(1, api.GetInteger(GLEnum.MaxViewports));
+                RuntimeEngine.Rendering.State.MaxOpenGLViewports = Math.Max(1, api.GetInteger(GLEnum.MaxViewports));
             }
             catch (Exception ex)
             {
-                Engine.Rendering.State.MaxOpenGLViewports = 1;
+                RuntimeEngine.Rendering.State.MaxOpenGLViewports = 1;
                 Debug.OpenGLWarning($"Failed to query GL_MAX_VIEWPORTS: {ex.Message}");
             }
 
@@ -135,22 +135,22 @@ public partial class OpenGLRenderer
                     break;
                 }
             }
-            Engine.Rendering.State.HasOvrMultiViewExtension |= hasExtMultiview;
+            RuntimeEngine.Rendering.State.HasOvrMultiViewExtension |= hasExtMultiview;
 
             ConfigureParallelShaderCompile(api, extensions);
 
             InitializeSparseTextureSupport(extensions);
 
             // Ray tracing / DLSS / XeSS are Vulkan-focused; do not probe GL_NV_ray_tracing on OpenGL startup.
-            Engine.Rendering.State.HasNvRayTracing = false;
-            Engine.Rendering.State.HasVulkanRayTracing = false;
-            Engine.Rendering.State.HasVulkanMemoryDecompression = false;
-            Engine.Rendering.State.HasVulkanCopyMemoryIndirect = false;
-            Engine.Rendering.State.HasVulkanRtxIo = false;
-            Engine.Rendering.State.HasVulkanMultiView = false;
+            RuntimeEngine.Rendering.State.HasNvRayTracing = false;
+            RuntimeEngine.Rendering.State.HasVulkanRayTracing = false;
+            RuntimeEngine.Rendering.State.HasVulkanMemoryDecompression = false;
+            RuntimeEngine.Rendering.State.HasVulkanCopyMemoryIndirect = false;
+            RuntimeEngine.Rendering.State.HasVulkanRtxIo = false;
+            RuntimeEngine.Rendering.State.HasVulkanMultiView = false;
         }
 
-        Engine.Rendering.RefreshVulkanUpscaleBridgeCapabilitySnapshot(this);
+        RuntimeEngine.Rendering.RefreshVulkanUpscaleBridgeCapabilitySnapshot(this);
 
         GLRenderProgram.ReadBinaryShaderCache(api);
 

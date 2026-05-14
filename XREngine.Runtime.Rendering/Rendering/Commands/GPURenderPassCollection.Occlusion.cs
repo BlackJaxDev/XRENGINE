@@ -1,4 +1,4 @@
-﻿using Silk.NET.OpenGL;
+using Silk.NET.OpenGL;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -184,7 +184,7 @@ namespace XREngine.Rendering.Commands
         // Crash breadcrumbs: synchronous Console.Error/Trace writes around suspect GL calls.
         // Set XRE_CRASH_BREADCRUMBS=1 to enable. Each call also issues glFinish so the GPU
         // catches up before the next breadcrumb prints; the last [CRUMB] line on stderr
-        // before a fastfail identifies which GL call killed the driver. Heavy â€” diagnostic
+        // before a fastfail identifies which GL call killed the driver. Heavy — diagnostic
         // only, leave off for measurement runs.
         private static bool? _crashBreadcrumbsCached;
         internal static bool AreCrashBreadcrumbsEnabled()
@@ -231,7 +231,7 @@ namespace XREngine.Rendering.Commands
             if (ForcePassthroughCulling)
                 return EOcclusionCullingMode.Disabled;
 
-            EOcclusionCullingMode mode = VulkanFeatureProfile.ResolveOcclusionCullingMode(Engine.EffectiveSettings.GpuOcclusionCullingMode);
+            EOcclusionCullingMode mode = VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);
             if (!VulkanFeatureProfile.IsActive)
                 return mode;
 
@@ -263,15 +263,15 @@ namespace XREngine.Rendering.Commands
                     return;
 
                 occlusionStopwatch.Stop();
-                Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                    Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Occlusion,
+                RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                    RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Occlusion,
                     occlusionStopwatch.Elapsed);
             }
 
             EOcclusionCullingMode mode = ResolveActiveOcclusionMode();
             LogOcclusionModeActivation(mode);
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
-                mode, Engine.Rendering.ResolveMeshSubmissionStrategy());
+                mode, RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
 
             if (_lastLoggedOcclusionMode != mode)
                 ResetTemporalOcclusionState();
@@ -286,8 +286,8 @@ namespace XREngine.Rendering.Commands
             }
 
             // Pass-awareness: keep shadow/depth contributors out of occlusion hiding to avoid missing required passes.
-            if (Engine.Rendering.State.IsShadowPass ||
-                (Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false))
+            if (RuntimeEngine.Rendering.State.IsShadowPass ||
+                (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false))
             {
                 HiZStageStats.Record("Exit.ShadowOrDepthPass", 0.0);
                 RecordOcclusionFrameStats(0u, 0u, 0u, 0u);
@@ -362,7 +362,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             if (pipeline is null)
             {
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
@@ -421,7 +421,7 @@ namespace XREngine.Rendering.Commands
             }
 
             bool isReverseZ = camera.IsReversedDepth;
-            bool cacheOncePerFrame = Engine.Rendering.Settings.CacheGpuHiZOcclusionOncePerFrame;
+            bool cacheOncePerFrame = RuntimeEngine.Rendering.Settings.CacheGpuHiZOcclusionOncePerFrame;
             bool invalidateTemporalHiZ = ShouldInvalidateGpuHiZTemporalState(scene, camera);
             uint temporalInvalidations = invalidateTemporalHiZ ? 1u : 0u;
             if (cacheOncePerFrame)
@@ -440,7 +440,7 @@ namespace XREngine.Rendering.Commands
                     return;
                 }
 
-                ulong frameId = Engine.Rendering.State.RenderFrameId;
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
                 if (shared.LastBuiltFrameId != frameId)
                 {
                     Crumb($"HiZ.BuildPyramid.SHARED.BEGIN pass={RenderPass} mip={_hiZMaxMip}");
@@ -469,7 +469,7 @@ namespace XREngine.Rendering.Commands
             // C-GPU-3: when temporal state is dirty (scene mutated or camera jumped this
             // frame), the depth feeding the pyramid we just built does not contain newly
             // added meshes (or the right view of existing meshes). Consuming that
-            // pyramid would over-cull â€” the symptom that previously kept
+            // pyramid would over-cull — the symptom that previously kept
             // XRE_CPU_HIZ_OCCLUSION default-off. The bypass below builds the pyramid
             // anyway (so the *next* frame can cull normally) and skips refine for this
             // pass: every frustum/BVH candidate passes through unchanged.
@@ -490,7 +490,7 @@ namespace XREngine.Rendering.Commands
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPassthroughDirty();
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
                     EOcclusionCullingMode.GpuHiZ,
-                    Engine.Rendering.ResolveMeshSubmissionStrategy());
+                    RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
                 return;
             }
 
@@ -523,7 +523,7 @@ namespace XREngine.Rendering.Commands
                 (int)candidates, (int)occluded, readbackAvailable);
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
                 EOcclusionCullingMode.GpuHiZ,
-                Engine.Rendering.ResolveMeshSubmissionStrategy());
+                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
         }
 
         private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)
@@ -889,7 +889,7 @@ namespace XREngine.Rendering.Commands
             if (CulledSceneToRenderBuffer is null)
                 return;
 
-            // CPU occlusion queries require reading count from GPU â€” skip when readback is disabled.
+            // CPU occlusion queries require reading count from GPU — skip when readback is disabled.
             if (IsCpuReadbackCountDisabledForPass())
                 return;
 
@@ -926,7 +926,7 @@ namespace XREngine.Rendering.Commands
             if (CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
                 return 0u;
 
-            // CPU temporal filter requires GPU count readback â€” pass through all candidates when disabled.
+            // CPU temporal filter requires GPU count readback — pass through all candidates when disabled.
             if (IsCpuReadbackCountDisabledForPass())
                 return candidates;
 
@@ -934,7 +934,7 @@ namespace XREngine.Rendering.Commands
             if (inputCount == 0u)
                 return 0u;
 
-            ulong frameId = Engine.Rendering.State.RenderFrameId;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             uint writeIndex = 0u;
             uint visibleInstances = 0u;
             uint occludedAccepted = 0u;
@@ -1001,7 +1001,7 @@ namespace XREngine.Rendering.Commands
 
         private void ResolveCpuOcclusionQueryResults()
         {
-            ulong frameId = Engine.Rendering.State.RenderFrameId;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (_cpuOcclusionLastResolveFrameId == frameId)
                 return;
 

@@ -168,10 +168,10 @@ void main()
             return;
         }
 
-        Engine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
+        RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
         using var areaScope = instance.RenderState.PushRenderArea(region);
         if (ClearColor || ClearDepth || ClearStencil)
-            Engine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);
+            RuntimeEngine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);
 
         try
         {
@@ -208,7 +208,7 @@ void main()
         if (string.IsNullOrWhiteSpace(WindowTitle))
             return renderer.XRWindow;
 
-        foreach (XRWindow window in Engine.Windows)
+        foreach (XRWindow window in RuntimeEngine.Windows)
         {
             string? title = window.Window?.Title;
             if (string.Equals(title, WindowTitle, StringComparison.OrdinalIgnoreCase))

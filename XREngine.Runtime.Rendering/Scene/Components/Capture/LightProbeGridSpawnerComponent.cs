@@ -660,12 +660,12 @@ public class LightProbeGridSpawnerComponent : XRComponent
             _gridBuildRunningVersion = version;
         }
 
-        Engine.Jobs.Schedule(new ActionJob(() =>
+        RuntimeEngine.Jobs.Schedule(new ActionJob(() =>
         {
             GridBuildResult? result = null;
             try
             {
-                using var _ = Engine.Profiler.Start("LightProbeGrid.BuildPlacement");
+                using var _ = RuntimeEngine.Profiler.Start("LightProbeGrid.BuildPlacement");
                 result = BuildGridPlacement(request);
             }
             catch (Exception ex)
@@ -673,7 +673,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
                 Debug.LightingException(ex, "[LightProbeGrid] Background grid placement failed.");
             }
 
-            Engine.EnqueueAppThreadTask(
+            RuntimeEngine.EnqueueAppThreadTask(
                 () => CompleteGridBuildOnAppThread(request.Version, result),
                 "LightProbeGrid.ApplyBackgroundBuild");
         }), JobPriority.Low);

@@ -29,8 +29,8 @@ namespace XREngine.Scene
         /// </summary>
         public void CaptureLightProbes()
             => CaptureLightProbes(
-                Engine.Rendering.Settings.LightProbeResolution,
-                Engine.Rendering.Settings.LightProbesCaptureDepth);
+                RuntimeEngine.Rendering.Settings.LightProbeResolution,
+                RuntimeEngine.Rendering.Settings.LightProbesCaptureDepth);
 
         /// <summary>
         /// Renders the scene from each light probe's perspective.

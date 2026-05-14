@@ -177,8 +177,8 @@ public class GpuSceneBvhTests
 
         // Assert
         source.ShouldNotBeNullOrEmpty();
-        source.ShouldContain("COMMAND_FLOATS");
-        source.ShouldContain("BOUNDS_OFFSET");
+        source.ShouldContain("BoundsBuffer");
+        source.ShouldContain("BoundsGpu");
         source.ShouldContain("AABBs");
     }
 
@@ -427,8 +427,8 @@ public class GpuSceneBvhTests
     [Test]
     public void GPUIndirectRenderCommand_StructLayout_CorrectSize()
     {
-        // Verify the GPU command structure has expected size (192 bytes / 48 floats)
-        int expectedSize = 192;
+        // Verify the compact GPU command compatibility structure has expected size (80 bytes / 20 lanes).
+        int expectedSize = 80;
         int actualSize = System.Runtime.InteropServices.Marshal.SizeOf<GPUIndirectRenderCommand>();
         
         actualSize.ShouldBe(expectedSize);
@@ -471,7 +471,8 @@ public class GpuSceneBvhTests
         cmd.MaterialID.ShouldBe(0u);
         cmd.InstanceCount.ShouldBe(0u);
         cmd.Flags.ShouldBe(0u);
-        cmd.WorldMatrix.ShouldBe(default(Matrix4x4));
+        cmd.TransformID.ShouldBe(0u);
+        cmd.BoundsID.ShouldBe(0u);
     }
 
     #endregion

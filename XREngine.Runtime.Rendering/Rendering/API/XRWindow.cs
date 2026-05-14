@@ -197,10 +197,10 @@ namespace XREngine.Rendering
             if (_isDisposed || _isDisposing)
                 return;
 
-            if (Engine.IsRenderThread)
+            if (RuntimeEngine.IsRenderThread)
                 ApplyVSyncModeOnRenderThread(globalVSyncMode);
             else
-                Engine.EnqueueRenderThreadTask(
+                RuntimeEngine.EnqueueRenderThreadTask(
                     () => ApplyVSyncModeOnRenderThread(globalVSyncMode),
                     $"XRWindow.ApplyVSync[{GetHashCode()}]");
         }
@@ -210,13 +210,13 @@ namespace XREngine.Rendering
             if (_isDisposed || _isDisposing)
                 return;
 
-            if (Engine.IsRenderThread)
+            if (RuntimeEngine.IsRenderThread)
             {
                 RequestCloseOnRenderThread();
                 return;
             }
 
-            Engine.EnqueueRenderThreadTask(
+            RuntimeEngine.EnqueueRenderThreadTask(
                 RequestCloseOnRenderThread,
                 $"Viewport.CloseWindow[{GetHashCode()}]");
         }
@@ -271,7 +271,7 @@ namespace XREngine.Rendering
             if (_isDisposed || _isDisposing)
                 return;
 
-            if (Engine.IsDispatchingRenderFrame)
+            if (RuntimeEngine.IsDispatchingRenderFrame)
             {
                 Interlocked.Exchange(ref _pendingCloseRequested, 1);
                 return;
@@ -449,7 +449,7 @@ namespace XREngine.Rendering
         #region Public Methods - Player Registration
 
         public void RegisterLocalPlayer(ELocalPlayerIndex playerIndex, bool autoSizeAllViewports)
-            => RegisterController(Engine.State.GetOrCreateLocalPlayer(playerIndex), autoSizeAllViewports);
+            => RegisterController(RuntimeEngine.State.GetOrCreateLocalPlayer(playerIndex), autoSizeAllViewports);
 
         public void RegisterController(IPawnController controller, bool autoSizeAllViewports)
             => GetOrAddViewportForPlayer(controller, autoSizeAllViewports).AssociatedPlayer = controller;
@@ -492,7 +492,7 @@ namespace XREngine.Rendering
 
         public void UnregisterLocalPlayer(ELocalPlayerIndex playerIndex)
         {
-            IPawnController? controller = Engine.State.GetLocalPlayer(playerIndex);
+            IPawnController? controller = RuntimeEngine.State.GetLocalPlayer(playerIndex);
             if (controller is not null)
                 UnregisterController(controller);
         }
@@ -860,8 +860,8 @@ namespace XREngine.Rendering
 
             // Subscribe to play mode transitions to invalidate scene panel resources
             RuntimeRenderingHostServices.Current.SubscribePlayModeTransitions(OnPlayModeTransition);
-            Engine.PlayMode.PostEnterPlay += OnPlayModeTransition;
-            Engine.PlayMode.PreExitPlay += OnPlayModeTransition;
+            RuntimeEngine.PlayMode.PostEnterPlay += OnPlayModeTransition;
+            RuntimeEngine.PlayMode.PreExitPlay += OnPlayModeTransition;
         }
 
         private void UnlinkWindow()
@@ -878,14 +878,14 @@ namespace XREngine.Rendering
 
             // Unsubscribe from play mode events
             RuntimeRenderingHostServices.Current.UnsubscribePlayModeTransitions(OnPlayModeTransition);
-            Engine.PlayMode.PostEnterPlay -= OnPlayModeTransition;
-            Engine.PlayMode.PreExitPlay -= OnPlayModeTransition;
+            RuntimeEngine.PlayMode.PostEnterPlay -= OnPlayModeTransition;
+            RuntimeEngine.PlayMode.PreExitPlay -= OnPlayModeTransition;
         }
 
         private void OnPlayModeTransition()
         {
-            bool isTransitioning = Engine.PlayMode.IsTransitioning;
-            Debug.Rendering($"[XRWindow] OnPlayModeTransition called. PlayModeState={Engine.PlayMode.State} Viewports={Viewports.Count} Transitioning={isTransitioning}");
+            bool isTransitioning = RuntimeEngine.PlayMode.IsTransitioning;
+            Debug.Rendering($"[XRWindow] OnPlayModeTransition called. PlayModeState={RuntimeEngine.PlayMode.State} Viewports={Viewports.Count} Transitioning={isTransitioning}");
             
             // Invalidate scene panel resources IMMEDIATELY so stale textures don't persist.
             // Using immediate destruction ensures the GL texture handle is invalidated before
@@ -998,7 +998,7 @@ namespace XREngine.Rendering
                 return;
 
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.RenderFrame");
-            ulong renderFrameId = Engine.Rendering.State.RenderFrameId;
+            ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
             long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
             {
@@ -1033,7 +1033,7 @@ namespace XREngine.Rendering
             {
                 // Draw the frame first, then spend a small budget on queued GPU work.
                 // This keeps texture uploads and property updates from delaying visible rendering.
-                Engine.ProcessMainThreadTasks();
+                RuntimeEngine.ProcessMainThreadTasks();
             }
             RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PostRenderMainThreadJobs", phaseStart);
 
@@ -1131,14 +1131,14 @@ namespace XREngine.Rendering
                 bool viewportRenderFailed = false;
                 try
                 {
-                    if (Engine.PlayMode.IsTransitioning)
+                    if (RuntimeEngine.PlayMode.IsTransitioning)
                     {
                         Debug.RenderingEvery(
                             $"XRWindow.RenderCallback.TransitionSuspended.{GetHashCode()}",
                             TimeSpan.FromSeconds(1),
                             "[RenderDiag] Window viewport rendering suspended during play-mode transition. Window={0} State={1} Viewports={2}",
                             GetHashCode(),
-                            Engine.PlayMode.State,
+                            RuntimeEngine.PlayMode.State,
                             Viewports.Count);
                     }
                     else
@@ -1174,7 +1174,7 @@ namespace XREngine.Rendering
                     }
                 }
 
-                if (Engine.StartupPresentationEnabled)
+                if (RuntimeEngine.StartupPresentationEnabled)
                 {
                     using var startupPresentationSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.StartupPresentationMarker");
                     var fullRegion = new BoundingRectangle(0, 0, Window.FramebufferSize.X, Window.FramebufferSize.Y);
@@ -1186,7 +1186,7 @@ namespace XREngine.Rendering
                     Renderer.SetRenderArea(fullRegion);
                     Renderer.SetCroppingEnabled(true);
                     Renderer.CropRenderArea(markerRegion);
-                    Renderer.ClearColor(Engine.StartupPresentationClearColor);
+                    Renderer.ClearColor(RuntimeEngine.StartupPresentationClearColor);
                     Renderer.Clear(color: true, depth: false, stencil: false);
                     Renderer.SetCroppingEnabled(false);
                     Renderer.SetRenderArea(fullRegion);
@@ -1207,7 +1207,7 @@ namespace XREngine.Rendering
                 // is still marked active so that IsRendererActive guards inside those coroutines pass.
                 using (var inFrameJobsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.InFrameMainThreadJobs"))
                 {
-                    Engine.ProcessMainThreadTasks();
+                    RuntimeEngine.ProcessMainThreadTasks();
                 }
 
                 // Successful frame: clear circuit breaker state (viewport failures don't block present).
@@ -1275,21 +1275,21 @@ namespace XREngine.Rendering
                 "[RenderDiag] Window mode: PanelMode={0} ForcedFull={1} Pref={2} CanRender={3} Viewports={4} TargetWorld={5} PlayState={6} Delta={7:F4} DrawCalls={8} VkReq={9} VkCull={10} VkEmit={11} VkConsume={12} GpuVisible(O/M/A/E)={13}/{14}/{15}/{16}",
                 useScenePanelMode,
                 forceFullViewport,
-                Engine.EditorPreferences.ViewportPresentationMode,
+                RuntimeEngine.EditorPreferences.ViewportPresentationMode,
                 canRenderWindowViewports,
                 Viewports.Count,
                 TargetWorldInstance?.TargetWorldName ?? "<null>",
                 TargetWorldInstance?.IsPlaySessionActive.ToString() ?? "<null>",
                 delta,
-                Engine.Rendering.Stats.DrawCalls,
-                Engine.Rendering.Stats.VulkanRequestedDraws,
-                Engine.Rendering.Stats.VulkanCulledDraws,
-                Engine.Rendering.Stats.VulkanEmittedIndirectDraws,
-                Engine.Rendering.Stats.VulkanConsumedDraws,
-                Engine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
-                Engine.Rendering.Stats.GpuTransparencyMaskedVisible,
-                Engine.Rendering.Stats.GpuTransparencyApproximateVisible,
-                Engine.Rendering.Stats.GpuTransparencyExactVisible);
+                RuntimeEngine.Rendering.Stats.DrawCalls,
+                RuntimeEngine.Rendering.Stats.VulkanRequestedDraws,
+                RuntimeEngine.Rendering.Stats.VulkanCulledDraws,
+                RuntimeEngine.Rendering.Stats.VulkanEmittedIndirectDraws,
+                RuntimeEngine.Rendering.Stats.VulkanConsumedDraws,
+                RuntimeEngine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparencyMaskedVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparencyApproximateVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparencyExactVisible);
 
             if (!canRenderWindowViewports)
             {

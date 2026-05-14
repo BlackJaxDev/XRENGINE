@@ -623,6 +623,8 @@ public static partial class EditorImGuiUI
                 DrawOpenGLErrorsPanel();
             using (Engine.Profiler.Start("UI.DrawRenderApiExtensionsPanel"))
                 DrawRenderApiExtensionsPanel();
+            if (XREngine.Diagnostics.AssetDiagnostics.ConsumePendingDisplayFlag())
+                _showMissingAssets = true;
             DrawMissingAssetsPanel();
             using (Engine.Profiler.Start("UI.DrawGlobalEditorPreferencesPanel"))
                 DrawGlobalEditorPreferencesPanel();

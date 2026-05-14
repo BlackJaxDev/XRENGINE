@@ -74,36 +74,36 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (Engine.Rendering.State.IsShadowPass)
+            if (RuntimeEngine.Rendering.State.IsShadowPass)
             {
-                Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
+                RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
                 return;
             }
 
             var world = ActivePipelineInstance.RenderState.WindowViewport?.World;
             if (world?.Lights is null)
             {
-                Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
+                RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
                 return;
             }
 
             var depthTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTexture);
             if (depthTex is null)
             {
-                Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
+                RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
                 return;
             }
 
-            bool stereo = Engine.Rendering.State.IsStereoPass;
+            bool stereo = RuntimeEngine.Rendering.State.IsStereoPass;
             if (stereo)
                 EnsureStereoComputeProgram();
             else
@@ -115,7 +115,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             // Compute tile counts from the active render area.
             // (Texture sizes can be backend-specific due to views/arrays.)
-            var area = Engine.Rendering.State.RenderArea;
+            var area = RuntimeEngine.Rendering.State.RenderArea;
             int width = Math.Max(1, area.Width);
             int height = Math.Max(1, area.Height);
 
@@ -128,7 +128,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             UploadLocalLights(lights);
 
             // Bind SSBOs + uniforms and dispatch.
-            var cam = Engine.Rendering.State.RenderingCamera;
+            var cam = RuntimeEngine.Rendering.State.RenderingCamera;
             Matrix4x4 view = cam?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 proj = cam?.ProjectionMatrix ?? Matrix4x4.Identity;
             float cameraNear = cam?.Parameters.NearZ ?? 0.1f;
@@ -137,10 +137,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 if (depthTex is not XRTexture2DArray depthArray)
                 {
-                    Engine.Rendering.State.ForwardPlusLocalLightCount = 0;
-                    Engine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
-                    Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
-                    Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
+                    RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
+                    RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;
+                    RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = null;
+                    RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = null;
                     return;
                 }
 
@@ -187,15 +187,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             // Publish state so forward materials can bind buffers for shading.
-            Engine.Rendering.State.ForwardPlusLocalLightsBuffer = _localLightsBuffer;
-            Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer = _visibleIndicesBuffer;
-            Engine.Rendering.State.ForwardPlusTileLightCountsBuffer = _tileLightCountsBuffer;
-            Engine.Rendering.State.ForwardPlusScreenSize = new Vector2(width, height);
-            Engine.Rendering.State.ForwardPlusTileSize = TileSize;
-            Engine.Rendering.State.ForwardPlusTileCountX = tileCountX;
-            Engine.Rendering.State.ForwardPlusTileCountY = tileCountY;
-            Engine.Rendering.State.ForwardPlusMaxLightsPerTile = MaxLightsPerTile;
-            Engine.Rendering.State.ForwardPlusLocalLightCount = lightCount;
+            RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = _localLightsBuffer;
+            RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer = _visibleIndicesBuffer;
+            RuntimeEngine.Rendering.State.ForwardPlusTileLightCountsBuffer = _tileLightCountsBuffer;
+            RuntimeEngine.Rendering.State.ForwardPlusScreenSize = new Vector2(width, height);
+            RuntimeEngine.Rendering.State.ForwardPlusTileSize = TileSize;
+            RuntimeEngine.Rendering.State.ForwardPlusTileCountX = tileCountX;
+            RuntimeEngine.Rendering.State.ForwardPlusTileCountY = tileCountY;
+            RuntimeEngine.Rendering.State.ForwardPlusMaxLightsPerTile = MaxLightsPerTile;
+            RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = lightCount;
 
             _depthTextureCache = depthTex;
             _lastTileCountX = tileCountX;
@@ -213,7 +213,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     continue;
 
                 int shadowRecordIndex = -1;
-                if (Engine.Rendering.Settings.UsePointShadowAtlas)
+                if (RuntimeEngine.Rendering.Settings.UsePointShadowAtlas)
                     lights.TryGetPointShadowAtlasFaceAllocation(p, 0, out _, out shadowRecordIndex);
 
                 result.Add(new ForwardPlusLocalLight
@@ -234,7 +234,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     continue;
 
                 int shadowRecordIndex = -1;
-                if (Engine.Rendering.Settings.UseSpotShadowAtlas && s.UsesSpotShadowAtlasForCurrentEncoding)
+                if (RuntimeEngine.Rendering.Settings.UseSpotShadowAtlas && s.UsesSpotShadowAtlasForCurrentEncoding)
                     lights.TryGetSpotShadowAtlasAllocation(s, out _, out shadowRecordIndex);
 
                 result.Add(new ForwardPlusLocalLight

@@ -157,6 +157,36 @@ namespace XREngine
                 => Rendering.Settings.GpuOcclusionCullingMode;
 
             /// <summary>
+            /// Gets whether the opt-in CPU software occlusion culler is enabled.
+            /// </summary>
+            public static bool EnableCpuSoftwareOcclusionCulling
+                => Rendering.Settings.EnableCpuSoftwareOcclusionCulling;
+
+            public static int CpuSocBufferWidth
+                => Rendering.Settings.CpuSocBufferWidth;
+
+            public static int CpuSocBufferHeight
+                => Rendering.Settings.CpuSocBufferHeight;
+
+            public static int CpuSocOccluderTriangleBudget
+                => Rendering.Settings.CpuSocOccluderTriangleBudget;
+
+            public static int CpuSocMaxOccluders
+                => Rendering.Settings.CpuSocMaxOccluders;
+
+            public static float CpuSocMinOccluderScreenArea
+                => Rendering.Settings.CpuSocMinOccluderScreenArea;
+
+            public static bool CpuSocUseAvx2
+                => Rendering.Settings.CpuSocUseAvx2;
+
+            public static bool CpuSocDebugVisualization
+                => Rendering.Settings.CpuSocDebugVisualization;
+
+            public static bool CpuSocDebugForceVisible
+                => Rendering.Settings.CpuSocDebugForceVisible;
+
+            /// <summary>
             /// Gets the effective BVH leaf primitive budget for GPU builds.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>

@@ -1,10 +1,41 @@
 #version 460 core
-// SoA-based frustum + distance culling reading pre-extracted arrays
+// SoA frustum + distance culling over the Phase C scene database.
 layout(local_size_x = 256) in;
 
-layout(std430, binding = 0) buffer InBoundingSpheres { vec4 inSpheres[]; };
-layout(std430, binding = 1) buffer InMetadata { uvec4 inMeta[]; }; // (InstanceCount, RenderPass, LayerMask, Flags)
-layout(std430, binding = 2) buffer OutIndices { uint outIndices[]; }; // first element used as counter (slot 0), then indices
+struct DrawMetadata
+{
+    uint DrawID;
+    uint MeshID;
+    uint SubmeshID;
+    uint MaterialID;
+    uint TransformID;
+    uint SkinID;
+    uint RenderPassMask;
+    uint LayerMask;
+    uint Flags;
+    uint LodPolicy;
+    uint StateClassID;
+    uint InstanceCount;
+    uint RenderPass;
+    uint ShaderProgramID;
+    uint LogicalMeshID;
+    uint BoundsID;
+};
+
+struct BoundsGpu
+{
+    vec4 BoundingSphere;
+    vec4 AabbMin;
+    vec4 AabbMax;
+    uint BoundsVersion;
+    uint Padding0;
+    uint Padding1;
+    uint Padding2;
+};
+
+layout(std430, binding = 0) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
+layout(std430, binding = 1) readonly buffer BoundsBuffer { BoundsGpu Bounds[]; };
+layout(std430, binding = 2) buffer OutIndices { uint outIndices[]; };
 
 uniform vec4 FrustumPlanes[6];
 uniform vec3 CameraPosition;
@@ -14,7 +45,6 @@ uniform int CurrentRenderPass;
 uniform uint DisabledFlagsMask;
 uniform int InputCommandCount;
 
-// Stats / overflow
 layout(std430, binding = 3) buffer CulledCountBuffer
 {
     uint CulledCount;
@@ -46,33 +76,38 @@ layout(std430, binding = 8) buffer StatsBuffer {
 bool FrustumSphereVisible(vec3 center, float radius){
     for(int i=0;i<6;++i){
         vec4 p = FrustumPlanes[i];
-        float d = dot(p.xyz, center) + p.w;
-        if(d < -radius) return false;
+        if(dot(p.xyz, center) + p.w < -radius) return false;
     }
     return true;
 }
 
 void main(){
     uint idx = gl_GlobalInvocationID.x;
-    if(idx >= uint(InputCommandCount)) return;
+    if(idx >= uint(InputCommandCount) || idx >= Draws.length()) return;
     if(idx==0u) StatsInputCount = uint(InputCommandCount);
-    vec4 sphere = inSpheres[idx];
-    uvec4 meta = inMeta[idx];
-    uint instanceCount = meta.x;
-    uint renderPass = meta.y;
-    uint layerMask = meta.z;
-    uint flags = meta.w;
+
+    DrawMetadata meta = Draws[idx];
+    if(meta.BoundsID >= Bounds.length()) return;
+
+    vec4 sphere = Bounds[meta.BoundsID].BoundingSphere;
+    uint instanceCount = meta.InstanceCount;
+    uint renderPass = meta.RenderPass;
+    uint layerMask = meta.LayerMask;
+    uint flags = meta.Flags;
+
     if(instanceCount==0u) return;
     if((layerMask & CameraLayerMask)==0u) return;
     if(DisabledFlagsMask!=0u && (flags & DisabledFlagsMask)!=0u) return;
     if(CurrentRenderPass>=0 && renderPass != uint(CurrentRenderPass) && renderPass != 0xFFFFFFFFu) return;
+
     vec3 toCenter = sphere.xyz - CameraPosition;
     float dist2 = dot(toCenter,toCenter);
     if(dist2 > MaxRenderDistance){ atomicAdd(StatsRejectedDistance,1u); return; }
     if(!FrustumSphereVisible(sphere.xyz, sphere.w)){ atomicAdd(StatsRejectedFrustum,1u); return; }
+
     uint outIndex = atomicAdd(CulledCount, 1u);
     if(outIndex >= 0xFFFFFFFEu){ atomicExchange(CullingOverflowFlag,1u); atomicCompSwap(CulledOverflow,0u,outIndex+1u); return; }
-    outIndices[outIndex+1u] = idx; // +1 skip counter slot
+    outIndices[outIndex+1u] = meta.DrawID;
     atomicAdd(CulledInstanceCount, instanceCount);
     atomicAdd(StatsCulledCount,1u);
 }

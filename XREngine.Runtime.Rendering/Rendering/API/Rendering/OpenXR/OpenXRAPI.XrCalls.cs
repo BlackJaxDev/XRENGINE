@@ -1,12 +1,61 @@
 using Silk.NET.OpenXR;
+using Silk.NET.OpenXR.Extensions.KHR;
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
+    private KhrWin32ConvertPerformanceCounterTime? _win32PerformanceCounterTimeExtension;
+    private int _win32PerformanceCounterTimeExtensionChecked;
+
+    private void MarkOpenXrRenderThread()
+    {
+        int currentId = Environment.CurrentManagedThreadId;
+        int previousId = Interlocked.CompareExchange(ref _openXrRenderThreadId, currentId, 0);
+        if (previousId != 0 && previousId != currentId)
+            System.Diagnostics.Debug.Fail($"OpenXR render callback moved from thread {previousId} to {currentId}.");
+    }
+
+    /// <summary>
+    /// Records the calling thread as the OpenXR pacing thread (set once when the dedicated pacing thread starts).
+    /// </summary>
+    private void MarkOpenXrPacingThread()
+    {
+        int currentId = Environment.CurrentManagedThreadId;
+        int previousId = Interlocked.CompareExchange(ref _openXrPacingThreadId, currentId, 0);
+        if (previousId != 0 && previousId != currentId)
+            System.Diagnostics.Debug.Fail($"OpenXR pacing thread moved from {previousId} to {currentId}.");
+    }
+
+    /// <summary>
+    /// Clears the registered OpenXR pacing thread id (call after the dedicated pacing thread exits).
+    /// </summary>
+    private void ClearOpenXrPacingThread()
+    {
+        Volatile.Write(ref _openXrPacingThreadId, 0);
+    }
+
+    [Conditional("DEBUG")]
+    private void AssertOpenXrRenderThread(string operation)
+    {
+        int renderThreadId = Volatile.Read(ref _openXrRenderThreadId);
+        int pacingThreadId = Volatile.Read(ref _openXrPacingThreadId);
+        if (renderThreadId == 0 && pacingThreadId == 0)
+            return;
+
+        int currentId = Environment.CurrentManagedThreadId;
+        bool ok = (renderThreadId != 0 && currentId == renderThreadId)
+               || (pacingThreadId != 0 && currentId == pacingThreadId);
+        System.Diagnostics.Debug.Assert(
+            ok,
+            $"OpenXR frame API call '{operation}' ran on thread {currentId}; expected render thread {renderThreadId} or pacing thread {pacingThreadId}.");
+    }
+
     /// <summary>
     /// Creates an OpenXR system for the specified form factor.
     /// </summary>
@@ -50,6 +99,7 @@ public unsafe partial class OpenXRAPI
     /// <returns>True if the frame was successfully begun, false otherwise.</returns>
     private bool BeginFrame()
     {
+        AssertOpenXrRenderThread(nameof(BeginFrame));
         var frameBeginInfo = new FrameBeginInfo { Type = StructureType.FrameBeginInfo };
         if (CheckResult(Api.BeginFrame(_session, in frameBeginInfo), "xrBeginFrame") != Result.Success)
         {
@@ -66,15 +116,93 @@ public unsafe partial class OpenXRAPI
     /// <returns>True if successfully waited for the frame, false otherwise.</returns>
     private bool WaitFrame(out FrameState frameState)
     {
+        AssertOpenXrRenderThread(nameof(WaitFrame));
         var frameWaitInfo = new FrameWaitInfo { Type = StructureType.FrameWaitInfo };
         frameState = new FrameState { Type = StructureType.FrameState };
+        long waitStart = Stopwatch.GetTimestamp();
         if (CheckResult(Api.WaitFrame(_session, in frameWaitInfo, ref frameState), "xrWaitFrame") != Result.Success)
         {
             Debug.LogWarning("Failed to wait for OpenXR frame.");
             return false;
         }
+        long waitEnd = Stopwatch.GetTimestamp();
+        long waitTicks = waitEnd - waitStart;
+        RuntimeEngine.Rendering.Stats.RecordVrXrWaitFrameBlockTime(TimeSpan.FromSeconds(waitTicks / (double)Stopwatch.Frequency));
+
         _frameState = frameState;
+        double leadMs = TryGetPredictedDisplayLeadTimeMs(frameState, waitEnd);
+        RuntimeEngine.Rendering.Stats.RecordVrXrPredictedDisplayLeadTime(leadMs);
+
         return true;
+    }
+
+    private double TryGetPredictedDisplayLeadTimeMs(FrameState frameState, long performanceCounter)
+    {
+        if (!TryConvertPerformanceCounterToXrTime(performanceCounter, out long nowXrTime))
+            return double.NaN;
+
+        return (frameState.PredictedDisplayTime - nowXrTime) / 1_000_000.0;
+    }
+
+    private bool TryConvertPerformanceCounterToXrTime(long performanceCounter, out long xrTime)
+    {
+        xrTime = 0;
+        if (!TryGetWin32PerformanceCounterTimeExtension(out var timeExtension))
+            return false;
+
+        long counter = performanceCounter;
+        var result = timeExtension.ConvertWin32PerformanceCounterToTime(_instance, ref counter, ref xrTime);
+        if (CheckResult(result, "xrConvertWin32PerformanceCounterToTimeKHR") != Result.Success)
+            return false;
+
+        return true;
+    }
+
+    private bool TryGetWin32PerformanceCounterTimeExtension(out KhrWin32ConvertPerformanceCounterTime? timeExtension)
+    {
+        timeExtension = _win32PerformanceCounterTimeExtension;
+        if (timeExtension is not null)
+            return true;
+
+        if (Volatile.Read(ref _win32PerformanceCounterTimeExtensionChecked) != 0)
+            return false;
+
+        if (_instance.Handle == 0)
+            return false;
+
+        if (Api.TryGetInstanceExtension<KhrWin32ConvertPerformanceCounterTime>(string.Empty, _instance, out timeExtension))
+        {
+            _win32PerformanceCounterTimeExtension = timeExtension;
+            return true;
+        }
+
+        Volatile.Write(ref _win32PerformanceCounterTimeExtensionChecked, 1);
+        return false;
+    }
+
+    private void RecordDeadlineStatus(long displayTime, long submitEndCounter, uint submittedLayerCount)
+    {
+        if (submittedLayerCount == 0)
+            return;
+
+        if (!TryConvertPerformanceCounterToXrTime(submitEndCounter, out long submitEndXrTime))
+            return;
+
+        double safetyMarginNanoseconds = Math.Max(0.0, OpenXrDeadlineSafetyMarginMs) * 1_000_000.0;
+        if (submitEndXrTime + safetyMarginNanoseconds >= displayTime)
+            RuntimeEngine.Rendering.Stats.RecordVrXrMissedDeadlineFrame();
+    }
+
+    private Result EndFrameWithTiming(in FrameEndInfo frameEndInfo)
+    {
+        AssertOpenXrRenderThread("xrEndFrame");
+        long start = Stopwatch.GetTimestamp();
+        var result = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
+        long end = Stopwatch.GetTimestamp();
+        long ticks = end - start;
+        RuntimeEngine.Rendering.Stats.RecordVrXrEndFrameSubmitTime(TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency));
+        RecordDeadlineStatus(frameEndInfo.DisplayTime, end, frameEndInfo.LayerCount);
+        return result;
     }
 
     private bool LocateViews()
@@ -82,6 +210,7 @@ public unsafe partial class OpenXRAPI
 
     private bool LocateViews(OpenXrPoseTiming timing)
     {
+        AssertOpenXrRenderThread(nameof(LocateViews));
         var displayTime = _frameState.PredictedDisplayTime;
 
         var viewLocateInfo = new ViewLocateInfo
@@ -104,8 +233,83 @@ public unsafe partial class OpenXRAPI
             }
         }
 
+        if (!HandleLocatedViewState(viewState))
+            return false;
+
         StoreViewPosesToCache(timing);
         return true;
+    }
+
+    private bool HandleLocatedViewState(ViewState viewState)
+    {
+        const ViewStateFlags need = ViewStateFlags.PositionValidBit | ViewStateFlags.OrientationValidBit;
+        if ((viewState.ViewStateFlags & need) == need)
+        {
+            CacheLastValidViews();
+            return true;
+        }
+
+        RuntimeEngine.Rendering.Stats.RecordVrXrTrackingLossFrame();
+
+        // Rate-limit allocation: emit a single warning per tracking-loss streak. The flag resets when
+        // CacheLastValidViews() runs again (tracking recovered). Cold-frame allocation is acceptable.
+        bool firstLossInStreak = Interlocked.Exchange(ref _trackingLossStreakLogged, 1) == 0;
+
+        switch (OpenXrTrackingLossHandling)
+        {
+            case OpenXrTrackingLossPolicy.FreezeLastValid:
+                if (TryRestoreLastValidViews())
+                    return true;
+                // Freeze policy with no cached views (cold start / no successful locate yet) falls back to identity.
+                // Log once per streak so users can tell why the view snapped to identity.
+                if (Interlocked.Exchange(ref _freezeFallbackStreakLogged, 1) == 0)
+                    Debug.LogWarning("OpenXR FreezeLastValid policy has no cached views; snapping to identity until tracking recovers.");
+                ApplyIdentityViewPoses();
+                return true;
+            case OpenXrTrackingLossPolicy.Identity:
+                ApplyIdentityViewPoses();
+                return true;
+            case OpenXrTrackingLossPolicy.SkipFrame:
+                if (firstLossInStreak)
+                    Debug.LogWarning($"OpenXR LocateViews returned invalid tracking flags: {viewState.ViewStateFlags}");
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    private void CacheLastValidViews()
+    {
+        if (_lastValidViews is null || _lastValidViews.Length != _views.Length)
+            _lastValidViews = new View[_views.Length];
+
+        Array.Copy(_views, _lastValidViews, _views.Length);
+        Volatile.Write(ref _hasLastValidViews, 1);
+        // Tracking recovered — clear streak-logged flags so the next loss emits a fresh warning.
+        Volatile.Write(ref _trackingLossStreakLogged, 0);
+        Volatile.Write(ref _freezeFallbackStreakLogged, 0);
+    }
+
+    private bool TryRestoreLastValidViews()
+    {
+        View[]? lastValidViews = _lastValidViews;
+        if (Volatile.Read(ref _hasLastValidViews) == 0 || lastValidViews is null || lastValidViews.Length != _views.Length)
+            return false;
+
+        Array.Copy(lastValidViews, _views, _views.Length);
+        return true;
+    }
+
+    private void ApplyIdentityViewPoses()
+    {
+        var identity = new Posef
+        {
+            Orientation = new Quaternionf { W = 1.0f },
+            Position = default
+        };
+
+        for (int i = 0; i < _views.Length; i++)
+            _views[i].Pose = identity;
     }
 
     private void StoreViewPosesToCache(OpenXrPoseTiming timing)
@@ -222,10 +426,12 @@ public unsafe partial class OpenXRAPI
                             var endResult = CheckResult(Api.EndSession(_session), "xrEndSession");
                             Debug.Out($"xrEndSession: {endResult}");
                             _sessionBegun = false;
+                            StopOpenXrPacingThread();
                         }
                         else if (_sessionState == SessionState.Exiting || _sessionState == SessionState.LossPending)
                         {
                             _sessionBegun = false;
+                            StopOpenXrPacingThread();
                             MarkRuntimeLoss(_sessionState == SessionState.LossPending
                                 ? OpenXrRuntimeLossReason.SessionLossPending
                                 : OpenXrRuntimeLossReason.SessionExiting);
@@ -249,6 +455,7 @@ public unsafe partial class OpenXRAPI
     protected void CleanUp()
     {
         DisableRuntimeMonitoring();
+        StopOpenXrPacingThread();
         StopOpenXrParallelCollectWorkers();
 
         if (Window is not null && _deferredOpenGlInit is not null)

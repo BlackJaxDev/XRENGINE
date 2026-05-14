@@ -291,7 +291,7 @@ namespace XREngine.Rendering.OpenGL
                 double elapsedMilliseconds,
                 string? detail = null)
             {
-                bool renderThread = Engine.IsRenderThread;
+                bool renderThread = RuntimeEngine.IsRenderThread;
                 Debug.Rendering(
                     EOutputVerbosity.Verbose,
                     false,
@@ -328,7 +328,7 @@ namespace XREngine.Rendering.OpenGL
                     cacheKey,
                     length,
                     format,
-                    Engine.IsRenderThread,
+                    RuntimeEngine.IsRenderThread,
                     FormatRenderingDetail(detail));
             }
 

@@ -7,33 +7,70 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.Materials
 {
     /// <summary>
-    /// GPU material table entry (bindless handles split into two uints each for std430 alignment).
-    /// Extend as needed (PBR params, etc.). Keep size a multiple of 16 bytes.
+    /// GPU material table entry. Texture fields are indices into <see cref="GPUMaterialTable.TextureHandleBuffer"/>,
+    /// not API handles. This keeps the per-material row small and lets GL bindless handles or Vulkan descriptor
+    /// indices share the same shader-facing indirection contract.
     /// </summary>
     public struct GPUMaterialEntry
     {
-        public ulong AlbedoHandle;      // 8 bytes
-        public ulong NormalHandle;      // 8 bytes
-        public ulong RMHandle;          // 8 bytes (Roughness/Metal/AO)
-        public uint Flags;              // 4 bytes
-        public uint Padding0;           // 4
-        public uint Padding1;           // 4
-        public uint Padding2;           // 4 (total 40 -> align to 48 if needed)
+        public uint AlbedoHandleIndex;
+        public uint NormalHandleIndex;
+        public uint RMHandleIndex;
+        public uint Flags;
     }
 
     /// <summary>
-    /// Manages a GPU material table SSBO for bindless sampling.
+    /// Backend texture handles referenced by <see cref="GPUMaterialEntry"/>.
+    /// OpenGL stores ARB_bindless_texture handles split into low/high uints. Vulkan uses the same
+    /// index as the descriptor-array slot and leaves the 64-bit handle zeroed.
+    /// </summary>
+    public struct GPUTextureHandleEntry
+    {
+        public ulong Handle;
+        public uint Flags;
+        public uint Padding0;
+    }
+
+    public readonly record struct GPUMaterialTextureHandles(ulong Albedo, ulong Normal, ulong RM);
+
+    public readonly record struct GPUMaterialRetiredHandle(ulong Handle);
+
+    public readonly record struct GPUMaterialTableUpdate(uint MaterialID, GPUMaterialEntry Entry);
+
+    public readonly record struct GPUMaterialHandleTableUpdate(uint HandleIndex, GPUTextureHandleEntry Entry);
+
+    public readonly record struct GPUMaterialHandleIndices(uint Albedo, uint Normal, uint RM)
+    {
+        public static readonly GPUMaterialHandleIndices Empty = new(0u, 0u, 0u);
+    }
+
+    /// <summary>
+    /// Manages the GPU material table and its second-level texture-handle table.
     /// </summary>
     public class GPUMaterialTable : XRBase, IDisposable
     {
-        private static readonly uint[] EmptyEntryWords = new uint[12];
+        public const uint InvalidTextureHandleIndex = 0u;
+        private const uint InitialHandleIndex = 1u;
+
+        private static readonly uint[] EmptyMaterialEntryWords = new uint[4];
+        private static readonly uint[] EmptyHandleEntryWords = new uint[4];
         private readonly HashSet<uint> _activeMaterialIds = [];
+        private readonly Dictionary<uint, GPUMaterialHandleIndices> _materialHandleIndices = [];
+        private readonly Dictionary<ulong, uint> _handleIndicesByHandle = [];
+        private readonly Dictionary<uint, ulong> _handlesByIndex = [];
+        private readonly Dictionary<uint, uint> _handleRefCounts = [];
+        private readonly Queue<uint> _freeHandleIndices = [];
+        private readonly Queue<GPUMaterialRetiredHandle> _retiredHandles = [];
+        private uint _nextHandleIndex = InitialHandleIndex;
 
         public XRDataBuffer Buffer { get; }
+        public XRDataBuffer TextureHandleBuffer { get; }
         public uint Capacity { get; private set; }
+        public uint TextureHandleCapacity { get; private set; }
         public IReadOnlyCollection<uint> ActiveMaterialIds => _activeMaterialIds;
+        public IReadOnlyCollection<ulong> ActiveTextureHandles => _handleIndicesByHandle.Keys;
 
-        public GPUMaterialTable(uint initialCapacity = 128)
+        public GPUMaterialTable(uint initialCapacity = 128, uint initialHandleCapacity = 256)
         {
             Capacity = initialCapacity;
             Buffer = new XRDataBuffer(
@@ -41,7 +78,7 @@ namespace XREngine.Rendering.Materials
                 EBufferTarget.ShaderStorageBuffer,
                 Capacity,
                 EComponentType.UInt,
-                12, // 12 uints (48 bytes) per entry (to hold the 3x64-bit + 4x uint fields when reinterpreted)
+                4,
                 false,
                 false)
             {
@@ -49,25 +86,52 @@ namespace XREngine.Rendering.Materials
                 DisposeOnPush = false
             };
             Buffer.Generate();
+
+            TextureHandleCapacity = Math.Max(initialHandleCapacity, InitialHandleIndex);
+            TextureHandleBuffer = new XRDataBuffer(
+                "MaterialTextureHandleTable",
+                EBufferTarget.ShaderStorageBuffer,
+                TextureHandleCapacity,
+                EComponentType.UInt,
+                4,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false
+            };
+            TextureHandleBuffer.Generate();
         }
 
         public uint AddOrUpdate(uint materialID, GPUMaterialEntry entry)
+            => AddOrUpdate(materialID, entry, new GPUMaterialTextureHandles());
+
+        public uint AddOrUpdate(uint materialID, GPUMaterialEntry entry, GPUMaterialTextureHandles textureHandles)
         {
             if (materialID >= Capacity)
                 Resize(Math.Max(Capacity * 2, materialID + 1));
 
-            // Convert entry to 12 uints
-            Span<uint> scratch = stackalloc uint[12];
-            PackULong(entry.AlbedoHandle, scratch, 0);
-            PackULong(entry.NormalHandle, scratch, 2);
-            PackULong(entry.RMHandle, scratch, 4);
-            scratch[6] = entry.Flags;
-            scratch[7] = entry.Padding0;
-            scratch[8] = entry.Padding1;
-            scratch[9] = entry.Padding2;
-            scratch[10] = 0u;
-            scratch[11] = 0u;
+            ReleaseMaterialHandleRefs(materialID);
+
+            GPUMaterialHandleIndices indices = new(
+                AddHandleReference(textureHandles.Albedo),
+                AddHandleReference(textureHandles.Normal),
+                AddHandleReference(textureHandles.RM));
+
+            entry.AlbedoHandleIndex = indices.Albedo;
+            entry.NormalHandleIndex = indices.Normal;
+            entry.RMHandleIndex = indices.RM;
+
+            Span<uint> scratch = stackalloc uint[4];
+            scratch[0] = entry.AlbedoHandleIndex;
+            scratch[1] = entry.NormalHandleIndex;
+            scratch[2] = entry.RMHandleIndex;
+            scratch[3] = entry.Flags;
             Buffer.SetDataArrayRawAtIndex(materialID, scratch.ToArray());
+
+            if (!indices.Equals(GPUMaterialHandleIndices.Empty))
+                _materialHandleIndices[materialID] = indices;
+
             _activeMaterialIds.Add(materialID);
             return materialID;
         }
@@ -80,9 +144,13 @@ namespace XREngine.Rendering.Materials
             if (!_activeMaterialIds.Remove(materialID))
                 return false;
 
-            Buffer.SetDataArrayRawAtIndex(materialID, EmptyEntryWords);
+            ReleaseMaterialHandleRefs(materialID);
+            Buffer.SetDataArrayRawAtIndex(materialID, EmptyMaterialEntryWords);
             return true;
         }
+
+        public bool TryConsumeRetiredHandle(out GPUMaterialRetiredHandle retiredHandle)
+            => _retiredHandles.TryDequeue(out retiredHandle);
 
         public uint TrimTrailingUnused(uint minimumCapacity = 128u)
         {
@@ -102,10 +170,85 @@ namespace XREngine.Rendering.Materials
             return Capacity;
         }
 
-        private void PackULong(ulong value, Span<uint> dst, int offset)
+        private uint AddHandleReference(ulong handle)
         {
-            dst[offset] = (uint)(value & 0xFFFFFFFFul);
-            dst[offset + 1] = (uint)(value >> 32);
+            if (handle == 0ul)
+                return InvalidTextureHandleIndex;
+
+            if (!_handleIndicesByHandle.TryGetValue(handle, out uint index))
+            {
+                index = AllocateHandleIndex();
+                _handleIndicesByHandle.Add(handle, index);
+                _handlesByIndex.Add(index, handle);
+
+                Span<uint> scratch = stackalloc uint[4];
+                PackHandleEntry(new GPUTextureHandleEntry
+                {
+                    Handle = handle,
+                    Flags = 1u,
+                    Padding0 = 0u
+                }, scratch);
+                TextureHandleBuffer.SetDataArrayRawAtIndex(index, scratch.ToArray());
+            }
+
+            _handleRefCounts.TryGetValue(index, out uint refCount);
+            _handleRefCounts[index] = refCount + 1u;
+            return index;
+        }
+
+        private uint AllocateHandleIndex()
+        {
+            uint index = _freeHandleIndices.Count > 0
+                ? _freeHandleIndices.Dequeue()
+                : _nextHandleIndex++;
+
+            if (index >= TextureHandleCapacity)
+                ResizeTextureHandleTable(Math.Max(TextureHandleCapacity * 2, index + 1u));
+
+            return index;
+        }
+
+        private void ReleaseMaterialHandleRefs(uint materialID)
+        {
+            if (!_materialHandleIndices.Remove(materialID, out GPUMaterialHandleIndices indices))
+                return;
+
+            ReleaseHandleReference(indices.Albedo);
+            ReleaseHandleReference(indices.Normal);
+            ReleaseHandleReference(indices.RM);
+        }
+
+        private void ReleaseHandleReference(uint index)
+        {
+            if (index == InvalidTextureHandleIndex)
+                return;
+
+            if (!_handleRefCounts.TryGetValue(index, out uint refCount))
+                return;
+
+            if (refCount > 1u)
+            {
+                _handleRefCounts[index] = refCount - 1u;
+                return;
+            }
+
+            _handleRefCounts.Remove(index);
+            if (_handlesByIndex.Remove(index, out ulong handle))
+            {
+                _handleIndicesByHandle.Remove(handle);
+                _retiredHandles.Enqueue(new GPUMaterialRetiredHandle(handle));
+            }
+
+            TextureHandleBuffer.SetDataArrayRawAtIndex(index, EmptyHandleEntryWords);
+            _freeHandleIndices.Enqueue(index);
+        }
+
+        private static void PackHandleEntry(GPUTextureHandleEntry entry, Span<uint> dst)
+        {
+            dst[0] = (uint)(entry.Handle & 0xFFFFFFFFul);
+            dst[1] = (uint)(entry.Handle >> 32);
+            dst[2] = entry.Flags;
+            dst[3] = entry.Padding0;
         }
 
         private void Resize(uint newCapacity)
@@ -114,9 +257,16 @@ namespace XREngine.Rendering.Materials
             Capacity = newCapacity;
         }
 
+        private void ResizeTextureHandleTable(uint newCapacity)
+        {
+            TextureHandleBuffer.Resize(newCapacity);
+            TextureHandleCapacity = newCapacity;
+        }
+
         public void Dispose()
         {
             Buffer?.Dispose();
+            TextureHandleBuffer?.Dispose();
         }
     }
 }

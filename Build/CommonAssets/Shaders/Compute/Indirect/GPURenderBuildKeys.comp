@@ -2,7 +2,7 @@
 
 layout(local_size_x = 256) in;
 
-const uint COMMAND_FLOATS = 48u;
+const uint COMMAND_FLOATS = 20u;
 const uint KEY_UINTS = 4u;
 
 layout(std430, binding = 0) readonly buffer CulledCommands { float culled[]; };
@@ -45,7 +45,7 @@ void main()
     if (base + COMMAND_FLOATS > uint(culled.length()))
         return;
 
-    uint renderPass = floatBitsToUint(culled[base + 40u]);
+    uint renderPass = floatBitsToUint(culled[base + 8u]);
     if (CurrentRenderPass >= 0 &&
         renderPass != uint(CurrentRenderPass) &&
         renderPass != 0xFFFFFFFFu)
@@ -53,11 +53,13 @@ void main()
         return;
     }
 
-    uint materialID = floatBitsToUint(culled[base + 38u]);
-    uint meshID = floatBitsToUint(culled[base + 36u]);
-    uint shaderProgramID = floatBitsToUint(culled[base + 41u]);
-    float renderDistance = culled[base + 42u];
-    uint flags = floatBitsToUint(culled[base + 45u]);
+    uint materialID = floatBitsToUint(culled[base + 6u]);
+    uint meshID = floatBitsToUint(culled[base + 4u]);
+    uint shaderProgramID = floatBitsToUint(culled[base + 9u]);
+    float renderDistance = culled[base + 10u];
+    uint flags = floatBitsToUint(culled[base + 13u]);
+    uint stateClassID = floatBitsToUint(culled[base + 17u]);
+    uint drawID = floatBitsToUint(culled[base + 19u]);
 
     uint stateBits = flags & StateBitMask;
     uint packedPassPipelineState =
@@ -76,7 +78,7 @@ void main()
     }
     else
     {
-        primarySortKey = materialID;
+        primarySortKey = stateClassID;
         secondarySortKey = meshID;
     }
 
@@ -84,5 +86,5 @@ void main()
     sortKeys[outBase + 0u] = packedPassPipelineState;
     sortKeys[outBase + 1u] = primarySortKey;
     sortKeys[outBase + 2u] = secondarySortKey;
-    sortKeys[outBase + 3u] = logicalIdx;
+    sortKeys[outBase + 3u] = drawID;
 }

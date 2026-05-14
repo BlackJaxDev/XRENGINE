@@ -37,7 +37,7 @@ namespace XREngine.Rendering
             => FullScreenCubeMesh.TryPrepareForRendering(forceNoStereo);
 
         /// <summary>
-        /// Renders the one side of the FBO to the entire region set by Engine.Rendering.State.PushRenderArea.
+        /// Renders the one side of the FBO to the entire region set by RuntimeEngine.Rendering.State.PushRenderArea.
         /// </summary>
         public bool RenderFullscreen(ECubemapFace face)
         {
@@ -46,7 +46,7 @@ namespace XREngine.Rendering
 
             var cam = LocalCameras[(int)face];
 
-            var state = Engine.Rendering.State.RenderingPipelineState;
+            var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
             if (state is not null)
             {
                 using (state.PushRenderingCamera(cam))
@@ -54,9 +54,9 @@ namespace XREngine.Rendering
             }
             else
             {
-                Engine.Rendering.State.RenderingCameraOverride = cam;
+                RuntimeEngine.Rendering.State.RenderingCameraOverride = cam;
                 FullScreenCubeMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, true);
-                Engine.Rendering.State.RenderingCameraOverride = null;
+                RuntimeEngine.Rendering.State.RenderingCameraOverride = null;
             }
 
             return true;

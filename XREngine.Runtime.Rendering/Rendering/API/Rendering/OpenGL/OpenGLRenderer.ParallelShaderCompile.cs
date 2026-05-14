@@ -56,10 +56,10 @@ public partial class OpenGLRenderer
 
             _ = s_enableSharedContextLinkQueueEnv;
 
-            if (!Engine.Rendering.Settings.AsyncProgramCompilation)
+            if (!RuntimeEngine.Rendering.Settings.AsyncProgramCompilation)
                 return false;
 
-            return Engine.Rendering.Settings.OpenGLShaderLinkStrategy switch
+            return RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy switch
             {
                 // Auto creates the shared-context queue as a fallback lane, but the
                 // selector only uses it when the driver-parallel startup probe fails.
@@ -77,7 +77,7 @@ public partial class OpenGLRenderer
             if (!WantsSharedContextProgramCompileLinkQueue)
                 return false;
 
-            return Engine.Rendering.Settings.OpenGLShaderLinkStrategy switch
+            return RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy switch
             {
                 EOpenGLShaderLinkStrategy.Auto => !_parallelShaderCompileProbePassed && ProgramCompileLinkQueue is { IsAvailable: true },
                 EOpenGLShaderLinkStrategy.SharedContext => true,
@@ -96,9 +96,9 @@ public partial class OpenGLRenderer
             if (!_parallelShaderCompileSupported)
                 return false;
 
-            EOpenGLShaderLinkStrategy strategy = Engine.Rendering.Settings.OpenGLShaderLinkStrategy;
+            EOpenGLShaderLinkStrategy strategy = RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy;
             if (strategy != EOpenGLShaderLinkStrategy.DriverParallel &&
-                !Engine.Rendering.Settings.AsyncProgramCompilation)
+                !RuntimeEngine.Rendering.Settings.AsyncProgramCompilation)
             {
                 return false;
             }
@@ -106,7 +106,7 @@ public partial class OpenGLRenderer
             return strategy switch
             {
                 EOpenGLShaderLinkStrategy.DriverParallel =>
-                    !Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled ||
+                    !RuntimeEngine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled ||
                     _parallelShaderCompileProbePassed,
                 EOpenGLShaderLinkStrategy.Auto => _parallelShaderCompileProbePassed,
                 _ => false,
@@ -125,9 +125,9 @@ public partial class OpenGLRenderer
                 ? KhrParallelShaderCompileExtensionName
                 : string.Empty;
 
-        Engine.Rendering.State.HasParallelShaderCompile = _parallelShaderCompileSupported;
-        Engine.Rendering.State.OpenGLParallelShaderCompileExtension = _parallelShaderCompileExtensionName;
-        Engine.Rendering.State.OpenGLParallelShaderCompileProbePassed = false;
+        RuntimeEngine.Rendering.State.HasParallelShaderCompile = _parallelShaderCompileSupported;
+        RuntimeEngine.Rendering.State.OpenGLParallelShaderCompileExtension = _parallelShaderCompileExtensionName;
+        RuntimeEngine.Rendering.State.OpenGLParallelShaderCompileProbePassed = false;
 
         if (!_parallelShaderCompileSupported)
         {
@@ -151,31 +151,31 @@ public partial class OpenGLRenderer
         {
             _parallelShaderCompileProbePassed = ProbeParallelShaderCompile(
                 api,
-                Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeTimeoutMs);
+                RuntimeEngine.Rendering.Settings.OpenGLParallelShaderCompileProbeTimeoutMs);
             probeResult = _parallelShaderCompileProbePassed ? "passed" : "failed";
         }
         else
         {
             _parallelShaderCompileProbePassed = false;
-            if (!Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled)
+            if (!RuntimeEngine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled)
                 probeResult = "disabled";
         }
 
-        Engine.Rendering.State.OpenGLParallelShaderCompileProbePassed = _parallelShaderCompileProbePassed;
+        RuntimeEngine.Rendering.State.OpenGLParallelShaderCompileProbePassed = _parallelShaderCompileProbePassed;
 
         Debug.OpenGL(
             $"OpenGL parallel shader compile: extension={_parallelShaderCompileExtensionName}, " +
             $"requestedThreads={FormatThreadCount(requestedThreads)}, reportedThreads={reportedThreads}, " +
             $"set={threadCountSet}, probe={probeResult}, " +
-            $"strategy={Engine.Rendering.Settings.OpenGLShaderLinkStrategy}.");
+            $"strategy={RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy}.");
     }
 
     private static bool ShouldRunParallelShaderCompileProbe()
     {
-        if (!Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled)
+        if (!RuntimeEngine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled)
             return false;
 
-        return Engine.Rendering.Settings.OpenGLShaderLinkStrategy switch
+        return RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy switch
         {
             EOpenGLShaderLinkStrategy.Auto => true,
             EOpenGLShaderLinkStrategy.DriverParallel => true,
@@ -206,7 +206,7 @@ public partial class OpenGLRenderer
 
     private static uint ResolveParallelShaderCompilerThreadCount()
     {
-        int configured = Engine.Rendering.Settings.OpenGLShaderCompilerThreadCount;
+        int configured = RuntimeEngine.Rendering.Settings.OpenGLShaderCompilerThreadCount;
         if (configured < 0)
             return ParallelShaderCompileImplementationMaxThreads;
 
@@ -257,7 +257,7 @@ public partial class OpenGLRenderer
         action();
         double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
 
-        bool renderThread = Engine.IsRenderThread;
+        bool renderThread = RuntimeEngine.IsRenderThread;
         Debug.Rendering(
             EOutputVerbosity.Verbose,
             false,

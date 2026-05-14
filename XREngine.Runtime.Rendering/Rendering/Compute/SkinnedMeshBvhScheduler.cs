@@ -44,10 +44,10 @@ internal sealed class SkinnedMeshBvhScheduler
 
         void Enqueue() => ExecuteOnRenderThread(mesh, version, tcs);
 
-        if (Engine.IsRenderThread)
+        if (RuntimeEngine.IsRenderThread)
             Enqueue();
         else
-            Engine.EnqueueMainThreadTask(Enqueue);
+            RuntimeEngine.EnqueueMainThreadTask(Enqueue);
 
         return tcs.Task;
     }
@@ -75,7 +75,7 @@ internal sealed class SkinnedMeshBvhScheduler
             return tcs.Task;
         }
 
-        Engine.Jobs.Schedule(
+        RuntimeEngine.Jobs.Schedule(
             GenerateBvhJob(mesh, triangles, localizedPositions, version, boundsResult, tcs),
             error: ex => tcs.TrySetException(ex),
             canceled: () => tcs.TrySetCanceled()
@@ -111,7 +111,7 @@ internal sealed class SkinnedMeshBvhScheduler
                 return;
             }
 
-            Engine.Jobs.Schedule(
+            RuntimeEngine.Jobs.Schedule(
                 GenerateBvhJob(mesh, triangles, positions, version, boundsResult, tcs),
                 error: ex => tcs.TrySetException(ex),
                 canceled: () => tcs.TrySetCanceled()
@@ -138,7 +138,7 @@ internal sealed class SkinnedMeshBvhScheduler
 
     private static BVH<Triangle>? BuildBvh(RenderableMesh mesh, IReadOnlyList<IndexTriangle> triangles, IReadOnlyList<Vector3> positions)
     {
-        if (Engine.Rendering.Settings.UseSkinnedBvhRefitOptimize
+        if (RuntimeEngine.Rendering.Settings.UseSkinnedBvhRefitOptimize
             && TryRefitSkinnedBvh(mesh, triangles, positions, out var refitTree))
             return refitTree;
 
@@ -183,7 +183,7 @@ internal sealed class SkinnedMeshBvhScheduler
 
         RefitInternalNodes(cache.Tree._rootBVH);
 
-        if (Engine.Rendering.Settings.UseSkinnedBvhRefitOptimize)
+        if (RuntimeEngine.Rendering.Settings.UseSkinnedBvhRefitOptimize)
             OptimizeTree(cache.Tree, cache.LeafRefs);
 
         tree = cache.Tree;
@@ -196,7 +196,7 @@ internal sealed class SkinnedMeshBvhScheduler
         IReadOnlyList<Vector3> positions,
         BVH<Triangle> tree)
     {
-        if (!Engine.Rendering.Settings.UseSkinnedBvhRefitOptimize)
+        if (!RuntimeEngine.Rendering.Settings.UseSkinnedBvhRefitOptimize)
             return tree;
 
         var cache = Instance._cpuRefitCaches.GetValue(mesh, _ => new SkinnedBvhRefitCache());

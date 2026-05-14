@@ -27,7 +27,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool CullWithFrustum { get; set; } = true;
         public bool CollectMirrors { get; set; }
         public bool GenerateMipmapsAfterRender { get; set; } = true;
-        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = Engine.Rendering.ResolveMeshSubmissionStrategy();
+        public EMeshSubmissionStrategy MeshSubmissionStrategy { get; set; } = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
         public bool GPUDispatch
         {
             get => MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect;
@@ -55,7 +55,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
                 using var bindScope = fbo.BindForWritingState();
                 if (ClearColor || ClearDepth || ClearStencil)
-                    Engine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
+                    RuntimeEngine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
 
                 RenderCommandCollection commands = _faceCommands[faceIndex] ?? instance.MeshRenderCommands;
                 VPRCRenderTargetHelpers.RenderPass(instance, commands, GetFaceCamera(face), RenderPass, extent, extent, MeshSubmissionStrategy);

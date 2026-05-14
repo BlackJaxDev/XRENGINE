@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
+using System.Threading;
 using Debug = XREngine.Debug;
 
 using XrAction = Silk.NET.OpenXR.Action;
@@ -327,6 +328,7 @@ public unsafe partial class OpenXRAPI
 
     private void SyncActionsForFrame()
     {
+        AssertOpenXrRenderThread(nameof(SyncActionsForFrame));
         if (!_inputCreated || !_inputAttached)
             return;
 
@@ -379,6 +381,7 @@ public unsafe partial class OpenXRAPI
 
     private bool TryLocateSpace(Space space, long displayTime, out Matrix4x4 localMatrix)
     {
+        AssertOpenXrRenderThread(nameof(TryLocateSpace));
         localMatrix = Matrix4x4.Identity;
         if (space.Handle == 0)
             return false;
@@ -402,6 +405,7 @@ public unsafe partial class OpenXRAPI
 
     private void UpdateActionPoseCaches(OpenXrPoseTiming timing)
     {
+        AssertOpenXrRenderThread(nameof(UpdateActionPoseCaches));
         if (!_sessionBegun)
             return;
 
@@ -412,7 +416,15 @@ public unsafe partial class OpenXRAPI
         // Poses are always located at the runtime's predicted display time for the current frame.
         long displayTime = _frameState.PredictedDisplayTime;
 
-        SyncActionsForFrame();
+        int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+        bool shouldSyncActions = timing == OpenXrPoseTiming.Predicted
+            || OpenXrActionSyncHandling == OpenXrActionSyncPolicy.PredictedAndLate
+            || Volatile.Read(ref _openXrActionsSyncedFrameNumber) != frameNo;
+        if (shouldSyncActions)
+        {
+            SyncActionsForFrame();
+            Volatile.Write(ref _openXrActionsSyncedFrameNumber, frameNo);
+        }
 
         bool leftActive = false;
         bool rightActive = false;

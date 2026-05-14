@@ -124,25 +124,24 @@ public class GpuCullingPipelineTests
     }
 
     [Test]
-    public void CullingShader_FlagBitLayout_MatchesCSharpFlags()
+    public void CullingShader_ConsumesMetadataFlags()
     {
         string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
 
-        // Verify flag constants match the C# GPUIndirectRenderFlags enum
+        source.ShouldContain("uint Flags;");
+        source.ShouldContain("uint flags = meta.Flags;");
         source.ShouldContain("FLAG_TRANSPARENT    (1u<<0)");
-        source.ShouldContain("FLAG_CAST_SHADOW    (1u<<1)");
-        source.ShouldContain("FLAG_SKINNED        (1u<<2)");
-        source.ShouldContain("FLAG_DYNAMIC        (1u<<3)");
-        source.ShouldContain("FLAG_DOUBLE_SIDED   (1u<<4)");
     }
 
     [Test]
-    public void CullingShader_CommandLayout_Matches48Floats()
+    public void CullingShader_CommandLayout_MatchesCompactPhaseC()
     {
         string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
 
-        source.ShouldContain("COMMAND_FLOATS = 48");
-        source.ShouldContain("192 bytes"); // 48 * 4 = 192
+        source.ShouldContain("COMMAND_FLOATS = 20");
+        source.ShouldContain("DrawMetadataBuffer");
+        source.ShouldContain("BoundsBuffer");
+        source.ShouldContain("outCommands[base + 19] = uintBitsToFloat(meta.DrawID)");
     }
 
     [Test]

@@ -195,7 +195,7 @@ public sealed class ShadowAtlasManager
     public void BeginFrame(IRuntimeRenderWorld world, ReadOnlySpan<XRCamera> activeCameras)
     {
         ConfigureFromEngineSettings();
-        BeginFrameCore(Engine.Rendering.State.RenderFrameId, activeCameras.Length);
+        BeginFrameCore(RuntimeEngine.Rendering.State.RenderFrameId, activeCameras.Length);
     }
 
     public void BeginFrame(ulong frameId, int activeCameraCount = 0)
@@ -285,7 +285,7 @@ public sealed class ShadowAtlasManager
 
     public void SolveAllocations()
     {
-        using var sample = Engine.Profiler.Start("ShadowAtlasManager.SolveAllocations");
+        using var sample = RuntimeEngine.Profiler.Start("ShadowAtlasManager.SolveAllocations");
 
         ClassifyRequestsForSolve();
 
@@ -1209,7 +1209,7 @@ public sealed class ShadowAtlasManager
 
     public void PublishFrameData()
     {
-        using var sample = Engine.Profiler.Start("ShadowAtlasManager.PublishFrameData");
+        using var sample = RuntimeEngine.Profiler.Start("ShadowAtlasManager.PublishFrameData");
 
         bool layoutChanged = HasLayoutChanged();
         if (layoutChanged)
@@ -1933,7 +1933,7 @@ public sealed class ShadowAtlasManager
             XREngine.EOutputVerbosity.Normal,
             false,
             "[DirectionalShadowAudit][AtlasRequestRender] frame={0} state={1} light='{2}' projection={3} cascadeOrFace={4} dirty={5} dirtyReason={6} canReuse={7} requiresRender={8} fallbackRequest={9} allocationResident={10} allocationFallback={11} lastRenderedFrame={12} page={13} rect={14} content={15}",
-            Engine.Rendering.State.RenderFrameId,
+            RuntimeEngine.Rendering.State.RenderFrameId,
             state,
             LightName(request.Light),
             request.ProjectionType,

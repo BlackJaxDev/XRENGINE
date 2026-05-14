@@ -197,7 +197,7 @@ void main()
                 ReportBridgeFallback(
                     viewport,
                     hasColorTexture
-                        ? Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(viewport, ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false)
+                        ? RuntimeEngine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(viewport, ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false)
                         : resolveFailure);
             }
 
@@ -316,10 +316,10 @@ void main()
         {
             failureReason = string.Empty;
 
-            VulkanUpscaleBridge? bridge = Engine.Rendering.GetVulkanUpscaleBridge(viewport);
+            VulkanUpscaleBridge? bridge = RuntimeEngine.Rendering.GetVulkanUpscaleBridge(viewport);
             if (bridge is null || !bridge.TryResolveCurrentFrameSlot(out VulkanUpscaleBridgeFrameSlot? slot) || slot is null)
             {
-                failureReason = Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(
+                failureReason = RuntimeEngine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(
                     viewport,
                     ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false);
                 return false;
@@ -421,9 +421,9 @@ void main()
             }
 
             _fallbackSourceTexture = bridgeOutput;
-            _fallbackApplySharpen = vendor == EVulkanUpscaleBridgeVendor.Xess && Engine.Rendering.Settings.XessSharpness > 0.0f;
+            _fallbackApplySharpen = vendor == EVulkanUpscaleBridgeVendor.Xess && RuntimeEngine.Rendering.Settings.XessSharpness > 0.0f;
             _fallbackSharpenStrength = _fallbackApplySharpen
-                ? Math.Clamp(Engine.Rendering.Settings.XessSharpness, 0.0f, 1.0f) * 0.35f
+                ? Math.Clamp(RuntimeEngine.Rendering.Settings.XessSharpness, 0.0f, 1.0f) * 0.35f
                 : 0.0f;
             _lastBridgeVendor = vendor;
             _bridgeVendorHistoryValid = true;
@@ -440,12 +440,12 @@ void main()
             vendor = default;
             failureReason = string.Empty;
 
-            bool dlssEnabled = Engine.EffectiveSettings.EnableNvidiaDlss;
-            bool xessEnabled = Engine.EffectiveSettings.EnableIntelXess;
+            bool dlssEnabled = RuntimeEngine.EffectiveSettings.EnableNvidiaDlss;
+            bool xessEnabled = RuntimeEngine.EffectiveSettings.EnableIntelXess;
             bool dlssSupported = dlssEnabled && NvidiaDlssManager.IsSupported;
             bool xessSupported = xessEnabled && IntelXessManager.IsSupported;
 
-            if (Engine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst)
+            if (RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst)
             {
                 if (dlssSupported)
                 {
@@ -560,8 +560,8 @@ void main()
                 OutputHdr = outputHdr,
                 DlssQuality = frameResources.DlssQuality,
                 XessQuality = frameResources.XessQuality,
-                DlssSharpness = Engine.Rendering.Settings.DlssSharpness,
-                XessSharpness = Engine.Rendering.Settings.XessSharpness,
+                DlssSharpness = RuntimeEngine.Rendering.Settings.DlssSharpness,
+                XessSharpness = RuntimeEngine.Rendering.Settings.XessSharpness,
                 JitterOffsetX = jitter.X,
                 JitterOffsetY = jitter.Y,
                 HasExposureTexture = hasExposureTexture,
@@ -718,7 +718,7 @@ void main()
 
         private static void ReportNativeFallback()
         {
-            if (Engine.EffectiveSettings.EnableIntelXess && !IntelXessManager.IsSupported && !_reportedXessUnavailable)
+            if (RuntimeEngine.EffectiveSettings.EnableIntelXess && !IntelXessManager.IsSupported && !_reportedXessUnavailable)
             {
                 _reportedXessUnavailable = true;
                 string reason = string.IsNullOrWhiteSpace(IntelXessManager.LastError)
@@ -727,7 +727,7 @@ void main()
                 Debug.LogWarning($"Intel XeSS is enabled but unavailable ({reason}). Falling back to standard blit.");
             }
 
-            if (Engine.EffectiveSettings.EnableNvidiaDlss && !NvidiaDlssManager.IsSupported && !_reportedDlssUnavailable)
+            if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && !NvidiaDlssManager.IsSupported && !_reportedDlssUnavailable)
             {
                 _reportedDlssUnavailable = true;
                 string reason = string.IsNullOrWhiteSpace(NvidiaDlssManager.LastError)
@@ -740,18 +740,18 @@ void main()
         private void ReportBridgeFallback(XRViewport viewport, string failureReason)
         {
             string reason = string.IsNullOrWhiteSpace(failureReason)
-                ? Engine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(
+                ? RuntimeEngine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(
                     viewport,
                     ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false)
                 : failureReason;
 
-            if (Engine.EffectiveSettings.EnableIntelXess && !_reportedXessApiMismatch)
+            if (RuntimeEngine.EffectiveSettings.EnableIntelXess && !_reportedXessApiMismatch)
             {
                 _reportedXessApiMismatch = true;
                 Debug.LogWarning($"Intel XeSS requires Vulkan or the OpenGL->Vulkan upscale bridge. {reason}. Falling back to standard blit.");
             }
 
-            if (Engine.EffectiveSettings.EnableNvidiaDlss && !_reportedDlssApiMismatch)
+            if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && !_reportedDlssApiMismatch)
             {
                 _reportedDlssApiMismatch = true;
                 Debug.LogWarning($"NVIDIA DLSS requires Vulkan or the OpenGL->Vulkan upscale bridge. {reason}. Falling back to standard blit.");
@@ -969,7 +969,7 @@ void main()
         }
 
         private static bool IsBridgePathRequested()
-            => Engine.EffectiveSettings.EnableIntelXess || Engine.EffectiveSettings.EnableNvidiaDlss;
+            => RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.EffectiveSettings.EnableNvidiaDlss;
 
         private static bool ShouldRecreateBridgeAfterDispatchFailure(string failureReason)
             => !NvidiaDlssManager.Native.IsTerminalBridgeFailureMessage(failureReason);
@@ -983,7 +983,7 @@ void main()
 
         private bool TryRunXess()
         {
-            if (!Engine.EffectiveSettings.EnableIntelXess || !IntelXessManager.IsSupported)
+            if (!RuntimeEngine.EffectiveSettings.EnableIntelXess || !IntelXessManager.IsSupported)
                 return false;
 
             if (FrameBufferName is null)
@@ -1012,9 +1012,9 @@ void main()
                 : null;
 
             // Keep the internal resolution aligned with XeSS expectations.
-            IntelXessManager.ApplyToViewport(viewport, Engine.Rendering.Settings);
+            IntelXessManager.ApplyToViewport(viewport, RuntimeEngine.Rendering.Settings);
 
-            if (Engine.Rendering.Settings.EnableIntelXessFrameGeneration)
+            if (RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration)
             {
                 bool frameGenOk = IntelXessManager.Native.TryDispatchFrameGeneration(
                     viewport,
@@ -1037,7 +1037,7 @@ void main()
                 destination,
                 depth,
                 motion,
-                Engine.Rendering.Settings.XessSharpness,
+                RuntimeEngine.Rendering.Settings.XessSharpness,
                 out int errorCode);
 
             if (upscaleOk)
@@ -1055,7 +1055,7 @@ void main()
 
         private bool TryRunDlss()
         {
-            if (!NvidiaDlssManager.IsSupported || !Engine.EffectiveSettings.EnableNvidiaDlss)
+            if (!NvidiaDlssManager.IsSupported || !RuntimeEngine.EffectiveSettings.EnableNvidiaDlss)
                 return false;
 
             if (FrameBufferName is null)

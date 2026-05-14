@@ -57,11 +57,11 @@ namespace XREngine.Rendering.OpenGL
             public override void Destroy()
             {
                 //TODO: make an internal overrideable version and a public callable version of this method so we can force it to run on the main thread.
-                if (Engine.IsRenderThread)
+                if (RuntimeEngine.IsRenderThread)
                     DeleteObject();
                 else
                 {
-                    Engine.EnqueueMainThreadTask(Destroy);
+                    RuntimeEngine.EnqueueMainThreadTask(Destroy);
                     return;
                 }
 
@@ -123,7 +123,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public override void Generate()
             {
-                using var prof = Engine.Profiler.Start($"GLObject.Generate.{Type}");
+                using var prof = RuntimeEngine.Profiler.Start($"GLObject.Generate.{Type}");
                 if (!_invalidated)
                 {
                     if (!_hasSentInvalidationWarning)
@@ -134,10 +134,10 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                if (!Engine.IsRenderThread)
+                if (!RuntimeEngine.IsRenderThread)
                 {
                     Debug.OpenGLWarning("Attempted to generate OpenGL object from non-render thread. Enqueuing task to main thread, but this may break subsequent generation-dependent calls on the current thread.");
-                    Engine.EnqueueMainThreadTask(Generate);
+                    RuntimeEngine.EnqueueMainThreadTask(Generate);
                     return;
                 }
 

@@ -9,7 +9,7 @@ public partial class GLTexture2D
     {
         failure = string.Empty;
 
-        if (!Engine.IsRenderThread)
+        if (!RuntimeEngine.IsRenderThread)
         {
             failure = "Texture streaming cache GPU cook must run on the render thread.";
             return false;

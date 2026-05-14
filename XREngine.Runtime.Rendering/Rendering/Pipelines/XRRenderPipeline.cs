@@ -60,7 +60,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     public List<XRRenderPipelineInstance> Instances { get; } = [];
 
     /// <summary>
-    /// When true, <see cref="Engine.Rendering.ApplyRenderPipelinePreference"/> will not replace
+    /// When true, <see cref="RuntimeEngine.Rendering.ApplyRenderPipelinePreference"/> will not replace
     /// this pipeline with the global debug/default preference. Use this for viewports that
     /// require a specific pipeline (e.g., VR desktop mirror cameras that need deferred rendering).
     /// </summary>

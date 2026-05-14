@@ -113,7 +113,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// </summary>
         [Browsable(false)]
         public float TimeSinceLastMovement
-            => World is null ? 0.0f : TimeSinceLastMovementSeconds(Engine.ElapsedTicks, _lastMovedTicks);
+            => World is null ? 0.0f : TimeSinceLastMovementSeconds(RuntimeEngine.ElapsedTicks, _lastMovedTicks);
 
         /// <summary>
         /// This matrix is the location of the center of the light source. Used for rendering the light mesh.
@@ -281,7 +281,7 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
             if (World is not null)
-                _lastMovedTicks = Engine.ElapsedTicks;
+                _lastMovedTicks = RuntimeEngine.ElapsedTicks;
             unchecked { _movementVersion++; }
             UpdateLightMatrix(renderMatrix);
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
@@ -478,9 +478,9 @@ namespace XREngine.Components.Capture.Lights.Types
         internal uint GetDesiredShadowAtlasResolution()
         {
             uint desired = Math.Max(ShadowMapResolutionWidth, ShadowMapResolutionHeight);
-            desired = Math.Max(desired, Engine.Rendering.Settings.MinShadowAtlasTileResolution);
-            desired = Math.Min(desired, Engine.Rendering.Settings.MaxShadowAtlasTileResolution);
-            desired = Math.Min(desired, Engine.Rendering.Settings.ShadowAtlasPageSize);
+            desired = Math.Max(desired, RuntimeEngine.Rendering.Settings.MinShadowAtlasTileResolution);
+            desired = Math.Min(desired, RuntimeEngine.Rendering.Settings.MaxShadowAtlasTileResolution);
+            desired = Math.Min(desired, RuntimeEngine.Rendering.Settings.ShadowAtlasPageSize);
             return Math.Max(1u, desired);
         }
 
@@ -574,7 +574,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     EnsurePreviewVolumeMesh();
 
                 if (SetField(ref _previewBoundingVolume, value))
-                    RenderInfo.IsVisible = value || (World is not null && Engine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes);
+                    RenderInfo.IsVisible = value || (World is not null && RuntimeEngine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes);
             }
         }
 
@@ -810,33 +810,33 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public virtual void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {
-            program.Uniform(Engine.Rendering.Constants.ShadowExponentBaseUniform, ShadowExponentBase);
-            program.Uniform(Engine.Rendering.Constants.ShadowExponentUniform, ShadowExponent);
-            program.Uniform(Engine.Rendering.Constants.ShadowBiasMinUniform, ShadowMinBias);
-            program.Uniform(Engine.Rendering.Constants.ShadowBiasMaxUniform, ShadowMaxBias);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowExponentBaseUniform, ShadowExponentBase);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowExponentUniform, ShadowExponent);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowBiasMinUniform, ShadowMinBias);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowBiasMaxUniform, ShadowMaxBias);
             program.Uniform("ShadowBiasParams", ShadowBiasParameters);
             program.Uniform("ShadowBiasProjectionParams", ShadowBiasProjectionParameters);
 
-            program.Uniform(Engine.Rendering.Constants.ShadowSamples, FilterSamples);
-            program.Uniform(Engine.Rendering.Constants.ShadowBlockerSamples, BlockerSamples);
-            program.Uniform(Engine.Rendering.Constants.ShadowFilterSamples, FilterSamples);
-            program.Uniform(Engine.Rendering.Constants.ShadowVogelTapCount, VogelTapCount);
-            program.Uniform(Engine.Rendering.Constants.ShadowFilterRadius, FilterRadius);
-            program.Uniform(Engine.Rendering.Constants.ShadowBlockerSearchRadius, BlockerSearchRadius);
-            program.Uniform(Engine.Rendering.Constants.ShadowMinPenumbra, MinPenumbra);
-            program.Uniform(Engine.Rendering.Constants.ShadowMaxPenumbra, MaxPenumbra);
-            program.Uniform(Engine.Rendering.Constants.SoftShadowMode, (int)SoftShadowMode);
-            program.Uniform(Engine.Rendering.Constants.LightSourceRadius, EffectiveLightSourceRadius);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowSamples, FilterSamples);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowBlockerSamples, BlockerSamples);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowFilterSamples, FilterSamples);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowVogelTapCount, VogelTapCount);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowFilterRadius, FilterRadius);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowBlockerSearchRadius, BlockerSearchRadius);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowMinPenumbra, MinPenumbra);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ShadowMaxPenumbra, MaxPenumbra);
+            program.Uniform(RuntimeEngine.Rendering.Constants.SoftShadowMode, (int)SoftShadowMode);
+            program.Uniform(RuntimeEngine.Rendering.Constants.LightSourceRadius, EffectiveLightSourceRadius);
 
-            program.Uniform(Engine.Rendering.Constants.EnableCascadedShadows, EnableCascadedShadows);
-            program.Uniform(Engine.Rendering.Constants.EnableContactShadows, EnableContactShadows);
-            program.Uniform(Engine.Rendering.Constants.ContactShadowDistance, ContactShadowDistance);
-            program.Uniform(Engine.Rendering.Constants.ContactShadowSamples, ContactShadowSamples);
-            program.Uniform(Engine.Rendering.Constants.ContactShadowThickness, ContactShadowThickness);
-            program.Uniform(Engine.Rendering.Constants.ContactShadowFadeStart, ContactShadowFadeStart);
-            program.Uniform(Engine.Rendering.Constants.ContactShadowFadeEnd, ContactShadowFadeEnd);
-            program.Uniform(Engine.Rendering.Constants.ContactShadowNormalOffset, ContactShadowNormalOffset);
-            program.Uniform(Engine.Rendering.Constants.ContactShadowJitterStrength, ContactShadowJitterStrength);
+            program.Uniform(RuntimeEngine.Rendering.Constants.EnableCascadedShadows, EnableCascadedShadows);
+            program.Uniform(RuntimeEngine.Rendering.Constants.EnableContactShadows, EnableContactShadows);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ContactShadowDistance, ContactShadowDistance);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ContactShadowSamples, ContactShadowSamples);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ContactShadowThickness, ContactShadowThickness);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ContactShadowFadeStart, ContactShadowFadeStart);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ContactShadowFadeEnd, ContactShadowFadeEnd);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ContactShadowNormalOffset, ContactShadowNormalOffset);
+            program.Uniform(RuntimeEngine.Rendering.Constants.ContactShadowJitterStrength, ContactShadowJitterStrength);
 
             program.Uniform("ShadowDebugMode", _shadowDebugMode);
         }

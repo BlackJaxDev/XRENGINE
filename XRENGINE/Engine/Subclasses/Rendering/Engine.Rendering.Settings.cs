@@ -11,6 +11,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
@@ -499,6 +500,14 @@ namespace XREngine
                 private bool _cacheGpuHiZOcclusionOncePerFrame = false;
                 private int _cpuQueryOcclusionRetestPeriodFrames = 6;
                 private bool _enableCpuSoftwareOcclusionCulling = false;
+                private int _cpuSocBufferWidth = 256;
+                private int _cpuSocBufferHeight = 128;
+                private int _cpuSocOccluderTriangleBudget = 5000;
+                private int _cpuSocMaxOccluders = 64;
+                private float _cpuSocMinOccluderScreenArea = 0.005f;
+                private bool _cpuSocUseAvx2 = true;
+                private bool _cpuSocDebugVisualization = false;
+                private bool _cpuSocDebugForceVisible = false;
                 private uint _bvhLeafMaxPrims = 4u;
                 private EBvhMode _bvhMode = EBvhMode.Morton;
                 private bool _bvhRefitOnlyWhenStable = true;
@@ -554,6 +563,13 @@ namespace XREngine
                 private bool _openXrDebugClearOnly = false;
                 private bool _openXrDebugLifecycle = false;
                 private bool _openXrDebugRenderRightThenLeft = false;
+                private bool _openXrPrepareFrameAfterDesktopRender = true;
+                private float _openXrDeadlineSafetyMarginMs = 1.0f;
+                private OpenXRAPI.OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
+                private float _openXrCollectVisibleFrustumPaddingDegrees = 2.0f;
+                private OpenXRAPI.OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
+                private OpenXRAPI.OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
+                private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = OpenXRAPI.OpenXrRenderPacingMode.PostRenderCallback;
                 private Vector2 _vrFoveationCenterUv = new(0.5f, 0.5f);
                 private float _vrFoveationInnerRadius = 0.35f;
                 private float _vrFoveationOuterRadius = 0.85f;
@@ -1425,15 +1441,79 @@ namespace XREngine
 
                 /// <summary>
                 /// Opt-in: enable the CPU software-rasterizer occluder pass (Masked SOC-style).
-                /// Scaffold-only today — the rasterizer body is a no-op pending a real port.
+                /// Rasterizes a conservative low-resolution opaque depth buffer on the CPU.
                 /// Env override: XRE_CPU_SOC_OCCLUSION=1. See C-CPU-3 in the perf-debug plan.
                 /// </summary>
                 [Category("Occlusion")]
-                [Description("Opt-in: enable CPU software-rasterizer occluder pass (SOC). Scaffold only — no rasterization is performed yet.")]
+                [Description("Opt-in: enable CPU software-rasterizer occluder pass (SOC).")]
                 public bool EnableCpuSoftwareOcclusionCulling
                 {
                     get => _enableCpuSoftwareOcclusionCulling;
                     set => SetField(ref _enableCpuSoftwareOcclusionCulling, value);
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU SOC internal depth buffer width in pixels.")]
+                public int CpuSocBufferWidth
+                {
+                    get => _cpuSocBufferWidth;
+                    set => SetField(ref _cpuSocBufferWidth, Math.Clamp(value, 64, 4096));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU SOC internal depth buffer height in pixels.")]
+                public int CpuSocBufferHeight
+                {
+                    get => _cpuSocBufferHeight;
+                    set => SetField(ref _cpuSocBufferHeight, Math.Clamp(value, 32, 4096));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU SOC per-frame triangle budget for selected occluders.")]
+                public int CpuSocOccluderTriangleBudget
+                {
+                    get => _cpuSocOccluderTriangleBudget;
+                    set => SetField(ref _cpuSocOccluderTriangleBudget, Math.Clamp(value, 0, 1_000_000));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU SOC maximum number of opaque mesh occluders selected per frame.")]
+                public int CpuSocMaxOccluders
+                {
+                    get => _cpuSocMaxOccluders;
+                    set => SetField(ref _cpuSocMaxOccluders, Math.Clamp(value, 0, 4096));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU SOC minimum projected occluder screen area, normalized 0..1.")]
+                public float CpuSocMinOccluderScreenArea
+                {
+                    get => _cpuSocMinOccluderScreenArea;
+                    set => SetField(ref _cpuSocMinOccluderScreenArea, Math.Clamp(value, 0.0f, 1.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("Allows the CPU SOC implementation to use AVX2 when a SIMD path is available.")]
+                public bool CpuSocUseAvx2
+                {
+                    get => _cpuSocUseAvx2;
+                    set => SetField(ref _cpuSocUseAvx2, value);
+                }
+
+                [Category("Occlusion")]
+                [Description("Enables CPU SOC debug depth-buffer readback.")]
+                public bool CpuSocDebugVisualization
+                {
+                    get => _cpuSocDebugVisualization;
+                    set => SetField(ref _cpuSocDebugVisualization, value);
+                }
+
+                [Category("Occlusion")]
+                [Description("Forces CPU SOC tests visible while still building telemetry and occluder buffers.")]
+                public bool CpuSocDebugForceVisible
+                {
+                    get => _cpuSocDebugForceVisible;
+                    set => SetField(ref _cpuSocDebugForceVisible, value);
                 }
 
                 /// <summary>
@@ -1650,6 +1730,83 @@ namespace XREngine
                 {
                     get => _openXrCullWithFrustum;
                     set => SetField(ref _openXrCullWithFrustum, value);
+                }
+
+                /// <summary>
+                /// If true, OpenXR waits/begins/locates the next frame after desktop viewport rendering completes.
+                /// </summary>
+                [Category("VR")]
+                [Description("If true, OpenXR waits/begins/locates the next frame after desktop viewport rendering completes, reducing desktop stalls from xrWaitFrame.")]
+                public bool OpenXrPrepareFrameAfterDesktopRender
+                {
+                    get => _openXrPrepareFrameAfterDesktopRender;
+                    set => SetField(ref _openXrPrepareFrameAfterDesktopRender, value);
+                }
+
+                /// <summary>
+                /// Safety margin, in milliseconds, used to flag predicted-display deadline misses after xrWaitFrame returns.
+                /// </summary>
+                [Category("VR")]
+                [Description("Safety margin, in milliseconds, used to flag predicted-display deadline misses after xrWaitFrame returns.")]
+                public float OpenXrDeadlineSafetyMarginMs
+                {
+                    get => _openXrDeadlineSafetyMarginMs;
+                    set => SetField(ref _openXrDeadlineSafetyMarginMs, MathF.Max(0.0f, value));
+                }
+
+                /// <summary>
+                /// Controls which OpenXR pose/frustum policy CollectVisible uses.
+                /// </summary>
+                [Category("VR")]
+                [Description("Controls which OpenXR pose/frustum policy CollectVisible uses.")]
+                public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy
+                {
+                    get => _openXrCollectVisiblePosePolicy;
+                    set => SetField(ref _openXrCollectVisiblePosePolicy, value);
+                }
+
+                /// <summary>
+                /// Extra asymmetric-FOV padding in degrees when OpenXrCollectVisiblePosePolicy is PaddedFrustum.
+                /// </summary>
+                [Category("VR")]
+                [Description("Extra asymmetric-FOV padding in degrees when OpenXrCollectVisiblePosePolicy is PaddedFrustum.")]
+                public float OpenXrCollectVisibleFrustumPaddingDegrees
+                {
+                    get => _openXrCollectVisibleFrustumPaddingDegrees;
+                    set => SetField(ref _openXrCollectVisibleFrustumPaddingDegrees, Math.Clamp(value, 0.0f, 20.0f));
+                }
+
+                /// <summary>
+                /// Controls how OpenXR handles frames whose xrLocateViews result lacks valid position/orientation flags.
+                /// </summary>
+                [Category("VR")]
+                [Description("Controls how OpenXR handles frames whose xrLocateViews result lacks valid position/orientation flags.")]
+                public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy
+                {
+                    get => _openXrTrackingLossPolicy;
+                    set => SetField(ref _openXrTrackingLossPolicy, value);
+                }
+
+                /// <summary>
+                /// Controls whether xrSyncActions runs only once for predicted poses or again during late update.
+                /// </summary>
+                [Category("VR")]
+                [Description("Controls whether xrSyncActions runs only once for predicted poses or again during late update.")]
+                public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy
+                {
+                    get => _openXrActionSyncPolicy;
+                    set => SetField(ref _openXrActionSyncPolicy, value);
+                }
+
+                /// <summary>
+                /// Controls where OpenXR's next-frame prep (xrWaitFrame/xrBeginFrame/LocateViews(Predicted)) runs.
+                /// </summary>
+                [Category("VR")]
+                [Description("Controls where OpenXR's next-frame prep runs: inline at start of render callback, post-render (default), or on a dedicated pacing thread.")]
+                public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode
+                {
+                    get => _openXrRenderPacingMode;
+                    set => SetField(ref _openXrRenderPacingMode, value);
                 }
 
                 /// <summary>

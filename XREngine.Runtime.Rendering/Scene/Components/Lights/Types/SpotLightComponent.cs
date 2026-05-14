@@ -191,7 +191,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             get
             {
-                if (!Engine.Rendering.Settings.UseSpotShadowAtlas)
+                if (!RuntimeEngine.Rendering.Settings.UseSpotShadowAtlas)
                     return false;
 
                 return ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat).Encoding == EShadowMapEncoding.Depth;
@@ -236,7 +236,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             base.SetUniforms(program, targetStructName);
 
-            string prefix = targetStructName ?? Engine.Rendering.Constants.LightsStructName;
+            string prefix = targetStructName ?? RuntimeEngine.Rendering.Constants.LightsStructName;
             string flatPrefix = $"{prefix}.";
             string pointBasePrefix = $"{prefix}.Base.";
             string lightBasePrefix = $"{prefix}.Base.Base.";

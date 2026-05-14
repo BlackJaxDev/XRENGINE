@@ -65,11 +65,11 @@ public unsafe partial class VulkanRenderer
             ulong aligned = AlignUp(_currentOffset, _alignment);
             if (aligned + size > _capacity)
             {
-                Engine.Rendering.Stats.RecordVulkanDynamicUniformExhaustion();
+                RuntimeEngine.Rendering.Stats.RecordVulkanDynamicUniformExhaustion();
                 return ulong.MaxValue;
             }
             _currentOffset = aligned + size;
-            Engine.Rendering.Stats.RecordVulkanDynamicUniformAllocation(size);
+            RuntimeEngine.Rendering.Stats.RecordVulkanDynamicUniformAllocation(size);
             return aligned;
         }
 
@@ -133,7 +133,7 @@ public unsafe partial class VulkanRenderer
 
     private void InitializeDynamicUniformRingBuffers()
     {
-        if (!Engine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled)
+        if (!RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled)
             return;
 
         int count = swapChainImages?.Length ?? 0;

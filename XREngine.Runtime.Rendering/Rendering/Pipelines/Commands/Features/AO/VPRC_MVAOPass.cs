@@ -152,7 +152,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var area = Engine.Rendering.State.RenderArea;
+            var area = RuntimeEngine.Rendering.State.RenderArea;
             int width = area.Width;
             int height = area.Height;
             bool forceRebuild = state.ResourcesDirty;
@@ -386,7 +386,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             camera.SetUniforms(program);
 
-            if (Engine.Rendering.State.IsStereoPass)
+            if (RuntimeEngine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
             camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiViewCustom);
@@ -399,7 +399,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 camera.DepthMode,
                 region.Width,
                 region.Height,
-                Engine.Rendering.State.IsStereoPass,
+                RuntimeEngine.Rendering.State.IsStereoPass,
                 _kernelSize);
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);

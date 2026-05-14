@@ -392,7 +392,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
             }
 
-            if (!Engine.Rendering.State.IsSceneCapturePass && !Engine.Rendering.State.IsLightProbePass)
+            if (!RuntimeEngine.Rendering.State.IsSceneCapturePass && !RuntimeEngine.Rendering.State.IsLightProbePass)
                 hostServices.PrepareUpscaleBridgeForFrame(viewport, this);
         }
 
@@ -439,10 +439,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     private bool EnqueueResourceMutationIfOffRenderThread(Action action, string reason)
     {
-        if (Engine.IsRenderThread)
+        if (RuntimeEngine.IsRenderThread)
             return false;
 
-        Engine.EnqueueRenderThreadTask(action, reason);
+        RuntimeEngine.EnqueueRenderThreadTask(action, reason);
         return true;
     }
 
@@ -547,9 +547,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
 
         Resources.TryGetTexture(name, out XRTexture? existingTexture);
-        if (!Engine.IsRenderThread && existingTexture is not null && !ReferenceEquals(existingTexture, texture))
+        if (!RuntimeEngine.IsRenderThread && existingTexture is not null && !ReferenceEquals(existingTexture, texture))
         {
-            Engine.EnqueueRenderThreadTask(() => SetTexture(texture, descriptor), $"XRRenderPipelineInstance.SetTexture[{name}]");
+            RuntimeEngine.EnqueueRenderThreadTask(() => SetTexture(texture, descriptor), $"XRRenderPipelineInstance.SetTexture[{name}]");
             return;
         }
 
@@ -581,9 +581,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
         }
 
-        if (!Engine.IsRenderThread && Resources.TryGetBuffer(name, out XRDataBuffer? existingBuffer) && !ReferenceEquals(existingBuffer, buffer))
+        if (!RuntimeEngine.IsRenderThread && Resources.TryGetBuffer(name, out XRDataBuffer? existingBuffer) && !ReferenceEquals(existingBuffer, buffer))
         {
-            Engine.EnqueueRenderThreadTask(() => SetBuffer(buffer, descriptor), $"XRRenderPipelineInstance.SetBuffer[{name}]");
+            RuntimeEngine.EnqueueRenderThreadTask(() => SetBuffer(buffer, descriptor), $"XRRenderPipelineInstance.SetBuffer[{name}]");
             return;
         }
 
@@ -613,9 +613,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
 
         Resources.TryGetFrameBuffer(name, out XRFrameBuffer? existingFbo);
-        if (!Engine.IsRenderThread && existingFbo is not null && !ReferenceEquals(existingFbo, fbo))
+        if (!RuntimeEngine.IsRenderThread && existingFbo is not null && !ReferenceEquals(existingFbo, fbo))
         {
-            Engine.EnqueueRenderThreadTask(() => SetFBO(fbo, descriptor), $"XRRenderPipelineInstance.SetFBO[{name}]");
+            RuntimeEngine.EnqueueRenderThreadTask(() => SetFBO(fbo, descriptor), $"XRRenderPipelineInstance.SetFBO[{name}]");
             return;
         }
 

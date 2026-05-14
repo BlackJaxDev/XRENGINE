@@ -70,7 +70,7 @@ namespace XREngine.Rendering.Shaders.Generator
             if (_useTangents)
                 location++;
 
-            bool needSkinning = Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
+            bool needSkinning = Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
             uint skinningSlots = needSkinning ? 2u : 0u; //Both code paths consume two attributes
 
             if (needSkinning)
@@ -94,7 +94,7 @@ namespace XREngine.Rendering.Shaders.Generator
             else
                 _useSkinningInputs = false;
 
-            bool needBlendshapeAttr = Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && Engine.Rendering.Settings.AllowBlendshapes;
+            bool needBlendshapeAttr = Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
             _useBlendshapeInput = needBlendshapeAttr && location < MaxVertexAttribs;
             if (_useBlendshapeInput)
                 location++;
@@ -120,12 +120,12 @@ namespace XREngine.Rendering.Shaders.Generator
             if (_useTangents)
                 InputVars.Add(ECommonBufferType.Tangent.ToString(), (location++, EShaderVarType._vec4));
 
-            if (_useSkinningInputs && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
+            if (_useSkinningInputs && Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
             {
-                bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
+                bool optimizeTo4Weights = RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
                 if (optimizeTo4Weights)
                 {
-                    EShaderVarType intVecVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                    EShaderVarType intVecVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                         ? EShaderVarType._ivec4
                         : EShaderVarType._vec4;
 
@@ -134,7 +134,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 }
                 else
                 {
-                    EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                    EShaderVarType intVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                         ? EShaderVarType._int
                         : EShaderVarType._float;
 
@@ -153,7 +153,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
             if (_useBlendshapeInput)
             {
-                EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                EShaderVarType intVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                     ? EShaderVarType._ivec2
                     : EShaderVarType._vec2;
 
@@ -199,7 +199,7 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             UniformNames.Add(EEngineUniform.ModelMatrix.ToStringFast(), (EShaderVarType._mat4, false));
 
-            if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
+            if (Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
                 UniformNames.Add("boneMatrixBase", (EShaderVarType._uint, false));
 
             // Used when gl_BaseInstance is 0 (non-indirect draw path).
@@ -265,10 +265,10 @@ namespace XREngine.Rendering.Shaders.Generator
         public virtual bool UsePointLightInstancedLayering => false;
         public virtual bool UsePointLightAtlasInstancedLayering => false;
 
-        private bool UseComputeSkinning => Engine.Rendering.Settings.CalculateSkinningInComputeShader && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+        private bool UseComputeSkinning => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader && Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
         private bool UseComputeBlendshapes => Mesh.BlendshapeCount > 0
-            && Engine.Rendering.Settings.AllowBlendshapes
-            && (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || UseComputeSkinning);
+            && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+            && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || UseComputeSkinning);
         private bool UseComputeDeformation => UseComputeSkinning || UseComputeBlendshapes;
         private bool UseExplicitRowVectorSkinningConvention => Mesh.SkinningShaderConvention == ESkinningShaderConvention.ExplicitRowMajorRowVector;
 
@@ -298,7 +298,7 @@ namespace XREngine.Rendering.Shaders.Generator
             }
 
             //Transform position, normals and tangents
-            WriteMeshTransforms(_useSkinningInputs && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning);
+            WriteMeshTransforms(_useSkinningInputs && Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning);
             if (UseNVStereo)
                 Line("gl_Layer = 0;");
 
@@ -318,7 +318,15 @@ namespace XREngine.Rendering.Shaders.Generator
             else
                 Line($"{string.Format(FragUVName, 0)} = vec2(0.0f);");
 
-            // Default CPU draw path has gl_BaseInstance == 0; GPU-indirect path uses it as the draw/command index.
+            // FragTransformId is forwarded to the fragment shader so a single FS can be paired
+            // with either VS variant: the CPU-direct VS (this generator, using the ModelMatrix
+            // uniform) or the GPU-indirect substitute VS built by
+            // HybridRenderingManager.CreateGpuIndirectVertexShader, which reads the world matrix
+            // from scene.TransformBuffer via DrawMetadata[gl_BaseInstance].TransformID. The FS
+            // uses FragTransformId for material / draw-metadata lookups in both paths.
+            // CPU-direct: gl_BaseInstance is 0, so we fall back to the per-draw TransformId
+            // uniform set by the CPU. GPU-indirect: HybridRenderingManager substitutes this VS
+            // entirely, so this branch is not the indirect transform-fetch site.
             if (EmitTransformId)
             {
                 Line("uint _xreTransformId = uint(gl_BaseInstance);");
@@ -339,7 +347,7 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             if (UseOVRMultiView)
             {
-                if (Engine.Rendering.State.IsVulkan)
+                if (RuntimeEngine.Rendering.State.IsVulkan)
                     Line("#extension GL_EXT_multiview : require");
                 else
                     Line("#extension GL_OVR_multiview2 : require");
@@ -351,7 +359,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line("#extension GL_NV_viewport_array2 : require");
                 Line("#extension GL_NV_stereo_view_rendering : require");
             }
-            else if ((UseDirectionalCascadeInstancedLayering || UsePointLightInstancedLayering) && !Engine.Rendering.State.IsVulkan)
+            else if ((UseDirectionalCascadeInstancedLayering || UsePointLightInstancedLayering) && !RuntimeEngine.Rendering.State.IsVulkan)
             {
                 Line("#extension GL_ARB_shader_viewport_layer_array : require");
             }
@@ -394,9 +402,9 @@ namespace XREngine.Rendering.Shaders.Generator
             bool wroteAnything = false;
 
             int binding = 0;
-            if (Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && Engine.Rendering.Settings.AllowBlendshapes)
+            if (Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
             {
-                EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                EShaderVarType intVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                     ? EShaderVarType._ivec4
                     : EShaderVarType._vec4;
 
@@ -411,7 +419,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 wroteAnything = true;
             }
-            bool skinning = Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
+            bool skinning = Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
             if (skinning)
             {
                 using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrices}Buffer", binding++, rowMajor: UseExplicitRowVectorSkinningConvention))
@@ -420,7 +428,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInvBindMatrices}Buffer", binding++, rowMajor: UseExplicitRowVectorSkinningConvention))
                     WriteUniform(EShaderVarType._mat4, ECommonBufferType.BoneInvBindMatrices.ToString(), true);
 
-                bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
+                bool optimizeTo4Weights = RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
                 if (!optimizeTo4Weights)
                 {
                     using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrixIndices}Buffer", binding++))
@@ -587,21 +595,21 @@ namespace XREngine.Rendering.Shaders.Generator
         }
 
         private bool NeedsSkinningCalc()
-            => Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !Engine.Rendering.Settings.CalculateSkinningInComputeShader;
+            => Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
 
         private bool NeedsBlendshapeCalc()
-            => Mesh.BlendshapeCount > 0 && Engine.Rendering.Settings.AllowBlendshapes && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
+            => Mesh.BlendshapeCount > 0 && RuntimeEngine.Rendering.Settings.AllowBlendshapes && !RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader;
 
         private bool WriteSkinningCalc()
         {
-            if (Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+            if (RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader)
                 return false;
 
             bool hasNormals = _useNormals;
             bool hasTangents = _useTangents;
             bool explicitRowVector = UseExplicitRowVectorSkinningConvention;
 
-            bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
+            bool optimizeTo4Weights = RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
             if (optimizeTo4Weights)
             {
                 Line($"for (int i = 0; i < 4; i++)");
@@ -687,13 +695,13 @@ namespace XREngine.Rendering.Shaders.Generator
         
         private bool WriteBlendshapeCalc()
         {
-            if (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || Mesh.BlendshapeCount == 0 || !Engine.Rendering.Settings.AllowBlendshapes || !_useBlendshapeInput)
+            if (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || Mesh.BlendshapeCount == 0 || !RuntimeEngine.Rendering.Settings.AllowBlendshapes || !_useBlendshapeInput)
                 return false;
 
             bool hasNormals = _useNormals;
             bool hasTangents = _useTangents;
 
-            bool absolute = Engine.Rendering.Settings.UseAbsoluteBlendshapePositions;
+            bool absolute = RuntimeEngine.Rendering.Settings.UseAbsoluteBlendshapePositions;
 
             const string minWeight = "0.0001f";
             if (Mesh.MaxBlendshapeAccumulation)
@@ -708,7 +716,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 using (OpenBracketState())
                 {
                     Line($"int index = int({ECommonBufferType.BlendshapeCount}.x) + i;");
-                    if (Engine.Rendering.Settings.UseIntegerUniformsInShaders)
+                    if (RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders)
                         Line($"ivec4 blendshapeIndices = {ECommonBufferType.BlendshapeIndices}[index];");
                     else
                         Line($"vec4 blendshapeIndices = {ECommonBufferType.BlendshapeIndices}[index];");
@@ -741,7 +749,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 using (OpenBracketState())
                 {
                     Line($"int index = int({ECommonBufferType.BlendshapeCount}.x) + i;");
-                    if (Engine.Rendering.Settings.UseIntegerUniformsInShaders)
+                    if (RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders)
                         Line($"ivec4 blendshapeIndices = {ECommonBufferType.BlendshapeIndices}[index];");
                     else
                         Line($"vec4 blendshapeIndices = {ECommonBufferType.BlendshapeIndices}[index];");

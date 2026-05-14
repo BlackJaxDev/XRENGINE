@@ -100,6 +100,26 @@ public sealed partial class RenderStatsPacket
     public long FBOBandwidthBytes { get; set; }
     public int FBOBindCount { get; set; }
 
+    // OpenXR / VR
+    public int VrLeftEyeDraws { get; set; }
+    public int VrRightEyeDraws { get; set; }
+    public int VrLeftEyeVisible { get; set; }
+    public int VrRightEyeVisible { get; set; }
+    public double VrLeftWorkerBuildTimeMs { get; set; }
+    public double VrRightWorkerBuildTimeMs { get; set; }
+    public double VrRenderSubmitTimeMs { get; set; }
+    public double VrXrWaitFrameBlockTimeMs { get; set; }
+    public double VrXrEndFrameSubmitTimeMs { get; set; }
+    public double VrXrPredictedToLatePoseDeltaMillimeters { get; set; }
+    public double VrXrPredictedToLatePoseDeltaDegrees { get; set; }
+    public double VrXrPredictedDisplayLeadTimeMs { get; set; }
+    public int VrXrMissedDeadlineFrames { get; set; }
+    public int VrXrTrackingLossFrames { get; set; }
+    public double VrXrRelocatePredictedTimeMs { get; set; }
+    public double VrXrCollectFrustumExpansionDegrees { get; set; }
+    public double VrXrPacingThreadIdleTimeMs { get; set; }
+    public int VrXrPacingHandoffStalls { get; set; }
+
     // Physics-chain telemetry
     public long PhysicsChainCpuUploadBytes { get; set; }
     public long PhysicsChainGpuCopyBytes { get; set; }

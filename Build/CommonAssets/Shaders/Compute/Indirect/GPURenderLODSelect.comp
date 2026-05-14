@@ -2,7 +2,7 @@
 
 layout(local_size_x = 256) in;
 
-const uint COMMAND_FLOATS = 48u;
+const uint COMMAND_FLOATS = 20u;
 const uint LOD_TABLE_FLOATS = 12u;
 const uint FLAG_LOD_ENABLED = 1u << 15u;
 const uint LOD_TRANSITION_UINTS = 4u;
@@ -89,14 +89,14 @@ void main()
         return;
 
     uint base = idx * COMMAND_FLOATS;
-    if (base + 46u >= uint(culled.length()))
+    if (base + COMMAND_FLOATS > uint(culled.length()))
         return;
 
-    uint flags = floatBitsToUint(culled[base + 45u]);
+    uint flags = floatBitsToUint(culled[base + 13u]);
     if ((flags & FLAG_LOD_ENABLED) == 0u)
         return;
 
-    uint logicalMeshID = floatBitsToUint(culled[base + 46u]);
+    uint logicalMeshID = floatBitsToUint(culled[base + 14u]);
     if (logicalMeshID == 0u)
         return;
 
@@ -108,8 +108,8 @@ void main()
     if (lodCount <= 1u)
         return;
 
-    vec3 center = vec3(culled[base + 32u], culled[base + 33u], culled[base + 34u]);
-    float radius = culled[base + 35u];
+    vec3 center = vec3(culled[base + 0u], culled[base + 1u], culled[base + 2u]);
+    float radius = culled[base + 3u];
     float distanceToCamera = max(0.0, length(CameraPosition - center) - radius);
 
     uint selectedLevel = 0u;
@@ -129,9 +129,10 @@ void main()
     if (resolvedLevel != selectedLevel && logicalMeshID < uint(lodRequestMask.length()))
         atomicOr(lodRequestMask[logicalMeshID], 1u << min(selectedLevel, 31u));
 
-    uint currentMeshID = floatBitsToUint(culled[base + 36u]);
-    uint currentLodLevel = floatBitsToUint(culled[base + 44u]);
-    uint transitionBase = idx * LOD_TRANSITION_UINTS;
+    uint currentMeshID = floatBitsToUint(culled[base + 4u]);
+    uint currentLodLevel = floatBitsToUint(culled[base + 12u]);
+    uint drawID = floatBitsToUint(culled[base + 19u]);
+    uint transitionBase = drawID * LOD_TRANSITION_UINTS;
     if (transitionBase + 3u >= uint(lodTransitions.length()))
         return;
 
@@ -159,9 +160,9 @@ void main()
         }
     }
 
-    culled[base + 36u] = uintBitsToFloat(selectedMeshID);
-    culled[base + 37u] = uintBitsToFloat((selectedMeshID << 16u) | (floatBitsToUint(culled[base + 37u]) & 0xFFFFu));
-    culled[base + 44u] = uintBitsToFloat(resolvedLevel);
+    culled[base + 4u] = uintBitsToFloat(selectedMeshID);
+    culled[base + 5u] = uintBitsToFloat((selectedMeshID << 16u) | (floatBitsToUint(culled[base + 5u]) & 0xFFFFu));
+    culled[base + 12u] = uintBitsToFloat(resolvedLevel);
 
     lodTransitions[transitionBase + 0u] = previousMeshID;
     lodTransitions[transitionBase + 1u] = previousLodLevel;

@@ -46,7 +46,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()
-            => Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
+            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline switch
             {
                 DefaultRenderPipeline pipeline => pipeline.UsesRestirGI,
                 DefaultRenderPipeline2 pipeline => pipeline.UsesRestirGI,
@@ -116,7 +116,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private bool TryRayTrace(uint width, uint height)
         {
             // Vulkan-only optional RT path.
-            if (!Engine.Rendering.State.IsVulkan)
+            if (!RuntimeEngine.Rendering.State.IsVulkan)
                 return false;
 
             // Only try when fully configured

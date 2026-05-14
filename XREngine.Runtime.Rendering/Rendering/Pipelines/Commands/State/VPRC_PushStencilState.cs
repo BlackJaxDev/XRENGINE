@@ -33,10 +33,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            Engine.Rendering.State.EnableStencilTest(true);
-            Engine.Rendering.State.StencilMask(WriteMask);
-            Engine.Rendering.State.StencilFunc(Function, Reference, ReadMask);
-            Engine.Rendering.State.StencilOp(StencilFail, DepthFail, BothPass);
+            RuntimeEngine.Rendering.State.EnableStencilTest(true);
+            RuntimeEngine.Rendering.State.StencilMask(WriteMask);
+            RuntimeEngine.Rendering.State.StencilFunc(Function, Reference, ReadMask);
+            RuntimeEngine.Rendering.State.StencilOp(StencilFail, DepthFail, BothPass);
         }
     }
 }

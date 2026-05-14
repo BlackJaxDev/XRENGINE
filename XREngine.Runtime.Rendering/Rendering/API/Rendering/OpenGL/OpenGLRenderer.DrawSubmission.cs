@@ -201,8 +201,8 @@ public partial class OpenGLRenderer
         var (prim, elem) = GetActivePrimitiveAndElementType();
         ApplyPatchParameters(ActiveMeshRenderer);
         Api.MultiDrawElementsIndirect(prim, elem, null, drawCount, stride);
-        Engine.Rendering.Stats.IncrementMultiDrawCalls();
-        Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
+        RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
     }
 
     public override unsafe void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
@@ -210,8 +210,8 @@ public partial class OpenGLRenderer
         var (prim, elem) = GetActivePrimitiveAndElementType();
         ApplyPatchParameters(ActiveMeshRenderer);
         Api.MultiDrawElementsIndirect(prim, elem, (void*)byteOffset, drawCount, stride);
-        Engine.Rendering.Stats.IncrementMultiDrawCalls();
-        Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
+        RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
     }
 
     public override unsafe void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
@@ -219,7 +219,7 @@ public partial class OpenGLRenderer
         var (prim, elem) = GetActivePrimitiveAndElementType();
         ApplyPatchParameters(ActiveMeshRenderer);
         Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, (IntPtr)countByteOffset, maxDrawCount, stride);
-        Engine.Rendering.Stats.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
         QueueBoundParameterDrawCountReadback(countByteOffset);
     }
 
@@ -235,7 +235,7 @@ public partial class OpenGLRenderer
             maxDrawCount,
             stride,
             1);
-        Engine.Rendering.Stats.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
         QueueBoundParameterDrawCountReadback(drawCountOffset);
     }
 
@@ -251,7 +251,7 @@ public partial class OpenGLRenderer
             (nint)drawCountOffset,
             maxDrawCount,
             stride);
-        Engine.Rendering.Stats.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
         QueueBoundParameterDrawCountReadback(drawCountOffset);
     }
 

@@ -72,7 +72,7 @@ namespace XREngine.Rendering.Occlusion
         // so it can detect unocclusion. Without this, an object whose query returned 0
         // samples would be skipped → never requeried → LastAnySamplesPassed stays false
         // forever (the classic occlusion-query deadlock). Configurable via
-        // Engine.EffectiveSettings.CpuQueryOcclusionRetestPeriodFrames. Worst-case
+        // RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRetestPeriodFrames. Worst-case
         // unoccluder visibility latency ≈ retest period + 1-2 frames of async query
         // latency. Per-command stagger via sourceCommandIndex keeps the per-frame
         // retest cost bounded.
@@ -84,7 +84,7 @@ namespace XREngine.Rendering.Occlusion
 
         private static int GetOccludedRetestPeriodFrames()
         {
-            int period = Engine.EffectiveSettings.CpuQueryOcclusionRetestPeriodFrames;
+            int period = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRetestPeriodFrames;
             return period > 0 ? period : DefaultOccludedRetestPeriodFrames;
         }
 
@@ -131,7 +131,7 @@ namespace XREngine.Rendering.Occlusion
             lock (_lock)
             {
                 PassState state = GetPassState(renderPass);
-                ulong frameId = Engine.Rendering.State.RenderFrameId;
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
                 if (!state.Queries.TryGetValue(sourceCommandIndex, out QueryState? queryState))
                 {
@@ -249,7 +249,7 @@ namespace XREngine.Rendering.Occlusion
                 // Idempotent within a frame: prepass and color pass may both wrap this
                 // command's draw. Issue exactly one Begin/End pair against the GL query,
                 // so its result reflects all draws (which write to the same depth target).
-                ulong frameId = Engine.Rendering.State.RenderFrameId;
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
                 if (queryState.QueryIssuedFrameId == frameId)
                     return;
                 queryState.QueryIssuedFrameId = frameId;
@@ -277,7 +277,7 @@ namespace XREngine.Rendering.Occlusion
                 // (QueryIssuedFrameId is set inside BeginQuery; if it matches current
                 // frame this BeginQuery owned the GL query; otherwise this call is a
                 // no-op for a second pass that wasn't the one to begin it.)
-                ulong frameId = Engine.Rendering.State.RenderFrameId;
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
                 if (queryState.QueryIssuedFrameId != frameId)
                     return;
 
@@ -306,7 +306,7 @@ namespace XREngine.Rendering.Occlusion
             {
                 Query = _queryManager.Acquire(EQueryTarget.AnySamplesPassedConservative),
                 ConsecutiveOccludedFrames = 0,
-                LastTouchedFrame = Engine.Rendering.State.RenderFrameId,
+                LastTouchedFrame = RuntimeEngine.Rendering.State.RenderFrameId,
                 LastAnySamplesPassed = true,
             };
 
@@ -316,7 +316,7 @@ namespace XREngine.Rendering.Occlusion
 
         private void ResolveAvailableResults(PassState state)
         {
-            ulong frameId = Engine.Rendering.State.RenderFrameId;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (state.LastResolvedFrameId == frameId)
                 return;
 
@@ -391,7 +391,7 @@ namespace XREngine.Rendering.Occlusion
         private static void BeginStaggeredReset(PassState state)
         {
             state.ResetActive = true;
-            state.ResetStartFrameId = Engine.Rendering.State.RenderFrameId;
+            state.ResetStartFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         }
 
         /// <summary>
@@ -402,7 +402,7 @@ namespace XREngine.Rendering.Occlusion
         /// </summary>
         private static void ApplyResetStripe(PassState state)
         {
-            ulong currentFrame = Engine.Rendering.State.RenderFrameId;
+            ulong currentFrame = RuntimeEngine.Rendering.State.RenderFrameId;
             ulong elapsed = currentFrame - state.ResetStartFrameId;
             if (elapsed >= (ulong)ResetStripeFrames)
             {

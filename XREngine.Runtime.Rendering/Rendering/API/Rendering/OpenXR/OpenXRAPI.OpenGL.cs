@@ -687,8 +687,8 @@ public unsafe partial class OpenXRAPI
         _openXrLeftViewport.Camera = _openXrLeftEyeCamera;
         _openXrRightViewport.Camera = _openXrRightEyeCamera;
 
-        _openXrLeftViewport.CullWithFrustum = Engine.Rendering.Settings.OpenXrCullWithFrustum;
-        _openXrRightViewport.CullWithFrustum = Engine.Rendering.Settings.OpenXrCullWithFrustum;
+        _openXrLeftViewport.CullWithFrustum = RuntimeEngine.Rendering.Settings.OpenXrCullWithFrustum;
+        _openXrRightViewport.CullWithFrustum = RuntimeEngine.Rendering.Settings.OpenXrCullWithFrustum;
 
         // Keep them independent of editor viewport layout.
         _openXrLeftViewport.SetFullScreen();
@@ -720,8 +720,8 @@ public unsafe partial class OpenXRAPI
     {
         // Prefer VRState-provided eye cameras when a VR rig exists.
         // The rig's transforms/parameters are responsible for choosing OpenVR vs OpenXR data sources.
-        var vrInfo = Engine.VRState.ViewInformation;
-        bool hasVrRig = Engine.VRState.IsInVR && (vrInfo.LeftEyeCamera is not null || vrInfo.RightEyeCamera is not null);
+        var vrInfo = RuntimeEngine.VRState.ViewInformation;
+        bool hasVrRig = RuntimeEngine.VRState.IsInVR && (vrInfo.LeftEyeCamera is not null || vrInfo.RightEyeCamera is not null);
         _openXrLeftEyeCamera ??= (hasVrRig ? vrInfo.LeftEyeCamera : null) ?? new XRCamera(new Transform());
         _openXrRightEyeCamera ??= (hasVrRig ? vrInfo.RightEyeCamera : null) ?? new XRCamera(new Transform());
 
@@ -774,32 +774,41 @@ public unsafe partial class OpenXRAPI
         }
     }
 
-    private void UpdateOpenXrEyeCameraFromView(XRCamera camera, uint viewIndex)
+    private float UpdateOpenXrEyeCameraFromView(XRCamera camera, uint viewIndex)
     {
-        var pose = _views[viewIndex].Pose;
-        var fov = _views[viewIndex].Fov;
+        bool leftEye = viewIndex == 0;
+        Matrix4x4 eyeLocalMatrix;
+        (float Left, float Right, float Up, float Down) fov;
+        lock (_openXrPoseLock)
+        {
+            eyeLocalMatrix = leftEye ? _openXrPredLeftEyeLocalPose : _openXrPredRightEyeLocalPose;
+            fov = leftEye ? _openXrPredLeftEyeFov : _openXrPredRightEyeFov;
+        }
 
         // OpenXR way: render the world directly from the per-eye view pose returned by xrLocateViews
         // in the same reference space we submit in the projection layer (layer.Space == _appSpace).
         // This keeps the rendered images consistent with the submitted projectionViews[*].Pose and
         // avoids timewarp/reprojection artifacts from pose-space mismatches.
-        Vector3 eyePos = new(pose.Position.X, pose.Position.Y, pose.Position.Z);
-        Quaternion eyeRot = Quaternion.Normalize(new Quaternion(
-            pose.Orientation.X,
-            pose.Orientation.Y,
-            pose.Orientation.Z,
-            pose.Orientation.W));
-
-        Matrix4x4 eyeLocalMatrix = Matrix4x4.CreateFromQuaternion(eyeRot);
-        eyeLocalMatrix.Translation = eyePos;
-
         // Only directly drive the transform when the camera isn't part of an app-provided VR rig.
         // (Rig eye cameras use VREyeTransform + VRHeadsetTransform and are updated via InvokeRecalcMatrixOnDraw.)
         if (camera.Transform is not XREngine.Scene.Transforms.VREyeTransform)
             camera.Transform.DeriveLocalMatrix(eyeLocalMatrix, networkSmoothed: false);
 
+        float paddingDegrees = 0.0f;
+        if (OpenXrCollectPosePolicy == OpenXrCollectVisiblePosePolicy.PaddedFrustum)
+        {
+            paddingDegrees = MathF.Max(0.0f, OpenXrCollectFrustumPaddingDegrees);
+            float paddingRadians = paddingDegrees * (MathF.PI / 180.0f);
+            fov.Left -= paddingRadians;
+            fov.Right += paddingRadians;
+            fov.Down -= paddingRadians;
+            fov.Up += paddingRadians;
+        }
+
         if (camera.Parameters is XROpenXRFovCameraParameters openxrParams)
-            openxrParams.SetAngles(fov.AngleLeft, fov.AngleRight, fov.AngleUp, fov.AngleDown);
+            openxrParams.SetAngles(fov.Left, fov.Right, fov.Up, fov.Down);
+
+        return paddingDegrees;
     }
 
     private void ApplyOpenXrEyePoseForRenderThread(uint viewIndex)
