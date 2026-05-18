@@ -166,6 +166,12 @@ public partial class OpenGLRenderer
     {
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
 
+        if (IsGpuIndirectZeroReadbackActive())
+        {
+            callback(false, 0.0f);
+            return;
+        }
+
         var glTex = GenericToAPI<GLTexture2DArray>(texture);
         if (glTex is null)
         {
@@ -951,6 +957,12 @@ void main()
     {
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
 
+        if (IsGpuIndirectZeroReadbackActive())
+        {
+            callback(false, 0.0f);
+            return;
+        }
+
         var glTex = GenericToAPI<GLTexture2D>(texture);
         if (glTex is null)
         {
@@ -1015,6 +1027,9 @@ void main()
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminance");
 
         dotLuminance = 1.0f;
+        if (IsGpuIndirectZeroReadbackActive())
+            return false;
+
         var glTex = GenericToAPI<GLTexture2DArray>(texture);
         if (glTex is null)
             return false;
@@ -1063,6 +1078,9 @@ void main()
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminance");
 
         dotLuminance = 1.0f;
+        if (IsGpuIndirectZeroReadbackActive())
+            return false;
+
         var glTex = GenericToAPI<GLTexture2D>(texture);
         if (glTex is null)
             return false;
@@ -1091,6 +1109,9 @@ void main()
     /// <inheritdoc/>
     public override unsafe float ReadTextureCenterRedMip0(XRTexture2D texture)
     {
+        if (IsGpuIndirectZeroReadbackActive())
+            return 0.0f;
+
         var glTex = GenericToAPI<GLTexture2D>(texture);
         if (glTex is null || !glTex.IsGenerated)
             return 0.0f;
@@ -1120,6 +1141,12 @@ void main()
     public override unsafe void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
     {
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsync");
+
+        if (IsGpuIndirectZeroReadbackActive())
+        {
+            QueueCachedFrontLuminanceCallback(callback);
+            return;
+        }
 
         long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         TryServicePendingFrontLuminanceReadback(nowTicks);
@@ -1239,6 +1266,12 @@ void main()
     public unsafe override void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
     {
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsyncCompute");
+
+        if (IsGpuIndirectZeroReadbackActive())
+        {
+            QueueCachedFrontLuminanceCallback(callback);
+            return;
+        }
 
         long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         TryServicePendingFrontLuminanceReadback(nowTicks);

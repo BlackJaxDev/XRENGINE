@@ -378,8 +378,15 @@ namespace XREngine.Rendering.OpenGL
 
             if (TryResolveAttachIds(fbo, attachment, mipLevel, requireTexture: true, out uint fboId, out uint texId))
             {
+                System.Numerics.Vector3 dims = Data?.WidthHeightDepth ?? default;
+                string textureState = this is GLTexture2D texture2D
+                    ? $" resizable={texture2D.Data.Resizable} storageSet={texture2D.StorageSet}"
+                    : string.Empty;
                 XREngine.Rendering.Commands.GPURenderPassCollection.Crumb(
-                    $"NamedFramebufferTexture.BEGIN fbo={fboId} attachment={attachment} tex={texId} mip={mipLevel} type={GetType().Name} dataFmt={Data?.GetType().Name}");
+                    $"NamedFramebufferTexture.BEGIN fbo={fboId} fboName={fbo.Name ?? "<unnamed>"} " +
+                    $"attachment={attachment} tex={texId} texName={Data?.Name ?? "<unnamed>"} " +
+                    $"mip={mipLevel} type={GetType().Name} dataFmt={Data?.GetType().Name} " +
+                    $"dims={dims.X}x{dims.Y}x{dims.Z}{textureState}");
                 Api.NamedFramebufferTexture(fboId, ToGLEnum(attachment), texId, mipLevel);
                 XREngine.Rendering.Commands.GPURenderPassCollection.Crumb("NamedFramebufferTexture.END");
             }

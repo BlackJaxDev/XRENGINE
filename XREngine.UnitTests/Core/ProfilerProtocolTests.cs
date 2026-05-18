@@ -109,6 +109,11 @@ public sealed class ProfilerProtocolTests
             DrawCalls = 1234,
             MultiDrawCalls = 56,
             TrianglesRendered = 9_876_543,
+            GpuCpuFallbackEvents = 2,
+            GpuCpuFallbackRecoveredCommands = 17,
+            ForbiddenGpuFallbackEvents = 1,
+            GpuMappedBuffers = 3,
+            GpuReadbackBytes = 4096,
             VulkanDeviceLocalAllocationCount = 7,
             VulkanDeviceLocalAllocatedBytes = 70_000,
             VulkanUploadAllocationCount = 3,
@@ -258,6 +263,11 @@ public sealed class ProfilerProtocolTests
         clone.DrawCalls.ShouldBe(1234);
         clone.MultiDrawCalls.ShouldBe(56);
         clone.TrianglesRendered.ShouldBe(9_876_543);
+        clone.GpuCpuFallbackEvents.ShouldBe(2);
+        clone.GpuCpuFallbackRecoveredCommands.ShouldBe(17);
+        clone.ForbiddenGpuFallbackEvents.ShouldBe(1);
+        clone.GpuMappedBuffers.ShouldBe(3);
+        clone.GpuReadbackBytes.ShouldBe(4096);
         clone.VulkanDeviceLocalAllocationCount.ShouldBe(7);
         clone.VulkanDeviceLocalAllocatedBytes.ShouldBe(70_000);
         clone.VulkanUploadAllocationCount.ShouldBe(3);

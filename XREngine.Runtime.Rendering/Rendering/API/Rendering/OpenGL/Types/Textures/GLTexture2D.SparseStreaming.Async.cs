@@ -29,6 +29,11 @@ public partial class GLTexture2D
         Action<SparseTextureStreamingTransitionResult> onCompleted,
         Action<Exception>? onError = null)
     {
+        // The async promotion path is completed by polling a GL sync object. Keep
+        // strict zero-readback profiling on the single-context fallback path.
+        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            return false;
+
         if (!TryPrepareSparseTransitionForAsyncPromotion(request, out PreparedSparseTransition prepared))
             return false;
 

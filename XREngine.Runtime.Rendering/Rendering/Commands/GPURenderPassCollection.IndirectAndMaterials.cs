@@ -612,7 +612,10 @@ namespace XREngine.Rendering.Commands
             IReadOnlyDictionary<uint, XRMaterial> materialMap = scene.MaterialMap;
             ulong signature = ComputeMaterialSlotLookupSignature(materialMap, out uint maxMaterialId);
 
-            EnsureMaterialScatterBuffers(maxMaterialId + 1u, CommandCapacity);
+            uint materialSlotLookupCount = maxMaterialId == uint.MaxValue
+                ? uint.MaxValue
+                : maxMaterialId + 1u;
+            EnsureMaterialScatterBuffers(materialSlotLookupCount, (uint)materialMap.Count, CommandCapacity);
             if (_materialSlotLookupBuffer is null)
                 return;
 
@@ -659,13 +662,34 @@ namespace XREngine.Rendering.Commands
                 _materialTierDrawCountBuffer.ElementCount,
                 EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
-            ulong indirectUIntCount = (ulong)_materialTierIndirectDrawBuffer.ElementCount * _materialTierIndirectDrawBuffer.ComponentCount;
-            bool commandsCleared = ClearUIntBufferOnGpu(
-                _materialTierIndirectDrawBuffer,
-                indirectUIntCount,
-                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            bool commandsCleared = true;
+            if (ShouldClearMaterialScatterIndirectCommands(_materialTierDrawCountBuffer))
+            {
+                ulong indirectUIntCount = (ulong)_materialTierIndirectDrawBuffer.ElementCount * _materialTierIndirectDrawBuffer.ComponentCount;
+                commandsCleared = ClearUIntBufferOnGpu(
+                    _materialTierIndirectDrawBuffer,
+                    indirectUIntCount,
+                    EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+                P3Diagnostics.RecordMaterialScatterIndirectCommandClear(cleared: true);
+            }
+            else
+            {
+                P3Diagnostics.RecordMaterialScatterIndirectCommandClear(cleared: false);
+            }
 
             return countsCleared && commandsCleared;
+        }
+
+        private static bool ShouldClearMaterialScatterIndirectCommands(XRDataBuffer drawCountBuffer)
+        {
+            if (IndirectDebug.DisableCountDrawPath)
+                return true;
+
+            var renderer = AbstractRenderer.Current;
+            if (renderer is null || !renderer.SupportsIndirectCountDraw())
+                return true;
+
+            return IndirectDebug.ValidateLiveHandles && drawCountBuffer.APIWrappers.Count == 0;
         }
 
         private bool ClearUIntBufferOnGpu(XRDataBuffer buffer, ulong uintCount, EMemoryBarrierMask barrierMask)
@@ -1595,7 +1619,7 @@ namespace XREngine.Rendering.Commands
 
         private void QueueAsyncGpuTriangleStatsReadback()
         {
-            if (_statsBuffer is null)
+            if (_statsBuffer is null || !ShouldCaptureDiagnosticReadbacksForPass())
                 return;
 
             AbstractRenderer.Current?.QueueGpuRenderStatsBufferReadback(

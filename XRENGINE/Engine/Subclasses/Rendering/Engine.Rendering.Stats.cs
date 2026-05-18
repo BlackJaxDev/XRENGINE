@@ -732,6 +732,11 @@ namespace XREngine
                     out string? error)
                     => RenderPipelineGpuProfiler.Instance.TryDumpTimingHistory(pipelineName, out fileName, out error);
 
+                public static bool TryDumpAllGpuRenderPipelineTimingHistories(
+                    out string[] fileNames,
+                    out string? error)
+                    => RenderPipelineGpuProfiler.Instance.TryDumpAllTimingHistories(out fileNames, out error);
+
                 /// <summary>
                 /// Call this at the start of each frame to reset the counters.
                 /// </summary>
@@ -886,6 +891,10 @@ namespace XREngine
                     _lastFrameVrXrPacingHandoffStalls = _vrXrPacingHandoffStalls;
                     _lastFrameFBOBandwidthBytes = _fboBandwidthBytes;
                     _lastFrameFBOBindCount = _fboBindCount;
+
+#if !XRE_PUBLISHED
+                    Engine.ProfileCapture.RecordRenderStatsSnapshot();
+#endif
 
                     _drawCalls = 0;
                     _trianglesRendered = 0;

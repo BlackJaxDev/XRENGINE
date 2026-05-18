@@ -38,6 +38,12 @@ public partial class OpenGLRenderer
             return;
         }
 
+        if (IsGpuIndirectZeroReadbackActive())
+        {
+            callback(false, null, "GPU texture mip-chain readback is disabled by the zero-readback mesh submission strategy.");
+            return;
+        }
+
         if (texture is null)
         {
             callback(false, null, "Texture was null.");

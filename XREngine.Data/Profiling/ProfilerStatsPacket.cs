@@ -15,6 +15,9 @@ public sealed partial class RenderStatsPacket
     public int TrianglesRendered { get; set; }
     public int GpuCpuFallbackEvents { get; set; }
     public int GpuCpuFallbackRecoveredCommands { get; set; }
+    public int ForbiddenGpuFallbackEvents { get; set; }
+    public int GpuMappedBuffers { get; set; }
+    public long GpuReadbackBytes { get; set; }
     public int GpuTransparencyOpaqueOrOtherVisible { get; set; }
     public int GpuTransparencyMaskedVisible { get; set; }
     public int GpuTransparencyApproximateVisible { get; set; }

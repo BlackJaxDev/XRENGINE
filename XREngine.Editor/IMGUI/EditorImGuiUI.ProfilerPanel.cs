@@ -81,6 +81,9 @@ public static partial class EditorImGuiUI
     private static bool _showMainThreadInvokes = true;
     private static bool _profilerDockLayoutInitialized;
     private static bool _profilerDockLayoutRequested;
+    private static int _speedProfileDurationSeconds = 15;
+    private static string _speedProfileStatus = string.Empty;
+    private static string _speedProfileLastSummaryPath = string.Empty;
 
     // Throttled engine-data collection: collecting deep profiler trees + a ~100-field render-stats
     // packet every frame was the #1 in-editor stall source (~7s total / 644ms max in
@@ -313,6 +316,67 @@ public static partial class EditorImGuiUI
             string.IsNullOrWhiteSpace(error) ? $"GPU timing dump failed for '{pipelineName}'." : error);
     }
 
+    private static void DrawSpeedProfileControls()
+    {
+        bool active = Engine.IsSpeedProfileCaptureActive;
+        string lastSummaryPath = Engine.LastSpeedProfileCaptureSummaryPath;
+        if (!active &&
+            !string.IsNullOrWhiteSpace(lastSummaryPath) &&
+            !StringComparer.Ordinal.Equals(lastSummaryPath, _speedProfileLastSummaryPath))
+        {
+            _speedProfileLastSummaryPath = lastSummaryPath;
+            _speedProfileStatus = "Speed profile written.";
+        }
+
+        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Speed Profile:");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(96.0f);
+        int durationSeconds = _speedProfileDurationSeconds;
+        if (ImGui.InputInt("Seconds", ref durationSeconds))
+            _speedProfileDurationSeconds = Math.Clamp(durationSeconds, 1, 600);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Capture steady-state frame/render/GPU pipeline stats for this many seconds.");
+
+        ImGui.SameLine();
+        if (active)
+        {
+            if (ImGui.Button("Stop Speed Profile"))
+            {
+                if (Engine.TryStopSpeedProfileCapture(out string summaryPath, out string? error))
+                {
+                    _speedProfileLastSummaryPath = summaryPath;
+                    _speedProfileStatus = "Speed profile written.";
+                }
+                else
+                {
+                    _speedProfileStatus = string.IsNullOrWhiteSpace(error) ? "Speed profile stop failed." : error;
+                }
+            }
+
+            ImGui.SameLine();
+            ImGui.TextDisabled($"{Engine.SpeedProfileCaptureSecondsRemaining:0.0}s");
+        }
+        else if (ImGui.Button("Dump Speed Profile"))
+        {
+            if (Engine.TryStartSpeedProfileCapture(_speedProfileDurationSeconds, "profiler-panel", out string? error))
+            {
+                _speedProfileStatus = "Speed profile running.";
+            }
+            else
+            {
+                _speedProfileStatus = string.IsNullOrWhiteSpace(error) ? "Speed profile start failed." : error;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(_speedProfileStatus))
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled(_speedProfileStatus);
+            if (!string.IsNullOrWhiteSpace(_speedProfileLastSummaryPath) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(_speedProfileLastSummaryPath);
+        }
+    }
+
     /// <summary>
     /// Main entry point called from <see cref="RenderEditor"/>.
     /// Draws the in-editor profiler window when <c>_showProfiler</c> is true.
@@ -442,6 +506,10 @@ public static partial class EditorImGuiUI
             ImGui.Separator();
 
             // ── External Profiler ──
+            DrawSpeedProfileControls();
+
+            ImGui.Separator();
+
             ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "External Profiler:");
             ImGui.SameLine();
             bool udpEnabled = _profilerUdpEnabled;

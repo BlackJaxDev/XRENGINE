@@ -187,6 +187,9 @@ public sealed class RenderResourceRegistry
         descriptor = descriptor with { Name = name };
 
         RenderTextureResource record = RegisterTextureDescriptor(descriptor);
+        if (record.Instance is XRTexture existingTexture && !ReferenceEquals(existingTexture, texture))
+            DestroyFrameBuffersReferencing(existingTexture);
+
         record.Bind(texture);
     }
 
@@ -357,6 +360,25 @@ public sealed class RenderResourceRegistry
             _frameBuffers.Clear();
             _buffers.Clear();
             _renderBuffers.Clear();
+        }
+    }
+
+    private void DestroyFrameBuffersReferencing(XRTexture texture)
+    {
+        foreach (RenderFrameBufferResource record in _frameBuffers.Values)
+        {
+            XRFrameBuffer? frameBuffer = record.Instance;
+            if (frameBuffer?.Targets is not { Length: > 0 } targets)
+                continue;
+
+            for (int i = 0; i < targets.Length; ++i)
+            {
+                if (!ReferenceEquals(targets[i].Target, texture))
+                    continue;
+
+                record.DestroyInstance();
+                break;
+            }
         }
     }
 }
