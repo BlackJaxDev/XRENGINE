@@ -93,16 +93,19 @@ namespace XREngine
                             case EDebugShapePopulationMode.ParallelInvoke:
                                 Parallel.Invoke(PopulatePoints, PopulateLines, PopulateTriangles);
                                 break;
-                            case EDebugShapePopulationMode.JobSystem:
-                            {
-                                var hp = Engine.Jobs.Schedule(new ActionJob(PopulatePoints), JobPriority.High);
-                                var hl = Engine.Jobs.Schedule(new ActionJob(PopulateLines), JobPriority.High);
-                                var ht = Engine.Jobs.Schedule(new ActionJob(PopulateTriangles), JobPriority.High);
-                                hp.Wait();
-                                hl.Wait();
-                                ht.Wait();
-                                break;
-                            }
+                            // JobSystem is intentionally unavailable here. If the engine job workers
+                            // starve, these waits starve SwapBuffers on the main thread, which is not
+                            // acceptable for debug rendering.
+                            // case EDebugShapePopulationMode.JobSystem:
+                            // {
+                            //     var hp = Engine.Jobs.Schedule(new ActionJob(PopulatePoints), JobPriority.High);
+                            //     var hl = Engine.Jobs.Schedule(new ActionJob(PopulateLines), JobPriority.High);
+                            //     var ht = Engine.Jobs.Schedule(new ActionJob(PopulateTriangles), JobPriority.High);
+                            //     hp.Wait();
+                            //     hl.Wait();
+                            //     ht.Wait();
+                            //     break;
+                            // }
                             case EDebugShapePopulationMode.Sequential:
                             default:
                                 PopulatePoints();

@@ -62,7 +62,7 @@ Dynamic material-table layouts for additional deferred, forward+, Uber, and anno
 
 - `CpuDirect` does not consume GPU Hi-Z visibility snapshots. Hardware CPU queries remain the default occlusion path, and optional CPU masked software occlusion can pre-cull traditional CPU mesh draws before hardware-query submission when explicitly enabled.
 - `GpuIndirectZeroReadback` enables state-class/tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts. Use `FullBucketScan` when validating the strict no-readback material path; the active-bucket and material-table variants intentionally read back the compact active bucket list for diagnostics.
-- `GpuIndirectInstrumented` is the only strategy allowed to read back batch ranges, count buffers, per-view draw counts, or indirect command dumps.
+- `GpuIndirectInstrumented` is the only strategy allowed to read back batch ranges, count buffers, per-view draw counts, or indirect command dumps. It still uses the material-tier scatter draw path by default so diagnostics render with the same per-material shaders and textures as the production GPU path. CPU masked software occlusion can also run here by preparing CPU occluders, reading the GPU-cull count, and compacting the culled indirect command buffer for validation.
 - CPU safety-net mesh fallback is only available for `GpuIndirectInstrumented` and only when fallback diagnostics are explicitly enabled.
 
 ## Kill Switch

@@ -1361,12 +1361,10 @@ namespace XREngine
         /// </summary>
         Sequential,
 
-        /// <summary>
-        /// Schedules population on the engine's persistent worker threads via the JobManager.
-        /// Avoids thread-pool scheduling overhead, but debug population can be starved when all
-        /// job workers are busy on long-running, CPU-bound work (e.g. texture cache compression).
-        /// </summary>
-        JobSystem,
+        // JobSystem is intentionally unavailable for debug shape population. If the engine
+        // job workers starve, SwapBuffers waits here and starves the main thread; main-thread
+        // starvation is not acceptable for debug rendering.
+        // JobSystem,
     }
 
     [Serializable]
@@ -1898,11 +1896,14 @@ namespace XREngine
         /// </summary>
         [Category("Debug")]
         [DisplayName("Debug Shape Population Mode")]
-        [Description("Controls how debug shape data is populated each frame. 'JobSystem' uses engine worker threads and is the default. 'Tasks' retains the Task.Run + Task.WaitAll path. 'ParallelInvoke' uses Parallel.Invoke. 'Sequential' runs on the calling thread.")]
+        [Description("Controls how debug shape data is populated each frame. 'Tasks' uses Task.Run + Task.WaitAll and is the default. 'ParallelInvoke' uses Parallel.Invoke. 'Sequential' runs on the calling thread. The JobSystem path is intentionally unavailable because worker starvation can starve SwapBuffers on the main thread.")]
         public EDebugShapePopulationMode DebugShapePopulationMode
         {
             get => _debugShapePopulationMode;
-            set => SetField(ref _debugShapePopulationMode, value);
+            set => SetField(ref _debugShapePopulationMode,
+                Enum.IsDefined(typeof(EDebugShapePopulationMode), value)
+                    ? value
+                    : EDebugShapePopulationMode.Tasks);
         }
 
         /// <summary>

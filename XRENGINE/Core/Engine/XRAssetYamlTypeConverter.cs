@@ -85,6 +85,34 @@ namespace XREngine
         public static int CurrentDepth => _depth;
     }
 
+    internal sealed class LegacyEnumYamlNodeDeserializer : INodeDeserializer
+    {
+        public bool Deserialize(IParser reader, Type expectedType, Func<IParser, Type, object?> nestedObjectDeserializer, out object? value, ObjectDeserializer rootDeserializer)
+        {
+            Type targetType = Nullable.GetUnderlyingType(expectedType) ?? expectedType;
+
+            if (!targetType.IsEnum || !reader.Accept<Scalar>(out var scalar))
+            {
+                value = null;
+                return false;
+            }
+
+            if (targetType == typeof(EDebugShapePopulationMode)
+                && string.Equals(scalar.Value, "JobSystem", StringComparison.OrdinalIgnoreCase))
+            {
+                // Legacy editor preferences may still contain this removed option. It used
+                // engine workers, so worker starvation could starve SwapBuffers on the main
+                // thread; normalize old assets to the thread-pool Tasks path instead.
+                reader.Consume<Scalar>();
+                value = EDebugShapePopulationMode.Tasks;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+    }
+
     public class XRAssetDeserializer : INodeDeserializer
     {
         [ThreadStatic]

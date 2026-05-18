@@ -1026,7 +1026,7 @@ namespace XREngine.Rendering.Commands
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.PrepareMaterialTableAndValidateResidency");
 
-            bool materialTableRequired = MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+            bool materialTableRequired = EnableZeroReadbackMaterialScatter &&
                 ZeroReadbackMaterialDrawPath is EZeroReadbackMaterialDrawPath.MaterialTable
                     or EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
 

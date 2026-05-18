@@ -2,8 +2,10 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
 using System.Collections.Generic;
+using System.IO;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using YamlDotNet.Core;
 
 namespace XREngine.UnitTests.Core;
 
@@ -152,6 +154,33 @@ Color3:
         clone.Color4.ShouldBe(new ColorF4(1.0f, 0.5f, 0.0f, 1.0f));
         clone.Color4Alias.ShouldBe(clone.Color4);
         clone.Color3.ShouldBe(new ColorF3(0.0f, 0.25f, 0.75f));
+    }
+
+    [Test]
+    public void YamlDeserializer_Reads_Legacy_DebugShapePopulationMode_JobSystem_As_Tasks()
+    {
+        const string yaml = """
+DebugShapePopulationMode: JobSystem
+""";
+
+        EditorDebugOptions clone = AssetManager.Deserializer.Deserialize<EditorDebugOptions>(yaml).ShouldNotBeNull();
+
+        clone.DebugShapePopulationMode.ShouldBe(EDebugShapePopulationMode.Tasks);
+    }
+
+    [Test]
+    public void YamlParserDeserializer_Reads_Legacy_DebugShapePopulationMode_JobSystem_As_Tasks()
+    {
+        const string yaml = """
+DebugShapePopulationMode: JobSystem
+""";
+
+        using var reader = new StringReader(yaml);
+        var parser = new Parser(reader);
+        var clone = AssetManager.Deserializer.Deserialize(parser, typeof(EditorDebugOptions))
+            .ShouldBeOfType<EditorDebugOptions>();
+
+        clone.DebugShapePopulationMode.ShouldBe(EDebugShapePopulationMode.Tasks);
     }
 
     private sealed class StubAsset : XRAsset
