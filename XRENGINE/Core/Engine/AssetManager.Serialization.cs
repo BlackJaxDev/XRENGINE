@@ -142,6 +142,7 @@ namespace XREngine
                 .WithNodeDeserializer(new InterfaceCollectionYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(new XRShaderScalarYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(new XRShaderCollectionYamlNodeDeserializer(), w => w.OnTop())
+                .WithNodeDeserializer(new LegacyEnumYamlNodeDeserializer(), w => w.OnTop())
                 .WithNodeDeserializer(
                     inner => new DepthTrackingNodeDeserializer(inner),
                     s => s.InsteadOf<ObjectNodeDeserializer>())

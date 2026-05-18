@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
@@ -270,7 +271,7 @@ namespace XREngine.Rendering.Commands
             EOcclusionCullingMode mode = ResolveActiveOcclusionMode();
             LogOcclusionModeActivation(mode);
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
-                mode, RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+                mode, MeshSubmissionStrategy);
 
             if (_lastLoggedOcclusionMode != mode)
                 ResetTemporalOcclusionState();
@@ -317,7 +318,7 @@ namespace XREngine.Rendering.Commands
 
                 case EOcclusionCullingMode.CpuSoftwareOcclusion:
                     HiZStageStats.Record("Dispatch.CpuSoftwareOcclusion.CpuOnly", 0.0);
-                    RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                    ApplyCpuSoftwareOcclusionToGpuCulledCommands(scene, candidates);
                     break;
             }
 
@@ -494,7 +495,7 @@ namespace XREngine.Rendering.Commands
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPassthroughDirty();
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
                     EOcclusionCullingMode.GpuHiZ,
-                    RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+                    MeshSubmissionStrategy);
                 return;
             }
 
@@ -527,7 +528,88 @@ namespace XREngine.Rendering.Commands
                 (int)candidates, (int)occluded, readbackAvailable);
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
                 EOcclusionCullingMode.GpuHiZ,
-                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+                MeshSubmissionStrategy);
+        }
+
+        private void ApplyCpuSoftwareOcclusionToGpuCulledCommands(GPUScene scene, uint candidates)
+        {
+            if (CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
+            {
+                RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                return;
+            }
+
+            if (IsCpuReadbackCountDisabledForPass())
+            {
+                RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.CpuSocGpuReadbackDisabled.{RenderPass}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] CPU SOC mode needs GpuIndirectInstrumented count readback for traditional GPU indirect pass {0}; passing candidates through.",
+                    RenderPass);
+                return;
+            }
+
+            if (!RenderCommandCollection.CpuSoftwareOcclusion.IsFrameOpen)
+            {
+                RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                return;
+            }
+
+            uint inputCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
+            if (inputCount == 0u)
+            {
+                WriteVisibleCounters(0u, 0u);
+                RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                return;
+            }
+
+            inputCount = Math.Min(inputCount, CulledSceneToRenderBuffer.ElementCount);
+            AbstractRenderer.Current?.MemoryBarrier(
+                EMemoryBarrierMask.ShaderStorage |
+                EMemoryBarrierMask.Command |
+                EMemoryBarrierMask.ClientMappedBuffer);
+
+            uint writeIndex = 0u;
+            uint visibleInstances = 0u;
+            uint culled = 0u;
+
+            for (uint readIndex = 0; readIndex < inputCount; ++readIndex)
+            {
+                GPUIndirectRenderCommand command = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(readIndex);
+                bool keepVisible = true;
+                uint sourceIndex = command.Reserved1;
+
+                if (scene.TryGetSourceCommand(sourceIndex, out IRenderCommandMesh? sourceCommand) &&
+                    sourceCommand is RenderCommand renderCommand &&
+                    !CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(sourceCommand) &&
+                    renderCommand.CullingVolume is AABB bounds)
+                {
+                    keepVisible = RenderCommandCollection.CpuSoftwareOcclusion.TestVisible(renderCommand.StableQueryKey, bounds);
+                }
+
+                if (!keepVisible)
+                {
+                    culled++;
+                    continue;
+                }
+
+                if (writeIndex != readIndex)
+                    CulledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, command);
+
+                visibleInstances += Math.Max(command.InstanceCount, 1u);
+                writeIndex++;
+            }
+
+            if (writeIndex < inputCount)
+            {
+                uint byteCount = writeIndex * CulledSceneToRenderBuffer.ElementSize;
+                if (byteCount > 0u)
+                    CulledSceneToRenderBuffer.PushSubData(0, byteCount);
+            }
+
+            WriteVisibleCounters(writeIndex, visibleInstances);
+            RecordOcclusionFrameStats(candidates, culled, 0u, 0u);
         }
 
         private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)

@@ -59,6 +59,55 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     }
 
     [Test]
+    public void GpuIndirectInstrumented_UsesMaterialScatterForVisualDiagnostics()
+    {
+        string coreSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Core.cs");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
+
+        string policySnapshot = Slice(
+            coreSource,
+            "private void CapturePassPolicySnapshot()",
+            "AssertZeroReadbackProductionInvariantsForPass(strategy);",
+            StringComparison.Ordinal);
+
+        policySnapshot.ShouldContain("_passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented;");
+        policySnapshot.ShouldContain("_passDisableCpuReadbackCount = !instrumented;");
+
+        string materialTableRequirement = Slice(
+            passSource,
+            "private bool PrepareMaterialTableAndValidateResidency",
+            "if (!VulkanFeatureProfile.EnableBindlessMaterialTable",
+            StringComparison.Ordinal);
+
+        materialTableRequirement.ShouldContain("bool materialTableRequired = EnableZeroReadbackMaterialScatter &&");
+    }
+
+    [Test]
+    public void GpuOcclusionTelemetry_UsesActualPassStrategyAndSocFilter()
+    {
+        string occlusionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs");
+        string commandCollectionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommandCollection.cs");
+
+        string applyOcclusion = Slice(
+            occlusionSource,
+            "private void ApplyOcclusionCulling",
+            "private void LogOcclusionModeActivation",
+            StringComparison.Ordinal);
+
+        applyOcclusion.ShouldContain("mode, MeshSubmissionStrategy);");
+        applyOcclusion.ShouldContain("ApplyCpuSoftwareOcclusionToGpuCulledCommands(scene, candidates);");
+
+        string renderGpu = Slice(
+            commandCollectionSource,
+            "public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)",
+            "public bool HasRenderingCommands",
+            StringComparison.Ordinal);
+
+        renderGpu.ShouldContain("meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented");
+        renderGpu.ShouldContain("PrepareCpuSoftwareOcclusion(renderPass, xrCamera);");
+    }
+
+    [Test]
     public void MeshletPass_DoesNotRunCpuRenderBeforeGpuMeshlets()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs");

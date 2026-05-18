@@ -253,11 +253,15 @@ namespace XREngine.Rendering.Commands
             _passValidationLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging;
             _passZeroReadbackMaterialDrawPath = RuntimeEngine.EffectiveSettings.ZeroReadbackMaterialDrawPath;
 
-            _passEnableZeroReadbackMaterialScatter = zeroReadback;
+            // Instrumented GPU indirect needs the same material-tier dispatch as zero-readback
+            // so visual diagnostics bind the correct shader/textures per material. CPU readback
+            // policy stays controlled by the instrumentation switches below.
+            _passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented;
             EnableZeroReadbackMaterialScatter = _passEnableZeroReadbackMaterialScatter;
 
             // Zero-readback and non-instrumented strategies must not map GPU count buffers on the render path.
-            _passDisableCpuReadbackCount = !instrumented || IndirectDebug.DisableCpuReadbackCount;
+            // Instrumented exists specifically for bring-up and validation, so keep counts CPU-readable there.
+            _passDisableCpuReadbackCount = !instrumented;
             _passEnableCpuBatching = instrumented && IndirectDebug.EnableCpuBatching;
             _passProbeSourceCommands = instrumented && IndirectDebug.ProbeSourceCommandsBeforeCopy;
             _passLogCountBufferWrites = instrumented && IndirectDebug.LogCountBufferWrites && _passDebugLoggingEnabled;

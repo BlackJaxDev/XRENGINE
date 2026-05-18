@@ -403,7 +403,7 @@ namespace XREngine.Rendering.Commands
 
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
                 appliedOcclusionMode,
-                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+                EMeshSubmissionStrategy.CpuDirect);
 
             if (useCpuQueryOcclusion)
             {
@@ -677,6 +677,12 @@ namespace XREngine.Rendering.Commands
             var scene = renderState.RenderingScene;
             if (scene is null)
                 return;
+
+            if (meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+                camera is XRCamera xrCamera)
+            {
+                PrepareCpuSoftwareOcclusion(renderPass, xrCamera);
+            }
 
             gpuPass.MeshSubmissionStrategy = meshSubmissionStrategy;
             ConfigureGpuViewSet(gpuPass, renderState, camera);
