@@ -197,6 +197,34 @@ Editor Preferences Overrides. Startup uses that setting to launch
 The in-editor profiler window also exposes **Enable GPU Pipeline Profiling**,
 which turns on command-level GPU timestamp collection for supported renderers.
 
+Use **Dump Speed Profile** in the in-editor profiler window after the editor has
+settled into the workload you care about. It captures the same per-frame render
+stats stream for the selected number of seconds and writes
+`profiler-render-stats.ndjson`, `profiler-capture-manifest.json`, and
+`profiler-capture-summary.json` under the current session's
+`Build/Logs/.../<session>/speed-profiles/<timestamp>_profiler-panel/` folder.
+Only the latest three in-session speed-profile captures are retained.
+
+For repeatable run-to-run capture, launch with `XRE_PROFILE_CAPTURE=1`. This writes
+`profiler-render-stats.ndjson` with one completed render-frame sample per line,
+including game-loop CPU timings, render counters, GPU pipeline timing readiness,
+fallback counters, and GPU readback/mapped-buffer totals. `XRE_PROFILE_AUTO_DUMP=1`
+also dumps all GPU render-pipeline timing histories on graceful shutdown; it is
+enabled automatically when `XRE_PROFILE_CAPTURE=1`.
+
+The game-loop/default-pipeline harness reports both capture-window `Samples` and
+process-lifetime `AllSamples`. If a GPU path freezes during warmup and never reaches
+the timed capture window, the summary still records the final sample timestamp,
+frame id, render/GPU time, readback bytes, and fallback counters. Strict
+`GpuIndirectZeroReadback` runs do not queue async stats-buffer readbacks; draw and
+triangle stats that require CPU readback are intentionally unavailable on that path.
+The harness also has a `-NoSampleHangSec` watchdog, enabled by default, that
+force-stops a variant when `profiler-render-stats.ndjson` stops advancing after
+at least one sample has been written. Harness summaries are written under
+`Build/Logs/speed-profiles/game-loop-render-pipeline/<timestamp>/` as
+`summary.json`, `summary.txt`, and `run-logdirs.txt`; by default the harness keeps
+only the latest three summary runs, configurable with `-RetainedRunCount`.
+
 The in-editor profiler window also exposes **Enable Profiler Component Timing**,
 which independently controls per-component tick timing capture for the
 Components panel without affecting frame logging or render statistics.

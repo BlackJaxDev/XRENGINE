@@ -98,18 +98,29 @@ Run from VS Code:
 - `Measurement-Baseline-GpuIndirectInstrumented`
 - `Measurement-Baseline-GpuIndirectZeroReadback`
 - `Measurement-Baseline-Release-All` — builds Release and runs all three strategies through `Tools/Measure-MeshSubmissionBaselines.ps1 -Configuration Release`.
+- `Measurement-GameLoopRenderPipeline-Release-All` - builds Release and runs `CpuDirect`, `GpuIndirectInstrumented`, and `GpuIndirectZeroReadback` through the game-loop/default-pipeline harness. Meshlets are intentionally excluded.
 - `Measurement-PushSubDataBreakdown-GpuIndirectInstrumented` (sets `XRE_PUSHSUBDATA_BREAKDOWN=1`)
 
 Release command-line target:
 
 ```powershell
 pwsh Tools/Measure-MeshSubmissionBaselines.ps1 -Configuration Release -WarmupSec 25 -CaptureSec 60
+pwsh Tools/Measure-GameLoopRenderPipeline.ps1 -Configuration Release -WarmupSec 25 -CaptureSec 60
 ```
 
 The measurement script launches one editor process per strategy and clears the OpenGL shader-program binary cache between variants by default. Use `-NoClearCachesBetweenVariants` only when intentionally measuring warm-cache behavior.
 
+Use `Measure-GameLoopRenderPipeline.ps1` for true speed comparisons. It enables `XRE_PROFILE_CAPTURE=1`, gracefully closes each editor process so GPU timing histories are dumped, and summarizes per-frame `render_dispatch_ms`, update/collect/fixed-update timings, GPU timestamp-query frame time, render-thread-minus-GPU gap, draw counts, fallback counts, and `GpuReadbackBytes`/`GpuMappedBuffers` totals. For `GpuIndirectZeroReadback`, the harness forces `XRE_ZERO_READBACK_MATERIAL_DRAW_PATH=FullBucketScan` and reports any nonzero readback or mapped-buffer frame as a violation. The summary includes capture-window `Samples` plus process-lifetime `AllSamples`, final sample timestamp/frame/timing, and final readback/fallback counters so failed warmup runs still leave usable evidence instead of a blank row. `-NoSampleHangSec` force-stops a variant when the render-stats file stops advancing after samples have begun. Summaries are written under `Build/Logs/speed-profiles/game-loop-render-pipeline/<timestamp>/`, and the harness keeps the latest three summary runs by default via `-RetainedRunCount`.
+
+For warmed-up steady-state inspection during an interactive editor session, use **Dump Speed Profile** from the in-editor profiler window after the scene has settled. It writes the same render-stats capture files under the current session's `speed-profiles/<timestamp>_profiler-panel/` folder and retains the latest three in-session captures.
+
+Strict `GpuIndirectZeroReadback` runs must not queue async stats-buffer readbacks for draw/triangle publication. Those counters are diagnostic readbacks and are intentionally suppressed on the zero-readback path.
+
 Logs land in `Build/Logs/<configuration>_<tfm>/<platform>/<session>/`:
 
+- `profiler-render-stats.ndjson` - one JSON object per completed render frame when `XRE_PROFILE_CAPTURE=1`.
+- `profiler-capture-manifest.json` / `profiler-capture-summary.json` - run metadata and automatic GPU dump results.
+- `profiler-gpu-pipeline-*.log` - command-level GPU timing history dumped on graceful shutdown.
 - `profiler-fps-drops.log` — primary HotPath data.
 - `profiler-render-stalls.log` — render-thread stalls.
 - `profiler-main-thread-invokes.log` — MainThreadInvoke flooding.

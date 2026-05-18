@@ -389,6 +389,7 @@ namespace XREngine.Rendering
 
             if (renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
+                GPURenderPassCollection.Crumb($"ZeroPath.BEGIN pass={currentRenderPass} path={renderPasses.ZeroReadbackMaterialDrawPath}");
                 switch (renderPasses.ZeroReadbackMaterialDrawPath)
                 {
                     case EZeroReadbackMaterialDrawPath.ActiveBucketList:
@@ -428,6 +429,7 @@ namespace XREngine.Rendering
                             materialMap);
                         break;
                 }
+                GPURenderPassCollection.Crumb($"ZeroPath.END pass={currentRenderPass} path={renderPasses.ZeroReadbackMaterialDrawPath}");
                 return;
             }
 
@@ -3764,6 +3766,7 @@ namespace XREngine.Rendering
             IReadOnlyDictionary<uint, XRMaterial> materialMap)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTiers");
+            GPURenderPassCollection.Crumb($"MaterialTiers.BEGIN pass={currentRenderPass}");
 
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
@@ -3875,6 +3878,8 @@ namespace XREngine.Rendering
                     uint bucketIndex = ((uint)slotIndex * GPUBatchingBindings.MaterialTierCount) + tier;
                     nuint indirectByteOffset = (nuint)(bucketIndex * maxDrawsPerBucket * stride);
                     nuint countByteOffset = (nuint)(bucketIndex * sizeof(uint));
+                    GPURenderPassCollection.Crumb(
+                        $"MaterialTiers.DISPATCH pass={currentRenderPass} slot={slotIndex} materialId={materialId} materialName={material.Name ?? "<unnamed>"} tier={tier} bucket={bucketIndex} indirectOff={indirectByteOffset} countOff={countByteOffset}");
 
                     DispatchRenderIndirectCountBucket(
                         indirectDrawBuffer,
@@ -3897,6 +3902,7 @@ namespace XREngine.Rendering
                 }
             }
 
+            GPURenderPassCollection.Crumb($"MaterialTiers.END pass={currentRenderPass}");
             P3Diagnostics.MaybeFlush();
         }
 
@@ -4205,6 +4211,8 @@ namespace XREngine.Rendering
 
         private static bool ConfigureIndirectRendererForTier(GPUScene scene, XRMeshRenderer? vaoRenderer, EAtlasTier tier)
         {
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ConfigureIndirectRendererForTier");
+
             if (vaoRenderer is null)
                 return false;
 
@@ -4394,15 +4402,28 @@ namespace XREngine.Rendering
 
                 using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectCount"))
                 {
+                    uint bucketIndex = countByteOffset <= uint.MaxValue - sizeof(uint)
+                        ? (uint)(countByteOffset / sizeof(uint))
+                        : uint.MaxValue;
                     LogIndirectDrawSizes("DispatchRenderIndirectCountBucket", maxDrawCount, stride, indirectDrawBuffer, parameterBuffer, indirectByteOffset, countByteOffset);
+                    GPURenderPassCollection.Crumb($"MDIC.BUCKET.BEGIN bucket={bucketIndex} maxCmd={maxDrawCount} stride={stride} indirectOff={indirectByteOffset} countOff={countByteOffset} indCap={indirectDrawBuffer.ElementCount} paramCap={parameterBuffer.ElementCount}");
                     renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
+                    if (P3Diagnostics.FinishAfterMultiDrawIndirectCount)
+                    {
+                        GPURenderPassCollection.Crumb("MDIC.BUCKET.FINISH.BEGIN");
+                        renderer.WaitForGpu();
+                        GPURenderPassCollection.Crumb("MDIC.BUCKET.FINISH.END");
+                    }
+                    GPURenderPassCollection.Crumb("MDIC.BUCKET.END");
                 }
             }
             finally
             {
+                GPURenderPassCollection.Crumb("MDIC.BUCKET.UNBIND.BEGIN");
                 renderer.UnbindParameterBuffer();
                 renderer.UnbindDrawIndirectBuffer();
                 renderer.BindVAOForRenderer(null);
+                GPURenderPassCollection.Crumb("MDIC.BUCKET.UNBIND.END");
             }
         }
 

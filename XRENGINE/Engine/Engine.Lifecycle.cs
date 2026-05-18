@@ -176,8 +176,9 @@ namespace XREngine
 
             ShuttingDown = true;
 
-            // Stop profiler sender before tearing down subsystems it reads from
+            // Finalize profiler output before tearing down subsystems it reads from.
 #if !XRE_PUBLISHED
+            ProfileCapture.Shutdown();
             UdpProfilerSender.Stop();
 #endif
 

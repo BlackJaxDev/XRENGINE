@@ -115,6 +115,8 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void ProcessUploads()
             {
+                using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLUploadQueue.ProcessUploads");
+
                 ResetLastProcessStats();
 
                 if (_pendingUploads.IsEmpty)
@@ -209,6 +211,8 @@ namespace XREngine.Rendering.OpenGL
 
             private UploadExecutionResult ExecuteUpload(PendingUpload upload)
             {
+                using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLUploadQueue.ExecuteUpload");
+
                 var buffer = upload.Buffer;
                 var data = upload.Data;
                 var dataLength = upload.DataLength;
@@ -398,9 +402,49 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void FlushAll()
             {
+                using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLUploadQueue.FlushAll");
+
                 while (_pendingUploads.TryDequeue(out var upload))
                 {
                     ExecuteUpload(upload);
+                }
+            }
+
+            /// <summary>
+            /// Forces one buffer's queued upload to complete without draining unrelated uploads.
+            /// </summary>
+            public void FlushBuffer(GLDataBuffer buffer)
+            {
+                using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLUploadQueue.FlushBuffer");
+
+                if (!_pendingBuffers.ContainsKey(buffer))
+                    return;
+
+                while (_pendingBuffers.ContainsKey(buffer))
+                {
+                    int scanCount = _pendingUploads.Count;
+                    if (scanCount == 0)
+                        return;
+
+                    bool executedTargetUpload = false;
+                    for (int i = 0; i < scanCount; ++i)
+                    {
+                        if (!_pendingUploads.TryDequeue(out var upload))
+                            break;
+
+                        if (ReferenceEquals(upload.Buffer, buffer))
+                        {
+                            ExecuteUpload(upload);
+                            executedTargetUpload = true;
+                        }
+                        else
+                        {
+                            _pendingUploads.Enqueue(upload);
+                        }
+                    }
+
+                    if (!executedTargetUpload)
+                        return;
                 }
             }
         }

@@ -220,13 +220,19 @@ namespace XREngine
                 // any absolute path that should be saved as a relative path on the next save).
                 if (resolution != ScalarPathResolution.Relative)
                 {
+                    string? sourceAssetPath = AssetDeserializationContext.CurrentFilePath;
+                    bool rebasedAbsolutePath = resolution == ScalarPathResolution.AbsoluteRebased;
                     AssetDiagnostics.RecordRebasedAsset(
                         candidate,
                         resolvedPath,
                         expectedType.Name,
-                        resolution == ScalarPathResolution.AbsoluteRebased
-                            ? $"Rebased absolute path (file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}')"
-                            : $"Absolute path (will be made portable on next save; file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}')");
+                        rebasedAbsolutePath
+                            ? $"Found current workspace path (file='{sourceAssetPath ?? "<unknown>"}')"
+                            : $"Path made portable (file='{sourceAssetPath ?? "<unknown>"}')",
+                        rebasedAbsolutePath
+                            ? AssetDiagnostics.AssetReferenceRepairKind.FoundCurrentWorkspacePath
+                            : AssetDiagnostics.AssetReferenceRepairKind.PathMadePortable,
+                        sourceAssetPath);
                 }
 
                 // Backing text files (for example XRShader.Source) should stay local to the

@@ -321,6 +321,45 @@ internal sealed class RenderPipelineGpuProfiler
         return true;
     }
 
+    public bool TryDumpAllTimingHistories(out string[] fileNames, out string? error)
+    {
+        fileNames = [];
+        error = null;
+
+        List<(string FileName, string Content)> dumps = [];
+        DateTimeOffset dumpTimestamp = DateTimeOffset.Now;
+
+        lock (_lock)
+        {
+            foreach (PipelineTimingHistory history in _pipelineTimingHistories.Values)
+            {
+                if (history.FrameCount == 0)
+                    continue;
+
+                string fileName = BuildTimingDumpFileName(history.PipelineName, dumpTimestamp);
+                string content = BuildTimingDumpContentNoLock(history, dumpTimestamp, fileName);
+                dumps.Add((fileName, content));
+            }
+        }
+
+        if (dumps.Count == 0)
+        {
+            error = "No GPU timing history has been captured for any render pipeline.";
+            return false;
+        }
+
+        string[] written = new string[dumps.Count];
+        for (int i = 0; i < dumps.Count; i++)
+        {
+            (string fileName, string content) = dumps[i];
+            Debug.WriteAuxiliaryLog(fileName, content);
+            written[i] = fileName;
+        }
+
+        fileNames = written;
+        return true;
+    }
+
     /// <summary>
     /// Records the wall-clock CPU duration of the render-thread frame dispatch (begin-of-frame
     /// through end of SwapBuffers) for the given frame id. Surfaced as a "Render Thread (CPU+Present)"

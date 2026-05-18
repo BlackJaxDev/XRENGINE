@@ -5,6 +5,7 @@ using System.Linq;
 using System.Globalization;
 using System.Numerics;
 using XREngine;
+using XREngine.Core.Files;
 using XREngine.Diagnostics;
 
 namespace XREngine.Editor;
@@ -13,6 +14,8 @@ public static partial class EditorImGuiUI
 {
         private static string? _selectedMissingAssetKey;
         private static string _missingAssetReplacementPath = string.Empty;
+        private static string? _autoRepairSaveStatus;
+        private static bool _autoRepairSaveSucceeded;
         private const float MissingAssetEditorMinHeight = 140.0f;
         private const float MissingAssetListMinHeight = 110.0f;
 
@@ -37,7 +40,7 @@ public static partial class EditorImGuiUI
             var missingAssets = AssetDiagnostics.GetTrackedMissingAssets();
             if (missingAssets.Count == 0)
             {
-                ImGui.TextDisabled("No missing assets have been tracked.");
+                ImGui.TextDisabled("No fully missing asset references have been tracked.");
                 if (ImGui.Button("Clear Missing Asset Log"))
                     AssetDiagnostics.ClearTrackedMissingAssets();
                 ClearMissingAssetSelection();
@@ -48,7 +51,7 @@ public static partial class EditorImGuiUI
             foreach (var info in missingAssets)
                 totalHits += info.Count;
 
-            ImGui.TextUnformatted($"Entries: {missingAssets.Count} | Hits: {totalHits}");
+            ImGui.TextUnformatted($"Fully missing references: {missingAssets.Count} | Hits: {totalHits}");
 
             if (ImGui.Button("Clear Missing Asset Log"))
             {
@@ -221,6 +224,7 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
 
+            ImGui.TextDisabled("Status: Fully missing - no readable file was found for this reference.");
             ImGui.TextUnformatted($"Category: {info.Category}");
             ImGui.TextUnformatted($"Hits: {info.Count}");
             ImGui.TextUnformatted($"Last Seen: {info.LastSeenUtc.ToLocalTime():g}");
@@ -358,22 +362,65 @@ public static partial class EditorImGuiUI
             if (rebased.Count == 0)
                 return;
 
-            if (!ImGui.CollapsingHeader($"Auto-Repaired / Non-Portable Asset Paths ({rebased.Count})", ImGuiTreeNodeFlags.DefaultOpen))
+            if (!ImGui.CollapsingHeader($"Auto-Repaired Asset References ({rebased.Count})", ImGuiTreeNodeFlags.DefaultOpen))
                 return;
 
-            ImGui.TextDisabled("These asset references loaded successfully but were not workspace-portable. They'll be saved in portable form on the next save.");
+            int portableCount = 0;
+            int foundPathCount = 0;
+            foreach (var info in rebased)
+            {
+                if (info.RepairKind == AssetDiagnostics.AssetReferenceRepairKind.PathMadePortable)
+                    portableCount++;
+                else if (info.RepairKind == AssetDiagnostics.AssetReferenceRepairKind.FoundCurrentWorkspacePath)
+                    foundPathCount++;
+            }
 
+            ImGui.TextWrapped("These references loaded successfully after auto-repair. Save them now to write the corrected portable references and avoid seeing this dialog for the same fixes next load.");
+            ImGui.TextDisabled($"Path made portable: {portableCount} | Found current path: {foundPathCount} | Auto-repaired rows still missing: 0");
+
+            var saveTargets = GetAutoRepairedSaveTargets(rebased, out int unsaveableRepairCount);
+            bool canSaveRepairs = saveTargets.Count > 0 && unsaveableRepairCount == 0;
+            using (new ImGuiDisabledScope(!canSaveRepairs))
+            {
+                if (ImGui.Button($"Save Auto-Repairs Now ({saveTargets.Count})"))
+                    SaveAutoRepairedAssets(saveTargets);
+            }
+
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                if (saveTargets.Count == 0)
+                    ImGui.SetTooltip("No loaded owner asset file was found for these repair records.");
+                else if (unsaveableRepairCount > 0)
+                    ImGui.SetTooltip("Some repair records do not identify a loaded owner asset file to save.");
+                else
+                    ImGui.SetTooltip("Saves the asset files that contained these repaired references. Other unsaved changes in those files will be saved too.");
+            }
+
+            ImGui.SameLine();
             if (ImGui.Button("Clear Auto-Repaired Log"))
+            {
                 AssetDiagnostics.ClearTrackedRebasedAssets();
+                _autoRepairSaveStatus = null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_autoRepairSaveStatus))
+            {
+                Vector4 color = _autoRepairSaveSucceeded
+                    ? new Vector4(0.55f, 0.85f, 0.55f, 1.0f)
+                    : new Vector4(0.95f, 0.55f, 0.35f, 1.0f);
+                ImGui.TextColored(color, _autoRepairSaveStatus);
+            }
 
             const ImGuiTableFlags tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
             float height = MathF.Min(220.0f, MathF.Max(80.0f, 22.0f + rebased.Count * 22.0f));
-            if (ImGui.BeginTable("RebasedAssetTable", 5, tableFlags, new Vector2(-1.0f, height)))
+            if (ImGui.BeginTable("RebasedAssetTable", 7, tableFlags, new Vector2(-1.0f, height)))
             {
                 ImGui.TableSetupScrollFreeze(0, 1);
+                ImGui.TableSetupColumn("Fix", ImGuiTableColumnFlags.WidthFixed, 150.0f);
                 ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 110.0f);
-                ImGui.TableSetupColumn("Original Path", ImGuiTableColumnFlags.WidthStretch, 0.4f);
-                ImGui.TableSetupColumn("Resolved Path", ImGuiTableColumnFlags.WidthStretch, 0.4f);
+                ImGui.TableSetupColumn("Original Path", ImGuiTableColumnFlags.WidthStretch, 0.32f);
+                ImGui.TableSetupColumn("Resolved Path", ImGuiTableColumnFlags.WidthStretch, 0.32f);
+                ImGui.TableSetupColumn("Saved In", ImGuiTableColumnFlags.WidthStretch, 0.22f);
                 ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 60.0f);
                 ImGui.TableSetupColumn("Last Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
                 ImGui.TableHeadersRow();
@@ -382,14 +429,19 @@ public static partial class EditorImGuiUI
                 {
                     ImGui.TableNextRow();
                     ImGui.TableSetColumnIndex(0);
-                    ImGui.TextUnformatted(info.Category);
+                    ImGui.TextUnformatted(GetAutoRepairKindLabel(info.RepairKind));
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(GetAutoRepairKindDescription(info.RepairKind));
 
                     ImGui.TableSetColumnIndex(1);
+                    ImGui.TextUnformatted(info.Category);
+
+                    ImGui.TableSetColumnIndex(2);
                     ImGui.TextUnformatted(info.OriginalPath);
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip(info.OriginalPath);
 
-                    ImGui.TableSetColumnIndex(2);
+                    ImGui.TableSetColumnIndex(3);
                     ImGui.TextUnformatted(info.ResolvedPath);
                     if (ImGui.IsItemHovered())
                     {
@@ -403,10 +455,16 @@ public static partial class EditorImGuiUI
                         ImGui.EndTooltip();
                     }
 
-                    ImGui.TableSetColumnIndex(3);
+                    ImGui.TableSetColumnIndex(4);
+                    string saveTargetLabel = GetAutoRepairSaveTargetLabel(info);
+                    ImGui.TextUnformatted(saveTargetLabel);
+                    if (ImGui.IsItemHovered())
+                        DrawAutoRepairSaveTargetTooltip(info);
+
+                    ImGui.TableSetColumnIndex(5);
                     ImGui.TextUnformatted(info.Count.ToString(CultureInfo.InvariantCulture));
 
-                    ImGui.TableSetColumnIndex(4);
+                    ImGui.TableSetColumnIndex(6);
                     ImGui.TextUnformatted(info.LastSeenUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
                 }
 
@@ -414,5 +472,161 @@ public static partial class EditorImGuiUI
             }
 
             ImGui.Separator();
+        }
+
+        private static string GetAutoRepairKindLabel(AssetDiagnostics.AssetReferenceRepairKind repairKind)
+            => repairKind switch
+            {
+                AssetDiagnostics.AssetReferenceRepairKind.PathMadePortable => "Path made portable",
+                AssetDiagnostics.AssetReferenceRepairKind.FoundCurrentWorkspacePath => "Found current path",
+                _ => "Auto-repaired",
+            };
+
+        private static string GetAutoRepairKindDescription(AssetDiagnostics.AssetReferenceRepairKind repairKind)
+            => repairKind switch
+            {
+                AssetDiagnostics.AssetReferenceRepairKind.PathMadePortable => "The absolute path existed, so the loaded reference is valid and can be saved as a workspace-portable path.",
+                AssetDiagnostics.AssetReferenceRepairKind.FoundCurrentWorkspacePath => "The original absolute path was stale, but the same asset was found under the current workspace asset roots.",
+                _ => "The reference loaded after repair, but the specific repair category was not recorded.",
+            };
+
+        private static string GetAutoRepairSaveTargetLabel(in AssetDiagnostics.RebasedAssetInfo info)
+        {
+            if (info.SourceAssetPaths.Count == 0)
+                return "<unknown>";
+
+            string lastPath = info.LastSourceAssetPath ?? info.SourceAssetPaths[0];
+            string label = Path.GetFileName(lastPath);
+            if (info.SourceAssetPaths.Count <= 1)
+                return label;
+
+            return $"{label} (+{info.SourceAssetPaths.Count - 1})";
+        }
+
+        private static void DrawAutoRepairSaveTargetTooltip(in AssetDiagnostics.RebasedAssetInfo info)
+        {
+            ImGui.BeginTooltip();
+            if (info.SourceAssetPaths.Count == 0)
+            {
+                ImGui.TextUnformatted("No owning asset file was recorded for this repair.");
+            }
+            else
+            {
+                ImGui.TextUnformatted("Owning asset file(s) to save:");
+                foreach (string sourceAssetPath in info.SourceAssetPaths.OrderBy(static p => p, StringComparer.OrdinalIgnoreCase))
+                    ImGui.TextUnformatted(sourceAssetPath);
+            }
+            ImGui.EndTooltip();
+        }
+
+        private static List<XRAsset> GetAutoRepairedSaveTargets(IReadOnlyList<AssetDiagnostics.RebasedAssetInfo> rebased, out int unsaveableRepairCount)
+        {
+            unsaveableRepairCount = 0;
+            var targetsByPath = new Dictionary<string, XRAsset>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var info in rebased)
+            {
+                bool foundTargetForRepair = false;
+                foreach (string sourceAssetPath in info.SourceAssetPaths)
+                {
+                    if (!TryGetLoadedAssetForAutoRepair(sourceAssetPath, out XRAsset? asset))
+                        continue;
+
+                    if (asset is null)
+                        continue;
+
+                    XRAsset root = asset.SourceAsset;
+                    if (string.IsNullOrWhiteSpace(root.FilePath))
+                        continue;
+
+                    targetsByPath[root.FilePath] = root;
+                    foundTargetForRepair = true;
+                }
+
+                if (!foundTargetForRepair)
+                    unsaveableRepairCount++;
+            }
+
+            return targetsByPath.Values
+                .OrderBy(static asset => EditorUnitTests.UserInterface.GetAssetDisplayName(asset), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static bool TryGetLoadedAssetForAutoRepair(string sourceAssetPath, out XRAsset? asset)
+        {
+            asset = null;
+            if (string.IsNullOrWhiteSpace(sourceAssetPath))
+                return false;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return false;
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(sourceAssetPath);
+            }
+            catch
+            {
+                fullPath = sourceAssetPath;
+            }
+
+            if (assets.TryGetAssetByPath(fullPath, out asset))
+                return true;
+
+            foreach (var loaded in assets.LoadedAssetsByPathInternal.Values)
+            {
+                if (loaded is null || string.IsNullOrWhiteSpace(loaded.FilePath))
+                    continue;
+
+                if (string.Equals(loaded.FilePath, fullPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    asset = loaded;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void SaveAutoRepairedAssets(IReadOnlyList<XRAsset> saveTargets)
+        {
+            var assets = Engine.Assets;
+            if (assets is null)
+            {
+                _autoRepairSaveSucceeded = false;
+                _autoRepairSaveStatus = "Asset system unavailable; auto-repairs were not saved.";
+                return;
+            }
+
+            int savedCount = 0;
+            List<string> failedTargets = [];
+            foreach (XRAsset target in saveTargets)
+            {
+                try
+                {
+                    assets.Save(target, bypassJobThread: true);
+                    savedCount++;
+                }
+                catch (Exception ex)
+                {
+                    failedTargets.Add(EditorUnitTests.UserInterface.GetAssetDisplayName(target));
+                    Debug.LogException(ex, $"Failed to save auto-repaired asset '{target.FilePath ?? target.Name}'.");
+                }
+            }
+
+            if (failedTargets.Count == 0)
+            {
+                AssetDiagnostics.ClearTrackedRebasedAssets();
+                _autoRepairSaveSucceeded = true;
+                _autoRepairSaveStatus = savedCount == 1
+                    ? "Saved 1 auto-repaired asset file."
+                    : $"Saved {savedCount} auto-repaired asset files.";
+                return;
+            }
+
+            _autoRepairSaveSucceeded = false;
+            _autoRepairSaveStatus = $"Saved {savedCount}; failed {failedTargets.Count}: {string.Join(", ", failedTargets)}";
         }
 }

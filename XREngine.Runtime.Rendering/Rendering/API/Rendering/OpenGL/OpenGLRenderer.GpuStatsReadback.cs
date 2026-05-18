@@ -33,6 +33,9 @@ namespace XREngine.Rendering.OpenGL
         private int _gpuRenderStatsReadbackCursor;
         private XRDataBuffer? _boundParameterBufferForStats;
 
+        private static bool IsGpuIndirectZeroReadbackActive()
+            => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
         public override void PollGpuRenderStatsReadbacks()
         {
             if (!RuntimeEngine.IsRenderThread)
@@ -62,6 +65,10 @@ namespace XREngine.Rendering.OpenGL
         public override bool QueueGpuRenderStatsBufferReadback(XRDataBuffer statsBuffer, bool publishDraws, bool publishTriangles)
         {
             if (!publishDraws && !publishTriangles)
+                return false;
+
+            // Publishing stats through a staging buffer is still a GPU->CPU readback.
+            if (IsGpuIndirectZeroReadbackActive())
                 return false;
 
             return QueueGpuRenderStatsReadback(
@@ -262,7 +269,7 @@ namespace XREngine.Rendering.OpenGL
             // draw caused NVIDIA's driver to corrupt its internal sync-object list (verified via
             // dotnet-dump: render thread faulted inside glClientWaitSync at nvoglv64.dll+0x108f0cd
             // with FAST_FAIL_CORRUPT_LIST_ENTRY). Skip the readback under that strategy.
-            if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == Data.Rendering.EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            if (IsGpuIndirectZeroReadbackActive())
                 return;
 
             QueueGpuRenderDrawCountReadback(_boundParameterBufferForStats, (uint)countByteOffset, 1u);

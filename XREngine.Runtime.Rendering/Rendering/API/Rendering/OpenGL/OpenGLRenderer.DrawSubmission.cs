@@ -88,6 +88,8 @@ public partial class OpenGLRenderer
 
     public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize)
     {
+        using var scope = RuntimeEngine.Profiler.Start("OpenGL.TrySyncMeshRendererIndexBuffer");
+
         var version = meshRenderer.GetDefaultVersion();
         var glMesh = GenericToAPI<GLMeshRenderer>(version);
         if (glMesh is null)
@@ -98,6 +100,9 @@ public partial class OpenGLRenderer
             return false;
 
         glIndexBuffer.EnsureStorageAllocatedForGpuCopy();
+        if (!glIndexBuffer.IsReadyForRendering)
+            return false;
+
         glMesh.SetTriangleIndexBuffer(glIndexBuffer, elementSize);
         Api.VertexArrayElementBuffer(glMesh.BindingId, glIndexBuffer.BindingId);
         return true;
@@ -105,6 +110,8 @@ public partial class OpenGLRenderer
 
     public override void BindDrawIndirectBuffer(XRDataBuffer buffer)
     {
+        using var scope = RuntimeEngine.Profiler.Start("OpenGL.BindDrawIndirectBuffer");
+
         var glBuf = GenericToAPI<GLDataBuffer>(buffer);
         if (glBuf is null)
             return;
@@ -120,6 +127,8 @@ public partial class OpenGLRenderer
 
     public override void BindParameterBuffer(XRDataBuffer buffer)
     {
+        using var scope = RuntimeEngine.Profiler.Start("OpenGL.BindParameterBuffer");
+
         var glBuf = GenericToAPI<GLDataBuffer>(buffer);
         if (glBuf is null)
             return;

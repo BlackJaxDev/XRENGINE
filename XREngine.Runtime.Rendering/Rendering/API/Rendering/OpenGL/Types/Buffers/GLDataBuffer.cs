@@ -6,7 +6,6 @@ using XREngine.Data.Rendering;
 using System.Buffers;
 using System.Linq;
 using System.Collections.Concurrent;
-using System.Threading.Tasks;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -325,6 +324,8 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void PushDataQueued()
             {
+                using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLDataBuffer.PushDataQueued");
+
                 uint dataLength = Data.Length;
                 if (dataLength == 0)
                     return;
@@ -372,14 +373,11 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                if (RuntimeEngine.IsRenderThread)
-                {
-                    Task.Run(EnqueueCopy);
-                }
-                else
-                {
-                    EnqueueCopy();
-                }
+                // The source pointer belongs to XRDataBuffer.ClientSideSource. That memory can be
+                // resized or disposed by the owning buffer, so do not capture it for a later
+                // thread-pool copy. Snapshot the client bytes immediately, then let the upload
+                // queue budget only the GL work.
+                EnqueueCopy();
             }
 
             /// <summary>
@@ -387,6 +385,8 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void PushDataImmediate()
             {
+                using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLDataBuffer.PushDataImmediate");
+
                 bool shouldUseImmutableStorage = ShouldUseImmutableStorage();
                 bool remapAfterUpload = Data.ActivelyMapping.Contains(this);
 
@@ -563,10 +563,12 @@ namespace XREngine.Rendering.OpenGL
             /// Returns false if there's a pending upload in the queue.
             /// </summary>
             public bool IsReadyForRendering
-                => _lastPushedLength > 0 && !_hasPendingUpload;
+                => _lastPushedLength >= Data.Length && !_hasPendingUpload;
 
             internal void EnsureStorageAllocatedForGpuCopy()
             {
+                using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLDataBuffer.EnsureStorageAllocatedForGpuCopy");
+
                 if (HasBlockingActiveMapping())
                     return;
 
@@ -577,10 +579,22 @@ namespace XREngine.Rendering.OpenGL
                     Generate();
 
                 if (_hasPendingUpload)
-                    Renderer.UploadQueue.FlushAll();
+                    Renderer.UploadQueue.FlushBuffer(this);
 
                 if (_lastPushedLength < Data.Length)
+                {
+                    if (Data.Length > AsyncUploadThreshold &&
+                        Renderer.UploadQueue.Enabled &&
+                        Data.TryGetAddress(out var sourceAddress) &&
+                        sourceAddress != VoidPtr.Zero)
+                    {
+                        PushDataQueued();
+                        Renderer.UploadQueue.FlushBuffer(this);
+                        return;
+                    }
+
                     PushDataImmediate();
+                }
             }
 
             public static GLEnum ToGLEnum(EBufferUsage usage) => usage switch
@@ -729,7 +743,7 @@ namespace XREngine.Rendering.OpenGL
                 string attr = Data.AttributeName;
                 if (string.IsNullOrEmpty(attr))
                     attr = "<unnamed-attr>";
-                string name = Data.Name;
+                string name = Data.Name ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(name))
                     name = $"id={Data.GetCacheIndex()}";
                 return $"{attr}|{name}|target={Data.Target}";
@@ -1112,10 +1126,10 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                // Draw-indirect buffers are often GPU-written in the same frame they are created.
-                // Do not leave their first allocation in the frame-budgeted upload queue, or
-                // glMultiDrawElementsIndirect* can see a zero/undersized buffer.
-                if (Data.Target == EBufferTarget.DrawIndirectBuffer && !IsReadyForRendering)
+                // SSBOs may be GPU-written immediately after binding. If XRDataBuffer.Resize()
+                // grew the client-side size, allocate the GL storage before compute dispatch so
+                // shader writes do not target the previous, smaller allocation.
+                if (!IsReadyForRendering)
                     EnsureStorageAllocatedForGpuCopy();
 
                 uint resourceIndex;

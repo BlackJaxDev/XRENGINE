@@ -7,6 +7,13 @@ namespace XREngine.Diagnostics;
 
 public static class AssetDiagnostics
 {
+    public enum AssetReferenceRepairKind
+    {
+        Unknown = 0,
+        PathMadePortable,
+        FoundCurrentWorkspacePath,
+    }
+
     public readonly struct MissingAssetInfo
     {
         public string AssetPath { get; init; }
@@ -37,7 +44,10 @@ public static class AssetDiagnostics
         public string OriginalPath { get; init; }
         public string ResolvedPath { get; init; }
         public string Category { get; init; }
+        public AssetReferenceRepairKind RepairKind { get; init; }
         public string? LastContext { get; init; }
+        public string? LastSourceAssetPath { get; init; }
+        public IReadOnlyList<string> SourceAssetPaths { get; init; }
         public int Count { get; init; }
         public DateTime FirstSeenUtc { get; init; }
         public DateTime LastSeenUtc { get; init; }
@@ -48,7 +58,10 @@ public static class AssetDiagnostics
         public string OriginalPath = string.Empty;
         public string ResolvedPath = string.Empty;
         public string Category = string.Empty;
+        public AssetReferenceRepairKind RepairKind;
         public string? LastContext;
+        public string? LastSourceAssetPath;
+        public HashSet<string>? SourceAssetPaths;
         public int Count;
         public DateTime FirstSeenUtc;
         public DateTime LastSeenUtc;
@@ -98,7 +111,13 @@ public static class AssetDiagnostics
     /// known asset root). Used by the editor to surface workspace-portability issues without
     /// failing the load.
     /// </summary>
-    public static void RecordRebasedAsset(string? originalPath, string? resolvedPath, string? category, string? context = null)
+    public static void RecordRebasedAsset(
+        string? originalPath,
+        string? resolvedPath,
+        string? category,
+        string? context = null,
+        AssetReferenceRepairKind repairKind = AssetReferenceRepairKind.Unknown,
+        string? sourceAssetPath = null)
     {
         if (string.IsNullOrWhiteSpace(originalPath))
             return;
@@ -106,7 +125,8 @@ public static class AssetDiagnostics
         string normalizedOriginal = NormalizePath(originalPath);
         string normalizedResolved = NormalizePath(resolvedPath);
         string normalizedCategory = string.IsNullOrWhiteSpace(category) ? "Unknown" : category.Trim();
-        string key = BuildRebasedKey(normalizedCategory, normalizedOriginal, normalizedResolved);
+        string? normalizedSourceAssetPath = NormalizeOptionalPath(sourceAssetPath);
+        string key = BuildRebasedKey(normalizedCategory, normalizedOriginal, normalizedResolved, repairKind);
         DateTime nowUtc = DateTime.UtcNow;
 
         lock (_rebasedAssetLock)
@@ -118,6 +138,7 @@ public static class AssetDiagnostics
                     OriginalPath = normalizedOriginal,
                     ResolvedPath = normalizedResolved,
                     Category = normalizedCategory,
+                    RepairKind = repairKind,
                     FirstSeenUtc = nowUtc
                 };
                 _rebasedAssets[key] = aggregate;
@@ -127,6 +148,12 @@ public static class AssetDiagnostics
             aggregate.LastSeenUtc = nowUtc;
             if (!string.IsNullOrWhiteSpace(context))
                 aggregate.LastContext = context;
+            if (!string.IsNullOrWhiteSpace(normalizedSourceAssetPath))
+            {
+                aggregate.LastSourceAssetPath = normalizedSourceAssetPath;
+                aggregate.SourceAssetPaths ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                aggregate.SourceAssetPaths.Add(normalizedSourceAssetPath);
+            }
         }
 
         System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 1);
@@ -143,12 +170,19 @@ public static class AssetDiagnostics
             int index = 0;
             foreach (var aggregate in _rebasedAssets.Values)
             {
+                string[] sourceAssetPaths = aggregate.SourceAssetPaths is { Count: > 0 } set
+                    ? set.ToArray()
+                    : Array.Empty<string>();
+
                 snapshot[index++] = new RebasedAssetInfo
                 {
                     OriginalPath = aggregate.OriginalPath,
                     ResolvedPath = aggregate.ResolvedPath,
                     Category = aggregate.Category,
+                    RepairKind = aggregate.RepairKind,
                     LastContext = aggregate.LastContext,
+                    LastSourceAssetPath = aggregate.LastSourceAssetPath,
+                    SourceAssetPaths = sourceAssetPaths,
                     Count = aggregate.Count,
                     FirstSeenUtc = aggregate.FirstSeenUtc,
                     LastSeenUtc = aggregate.LastSeenUtc
@@ -174,8 +208,12 @@ public static class AssetDiagnostics
     public static bool ConsumePendingDisplayFlag()
         => System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 0) != 0;
 
-    private static string BuildRebasedKey(string category, string originalPath, string resolvedPath)
-        => string.Concat(category, "::", originalPath, "->", resolvedPath);
+    private static string BuildRebasedKey(
+        string category,
+        string originalPath,
+        string resolvedPath,
+        AssetReferenceRepairKind repairKind)
+        => string.Concat(category, "::", repairKind.ToString(), "::", originalPath, "->", resolvedPath);
 
     public static IReadOnlyList<MissingAssetInfo> GetTrackedMissingAssets()
     {
@@ -237,6 +275,28 @@ public static class AssetDiagnostics
             return "<unknown>";
 
         string trimmed = assetPath.Trim();
+        if (string.Equals(trimmed, "<unknown>", StringComparison.Ordinal))
+            return trimmed;
+
+        try
+        {
+            return Path.GetFullPath(trimmed);
+        }
+        catch
+        {
+            return trimmed.Replace('\u005c', '/');
+        }
+    }
+
+    private static string? NormalizeOptionalPath(string? assetPath)
+    {
+        if (string.IsNullOrWhiteSpace(assetPath))
+            return null;
+
+        string trimmed = assetPath.Trim();
+        if (string.Equals(trimmed, "<unknown>", StringComparison.Ordinal))
+            return null;
+
         try
         {
             return Path.GetFullPath(trimmed);

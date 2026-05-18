@@ -564,6 +564,25 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Measurement-GameLoopRenderPipeline-Release-All",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Measure-GameLoopRenderPipeline.ps1",
+				"-Configuration",
+				"Release"
+			],
+			"dependsOn": "Build-Editor-Release",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Measurement-PushSubDataBreakdown-GpuIndirectInstrumented",
 			"type": "shell",
 			"command": "cmd",

@@ -1889,8 +1889,11 @@ internal sealed class RuntimeAssetFacade
 
 internal sealed class RuntimeProfilerFacade
 {
-    public IDisposable Start(string? label = null) => DisposableAction.Empty;
-    public IDisposable Start(string? label, ProfilerScopeKind scopeKind) => DisposableAction.Empty;
+    public IDisposable Start(string? label = null)
+        => RuntimeRenderingHostServices.Current.StartProfileScope(label) ?? DisposableAction.Empty;
+
+    public IDisposable Start(string? label, ProfilerScopeKind scopeKind)
+        => RuntimeRenderingHostServices.Current.StartProfileScope(label) ?? DisposableAction.Empty;
 }
 
 internal sealed class RuntimeVrState

@@ -876,9 +876,10 @@ namespace XREngine.Rendering.Commands
             EnsureInstanceDataBuffers(capacity);
         }
 
-        private void EnsureMaterialScatterBuffers(uint materialCount, uint capacity)
+        private void EnsureMaterialScatterBuffers(uint materialSlotLookupCount, uint materialSlotCount, uint capacity)
         {
-            uint slotCount = Math.Max(materialCount, 1u);
+            uint lookupCount = Math.Max(materialSlotLookupCount, 1u);
+            uint slotCount = Math.Max(materialSlotCount, 1u);
             uint bucketCount = slotCount * GPUBatchingBindings.MaterialTierCount;
 
             if (_materialSlotLookupBuffer is null ||
@@ -889,7 +890,7 @@ namespace XREngine.Rendering.Commands
                 _materialSlotLookupBuffer = new XRDataBuffer(
                     "MaterialSlotLookup",
                     EBufferTarget.ShaderStorageBuffer,
-                    slotCount,
+                    lookupCount,
                     EComponentType.UInt,
                     1u,
                     false,
@@ -903,9 +904,9 @@ namespace XREngine.Rendering.Commands
                 _materialSlotLookupBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
                 _materialSlotLookupBuffer.Generate();
             }
-            else if (_materialSlotLookupBuffer.ElementCount < slotCount)
+            else if (_materialSlotLookupBuffer.ElementCount < lookupCount)
             {
-                _materialSlotLookupBuffer.Resize(slotCount);
+                _materialSlotLookupBuffer.Resize(lookupCount);
             }
 
             if (_materialTierDrawCountBuffer is null ||
@@ -967,6 +968,11 @@ namespace XREngine.Rendering.Commands
 
             _materialTierBucketCount = bucketCount;
             _maxDrawsPerMaterialTier = maxDrawsPerBucket;
+            P3Diagnostics.RecordMaterialScatterSizing(
+                _materialSlotLookupBuffer.ElementCount,
+                slotCount,
+                bucketCount,
+                maxDrawsPerBucket);
             EnsureActiveMaterialBucketBuffers(bucketCount);
         }
 

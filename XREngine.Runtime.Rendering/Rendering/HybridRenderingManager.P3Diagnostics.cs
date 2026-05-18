@@ -55,6 +55,13 @@ namespace XREngine.Rendering
         /// </summary>
         public static readonly bool ForceSingleBucket = ReadFlag("XRE_FORCE_SINGLE_BUCKET");
 
+        /// <summary>
+        /// Diagnostic-only sync after each material-tier
+        /// <c>MultiDrawElementsIndirectCount</c>. This intentionally destroys throughput, but
+        /// turns asynchronous driver faults into a precise bucket breadcrumb.
+        /// </summary>
+        public static readonly bool FinishAfterMultiDrawIndirectCount = ReadFlag("XRE_MDIC_GL_FINISH");
+
         // -----------------------------------------------------------------
         // Per-frame counters (incremented from render thread).
         // -----------------------------------------------------------------
@@ -70,6 +77,12 @@ namespace XREngine.Rendering
         private static long _bucketsDryRunSkipped;
         private static long _commandSwapsCleanSkipped;
         private static long _commandSwapsExecuted;
+        private static long _materialScatterLookupCapacity;
+        private static long _materialScatterDenseSlots;
+        private static long _materialScatterBucketCount;
+        private static long _materialScatterMaxDrawsPerBucket;
+        private static long _materialScatterIndirectCommandClears;
+        private static long _materialScatterIndirectCommandClearSkips;
 
         private static readonly Stopwatch _flushTimer = Stopwatch.StartNew();
         private static long _lastFlushMs;
@@ -86,6 +99,27 @@ namespace XREngine.Rendering
         public static void IncBucketDryRunSkipped() => Interlocked.Increment(ref _bucketsDryRunSkipped);
         public static void IncCommandSwapCleanSkipped() => Interlocked.Increment(ref _commandSwapsCleanSkipped);
         public static void IncCommandSwapExecuted() => Interlocked.Increment(ref _commandSwapsExecuted);
+        public static void RecordMaterialScatterSizing(uint lookupCapacity, uint denseSlots, uint bucketCount, uint maxDrawsPerBucket)
+        {
+            if (!LoggingEnabled)
+                return;
+
+            Interlocked.Exchange(ref _materialScatterLookupCapacity, lookupCapacity);
+            Interlocked.Exchange(ref _materialScatterDenseSlots, denseSlots);
+            Interlocked.Exchange(ref _materialScatterBucketCount, bucketCount);
+            Interlocked.Exchange(ref _materialScatterMaxDrawsPerBucket, maxDrawsPerBucket);
+        }
+
+        public static void RecordMaterialScatterIndirectCommandClear(bool cleared)
+        {
+            if (!LoggingEnabled)
+                return;
+
+            if (cleared)
+                Interlocked.Increment(ref _materialScatterIndirectCommandClears);
+            else
+                Interlocked.Increment(ref _materialScatterIndirectCommandClearSkips);
+        }
 
         /// <summary>
         /// Flush counters at most once per second to <c>profiler-indirect-calls.log</c>.
@@ -116,6 +150,12 @@ namespace XREngine.Rendering
             long bucketsDry = Interlocked.Exchange(ref _bucketsDryRunSkipped, 0);
             long swapsClean = Interlocked.Exchange(ref _commandSwapsCleanSkipped, 0);
             long swapsExec = Interlocked.Exchange(ref _commandSwapsExecuted, 0);
+            long scatterLookup = Interlocked.Read(ref _materialScatterLookupCapacity);
+            long scatterSlots = Interlocked.Read(ref _materialScatterDenseSlots);
+            long scatterBuckets = Interlocked.Read(ref _materialScatterBucketCount);
+            long scatterMaxDraws = Interlocked.Read(ref _materialScatterMaxDrawsPerBucket);
+            long scatterCmdClears = Interlocked.Exchange(ref _materialScatterIndirectCommandClears, 0);
+            long scatterCmdClearSkips = Interlocked.Exchange(ref _materialScatterIndirectCommandClearSkips, 0);
 
             var sb = new StringBuilder(256);
             sb.Append('[').Append(DateTime.UtcNow.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)).Append("] ");
@@ -129,9 +169,16 @@ namespace XREngine.Rendering
             sb.Append(" buckets=").Append(buckets);
             sb.Append(" bucketsDryRunSkipped=").Append(bucketsDry);
             sb.Append(" cmdSwap(exec=").Append(swapsExec).Append(",cleanSkip=").Append(swapsClean).Append(')');
+            sb.Append(" materialScatter(lookup=").Append(scatterLookup);
+            sb.Append(",slots=").Append(scatterSlots);
+            sb.Append(",buckets=").Append(scatterBuckets);
+            sb.Append(",maxDrawsPerBucket=").Append(scatterMaxDraws);
+            sb.Append(",cmdClears=").Append(scatterCmdClears);
+            sb.Append(",cmdClearSkips=").Append(scatterCmdClearSkips).Append(')');
             sb.Append(" flags(dryRun=").Append(BucketLoopDryRun ? '1' : '0');
             sb.Append(",skipEmpty=").Append(BucketLoopSkipEmpty ? '1' : '0');
             sb.Append(",forceSingle=").Append(ForceSingleBucket ? '1' : '0');
+            sb.Append(",finishAfterMdic=").Append(FinishAfterMultiDrawIndirectCount ? '1' : '0');
             sb.Append(",skipCleanSwap=").Append(SkipCommandSwapIfClean ? '1' : '0').Append(')');
 
             try
