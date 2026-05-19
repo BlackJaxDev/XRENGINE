@@ -928,8 +928,10 @@ namespace XREngine.Rendering.Commands
             if (!_loggedCpuQueryAsyncScaffold)
             {
                 _loggedCpuQueryAsyncScaffold = true;
-                Log(LogCategory.Culling, LogLevel.Info,
-                    "Occlusion mode {0} active for pass {1}: async query submission/resolution enabled with previous-frame-only policy.",
+                Log(LogCategory.Culling, LogLevel.Warning,
+                    "Occlusion mode {0} on GPU dispatch path is scaffolded but NOT functional for pass {1}: " +
+                    "proxy-AABB query submission is not implemented, so no occluders are tested and every candidate passes through. " +
+                    "Use GpuHiZ for GPU dispatch occlusion or CpuDirect submission for the CpuQueryAsync path.",
                     EOcclusionCullingMode.CpuQueryAsync,
                     RenderPass);
             }
@@ -972,39 +974,22 @@ namespace XREngine.Rendering.Commands
 
         private void SubmitCpuOcclusionQueryBatch(uint candidates)
         {
-            if (CulledSceneToRenderBuffer is null)
-                return;
-
-            // CPU occlusion queries require reading count from GPU — skip when readback is disabled.
-            if (IsCpuReadbackCountDisabledForPass())
-                return;
-
-            uint inputCount = ReadUIntAt(_culledCountBuffer!, GPUScene.VisibleCountDrawIndex);
-            if (inputCount == 0u)
-                return;
-
-            uint submitCount = Math.Min(Math.Min(candidates, inputCount), CpuOcclusionMaxQueriesPerFrame);
-            for (uint i = 0; i < submitCount; ++i)
-            {
-                var cmd = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
-                uint sourceIndex = cmd.Reserved1;
-
-                bool alreadyPending = false;
-                for (int p = 0; p < _cpuOcclusionPending.Count; ++p)
-                {
-                    if (_cpuOcclusionPending[p].SourceCommandIndex == sourceIndex)
-                    {
-                        alreadyPending = true;
-                        break;
-                    }
-                }
-
-                if (alreadyPending)
-                    continue;
-
-                XRRenderQuery query = s_cpuOcclusionQueryManager.Acquire(EQueryTarget.AnySamplesPassedConservative);
-                _cpuOcclusionPending.Add((sourceIndex, query));
-            }
+            // SCAFFOLD ONLY — not functional.
+            //
+            // A proper implementation would, for each candidate:
+            //   1. glBeginQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE, queryId)
+            //   2. draw a proxy AABB for the candidate (depth-test enabled, color/depth writes off)
+            //   3. glEndQuery(...)
+            // and the next-frame resolve would consume the result. The current code path acquired
+            // a query object and recorded it as "pending" without ever bracketing a draw, which
+            // produced meaningless results and could leak query objects when paired with the
+            // zero-readback early return below.
+            //
+            // Until the proxy-AABB submission is implemented, leave the per-frame state untouched
+            // so the temporal filter passes every candidate through (no false occlusion). Skip the
+            // readback guard entirely so we don't hide the skip in any code path.
+            _ = candidates;
+            return;
         }
 
         private uint ApplyTemporalCpuOcclusionFilter(uint candidates, ref uint temporalOverrides, ref uint falsePositiveRecoveries)
