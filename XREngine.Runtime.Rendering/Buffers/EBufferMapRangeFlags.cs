@@ -1,5 +1,6 @@
 namespace XREngine.Rendering
 {
+    [System.Flags]
     public enum EBufferMapRangeFlags
     {
         /// <summary>
@@ -28,7 +29,7 @@ namespace XREngine.Rendering
         /// In the absence of this bit, persistent mappings are not coherent and modified ranges of the buffer store must be explicitly communicated to the GL,
         /// either by unmapping the buffer, or through a call to glFlushMappedBufferRange or glMemoryBarrier.
         /// </summary>
-        Coherent = 0x0041,
+        Coherent = 0x0080,
         /// <summary>
         /// GL_MAP_INVALIDATE_RANGE_BIT indicates that the previous contents of the specified range may be discarded.
         /// Data within this range are undefined with the exception of subsequently written data.

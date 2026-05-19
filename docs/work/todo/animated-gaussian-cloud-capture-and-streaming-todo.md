@@ -47,7 +47,7 @@ What already exists:
 - `XRENGINE/Scene/Components/Mesh/GaussianSplatComponent.cs` converts the cloud into instanced point-sprite data and rebuilds the render model when the cloud changes.
 - `Build/CommonAssets/Shaders/Gaussian/GaussianSplat.vs` and `Build/CommonAssets/Shaders/Gaussian/GaussianSplat.fs` already render an ellipse-shaped Gaussian billboard from per-instance position, scale, rotation, and color.
 - `XRENGINE/Rendering/Commands/GPUScene.cs` already has streaming-tier infrastructure such as `RegisterStreamingMesh(...)` and `AdvanceStreamingAtlasFrame()`.
-- The GPU-driven rendering backlog already targets zero-readback draw submission through `MultiDrawElementsIndirectCount`; see [gpu-rendering.md](gpu-rendering.md).
+- The GPU-driven rendering backlog already targets zero-readback draw submission through `MultiDrawElementsIndirectCount`; see [production-rendering-pipeline-roadmap.md](rendering/gpu/production-rendering-pipeline-roadmap.md).
 
 What does **not** exist yet:
 
@@ -371,6 +371,6 @@ These are the most likely areas to change once implementation starts:
 
 ## Related Docs
 
-- [gpu-rendering.md](gpu-rendering.md)
+- [production-rendering-pipeline-roadmap.md](rendering/gpu/production-rendering-pipeline-roadmap.md)
 - [../design/zero-readback-gpu-driven-rendering-plan.md](../design/zero-readback-gpu-driven-rendering-plan.md)
 - [../../architecture/rendering/default-render-pipeline-notes.md](../../architecture/rendering/default-render-pipeline-notes.md)

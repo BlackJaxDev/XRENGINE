@@ -84,6 +84,13 @@ public sealed class GpuBvhTree : IDisposable
     private XRDataBuffer? _counterBuffer;
     private XRDataBuffer? _aabbBuffer;
     private XRDataBuffer? _overflowFlagBuffer;
+    private XRGpuFence? _pendingOverflowFence;
+    private uint _pendingOverflowPrimitiveCount;
+    private uint _pendingOverflowNodeCount;
+    private uint _pendingOverflowAgeFrames;
+    private bool _warnedPendingOverflowFenceDelay;
+
+    private const uint PendingOverflowFenceDiagnosticFrames = 3u;
 
     // Shader programs
     private XRShader? _buildShader;
@@ -226,14 +233,17 @@ public sealed class GpuBvhTree : IDisposable
     /// <param name="sceneBounds">World-space bounds for Morton code normalization.</param>
     public void Build(XRDataBuffer aabbBuffer, uint primitiveCount, AABB sceneBounds)
     {
-        if (primitiveCount == 0)
-        {
-            Clear();
-            return;
-        }
-
         lock (_syncRoot)
         {
+            if (PollPendingOverflowCore())
+                return;
+
+            if (primitiveCount == 0)
+            {
+                ClearCore();
+                return;
+            }
+
             _aabbBuffer = aabbBuffer;
             // Bail before doing any GPU work if a required program failed to
             // link — otherwise individual Dispatch* methods silently skip and
@@ -241,6 +251,7 @@ public sealed class GpuBvhTree : IDisposable
             if (!EnsureProgramsReady(primitiveCount))
                 return;
             EnsureBuffers(primitiveCount);
+            DropPendingOverflowFence("superseded by a new BVH build", warnIfOld: true);
             ResetOverflowFlagBuffer();
 
             Vector3 sceneMin = sceneBounds.Min;
@@ -268,7 +279,7 @@ public sealed class GpuBvhTree : IDisposable
             // Refit bounds
             DispatchRefit();
 
-            if (ConsumeOverflowFlag(primitiveCount, _lastNodeCount))
+            if (EnqueueOverflowFlagReadback(primitiveCount, _lastNodeCount))
                 return;
 
             _lastPrimitiveCount = primitiveCount;
@@ -308,15 +319,31 @@ public sealed class GpuBvhTree : IDisposable
     public void Clear()
     {
         lock (_syncRoot)
-        {
-            _lastNodeCount = 0;
-            _lastPrimitiveCount = 0;
-            _isDirty = true;
+            ClearCore();
+    }
 
-            ClearBuffer(_nodeBuffer);
-            ClearBuffer(_rangeBuffer);
-            ClearBuffer(_mortonBuffer);
-        }
+    private void ClearCore()
+    {
+        DropPendingOverflowFence("BVH cleared", warnIfOld: false);
+
+        _lastNodeCount = 0;
+        _lastPrimitiveCount = 0;
+        _isDirty = true;
+
+        ClearBuffer(_nodeBuffer);
+        ClearBuffer(_rangeBuffer);
+        ClearBuffer(_mortonBuffer);
+    }
+
+    /// <summary>
+    /// Polls the pending asynchronous overflow readback, if any, without waiting
+    /// for the GPU. Returns <c>true</c> when an overflow was observed and the BVH
+    /// was cleared.
+    /// </summary>
+    public bool PollPendingOverflow()
+    {
+        lock (_syncRoot)
+            return PollPendingOverflowCore();
     }
 
     private void EnsurePrograms()
@@ -537,6 +564,83 @@ public sealed class GpuBvhTree : IDisposable
         _overflowFlagBuffer.PushSubData();
     }
 
+    private bool EnqueueOverflowFlagReadback(uint primitiveCount, uint nodeCount)
+    {
+        if (_overflowFlagBuffer is null)
+            return false;
+
+        // Strict zero-readback profiling cannot enqueue or consume even a
+        // 4-byte diagnostic readback.
+        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            return false;
+
+        XRGpuFence? fence = AbstractRenderer.Current?.InsertGpuFence();
+        if (fence is null)
+            return ConsumeOverflowFlag(primitiveCount, nodeCount);
+
+        _pendingOverflowFence = fence;
+        _pendingOverflowPrimitiveCount = primitiveCount;
+        _pendingOverflowNodeCount = nodeCount;
+        _pendingOverflowAgeFrames = 0u;
+        _warnedPendingOverflowFenceDelay = false;
+        return false;
+    }
+
+    private bool PollPendingOverflowCore()
+    {
+        if (_pendingOverflowFence is null)
+            return false;
+
+        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+        {
+            DropPendingOverflowFence("zero-readback strategy is active", warnIfOld: false);
+            return false;
+        }
+
+        EGpuFenceStatus status = _pendingOverflowFence.Poll();
+        if (status == EGpuFenceStatus.Pending)
+        {
+            _pendingOverflowAgeFrames++;
+            if (_pendingOverflowAgeFrames >= PendingOverflowFenceDiagnosticFrames && !_warnedPendingOverflowFenceDelay)
+            {
+                _warnedPendingOverflowFenceDelay = true;
+                Debug.LogWarning($"[GpuBvhTree] Overflow readback fence still pending after {_pendingOverflowAgeFrames} non-blocking polls.");
+            }
+            return false;
+        }
+
+        uint primitiveCount = _pendingOverflowPrimitiveCount;
+        uint nodeCount = _pendingOverflowNodeCount;
+        DropPendingOverflowFence(status == EGpuFenceStatus.Failed ? "fence wait failed" : "fence signaled", warnIfOld: false);
+
+        if (status == EGpuFenceStatus.Failed)
+        {
+            Debug.LogWarning("[GpuBvhTree] Overflow readback fence wait failed; dropping the diagnostic flag for this build.");
+            return false;
+        }
+
+        return ConsumeOverflowFlag(primitiveCount, nodeCount);
+    }
+
+    private void DropPendingOverflowFence(string reason, bool warnIfOld)
+    {
+        if (_pendingOverflowFence is null)
+            return;
+
+        if (warnIfOld && _pendingOverflowAgeFrames >= PendingOverflowFenceDiagnosticFrames && !_warnedPendingOverflowFenceDelay)
+        {
+            Debug.LogWarning($"[GpuBvhTree] Dropping overflow readback fence after {_pendingOverflowAgeFrames} non-blocking polls ({reason}).");
+            _warnedPendingOverflowFenceDelay = true;
+        }
+
+        _pendingOverflowFence.Dispose();
+        _pendingOverflowFence = null;
+        _pendingOverflowPrimitiveCount = 0u;
+        _pendingOverflowNodeCount = 0u;
+        _pendingOverflowAgeFrames = 0u;
+        _warnedPendingOverflowFenceDelay = false;
+    }
+
     private bool ConsumeOverflowFlag(uint primitiveCount, uint nodeCount)
     {
         if (_overflowFlagBuffer is null)
@@ -547,11 +651,8 @@ public sealed class GpuBvhTree : IDisposable
         if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
             return false;
 
-        // Map the GPU buffer to read the overflow flag written by compute shaders.
-        // This is a synchronous readback (the driver may wait for pending dispatches
-        // to finish), but the cost is bounded: 4 bytes, once per Build call.
-        // The BVH must be fully built before subsequent draw calls consume it, so
-        // the GPU work must complete this frame regardless.
+        // Map only after a queued GPU fence has already signaled. Backends that
+        // cannot expose a fence fall back to the old synchronous read for safety.
         uint flags = ReadOverflowFlagFromGpu();
         if (flags == 0u)
             return false;
@@ -592,7 +693,7 @@ public sealed class GpuBvhTree : IDisposable
                     {
                         // Phase B invariant: every GPU->CPU readback must be recorded in
                         // Engine.Rendering.Stats so GpuReadbackBytes stays honest under the
-                        // zero-readback strategy. This is a 4-byte read, but it counts.
+                        // instrumented strategy. This is a 4-byte read, but it counts.
                         RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
                         return *((uint*)addr.Pointer);
                     }
@@ -787,6 +888,7 @@ public sealed class GpuBvhTree : IDisposable
         _mortonBuffer?.Dispose();
         _counterBuffer?.Dispose();
         _overflowFlagBuffer?.Dispose();
+        _pendingOverflowFence?.Dispose();
 
         _buildShader?.Destroy();
         _refitShader?.Destroy();
@@ -811,6 +913,7 @@ public sealed class GpuBvhTree : IDisposable
         _mortonBuffer = null;
         _counterBuffer = null;
         _overflowFlagBuffer = null;
+        _pendingOverflowFence = null;
         _aabbBuffer = null;
     }
 }
