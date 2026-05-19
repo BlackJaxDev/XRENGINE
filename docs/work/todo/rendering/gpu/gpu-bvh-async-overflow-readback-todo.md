@@ -1,7 +1,7 @@
 # GPU BVH Async Overflow Readback TODO
 
-Last updated: 2026-05-18
-Current status: design captured, implementation not started
+Last updated: 2026-05-19
+Current status: Option A implemented for OpenGL; validation captures still pending
 Scope: replace the synchronous overflow-flag map in
 [`GpuBvhTree.cs`](../../../../../XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhTree.cs)
 with a fenced, non-blocking GPU->CPU readback so BVH builds stop stalling the
@@ -42,14 +42,23 @@ Today, in [`GpuBvhTree.cs`](../../../../../XREngine.Runtime.Rendering/Rendering/
 - The single non-readback strategy
   (`GpuIndirectZeroReadback`) short-circuits the read entirely.
 
-What does not exist yet:
+What now exists:
 
-- a `glFenceSync` / `glClientWaitSync` wrapper exposed at the
-  `XREngine.Runtime.Rendering` API level,
-- a persistent-coherent mapping path for small readback buffers,
-- a ring of overflow-flag buffers (or a single persistent-mapped slot) so a
-  fence signal corresponds to a known capture,
-- handling for "fence still pending after N frames" diagnostics.
+- an `XRGpuFence` wrapper exposed at the `XREngine.Runtime.Rendering` API level,
+  with an OpenGL `glFenceSync` / non-blocking `glClientWaitSync(..., 0)` /
+  `glDeleteSync` implementation,
+- a single-slot async overflow readback in `GpuBvhTree`; if a new build must
+  reuse the slot while the old fence is still pending, the old fence is dropped,
+- a culling-frame poll in `GPUScene.PrepareBvhForCulling(...)` so pending
+  overflow readbacks are observed even when the BVH is no longer dirty,
+- delayed-fence diagnostics after repeated non-blocking polls.
+
+Still pending:
+
+- a live GPU compute readback test,
+- Phase 0 / Phase 3 timing captures on target hardware,
+- a Vulkan/DX12 equivalent fence implementation beyond the safe synchronous
+  fallback used when a backend does not expose `InsertGpuFence()`.
 
 ## Target Outcome
 
@@ -98,35 +107,38 @@ available in the OpenGL backend; Option A is the safer fallback.
       `Measurement-Baseline-CpuDirect` and
       `Measurement-Baseline-GpuIndirectInstrumented`. Record the cost of the
       current synchronous map separately if possible.
-- [ ] Confirm `EBufferMapRangeFlags` already supports the persistent/coherent
-      bits needed for Option B; add them if missing.
-- [ ] Check whether the rendering layer already wraps `glFenceSync` /
+- [x] Confirm `EBufferMapRangeFlags` already supports the persistent/coherent
+      bits needed for Option B; fixed `Persistent` / `Coherent` bit values for
+      both range and storage flags.
+- [x] Check whether the rendering layer already wraps `glFenceSync` /
       `glClientWaitSync` / `glDeleteSync`. If not, identify the smallest
-      surface to add (likely on `AbstractRenderer` / OpenGL backend).
+      surface to add (likely on `AbstractRenderer` / OpenGL backend). Added
+      `XRGpuFence` plus `AbstractRenderer.InsertGpuFence()`.
 - [ ] Verify the Vulkan and DX12 backends can host an equivalent semaphore /
       fence wait that does the right thing or no-ops cleanly.
 
 ## Phase 1 - Choose And Land The Wait Primitive
 
-- [ ] Pick Option A or Option B based on Phase 0.
-- [ ] Add the cross-backend fence wrapper (or persistent-mapping wrapper) with
+- [x] Pick Option A or Option B based on Phase 0. Chosen: Option A
+      (`FenceSync` + next-frame map) for the first implementation slice.
+- [x] Add the cross-backend fence wrapper (or persistent-mapping wrapper) with
       sync, no-op for backends that cannot honor it yet.
 - [ ] Unit test: dispatch a trivial compute that writes a known value to a
       readback buffer, fence, poll non-blocking, then poll until signaled, and
-      assert the value.
+      assert the value. Source-contract coverage exists; live GPU test remains.
 
 ## Phase 2 - Apply To `GpuBvhTree`
 
-- [ ] Replace `ConsumeOverflowFlag` call at end of `Build` with a fence enqueue.
-- [ ] Add `PollPendingOverflow()` that runs at the start of each `Build` and
+- [x] Replace `ConsumeOverflowFlag` call at end of `Build` with a fence enqueue.
+- [x] Add `PollPendingOverflow()` that runs at the start of each `Build` and
       consumes any signaled fence from the previous build.
-- [ ] If a fence is still pending when a new `Build` starts, either:
+- [x] If a fence is still pending when a new `Build` starts, either:
       - drop the previous fence (and its warning) - acceptable because
         overflow is a sticky/reproducible condition that will fire again next
         frame, or
       - hold a ring of fences/slots to capture every overflow exactly once.
-      Pick the simpler option first.
-- [ ] Update `ReadOverflowFlagFromGpu` / `RecordGpuReadbackBytes` accounting
+      Pick the simpler option first. Chosen: single-slot + drop stale fence.
+- [x] Update `ReadOverflowFlagFromGpu` / `RecordGpuReadbackBytes` accounting
       so the 4-byte read still counts toward `GpuReadbackBytes`, but at most
       once per actually-observed signal.
 
@@ -141,6 +153,12 @@ available in the OpenGL backend; Option A is the safer fallback.
       capacity/required figures.
 - [ ] Confirm `GpuIndirectZeroReadback` still records `0` for
       `GpuReadbackBytes`.
+
+Validation note 2026-05-19: source-contract coverage for the async BVH overflow
+path passes. `Test-VulkanPhase3-Regression` currently fails in existing backlog
+tests unrelated to this change (shader services not configured, stale source
+paths, LOD/occlusion expectations). `Test-SurfelGi` did not fail, but all
+hardware GL cases were skipped on this machine.
 
 ## Risks And Open Questions
 

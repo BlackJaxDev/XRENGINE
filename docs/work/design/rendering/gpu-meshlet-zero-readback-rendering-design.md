@@ -8,7 +8,7 @@ Related docs:
 
 - [GPU meshlet zero-readback rendering TODO](../../todo/rendering/gpu/gpu-meshlet-zero-readback-rendering-todo.md)
 - [Production rendering pipeline roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
-- [GPU rendering TODO](../../todo/rendering/gpu/gpu-rendering.md)
+- [Production GPU-driven rendering roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 - [Zero-readback GPU-driven rendering plan](zero-readback-gpu-driven-rendering-plan.md)
 - [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
 - [Frame lifecycle and dispatch paths](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)

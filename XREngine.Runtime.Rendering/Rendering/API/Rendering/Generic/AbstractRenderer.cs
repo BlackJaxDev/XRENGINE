@@ -753,6 +753,8 @@ namespace XREngine.Rendering
         #region Synchronization / Masks
 
         public abstract void MemoryBarrier(EMemoryBarrierMask mask);
+        public virtual XRGpuFence? InsertGpuFence()
+            => null;
         public abstract void ColorMask(bool red, bool green, bool blue, bool alpha);
 
         #endregion

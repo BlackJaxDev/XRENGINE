@@ -1,8 +1,8 @@
 # GPU Meshlet Zero-Readback Rendering TODO
 
-Last Updated: 2026-05-18
+Last Updated: 2026-05-19
 Owner: Rendering
-Status: active planning tracker
+Status: Active child execution tracker for [Production GPU-Driven Rendering Roadmap](production-rendering-pipeline-roadmap.md) Phase E4-E9
 Target Branch: `rendering-gpu-meshlet-zero-readback`
 
 Source design:
@@ -11,13 +11,27 @@ Source design:
 
 Related docs:
 
-- [Production rendering pipeline roadmap](production-rendering-pipeline-roadmap.md)
-- [GPU rendering TODO](gpu-rendering.md)
+- [Production GPU-driven rendering roadmap](production-rendering-pipeline-roadmap.md)
 - [Zero-readback GPU-driven rendering plan](../../../design/rendering/zero-readback-gpu-driven-rendering-plan.md)
 - [Mesh submission strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
 - [Frame lifecycle and dispatch paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Model Import Cooked Asset Cache TODO](../../assets/model-import-binary-cache-todo.md)
 - [Model Import Binary Cache Design](../../../design/assets/model-import-binary-cache-design.md)
+
+## Parent Roadmap Contract
+
+This file is the implementation-level tracker for meshlet productionization. The parent roadmap owns the canonical status and ordering for the broader renderer; this child tracker owns the detailed branch scope, backend capability contract, GPUScene meshlet storage, task-record expansion, mesh-task dispatch, shader work, pass/material parity, diagnostics, and validation.
+
+Keep the parent Phase E checklist and this table in sync when changing meshlet scope:
+
+| Parent roadmap task | Meshlet tracker coverage | Notes |
+| --- | --- | --- |
+| E4: production meshlet capability honesty | Phase 0, Phase 1, Phase 9 | Backend dialects, direct-vs-indirect dispatch distinction, visible fallback behavior, and diagnostics. |
+| E5: GPUScene-owned meshlet data | Phase 3, Phase 4 | Scene-owned ranges/descriptors/index streams keyed by `MeshDataID` and LOD; shared visibility/LOD integration. |
+| E6: cooked meshlet payloads | Phase 2 | Import/cache-generated descriptors, cones, bounds, settings, freshness, and warm-cache repair. |
+| E7: GPU expansion and indirect-count dispatch | Phase 5, Phase 6 | `GPURenderExpandMeshlets.comp`, task records, count buffers, overflow handling, and backend dispatch wrappers. |
+| E8: production task/mesh shaders | Phase 7 | Task-record culling, transform/Hi-Z/cone integration, atlas-backed mesh shaders, and material-compatible interpolants. |
+| E9: material/pass parity and validation | Phase 8, Phase 9, Phase 10 | Bindless/descriptor material policy, pass coverage, counters, source-contract tests, parity runs, stress, and soak. |
 
 ## Goal
 

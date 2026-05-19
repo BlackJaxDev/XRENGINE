@@ -4991,6 +4991,18 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            if (_gpuBvhTree?.PollPendingOverflow() == true)
+            {
+                _bvhReady = false;
+                _bvhNodeCount = 0;
+                _bvhPrimitiveCount = 0;
+                _bvhDirty = false;
+                _bvhRefitPending = false;
+                _bvhBuildSuppressed = true;
+                _bvhSuppressedCommandCount = commandCount;
+                return;
+            }
+
             if (_bvhBuildSuppressed && !_bvhDirty)
             {
                 if (_bvhSuppressedCommandCount == commandCount)

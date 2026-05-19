@@ -20,7 +20,7 @@ The desired architecture is:
 
 This TODO complements:
 
-- `docs/work/todo/rendering/gpu/gpu-rendering.md`
+- `docs/work/todo/rendering/gpu/production-rendering-pipeline-roadmap.md`
 - `docs/work/design/rendering/zero-readback-gpu-driven-rendering-plan.md`
 - `docs/work/design/rendering/default-render-pipeline-improvement-plan.md`
 
@@ -246,7 +246,7 @@ Likely test areas:
 - [x] Update `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md`.
 - [x] Update `docs/architecture/rendering/default-render-pipeline-notes.md` to reference the strategy contract.
 - [x] Update `AGENTS.md` rendering section to point at the strategy contract document.
-- [x] Update `docs/work/todo/rendering/gpu/gpu-rendering.md` with the final strategy names and status.
+- [x] Update `docs/work/todo/rendering/gpu/production-rendering-pipeline-roadmap.md` with the final strategy names and status.
 - [x] Add migration notes for settings:
   - `GPURenderDispatch` (deprecation / replacement with `PreferGpuMeshSubmission`)
   - `ForceMeshSubmissionStrategy` (new kill switch)
