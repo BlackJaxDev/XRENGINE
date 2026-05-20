@@ -1838,7 +1838,9 @@ internal sealed class RuntimeEffectiveSettings
     {
         get
         {
-            EOcclusionCullingMode resolved = _gpuOcclusionCullingMode;
+            EOcclusionCullingMode resolved = TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+                ? services.GpuOcclusionCullingMode
+                : _gpuOcclusionCullingMode;
             string? raw = Environment.GetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE");
             if (!string.IsNullOrWhiteSpace(raw) &&
                 Enum.TryParse(raw.Trim(), ignoreCase: true, out EOcclusionCullingMode parsed))
@@ -1858,7 +1860,10 @@ internal sealed class RuntimeEffectiveSettings
             string? raw = Environment.GetEnvironmentVariable("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES");
             if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw.Trim(), out int parsed))
                 return Math.Clamp(parsed, 1, 64);
-            return _cpuQueryOcclusionRetestPeriodFrames;
+
+            return TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+                ? Math.Clamp(services.CpuQueryOcclusionRetestPeriodFrames, 1, 64)
+                : _cpuQueryOcclusionRetestPeriodFrames;
         }
         set => _cpuQueryOcclusionRetestPeriodFrames = Math.Clamp(value, 1, 64);
     }
@@ -1876,43 +1881,77 @@ internal sealed class RuntimeEffectiveSettings
                 if (trimmed == "0" || trimmed.Equals("false", StringComparison.OrdinalIgnoreCase))
                     return false;
             }
-            return _enableCpuSoftwareOcclusionCulling;
+
+            return TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+                ? services.EnableCpuSoftwareOcclusionCulling
+                : _enableCpuSoftwareOcclusionCulling;
         }
         set => _enableCpuSoftwareOcclusionCulling = value;
     }
     private int _cpuSocBufferWidth = 256;
     public int CpuSocBufferWidth
     {
-        get => _cpuSocBufferWidth;
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? Math.Clamp(services.CpuSocBufferWidth, 64, 4096)
+            : _cpuSocBufferWidth;
         set => _cpuSocBufferWidth = Math.Clamp(value, 64, 4096);
     }
     private int _cpuSocBufferHeight = 128;
     public int CpuSocBufferHeight
     {
-        get => _cpuSocBufferHeight;
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? Math.Clamp(services.CpuSocBufferHeight, 32, 4096)
+            : _cpuSocBufferHeight;
         set => _cpuSocBufferHeight = Math.Clamp(value, 32, 4096);
     }
     private int _cpuSocOccluderTriangleBudget = 5000;
     public int CpuSocOccluderTriangleBudget
     {
-        get => _cpuSocOccluderTriangleBudget;
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? Math.Clamp(services.CpuSocOccluderTriangleBudget, 0, 1_000_000)
+            : _cpuSocOccluderTriangleBudget;
         set => _cpuSocOccluderTriangleBudget = Math.Clamp(value, 0, 1_000_000);
     }
     private int _cpuSocMaxOccluders = 64;
     public int CpuSocMaxOccluders
     {
-        get => _cpuSocMaxOccluders;
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? Math.Clamp(services.CpuSocMaxOccluders, 0, 4096)
+            : _cpuSocMaxOccluders;
         set => _cpuSocMaxOccluders = Math.Clamp(value, 0, 4096);
     }
     private float _cpuSocMinOccluderScreenArea = 0.005f;
     public float CpuSocMinOccluderScreenArea
     {
-        get => _cpuSocMinOccluderScreenArea;
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? Math.Clamp(services.CpuSocMinOccluderScreenArea, 0.0f, 1.0f)
+            : _cpuSocMinOccluderScreenArea;
         set => _cpuSocMinOccluderScreenArea = Math.Clamp(value, 0.0f, 1.0f);
     }
-    public bool CpuSocUseAvx2 { get; set; } = true;
-    public bool CpuSocDebugVisualization { get; set; }
-    public bool CpuSocDebugForceVisible { get; set; }
+    private bool _cpuSocUseAvx2 = true;
+    public bool CpuSocUseAvx2
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.CpuSocUseAvx2
+            : _cpuSocUseAvx2;
+        set => _cpuSocUseAvx2 = value;
+    }
+    private bool _cpuSocDebugVisualization;
+    public bool CpuSocDebugVisualization
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.CpuSocDebugVisualization
+            : _cpuSocDebugVisualization;
+        set => _cpuSocDebugVisualization = value;
+    }
+    private bool _cpuSocDebugForceVisible;
+    public bool CpuSocDebugForceVisible
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.CpuSocDebugForceVisible
+            : _cpuSocDebugForceVisible;
+        set => _cpuSocDebugForceVisible = value;
+    }
     public bool GPURenderDispatch { get; set; }
     public EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
     {
@@ -1937,6 +1976,12 @@ internal sealed class RuntimeEffectiveSettings
 
     private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy;
     private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
+
+    private static bool TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+    {
+        services = RuntimeRenderingHostServices.Current;
+        return RuntimeRenderingHostServices.HasConcreteHost;
+    }
 }
 
 internal sealed class RuntimeVulkanRobustnessSettings

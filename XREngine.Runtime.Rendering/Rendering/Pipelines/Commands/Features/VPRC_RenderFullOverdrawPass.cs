@@ -79,17 +79,38 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
         using var pipelineTicket = renderState.PushForceShaderPipelines();
         using var generatedVertexTicket = renderState.PushForceGeneratedVertexProgram();
 
+        EMeshSubmissionStrategy overdrawStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+        bool useGpuRenderPath = overdrawStrategy != EMeshSubmissionStrategy.CpuDirect;
+
         for (int i = 0; i < RenderPasses.Length; i++)
         {
             int pass = RenderPasses[i];
             material.RenderPass = pass;
 
             using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(pass);
-            commands.RenderCPUFiltered(
-                pass,
-                static command => command is IRenderCommandMesh,
-                respectCpuQueryOcclusion: true);
+            if (useGpuRenderPath)
+            {
+                commands.RenderCPUFiltered(
+                    pass,
+                    static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh),
+                    respectCpuQueryOcclusion: true);
+
+                commands.RenderGPU(pass, overdrawStrategy);
+            }
+            else
+            {
+                commands.RenderCPUFiltered(
+                    pass,
+                    static command => command is IRenderCommandMesh,
+                    respectCpuQueryOcclusion: true);
+            }
         }
+    }
+
+    private static bool IsGpuPathCpuFallbackMesh(IRenderCommandMesh meshCommand)
+    {
+        XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+        return meshCommand.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

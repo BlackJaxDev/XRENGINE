@@ -27,6 +27,9 @@ namespace XREngine.Rendering.Occlusion
             public int ConsecutiveOccludedFrames;
             public ulong LastTouchedFrame;
             public bool LastAnySamplesPassed = true;
+            public bool QueryPending;
+            public bool DiscardPendingResult;
+            public bool PendingQueryWasVisibleDraw;
 
             // Per-frame decision cache. Multiple passes (depth-normal prepass + color pass)
             // can ask for the same command's decision within one frame. Without this the
@@ -36,28 +39,18 @@ namespace XREngine.Rendering.Occlusion
             public ECpuOcclusionDecision LastDecision = ECpuOcclusionDecision.Visible;
             public ulong QueryIssuedFrameId;
 
-            // Camera-jump reset cooperative state. When set, the next decision returns
-            // ProbeOnly (cheap depth-only AABB) instead of full-mesh redraw, so a fleet
-            // reset doesn't translate to a frame-spike of full-mesh draws.
-            public bool ResetSeedProbe;
         }
 
         private sealed class PassState
         {
             public readonly Dictionary<uint, QueryState> Queries = new();
             public Vector3 LastCameraPosition;
+            public Vector3 LastCameraForward;
+            public Vector3 LastCameraUp;
             public Matrix4x4 LastProjection;
             public bool HasCameraState;
             public ulong LastResolvedFrameId;
             public uint LastSceneCommandCount;
-
-            // Camera-jump stagger: when a significant camera change is detected we mark
-            // a reset window of ResetStripeFrames frames; each frame inside the window
-            // re-seeds one stripe of commands (by StableQueryKey % ResetStripeFrames).
-            // This spreads the cost of seed-probe draws over multiple frames instead of
-            // a single-frame visibility cliff.
-            public ulong ResetStartFrameId;
-            public bool ResetActive;
         }
 
         private readonly object _lock = new();
@@ -77,10 +70,10 @@ namespace XREngine.Rendering.Occlusion
         // latency. Per-command stagger via sourceCommandIndex keeps the per-frame
         // retest cost bounded.
         private const int DefaultOccludedRetestPeriodFrames = 6;
-        private const float CameraJumpDistance = 2.0f;
-        private const float ProjectionDeltaThreshold = 0.125f;
+        private const float CameraMotionEpsilon = 0.0001f;
+        private const float CameraOrientationDotThreshold = 0.999999f;
+        private const float ProjectionDeltaThreshold = 0.001f;
         private const int StaleEvictionFrames = 120;
-        private const int ResetStripeFrames = 8;
 
         private static int GetOccludedRetestPeriodFrames()
         {
@@ -101,13 +94,8 @@ namespace XREngine.Rendering.Occlusion
                 // reclaims it.
                 state.LastSceneCommandCount = sceneCommandCount;
 
-                if (HasSignificantCameraChange(state, camera))
-                    BeginStaggeredReset(state);
-
-                // Process active reset stripe (if any) — re-seeds only commands matching
-                // the current frame's stripe index, spreading load over ResetStripeFrames.
-                if (state.ResetActive)
-                    ApplyResetStripe(state);
+                if (HasCameraVisibilityStateChanged(state, camera))
+                    ResetTemporalState(state);
 
                 ResolveAvailableResults(state);
             }
@@ -148,6 +136,7 @@ namespace XREngine.Rendering.Occlusion
                     // Caller still needs a query call only if no pass has issued one yet
                     // this frame. ProbeOnly's "needs query" is handled the same way.
                     needsHardwareQuery = queryState.QueryIssuedFrameId != frameId
+                        && !queryState.QueryPending
                         && queryState.LastDecision != ECpuOcclusionDecision.Skip;
                     OcclusionTelemetry.RecordCpuDecision(ECpuDecisionKind.Cached);
                     return queryState.LastDecision;
@@ -156,25 +145,33 @@ namespace XREngine.Rendering.Occlusion
                 queryState.LastTouchedFrame = frameId;
                 queryState.LastDecidedFrameId = frameId;
 
-                // Camera-jump reseed: spend exactly one ProbeOnly frame seeding the
-                // result, then resume normal logic. This eliminates the full-mesh
-                // redraw spike when many commands reset on the same frame.
-                if (queryState.ResetSeedProbe)
-                {
-                    queryState.ResetSeedProbe = false;
-                    queryState.LastDecision = ECpuOcclusionDecision.ProbeOnly;
-                    needsHardwareQuery = true;
-                    OcclusionTelemetry.RecordCpuDecision(ECpuDecisionKind.Probe);
-                    return ECpuOcclusionDecision.ProbeOnly;
-                }
-
                 if (queryState.LastAnySamplesPassed)
                 {
                     queryState.ConsecutiveOccludedFrames = 0;
                     queryState.LastDecision = ECpuOcclusionDecision.Visible;
-                    needsHardwareQuery = true;
+                    needsHardwareQuery = !queryState.QueryPending;
                     OcclusionTelemetry.RecordCpuDecision(ECpuDecisionKind.VisibleQuery);
                     return ECpuOcclusionDecision.Visible;
+                }
+
+                // Do not trust a stale "occluded" result while the full visible draw
+                // that should replace it is still in flight. Reusing or overwriting the
+                // same GL query before its result becomes available can otherwise keep
+                // LastAnySamplesPassed pinned false and cull visible meshes.
+                if (queryState.QueryPending)
+                {
+                    if (queryState.PendingQueryWasVisibleDraw)
+                    {
+                        queryState.LastDecision = ECpuOcclusionDecision.Visible;
+                        needsHardwareQuery = false;
+                        OcclusionTelemetry.RecordCpuDecision(ECpuDecisionKind.VisibleHysteresis);
+                        return ECpuOcclusionDecision.Visible;
+                    }
+
+                    queryState.LastDecision = ECpuOcclusionDecision.Skip;
+                    needsHardwareQuery = false;
+                    OcclusionTelemetry.RecordCpuDecision(ECpuDecisionKind.Skip);
+                    return ECpuOcclusionDecision.Skip;
                 }
 
                 // Hysteresis: keep drawing for HysteresisFrames after first-detected
@@ -226,6 +223,8 @@ namespace XREngine.Rendering.Occlusion
                     return true;
                 if (queryState.LastAnySamplesPassed)
                     return true;
+                if (queryState.QueryPending && queryState.PendingQueryWasVisibleDraw)
+                    return true;
                 if (queryState.ConsecutiveOccludedFrames < HysteresisFrames)
                     return true;
 
@@ -252,12 +251,14 @@ namespace XREngine.Rendering.Occlusion
                 ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
                 if (queryState.QueryIssuedFrameId == frameId)
                     return;
-                queryState.QueryIssuedFrameId = frameId;
+                if (queryState.QueryPending)
+                    return;
 
                 GLRenderQuery? glQuery = gl.GenericToAPI<GLRenderQuery>(queryState.Query);
                 if (glQuery is null)
                     return;
 
+                queryState.QueryIssuedFrameId = frameId;
                 glQuery.BeginQuery(EQueryTarget.AnySamplesPassedConservative);
             }
         }
@@ -282,7 +283,12 @@ namespace XREngine.Rendering.Occlusion
                     return;
 
                 GLRenderQuery? glQuery = gl.GenericToAPI<GLRenderQuery>(queryState.Query);
-                glQuery?.EndQuery();
+                if (glQuery is null)
+                    return;
+
+                glQuery.EndQuery();
+                queryState.QueryPending = true;
+                queryState.PendingQueryWasVisibleDraw = queryState.LastDecision == ECpuOcclusionDecision.Visible;
             }
         }
 
@@ -308,6 +314,9 @@ namespace XREngine.Rendering.Occlusion
                 ConsecutiveOccludedFrames = 0,
                 LastTouchedFrame = RuntimeEngine.Rendering.State.RenderFrameId,
                 LastAnySamplesPassed = true,
+                QueryPending = false,
+                DiscardPendingResult = false,
+                PendingQueryWasVisibleDraw = false,
             };
 
             state.Queries[sourceCommandIndex] = created;
@@ -326,12 +335,21 @@ namespace XREngine.Rendering.Occlusion
             List<uint>? staleKeys = null;
             foreach (var (key, queryState) in state.Queries)
             {
-                if (_queryManager.TryGetAnySamplesPassed(queryState.Query, out bool anySamplesPassed))
-                    queryState.LastAnySamplesPassed = anySamplesPassed;
+                if (queryState.QueryPending &&
+                    _queryManager.TryGetAnySamplesPassed(queryState.Query, out bool anySamplesPassed))
+                {
+                    queryState.QueryPending = false;
+                    queryState.PendingQueryWasVisibleDraw = false;
+                    if (!queryState.DiscardPendingResult)
+                        queryState.LastAnySamplesPassed = anySamplesPassed;
+
+                    queryState.DiscardPendingResult = false;
+                }
 
                 // Evict queries not touched for StaleEvictionFrames to prevent unbounded growth
                 // when scene objects are added/removed without changing total count.
-                if (frameId - queryState.LastTouchedFrame > StaleEvictionFrames)
+                if (!queryState.QueryPending &&
+                    frameId - queryState.LastTouchedFrame > StaleEvictionFrames)
                 {
                     staleKeys ??= new();
                     staleKeys.Add(key);
@@ -348,26 +366,41 @@ namespace XREngine.Rendering.Occlusion
             }
         }
 
-        private static bool HasSignificantCameraChange(PassState state, XRCamera camera)
+        private static bool HasCameraVisibilityStateChanged(PassState state, XRCamera camera)
         {
             Vector3 position = camera.Transform.RenderTranslation;
-            Matrix4x4 projection = camera.ProjectionMatrix;
+            Vector3 forward = camera.Transform.RenderForward;
+            Vector3 up = camera.Transform.RenderUp;
+            Matrix4x4 projection = camera.ProjectionMatrixUnjittered;
 
             if (!state.HasCameraState)
             {
                 state.HasCameraState = true;
                 state.LastCameraPosition = position;
+                state.LastCameraForward = forward;
+                state.LastCameraUp = up;
                 state.LastProjection = projection;
                 return false;
             }
 
-            bool movedFar = Vector3.DistanceSquared(state.LastCameraPosition, position) > (CameraJumpDistance * CameraJumpDistance);
-            float projectionDelta = MathF.Abs(state.LastProjection.M11 - projection.M11) + MathF.Abs(state.LastProjection.M22 - projection.M22);
+            bool moved = Vector3.DistanceSquared(state.LastCameraPosition, position) > (CameraMotionEpsilon * CameraMotionEpsilon);
+            bool rotated =
+                Vector3.Dot(state.LastCameraForward, forward) < CameraOrientationDotThreshold ||
+                Vector3.Dot(state.LastCameraUp, up) < CameraOrientationDotThreshold;
+            float projectionDelta =
+                MathF.Abs(state.LastProjection.M11 - projection.M11) +
+                MathF.Abs(state.LastProjection.M22 - projection.M22) +
+                MathF.Abs(state.LastProjection.M31 - projection.M31) +
+                MathF.Abs(state.LastProjection.M32 - projection.M32) +
+                MathF.Abs(state.LastProjection.M33 - projection.M33) +
+                MathF.Abs(state.LastProjection.M43 - projection.M43);
             bool projectionChanged = projectionDelta > ProjectionDeltaThreshold;
 
             state.LastCameraPosition = position;
+            state.LastCameraForward = forward;
+            state.LastCameraUp = up;
             state.LastProjection = projection;
-            return movedFar || projectionChanged;
+            return moved || rotated || projectionChanged;
         }
 
         private static void ResetTemporalState(PassState state)
@@ -376,52 +409,11 @@ namespace XREngine.Rendering.Occlusion
             {
                 queryState.ConsecutiveOccludedFrames = 0;
                 queryState.LastAnySamplesPassed = true;
-                queryState.ResetSeedProbe = true;
-            }
-        }
-
-        /// <summary>
-        /// Begins a multi-frame reset window after a significant camera change. Instead
-        /// of resetting every command's visibility state on the same frame (which would
-        /// translate to a frame-spike of full-mesh draws as every cached "occluded" flips
-        /// back to "visible"), we mark a window of <see cref="ResetStripeFrames"/> frames.
-        /// Each frame inside the window re-seeds one stripe of commands selected by
-        /// <c>StableQueryKey % ResetStripeFrames</c>, spreading the seed cost.
-        /// </summary>
-        private static void BeginStaggeredReset(PassState state)
-        {
-            state.ResetActive = true;
-            state.ResetStartFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        }
-
-        /// <summary>
-        /// Applied at the start of each frame while a reset window is active. Re-seeds
-        /// the stripe of commands whose key matches this frame's stripe index. Each
-        /// re-seeded command will then return ProbeOnly on its next decision (so the
-        /// visible-cost cliff becomes a multi-frame depth-only AABB sweep instead).
-        /// </summary>
-        private static void ApplyResetStripe(PassState state)
-        {
-            ulong currentFrame = RuntimeEngine.Rendering.State.RenderFrameId;
-            ulong elapsed = currentFrame - state.ResetStartFrameId;
-            if (elapsed >= (ulong)ResetStripeFrames)
-            {
-                state.ResetActive = false;
-                return;
-            }
-
-            uint stripe = (uint)elapsed;
-            foreach (var (key, queryState) in state.Queries)
-            {
-                if ((key % (uint)ResetStripeFrames) != stripe)
-                    continue;
-
-                queryState.ConsecutiveOccludedFrames = 0;
-                queryState.LastAnySamplesPassed = false;
-                queryState.ResetSeedProbe = true;
-                // Force a fresh decision call this frame even if the cached frame id
-                // matches (the cached decision predates the reset).
-                queryState.LastDecidedFrameId = 0;
+                queryState.LastDecision = ECpuOcclusionDecision.Visible;
+                queryState.LastDecidedFrameId = ulong.MaxValue;
+                queryState.QueryIssuedFrameId = ulong.MaxValue;
+                if (queryState.QueryPending)
+                    queryState.DiscardPendingResult = true;
             }
         }
     }

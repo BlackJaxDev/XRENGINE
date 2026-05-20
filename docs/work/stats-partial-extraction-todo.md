@@ -4,7 +4,8 @@ Tracks the topic-by-topic split of `XRENGINE/Engine/Subclasses/Rendering/Engine.
 
 ## Status
 
-- Main file: **1230 lines** (down from 2367 originally — 48% reduction).
+- Main file: **426 lines** (down from 2367 originally — 82% reduction).
+- Vulkan extraction complete (single consolidated partial — see deviation note below).
 - Build validation command (avoids editor file locks):
   ```powershell
   dotnet build .\XREngine.Editor\XREngine.Editor.csproj `
@@ -30,10 +31,20 @@ Tracks the topic-by-topic split of `XRENGINE/Engine/Subclasses/Rendering/Engine.
 | `Engine.Rendering.Stats.PixelFormats.cs` | `GetBytesPerPixel` overloads |
 | `Engine.Rendering.Stats.Vr.cs` | VR / VR-XR record paths |
 | `Engine.Rendering.Stats.Helpers.cs` | `AddNonNegative`, `UpdateMaxCounter`, `StopwatchTicksToMilliseconds`, `NormalizeDescriptorBindingClass`, `AppendDiagnosticToken`, `TruncateDiagnosticText` |
+| `Engine.Rendering.Stats.Vulkan.cs` | All Vulkan fields, properties, enums (`EVulkanAllocationTelemetryClass`, `EVulkanGpuDrivenStageTiming`) and `Record*` methods (consolidated — see deviation note) |
 
 ## Remaining Work
 
-### Vulkan extraction (split-by-subtopic)
+No remaining extraction work — main file now contains only general `DrawCalls`/`TrianglesRendered`/`MultiDrawCalls` counters, `EnableTracking`, and `BeginFrame` swap/reset logic.
+
+### Deviation from original Vulkan sub-partial plan
+
+The original plan proposed splitting Vulkan into 6 sub-partials (Barriers, Indirect, Descriptors, Allocations, FrameLifecycle, Diagnostics). The actual extraction consolidated everything into a single `Engine.Rendering.Stats.Vulkan.cs` (817 lines) matching the single-file-by-topic pattern used by all other completed partials (GpuFallback, GpuTransparency, GpuMeshlets, etc.). Rationale: Vulkan fields are heavily interspersed across sub-topics (frame-lifecycle ticks, barrier counters, indirect counters share adjacent declaration order), and the `BeginFrame` swap/reset logic touches the entire Vulkan field set as one unit — splitting would have created cross-file coupling without meaningful navigability gains.
+
+If future growth makes the consolidated Vulkan partial unwieldy, the 6-sub-partial split documented below remains a viable plan.
+
+### (Historical) Vulkan sub-partial split plan
+
 
 Vulkan is by far the largest remaining block: ~170 fields, ~20 `Record*` methods, large property block, 2 enums. User-approved approach is to split into focused sub-partials.
 

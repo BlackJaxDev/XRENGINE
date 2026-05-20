@@ -750,7 +750,10 @@ subsequent perf optimization is blind.
 - [x] **C-OBS-3**: Wire GPU Hi-Z path. `ApplyGpuHiZOcclusion` records
   candidates/occluded per pass plus the readback-availability flag so the
   UI can clearly distinguish "no occlusion" from "occlusion happening but
-  unobservable on zero-readback strategy".
+  unobservable on zero-readback strategy". It also records whether each
+  Hi-Z pass sampled previous-frame history depth or current-frame depth,
+  which separates "empty early-frame depth" from "real history depth, but
+  no fully occluded whole-mesh bounds".
 - [x] **C-OBS-4**: Add Editor → View → **Occlusion** ImGui panel
   ([EditorImGuiUI.OcclusionPanel.cs](../../../../XREngine.Editor/IMGUI/EditorImGuiUI.OcclusionPanel.cs))
   showing live tested/culled/rendered per path, percentages, and an
@@ -1013,24 +1016,18 @@ Todos:
   Decouples Hi-Z cull from main pass ordering, removes "first frame
   after mutation" failure mode in C-GPU-3.2.
 - [ ] **C-GPU-8**: GPU-resident overdraw debug drawer (parity with main
-  pass under GPU occlusion modes). Today
-  `VPRC_RenderFullOverdrawPass` re-traverses the CPU render-command list
-  via `RenderCommandCollection.RenderCPUFiltered`. Under
-  `CpuQueryAsync` we now consult `CpuRenderOcclusionCoordinator.PeekShouldRender`
-  (non-mutating peek) so the viz matches the primary pass's visibility
-  set. Under `GpuHiZ` + `GpuIndirectZeroReadback`/`GpuIndirectInstrumented`
-  the visibility set lives only in GPU buffers (post-cull indirect-draw
-  buffer + visibility mask), so the CPU traversal silently shows every
-  mesh. Implement a sibling pass that binds the overdraw override
-  material + count FBO and reissues `MultiDrawElementsIndirect` against
-  the *already-culled* indirect-draw buffer instead of re-traversing on
-  the CPU. Same shape as the GPU BVH debug drawer. Until then the pass
-  should gate itself off (or warn) when GPU occlusion is active so the
-  visualization isn't misleading. Broader audit row: any **secondary
-  CPU traversal** (overdraw, wireframe, motion-vector debug, selection
-  outline) silently desyncs from GPU culling and needs the same
-  treatment — either coordinator-peek + force CPU occlusion, or a
-  GPU-resident sibling pass.
+  pass under GPU occlusion modes). First parity fix: `VPRC_RenderFullOverdrawPass`
+  resolves the actual active submission strategy; `CpuDirect` redraws the CPU
+  mesh list, while GPU submission uses `RenderGPU(pass, strategy)` for
+  GPU-eligible meshes and only re-traverses the CPU list for forced-CPU /
+  `ExcludeFromGpuIndirect` fallback meshes. A tighter follow-up can bind the
+  overdraw override material + count FBO and reissue `MultiDrawElementsIndirect`
+  against the already-culled indirect-draw buffer instead of re-running GPU
+  culling for the debug pass. Same shape as the GPU BVH debug drawer. Broader
+  audit row: any **secondary CPU traversal** (wireframe, motion-vector debug,
+  selection outline) can silently desync from GPU culling and needs the same
+  treatment - either coordinator-peek + force CPU occlusion, or a GPU-resident
+  sibling pass.
 
 Acceptance: ZeroReadback B1 baseline lands within 20% of CpuDirect;
 RenderDoc capture shows zero CPU buffer-map operations on the
@@ -1084,7 +1081,7 @@ deleted.
    enough on B2 (avatar-heavy).
 10. **C-GPU-8** (GPU-resident overdraw debug drawer) — fold in once
     GPU indirect-draw buffers are the canonical visibility set
-    (post C-GPU-3..6). Lightweight gating today; full sibling pass later.
+    (post C-GPU-3..6). Temporary parity via `RenderGPU`; full sibling pass later.
 
 ## 11. Related Code
 

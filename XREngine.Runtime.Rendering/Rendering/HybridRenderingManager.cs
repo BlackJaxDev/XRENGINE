@@ -67,6 +67,9 @@ namespace XREngine.Rendering
         private const string FragMaterialIdName = "XRE_FragMaterialId";
         private const int FragStateClassIdLocation = 26;
         private const string FragStateClassIdName = "XRE_FragStateClassId";
+        private const int FragMeshletDebugColorLocation = 12;
+        private const string FragMeshletDebugColorName = "FragMeshletDebugColor";
+        private const string MeshletDebugDisplayUniformName = "EnableMeshletDebugDisplay";
         private static readonly string[] MeshletFrustumPlaneUniformNames =
         [
             "FrustumPlanes[0]",
@@ -2591,6 +2594,7 @@ namespace XREngine.Rendering
             program.Uniform("PassFlags", GetMeshletPassFlags(renderPasses, currentRenderPass));
             program.Uniform("MeshletAlphaCutoff", 0.5f);
             program.Uniform("EnableSkinning", 0u);
+            program.Uniform(MeshletDebugDisplayUniformName, GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera) ? 1u : 0u);
 
             IReadOnlyList<Plane> planes = camera.WorldFrustum().Planes;
             int planeCount = Math.Min(planes.Count, MeshletFrustumPlaneUniformNames.Length);
@@ -2797,6 +2801,7 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
             sb.AppendLine("layout(location=4) in vec2 FragUV0;");
+            sb.AppendLine($"layout(location={FragMeshletDebugColorLocation}) in vec4 {FragMeshletDebugColorName};");
             sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
             sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat in uint {FragMaterialIdName};");
             sb.AppendLine($"layout(location={FragStateClassIdLocation}) flat in uint {FragStateClassIdName};");
@@ -2806,6 +2811,7 @@ namespace XREngine.Rendering
             sb.AppendLine("layout(location=3) out uint TransformId;");
             sb.AppendLine();
             sb.AppendLine("uniform float MeshletAlphaCutoff;");
+            sb.AppendLine($"uniform uint {MeshletDebugDisplayUniformName};");
             sb.AppendLine();
             MaterialBindingGlslGenerator.AppendMaterialTableDefinitions(
                 sb,
@@ -2838,6 +2844,14 @@ namespace XREngine.Rendering
             sb.AppendLine("void main()");
             sb.AppendLine("{");
             sb.AppendLine($"    uint drawID = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
+            sb.AppendLine($"    if ({MeshletDebugDisplayUniformName} != 0u)");
+            sb.AppendLine("    {");
+            sb.AppendLine("        TransformId = drawID;");
+            sb.AppendLine("        Normal = XRENGINE_EncodeNormal(FragNorm);");
+            sb.AppendLine($"        AlbedoOpacity = vec4({FragMeshletDebugColorName}.rgb, 1.0);");
+            sb.AppendLine("        RMSE = vec4(1.0, 0.0, 0.0, 1.0);");
+            sb.AppendLine("        return;");
+            sb.AppendLine("    }");
             sb.AppendLine($"    MaterialStateGpu state = XRE_LoadMaterialState({FragStateClassIdName});");
             sb.AppendLine($"    uint materialId = {FragMaterialIdName} != 0u ? {FragMaterialIdName} : state.MaterialID;");
             sb.AppendLine("    MaterialEntry material;");

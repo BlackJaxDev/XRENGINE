@@ -36,7 +36,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             XREngine.Engine.Rendering.Stats.EnableTracking = previousTracking;
         }
 
-        string renderPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string renderPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
         renderPassSource.ShouldContain("BuildIndirectCommandBuffer(scene);");
         renderPassSource.ShouldContain("EnableZeroReadbackMaterialScatter");
         renderPassSource.ShouldContain("DispatchMaterialScatter(scene);");
@@ -46,8 +46,8 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     [Test]
     public void LegacyBatchRangeReadback_IsCompileFlaggedOutOfShippingPath()
     {
-        string initSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs");
-        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string initSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.ShadersAndInit.cs");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
 
         initSource.ShouldContain("#if XRE_DEBUG_BATCH_RANGE_READBACK\n            _buildGpuBatchesComputeShader");
         passSource.ShouldContain("#if XRE_DEBUG_BATCH_RANGE_READBACK\n        private void DispatchBuildGpuBatches");
@@ -59,10 +59,10 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     }
 
     [Test]
-    public void GpuIndirectInstrumented_UsesMaterialScatterForVisualDiagnostics()
+    public void GpuDrivenStrategies_UseMaterialScatterForVisualDiagnosticsAndMeshletParity()
     {
-        string coreSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Core.cs");
-        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string coreSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
 
         string policySnapshot = Slice(
             coreSource,
@@ -70,7 +70,8 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             "AssertZeroReadbackProductionInvariantsForPass(strategy);",
             StringComparison.Ordinal);
 
-        policySnapshot.ShouldContain("_passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented;");
+        policySnapshot.ShouldContain("bool meshlet = strategy == EMeshSubmissionStrategy.GpuMeshlet;");
+        policySnapshot.ShouldContain("_passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented || meshlet;");
         policySnapshot.ShouldContain("_passDisableCpuReadbackCount = !instrumented;");
 
         string materialTableRequirement = Slice(
@@ -85,8 +86,10 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     [Test]
     public void GpuOcclusionTelemetry_UsesActualPassStrategyAndSocFilter()
     {
-        string occlusionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs");
-        string commandCollectionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommandCollection.cs");
+        string occlusionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
+        string commandCollectionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
+        string telemetrySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Occlusion/OcclusionTelemetry.cs");
+        string panelSource = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.OcclusionPanel.cs");
 
         string applyOcclusion = Slice(
             occlusionSource,
@@ -105,6 +108,10 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
 
         renderGpu.ShouldContain("meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented");
         renderGpu.ShouldContain("PrepareCpuSoftwareOcclusion(renderPass, xrCamera);");
+
+        telemetrySource.ShouldContain("GpuDepthSourceHistory");
+        telemetrySource.ShouldContain("RecordGpuDepthSource(bool history)");
+        panelSource.ShouldContain("Depth Source      : history=");
     }
 
     [Test]
@@ -115,6 +122,18 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         source.ShouldContain("gpuPass.UseMeshletPipeline = true;");
         source.ShouldContain("activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);");
         source.ShouldNotContain("RenderCPU(");
+    }
+
+    [Test]
+    public void FullOverdraw_UsesGpuRenderPath_WhenGpuSubmissionIsActive()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_RenderFullOverdrawPass.cs");
+
+        source.ShouldContain("EMeshSubmissionStrategy overdrawStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();");
+        source.ShouldContain("bool useGpuRenderPath = overdrawStrategy != EMeshSubmissionStrategy.CpuDirect;");
+        source.ShouldContain("IsGpuPathCpuFallbackMesh(mesh)");
+        source.ShouldContain("commands.RenderGPU(pass, overdrawStrategy);");
+        source.ShouldContain("return meshCommand.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;");
     }
 
     [Test]

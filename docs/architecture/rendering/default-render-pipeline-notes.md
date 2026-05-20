@@ -492,7 +492,7 @@ Closing a detached ImGui viewport hides and detaches the Silk/GLFW window, relea
 
 The stage owns broad render-pipeline diagnostics, not only GPU BVH wireframes. It currently includes:
 
-- `Full Overdraw`: renders all visible mesh render passes into `FullOverdrawCountTex` using additive `1.0` writes with depth disabled, then presents `FullOverdrawDebugFBO` as a heatmap over `PostProcessOutputTexture`.
+- `Full Overdraw`: renders all visible mesh render passes into `FullOverdrawCountTex` using additive `1.0` writes with depth disabled, then presents `FullOverdrawDebugFBO` as a heatmap over `PostProcessOutputTexture`. It resolves the same mesh submission strategy as the main pass: `CpuDirect` redraws the CPU mesh list, while active GPU submission draws GPU-eligible meshes through the GPU render path and leaves forced-CPU / `ExcludeFromGpuIndirect` meshes on the CPU fallback path.
 - `GPU BVH`: the existing zero-readback BVH wireframe controls.
 
-Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resource caching but before final output. The count pass is intentionally debug-only CPU mesh submission with a forced simple material, so it should not be used for performance numbers except to locate screen regions with repeated pixel coverage.
+Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resource caching but before final output. The count pass is intentionally debug-only mesh submission with a forced simple material, so it should not be used for performance numbers except to locate screen regions with repeated pixel coverage.

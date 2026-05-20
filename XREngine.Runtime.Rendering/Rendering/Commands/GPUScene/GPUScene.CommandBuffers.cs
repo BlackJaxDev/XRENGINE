@@ -707,13 +707,17 @@ namespace XREngine.Rendering.Commands
         public bool RenderMeshlets(XRCamera camera, int renderPass)
             => RenderMeshlets(camera, renderPass, null);
 
-        public bool RenderMeshlets(XRCamera camera, int renderPass, Func<GPUScene, uint, bool>? commandVisibility)
+        public bool RenderMeshlets(
+            XRCamera camera,
+            int renderPass,
+            Func<GPUScene, uint, bool>? commandVisibility,
+            bool meshletDebugDisplay = false)
         {
             if (camera is null)
                 return false;
 
             EnsureDebugMeshletsReadyForRender();
-            return _meshlets.Render(camera, renderPass, this, commandVisibility);
+            return _meshlets.Render(camera, renderPass, this, commandVisibility, meshletDebugDisplay);
         }
 
         private void EnsureDebugMeshletsReadyForRender()

@@ -39,7 +39,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_CullingPolicy_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs");
 
         source.ShouldContain("private bool ShouldUsePassthroughCulling()");
         source.ShouldContain("VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics");
@@ -53,13 +53,18 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_OcclusionPolicy_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.Occlusion.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
 
         source.ShouldContain("if (mode == EOcclusionCullingMode.CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics)");
         source.ShouldContain("return EOcclusionCullingMode.GpuHiZ;");
         source.ShouldContain("case EOcclusionCullingMode.CpuSoftwareOcclusion:");
         source.ShouldContain("private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)");
         source.ShouldContain("shared.LastBuiltFrameId = ulong.MaxValue;");
+        source.ShouldContain("private static bool TryResolveGpuHiZHistoryDepthInput");
+        source.ShouldContain("DefaultRenderPipeline.HistoryDepthViewTextureName");
+        source.ShouldContain("temporalData.PrevViewProjection");
+        source.ShouldContain("scene.BoundsBuffer.BindTo(_hiZOcclusionProgram, 5);");
+        source.ShouldContain("OcclusionTelemetry.RecordGpuDepthSource(depthInput.History);");
     }
 
     [Test]
@@ -75,7 +80,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_ViewContractValidation_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.ViewSet.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.ViewSet.cs");
 
         source.ShouldContain("ValidateViewSetContractOrThrow();");
         source.ShouldContain("private void ValidateViewSetContractOrThrow()");
@@ -86,7 +91,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_RenderCommandViewLayoutValidation_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommandCollection.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
 
         source.ShouldContain("ValidateViewDescriptorLayout(descriptors.Slice(0, (int)cursor), gpuPass.CommandCapacity);");
         source.ShouldContain("private static void ValidateViewDescriptorLayout(ReadOnlySpan<GPUViewDescriptor> descriptors, uint commandCapacity)");

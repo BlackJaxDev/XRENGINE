@@ -6,6 +6,7 @@ layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec2 in_texCoord;
 layout(location = 3) in vec4 in_tangent;
 layout(location = 4) flat in uint in_materialID;
+layout(location = 5) flat in uint in_meshletIndex;
 
 // Output
 layout(location = 0) out vec4 out_color;
@@ -35,8 +36,32 @@ uniform vec3 cameraPosition;
 uniform vec3 lightDirection;
 uniform vec3 lightColor;
 uniform float lightIntensity;
+uniform uint EnableMeshletDebugDisplay;
 
 const float PI = 3.14159265359;
+
+uint XRE_HashUint(uint value)
+{
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    value ^= value >> 16u;
+    return value;
+}
+
+vec3 XRE_HsvToRgb(vec3 hsv)
+{
+    vec3 p = abs(fract(hsv.xxx + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+    return hsv.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), hsv.y);
+}
+
+vec3 XRE_MeshletDebugColor(uint meshletIndex)
+{
+    uint hash = XRE_HashUint(meshletIndex + 1u);
+    float hue = fract(float(hash & 0x00FFFFFFu) * (1.0 / 16777216.0));
+    return XRE_HsvToRgb(vec3(hue, 0.82, 1.0));
+}
 
 // PBR calculation functions
 vec3 fresnelSchlick(float cosTheta, vec3 F0)
@@ -81,6 +106,12 @@ float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
 
 void main()
 {
+    if (EnableMeshletDebugDisplay != 0u)
+    {
+        out_color = vec4(XRE_MeshletDebugColor(in_meshletIndex), 1.0);
+        return;
+    }
+
     // Get material
     Material material = materials[in_materialID];
     

@@ -180,13 +180,15 @@ public class GpuRenderingBacklogTests
         SetNonPublicField(queryState, "LastTouchedFrame", 0ul);
 
         IDictionary queries = (IDictionary)GetNonPublicField(passState, "Queries");
-        queries[42u] = queryState;
+        queries[43u] = queryState;
 
         IDictionary passStates = (IDictionary)GetNonPublicField(coordinator, "_passStates");
         passStates[0] = passState;
 
-        coordinator.ShouldRender(0, 42u).ShouldBeTrue();
-        coordinator.ShouldRender(0, 42u).ShouldBeFalse();
+        SetNonPublicField(queryState, "LastDecidedFrameId", ulong.MaxValue);
+        coordinator.ShouldRender(0, 43u).ShouldBeTrue();
+        SetNonPublicField(queryState, "LastDecidedFrameId", ulong.MaxValue);
+        coordinator.ShouldRender(0, 43u).ShouldBeFalse();
     }
 
     [Test]

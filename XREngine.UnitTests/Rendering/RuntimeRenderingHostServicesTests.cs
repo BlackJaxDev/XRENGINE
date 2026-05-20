@@ -1,6 +1,7 @@
 using System.Collections;
 using System.IO;
 using System.Numerics;
+using System;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
@@ -36,6 +37,56 @@ public sealed class RuntimeRenderingHostServicesTests
     {
         RuntimeRenderingHostServices.Current = _previousServices ?? new TestRuntimeRenderingHostServices();
         RuntimeShaderServices.Current = _previousShaderServices;
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void EffectiveOcclusionSettings_UseRuntimeRenderingHostServices()
+    {
+        string? previousMode = Environment.GetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE");
+        string? previousRetest = Environment.GetEnvironmentVariable("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES");
+        string? previousSoc = Environment.GetEnvironmentVariable("XRE_CPU_SOC_OCCLUSION");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE", null);
+            Environment.SetEnvironmentVariable("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES", null);
+            Environment.SetEnvironmentVariable("XRE_CPU_SOC_OCCLUSION", null);
+
+            TestRuntimeRenderingHostServices services = new()
+            {
+                GpuOcclusionCullingMode = EOcclusionCullingMode.CpuQueryAsync,
+                CpuQueryOcclusionRetestPeriodFrames = 9,
+                EnableCpuSoftwareOcclusionCulling = true,
+                CpuSocBufferWidth = 512,
+                CpuSocBufferHeight = 256,
+                CpuSocOccluderTriangleBudget = 12345,
+                CpuSocMaxOccluders = 17,
+                CpuSocMinOccluderScreenArea = 0.125f,
+                CpuSocUseAvx2 = false,
+                CpuSocDebugVisualization = true,
+                CpuSocDebugForceVisible = true,
+            };
+            RuntimeRenderingHostServices.Current = services;
+
+            RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.CpuQueryAsync);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRetestPeriodFrames.ShouldBe(9);
+            RuntimeEngine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling.ShouldBeTrue();
+            RuntimeEngine.EffectiveSettings.CpuSocBufferWidth.ShouldBe(512);
+            RuntimeEngine.EffectiveSettings.CpuSocBufferHeight.ShouldBe(256);
+            RuntimeEngine.EffectiveSettings.CpuSocOccluderTriangleBudget.ShouldBe(12345);
+            RuntimeEngine.EffectiveSettings.CpuSocMaxOccluders.ShouldBe(17);
+            RuntimeEngine.EffectiveSettings.CpuSocMinOccluderScreenArea.ShouldBe(0.125f);
+            RuntimeEngine.EffectiveSettings.CpuSocUseAvx2.ShouldBeFalse();
+            RuntimeEngine.EffectiveSettings.CpuSocDebugVisualization.ShouldBeTrue();
+            RuntimeEngine.EffectiveSettings.CpuSocDebugForceVisible.ShouldBeTrue();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE", previousMode);
+            Environment.SetEnvironmentVariable("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES", previousRetest);
+            Environment.SetEnvironmentVariable("XRE_CPU_SOC_OCCLUSION", previousSoc);
+        }
     }
 
     [Test]
@@ -238,6 +289,17 @@ public sealed class RuntimeRenderingHostServicesTests
         public long TrackedVramBytes => 0L;
         public long TrackedVramBudgetBytes => long.MaxValue;
         public bool EnableGpuIndirectDebugLogging => false;
+        public EOcclusionCullingMode GpuOcclusionCullingMode { get; set; } = RuntimeRenderingHostServiceDefaults.GpuOcclusionCullingMode;
+        public int CpuQueryOcclusionRetestPeriodFrames { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRetestPeriodFrames;
+        public bool EnableCpuSoftwareOcclusionCulling { get; set; } = RuntimeRenderingHostServiceDefaults.EnableCpuSoftwareOcclusionCulling;
+        public int CpuSocBufferWidth { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocBufferWidth;
+        public int CpuSocBufferHeight { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocBufferHeight;
+        public int CpuSocOccluderTriangleBudget { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocOccluderTriangleBudget;
+        public int CpuSocMaxOccluders { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocMaxOccluders;
+        public float CpuSocMinOccluderScreenArea { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocMinOccluderScreenArea;
+        public bool CpuSocUseAvx2 { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocUseAvx2;
+        public bool CpuSocDebugVisualization { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocDebugVisualization;
+        public bool CpuSocDebugForceVisible { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocDebugForceVisible;
         public TextureRuntimeLogMode TextureLogMode => TextureRuntimeLogMode.Disabled;
         public double TextureSlowCpuDecodeResizeMilliseconds => 5.0;
         public double TextureSlowMipBuildMilliseconds => 5.0;

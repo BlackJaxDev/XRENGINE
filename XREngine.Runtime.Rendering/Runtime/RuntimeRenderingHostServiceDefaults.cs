@@ -37,6 +37,17 @@ public static class RuntimeRenderingHostServiceDefaults
     public const long DefaultTrackedVramBytes = 0L;
     public const long DefaultTrackedVramBudgetBytes = long.MaxValue;
     public const bool EnableGpuIndirectDebugLogging = false;
+    public const EOcclusionCullingMode GpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
+    public const int CpuQueryOcclusionRetestPeriodFrames = 6;
+    public const bool EnableCpuSoftwareOcclusionCulling = false;
+    public const int CpuSocBufferWidth = 256;
+    public const int CpuSocBufferHeight = 128;
+    public const int CpuSocOccluderTriangleBudget = 5000;
+    public const int CpuSocMaxOccluders = 64;
+    public const float CpuSocMinOccluderScreenArea = 0.005f;
+    public const bool CpuSocUseAvx2 = true;
+    public const bool CpuSocDebugVisualization = false;
+    public const bool CpuSocDebugForceVisible = false;
     public const bool IsPlayModeTransitioning = false;
     public const string PlayModeStateName = "Stopped";
     public const uint DefaultMsaaSampleCount = 1u;

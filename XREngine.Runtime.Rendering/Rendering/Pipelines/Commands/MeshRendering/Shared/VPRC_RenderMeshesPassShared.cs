@@ -114,43 +114,87 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     protected override void Execute()
     {
-        if (IsMeshletRequested())
+        EMeshSubmissionStrategy originalStrategy = MeshSubmissionStrategy;
+        bool forceMeshletDebugDisplay = ShouldForceMeshletDebugDisplay();
+        if (forceMeshletDebugDisplay)
+            MeshSubmissionStrategy = EMeshSubmissionStrategy.GpuMeshlet;
+
+        try
         {
-            AbstractRenderer? renderer = AbstractRenderer.Current;
-            if (renderer?.SupportsMeshletDispatch() == true)
+            if (IsMeshletRequested())
             {
-                VPRC_RenderMeshesPassMeshlet.Execute(this);
-                return;
+                AbstractRenderer? renderer = AbstractRenderer.Current;
+                if (renderer?.SupportsMeshletDispatch() == true)
+                {
+                    VPRC_RenderMeshesPassMeshlet.Execute(this);
+                    return;
+                }
+
+                EMeshSubmissionStrategy fallbackStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer);
+
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderMeshesPass.MeshletUnsupported.{RenderPass}",
+                    TimeSpan.FromSeconds(5),
+                    "[RenderDispatch] Meshlet submission requested for pass {0}, but production meshlet dispatch is unavailable. Fallback={1}; Dialect={2}; DirectTaskDispatch={3}; IndirectCountTaskDispatch={4}; Reason={5}.",
+                    RenderPass,
+                    fallbackStrategy,
+                    renderer?.MeshShaderDialect ?? EMeshShaderDialect.None,
+                    renderer?.SupportsDirectMeshTaskDispatch() == true,
+                    renderer?.SupportsIndirectCountMeshTaskDispatch() == true,
+                    renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer.");
+
+                MeshSubmissionStrategy = fallbackStrategy;
             }
 
-            EMeshSubmissionStrategy fallbackStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer);
-
-            XREngine.Debug.RenderingWarningEvery(
-                $"RenderMeshesPass.MeshletUnsupported.{RenderPass}",
-                TimeSpan.FromSeconds(5),
-                "[RenderDispatch] Meshlet submission requested for pass {0}, but production meshlet dispatch is unavailable. Fallback={1}; Dialect={2}; DirectTaskDispatch={3}; IndirectCountTaskDispatch={4}; Reason={5}.",
-                RenderPass,
-                fallbackStrategy,
-                renderer?.MeshShaderDialect ?? EMeshShaderDialect.None,
-                renderer?.SupportsDirectMeshTaskDispatch() == true,
-                renderer?.SupportsIndirectCountMeshTaskDispatch() == true,
-                renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer.");
-
-            MeshSubmissionStrategy = fallbackStrategy;
+            switch (PathIntent)
+            {
+                case EMeshRenderingPathIntent.Traditional:
+                default:
+                    VPRC_RenderMeshesPassTraditional.Execute(this);
+                    break;
+            }
         }
-
-        switch (PathIntent)
+        finally
         {
-            case EMeshRenderingPathIntent.Traditional:
-            default:
-                VPRC_RenderMeshesPassTraditional.Execute(this);
-                break;
+            if (forceMeshletDebugDisplay)
+                MeshSubmissionStrategy = originalStrategy;
         }
     }
 
     private bool IsMeshletRequested()
         => MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet ||
            PathIntent == EMeshRenderingPathIntent.Meshlet;
+
+    private bool ShouldForceMeshletDebugDisplay()
+    {
+        if (MeshSubmissionStrategy == EMeshSubmissionStrategy.CpuDirect ||
+            MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet ||
+            !SupportsMeshletDebugDisplayPass(RenderPass))
+        {
+            return false;
+        }
+
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer?.SupportsMeshletDispatch() != true)
+            return false;
+
+        XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        XRCamera? camera = activeInstance?.RenderState.SceneCamera
+            ?? activeInstance?.RenderState.RenderingCamera
+            ?? activeInstance?.LastSceneCamera
+            ?? activeInstance?.LastRenderingCamera;
+
+        return GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera);
+    }
+
+    private static bool SupportsMeshletDebugDisplayPass(int renderPass)
+        => renderPass == (int)EDefaultRenderPass.OpaqueDeferred ||
+           renderPass == (int)EDefaultRenderPass.OpaqueForward ||
+           renderPass == (int)EDefaultRenderPass.MaskedForward ||
+           renderPass == (int)EDefaultRenderPass.TransparentForward ||
+           renderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward ||
+           renderPass == (int)EDefaultRenderPass.PerPixelLinkedListForward ||
+           renderPass == (int)EDefaultRenderPass.DepthPeelingForward;
 
     private static EMeshSubmissionStrategy ResolveSelectedMeshletSubmissionStrategy(AbstractRenderer? renderer)
     {

@@ -54,7 +54,7 @@ namespace XREngine.Rendering.Meshlets
             var meshShader = ShaderHelper.LoadEngineShader(Path.Combine("Meshlets", "MeshletRenderDiagnostic.mesh"), EShaderType.Mesh);
             var fragmentShader = ShaderHelper.LoadEngineShader(Path.Combine("Meshlets", "MeshletShading.fs"), EShaderType.Fragment);
 
-            _taskMeshProgram = new XRRenderProgram(false, true, taskShader, meshShader, fragmentShader);
+            _taskMeshProgram = new XRRenderProgram(true, false, taskShader, meshShader, fragmentShader);
 
             // Create buffers
             _meshletBuffer = CreateBuffer("MeshletBuffer", EBufferTarget.ShaderStorageBuffer);
@@ -250,7 +250,8 @@ namespace XREngine.Rendering.Meshlets
             XRCamera camera,
             int renderPass,
             GPUScene? visibilityScene = null,
-            Func<GPUScene, uint, bool>? commandVisibility = null)
+            Func<GPUScene, uint, bool>? commandVisibility = null,
+            bool meshletDebugDisplay = false)
         {
             EnsureInitialized();
 
@@ -271,6 +272,10 @@ namespace XREngine.Rendering.Meshlets
 
             UpdateBuffers();
             UpdateCommandVisibilityBuffer(visibilityScene, commandVisibility);
+
+            gl.RawGL.Disable(Silk.NET.OpenGL.EnableCap.CullFace);
+            gl.RawGL.Disable(Silk.NET.OpenGL.EnableCap.StencilTest);
+            gl.RawGL.Disable(Silk.NET.OpenGL.EnableCap.Blend);
 
             // Use task/mesh program
             _taskMeshProgram.Use();
@@ -304,6 +309,7 @@ namespace XREngine.Rendering.Meshlets
             _taskMeshProgram.Uniform("cameraPosition", cameraPosition);
             _taskMeshProgram.Uniform("RenderPass", renderPass);
             _taskMeshProgram.Uniform("UseCpuCommandVisibility", commandVisibility is not null && visibilityScene is not null ? 1u : 0u);
+            _taskMeshProgram.Uniform("EnableMeshletDebugDisplay", meshletDebugDisplay ? 1u : 0u);
             _taskMeshProgram.Uniform("lightDirection", Vector3.Normalize(new Vector3(-0.35f, -1.0f, -0.25f)));
             _taskMeshProgram.Uniform("lightColor", Vector3.One);
             _taskMeshProgram.Uniform("lightIntensity", 2.0f);

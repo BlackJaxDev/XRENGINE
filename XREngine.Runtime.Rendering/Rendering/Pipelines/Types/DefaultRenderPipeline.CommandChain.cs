@@ -56,6 +56,7 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
                 c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
+                c.Add<VPRC_RenderMeshletDebugDisplay>();
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 c.Add<VPRC_BuildAccelerationStructure>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
@@ -609,6 +610,7 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = false;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
+            c.Add<VPRC_RenderMeshletDebugDisplay>();
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
             // GPU BVH wireframe overlay; no-op unless toggled via the

@@ -84,6 +84,17 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public long TrackedVramBytes => Engine.Rendering.Stats.AllocatedVRAMBytes;
     public long TrackedVramBudgetBytes => Engine.Rendering.Stats.VramBudgetBytes;
     public bool EnableGpuIndirectDebugLogging => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+    public EOcclusionCullingMode GpuOcclusionCullingMode => Engine.EffectiveSettings.GpuOcclusionCullingMode;
+    public int CpuQueryOcclusionRetestPeriodFrames => Engine.Rendering.Settings.CpuQueryOcclusionRetestPeriodFrames;
+    public bool EnableCpuSoftwareOcclusionCulling => Engine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling;
+    public int CpuSocBufferWidth => Engine.EffectiveSettings.CpuSocBufferWidth;
+    public int CpuSocBufferHeight => Engine.EffectiveSettings.CpuSocBufferHeight;
+    public int CpuSocOccluderTriangleBudget => Engine.EffectiveSettings.CpuSocOccluderTriangleBudget;
+    public int CpuSocMaxOccluders => Engine.EffectiveSettings.CpuSocMaxOccluders;
+    public float CpuSocMinOccluderScreenArea => Engine.EffectiveSettings.CpuSocMinOccluderScreenArea;
+    public bool CpuSocUseAvx2 => Engine.EffectiveSettings.CpuSocUseAvx2;
+    public bool CpuSocDebugVisualization => Engine.EffectiveSettings.CpuSocDebugVisualization;
+    public bool CpuSocDebugForceVisible => Engine.EffectiveSettings.CpuSocDebugForceVisible;
     public TextureRuntimeLogMode TextureLogMode => Engine.Rendering.Settings.TextureLogMode;
     public double TextureSlowCpuDecodeResizeMilliseconds => Engine.Rendering.Settings.TextureSlowCpuDecodeResizeMilliseconds;
     public double TextureSlowMipBuildMilliseconds => Engine.Rendering.Settings.TextureSlowMipBuildMilliseconds;

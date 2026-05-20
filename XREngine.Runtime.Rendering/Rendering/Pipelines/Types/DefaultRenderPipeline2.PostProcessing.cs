@@ -1654,6 +1654,12 @@ public partial class DefaultRenderPipeline2
             visibilityCondition: IsFullOverdrawEnabled);
 
         stage.AddParameter(
+            nameof(GpuBvhDebugSettings.MeshletDebugDisplayEnabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Meshlet Debug Display");
+
+        stage.AddParameter(
             nameof(GpuBvhDebugSettings.Enabled),
             PostProcessParameterKind.Bool,
             false,

@@ -26,6 +26,19 @@ layout(std430, binding = 3) buffer OutCountBuffer
 };
 
 layout(std430, binding = 4) buffer OverflowFlagBuffer { uint OcclusionOverflowFlag; };
+
+struct BoundsGpu
+{
+    vec4 BoundingSphere;
+    vec4 AabbMin;
+    vec4 AabbMax;
+    uint BoundsVersion;
+    uint Padding0;
+    uint Padding1;
+    uint Padding2;
+};
+
+layout(std430, binding = 5) readonly buffer BoundsBuffer { BoundsGpu Bounds[]; };
 layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
 layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer { uint outHotCommands[]; };
 
@@ -61,6 +74,16 @@ uniform int UseHotCommands;
 
 const int COMMAND_FLOATS = 20;
 const int HOT_UINTS = 20;
+const int HIZ_TARGET_TEXEL_SPAN = 6;
+const int HIZ_MAX_SAMPLE_TEXELS = 8;
+
+uint LoadBoundsId(int base, int hotBase)
+{
+    if (UseHotCommands != 0)
+        return inHotCommands[hotBase + 19];
+
+    return floatBitsToUint(inCommands[base + 18]);
+}
 
 bool IsValidCommand(int base)
 {
@@ -77,7 +100,29 @@ bool IsValidCommand(int base)
     return instanceCount != 0u;
 }
 
-float SampleHiZConservative(vec2 uvMin, vec2 uvMax, int mip)
+float CombineHiZDepth(float a, float b)
+{
+    if (IsReversedDepth != 0u)
+        return min(a, b);
+
+    return max(a, b);
+}
+
+float InitialHiZDepth()
+{
+    return IsReversedDepth != 0u ? 1.0 : 0.0;
+}
+
+int SelectHiZMip(vec2 uvMin, vec2 uvMax)
+{
+    ivec2 baseSize = textureSize(HiZDepth, 0);
+    vec2 sizePx = max((uvMax - uvMin) * vec2(baseSize), vec2(1.0));
+    float maxDim = max(sizePx.x, sizePx.y);
+    float targetDim = max(maxDim / float(HIZ_TARGET_TEXEL_SPAN), 1.0);
+    return int(clamp(floor(log2(targetDim)), 0.0, float(HiZMaxMip)));
+}
+
+float SampleHiZCornerConservative(vec2 uvMin, vec2 uvMax, int mip)
 {
     ivec2 mipSize = textureSize(HiZDepth, mip);
     ivec2 t00 = ivec2(clamp(uvMin * vec2(mipSize), vec2(0.0), vec2(mipSize - 1)));
@@ -90,28 +135,49 @@ float SampleHiZConservative(vec2 uvMin, vec2 uvMax, int mip)
     float d10 = texelFetch(HiZDepth, t10, mip).r;
     float d11 = texelFetch(HiZDepth, t11, mip).r;
 
-    // Keep conservative aggregation mode aligned with Hi-Z reduction mode.
-    if (IsReversedDepth != 0u)
-        return min(min(d00, d01), min(d10, d11));
-
-    return max(max(d00, d01), max(d10, d11));
+    return CombineHiZDepth(CombineHiZDepth(d00, d01), CombineHiZDepth(d10, d11));
 }
 
-bool HiZOccludedAabbRefine(vec3 worldCenter, float radius)
+float SampleHiZConservative(vec2 uvMin, vec2 uvMax, int mip)
 {
-    // Approximate AABB from the bounding sphere for a conservative second-stage test.
-    vec3 minP = worldCenter - vec3(radius);
-    vec3 maxP = worldCenter + vec3(radius);
+    ivec2 mipSize = textureSize(HiZDepth, mip);
+    ivec2 tMin = ivec2(clamp(floor(uvMin * vec2(mipSize)), vec2(0.0), vec2(mipSize - 1)));
+    ivec2 tMax = ivec2(clamp(floor(uvMax * vec2(mipSize)), vec2(0.0), vec2(mipSize - 1)));
+    ivec2 span = tMax - tMin + ivec2(1);
 
+    if (span.x > HIZ_MAX_SAMPLE_TEXELS || span.y > HIZ_MAX_SAMPLE_TEXELS)
+        return SampleHiZCornerConservative(uvMin, uvMax, min(mip + 1, HiZMaxMip));
+
+    float result = InitialHiZDepth();
+    for (int y = 0; y < HIZ_MAX_SAMPLE_TEXELS; ++y)
+    {
+        if (y >= span.y)
+            break;
+
+        for (int x = 0; x < HIZ_MAX_SAMPLE_TEXELS; ++x)
+        {
+            if (x >= span.x)
+                break;
+
+            float depth = texelFetch(HiZDepth, tMin + ivec2(x, y), mip).r;
+            result = CombineHiZDepth(result, depth);
+        }
+    }
+
+    return result;
+}
+
+bool HiZOccludedAabb(vec3 aabbMin, vec3 aabbMax)
+{
     vec3 corners[8] = vec3[8](
-        vec3(minP.x, minP.y, minP.z),
-        vec3(maxP.x, minP.y, minP.z),
-        vec3(minP.x, maxP.y, minP.z),
-        vec3(maxP.x, maxP.y, minP.z),
-        vec3(minP.x, minP.y, maxP.z),
-        vec3(maxP.x, minP.y, maxP.z),
-        vec3(minP.x, maxP.y, maxP.z),
-        vec3(maxP.x, maxP.y, maxP.z)
+        vec3(aabbMin.x, aabbMin.y, aabbMin.z),
+        vec3(aabbMax.x, aabbMin.y, aabbMin.z),
+        vec3(aabbMin.x, aabbMax.y, aabbMin.z),
+        vec3(aabbMax.x, aabbMax.y, aabbMin.z),
+        vec3(aabbMin.x, aabbMin.y, aabbMax.z),
+        vec3(aabbMax.x, aabbMin.y, aabbMax.z),
+        vec3(aabbMin.x, aabbMax.y, aabbMax.z),
+        vec3(aabbMax.x, aabbMax.y, aabbMax.z)
     );
 
     vec2 uvMin = vec2(1.0);
@@ -139,19 +205,39 @@ bool HiZOccludedAabbRefine(vec3 worldCenter, float radius)
             nearestDepth = min(nearestDepth, depth);
     }
 
-    if (any(lessThan(uvMin, vec2(0.0))) || any(greaterThan(uvMax, vec2(1.0))))
+    if (uvMax.x < 0.0 || uvMax.y < 0.0 || uvMin.x > 1.0 || uvMin.y > 1.0)
         return false;
 
-    ivec2 baseSize = textureSize(HiZDepth, 0);
-    vec2 sizePx = (uvMax - uvMin) * vec2(baseSize);
-    float maxDim = max(sizePx.x, sizePx.y);
-    int mip = int(clamp(floor(log2(max(maxDim, 1.0))), 0.0, float(HiZMaxMip)));
+    vec2 clampedUvMin = clamp(uvMin, vec2(0.0), vec2(1.0));
+    vec2 clampedUvMax = clamp(uvMax, vec2(0.0), vec2(1.0));
 
-    float hiz = SampleHiZConservative(uvMin, uvMax, mip);
+    int mip = SelectHiZMip(clampedUvMin, clampedUvMax);
+    float hiz = SampleHiZConservative(clampedUvMin, clampedUvMax, mip);
     if (IsReversedDepth != 0u)
         return nearestDepth < hiz;
 
     return nearestDepth > hiz;
+}
+
+bool TryLoadAabb(int base, int hotBase, out vec3 aabbMin, out vec3 aabbMax)
+{
+    uint boundsId = LoadBoundsId(base, hotBase);
+    if (boundsId >= uint(Bounds.length()))
+    {
+        aabbMin = vec3(0.0);
+        aabbMax = vec3(0.0);
+        return false;
+    }
+
+    BoundsGpu bounds = Bounds[boundsId];
+    aabbMin = bounds.AabbMin.xyz;
+    aabbMax = bounds.AabbMax.xyz;
+    return all(lessThanEqual(aabbMin, aabbMax));
+}
+
+bool HiZOccludedAabbRefine(vec3 worldCenter, float radius)
+{
+    return HiZOccludedAabb(worldCenter - vec3(radius), worldCenter + vec3(radius));
 }
 
 // Conservative Hi-Z test using a projected sphere.
@@ -174,17 +260,17 @@ bool HiZOccluded(vec3 worldCenter, float radius)
     vec2 uvMin = uvCenter - uvRadius;
     vec2 uvMax = uvCenter + uvRadius;
 
-    // If bounds straddle outside the screen, keep visible (uncertain).
-    if (any(lessThan(uvMin, vec2(0.0))) || any(greaterThan(uvMax, vec2(1.0))))
+    // If bounds are fully outside the screen, keep visible; otherwise clamp to
+    // the visible viewport region before sampling the pyramid.
+    if (uvMax.x < 0.0 || uvMax.y < 0.0 || uvMin.x > 1.0 || uvMin.y > 1.0)
         return false;
 
-    // Select mip level based on projected footprint.
-    ivec2 baseSize = textureSize(HiZDepth, 0);
-    vec2 sizePx = (uvMax - uvMin) * vec2(baseSize);
-    float maxDim = max(sizePx.x, sizePx.y);
-    int mip = int(clamp(floor(log2(max(maxDim, 1.0))), 0.0, float(HiZMaxMip)));
+    vec2 clampedUvMin = clamp(uvMin, vec2(0.0), vec2(1.0));
+    vec2 clampedUvMax = clamp(uvMax, vec2(0.0), vec2(1.0));
 
-    float hiz = SampleHiZConservative(uvMin, uvMax, mip);
+    // Select mip level based on projected footprint.
+    int mip = SelectHiZMip(clampedUvMin, clampedUvMax);
+    float hiz = SampleHiZConservative(clampedUvMin, clampedUvMax, mip);
 
     // Convert NDC z to depth-buffer space.
     float depth = ndc.z * 0.5 + 0.5;
@@ -223,6 +309,8 @@ void main()
         return;
 
     int hotBase = int(idx) * HOT_UINTS;
+    if (UseHotCommands != 0 && hotBase + HOT_UINTS > inHotCommands.length())
+        return;
 
     if (!IsValidCommand(base))
         return;
@@ -240,7 +328,11 @@ void main()
         radius = inCommands[base + 3];
     }
 
-    bool occluded = HiZOccluded(center, radius);
+    vec3 aabbMin;
+    vec3 aabbMax;
+    bool occluded = TryLoadAabb(base, hotBase, aabbMin, aabbMax)
+        ? HiZOccludedAabb(aabbMin, aabbMax)
+        : HiZOccluded(center, radius);
     if (occluded)
         return;
 

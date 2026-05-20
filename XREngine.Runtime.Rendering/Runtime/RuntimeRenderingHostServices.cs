@@ -107,6 +107,17 @@ public static class RuntimeRenderingHostServices
         public long TrackedVramBytes => RuntimeRenderingHostServiceDefaults.DefaultTrackedVramBytes;
         public long TrackedVramBudgetBytes => RuntimeRenderingHostServiceDefaults.DefaultTrackedVramBudgetBytes;
         public bool EnableGpuIndirectDebugLogging => RuntimeRenderingHostServiceDefaults.EnableGpuIndirectDebugLogging;
+        public EOcclusionCullingMode GpuOcclusionCullingMode => RuntimeRenderingHostServiceDefaults.GpuOcclusionCullingMode;
+        public int CpuQueryOcclusionRetestPeriodFrames => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRetestPeriodFrames;
+        public bool EnableCpuSoftwareOcclusionCulling => RuntimeRenderingHostServiceDefaults.EnableCpuSoftwareOcclusionCulling;
+        public int CpuSocBufferWidth => RuntimeRenderingHostServiceDefaults.CpuSocBufferWidth;
+        public int CpuSocBufferHeight => RuntimeRenderingHostServiceDefaults.CpuSocBufferHeight;
+        public int CpuSocOccluderTriangleBudget => RuntimeRenderingHostServiceDefaults.CpuSocOccluderTriangleBudget;
+        public int CpuSocMaxOccluders => RuntimeRenderingHostServiceDefaults.CpuSocMaxOccluders;
+        public float CpuSocMinOccluderScreenArea => RuntimeRenderingHostServiceDefaults.CpuSocMinOccluderScreenArea;
+        public bool CpuSocUseAvx2 => RuntimeRenderingHostServiceDefaults.CpuSocUseAvx2;
+        public bool CpuSocDebugVisualization => RuntimeRenderingHostServiceDefaults.CpuSocDebugVisualization;
+        public bool CpuSocDebugForceVisible => RuntimeRenderingHostServiceDefaults.CpuSocDebugForceVisible;
         public ETwoPlayerPreference TwoPlayerViewportPreference => RuntimeRenderingHostServiceDefaults.TwoPlayerViewportPreference;
         public EThreePlayerPreference ThreePlayerViewportPreference => RuntimeRenderingHostServiceDefaults.ThreePlayerViewportPreference;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeRenderingHostServiceDefaults.CurrentRenderBackend;

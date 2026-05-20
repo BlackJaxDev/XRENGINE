@@ -55,6 +55,24 @@ public sealed class XRMeshSerializationTests
     }
 
     [Test]
+    public void RuntimeCookedBinarySerializer_Reads_LegacyMeshWithoutMeshletFooter()
+    {
+        XRMesh original = CreateSampleMesh();
+
+        byte[] bytes = RuntimeCookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+            () => RuntimeCookedBinarySerializer.Serialize(original));
+        bytes[^1].ShouldBe((byte)0);
+
+        byte[] legacyBytes = bytes[..^1];
+        XRMesh? clone = RuntimeCookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+            () => RuntimeCookedBinarySerializer.Deserialize(typeof(XRMesh), legacyBytes) as XRMesh);
+
+        clone.ShouldNotBeNull();
+        clone!.MeshletPayload.ShouldBeNull();
+        AssertMeshesEquivalent(original, clone);
+    }
+
+    [Test]
     public void XRMesh_Clone_PreservesBufferBindingMetadata()
     {
         XRMesh original = CreateSampleMesh();
