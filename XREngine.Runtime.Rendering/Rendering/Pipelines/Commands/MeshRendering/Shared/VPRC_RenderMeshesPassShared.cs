@@ -1,6 +1,7 @@
 using System;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -89,7 +90,21 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     }
 
     public override string GpuProfilingName
-        => $"VPRC_RenderMeshesPass[{FormatRenderPassName(RenderPass)};{MeshSubmissionStrategy};{PathIntent}]";
+    {
+        get
+        {
+            if (!IsMeshletRequested())
+                return $"VPRC_RenderMeshesPass[{FormatRenderPassName(RenderPass)};{MeshSubmissionStrategy};{PathIntent}]";
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            EMeshSubmissionStrategy selectedStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer);
+            string fallbackReason = selectedStrategy == EMeshSubmissionStrategy.GpuMeshlet
+                ? "Ready"
+                : renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer.";
+
+            return $"VPRC_RenderMeshesPass[{FormatRenderPassName(RenderPass)};Requested={MeshSubmissionStrategy};Selected={selectedStrategy};{PathIntent};MeshletDialect={renderer?.MeshShaderDialect ?? EMeshShaderDialect.None};FallbackReason={fallbackReason}]";
+        }
+    }
 
     protected override bool ShouldExecuteThisFrame()
     {
@@ -99,20 +114,29 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     protected override void Execute()
     {
-        if (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet ||
-            PathIntent == EMeshRenderingPathIntent.Meshlet)
+        if (IsMeshletRequested())
         {
-            if (AbstractRenderer.Current?.SupportsMeshletDispatch() == true)
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer?.SupportsMeshletDispatch() == true)
             {
                 VPRC_RenderMeshesPassMeshlet.Execute(this);
                 return;
             }
 
+            EMeshSubmissionStrategy fallbackStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer);
+
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderMeshesPass.MeshletUnsupported.{RenderPass}",
                 TimeSpan.FromSeconds(5),
-                "[RenderDispatch] Meshlet submission requested for pass {0}, but the active renderer does not support meshlet dispatch. Falling back to traditional GPU indirect submission.",
-                RenderPass);
+                "[RenderDispatch] Meshlet submission requested for pass {0}, but production meshlet dispatch is unavailable. Fallback={1}; Dialect={2}; DirectTaskDispatch={3}; IndirectCountTaskDispatch={4}; Reason={5}.",
+                RenderPass,
+                fallbackStrategy,
+                renderer?.MeshShaderDialect ?? EMeshShaderDialect.None,
+                renderer?.SupportsDirectMeshTaskDispatch() == true,
+                renderer?.SupportsIndirectCountMeshTaskDispatch() == true,
+                renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer.");
+
+            MeshSubmissionStrategy = fallbackStrategy;
         }
 
         switch (PathIntent)
@@ -122,6 +146,27 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 VPRC_RenderMeshesPassTraditional.Execute(this);
                 break;
         }
+    }
+
+    private bool IsMeshletRequested()
+        => MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet ||
+           PathIntent == EMeshRenderingPathIntent.Meshlet;
+
+    private static EMeshSubmissionStrategy ResolveSelectedMeshletSubmissionStrategy(AbstractRenderer? renderer)
+    {
+        if (renderer?.SupportsMeshletDispatch() == true)
+            return EMeshSubmissionStrategy.GpuMeshlet;
+
+        EMeshSubmissionStrategy fallbackStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true);
+        if (fallbackStrategy != EMeshSubmissionStrategy.GpuMeshlet)
+            return fallbackStrategy;
+
+        if (renderer?.SupportsIndirectCountDraw() == true)
+            return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
+        return VulkanFeatureProfile.EnforceStrictNoFallbacks
+            ? EMeshSubmissionStrategy.CpuDirect
+            : EMeshSubmissionStrategy.GpuIndirectInstrumented;
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

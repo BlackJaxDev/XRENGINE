@@ -100,6 +100,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
         NVPathRendering = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVPathRendering ext13) ? ext13 : null;
         ARBParallelShaderCompile = api.TryGetExtension<ArbParallelShaderCompile>(out var ext14) ? ext14 : null;
         ARBBindlessTexture = api.TryGetExtension<ArbBindlessTexture>(out var ext15) ? ext15 : null;
+        LoadMeshTaskDispatchDelegates();
     }
 
     protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)

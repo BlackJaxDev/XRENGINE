@@ -144,6 +144,7 @@ public unsafe partial class VulkanRenderer
             MeshDrawOp d => d.Target is null,
             BlitOp b => b.OutFbo is null,
             IndirectDrawOp id => id.Target is null,
+            MeshTaskDispatchIndirectCountOp meshTask => meshTask.Target is null,
             _ => false,
         };
 

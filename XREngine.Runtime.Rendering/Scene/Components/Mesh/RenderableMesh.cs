@@ -234,7 +234,7 @@ namespace XREngine.Components.Scene.Mesh
                             renderer.Material = lod.Material;
                     }
                     lod.PropertyChanged += UpdateReferences;
-                    LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance));
+                    LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance, lod.MinProjectedScreenRadiusPixels));
                     TrackBones(renderer.Mesh, true);
                 }
 
@@ -760,7 +760,10 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
-        public record RenderableLOD(XRMeshRenderer Renderer, float MaxVisibleDistance);
+        public record RenderableLOD(
+            XRMeshRenderer Renderer,
+            float MaxVisibleDistance,
+            float MinProjectedScreenRadiusPixels);
 
         private void TrackBones(XRMesh? mesh, bool subscribe)
         {

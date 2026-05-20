@@ -32,9 +32,30 @@ namespace XREngine.Rendering
         private const uint MaterialTextureHandleTableSsboBinding = MaterialBindingLayouts.MaterialTextureHandleTableSsboBinding;
         private const int IndirectCommandFloatCount = GPUScene.CommandFloatCount;
         private const uint IndirectTextGlyphOffsetSsboBinding = 3;
+        private const uint MeshletMeshDataSsboBinding = 3;
+        private const uint MeshletDescriptorSsboBinding = 5;
+        private const uint MeshletVertexIndexSsboBinding = 6;
+        private const uint MeshletTriangleIndexSsboBinding = 7;
+        private const uint MeshletTaskRecordSsboBinding = 9;
+        private const uint MeshletTaskCountSsboBinding = 10;
+        private const uint MeshletAtlasPositionSsboBinding = 13;
+        private const uint MeshletAtlasNormalSsboBinding = 14;
+        private const uint MeshletAtlasTangentSsboBinding = 15;
+        private const uint MeshletMaterialStateSsboBinding = 16;
+        private const uint MeshletAtlasUv0SsboBinding = 18;
+        private const uint MeshletTransformSsboBinding = 19;
+        private const uint MeshletPrevTransformSsboBinding = 20;
+        private const uint MeshletStatsSsboBinding = 21;
         private const uint IndirectLegacyBaseInstanceFlag = 0x80000000u;
         private const uint IndirectPreviousLodBaseInstanceFlag = 0x40000000u;
         private const uint IndirectBaseInstanceCommandIndexMask = 0x3FFFFFFFu;
+        private const uint MeshletPassDepthPrepass = 1u << 0;
+        private const uint MeshletPassShadowDepth = 1u << 1;
+        private const uint MeshletPassOpaque = 1u << 2;
+        private const uint MeshletPassMasked = 1u << 3;
+        private const uint MeshletPassTransparent = 1u << 4;
+        private const uint MeshletPassVelocity = 1u << 5;
+        private const uint MeshletPassStereo = 1u << 6;
         private const int FragLodTransitionRoleLocation = 23;
         private const string FragLodTransitionRoleName = "XreFragLodTransitionRole";
         private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
@@ -44,6 +65,17 @@ namespace XREngine.Rendering
         private const int ZeroReadbackPendingProgramSampleLimit = 6;
         private const int FragMaterialIdLocation = 24;
         private const string FragMaterialIdName = "XRE_FragMaterialId";
+        private const int FragStateClassIdLocation = 26;
+        private const string FragStateClassIdName = "XRE_FragStateClassId";
+        private static readonly string[] MeshletFrustumPlaneUniformNames =
+        [
+            "FrustumPlanes[0]",
+            "FrustumPlanes[1]",
+            "FrustumPlanes[2]",
+            "FrustumPlanes[3]",
+            "FrustumPlanes[4]",
+            "FrustumPlanes[5]",
+        ];
         private XRRenderProgram? _indirectCompProgram;
 
         private bool _useMeshletPipeline = false;
@@ -68,9 +100,18 @@ namespace XREngine.Rendering
             public readonly XRShader FragmentShader = fragmentShader;
         }
 
+        private readonly struct MeshletMaterialTableProgramCache(XRRenderProgram program, XRShader taskShader, XRShader meshShader, XRShader fragmentShader)
+        {
+            public readonly XRRenderProgram Program = program;
+            public readonly XRShader TaskShader = taskShader;
+            public readonly XRShader MeshShader = meshShader;
+            public readonly XRShader FragmentShader = fragmentShader;
+        }
+
         private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(bool bindless, int rendererKey, string layoutHash), MaterialTableProgramCache> _materialTablePrograms = [];
+        private readonly Dictionary<(bool bindless, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
         private XRDataBuffer? _indirectTextRotationsBuffer;
@@ -364,22 +405,23 @@ namespace XREngine.Rendering
             if (camera is null || scene is null)
                 return;
 
-            if (_useMeshletPipeline && scene.RenderMeshlets(
-                camera,
-                currentRenderPass,
-                RenderCommandCollection.TestCpuSoftwareOcclusionForGpuSource))
+            if (_useMeshletPipeline &&
+                renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet &&
+                TryRenderMeshletMaterialTable(renderPasses, camera, scene, currentRenderPass))
             {
                 return;
             }
 
-            if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+            if ((renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback ||
+                 renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet) &&
                 !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
                 RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
                 XREngine.Debug.RenderingWarningEvery(
                     $"RenderDispatch.ZeroReadbackScatterMissing.{currentRenderPass}",
                     TimeSpan.FromSeconds(2),
-                    "[RenderDispatch] Zero-readback mesh submission for pass {0} could not prepare material-tier scatter. Skipping CPU fallback.",
+                    "[RenderDispatch] {0} mesh submission for pass {1} could not prepare material-tier scatter. Skipping CPU fallback.",
+                    renderPasses.MeshSubmissionStrategy,
                     currentRenderPass);
                 return;
             }
@@ -2193,6 +2235,383 @@ namespace XREngine.Rendering
             cache.FragmentShader.Destroy();
         }
 
+        private static void DestroyMeshletMaterialTableProgramCache(MeshletMaterialTableProgramCache cache)
+        {
+            cache.Program.Destroy();
+            cache.FragmentShader.Destroy();
+        }
+
+        private bool TryRenderMeshletMaterialTable(
+            GPURenderPassCollection renderPasses,
+            XRCamera camera,
+            GPUScene scene,
+            int currentRenderPass)
+        {
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuMeshlet.RenderMaterialTable");
+            RuntimeEngine.Rendering.Stats.RecordGpuMeshletStrategyRequested(
+                currentRenderPass,
+                EMeshSubmissionStrategy.GpuMeshlet,
+                EMeshSubmissionStrategy.GpuMeshlet,
+                AbstractRenderer.Current?.MeshShaderDialect ?? EMeshShaderDialect.None,
+                scene.TotalCommandCount,
+                renderPasses.MaxVisibleMeshletTaskCapacity);
+
+            var renderer = AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                WarnMeshletMaterialFallback(currentRenderPass, "No active renderer is available for meshlet dispatch.");
+                return false;
+            }
+
+            if (!renderer.SupportsMeshletDispatch())
+            {
+                WarnMeshletMaterialFallback(currentRenderPass, renderer.MeshletDispatchUnsupportedReason);
+                return false;
+            }
+
+            if (!renderPasses.MeshletExpansionPreparedThisFrame)
+            {
+                WarnMeshletMaterialFallback(currentRenderPass, "Visible meshlet task expansion was not prepared for this pass.");
+                return false;
+            }
+
+            if (!renderPasses.TryGetMeshletExpansionInputs(scene, out GpuMeshletExpansionInputs inputs))
+            {
+                WarnMeshletMaterialFallback(currentRenderPass, "Meshlet expansion inputs are incomplete.");
+                return false;
+            }
+
+            if (!IsMeshletMaterialTableDirectPassSupported(currentRenderPass))
+            {
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    "The current render pass is not implemented by the direct meshlet material-table shader.");
+                return false;
+            }
+
+            var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            bool overrideActive = RuntimeEngine.Rendering.State.OverrideMaterial is not null
+                || (renderState is not null && renderState.UseDepthNormalMaterialVariants);
+            if (overrideActive)
+            {
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    "Override/depth-normal material variants require the traditional zero-readback material-tier path.");
+                return false;
+            }
+
+            if (scene.SkinnedCommandCount != 0u)
+            {
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    "Scene-owned skinned meshlet vertex-weight buffers are not wired yet; preserving skinned meshes through the traditional zero-readback path.");
+                return false;
+            }
+
+            EZeroReadbackMaterialDrawPath drawPath = renderPasses.ZeroReadbackMaterialDrawPath;
+            bool bindlessRequested = drawPath == EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+            if (drawPath is not EZeroReadbackMaterialDrawPath.MaterialTable and
+                not EZeroReadbackMaterialDrawPath.BindlessMaterialTable)
+            {
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    $"Meshlet production dispatch requires a material-table draw path; current path is {drawPath}.");
+                return false;
+            }
+
+            if (!renderPasses.TryGetGeneratedMaterialTableDispatchLayout(currentRenderPass, out MaterialBindingLayout layout))
+            {
+                MaterialBindingResolverResult result = MaterialBindingResolverResult.PerMaterial(
+                    $"Pass {currentRenderPass} does not expose a generated material-table layout.");
+                renderPasses.RecordMaterialBindingResolverResult(result);
+                WarnMeshletMaterialFallback(currentRenderPass, result.Reason);
+                return false;
+            }
+
+            renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.Compatible(layout));
+
+            XRDataBuffer? visibleTaskBuffer = renderPasses.VisibleMeshletTaskBuffer;
+            XRDataBuffer? visibleTaskCountBuffer = renderPasses.VisibleMeshletTaskCountBuffer;
+            XRDataBuffer? dispatchIndirectBuffer = renderPasses.MeshletDispatchIndirectBuffer;
+            XRDataBuffer? dispatchCountBuffer = renderPasses.MeshletDispatchCountBuffer;
+            XRDataBuffer? materialTableBuffer = renderPasses.MaterialTableBuffer;
+            XRDataBuffer? positions = scene.AtlasPositions;
+            XRDataBuffer? normals = scene.AtlasNormals;
+            XRDataBuffer? tangents = scene.AtlasTangents;
+            XRDataBuffer? uv0 = scene.AtlasUV0;
+
+            if (visibleTaskBuffer is null ||
+                visibleTaskCountBuffer is null ||
+                dispatchIndirectBuffer is null ||
+                dispatchCountBuffer is null ||
+                materialTableBuffer is null ||
+                positions is null ||
+                normals is null ||
+                tangents is null ||
+                uv0 is null)
+            {
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    "One or more meshlet material-table buffers are missing; routing through traditional zero-readback indirect rendering.");
+                return false;
+            }
+
+            bool useBindless = bindlessRequested && SupportsOpenGLBindlessMaterialTable();
+            XRDataBuffer? materialTextureHandleBuffer = useBindless ? renderPasses.MaterialTextureHandleBuffer : null;
+            if (useBindless && materialTextureHandleBuffer is null)
+                useBindless = false;
+
+            if (bindlessRequested && !useBindless && _bindlessMaterialTableUnsupportedLogBudget > 0)
+            {
+                _bindlessMaterialTableUnsupportedLogBudget--;
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    "Bindless/descriptor-indexed material-table meshlets were requested, but the active backend cannot bind the material texture handle table.");
+            }
+
+            XRRenderProgram? program = EnsureMeshletMaterialTableProgram(useBindless, layout, renderer.MeshShaderDialect, skinned: false);
+            if (program is null)
+                return false;
+
+            if (!IsProgramReadyForCurrentRenderer(program))
+            {
+                renderPasses.RecordZeroReadbackProgramPending();
+                WarnZeroReadbackProgramWarmup(
+                    useBindless ? "GpuMeshletBindlessMaterialTable" : "GpuMeshletMaterialTable",
+                    currentRenderPass,
+                    pendingCount: 1);
+                return false;
+            }
+
+            if (!TryUseIndirectGraphicsProgram(program, useBindless ? "GpuMeshletBindlessMaterialTable" : "GpuMeshletMaterialTable"))
+                return false;
+
+            inputs.MeshDataBuffer.BindTo(program, MeshletMeshDataSsboBinding);
+            inputs.MeshletDescriptorBuffer.BindTo(program, MeshletDescriptorSsboBinding);
+            inputs.MeshletVertexIndexBuffer.BindTo(program, MeshletVertexIndexSsboBinding);
+            inputs.MeshletTriangleIndexBuffer.BindTo(program, MeshletTriangleIndexSsboBinding);
+            visibleTaskBuffer.BindTo(program, MeshletTaskRecordSsboBinding);
+            visibleTaskCountBuffer.BindTo(program, MeshletTaskCountSsboBinding);
+            inputs.DrawMetadataBuffer.BindTo(program, DrawMetadataSsboBinding);
+            positions.BindTo(program, MeshletAtlasPositionSsboBinding);
+            normals.BindTo(program, MeshletAtlasNormalSsboBinding);
+            tangents.BindTo(program, MeshletAtlasTangentSsboBinding);
+            uv0.BindTo(program, MeshletAtlasUv0SsboBinding);
+            scene.TransformBuffer.BindTo(program, MeshletTransformSsboBinding);
+            scene.PrevTransformBuffer.BindTo(program, MeshletPrevTransformSsboBinding);
+            scene.MaterialStateBuffer.BindTo(program, MeshletMaterialStateSsboBinding);
+            materialTableBuffer.BindTo(program, MaterialTableSsboBinding);
+            materialTextureHandleBuffer?.BindTo(program, MaterialTextureHandleTableSsboBinding);
+            XRDataBuffer? statsBuffer = renderPasses.StatsBuffer;
+            statsBuffer?.BindTo(program, MeshletStatsSsboBinding);
+
+            SetMeshletMaterialTableUniforms(program, renderPasses, camera, currentRenderPass);
+            program.Uniform("StatsEnabled", statsBuffer is not null ? 1u : 0u);
+            renderer.SetEngineUniforms(program, camera);
+
+            bool submitted = false;
+            try
+            {
+                renderer.MemoryBarrier(
+                    EMemoryBarrierMask.ShaderStorage |
+                    EMemoryBarrierMask.Command |
+                    EMemoryBarrierMask.TextureFetch);
+
+                submitted = renderer.TryDrawMeshTasksIndirectCount(
+                    dispatchIndirectBuffer,
+                    dispatchCountBuffer,
+                    GPUMeshletLayout.MeshTaskIndirectCommandMaxDrawCount,
+                    GPUMeshletLayout.MeshTaskIndirectCommandStride,
+                    out string failureReason);
+
+                if (!submitted)
+                    WarnMeshletMaterialFallback(currentRenderPass, failureReason);
+            }
+            finally
+            {
+                renderer.UnbindParameterBuffer();
+                renderer.UnbindDrawIndirectBuffer();
+            }
+
+            if (submitted)
+            {
+                RuntimeEngine.Rendering.Stats.RecordGpuMeshletProductionFrame(1);
+                RuntimeEngine.Rendering.Stats.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
+                XREngine.Debug.Meshes(
+                    $"Meshlet.BackendSelected pass={currentRenderPass} requested={EMeshSubmissionStrategy.GpuMeshlet} selected={EMeshSubmissionStrategy.GpuMeshlet} dialect={renderer.MeshShaderDialect} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
+            }
+
+            return submitted;
+        }
+
+        private XRRenderProgram? EnsureMeshletMaterialTableProgram(
+            bool bindless,
+            MaterialBindingLayout layout,
+            EMeshShaderDialect dialect,
+            bool skinned)
+        {
+            (bool bindless, EMeshShaderDialect dialect, bool skinned, string layoutHash) cacheKey =
+                (bindless, dialect, skinned, layout.LayoutHash);
+
+            if (_meshletMaterialTablePrograms.TryGetValue(cacheKey, out MeshletMaterialTableProgramCache existing))
+            {
+                existing.Program.Link();
+                return existing.Program;
+            }
+
+            if (!TryGetMeshletShaderPaths(dialect, skinned, out string taskShaderPath, out string meshShaderPath, out string failureReason))
+            {
+                Debug.MeshesWarning($"[RenderDispatch] Meshlet material-table program unavailable: {failureReason}");
+                return null;
+            }
+
+            XRShader taskShader = ShaderHelper.LoadEngineShader(taskShaderPath, EShaderType.Task);
+            XRShader meshShader = ShaderHelper.LoadEngineShader(meshShaderPath, EShaderType.Mesh);
+            XRShader fragmentShader = CreateMeshletMaterialTableFragmentShader(bindless, layout);
+            var shaderList = new List<XRShader> { taskShader, meshShader, fragmentShader };
+            var program = new XRRenderProgram(false, false, shaderList);
+            program.AllowLink();
+            program.Link();
+
+            _meshletMaterialTablePrograms[cacheKey] =
+                new MeshletMaterialTableProgramCache(program, taskShader, meshShader, fragmentShader);
+            return program;
+        }
+
+        private static bool TryGetMeshletShaderPaths(
+            EMeshShaderDialect dialect,
+            bool skinned,
+            out string taskShaderPath,
+            out string meshShaderPath,
+            out string failureReason)
+        {
+            taskShaderPath = string.Empty;
+            meshShaderPath = string.Empty;
+            failureReason = string.Empty;
+
+            switch (dialect)
+            {
+                case EMeshShaderDialect.OpenGLNV:
+                    taskShaderPath = "Meshlets/MeshletCulling.task";
+                    meshShaderPath = skinned
+                        ? "Meshlets/MeshletRenderSkinned.mesh"
+                        : "Meshlets/MeshletRender.mesh";
+                    return true;
+                case EMeshShaderDialect.OpenGLEXT:
+                case EMeshShaderDialect.VulkanEXT:
+                    taskShaderPath = "Meshlets/MeshletCullingExt.task";
+                    meshShaderPath = skinned
+                        ? "Meshlets/MeshletRenderSkinnedExt.mesh"
+                        : "Meshlets/MeshletRenderExt.mesh";
+                    return true;
+                default:
+                    failureReason = "No production mesh shader dialect is active.";
+                    return false;
+            }
+        }
+
+        private static bool IsMeshletMaterialTableDirectPassSupported(int renderPass)
+            => renderPass == (int)EDefaultRenderPass.OpaqueDeferred ||
+               renderPass == (int)EDefaultRenderPass.OpaqueForward ||
+               renderPass == (int)EDefaultRenderPass.MaskedForward ||
+               renderPass == (int)EDefaultRenderPass.TransparentForward ||
+               renderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward ||
+               renderPass == (int)EDefaultRenderPass.PerPixelLinkedListForward ||
+               renderPass == (int)EDefaultRenderPass.DepthPeelingForward;
+
+        private static uint GetMeshletPassFlags(GPURenderPassCollection renderPasses, int renderPass)
+        {
+            uint flags = renderPass switch
+            {
+                (int)EDefaultRenderPass.OpaqueDeferred or
+                (int)EDefaultRenderPass.OpaqueForward => MeshletPassOpaque,
+                (int)EDefaultRenderPass.MaskedForward => MeshletPassMasked,
+                (int)EDefaultRenderPass.TransparentForward or
+                (int)EDefaultRenderPass.WeightedBlendedOitForward or
+                (int)EDefaultRenderPass.PerPixelLinkedListForward or
+                (int)EDefaultRenderPass.DepthPeelingForward => MeshletPassTransparent,
+                _ => 0u,
+            };
+
+            if (renderPasses.ActiveViewCount > 1u)
+                flags |= MeshletPassStereo;
+
+            return flags;
+        }
+
+        private static uint GetMeshletAllowedStateClassMask(int renderPass)
+            => renderPass switch
+            {
+                (int)EDefaultRenderPass.OpaqueDeferred => MeshletStateClassMask(EGpuMaterialStateClass.OpaqueDeferred),
+                (int)EDefaultRenderPass.OpaqueForward => MeshletStateClassMask(EGpuMaterialStateClass.OpaqueForward),
+                (int)EDefaultRenderPass.MaskedForward => MeshletStateClassMask(EGpuMaterialStateClass.AlphaTested),
+                (int)EDefaultRenderPass.TransparentForward or
+                (int)EDefaultRenderPass.WeightedBlendedOitForward or
+                (int)EDefaultRenderPass.PerPixelLinkedListForward or
+                (int)EDefaultRenderPass.DepthPeelingForward => MeshletStateClassMask(EGpuMaterialStateClass.Transparent),
+                _ => 0u,
+            };
+
+        private static uint MeshletStateClassMask(EGpuMaterialStateClass stateClass)
+        {
+            uint stateClassId = (uint)stateClass;
+            return stateClassId < 32u ? 1u << (int)stateClassId : 0u;
+        }
+
+        private static void SetMeshletMaterialTableUniforms(
+            XRRenderProgram program,
+            GPURenderPassCollection renderPasses,
+            XRCamera camera,
+            int currentRenderPass)
+        {
+            Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
+            Matrix4x4 viewProjectionMatrix = viewMatrix * camera.ProjectionMatrix;
+
+            program.Uniform("ViewProjectionMatrix", viewProjectionMatrix);
+            program.Uniform("PreviousViewProjectionMatrix", viewProjectionMatrix);
+            program.Uniform("CameraPosition", camera.Transform.RenderTranslation);
+            program.Uniform("HiZSize", Vector2.Zero);
+            program.Uniform("HiZMipCount", 0.0f);
+            program.Uniform("HiZDepthBias", 0.0f);
+            program.Uniform("HiZUsesReversedZ", 0u);
+            program.Uniform("HiZValid", 0u);
+            program.Uniform("EnableHiZOcclusion", 0u);
+            program.Uniform("EnableFrustumCulling", 1u);
+            program.Uniform("EnableConeCulling", 1u);
+            program.Uniform("EnableMaskedConeCulling", 0u);
+            program.Uniform("EnableTransparentConeCulling", 0u);
+            program.Uniform("EnableVelocityConeCulling", 0u);
+            program.Uniform("EnableStereoHiZ", 0u);
+            program.Uniform("ActiveViewCount", renderPasses.ActiveViewCount == 0u ? 1u : renderPasses.ActiveViewCount);
+            program.Uniform("ActiveViewIndex", renderPasses.IndirectSourceViewId);
+            program.Uniform("CurrentRenderPass", currentRenderPass >= 0 ? (uint)currentRenderPass : uint.MaxValue);
+            program.Uniform("RequiredRenderPassMask", 0u);
+            program.Uniform("RequiredLayerMask", 0u);
+            program.Uniform("AllowedStateClassMask", GetMeshletAllowedStateClassMask(currentRenderPass));
+            program.Uniform("PassFlags", GetMeshletPassFlags(renderPasses, currentRenderPass));
+            program.Uniform("MeshletAlphaCutoff", 0.5f);
+            program.Uniform("EnableSkinning", 0u);
+
+            IReadOnlyList<Plane> planes = camera.WorldFrustum().Planes;
+            int planeCount = Math.Min(planes.Count, MeshletFrustumPlaneUniformNames.Length);
+            for (int i = 0; i < planeCount; ++i)
+                program.Uniform(MeshletFrustumPlaneUniformNames[i], planes[i].AsVector4());
+        }
+
+        private static void WarnMeshletMaterialFallback(int currentRenderPass, string reason)
+        {
+            RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+            RuntimeEngine.Rendering.Stats.RecordGpuMeshletFallback(1);
+            XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.GpuMeshletMaterialFallback.{currentRenderPass}.{reason.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] Meshlet.BackendUnsupported pass={0} requested={2} selected={3} reason='{1}' routing through traditional zero-readback indirect rendering",
+                currentRenderPass,
+                reason,
+                EMeshSubmissionStrategy.GpuMeshlet,
+                EMeshSubmissionStrategy.GpuIndirectZeroReadback);
+        }
+
         private XRRenderProgram? EnsureMaterialTableDrawProgram(XRMeshRenderer? vaoRenderer, bool bindless, MaterialBindingLayout layout)
         {
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
@@ -2347,6 +2766,109 @@ namespace XREngine.Rendering
             return new XRShader(EShaderType.Fragment, sb.ToString())
             {
                 Name = bindless ? "GPUIndirect_BindlessMaterialTableFS" : "GPUIndirect_MaterialTableFS"
+            };
+        }
+
+        private static XRShader CreateMeshletMaterialTableFragmentShader(bool bindless, MaterialBindingLayout layout)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("#version 460 core");
+            if (bindless)
+            {
+                sb.AppendLine("#extension GL_ARB_gpu_shader_int64 : require");
+                sb.AppendLine("#extension GL_ARB_bindless_texture : require");
+            }
+            sb.AppendLine();
+            sb.AppendLine("const uint XRE_TRANSPARENCY_MASKED = 1u;");
+            sb.AppendLine("const uint XRE_TRANSPARENCY_ALPHA_TO_COVERAGE = 9u;");
+            sb.AppendLine();
+            sb.AppendLine("struct MaterialStateGpu");
+            sb.AppendLine("{");
+            sb.AppendLine("    uint StateClassID;");
+            sb.AppendLine("    uint MaterialID;");
+            sb.AppendLine("    uint PipelineKey;");
+            sb.AppendLine("    uint OptionsBits;");
+            sb.AppendLine("    uint TransparencyMode;");
+            sb.AppendLine("    uint DescriptorStart;");
+            sb.AppendLine("    uint DescriptorCount;");
+            sb.AppendLine("    uint Flags;");
+            sb.AppendLine("};");
+            sb.AppendLine($"layout(std430, binding = {MeshletMaterialStateSsboBinding}) readonly buffer MaterialStateBuffer {{ MaterialStateGpu MaterialStates[]; }};");
+            sb.AppendLine();
+            sb.AppendLine("layout(location=1) in vec3 FragNorm;");
+            sb.AppendLine("layout(location=4) in vec2 FragUV0;");
+            sb.AppendLine($"layout(location=21) in float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine($"layout(location={FragMaterialIdLocation}) flat in uint {FragMaterialIdName};");
+            sb.AppendLine($"layout(location={FragStateClassIdLocation}) flat in uint {FragStateClassIdName};");
+            sb.AppendLine("layout(location=0) out vec4 AlbedoOpacity;");
+            sb.AppendLine("layout(location=1) out vec2 Normal;");
+            sb.AppendLine("layout(location=2) out vec4 RMSE;");
+            sb.AppendLine("layout(location=3) out uint TransformId;");
+            sb.AppendLine();
+            sb.AppendLine("uniform float MeshletAlphaCutoff;");
+            sb.AppendLine();
+            MaterialBindingGlslGenerator.AppendMaterialTableDefinitions(
+                sb,
+                layout,
+                bindless,
+                MaterialTableSsboBinding,
+                MaterialTextureHandleTableSsboBinding);
+            sb.AppendLine();
+            sb.AppendLine("MaterialStateGpu XRE_LoadMaterialState(uint stateClassId)");
+            sb.AppendLine("{");
+            sb.AppendLine("    if (stateClassId < uint(MaterialStates.length()))");
+            sb.AppendLine("        return MaterialStates[stateClassId];");
+            sb.AppendLine("    return MaterialStateGpu(0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("vec2 XRENGINE_EncodeNormal(vec3 normal)");
+            sb.AppendLine("{");
+            sb.AppendLine("    normal = normalize(normal);");
+            sb.AppendLine("    float invL1Norm = 1.0 / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-6);");
+            sb.AppendLine("    vec3 n = normal * invL1Norm;");
+            sb.AppendLine("    vec2 oct = n.xy;");
+            sb.AppendLine("    if (n.z < 0.0)");
+            sb.AppendLine("    {");
+            sb.AppendLine("        vec2 signDir = vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);");
+            sb.AppendLine("        oct = (1.0 - abs(oct.yx)) * signDir;");
+            sb.AppendLine("    }");
+            sb.AppendLine("    return oct * 0.5 + 0.5;");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("void main()");
+            sb.AppendLine("{");
+            sb.AppendLine($"    uint drawID = floatBitsToUint({DefaultVertexShaderGenerator.FragTransformIdName});");
+            sb.AppendLine($"    MaterialStateGpu state = XRE_LoadMaterialState({FragStateClassIdName});");
+            sb.AppendLine($"    uint materialId = {FragMaterialIdName} != 0u ? {FragMaterialIdName} : state.MaterialID;");
+            sb.AppendLine("    MaterialEntry material;");
+            sb.AppendLine("    XR_LoadMaterial(materialId, material);");
+            sb.AppendLine("    uint flags = material.Flags;");
+            sb.AppendLine("    vec4 baseColorOpacity = material.BaseColorOpacity;");
+            sb.AppendLine("    vec4 rmse = material.RMSE;");
+            sb.AppendLine("    vec3 baseColor = baseColorOpacity.rgb;");
+            sb.AppendLine("    float opacity = baseColorOpacity.a;");
+            if (bindless)
+            {
+                sb.AppendLine("    if ((flags & 1u) != 0u)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        vec4 albedo = SampleBindlessTexture(material.AlbedoHandleIndex, FragUV0, vec4(1.0));");
+                sb.AppendLine("        baseColor *= albedo.rgb;");
+                sb.AppendLine("        opacity *= albedo.a;");
+                sb.AppendLine("    }");
+            }
+            sb.AppendLine("    if ((state.TransparencyMode == XRE_TRANSPARENCY_MASKED || state.TransparencyMode == XRE_TRANSPARENCY_ALPHA_TO_COVERAGE) && opacity < MeshletAlphaCutoff)");
+            sb.AppendLine("        discard;");
+            sb.AppendLine("    if ((flags & (1u << 31u)) == 0u)");
+            sb.AppendLine("        baseColor = mix(baseColor, vec3(1.0, 0.0, 1.0), 0.65);");
+            sb.AppendLine("    TransformId = drawID;");
+            sb.AppendLine("    Normal = XRENGINE_EncodeNormal(FragNorm);");
+            sb.AppendLine("    AlbedoOpacity = vec4(baseColor, opacity);");
+            sb.AppendLine("    RMSE = rmse;");
+            sb.AppendLine("}");
+
+            return new XRShader(EShaderType.Fragment, sb.ToString())
+            {
+                Name = bindless ? "GpuMeshlet_BindlessMaterialTableFS" : "GpuMeshlet_MaterialTableFS"
             };
         }
 
@@ -4543,6 +5065,9 @@ namespace XREngine.Rendering
             foreach (var cache in _materialTablePrograms.Values)
                 DestroyMaterialTableProgramCache(cache);
             _materialTablePrograms.Clear();
+            foreach (var cache in _meshletMaterialTablePrograms.Values)
+                DestroyMeshletMaterialTableProgramCache(cache);
+            _meshletMaterialTablePrograms.Clear();
             _indirectTextTransformsBuffer?.Destroy();
             _indirectTextTexCoordsBuffer?.Destroy();
             _indirectTextRotationsBuffer?.Destroy();

@@ -67,6 +67,16 @@ public unsafe partial class VulkanRenderer
         bool UseCount,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
+    internal sealed record MeshTaskDispatchIndirectCountOp(
+        int PassIndex,
+        VkDataBuffer IndirectBuffer,
+        VkDataBuffer CountBuffer,
+        uint MaxDrawCount,
+        uint Stride,
+        nuint ByteOffset,
+        nuint CountByteOffset,
+        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+
     internal sealed record MemoryBarrierOp(
         int PassIndex,
         EMemoryBarrierMask Mask,
@@ -116,6 +126,7 @@ public unsafe partial class VulkanRenderer
             MeshDrawOp meshDraw => meshDraw with { PassIndex = validatedPassIndex },
             BlitOp blit => blit with { PassIndex = validatedPassIndex },
             IndirectDrawOp indirectDraw => indirectDraw with { PassIndex = validatedPassIndex },
+            MeshTaskDispatchIndirectCountOp meshTaskDispatch => meshTaskDispatch with { PassIndex = validatedPassIndex },
             MemoryBarrierOp memoryBarrier => memoryBarrier with { PassIndex = validatedPassIndex },
             ComputeDispatchOp computeDispatch => computeDispatch with { PassIndex = validatedPassIndex },
             _ => op
@@ -227,6 +238,14 @@ public unsafe partial class VulkanRenderer
                     hash.Add(indirect.Stride);
                     hash.Add(indirect.ByteOffset);
                     hash.Add(indirect.UseCount);
+                    break;
+                case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
+                    hash.Add(meshTaskDispatch.IndirectBuffer.GetHashCode());
+                    hash.Add(meshTaskDispatch.CountBuffer.GetHashCode());
+                    hash.Add(meshTaskDispatch.MaxDrawCount);
+                    hash.Add(meshTaskDispatch.Stride);
+                    hash.Add(meshTaskDispatch.ByteOffset);
+                    hash.Add(meshTaskDispatch.CountByteOffset);
                     break;
                 case MemoryBarrierOp barrier:
                     hash.Add((int)barrier.Mask);

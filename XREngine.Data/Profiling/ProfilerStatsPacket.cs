@@ -22,6 +22,19 @@ public sealed partial class RenderStatsPacket
     public int GpuTransparencyMaskedVisible { get; set; }
     public int GpuTransparencyApproximateVisible { get; set; }
     public int GpuTransparencyExactVisible { get; set; }
+    public int GpuMeshletRequestedFrames { get; set; }
+    public int GpuMeshletProductionFrames { get; set; }
+    public int GpuMeshletFallbackFrames { get; set; }
+    public int GpuMeshletDispatchSkipped { get; set; }
+    public long GpuMeshletTaskRecordsEmitted { get; set; }
+    public long GpuMeshletTaskRecordsFrustumCulled { get; set; }
+    public long GpuMeshletTaskRecordsConeCulled { get; set; }
+    public long GpuMeshletTaskRecordsHiZCulled { get; set; }
+    public long GpuMeshletExpansionOverflowCount { get; set; }
+    public long GpuMeshletBufferBytesResident { get; set; }
+    public int GpuMeshletCacheHits { get; set; }
+    public int GpuMeshletCacheMisses { get; set; }
+    public int GpuMeshletCacheStale { get; set; }
 
     // Vulkan phase-7 telemetry
     public int VulkanPipelineBinds { get; set; }

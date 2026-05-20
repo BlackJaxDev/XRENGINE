@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Commands
         private bool _indirectOverflowNeedsMap;
         private bool _statsNeedsMap;
         private bool _truncationNeedsMap;
+        private bool _meshletExpansionOverflowNeedsMap;
 
         private static void EnsurePersistentReadbackMapping(XRDataBuffer buffer)
         {
@@ -45,7 +46,7 @@ namespace XREngine.Rendering.Commands
             bool allowDiagnosticReadbackMappings = ShouldCaptureDiagnosticReadbacksForPass();
 
             // Determine if any buffer specifically needs to be remapped
-            bool anyFlagged = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap;
+            bool anyFlagged = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap || _meshletExpansionOverflowNeedsMap;
 
             // If nothing is flagged and we've already mapped previously, skip
             if (!anyFlagged && _buffersMapped)
@@ -81,6 +82,8 @@ namespace XREngine.Rendering.Commands
                     EnsurePersistentReadbackMapping(_statsBuffer);
                 if (allowDiagnosticReadbackMappings && _truncationFlagBuffer is not null)
                     EnsurePersistentReadbackMapping(_truncationFlagBuffer);
+                if (allowDiagnosticReadbackMappings && _meshletExpansionOverflowFlagBuffer is not null)
+                    EnsurePersistentReadbackMapping(_meshletExpansionOverflowFlagBuffer);
 
                 _buffersMapped = true;
                 Dbg("MapBuffers complete (initial)","Buffers");
@@ -110,6 +113,7 @@ namespace XREngine.Rendering.Commands
                 _indirectOverflowNeedsMap = false;
                 _statsNeedsMap = false;
                 _truncationNeedsMap = false;
+                _meshletExpansionOverflowNeedsMap = false;
                 _buffersMapped = true;
                 Dbg("MapBuffers skipped flagged diagnostic mappings (diagnostic readbacks disabled)", "Buffers");
                 return;
@@ -139,6 +143,12 @@ namespace XREngine.Rendering.Commands
                 _truncationNeedsMap = false;
             }
 
+            if (_meshletExpansionOverflowNeedsMap && _meshletExpansionOverflowFlagBuffer is not null)
+            {
+                EnsurePersistentReadbackMapping(_meshletExpansionOverflowFlagBuffer);
+                _meshletExpansionOverflowNeedsMap = false;
+            }
+
             _buffersMapped = true;
 
             Dbg("MapBuffers complete","Buffers");
@@ -155,6 +165,7 @@ namespace XREngine.Rendering.Commands
             //_histogramIndexBuffer?.UnmapBufferData();
             _statsBuffer?.UnmapBufferData();
             _truncationFlagBuffer?.UnmapBufferData();
+            _meshletExpansionOverflowFlagBuffer?.UnmapBufferData();
 
             _buffersMapped = false;
 
@@ -178,6 +189,7 @@ namespace XREngine.Rendering.Commands
             _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderIndirect.comp", EShaderType.Compute));
             _buildHotCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildHotCommands.comp", EShaderType.Compute));
             _resetCountersComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderResetCounters.comp", EShaderType.Compute));
+            _expandMeshletsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderExpandMeshlets.comp", EShaderType.Compute));
             _clearUIntsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClearUInts.comp", EShaderType.Compute));
             _extractSoAComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderExtractSoA.comp", EShaderType.Compute));
             _soACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCullingSoA.comp", EShaderType.Compute));
@@ -465,6 +477,7 @@ namespace XREngine.Rendering.Commands
             EnsureGpuDrivenBatchingBuffers(capacity);
             EnsureTransparencyDomainBuffers(capacity);
             EnsureViewSetBuffers(capacity);
+            EnsureMeshletExpansionBuffers(capacity);
             _statsNeedsMap |= EnsureStatsBuffer();
 
             // Phase 3: occlusion ping-pong buffer (same layout as CulledSceneToRenderBuffer)
@@ -490,7 +503,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Aggregate whether any buffer mapping is pending
-            bool anyRemapPending = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap;
+            bool anyRemapPending = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap || _meshletExpansionOverflowNeedsMap;
 
             if (IndirectDebug.ValidateBufferLayouts)
                 ValidateIndirectBufferLayout(capacity, anyRemapPending);
@@ -499,6 +512,74 @@ namespace XREngine.Rendering.Commands
 
             // Return whether any mapping work is pending (independent of indirect draw recreation)
             return anyRemapPending;
+        }
+
+        private void EnsureMeshletExpansionBuffers(uint commandCapacity)
+        {
+            uint taskCapacity = ComputeMeshletTaskCapacity(commandCapacity);
+
+            if (_visibleMeshletTaskBuffer is null ||
+                _visibleMeshletTaskBuffer.ElementCount != taskCapacity ||
+                _visibleMeshletTaskBuffer.ComponentType != EComponentType.UInt ||
+                _visibleMeshletTaskBuffer.ComponentCount != GPUMeshletLayout.MeshletTaskRecordUIntCount)
+            {
+                _visibleMeshletTaskBuffer?.Destroy();
+                _visibleMeshletTaskBuffer = MakeVisibleMeshletTaskBuffer(taskCapacity);
+            }
+
+            EnsureParameterBuffer(ref _visibleMeshletTaskCountBuffer, "VisibleMeshletTaskCount");
+            EnsureParameterBuffer(ref _meshletDispatchCountBuffer, "MeshletDispatchCount");
+            EnsureMeshletDispatchIndirectBuffer();
+            _meshletExpansionOverflowNeedsMap |= EnsureFlagBuffer(ref _meshletExpansionOverflowFlagBuffer, "MeshletExpansionOverflowFlag");
+        }
+
+        private static XRDataBuffer MakeVisibleMeshletTaskBuffer(uint capacity)
+        {
+            XRDataBuffer buffer = new(
+                "VisibleMeshletTaskBuffer",
+                EBufferTarget.ShaderStorageBuffer,
+                Math.Max(capacity, 1u),
+                EComponentType.UInt,
+                GPUMeshletLayout.MeshletTaskRecordUIntCount,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = false,
+                PadEndingToVec4 = false,
+            };
+            buffer.Generate();
+            return buffer;
+        }
+
+        private void EnsureMeshletDispatchIndirectBuffer()
+        {
+            if (_meshletDispatchIndirectBuffer is not null &&
+                _meshletDispatchIndirectBuffer.Target == EBufferTarget.DrawIndirectBuffer &&
+                _meshletDispatchIndirectBuffer.ElementCount == 1u &&
+                _meshletDispatchIndirectBuffer.ComponentType == EComponentType.UInt &&
+                _meshletDispatchIndirectBuffer.ComponentCount == GPUMeshletLayout.MeshTaskIndirectCommandUIntCount)
+            {
+                return;
+            }
+
+            _meshletDispatchIndirectBuffer?.Destroy();
+            _meshletDispatchIndirectBuffer = new XRDataBuffer(
+                "MeshletDispatchIndirectBuffer",
+                EBufferTarget.DrawIndirectBuffer,
+                1u,
+                EComponentType.UInt,
+                GPUMeshletLayout.MeshTaskIndirectCommandUIntCount,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = false,
+                PadEndingToVec4 = false,
+            };
+            _meshletDispatchIndirectBuffer.Generate();
         }
 
         private bool EnsureIndirectDrawBuffer(uint capacity)

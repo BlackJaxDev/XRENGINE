@@ -150,6 +150,8 @@ The cache is a runtime/import acceleration artifact, not a replacement for user-
 
 **Goal:** move meshlet generation out of warm render startup and provide cone-culling data to GPUScene.
 
+2026-05-19 dependency note: the meshlet production tracker now provides an `XRMesh`-level `MeshletPayload` contract with CPU descriptors, cone data, freshness hashes, disabled-generation manifests, and runtime cooked-binary round trip. This phase still owns the disposable model-cache chunk/container integration, GPUScene registration handoff, GPU `Meshlet` layout/shader coordination, and model-cache counter coverage.
+
 - [ ] Add a serialized CPU meshlet descriptor distinct from the GPU `Meshlet` struct.
 - [ ] Extend the GPU `Meshlet` layout with cone axis, cutoff, and apex or a documented compressed equivalent.
 - [ ] Coordinate the GPU buffer layout change with shaders, indirect-buffer writers, pools, allocators, and payload versioning.

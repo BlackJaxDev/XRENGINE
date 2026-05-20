@@ -1,0 +1,77 @@
+#version 460
+
+// Bitonic merge - shared-memory variant.
+//
+// Collapses all j-passes with j <= 512 for a given K into a single dispatch.
+// Each workgroup loads 1024 contiguous elements, runs j = min(K/2, 512),
+// j/2, ..., 1 in shared memory (cheap workgroup `barrier()` between passes),
+// then writes back.
+//
+// Correctness notes:
+//   - For any K >= 2 and j <= 512, the pair (i, i^j) lies in the same
+//     1024-aligned block, so both elements stay inside the same workgroup.
+//   - The "ascending" direction `(i & K) == 0` is computed per-element, so it
+//     handles both K <= 1024 (direction varies within the workgroup) and
+//     K > 1024 (direction constant per workgroup) correctly.
+//
+// Caller contract: only dispatch this for K >= 2; for K <= 1024 a single
+// dispatch with j_start = K/2 replaces log2(K) global-memory passes. For
+// K > 1024 the caller must first run the global merge kernel for j-passes
+// with j >= 1024, then dispatch this kernel once for the remaining j <= 512.
+
+struct MortonObject {
+    uint mortonCode;
+    uint objectId;
+};
+
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[];
+};
+
+uniform uint paddedCount;
+uniform uint K;
+
+bool greater(MortonObject a, MortonObject b) {
+    if (a.mortonCode != b.mortonCode) return a.mortonCode > b.mortonCode;
+    return a.objectId > b.objectId;
+}
+
+layout (local_size_x = 1024, local_size_y = 1, local_size_z = 1) in;
+shared MortonObject sdata[1024];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint base = gl_WorkGroupID.x * 1024u;
+    uint i = base + tid;
+
+    MortonObject val;
+    if (i < paddedCount) {
+        val = mortonObjects[i];
+    } else {
+        val.mortonCode = 0xFFFFFFFFu;
+        val.objectId = 0xFFFFFFFFu;
+    }
+    sdata[tid] = val;
+    barrier();
+
+    uint j_start = K >> 1u;
+    if (j_start > 512u) j_start = 512u;
+
+    for (uint j = j_start; j > 0u; j >>= 1u) {
+        uint ixj = tid ^ j;
+        if (ixj > tid) {
+            bool up = ((i & K) == 0u);
+            MortonObject a = sdata[tid];
+            MortonObject b = sdata[ixj];
+            bool swap = up ? greater(a, b) : greater(b, a);
+            if (swap) {
+                sdata[tid] = b;
+                sdata[ixj] = a;
+            }
+        }
+        barrier();
+    }
+
+    if (i < paddedCount) mortonObjects[i] = sdata[tid];
+}

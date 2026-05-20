@@ -1,0 +1,212 @@
+#version 460 core
+#extension GL_EXT_mesh_shader : require
+
+// GL_EXT_mesh_shader (VK_EXT_mesh_shader / GL_EXT_mesh_shader) variant of
+// MeshletRender.mesh. Semantics are identical to the NV sibling; only the
+// dialect-specific intrinsics differ:
+//   - taskPayloadSharedEXT for the task payload binding.
+//   - SetMeshOutputsEXT(vertexCount, primitiveCount) declares output counts.
+//   - gl_MeshVerticesEXT[] for per-vertex outputs.
+//   - gl_PrimitiveTriangleIndicesEXT[] for triangle index emission (one uvec3 per primitive).
+
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 64, max_primitives = 126) out;
+
+const uint GROUP_SIZE = 32u;
+const uint MESHLET_TASK_PREVIOUS_LOD_FLAG = 0x80000000u;
+const uint MESHLET_TASK_MESHLET_INDEX_MASK = 0x7FFFFFFFu;
+
+struct DrawMetadata
+{
+    uint DrawID;
+    uint MeshID;
+    uint SubmeshID;
+    uint MaterialID;
+    uint TransformID;
+    uint SkinID;
+    uint RenderPassMask;
+    uint LayerMask;
+    uint Flags;
+    uint LodPolicy;
+    uint StateClassID;
+    uint InstanceCount;
+    uint RenderPass;
+    uint ShaderProgramID;
+    uint LogicalMeshID;
+    uint BoundsID;
+};
+
+struct MeshDataEntry
+{
+    uint IndexCount;
+    uint FirstIndex;
+    uint FirstVertex;
+    uint Flags;
+};
+
+struct GpuMeshletTaskRecord
+{
+    uint MeshletIndex;
+    uint DrawID;
+    uint TransformID;
+    uint MaterialID;
+};
+
+struct GpuMeshletDescriptor
+{
+    vec4 BoundsSphere;
+    uint VertexOffset;
+    uint TriangleByteOffset;
+    uint VertexCount;
+    uint TriangleCount;
+    vec4 Cone;
+    vec4 ConeApex;
+    uint PackedCone;
+    uint Reserved0;
+    uint Reserved1;
+    uint Reserved2;
+};
+
+struct TaskPayload
+{
+    GpuMeshletTaskRecord Record;
+    uint MeshletIndex;
+    uint IsPreviousLod;
+    uint PassFlags;
+    uint Reserved;
+};
+
+taskPayloadSharedEXT TaskPayload IN;
+
+layout(std430, binding = 3) readonly buffer MeshDataBuffer { MeshDataEntry MeshData[]; };
+layout(std430, binding = 5) readonly buffer MeshletDescriptorBuffer { GpuMeshletDescriptor Meshlets[]; };
+layout(std430, binding = 6) readonly buffer MeshletVertexIndexBuffer { uint MeshletVertexIndices[]; };
+layout(std430, binding = 7) readonly buffer MeshletTriangleIndexBuffer { uint MeshletTriangleWords[]; };
+layout(std430, binding = 12) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
+layout(std430, binding = 13) readonly buffer AtlasPositionBuffer { float AtlasPositions[]; };
+layout(std430, binding = 14) readonly buffer AtlasNormalBuffer { float AtlasNormals[]; };
+layout(std430, binding = 15) readonly buffer AtlasTangentBuffer { float AtlasTangents[]; };
+layout(std430, binding = 18) readonly buffer AtlasUV0Buffer { float AtlasUV0[]; };
+layout(std430, binding = 19) readonly buffer TransformBuffer { mat4 WorldMatrices[]; };
+layout(std430, binding = 20) readonly buffer PrevTransformBuffer { mat4 PreviousWorldMatrices[]; };
+
+layout(location = 0) out vec3 FragPos[];
+layout(location = 1) out vec3 FragNorm[];
+layout(location = 2) out vec3 FragTan[];
+layout(location = 3) out vec3 FragBinorm[];
+layout(location = 4) out vec2 FragUV0[];
+layout(location = 12) out vec4 FragColor0[];
+layout(location = 20) out vec3 FragPosLocal[];
+layout(location = 21) out float FragTransformId[];
+layout(location = 22) out float FragViewIndex[];
+layout(location = 23) flat out uint XreFragLodTransitionRole[];
+layout(location = 24) flat out uint XRE_FragMaterialId[];
+layout(location = 25) out vec3 PrevFragPos[];
+layout(location = 26) flat out uint XRE_FragStateClassId[];
+
+uniform mat4 ViewProjectionMatrix;
+uniform mat4 PreviousViewProjectionMatrix;
+uniform uint ActiveViewIndex;
+
+vec3 LoadPosition(uint vertexIndex)
+{
+    uint base = vertexIndex * 3u;
+    return vec3(AtlasPositions[base + 0u], AtlasPositions[base + 1u], AtlasPositions[base + 2u]);
+}
+
+vec3 LoadNormal(uint vertexIndex)
+{
+    uint base = vertexIndex * 3u;
+    return vec3(AtlasNormals[base + 0u], AtlasNormals[base + 1u], AtlasNormals[base + 2u]);
+}
+
+vec4 LoadTangent(uint vertexIndex)
+{
+    uint base = vertexIndex * 4u;
+    return vec4(AtlasTangents[base + 0u], AtlasTangents[base + 1u], AtlasTangents[base + 2u], AtlasTangents[base + 3u]);
+}
+
+vec2 LoadUV0(uint vertexIndex)
+{
+    uint base = vertexIndex * 2u;
+    return vec2(AtlasUV0[base + 0u], AtlasUV0[base + 1u]);
+}
+
+uint ReadTriIndex(uint byteIndex)
+{
+    uint word = MeshletTriangleWords[byteIndex >> 2u];
+    uint shift = (byteIndex & 3u) * 8u;
+    return (word >> shift) & 0xFFu;
+}
+
+void EmitVertex(uint tid, uint atlasVertexIndex, in DrawMetadata draw, mat4 world, mat4 previousWorld)
+{
+    vec3 localPosition = LoadPosition(atlasVertexIndex);
+    vec3 localNormal = LoadNormal(atlasVertexIndex);
+    vec4 localTangent = LoadTangent(atlasVertexIndex);
+    vec2 uv0 = LoadUV0(atlasVertexIndex);
+
+    mat3 normalMatrix = transpose(inverse(mat3(world)));
+    vec3 worldNormal = normalize(normalMatrix * localNormal);
+    vec3 worldTangent = normalize(normalMatrix * localTangent.xyz);
+    vec3 worldBitangent = normalize(cross(worldNormal, worldTangent) * localTangent.w);
+    vec4 worldPosition = world * vec4(localPosition, 1.0);
+    vec4 previousWorldPosition = previousWorld * vec4(localPosition, 1.0);
+
+    gl_MeshVerticesEXT[tid].gl_Position = ViewProjectionMatrix * worldPosition;
+    FragPos[tid] = worldPosition.xyz;
+    FragNorm[tid] = worldNormal;
+    FragTan[tid] = worldTangent;
+    FragBinorm[tid] = worldBitangent;
+    FragUV0[tid] = uv0;
+    FragColor0[tid] = vec4(1.0);
+    FragPosLocal[tid] = localPosition;
+    FragTransformId[tid] = uintBitsToFloat(draw.DrawID);
+    FragViewIndex[tid] = float(ActiveViewIndex);
+    XreFragLodTransitionRole[tid] = IN.IsPreviousLod;
+    XRE_FragMaterialId[tid] = IN.Record.MaterialID != 0u ? IN.Record.MaterialID : draw.MaterialID;
+    PrevFragPos[tid] = previousWorldPosition.xyz;
+    XRE_FragStateClassId[tid] = draw.StateClassID;
+}
+
+void main()
+{
+    uint meshletIndex = IN.MeshletIndex & MESHLET_TASK_MESHLET_INDEX_MASK;
+    if (meshletIndex >= uint(Meshlets.length()) || IN.Record.DrawID >= uint(Draws.length()))
+    {
+        SetMeshOutputsEXT(0u, 0u);
+        return;
+    }
+
+    GpuMeshletDescriptor meshlet = Meshlets[meshletIndex];
+    DrawMetadata draw = Draws[IN.Record.DrawID];
+    if (draw.MeshID >= uint(MeshData.length()))
+    {
+        SetMeshOutputsEXT(0u, 0u);
+        return;
+    }
+
+    MeshDataEntry meshData = MeshData[draw.MeshID];
+    uint transformID = IN.Record.TransformID != 0u ? IN.Record.TransformID : draw.TransformID;
+    mat4 world = WorldMatrices[transformID];
+    mat4 previousWorld = PreviousWorldMatrices[transformID];
+
+    SetMeshOutputsEXT(meshlet.VertexCount, meshlet.TriangleCount);
+
+    uint tid = gl_LocalInvocationID.x;
+    if (tid < meshlet.VertexCount)
+    {
+        uint localVertexIndex = MeshletVertexIndices[meshlet.VertexOffset + tid];
+        uint atlasVertexIndex = meshData.FirstVertex + localVertexIndex;
+        EmitVertex(tid, atlasVertexIndex, draw, world, previousWorld);
+    }
+
+    for (uint tri = tid; tri < meshlet.TriangleCount; tri += GROUP_SIZE)
+    {
+        uint baseByte = meshlet.TriangleByteOffset + tri * 3u;
+        gl_PrimitiveTriangleIndicesEXT[tri] = uvec3(
+            ReadTriIndex(baseByte + 0u),
+            ReadTriIndex(baseByte + 1u),
+            ReadTriIndex(baseByte + 2u));
+    }
+}

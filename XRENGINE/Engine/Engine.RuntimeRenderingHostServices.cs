@@ -451,6 +451,36 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible)
         => Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(opaqueOrOtherVisible, maskedVisible, approximateVisible, exactVisible);
 
+    public void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1)
+        => Engine.Rendering.Stats.RecordGpuMeshletStrategyRequested(eventCount);
+
+    public void RecordRenderGpuMeshletProductionFrame(int eventCount = 1)
+        => Engine.Rendering.Stats.RecordGpuMeshletProductionFrame(eventCount);
+
+    public void RecordRenderGpuMeshletFallback(int eventCount = 1)
+        => Engine.Rendering.Stats.RecordGpuMeshletFallback(eventCount);
+
+    public void RecordRenderGpuMeshletDispatchSkipped(int eventCount = 1)
+        => Engine.Rendering.Stats.RecordGpuMeshletDispatchSkipped(eventCount);
+
+    public void RecordRenderGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
+        => Engine.Rendering.Stats.RecordGpuMeshletTaskStats(emitted, frustumCulled, coneCulled, hiZCulled);
+
+    public void RecordRenderGpuMeshletExpansionOverflow(uint overflowCount)
+        => Engine.Rendering.Stats.RecordGpuMeshletExpansionOverflow(overflowCount);
+
+    public void RecordRenderGpuMeshletBufferBytesResident(long bytes)
+        => Engine.Rendering.Stats.RecordGpuMeshletBufferBytesResident(bytes < 0 ? 0UL : (ulong)bytes);
+
+    public void RecordRenderGpuMeshletCacheHit(int eventCount = 1)
+        => Engine.Rendering.Stats.RecordGpuMeshletCacheHit(eventCount);
+
+    public void RecordRenderGpuMeshletCacheMiss(int eventCount = 1)
+        => Engine.Rendering.Stats.RecordGpuMeshletCacheMiss(eventCount);
+
+    public void RecordRenderGpuMeshletCacheStale(int eventCount = 1)
+        => Engine.Rendering.Stats.RecordGpuMeshletCacheStale(eventCount);
+
     public void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands)
         => Engine.Rendering.Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
 

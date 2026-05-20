@@ -74,6 +74,7 @@ namespace XREngine.Rendering.Commands
             _gpuBatchingPreparedThisFrame = false;
             _zeroReadbackMaterialScatterPreparedThisFrame = false;
             _zeroReadbackActiveBucketListPreparedThisFrame = false;
+            _meshletExpansionPreparedThisFrame = false;
             ResetZeroReadbackProgramPendingState();
             Stopwatch resetStopwatch = Stopwatch.StartNew();
             ResetCounters();
@@ -84,6 +85,7 @@ namespace XREngine.Rendering.Commands
 
             Cull(scene, camera);
             SelectVisibleCommandLods(scene, camera);
+            ExpandVisibleMeshlets(scene);
             ClassifyTransparencyDomains(scene);
 
             // Phase 2: do not early-out based on CPU-visible counters.
@@ -226,7 +228,14 @@ namespace XREngine.Rendering.Commands
         {
             ResetVisibleCounters();
 
-            if (_resetCountersComputeShader is null || _culledCountBuffer is null || _drawCountBuffer is null || _cullCountScratchBuffer is null)
+            if (_resetCountersComputeShader is null ||
+                _culledCountBuffer is null ||
+                _drawCountBuffer is null ||
+                _cullCountScratchBuffer is null ||
+                _visibleMeshletTaskCountBuffer is null ||
+                _meshletDispatchIndirectBuffer is null ||
+                _meshletDispatchCountBuffer is null ||
+                _meshletExpansionOverflowFlagBuffer is null)
                 return;
 
             Dbg("Reset counters dispatch", "Lifecycle");
@@ -244,6 +253,10 @@ namespace XREngine.Rendering.Commands
                 _resetCountersComputeShader.BindBuffer(_statsBuffer, 8);
             if (_gpuBatchCountBuffer is not null)
                 _resetCountersComputeShader.BindBuffer(_gpuBatchCountBuffer, 9);
+            BindStorageBuffer(_resetCountersComputeShader, _visibleMeshletTaskCountBuffer, 10);
+            _resetCountersComputeShader.BindBuffer(_meshletDispatchIndirectBuffer, 11);
+            _resetCountersComputeShader.BindBuffer(_meshletExpansionOverflowFlagBuffer, 12);
+            _resetCountersComputeShader.BindBuffer(_meshletDispatchCountBuffer, 14);
 
             _resetCountersComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             ResetCountersHook?.Invoke();
@@ -315,6 +328,8 @@ namespace XREngine.Rendering.Commands
                 return;
 
             _lodSelectComputeShader.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? Vector3.Zero);
+            _lodSelectComputeShader.Uniform("ProjectionScale", ResolveLodProjectionScale(camera));
+            _lodSelectComputeShader.Uniform("ViewportSize", ResolveLodViewportSize());
             _lodSelectComputeShader.Uniform("InputCommandCount", (int)dispatchCommands);
             _lodSelectComputeShader.Uniform("TransitionFrameStep", 1.0f / Math.Max(LodTransitionFrameCount, 1u));
 
@@ -329,6 +344,118 @@ namespace XREngine.Rendering.Commands
             _lodSelectComputeShader.DispatchCompute(dispatchGroups, 1, 1, postLodBarrier);
             AbstractRenderer.Current?.MemoryBarrier(postLodBarrier);
             _culledHotCommandsValid = false;
+        }
+
+        private static Vector2 ResolveLodProjectionScale(XRCamera camera)
+        {
+            bool useUnjitteredProjection = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+            Matrix4x4 projection = useUnjitteredProjection ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
+            return new Vector2(MathF.Abs(projection.M11), MathF.Abs(projection.M22));
+        }
+
+        private static Vector2 ResolveLodViewportSize()
+        {
+            var renderArea = RuntimeEngine.Rendering.State.RenderArea;
+            if (renderArea.Width > 0 && renderArea.Height > 0)
+                return new Vector2(renderArea.Width, renderArea.Height);
+
+            XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport
+                ?? pipeline?.LastWindowViewport;
+
+            if (viewport is not null)
+            {
+                int width = viewport.InternalWidth > 0 ? viewport.InternalWidth : viewport.Width;
+                int height = viewport.InternalHeight > 0 ? viewport.InternalHeight : viewport.Height;
+                return new Vector2(Math.Max(width, 1), Math.Max(height, 1));
+            }
+
+            return Vector2.One;
+        }
+
+        private void ExpandVisibleMeshlets(GPUScene scene)
+        {
+            using var profilerScope = RuntimeEngine.Profiler.Start("GpuMeshlet.ExpandVisibleMeshlets");
+
+            if (!UseMeshletPipeline && MeshSubmissionStrategy != EMeshSubmissionStrategy.GpuMeshlet)
+                return;
+
+            if (_expandMeshletsComputeShader is null ||
+                _visibleMeshletTaskBuffer is null ||
+                _visibleMeshletTaskCountBuffer is null ||
+                _meshletDispatchIndirectBuffer is null ||
+                _meshletDispatchCountBuffer is null ||
+                _meshletExpansionOverflowFlagBuffer is null)
+            {
+                LogMeshletDispatchSkipped("missing shader or output buffers", scene.TotalCommandCount);
+                Dbg("Meshlet expansion skipped - missing shader or output buffers.", "Meshlet");
+                return;
+            }
+
+            UpdateVisibleCountersFromBuffer();
+            BuildCulledHotCommandBuffer();
+
+            if (!TryGetMeshletExpansionInputs(scene, out GpuMeshletExpansionInputs inputs))
+            {
+                LogMeshletDispatchSkipped("input contract unavailable", scene.TotalCommandCount);
+                Dbg("Meshlet expansion skipped - input contract unavailable.", "Meshlet");
+                return;
+            }
+
+            uint dispatchCommands = Math.Min(inputs.VisibleCommandUpperBound, CommandCapacity);
+            if (dispatchCommands == 0u || inputs.MeshletRangeBuffer.ElementCount == 0u)
+            {
+                RuntimeEngine.Rendering.Stats.RecordGpuMeshletDispatchSkipped(1);
+                return;
+            }
+
+            _expandMeshletsComputeShader.Uniform("InputCommandCount", (int)dispatchCommands);
+            _expandMeshletsComputeShader.Uniform("MaxMeshletTaskRecords", (int)_visibleMeshletTaskBuffer.ElementCount);
+            _expandMeshletsComputeShader.Uniform("UseHotCommands", inputs.UseHotCommandLayout ? 1 : 0);
+            _expandMeshletsComputeShader.Uniform("ExpandPreviousLodTransitions", 1);
+
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.VisibleCommandBuffer, (uint)GPUMeshletBindings.ExpandVisibleCommands);
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.CulledCountBuffer, (uint)GPUMeshletBindings.ExpandCulledCount);
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.DrawMetadataBuffer, (uint)GPUMeshletBindings.ExpandDrawMetadata);
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.MeshDataBuffer, (uint)GPUMeshletBindings.ExpandMeshData);
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.MeshletRangeBuffer, (uint)GPUMeshletBindings.ExpandMeshletRanges);
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.MeshletDescriptorBuffer, (uint)GPUMeshletBindings.ExpandMeshletDescriptors);
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.MeshletVertexIndexBuffer, (uint)GPUMeshletBindings.ExpandMeshletVertexIndices);
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.MeshletTriangleIndexBuffer, (uint)GPUMeshletBindings.ExpandMeshletTriangleIndices);
+            BindStorageBuffer(_expandMeshletsComputeShader, inputs.LodTransitionBuffer, (uint)GPUMeshletBindings.ExpandLodTransitions);
+            BindStorageBuffer(_expandMeshletsComputeShader, _visibleMeshletTaskBuffer, (uint)GPUMeshletBindings.ExpandVisibleMeshletTasks);
+            BindStorageBuffer(_expandMeshletsComputeShader, _visibleMeshletTaskCountBuffer, (uint)GPUMeshletBindings.ExpandMeshletTaskCount);
+            BindStorageBuffer(_expandMeshletsComputeShader, _meshletDispatchIndirectBuffer, (uint)GPUMeshletBindings.ExpandDispatchIndirect);
+            BindStorageBuffer(_expandMeshletsComputeShader, _meshletExpansionOverflowFlagBuffer, (uint)GPUMeshletBindings.ExpandOverflow);
+            BindStorageBuffer(_expandMeshletsComputeShader, _meshletDispatchCountBuffer, (uint)GPUMeshletBindings.ExpandDispatchCount);
+
+            if (inputs.UseHotCommandLayout && inputs.VisibleHotCommandBuffer is not null)
+                BindStorageBuffer(_expandMeshletsComputeShader, inputs.VisibleHotCommandBuffer, (uint)GPUMeshletBindings.ExpandVisibleHotCommands);
+            else
+                BindStorageBuffer(_expandMeshletsComputeShader, inputs.VisibleCommandBuffer, (uint)GPUMeshletBindings.ExpandVisibleHotCommands);
+
+            uint dispatchGroups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(dispatchCommands, MeshletExpansionLocalSizeX).Item1);
+            const EMemoryBarrierMask postExpandBarrier = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command;
+            _expandMeshletsComputeShader.DispatchCompute(dispatchGroups, 1, 1, postExpandBarrier);
+            AbstractRenderer.Current?.MemoryBarrier(postExpandBarrier);
+            _meshletExpansionPreparedThisFrame = true;
+            RuntimeEngine.Rendering.Stats.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
+            Dbg($"Meshlet expansion dispatch groups={dispatchGroups} commands={dispatchCommands} taskCapacity={_visibleMeshletTaskBuffer.ElementCount}", "Meshlet");
+        }
+
+        private void LogMeshletDispatchSkipped(string reason, uint commandCount)
+        {
+            RuntimeEngine.Rendering.Stats.RecordGpuMeshletDispatchSkipped(1);
+            XREngine.Debug.RenderingWarningEvery(
+                $"Meshlet.DispatchSkipped.{RenderPass}.{reason.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "Meshlet.DispatchSkipped pass={0} requested={1} selected={2} reason='{3}' commandCount={4} capacity={5}",
+                RenderPass,
+                MeshSubmissionStrategy,
+                MeshSubmissionStrategy,
+                reason,
+                commandCount,
+                MaxVisibleMeshletTaskCapacity);
         }
 
         private void BindIndirectShaderUniforms()
@@ -370,6 +497,7 @@ namespace XREngine.Rendering.Commands
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.BuildCulledHotCommandBuffer");
 
             _culledCommandsUseHotLayout = false;
+            _culledHotCommandsValid = false;
 
             if (!IsHotCommandLayoutEnabled() ||
                 _buildHotCommandsProgram is null ||
@@ -395,6 +523,7 @@ namespace XREngine.Rendering.Commands
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
             _culledCommandsUseHotLayout = true;
+            _culledHotCommandsValid = true;
         }
 
         private List<HybridRenderingManager.DrawBatch>? BuildGpuBatchesAndInstancing(GPUScene scene)
@@ -1660,12 +1789,18 @@ namespace XREngine.Rendering.Commands
             uint cullOv = ReadUInt(_cullingOverflowFlagBuffer);
             uint indOv = ReadUInt(_indirectOverflowFlagBuffer);
             uint trunc = ReadUInt(_truncationFlagBuffer);
-            uint overflowTotal = cullOv + indOv + trunc;
+            uint meshletExpandOv = _meshletExpansionOverflowFlagBuffer is not null ? ReadUInt(_meshletExpansionOverflowFlagBuffer) : 0u;
+            uint overflowTotal = cullOv + indOv + trunc + meshletExpandOv;
 
-            if (cullOv != 0 || indOv != 0 || trunc != 0)
+            if (cullOv != 0 || indOv != 0 || trunc != 0 || meshletExpandOv != 0)
             {
-                Debug.MeshesWarning($"{FormatDebugPrefix("Stats")} GPU Render Overflow: Culling={cullOv} Indirect={indOv} Trunc={trunc}");
-                Dbg($"Overflow flags cull={cullOv} indirect={indOv} trunc={trunc}", "Stats");
+                Debug.MeshesWarning($"{FormatDebugPrefix("Stats")} GPU Render Overflow: Culling={cullOv} Indirect={indOv} Trunc={trunc} MeshletExpand={meshletExpandOv}");
+                Dbg($"Overflow flags cull={cullOv} indirect={indOv} trunc={trunc} meshletExpand={meshletExpandOv}", "Stats");
+                if (meshletExpandOv != 0u)
+                {
+                    RuntimeEngine.Rendering.Stats.RecordGpuMeshletExpansionOverflow(meshletExpandOv);
+                    Debug.MeshesWarning($"{FormatDebugPrefix("Stats")} Meshlet.ExpandOverflow pass={RenderPass} count={meshletExpandOv} capacity={MaxVisibleMeshletTaskCapacity}");
+                }
 
                 uint currentCapacity = scene.AllocatedMaxCommandCount;
                 uint minimumRequired = Math.Max(Math.Max(scene.TotalCommandCount, VisibleCommandCount), 1u);
@@ -1726,12 +1861,19 @@ namespace XREngine.Rendering.Commands
                 emittedIndirectDraws: stats.Drawn,
                 consumedDraws: consumedDrawCount,
                 overflowCount: overflowCount);
+            RuntimeEngine.Rendering.Stats.RecordGpuMeshletTaskStats(
+                stats.MeshletTaskRecordsEmitted,
+                stats.MeshletTaskRecordsFrustumCulled,
+                stats.MeshletTaskRecordsConeCulled,
+                stats.MeshletTaskRecordsHiZCulled);
 
             if (IsDebugLoggingEnabledForPass())
             {
                 Debug.Meshes($"{FormatDebugPrefix("Stats")} [GPU Stats] In={stats.Input} CulledOut={stats.Culled} " +
                          $"Draws={stats.Drawn} Tris={stats.Triangles} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected} " +
                          $"CpuFallbackEvents={cpuFallbackEvents} CpuRecovered={cpuFallbackRecovered}");
+                Debug.Meshes($"{FormatDebugPrefix("Stats")} [Meshlets] Tasks={stats.MeshletTaskRecordsEmitted} " +
+                         $"Frustum={stats.MeshletTaskRecordsFrustumCulled} Cone={stats.MeshletTaskRecordsConeCulled} HiZ={stats.MeshletTaskRecordsHiZCulled}");
 
                 Debug.Meshes($"{FormatDebugPrefix("Stats")} [Transparency] Masked={MaskedVisibleCommandCount} " +
                          $"Approximate={ApproximateTransparentVisibleCommandCount} Exact={ExactTransparentVisibleCommandCount}");
@@ -1858,6 +2000,11 @@ namespace XREngine.Rendering.Commands
             _sourceHotCommandBuffer?.Dispose();
             _culledHotCommandBuffer?.Dispose();
             _occlusionCulledHotBuffer?.Dispose();
+            _visibleMeshletTaskBuffer?.Dispose();
+            _visibleMeshletTaskCountBuffer?.Dispose();
+            _meshletDispatchIndirectBuffer?.Dispose();
+            _meshletDispatchCountBuffer?.Dispose();
+            _meshletExpansionOverflowFlagBuffer?.Dispose();
             _passFilterDebugBuffer?.Dispose();
             _materialIDsBuffer?.Dispose();
             _materialTable?.Dispose();
@@ -1888,6 +2035,7 @@ namespace XREngine.Rendering.Commands
             _lodSelectComputeShader?.Destroy();
             _indirectRenderTaskShader?.Destroy();
             _buildHotCommandsProgram?.Destroy();
+            _expandMeshletsComputeShader?.Destroy();
             _clearUIntsComputeShader?.Destroy();
             _indirectRenderer?.Destroy();
 
@@ -1916,6 +2064,10 @@ namespace XREngine.Rendering.Commands
             public uint BvhRefitCount { get; }
             public uint BvhCullCount { get; }
             public uint BvhRayCount { get; }
+            public uint MeshletTaskRecordsEmitted { get; }
+            public uint MeshletTaskRecordsFrustumCulled { get; }
+            public uint MeshletTaskRecordsConeCulled { get; }
+            public uint MeshletTaskRecordsHiZCulled { get; }
             public double BvhBuildMs { get; }
             public double BvhRefitMs { get; }
             public double BvhCullMs { get; }
@@ -1935,6 +2087,10 @@ namespace XREngine.Rendering.Commands
                 BvhRefitCount = values[(int)GpuStatsLayout.BvhRefitCount];
                 BvhCullCount = values[(int)GpuStatsLayout.BvhCullCount];
                 BvhRayCount = values[(int)GpuStatsLayout.BvhRayCount];
+                MeshletTaskRecordsEmitted = values[(int)GpuStatsLayout.MeshletTaskRecordsEmitted];
+                MeshletTaskRecordsFrustumCulled = values[(int)GpuStatsLayout.MeshletTaskRecordsFrustumCulled];
+                MeshletTaskRecordsConeCulled = values[(int)GpuStatsLayout.MeshletTaskRecordsConeCulled];
+                MeshletTaskRecordsHiZCulled = values[(int)GpuStatsLayout.MeshletTaskRecordsHiZCulled];
 
                 BvhBuildMs = ToMs(values[(int)GpuStatsLayout.BvhBuildTimeLo], values[(int)GpuStatsLayout.BvhBuildTimeHi]);
                 BvhRefitMs = ToMs(values[(int)GpuStatsLayout.BvhRefitTimeLo], values[(int)GpuStatsLayout.BvhRefitTimeHi]);

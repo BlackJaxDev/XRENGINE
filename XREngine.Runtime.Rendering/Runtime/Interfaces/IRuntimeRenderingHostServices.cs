@@ -752,6 +752,16 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands);
     void RecordRenderForbiddenGpuFallback(int eventCount = 1);
     void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible);
+    void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1);
+    void RecordRenderGpuMeshletProductionFrame(int eventCount = 1);
+    void RecordRenderGpuMeshletFallback(int eventCount = 1);
+    void RecordRenderGpuMeshletDispatchSkipped(int eventCount = 1);
+    void RecordRenderGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled);
+    void RecordRenderGpuMeshletExpansionOverflow(uint overflowCount);
+    void RecordRenderGpuMeshletBufferBytesResident(long bytes);
+    void RecordRenderGpuMeshletCacheHit(int eventCount = 1);
+    void RecordRenderGpuMeshletCacheMiss(int eventCount = 1);
+    void RecordRenderGpuMeshletCacheStale(int eventCount = 1);
     void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands);
     void RecordRenderRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime);
     void RecordRenderRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime);

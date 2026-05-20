@@ -621,6 +621,10 @@ public class GpuIndirectRenderDispatchTests
         GpuStatsLayout.StatsDrawCount.ShouldBe(2u);
         GpuStatsLayout.StatsRejectedFrustum.ShouldBe(3u);
         GpuStatsLayout.StatsRejectedDistance.ShouldBe(4u);
+        GpuStatsLayout.MeshletTaskRecordsEmitted.ShouldBeGreaterThan(GpuStatsLayout.StatsTriangleCount);
+        GpuStatsLayout.MeshletTaskRecordsFrustumCulled.ShouldBe(GpuStatsLayout.MeshletTaskRecordsEmitted + 1u);
+        GpuStatsLayout.MeshletTaskRecordsConeCulled.ShouldBe(GpuStatsLayout.MeshletTaskRecordsFrustumCulled + 1u);
+        GpuStatsLayout.MeshletTaskRecordsHiZCulled.ShouldBe(GpuStatsLayout.MeshletTaskRecordsConeCulled + 1u);
     }
 
     [Test]

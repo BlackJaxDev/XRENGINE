@@ -1,5 +1,6 @@
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
+using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Vulkan.Extensions.NV;
 using System.Text;
@@ -370,6 +371,34 @@ public unsafe partial class VulkanRenderer
         featureSupported = timelineFeatures.TimelineSemaphore;
     }
 
+    private unsafe void QueryMeshShaderCapabilities(
+        bool extensionEnabled,
+        out bool taskShaderSupported,
+        out bool meshShaderSupported)
+    {
+        taskShaderSupported = false;
+        meshShaderSupported = false;
+
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceMeshShaderFeaturesEXT meshShaderFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceMeshShaderFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &meshShaderFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        taskShaderSupported = meshShaderFeatures.TaskShader;
+        meshShaderSupported = meshShaderFeatures.MeshShader;
+    }
+
     /// <summary>
     /// Creates a logical device interface to the physical device with specific 
     /// queue families and extensions.
@@ -572,6 +601,16 @@ public unsafe partial class VulkanRenderer
         bool enableTimelineSemaphoreFeature = timelineSemaphoreFeatureSupported;
         bool enableSynchronization2Feature = synchronization2ExtensionEnabled && _supportsSynchronization2Feature;
 
+        bool meshShaderExtensionEnabled = extensionsArray.Contains("VK_EXT_mesh_shader");
+        QueryMeshShaderCapabilities(
+            meshShaderExtensionEnabled,
+            out bool taskShaderFeatureSupported,
+            out bool meshShaderFeatureSupported);
+        bool enableMeshShaderFeature =
+            meshShaderExtensionEnabled &&
+            taskShaderFeatureSupported &&
+            meshShaderFeatureSupported;
+
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
@@ -652,6 +691,14 @@ public unsafe partial class VulkanRenderer
             Synchronization2 = enableSynchronization2Feature,
         };
 
+        PhysicalDeviceMeshShaderFeaturesEXT meshShaderFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceMeshShaderFeaturesExt,
+            PNext = null,
+            TaskShader = enableMeshShaderFeature,
+            MeshShader = enableMeshShaderFeature,
+        };
+
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing)
         {
@@ -713,6 +760,12 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &synchronization2FeatureEnable;
         }
 
+        if (enableMeshShaderFeature)
+        {
+            meshShaderFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &meshShaderFeatureEnable;
+        }
+
         PhysicalDeviceFeatures2 featureChain = new()
         {
             SType = StructureType.PhysicalDeviceFeatures2,
@@ -756,6 +809,8 @@ public unsafe partial class VulkanRenderer
         _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
         _supportsTimelineSemaphores = enableTimelineSemaphoreFeature;
         _supportsSynchronization2 = enableSynchronization2Feature;
+        _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
+        _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
         RuntimeEngine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
 
@@ -843,6 +898,14 @@ public unsafe partial class VulkanRenderer
                     _supportsSynchronization2Feature);
             }
 
+            if (meshShaderExtensionEnabled && !enableMeshShaderFeature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] VK_EXT_mesh_shader present but disabled (taskShaderFeature={0}, meshShaderFeature={1}). Production meshlet dispatch will remain unavailable.",
+                    taskShaderFeatureSupported,
+                    meshShaderFeatureSupported);
+            }
+
         // Load optional extensions
         LoadOptionalDeviceExtensions(extensionsArray);
 
@@ -884,6 +947,25 @@ public unsafe partial class VulkanRenderer
             {
                 Debug.VulkanWarning("[Vulkan] Failed to load VK_KHR_draw_indirect_count extension handle.");
                 _supportsDrawIndirectCount = false;
+            }
+        }
+
+        if (enabledExtensions.Contains(ExtMeshShader.ExtensionName))
+        {
+            if (_supportsVulkanTaskShaderFeature &&
+                _supportsVulkanMeshShaderFeature &&
+                Api!.TryGetDeviceExtension(instance, device, out _extMeshShader))
+            {
+                _supportsVulkanMeshTaskIndirectCount = true;
+                Debug.Vulkan("[Vulkan] VK_EXT_mesh_shader extension loaded successfully for indirect-count mesh task dispatch.");
+            }
+            else
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Failed to load VK_EXT_mesh_shader for production dispatch (taskFeature={0}, meshFeature={1}).",
+                    _supportsVulkanTaskShaderFeature,
+                    _supportsVulkanMeshShaderFeature);
+                _supportsVulkanMeshTaskIndirectCount = false;
             }
         }
 
@@ -991,6 +1073,7 @@ public unsafe partial class VulkanRenderer
         LogCapability("AccelerationStructure", hasAccelerationStructure, "Optional");
         LogCapability("DescriptorIndexing", _supportsDescriptorIndexing, "Optional");
         LogCapability("DrawIndirectCount", _supportsDrawIndirectCount, "Optional");
+        LogCapability("MeshShaderEXT", SupportsVulkanMeshTaskIndirectCount, "Optional");
         LogCapability("Multiview", RuntimeEngine.Rendering.State.HasVulkanMultiView, "Optional");
         LogCapability("RayTracingPipeline", hasRayTracingPipeline, "DisabledByProfile");
         LogCapability("TimelineSemaphore", _supportsTimelineSemaphores, "Required");

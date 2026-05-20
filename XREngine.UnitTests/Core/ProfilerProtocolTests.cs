@@ -114,6 +114,19 @@ public sealed class ProfilerProtocolTests
             ForbiddenGpuFallbackEvents = 1,
             GpuMappedBuffers = 3,
             GpuReadbackBytes = 4096,
+            GpuMeshletRequestedFrames = 5,
+            GpuMeshletProductionFrames = 4,
+            GpuMeshletFallbackFrames = 1,
+            GpuMeshletDispatchSkipped = 2,
+            GpuMeshletTaskRecordsEmitted = 10_000,
+            GpuMeshletTaskRecordsFrustumCulled = 1_000,
+            GpuMeshletTaskRecordsConeCulled = 500,
+            GpuMeshletTaskRecordsHiZCulled = 250,
+            GpuMeshletExpansionOverflowCount = 3,
+            GpuMeshletBufferBytesResident = 2_097_152,
+            GpuMeshletCacheHits = 8,
+            GpuMeshletCacheMisses = 2,
+            GpuMeshletCacheStale = 1,
             VulkanDeviceLocalAllocationCount = 7,
             VulkanDeviceLocalAllocatedBytes = 70_000,
             VulkanUploadAllocationCount = 3,
@@ -268,6 +281,19 @@ public sealed class ProfilerProtocolTests
         clone.ForbiddenGpuFallbackEvents.ShouldBe(1);
         clone.GpuMappedBuffers.ShouldBe(3);
         clone.GpuReadbackBytes.ShouldBe(4096);
+        clone.GpuMeshletRequestedFrames.ShouldBe(5);
+        clone.GpuMeshletProductionFrames.ShouldBe(4);
+        clone.GpuMeshletFallbackFrames.ShouldBe(1);
+        clone.GpuMeshletDispatchSkipped.ShouldBe(2);
+        clone.GpuMeshletTaskRecordsEmitted.ShouldBe(10_000);
+        clone.GpuMeshletTaskRecordsFrustumCulled.ShouldBe(1_000);
+        clone.GpuMeshletTaskRecordsConeCulled.ShouldBe(500);
+        clone.GpuMeshletTaskRecordsHiZCulled.ShouldBe(250);
+        clone.GpuMeshletExpansionOverflowCount.ShouldBe(3);
+        clone.GpuMeshletBufferBytesResident.ShouldBe(2_097_152);
+        clone.GpuMeshletCacheHits.ShouldBe(8);
+        clone.GpuMeshletCacheMisses.ShouldBe(2);
+        clone.GpuMeshletCacheStale.ShouldBe(1);
         clone.VulkanDeviceLocalAllocationCount.ShouldBe(7);
         clone.VulkanDeviceLocalAllocatedBytes.ShouldBe(70_000);
         clone.VulkanUploadAllocationCount.ShouldBe(3);

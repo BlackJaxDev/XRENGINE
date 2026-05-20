@@ -1,43 +1,178 @@
 #version 460 core
 #extension GL_NV_mesh_shader : require
 
-layout(local_size_x = 32) in;
+layout(local_size_x = 1) in;
 
-const uint GROUP_SIZE = 32u;
+const uint XRE_INVALID_PASS = 0xFFFFFFFFu;
+const uint MESHLET_TASK_PREVIOUS_LOD_FLAG = 0x80000000u;
+const uint MESHLET_TASK_MESHLET_INDEX_MASK = 0x7FFFFFFFu;
 
-struct Meshlet
+const uint MESHLET_PASS_DEPTH_PREPASS = 1u << 0u;
+const uint MESHLET_PASS_SHADOW_DEPTH = 1u << 1u;
+const uint MESHLET_PASS_OPAQUE = 1u << 2u;
+const uint MESHLET_PASS_MASKED = 1u << 3u;
+const uint MESHLET_PASS_TRANSPARENT = 1u << 4u;
+const uint MESHLET_PASS_VELOCITY = 1u << 5u;
+const uint MESHLET_PASS_STEREO = 1u << 6u;
+
+struct DrawMetadata
 {
-    vec4 BoundingSphere;        // xyz center, w radius
-    uvec4 Indices;              // x = vertex offset, y = triangle offset, z = vertex count, w = triangle count
-    uvec4 Meta;                 // x = transform index, y = material ID, z = render pass
+    uint DrawID;
+    uint MeshID;
+    uint SubmeshID;
+    uint MaterialID;
+    uint TransformID;
+    uint SkinID;
+    uint RenderPassMask;
+    uint LayerMask;
+    uint Flags;
+    uint LodPolicy;
+    uint StateClassID;
+    uint InstanceCount;
+    uint RenderPass;
+    uint ShaderProgramID;
+    uint LogicalMeshID;
+    uint BoundsID;
 };
 
-layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
-layout(std430, binding = 5) buffer TransformBuffer { mat4 worldMatrices[]; };
-layout(std430, binding = 7) buffer CommandVisibilityBuffer { uint commandVisibility[]; };
+struct GpuMeshletTaskRecord
+{
+    uint MeshletIndex;
+    uint DrawID;
+    uint TransformID;
+    uint MaterialID;
+};
 
-struct TaskPayload { uint meshletIndices[GROUP_SIZE]; uint count; };
+struct GpuMeshletDescriptor
+{
+    vec4 BoundsSphere;
+    uint VertexOffset;
+    uint TriangleByteOffset;
+    uint VertexCount;
+    uint TriangleCount;
+    vec4 Cone;
+    vec4 ConeApex;
+    uint PackedCone;
+    uint Reserved0;
+    uint Reserved1;
+    uint Reserved2;
+};
+
+layout(std430, binding = 5) readonly buffer MeshletDescriptorBuffer { GpuMeshletDescriptor Meshlets[]; };
+layout(std430, binding = 9) readonly buffer VisibleMeshletTaskBuffer { GpuMeshletTaskRecord meshletTasks[]; };
+layout(std430, binding = 10) readonly buffer VisibleMeshletTaskCountBuffer { uint MeshletTaskCount; };
+layout(std430, binding = 12) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
+layout(std430, binding = 19) readonly buffer TransformBuffer { mat4 WorldMatrices[]; };
+layout(std430, binding = 21) buffer MeshletStatsBuffer
+{
+    uint StatsInputCount;
+    uint StatsCulledCount;
+    uint StatsDrawCount;
+    uint StatsRejectedFrustum;
+    uint StatsRejectedDistance;
+    uint StatsBvhBuildCount;
+    uint StatsBvhRefitCount;
+    uint StatsBvhCullCount;
+    uint StatsBvhRayCount;
+    uint StatsBvhBuildTimeLo;
+    uint StatsBvhBuildTimeHi;
+    uint StatsBvhRefitTimeLo;
+    uint StatsBvhRefitTimeHi;
+    uint StatsBvhCullTimeLo;
+    uint StatsBvhCullTimeHi;
+    uint StatsBvhRayTimeLo;
+    uint StatsBvhRayTimeHi;
+    uint StatsTriangleCount;
+    uint MeshletTaskRecordsEmitted;
+    uint MeshletTaskRecordsFrustumCulled;
+    uint MeshletTaskRecordsConeCulled;
+    uint MeshletTaskRecordsHiZCulled;
+};
+
+struct TaskPayload
+{
+    GpuMeshletTaskRecord Record;
+    uint MeshletIndex;
+    uint IsPreviousLod;
+    uint PassFlags;
+    uint Reserved;
+};
 
 taskNV out TaskPayload OUT;
 
-shared uint sVisibleCount;
-shared uint sIndices[GROUP_SIZE];
+layout(binding = 0) uniform sampler2D HiZDepth;
 
 uniform vec4 FrustumPlanes[6];
-uniform uint RenderPass;
-uniform uint UseCpuCommandVisibility;
+uniform mat4 ViewProjectionMatrix;
+uniform vec3 CameraPosition;
+uniform vec2 HiZSize;
+uniform float HiZMipCount;
+uniform float HiZDepthBias;
+uniform uint HiZUsesReversedZ;
+uniform uint HiZValid;
+uniform uint EnableHiZOcclusion;
+uniform uint EnableFrustumCulling;
+uniform uint EnableConeCulling;
+uniform uint EnableMaskedConeCulling;
+uniform uint EnableTransparentConeCulling;
+uniform uint EnableVelocityConeCulling;
+uniform uint EnableStereoHiZ;
+uniform uint ActiveViewCount;
+uniform uint CurrentRenderPass;
+uniform uint RequiredRenderPassMask;
+uniform uint RequiredLayerMask;
+uniform uint AllowedStateClassMask;
+uniform uint PassFlags;
+uniform uint StatsEnabled;
 
-vec4 TransformSphere(in Meshlet m)
+uint SafeBit(uint value)
 {
-    mat4 world = worldMatrices[m.Meta.x];
-    vec3 center = (world * vec4(m.BoundingSphere.xyz, 1.0)).xyz;
+    return value < 32u ? (1u << value) : 0u;
+}
+
+bool AcceptsRenderPass(in DrawMetadata draw)
+{
+    if (CurrentRenderPass == XRE_INVALID_PASS)
+        return true;
+
+    if (draw.RenderPass == CurrentRenderPass)
+        return true;
+
+    uint passBit = SafeBit(CurrentRenderPass);
+    return passBit != 0u && (draw.RenderPassMask & passBit) != 0u;
+}
+
+bool AcceptsPassControls(in DrawMetadata draw)
+{
+    if (!AcceptsRenderPass(draw))
+        return false;
+
+    if (RequiredRenderPassMask != 0u && (draw.RenderPassMask & RequiredRenderPassMask) == 0u)
+        return false;
+
+    if (RequiredLayerMask != 0u && (draw.LayerMask & RequiredLayerMask) == 0u)
+        return false;
+
+    uint stateClassBit = SafeBit(draw.StateClassID);
+    if (AllowedStateClassMask != 0u && (AllowedStateClassMask & stateClassBit) == 0u)
+        return false;
+
+    return true;
+}
+
+vec4 TransformSphere(in GpuMeshletDescriptor meshlet, uint transformID)
+{
+    mat4 world = WorldMatrices[transformID];
+    vec3 center = (world * vec4(meshlet.BoundsSphere.xyz, 1.0)).xyz;
     float scale = max(max(length(world[0].xyz), length(world[1].xyz)), length(world[2].xyz));
-    float radius = m.BoundingSphere.w * scale;
-    return vec4(center, radius);
+    return vec4(center, meshlet.BoundsSphere.w * scale);
 }
 
 bool FrustumCulled(vec4 sphere)
 {
+    if (EnableFrustumCulling == 0u)
+        return false;
+
     for (int i = 0; i < 6; ++i)
     {
         vec4 p = FrustumPlanes[i];
@@ -45,45 +180,117 @@ bool FrustumCulled(vec4 sphere)
         if (dist < -sphere.w)
             return true;
     }
+
     return false;
+}
+
+bool ConeCullAllowedForPass()
+{
+    if (EnableConeCulling == 0u)
+        return false;
+
+    if ((PassFlags & MESHLET_PASS_TRANSPARENT) != 0u && EnableTransparentConeCulling == 0u)
+        return false;
+
+    if ((PassFlags & MESHLET_PASS_MASKED) != 0u && EnableMaskedConeCulling == 0u)
+        return false;
+
+    if ((PassFlags & MESHLET_PASS_VELOCITY) != 0u && EnableVelocityConeCulling == 0u)
+        return false;
+
+    return true;
+}
+
+bool ConeBackfaceCulled(in GpuMeshletDescriptor meshlet, uint transformID)
+{
+    if (!ConeCullAllowedForPass())
+        return false;
+
+    if (meshlet.PackedCone == 0u && dot(meshlet.Cone.xyz, meshlet.Cone.xyz) == 0.0)
+        return false;
+
+    mat4 world = WorldMatrices[transformID];
+    vec3 worldAxis = normalize(mat3(world) * meshlet.Cone.xyz);
+    vec3 worldApex = (world * vec4(meshlet.ConeApex.xyz, 1.0)).xyz;
+    vec3 viewDirection = normalize(worldApex - CameraPosition);
+    return dot(viewDirection, worldAxis) >= meshlet.Cone.w;
+}
+
+bool HiZOccluded(vec4 sphere)
+{
+    if (EnableHiZOcclusion == 0u || HiZValid == 0u)
+        return false;
+
+    bool stereoActive = ActiveViewCount > 1u || (PassFlags & MESHLET_PASS_STEREO) != 0u;
+    if (stereoActive && EnableStereoHiZ == 0u)
+        return false;
+
+    vec4 clip = ViewProjectionMatrix * vec4(sphere.xyz, 1.0);
+    if (clip.w <= 0.0)
+        return false;
+
+    vec3 ndc = clip.xyz / clip.w;
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+        return false;
+
+    float depth = ndc.z * 0.5 + 0.5;
+    float radiusPixels = max(sphere.w / max(abs(clip.w), 1e-4) * max(HiZSize.x, HiZSize.y), 1.0);
+    float mip = clamp(log2(radiusPixels), 0.0, max(HiZMipCount - 1.0, 0.0));
+    float hizDepth = textureLod(HiZDepth, uv, mip).r;
+
+    return HiZUsesReversedZ != 0u
+        ? depth + HiZDepthBias < hizDepth
+        : depth - HiZDepthBias > hizDepth;
 }
 
 void main()
 {
-    if (gl_LocalInvocationID.x == 0)
-        sVisibleCount = 0u;
-    barrier();
+    uint taskIndex = gl_WorkGroupID.x;
+    bool visible = false;
+    GpuMeshletTaskRecord record = GpuMeshletTaskRecord(0u, 0u, 0u, 0u);
+    uint meshletIndex = 0u;
+    uint isPreviousLod = 0u;
 
-    uint idx = gl_WorkGroupID.x * GROUP_SIZE + gl_LocalInvocationID.x;
-
-    // Mark visible if within range and passes frustum test
-    if (idx < meshlets.length())
+    if (taskIndex < MeshletTaskCount && taskIndex < uint(meshletTasks.length()))
     {
-        Meshlet m = meshlets[idx];
-        if (m.Meta.z == RenderPass)
+        record = meshletTasks[taskIndex];
+        meshletIndex = record.MeshletIndex & MESHLET_TASK_MESHLET_INDEX_MASK;
+        isPreviousLod = (record.MeshletIndex & MESHLET_TASK_PREVIOUS_LOD_FLAG) != 0u ? 1u : 0u;
+        if (StatsEnabled != 0u)
+            atomicAdd(MeshletTaskRecordsEmitted, 1u);
+
+        if (meshletIndex < uint(Meshlets.length()) && record.DrawID < uint(Draws.length()))
         {
-            bool commandVisible = UseCpuCommandVisibility == 0u || commandVisibility[m.Meta.x] != 0u;
-            if (commandVisible)
+            DrawMetadata draw = Draws[record.DrawID];
+            GpuMeshletDescriptor meshlet = Meshlets[meshletIndex];
+
+            if (AcceptsPassControls(draw))
             {
-                vec4 worldSphere = TransformSphere(m);
-                if (!FrustumCulled(worldSphere))
+                uint transformID = record.TransformID != 0u ? record.TransformID : draw.TransformID;
+                vec4 worldSphere = TransformSphere(meshlet, transformID);
+                bool frustumCulled = FrustumCulled(worldSphere);
+                bool coneCulled = !frustumCulled && ConeBackfaceCulled(meshlet, transformID);
+                bool hiZCulled = !frustumCulled && !coneCulled && HiZOccluded(worldSphere);
+                visible = !frustumCulled && !coneCulled && !hiZCulled;
+
+                if (StatsEnabled != 0u)
                 {
-                    uint dst = atomicAdd(sVisibleCount, 1u);
-                    if (dst < GROUP_SIZE)
-                        sIndices[dst] = idx;
+                    if (frustumCulled)
+                        atomicAdd(MeshletTaskRecordsFrustumCulled, 1u);
+                    else if (coneCulled)
+                        atomicAdd(MeshletTaskRecordsConeCulled, 1u);
+                    else if (hiZCulled)
+                        atomicAdd(MeshletTaskRecordsHiZCulled, 1u);
                 }
             }
         }
     }
 
-    barrier();
-
-    if (gl_LocalInvocationID.x == 0)
-    {
-        uint count = min(sVisibleCount, GROUP_SIZE);
-        OUT.count = count;
-        for (uint i = 0u; i < count; ++i)
-            OUT.meshletIndices[i] = sIndices[i];
-        gl_TaskCountNV = count;
-    }
+    OUT.Record = record;
+    OUT.MeshletIndex = meshletIndex;
+    OUT.IsPreviousLod = isPreviousLod;
+    OUT.PassFlags = PassFlags;
+    OUT.Reserved = 0u;
+    gl_TaskCountNV = visible ? 1u : 0u;
 }

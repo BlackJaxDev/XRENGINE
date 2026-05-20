@@ -393,8 +393,9 @@ The codebase has a path split for `Traditional` versus `Meshlet` mesh rendering 
 The dedicated meshlet render command path is still experimental:
 
 - `VPRC_RenderMeshesPassShared` can route to `Traditional` or `Meshlet` intent.
-- `GpuMeshlet` requires `SupportsMeshletDispatch()` from the active renderer.
-- unsupported meshlet dispatch logs a warning and falls back to traditional GPU indirect submission.
+- `GpuMeshlet` requires production `SupportsMeshletDispatch()` from the active renderer, not just visible mesh shader extensions.
+- `MeshShaderDialect`, `SupportsDirectMeshTaskDispatch()`, and `SupportsIndirectCountMeshTaskDispatch()` expose partial backend support for diagnostics.
+- unsupported production meshlet dispatch logs a warning and falls back to `GpuIndirectZeroReadback` when available, or to the profile-approved non-meshlet fallback.
 
 There is real meshlet infrastructure in the repository:
 
@@ -536,7 +537,7 @@ If you need the practical, non-aspirational summary of the engine as it exists t
 - GPU-driven rendering uses `GPUScene` plus `GPURenderPassCollection` for later GPU culling and indirect generation.
 - GPU BVH exists and is wired for GPU command culling, but it is optional and not the same thing as replacing the CPU octree scene tree.
 - Per-mesh CPU BVHs exist for picking/raycast/skinned-mesh work.
-- Meshlet infrastructure exists, but `GpuMeshlet` is experimental and falls back to traditional GPU indirect submission when the active renderer does not expose meshlet dispatch support.
+- Meshlet infrastructure exists, but `GpuMeshlet` is experimental until a backend exposes production indirect-count mesh task dispatch; unsupported requests fall back visibly through the mesh submission strategy resolver.
 
 ## Source Code Guide
 
