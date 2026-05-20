@@ -308,7 +308,7 @@ public static partial class EditorImGuiUI
 
     private static ProfilerPanelRenderer.GpuPipelineTimingDumpResult DumpGpuPipelineTimingHistory(string pipelineName)
     {
-        if (Engine.Rendering.Stats.TryDumpGpuRenderPipelineTimingHistory(pipelineName, out string fileName, out string? error))
+        if (Engine.Rendering.Stats.GpuPipelineProfiler.TryDumpGpuRenderPipelineTimingHistory(pipelineName, out string fileName, out string? error))
             return new ProfilerPanelRenderer.GpuPipelineTimingDumpResult(true, $"GPU timing dump written: {fileName}");
 
         return new ProfilerPanelRenderer.GpuPipelineTimingDumpResult(

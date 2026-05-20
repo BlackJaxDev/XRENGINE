@@ -73,7 +73,7 @@ public sealed class GpuIndirectPhase3PolicyTests
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
 
         source.ShouldContain("VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics");
-        source.ShouldContain("Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);");
+        source.ShouldContain("Engine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);");
         source.ShouldContain("CPU mesh safety-net suppressed for policy");
     }
 

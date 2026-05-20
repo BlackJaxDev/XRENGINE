@@ -572,6 +572,8 @@ namespace XREngine
         private OverrideableSetting<bool> _visualizeTransparencyOverdrawHeatmapOverride = new();
         private OverrideableSetting<bool> _renderLightProbeTetrahedraOverride = new();
         private OverrideableSetting<float> _debugTextMaxLifespanOverride = new();
+        private OverrideableSetting<float> _debugPointSizeOverride = new();
+        private OverrideableSetting<float> _debugLineWidthOverride = new();
         private OverrideableSetting<bool> _enableThreadAllocationTrackingOverride = new();
         private OverrideableSetting<bool> _useDebugOpaquePipelineOverride = new();
         private OverrideableSetting<bool> _forceGpuPassthroughCullingOverride = new();
@@ -746,6 +748,18 @@ namespace XREngine
         {
             get => _debugTextMaxLifespanOverride;
             set => SetField(ref _debugTextMaxLifespanOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> DebugPointSizeOverride
+        {
+            get => _debugPointSizeOverride;
+            set => SetField(ref _debugPointSizeOverride, value ?? new());
+        }
+
+        public OverrideableSetting<float> DebugLineWidthOverride
+        {
+            get => _debugLineWidthOverride;
+            set => SetField(ref _debugLineWidthOverride, value ?? new());
         }
 
         public OverrideableSetting<bool> EnableThreadAllocationTrackingOverride

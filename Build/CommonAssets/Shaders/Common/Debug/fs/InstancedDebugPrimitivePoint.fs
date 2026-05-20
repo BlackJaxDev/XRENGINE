@@ -10,5 +10,8 @@ void main()
         discard;
     
     float alpha = smoothstep(1.0, 0.95, length(FragUV));
+    if (alpha <= 0.001f)
+        discard;
+
     OutColor = vec4(MatColor.rgb, MatColor.a * alpha);
 }

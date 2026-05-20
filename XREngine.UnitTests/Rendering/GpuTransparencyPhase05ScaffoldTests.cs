@@ -41,7 +41,7 @@ public sealed class GpuTransparencyPhase05ScaffoldTests
     {
         string hostSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
         hostSource.ShouldContain("ClassifyTransparencyDomains(scene);");
-        hostSource.ShouldContain("Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(");
+        hostSource.ShouldContain("Engine.Rendering.Stats.GpuTransparency.RecordGpuTransparencyDomainCounts(");
         hostSource.ShouldContain("GPUTransparencyBindings.ClassifyDomainCounts");
 
         string sceneSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPUScene.cs");

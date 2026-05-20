@@ -5,6 +5,7 @@ Last updated: 2026-05-13
 OpenXR timing/pipeline Round 1+2 (Phases 0-8 of the now-retired `openxr-timing-todo.md`) shipped: observability stats, post-render frame prep, visibility policy, input/pose sync cleanup, thread-safety hardening, dedicated render-pacing thread, and Round 1 polish. This doc tracks what is still genuinely open after that work.
 
 Sibling test tracker: [openxr-timing-tests-todo.md](../../tests/openxr-timing-tests-todo.md).
+No-HMD runtime testing design: [OpenXR Monado Testing Pipeline](../../../design/VR/openxr-monado-testing-pipeline.md).
 
 ## Phase 6 — Compositor extensions (P3, gated on hardware metrics)
 
@@ -31,6 +32,7 @@ Acceptance: each extension lands behind a setting, default off; profiler shows l
 ## Related
 
 - [OpenXR Timing Tests TODO](../../tests/openxr-timing-tests-todo.md)
+- [OpenXR Monado Testing Pipeline](../../../design/VR/openxr-monado-testing-pipeline.md)
 - [OpenXR VR Rendering (architecture)](../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Implementation Comparison (design)](../../../design/VR/openxr-implementation-comparison.md)
 - [OpenVR VRClient GPU Handoff TODO](../gpu/openvr-vrclient-gpu-handoff-todo.md)

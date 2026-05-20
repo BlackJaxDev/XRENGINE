@@ -638,8 +638,8 @@ namespace XREngine.Rendering.OpenGL
                         ToGLEnum(ActiveMeshRenderer.TrianglesElementType),
                         null,
                         instances);
-                    RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
-                    RuntimeEngine.Rendering.Stats.AddTrianglesRendered((int)(patchControlPoints / 3u * instances));
+                    RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
+                    RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(patchControlPoints / 3u * instances));
                 }
 
                 return;
@@ -657,8 +657,8 @@ namespace XREngine.Rendering.OpenGL
                 GLRenderQuery? samplesProbe = ActiveMeshRenderer.BeginBatchedTextSamplesProbe();
                 Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
                 ActiveMeshRenderer.EndBatchedTextSamplesProbe(samplesProbe, instances, triangles);
-                RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
-                RuntimeEngine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
+                RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(triangles / 3 * instances));
             }
             else
             {
@@ -677,7 +677,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, lineEbo);
                 Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
-                RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
             }
 
             uint points = pointBuffer?.Data?.ElementCount ?? 0u;
@@ -688,7 +688,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, pointEbo);
                 Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
-                RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
+                RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
             }
         }
 

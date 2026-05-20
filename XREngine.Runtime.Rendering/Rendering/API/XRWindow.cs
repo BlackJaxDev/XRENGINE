@@ -1281,15 +1281,15 @@ namespace XREngine.Rendering
                 TargetWorldInstance?.TargetWorldName ?? "<null>",
                 TargetWorldInstance?.IsPlaySessionActive.ToString() ?? "<null>",
                 delta,
-                RuntimeEngine.Rendering.Stats.DrawCalls,
-                RuntimeEngine.Rendering.Stats.VulkanRequestedDraws,
-                RuntimeEngine.Rendering.Stats.VulkanCulledDraws,
-                RuntimeEngine.Rendering.Stats.VulkanEmittedIndirectDraws,
-                RuntimeEngine.Rendering.Stats.VulkanConsumedDraws,
-                RuntimeEngine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
-                RuntimeEngine.Rendering.Stats.GpuTransparencyMaskedVisible,
-                RuntimeEngine.Rendering.Stats.GpuTransparencyApproximateVisible,
-                RuntimeEngine.Rendering.Stats.GpuTransparencyExactVisible);
+                RuntimeEngine.Rendering.Stats.Frame.DrawCalls,
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequestedDraws,
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanCulledDraws,
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanEmittedIndirectDraws,
+                RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws,
+                RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyOpaqueOrOtherVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyMaskedVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyApproximateVisible,
+                RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyExactVisible);
 
             if (!canRenderWindowViewports)
             {

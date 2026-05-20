@@ -8,6 +8,13 @@ uniform sampler2D Velocity;
 uniform sampler2D DepthView;
 uniform sampler2D HistoryDepth;
 uniform sampler2D TsrHistoryColor;
+// Stencil view of the post-temporal forward depth/stencil. Bit 0x80
+// (XRMaterial.GizmoStencilBit) marks pixels that were drawn after TAA by
+// AppendPostTemporalForwardPasses (gizmos rendered with DepthFunc=Always and
+// custom near-plane vertex shaders). Those pixels have no valid temporal
+// history and no valid motion vectors, so reusing history blurs/erodes them.
+// We detect the bit here and force history weight to zero for such pixels.
+uniform usampler2D StencilView;
 
 uniform bool HistoryReady;
 uniform vec2 SourceTexelSize;
@@ -99,6 +106,24 @@ vec3 SampleCurrentReconstruction(sampler2D tex, vec2 uv, vec2 texelSize)
         texture(tex, uv + vec2(-1.0f,  1.0f) * texelSize).rgb +
         texture(tex, uv + vec2( 1.0f,  1.0f) * texelSize).rgb;
     return (center + axial * 2.0f + diagonal) * (1.0f / 16.0f);
+}
+
+float SamplePostTemporalForwardMask(vec2 uv)
+{
+    uint stencilBits = texture(StencilView, clamp(uv, vec2(0.0f), vec2(1.0f))).r;
+    return ((stencilBits & 0x80u) != 0u) ? 1.0f : 0.0f;
+}
+
+void ComputePostTemporalForwardAA(vec2 uv, out float centerMask, out float coverage, out vec3 overlayColor)
+{
+    centerMask = SamplePostTemporalForwardMask(uv);
+    coverage = centerMask;
+
+    vec3 rawOverlay = texture(PostProcessOutputTexture, uv).rgb;
+    vec3 filteredOverlay = SampleCurrentReconstruction(PostProcessOutputTexture, uv, SourceTexelSize);
+    overlayColor = centerMask > 0.5f
+        ? mix(rawOverlay, filteredOverlay, 0.25f)
+        : rawOverlay;
 }
 
 // ── Clip toward AABB center (Karis 2014) ──────────────────────────
@@ -198,6 +223,16 @@ void main()
     // MotionVectors.fs writes unjittered current-minus-previous NDC, so do
     // not apply the temporal jitter delta again here.
     vec2 velocity = FindClosestVelocity(uv);
+
+    float postTemporalCenterMask;
+    float postTemporalCoverage;
+    vec3 postTemporalOverlayColor;
+    ComputePostTemporalForwardAA(uv, postTemporalCenterMask, postTemporalCoverage, postTemporalOverlayColor);
+
+    bool isPostTemporalForward = postTemporalCenterMask > 0.5f;
+    if (isPostTemporalForward)
+        velocity = vec2(0.0f);
+
     vec2 historyUV = uv - velocity * 0.5f;
 
     vec3 currentColorRaw = texture(PostProcessOutputTexture, uv).rgb;
@@ -250,6 +285,8 @@ void main()
     float historyWeight = mix(FeedbackMin, FeedbackMax, confidence);
     if (!canUseHistory)
         historyWeight = 0.0f;
+    if (isPostTemporalForward)
+        historyWeight = 0.0f;
 
     if (DebugMode != 0)
     {
@@ -282,15 +319,22 @@ void main()
     vec3 result = YCoCgToRGB(resolved);
 
     // Post-resolve sharpening — stronger than TAA because we're upscaling from low res.
-    // Uses current frame detail to restore high-frequency edges.
-    vec3 neighbors =
-        texture(PostProcessOutputTexture, uv + vec2(-1.0f, 0.0f) * SourceTexelSize).rgb +
-        texture(PostProcessOutputTexture, uv + vec2( 1.0f, 0.0f) * SourceTexelSize).rgb +
-        texture(PostProcessOutputTexture, uv + vec2(0.0f, -1.0f) * SourceTexelSize).rgb +
-        texture(PostProcessOutputTexture, uv + vec2(0.0f,  1.0f) * SourceTexelSize).rgb;
-    vec3 highFreq = currentColorRaw - neighbors * 0.25f;
-    float sharpenStrength = 0.18f * (1.0f - historyWeight) * (1.0f - 0.5f * reactiveMask);
-    result += highFreq * sharpenStrength;
+    // Uses current frame detail to restore high-frequency edges. Skip the
+    // overlay neighborhood; its coverage is resolved below from the stencil mask.
+    if (postTemporalCoverage <= 0.0f)
+    {
+        vec3 neighbors =
+            texture(PostProcessOutputTexture, uv + vec2(-1.0f, 0.0f) * SourceTexelSize).rgb +
+            texture(PostProcessOutputTexture, uv + vec2( 1.0f, 0.0f) * SourceTexelSize).rgb +
+            texture(PostProcessOutputTexture, uv + vec2(0.0f, -1.0f) * SourceTexelSize).rgb +
+            texture(PostProcessOutputTexture, uv + vec2(0.0f,  1.0f) * SourceTexelSize).rgb;
+        vec3 highFreq = currentColorRaw - neighbors * 0.25f;
+        float sharpenStrength = 0.18f * (1.0f - historyWeight) * (1.0f - 0.5f * reactiveMask);
+        result += highFreq * sharpenStrength;
+    }
+
+    if (postTemporalCoverage > 0.0f)
+        result = mix(result, postTemporalOverlayColor, postTemporalCoverage);
 
     OutColor = vec4(max(result, vec3(0.0f)), 1.0f);
 }

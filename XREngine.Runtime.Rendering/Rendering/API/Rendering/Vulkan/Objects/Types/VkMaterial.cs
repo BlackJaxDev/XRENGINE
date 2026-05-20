@@ -425,7 +425,7 @@ namespace XREngine.Rendering.Vulkan
                         return false;
                     }
 
-                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
                 }
 
                 DescriptorSetLayout[] layoutArray = [.. program.DescriptorSetLayouts];
@@ -460,7 +460,7 @@ namespace XREngine.Rendering.Vulkan
                         if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
                         {
                             Api.DestroyDescriptorPool(Device, descriptorPool, null);
-                            RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
                             WarnOnce("Failed to allocate Vulkan descriptor sets for material.");
                             return false;
                         }
@@ -472,7 +472,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!TryCreateUniformResources(bindings, frameCount, out Dictionary<(uint set, uint binding), UniformBindingResource> uniformResources))
                 {
                     Api!.DestroyDescriptorPool(Device, descriptorPool, null);
-                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
                     return false;
                 }
 
@@ -569,7 +569,7 @@ namespace XREngine.Rendering.Vulkan
                 if (state.DescriptorPool.Handle != 0)
                 {
                     Api!.DestroyDescriptorPool(Device, state.DescriptorPool, null);
-                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
                 }
             }
 
@@ -1241,7 +1241,7 @@ namespace XREngine.Rendering.Vulkan
                 };
 
             private void RecordDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
-                => RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorFallback(
+                => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorFallback(
                     Data.Name,
                     GetDescriptorBindingClass(binding.DescriptorType),
                     binding.Name,
@@ -1250,7 +1250,7 @@ namespace XREngine.Rendering.Vulkan
                     count);
 
             private void RecordDescriptorFailure(DescriptorBindingInfo binding, string reason)
-                => RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                     Data.Name,
                     GetDescriptorBindingClass(binding.DescriptorType),
                     binding.Name,

@@ -558,6 +558,9 @@ namespace XREngine
             return true;
         }
 
+        internal bool TryResolveThirdPartyCachePath(string filePath, Type assetType, string? cacheVariantKey, out string cachePath)
+            => TryResolveCachePath(filePath, assetType, cacheVariantKey, out cachePath);
+
         /// <summary>
         /// Attempts to resolve the cache file path for a given source asset file and asset type, without using a cache variant key. This is a convenience overload of the <see cref="TryResolveCachePath(string, Type, string?, out string)"/> method for cases where cache variants are not needed, allowing callers to simply provide the source file path and asset type to get the corresponding cache path. Internally, it calls the more general method with a null variant key.
         /// </summary>

@@ -730,7 +730,7 @@ public unsafe partial class VulkanRenderer
         if (_imguiDescriptorPool.Handle != 0)
         {
             Api.DestroyDescriptorPool(device, _imguiDescriptorPool, null);
-            RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
         }
         _imguiDescriptorPool = default;
 
@@ -914,7 +914,7 @@ public unsafe partial class VulkanRenderer
         if (Api.CreateDescriptorPool(device, ref poolInfo, null, out _imguiDescriptorPool) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui descriptor pool.");
 
-        RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
 
         DescriptorSetLayout descriptorLayout = _imguiDescriptorSetLayout;
         DescriptorSetAllocateInfo allocInfo = new()

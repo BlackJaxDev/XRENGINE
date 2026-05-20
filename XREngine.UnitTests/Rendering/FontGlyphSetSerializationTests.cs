@@ -1,6 +1,7 @@
 using ImageMagick;
 using NUnit.Framework;
 using Shouldly;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
@@ -21,6 +22,23 @@ public sealed class FontGlyphSetSerializationTests
 
         yaml.ShouldContain("Atlas:");
         yaml.ShouldContain("Format: CookedBinary");
+    }
+
+    [Test]
+    public void EmbeddedAtlas_WithExistingAuxiliaryImage_UsesTextureEnvelope()
+    {
+        FontGlyphSet font = CreateFontWithEmbeddedAtlas();
+        string atlasPath = font.Atlas.ShouldNotBeNull().FilePath.ShouldNotBeNull();
+        Directory.CreateDirectory(Path.GetDirectoryName(atlasPath)!);
+        File.WriteAllBytes(atlasPath, []);
+        XRAssetGraphUtility.RefreshAssetGraph(font);
+
+        string yaml = AssetManager.Serializer.Serialize(font);
+
+        yaml.ShouldContain("Atlas:");
+        yaml.ShouldContain("Format: CookedBinary");
+        yaml.ShouldNotContain("Atlas:\r\n  ID:");
+        yaml.ShouldNotContain("Atlas:\n  ID:");
     }
 
     [Test]
@@ -82,7 +100,7 @@ public sealed class FontGlyphSetSerializationTests
 
     private static FontGlyphSet CreateFontWithEmbeddedAtlas(string glyph = "A")
     {
-        string tempRoot = Path.Combine(Path.GetTempPath(), "FontGlyphSetSerializationTests");
+        string tempRoot = Path.Combine(Path.GetTempPath(), "FontGlyphSetSerializationTests", Guid.NewGuid().ToString("N"));
         string fontPath = Path.Combine(tempRoot, "EmbeddedFont.ttf");
         string atlasPath = Path.Combine(tempRoot, "EmbeddedFont.png");
 

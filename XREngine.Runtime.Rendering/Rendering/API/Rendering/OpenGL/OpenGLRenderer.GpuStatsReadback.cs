@@ -198,7 +198,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 PublishGpuRenderStatsReadback(slot, values);
-                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(slot.ByteCount);
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(slot.ByteCount);
             }
             finally
             {
@@ -229,7 +229,7 @@ namespace XREngine.Rendering.OpenGL
                         drawCount += values[i];
 
                     if (drawCount > 0ul)
-                        RuntimeEngine.Rendering.Stats.IncrementDrawCalls(SaturateToInt(drawCount));
+                        RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(SaturateToInt(drawCount));
                     break;
                 }
 
@@ -239,19 +239,19 @@ namespace XREngine.Rendering.OpenGL
                     {
                         uint draws = values[(int)GpuStatsLayout.StatsDrawCount];
                         if (draws > 0u)
-                            RuntimeEngine.Rendering.Stats.IncrementDrawCalls(SaturateToInt(draws));
+                            RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(SaturateToInt(draws));
                     }
 
                     if (slot.PublishTriangles && values.Length > (int)GpuStatsLayout.StatsTriangleCount)
                     {
                         uint triangles = values[(int)GpuStatsLayout.StatsTriangleCount];
                         if (triangles > 0u)
-                            RuntimeEngine.Rendering.Stats.AddTrianglesRendered(SaturateToInt(triangles));
+                            RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered(SaturateToInt(triangles));
                     }
 
                     if (values.Length > (int)GpuStatsLayout.MeshletTaskRecordsHiZCulled)
                     {
-                        RuntimeEngine.Rendering.Stats.RecordGpuMeshletTaskStats(
+                        RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(
                             values[(int)GpuStatsLayout.MeshletTaskRecordsEmitted],
                             values[(int)GpuStatsLayout.MeshletTaskRecordsFrustumCulled],
                             values[(int)GpuStatsLayout.MeshletTaskRecordsConeCulled],

@@ -741,6 +741,7 @@ namespace XREngine.Rendering.OpenGL
             //private static object HashLock = new();
             private static readonly ConcurrentDictionary<ulong, byte> Failed = new();
             private static readonly ConcurrentDictionary<ulong, byte> SharedContextLargeSourceTimeouts = new();
+            private static readonly ConcurrentDictionary<ulong, byte> DriverParallelLinkTimeouts = new();
             private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
 
             // Phase 3: per-hash diagnostic record captured the first time a hash fails,
@@ -1195,13 +1196,13 @@ namespace XREngine.Rendering.OpenGL
             /// <c>glFlush</c> to nudge the driver. Some drivers (notably NVIDIA's
             /// threaded path) can leave a parallel-link worker waiting on a fence
             /// from another context; flushing forces the command stream out.</item>
-            /// <item>After <see cref="AsyncShaderHardAbandonSeconds"/>, treat the
-            /// link as failed, mark the hash as failed, and clean up. We deliberately
-            /// do NOT call <c>glGetProgramiv(GL_LINK_STATUS)</c> on a still-pending
-            /// program because that call implicitly waits for completion and is
-            /// known to hang indefinitely when the driver's link worker is stuck.</item>
+            /// <item>After <see cref="AsyncShaderHardAbandonSeconds"/>, abandon the
+            /// wedged GL handles and schedule a fresh synchronous source-link retry.
+            /// We deliberately do NOT call <c>glGetProgramiv(GL_LINK_STATUS)</c> on a
+            /// still-pending program because that call implicitly waits for completion
+            /// and is known to hang indefinitely when the driver's link worker is stuck.</item>
             /// </list>
-            /// Returns true when the program has been force-failed (caller should stop polling).
+            /// Returns true when the stuck GL handles have been abandoned and the caller should stop polling them.
             /// </remarks>
             private bool TryAbandonStuckAsyncLink(uint linkedProgramId)
             {
@@ -1252,16 +1253,20 @@ namespace XREngine.Rendering.OpenGL
                     $"Abandoning async link for program '{GetProgramDebugName()}' hash={Hash}: programId={linkedProgramId} " +
                     $"and {(_asyncAttachedShaderIds?.Length ?? 0)} shader(s) leaked to avoid blocking GL calls.");
 
-                MarkHashFailed("Async link timed out (driver never reported completion).");
+                if (Hash != 0)
+                    DriverParallelLinkTimeouts.TryAdd(Hash, 0);
                 CompleteUberBackendTracking(false, "Async link timed out (driver never reported completion).");
                 PublishBackendStatus(
-                    EShaderProgramBackendStage.Abandoned,
+                    EShaderProgramBackendStage.SynchronousFallback,
                     _activeBuildBackend ?? "DriverParallelSource",
-                    "driver never reported completion",
+                    "driver never reported completion; retrying with synchronous source link",
                     "Async link timed out.");
                 CompleteBuildTelemetry(false, failureReason: "Async link timed out.");
 
                 InFlightCompilations.TryRemove(Hash, out _);
+                _asyncCompileDuplicateHashWaitPending = false;
+                _asyncCompileLinkQueueWaitPending = false;
+                _asyncCompileLinkPending = false;
 
                 // Orphan program/shader handles locally so nothing in this engine ever
                 // touches them again. We do NOT enqueue a deferred cleanup because the
@@ -1275,6 +1280,17 @@ namespace XREngine.Rendering.OpenGL
                         _activeBuildBackend ?? "DriverParallelSource",
                         "replacement program leaked after stuck async link",
                         "Async link timed out.");
+
+                    uint retryReplacementProgramId = CreateConfiguredProgramHandle();
+                    if (retryReplacementProgramId != 0)
+                    {
+                        _replacementProgramId = retryReplacementProgramId;
+                        _replacementProgramPending = true;
+                        PublishBackendStatus(
+                            EShaderProgramBackendStage.SynchronousFallback,
+                            "SynchronousSource",
+                            "replacement retry program allocated after async link timeout");
+                    }
                 }
                 else if (TryGetBindingId(out _))
                 {
@@ -1289,6 +1305,10 @@ namespace XREngine.Rendering.OpenGL
                 _asyncLinkedProgramId = 0;
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
                 UnregisterPendingAsyncProgram();
+                _hashComputed = false;
+                InvalidatePreparedLinkData();
+                BeginPrepareLinkData();
+                RegisterPendingAsyncProgram();
             }
 
             private bool CompleteAsyncLink(
@@ -2689,7 +2709,7 @@ namespace XREngine.Rendering.OpenGL
                     if (TryUseSharedLinkedProgram(binProg))
                         return true;
 
-                    if (!RuntimeEngine.Rendering.Stats.CanAllocateVram(binProg.Length, 0, out long projectedBytes, out long budgetBytes))
+                    if (!RuntimeEngine.Rendering.Stats.Vram.CanAllocateVram(binProg.Length, 0, out long projectedBytes, out long budgetBytes))
                     {
                         Debug.OpenGLWarning($"[VRAM Budget] Skipping cached program binary load for hash {Hash} ({binProg.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes. Deleting from cache.");
                         DeleteFromBinaryShaderCache(binProg.CacheKey, format);
@@ -2958,6 +2978,7 @@ namespace XREngine.Rendering.OpenGL
 
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
                     bool isKnownAsyncLinkHazard = IsKnownAsyncLinkHazard;
+                    bool forceSynchronousSourceRetry = Hash != 0 && DriverParallelLinkTimeouts.ContainsKey(Hash);
                     GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs;
                     // Hazardous graphics programs (single-stage separable), and
                     // oversized generated graphics programs, are routed to the
@@ -3005,7 +3026,8 @@ namespace XREngine.Rendering.OpenGL
                         IsKnownAsyncLinkHazard: isKnownAsyncLinkHazard,
                         PreferSharedContextForLargeSource: preferSharedContextForLargeSource,
                         HashPreviouslyFailed: false,
-                        AllowSynchronousSourceLink: false));
+                        AllowSynchronousSourceLink: false,
+                        ForceSynchronousSourceRetry: forceSynchronousSourceRetry));
                     LogRenderingProgramBuildEvent(
                         "SOURCE_BACKEND_SELECTED",
                         sourceSelection.Lane.ToString(),
@@ -3106,7 +3128,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                     if (sourceSelection.Lane == EOpenGLProgramBuildLane.SynchronousSource)
                     {
-                        if (nonBlocking)
+                        if (nonBlocking && !forceSynchronousSourceRetry)
                         {
                             // Phase B: defer the synchronous source-compile fallback
                             // off the render-prep hot path. PollPendingAsyncPrograms
@@ -3150,6 +3172,11 @@ namespace XREngine.Rendering.OpenGL
                         Environment.GetEnvironmentVariable("XRE_SYNCSRC_HAZARD_DISABLE_PARALLEL"),
                         "1",
                         StringComparison.Ordinal);
+                    // Timeout recovery must not call glMaxShaderCompilerThreads* here:
+                    // some drivers can block inside that call while a previous
+                    // driver-parallel link is already wedged. The forced synchronous
+                    // retry below instead avoids the async lane in engine code and
+                    // lets normal compile/link status queries perform the blocking wait.
                     bool hazardSyncLink = hazardSyncDisableParallel
                         && isKnownAsyncLinkHazard
                         && Renderer.UseDriverParallelShaderCompile
@@ -3201,8 +3228,11 @@ namespace XREngine.Rendering.OpenGL
 
                     // Driver-parallel linking is only safe for shapes outside the
                     // known hazard set.
-                    bool useDriverParallelLink = Renderer.UseDriverParallelShaderCompile
-                        && !isKnownAsyncLinkHazard;
+                    bool useDriverParallelLink =
+                        sourceSelection.Lane == EOpenGLProgramBuildLane.DriverParallelSource &&
+                        Renderer.UseDriverParallelShaderCompile &&
+                        !isKnownAsyncLinkHazard &&
+                        !forceSynchronousSourceRetry;
 
                     if (!useDriverParallelLink)
                     {
@@ -3352,6 +3382,7 @@ namespace XREngine.Rendering.OpenGL
                         {
                             AdoptLinkedBuildProgram(bindingId);
                             IsLinked = true;
+                            DriverParallelLinkTimeouts.TryRemove(Hash, out _);
                             long reflectionStart = Stopwatch.GetTimestamp();
                             using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
                             CacheActiveUniforms();

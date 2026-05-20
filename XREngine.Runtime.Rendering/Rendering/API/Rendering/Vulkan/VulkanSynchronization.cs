@@ -85,7 +85,7 @@ public unsafe partial class VulkanRenderer
             : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
 
         if (result == Result.Success)
-            RuntimeEngine.Rendering.Stats.RecordVulkanQueueSubmit();
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
 
         return result;
     }

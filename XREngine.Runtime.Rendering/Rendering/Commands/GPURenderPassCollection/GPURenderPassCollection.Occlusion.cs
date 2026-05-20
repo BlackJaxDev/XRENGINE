@@ -280,8 +280,8 @@ namespace XREngine.Rendering.Commands
                     return;
 
                 occlusionStopwatch.Stop();
-                RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                    RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Occlusion,
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
+                    RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Occlusion,
                     occlusionStopwatch.Elapsed);
             }
 

@@ -92,7 +92,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(values.Length * sizeof(uint));
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(values.Length * sizeof(uint));
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
@@ -172,7 +172,7 @@ namespace XREngine.Rendering.Commands
                     if (!buf.IsMapped)
                         return buf.GetDataRawAtIndex<uint>(index);
                     mappedTemporarily = true;
-                    RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
+                    RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
                 }
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
@@ -180,7 +180,7 @@ namespace XREngine.Rendering.Commands
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
                     throw new InvalidOperationException("ReadUIntAt failed - buffer mapped address is null");
-                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
                 return ((uint*)addr.Pointer)[index];
             }
             finally
@@ -240,7 +240,7 @@ namespace XREngine.Rendering.Commands
                     if (!buf.IsMapped)
                         return buf.GetDataRawAtIndex<uint>(0);
                     mappedTemporarily = true;
-                    RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
+                    RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
                 }
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
@@ -248,7 +248,7 @@ namespace XREngine.Rendering.Commands
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
                     throw new InvalidOperationException("ReadUInt failed - buffer mapped address is null");
-                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
                 return *((uint*)addr.Pointer);
             }
             finally
@@ -478,8 +478,8 @@ namespace XREngine.Rendering.Commands
                     return;
 
                 cullStopwatch.Stop();
-                RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                    RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Cull,
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
+                    RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Cull,
                     cullStopwatch.Elapsed);
             }
             
@@ -623,7 +623,7 @@ namespace XREngine.Rendering.Commands
         }
 
         private static void RecordCpuFallbackUsage(uint recoveredCommands)
-            => RuntimeEngine.Rendering.Stats.RecordGpuCpuFallback(1, (int)Math.Min(recoveredCommands, int.MaxValue));
+            => RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, (int)Math.Min(recoveredCommands, int.MaxValue));
 
         private bool ShouldUsePassthroughCulling()
         {

@@ -519,7 +519,7 @@ public unsafe partial class VulkanRenderer
         int retiredImageCount = _resourceAllocator.EnumeratePhysicalGroups().Count(static g => g.IsAllocated);
         int retiredBufferCount = _resourceAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
         if (retiredImageCount > 0 || retiredBufferCount > 0)
-            RuntimeEngine.Rendering.Stats.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
         _resourceAllocator.DestroyPhysicalImages(this);
         _resourceAllocator.DestroyPhysicalBuffers(this);
 
@@ -763,7 +763,7 @@ public unsafe partial class VulkanRenderer
         uint computeFamily = useComputeOwnership ? candidateComputeFamily : graphicsFamily;
         uint transferFamily = useTransferOwnership ? candidateTransferFamily : computeFamily;
 
-        RuntimeEngine.Rendering.Stats.RecordVulkanQueueOverlapWindow(
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueOverlapWindow(
             metrics.OverlapCandidatePassCount,
             metrics.TransferCost,
             metrics.FrameDelta,
@@ -808,8 +808,8 @@ public unsafe partial class VulkanRenderer
             ? passMetadata!.Count(IsQueueOverlapCandidatePass)
             : 0;
 
-        int queueOwnershipTransfers = RuntimeEngine.Rendering.Stats.VulkanQueueOwnershipTransfers;
-        int stageFlushes = RuntimeEngine.Rendering.Stats.VulkanBarrierStageFlushes;
+        int queueOwnershipTransfers = RuntimeEngine.Rendering.Stats.Vulkan.VulkanQueueOwnershipTransfers;
+        int stageFlushes = RuntimeEngine.Rendering.Stats.Vulkan.VulkanBarrierStageFlushes;
         int transferCost = transferUsageCount + queueOwnershipTransfers + stageFlushes;
 
         TimeSpan frameDelta = TimeSpan.Zero;

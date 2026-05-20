@@ -301,7 +301,7 @@ public static partial class Engine
             bool gpuDumpSucceeded = false;
             if (completion.AutoDumpGpuTimings)
             {
-                gpuDumpSucceeded = Engine.Rendering.Stats.TryDumpAllGpuRenderPipelineTimingHistories(
+                gpuDumpSucceeded = Engine.Rendering.Stats.GpuPipelineProfiler.TryDumpAllGpuRenderPipelineTimingHistories(
                     out gpuDumpFiles,
                     out gpuDumpError);
             }
@@ -382,8 +382,8 @@ public static partial class Engine
             double collectVisibleMs = TicksToMilliseconds(timer.Collect.ElapsedTicks);
             double fixedUpdateMs = TicksToMilliseconds(timer.FixedUpdateManager.ElapsedTicks);
             double elapsedMs = TicksToMilliseconds(Math.Max(0L, nowTicks - s_startTicks));
-            double gpuPipelineMs = Engine.Rendering.Stats.GpuRenderPipelineFrameMs;
-            bool gpuTimingsReady = Engine.Rendering.Stats.GpuRenderPipelineTimingsReady;
+            double gpuPipelineMs = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineFrameMs;
+            bool gpuTimingsReady = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineTimingsReady;
 
             s_lineBuilder.Clear();
             s_lineBuilder.Append('{');
@@ -414,45 +414,45 @@ public static partial class Engine
                 gpuTimingsReady && gpuPipelineMs > 0.0 ? Math.Max(0.0, renderMs - gpuPipelineMs) : null,
                 ref first);
 
-            AppendNumberField(s_lineBuilder, "draw_calls", Engine.Rendering.Stats.DrawCalls, ref first);
-            AppendNumberField(s_lineBuilder, "multi_draw_calls", Engine.Rendering.Stats.MultiDrawCalls, ref first);
-            AppendNumberField(s_lineBuilder, "triangles_rendered", Engine.Rendering.Stats.TrianglesRendered, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_mapped_buffers", Engine.Rendering.Stats.GpuMappedBuffers, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_readback_bytes", Engine.Rendering.Stats.GpuReadbackBytes, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_cpu_fallback_events", Engine.Rendering.Stats.GpuCpuFallbackEvents, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_cpu_fallback_recovered_commands", Engine.Rendering.Stats.GpuCpuFallbackRecoveredCommands, ref first);
-            AppendNumberField(s_lineBuilder, "forbidden_gpu_fallback_events", Engine.Rendering.Stats.ForbiddenGpuFallbackEvents, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_requested_frames", Engine.Rendering.Stats.GpuMeshletRequestedFrames, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_production_frames", Engine.Rendering.Stats.GpuMeshletProductionFrames, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_fallback_frames", Engine.Rendering.Stats.GpuMeshletFallbackFrames, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_dispatch_skipped", Engine.Rendering.Stats.GpuMeshletDispatchSkipped, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_emitted", Engine.Rendering.Stats.GpuMeshletTaskRecordsEmitted, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_frustum_culled", Engine.Rendering.Stats.GpuMeshletTaskRecordsFrustumCulled, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_cone_culled", Engine.Rendering.Stats.GpuMeshletTaskRecordsConeCulled, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_hiz_culled", Engine.Rendering.Stats.GpuMeshletTaskRecordsHiZCulled, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_expansion_overflow_count", Engine.Rendering.Stats.GpuMeshletExpansionOverflowCount, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_buffer_bytes_resident", Engine.Rendering.Stats.GpuMeshletBufferBytesResident, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_hits", Engine.Rendering.Stats.GpuMeshletCacheHits, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_misses", Engine.Rendering.Stats.GpuMeshletCacheMisses, ref first);
-            AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_stale", Engine.Rendering.Stats.GpuMeshletCacheStale, ref first);
-            AppendNumberField(s_lineBuilder, "fbo_bind_count", Engine.Rendering.Stats.FBOBindCount, ref first);
-            AppendNumberField(s_lineBuilder, "fbo_bandwidth_bytes", Engine.Rendering.Stats.FBOBandwidthBytes, ref first);
-            AppendNumberField(s_lineBuilder, "allocated_vram_bytes", Engine.Rendering.Stats.AllocatedVRAMBytes, ref first);
+            AppendNumberField(s_lineBuilder, "draw_calls", Engine.Rendering.Stats.Frame.DrawCalls, ref first);
+            AppendNumberField(s_lineBuilder, "multi_draw_calls", Engine.Rendering.Stats.Frame.MultiDrawCalls, ref first);
+            AppendNumberField(s_lineBuilder, "triangles_rendered", Engine.Rendering.Stats.Frame.TrianglesRendered, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_mapped_buffers", Engine.Rendering.Stats.GpuReadback.GpuMappedBuffers, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_readback_bytes", Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_cpu_fallback_events", Engine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_cpu_fallback_recovered_commands", Engine.Rendering.Stats.GpuFallback.GpuCpuFallbackRecoveredCommands, ref first);
+            AppendNumberField(s_lineBuilder, "forbidden_gpu_fallback_events", Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_requested_frames", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletRequestedFrames, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_production_frames", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletProductionFrames, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_fallback_frames", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletFallbackFrames, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_dispatch_skipped", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletDispatchSkipped, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_emitted", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_frustum_culled", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsFrustumCulled, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_cone_culled", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsConeCulled, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_hiz_culled", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsHiZCulled, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_expansion_overflow_count", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletExpansionOverflowCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_buffer_bytes_resident", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletBufferBytesResident, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_hits", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheHits, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_misses", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheMisses, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_stale", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheStale, ref first);
+            AppendNumberField(s_lineBuilder, "fbo_bind_count", Engine.Rendering.Stats.Vram.FBOBindCount, ref first);
+            AppendNumberField(s_lineBuilder, "fbo_bandwidth_bytes", Engine.Rendering.Stats.Vram.FBOBandwidthBytes, ref first);
+            AppendNumberField(s_lineBuilder, "allocated_vram_bytes", Engine.Rendering.Stats.Vram.AllocatedVRAMBytes, ref first);
 
-            AppendBoolField(s_lineBuilder, "gpu_pipeline_profiling_enabled", Engine.Rendering.Stats.GpuRenderPipelineProfilingEnabled, ref first);
-            AppendBoolField(s_lineBuilder, "gpu_pipeline_profiling_supported", Engine.Rendering.Stats.GpuRenderPipelineProfilingSupported, ref first);
+            AppendBoolField(s_lineBuilder, "gpu_pipeline_profiling_enabled", Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineProfilingEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "gpu_pipeline_profiling_supported", Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineProfilingSupported, ref first);
             AppendBoolField(s_lineBuilder, "gpu_pipeline_timings_ready", gpuTimingsReady, ref first);
-            AppendStringField(s_lineBuilder, "gpu_pipeline_backend", Engine.Rendering.Stats.GpuRenderPipelineBackend, ref first);
-            AppendStringField(s_lineBuilder, "gpu_pipeline_status", Engine.Rendering.Stats.GpuRenderPipelineStatusMessage, ref first);
+            AppendStringField(s_lineBuilder, "gpu_pipeline_backend", Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineBackend, ref first);
+            AppendStringField(s_lineBuilder, "gpu_pipeline_status", Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineStatusMessage, ref first);
             AppendNumberField(s_lineBuilder, "gpu_pipeline_frame_ms", gpuPipelineMs, ref first);
 
-            AppendNumberField(s_lineBuilder, "vulkan_indirect_api_calls", Engine.Rendering.Stats.VulkanIndirectApiCalls, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_indirect_submitted_draws", Engine.Rendering.Stats.VulkanIndirectSubmittedDraws, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_requested_draws", Engine.Rendering.Stats.VulkanRequestedDraws, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_consumed_draws", Engine.Rendering.Stats.VulkanConsumedDraws, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_oom_fallback_count", Engine.Rendering.Stats.VulkanOomFallbackCount, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", Engine.Rendering.Stats.VulkanFrameTotalMs, ref first);
-            AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", Engine.Rendering.Stats.VulkanFrameGpuCommandBufferMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_api_calls", Engine.Rendering.Stats.Vulkan.VulkanIndirectApiCalls, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_submitted_draws", Engine.Rendering.Stats.Vulkan.VulkanIndirectSubmittedDraws, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_requested_draws", Engine.Rendering.Stats.Vulkan.VulkanRequestedDraws, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_consumed_draws", Engine.Rendering.Stats.Vulkan.VulkanConsumedDraws, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_oom_fallback_count", Engine.Rendering.Stats.Vulkan.VulkanOomFallbackCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameTotalMs, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", Engine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs, ref first);
 
             s_lineBuilder.Append('}');
             s_sampleBuffer.Append(s_lineBuilder);

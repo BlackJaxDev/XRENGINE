@@ -251,12 +251,12 @@ namespace XREngine
             IRenderTree.ProfilingHook = ExternalProfilingHook;
             IRenderTree.OctreeStatsHook = (adds, moves, removes, skipped) =>
             {
-                for (int i = 0; i < adds; i++) Rendering.Stats.RecordOctreeAdd();
-                for (int i = 0; i < moves; i++) Rendering.Stats.RecordOctreeMove();
-                for (int i = 0; i < removes; i++) Rendering.Stats.RecordOctreeRemove();
+                for (int i = 0; i < adds; i++) Rendering.Stats.Octree.RecordOctreeAdd();
+                for (int i = 0; i < moves; i++) Rendering.Stats.Octree.RecordOctreeMove();
+                for (int i = 0; i < removes; i++) Rendering.Stats.Octree.RecordOctreeRemove();
             };
-            IRenderTree.OctreeSwapTimingHook = Rendering.Stats.RecordOctreeSwapTiming;
-            IRenderTree.OctreeRaycastTimingHook = Rendering.Stats.RecordOctreeRaycastTiming;
+            IRenderTree.OctreeSwapTimingHook = Rendering.Stats.Octree.RecordOctreeSwapTiming;
+            IRenderTree.OctreeRaycastTimingHook = Rendering.Stats.Octree.RecordOctreeRaycastTiming;
 
             // Snapshot restore can invalidate runtime-only bindings (viewport/world/camera).
             // Rebind right after restore (pre-BeginPlay) and once more after play begins.

@@ -783,10 +783,13 @@ namespace XREngine.Rendering
                 return;
             }
 
+            Dictionary<string, Glyph> glyphs = Glyphs!;
+            XRTexture2D atlas = Atlas!;
+
             GetQuads(
                 str,
-                Glyphs,
-                new IVector2((int)Atlas!.Width, (int)Atlas.Height),
+                glyphs,
+                new IVector2((int)atlas.Width, (int)atlas.Height),
                 LayoutEmSize,
                 quads,
                 offset,
@@ -847,7 +850,7 @@ namespace XREngine.Rendering
                     break;
 
                 string character = rune.ToString();
-                if (!glyphs.TryGetValue(character, out Glyph glyph))
+                if (!glyphs.TryGetValue(character, out Glyph? glyph) || glyph is null)
                 {
                     // Handle missing glyphs (e.g., skip or substitute)
                     continue;
@@ -918,7 +921,7 @@ namespace XREngine.Rendering
 
         private bool EnsureLayoutResourcesReady()
         {
-            if (Glyphs is not null && Atlas is not null)
+            if (!TryGetLayoutResourceIssue(this, out _))
                 return true;
 
             string recoveryKey = !string.IsNullOrWhiteSpace(OriginalPath)
@@ -946,7 +949,7 @@ namespace XREngine.Rendering
                 }
             }
 
-            return Glyphs is not null && Atlas is not null;
+            return !TryGetLayoutResourceIssue(this, out _);
         }
 
         /// <summary>
@@ -977,10 +980,13 @@ namespace XREngine.Rendering
                 return;
             }
 
+            Dictionary<string, Glyph> glyphs = Glyphs!;
+            XRTexture2D atlas = Atlas!;
+
             GetQuads(
                 str,
-                Glyphs,
-                new IVector2((int)Atlas!.Width, (int)Atlas.Height),
+                glyphs,
+                new IVector2((int)atlas.Width, (int)atlas.Height),
                 LayoutEmSize,
                 quads,
                 offset,
@@ -1069,7 +1075,7 @@ namespace XREngine.Rendering
                 }
 
                 string character = rune.ToString();
-                if (!glyphs.TryGetValue(character, out Glyph glyph))
+                if (!glyphs.TryGetValue(character, out Glyph? glyph) || glyph is null)
                 {
                     // Handle missing glyphs (e.g., skip or substitute)
                     continue;
@@ -1358,19 +1364,27 @@ namespace XREngine.Rendering
             var stopwatch = logTiming ? System.Diagnostics.Stopwatch.StartNew() : null;
             string importProfileKey = BuildImportProfileKey(importOptions);
             string? cacheDirectory = ResolveEngineFontCacheDirectory(path, importProfileKey);
-            Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: path='{path}', cacheDir='{cacheDirectory ?? "<null>"}', cacheAssetPathMode='asset-manager-variant'");
+            string? cacheAssetPath = Engine.Assets.TryResolveThirdPartyCachePath(path, typeof(FontGlyphSet), importProfileKey, out string resolvedCacheAssetPath)
+                ? resolvedCacheAssetPath
+                : null;
+            Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: path='{path}', cacheDir='{cacheDirectory ?? "<null>"}', cacheAssetPath='{cacheAssetPath ?? "<null>"}', cacheAssetPathMode='asset-manager-variant'");
 
             FontGlyphSet font = Engine.Assets.Load3rdPartyVariantWithCache<FontGlyphSet>(path, importOptions, importProfileKey, JobPriority.Highest, bypassJobThread: true)
                 ?? throw new FileNotFoundException($"Unable to import engine font at {path}");
 
-            // Safety net: if the cached font loaded without an atlas or with a blank atlas
-            // (e.g., stale or partially deserialized cache), evict and reimport fresh.
-            if (font.Atlas is null || font.Atlas.Mipmaps is { Length: 0 })
+            // Safety net: if the cached font loaded without a usable atlas (e.g., stale
+            // cache or an unresolved atlas reference that became a placeholder), evict and
+            // reimport fresh.
+            if (TryGetLayoutResourceIssue(font, out string? layoutIssue))
             {
-                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: cached font at '{path}' has a missing or blank atlas. atlasNull={font.Atlas is null}, mipmaps={font.Atlas?.Mipmaps?.Length ?? -1}. Evicting stale cache and reimporting.");
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: cached font at '{path}' has invalid layout resources ({layoutIssue}). Evicting stale cache and reimporting.");
                 EvictLoadedAsset(font, path);
+                DeleteFontCacheAsset(cacheAssetPath, path, layoutIssue);
                 font = Engine.Assets.Load3rdPartyVariantWithCache<FontGlyphSet>(path, importOptions, importProfileKey, JobPriority.Highest, bypassJobThread: true)
                     ?? throw new FileNotFoundException($"Unable to reimport engine font at {path}");
+
+                if (TryGetLayoutResourceIssue(font, out string? reimportIssue))
+                    Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: reimported font at '{path}' still has invalid layout resources ({reimportIssue}).");
             }
 
             if (font.AtlasType == EFontAtlasType.Bitmap)
@@ -1452,6 +1466,65 @@ namespace XREngine.Rendering
             }
         }
 
+        private static bool TryGetLayoutResourceIssue(FontGlyphSet font, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? issue)
+        {
+            issue = null;
+
+            if (font.Glyphs is null)
+            {
+                issue = "glyph table is null";
+                return true;
+            }
+
+            XRTexture2D? atlas = font.Atlas;
+            if (atlas is null)
+            {
+                issue = "atlas is null";
+                return true;
+            }
+
+            if (atlas.Mipmaps is null || atlas.Mipmaps.Length == 0)
+            {
+                issue = $"atlas has no mipmaps (mips={atlas.Mipmaps?.Length ?? -1})";
+                return true;
+            }
+
+            uint atlasWidth = atlas.Width;
+            uint atlasHeight = atlas.Height;
+            if (atlasWidth == 0u || atlasHeight == 0u)
+            {
+                issue = $"atlas has invalid size {atlasWidth}x{atlasHeight}";
+                return true;
+            }
+
+            if (TryGetGlyphAtlasExtents(font.Glyphs, out float maxX, out float maxY)
+                && (maxX > atlasWidth + 0.5f || maxY > atlasHeight + 0.5f))
+            {
+                issue = $"glyph atlas bounds exceed texture (maxGlyph={maxX:F1}x{maxY:F1}, atlas={atlasWidth}x{atlasHeight}, mips={atlas.Mipmaps.Length})";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetGlyphAtlasExtents(Dictionary<string, Glyph> glyphs, out float maxX, out float maxY)
+        {
+            maxX = 0.0f;
+            maxY = 0.0f;
+
+            foreach (Glyph glyph in glyphs.Values)
+            {
+                Vector2 atlasSize = glyph.EffectiveAtlasSize;
+                if (atlasSize.X <= 0.0f || atlasSize.Y <= 0.0f)
+                    continue;
+
+                maxX = MathF.Max(maxX, glyph.Position.X + atlasSize.X);
+                maxY = MathF.Max(maxY, glyph.Position.Y + atlasSize.Y);
+            }
+
+            return maxX > 0.0f || maxY > 0.0f;
+        }
+
         private static string? ResolveEngineFontCacheDirectory(string sourcePath, string? importProfileKey = null)
         {
             string engineAssetsPath = Path.GetFullPath(Engine.Assets.EngineAssetsPath);
@@ -1507,6 +1580,28 @@ namespace XREngine.Rendering
 
             if (font.ID != Guid.Empty)
                 Engine.Assets.LoadedAssetsByIDInternal.TryRemove(font.ID, out _);
+        }
+
+        private static void DeleteFontCacheAsset(string? cacheAssetPath, string sourcePath, string reason)
+        {
+            if (string.IsNullOrWhiteSpace(cacheAssetPath))
+            {
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"DeleteFontCacheAsset: no cache path resolved for '{sourcePath}' while recovering from {reason}.");
+                return;
+            }
+
+            try
+            {
+                if (!File.Exists(cacheAssetPath))
+                    return;
+
+                File.Delete(cacheAssetPath);
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"DeleteFontCacheAsset: deleted stale font cache '{cacheAssetPath}' for '{sourcePath}' ({reason}).");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"DeleteFontCacheAsset: failed to delete stale font cache '{cacheAssetPath}' for '{sourcePath}' ({reason}). {ex.Message}");
+            }
         }
 
         public static async Task<FontGlyphSet> LoadEngineFontAsync(string folderName, string fontName)

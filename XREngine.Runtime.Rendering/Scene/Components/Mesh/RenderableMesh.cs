@@ -1214,7 +1214,7 @@ namespace XREngine.Components.Scene.Mesh
             }
             finally
             {
-                RuntimeEngine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
+                RuntimeEngine.Rendering.Stats.SkinnedBounds.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
                 _skinnedBoundsRefreshTask = null;
             }
         }
@@ -1245,7 +1245,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             var tcs = new TaskCompletionSource<SkinnedBoundsRefreshResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             long queuedTicks = Stopwatch.GetTimestamp();
-            RuntimeEngine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredScheduled();
+            RuntimeEngine.Rendering.Stats.SkinnedBounds.RecordSkinnedBoundsRefreshDeferredScheduled();
             RuntimeEngine.Jobs.Schedule(() => RunSkinnedBoundsJob(snapshot, revision, queuedTicks, tcs), priority: JobPriority.Low);
             return tcs.Task;
         }
@@ -1313,7 +1313,7 @@ namespace XREngine.Components.Scene.Mesh
                                 _lastSkinnedBoundsRefreshTicks = nowTicks;
                                 _skinnedBoundsDirty = revision != _skinnedBoundsRevision;
                                 long gpuTicks = Math.Max(0L, Stopwatch.GetTimestamp() - gpuStartTicks);
-                                RuntimeEngine.Rendering.Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks: 0L);
+                                RuntimeEngine.Rendering.Stats.SkinnedBounds.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks: 0L);
                             }
                             else if (!_hasSkinnedBounds)
                             {
@@ -1330,7 +1330,7 @@ namespace XREngine.Components.Scene.Mesh
                                 ApplyCachedSkinnedBoundsLocked();
                                 long applyTicks = Math.Max(0L, Stopwatch.GetTimestamp() - applyStartTicks);
                                 long gpuTicks = Math.Max(0L, applyStartTicks - gpuStartTicks);
-                                RuntimeEngine.Rendering.Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
+                                RuntimeEngine.Rendering.Stats.SkinnedBounds.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
                             }
                             else if (!_hasSkinnedBounds)
                             {

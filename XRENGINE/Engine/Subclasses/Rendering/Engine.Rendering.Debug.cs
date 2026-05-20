@@ -77,6 +77,7 @@ namespace XREngine
 
                     var mode = Engine.EditorPreferences?.Debug?.DebugShapePopulationMode
                         ?? EDebugShapePopulationMode.Tasks;
+                    ApplyDebugPrimitivePreferences();
 
                     try
                     {
@@ -133,6 +134,16 @@ namespace XREngine
                     }
 
                     return true;
+                }
+
+                private static void ApplyDebugPrimitivePreferences()
+                {
+                    EditorDebugOptions? debug = Engine.EditorPreferences?.Debug;
+                    if (debug is null)
+                        return;
+
+                    _instancedDebugVisualizer.PointSize = debug.DebugPointSize;
+                    _instancedDebugVisualizer.LineWidth = debug.DebugLineWidth;
                 }
 
                 private static void PopulateTriangles()

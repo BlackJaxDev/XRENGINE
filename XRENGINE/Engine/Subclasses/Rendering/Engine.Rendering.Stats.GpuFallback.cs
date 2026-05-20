@@ -8,51 +8,61 @@ namespace XREngine
         {
             public static partial class Stats
             {
-                private static int _gpuCpuFallbackEvents;
-                private static int _gpuCpuFallbackRecoveredCommands;
-                private static int _forbiddenGpuFallbackEvents;
-                private static int _lastFrameGpuCpuFallbackEvents;
-                private static int _lastFrameGpuCpuFallbackRecoveredCommands;
-                private static int _lastFrameForbiddenGpuFallbackEvents;
-
-                /// <summary>
-                /// Number of GPU->CPU culling fallback events in the last completed frame.
-                /// </summary>
-                public static int GpuCpuFallbackEvents => _lastFrameGpuCpuFallbackEvents;
-
-                /// <summary>
-                /// Number of commands recovered by GPU->CPU fallback in the last completed frame.
-                /// </summary>
-                public static int GpuCpuFallbackRecoveredCommands => _lastFrameGpuCpuFallbackRecoveredCommands;
-
-                /// <summary>
-                /// Number of forbidden fallback attempts observed in the last completed frame.
-                /// Forbidden fallbacks indicate shipping-profile behavior would have fallen back but was blocked.
-                /// </summary>
-                public static int ForbiddenGpuFallbackEvents => _lastFrameForbiddenGpuFallbackEvents;
-
-                /// <summary>
-                /// Records usage of GPU->CPU fallback recovery during culling.
-                /// </summary>
-                public static void RecordGpuCpuFallback(int eventCount, int recoveredCommands)
+                public static class GpuFallback
                 {
-                    if (!EnableTracking || eventCount <= 0)
-                        return;
+                    private static int _gpuCpuFallbackEvents;
+                    private static int _gpuCpuFallbackRecoveredCommands;
+                    private static int _forbiddenGpuFallbackEvents;
+                    private static int _lastFrameGpuCpuFallbackEvents;
+                    private static int _lastFrameGpuCpuFallbackRecoveredCommands;
+                    private static int _lastFrameForbiddenGpuFallbackEvents;
 
-                    Interlocked.Add(ref _gpuCpuFallbackEvents, eventCount);
-                    if (recoveredCommands > 0)
-                        Interlocked.Add(ref _gpuCpuFallbackRecoveredCommands, recoveredCommands);
-                }
+                    /// <summary>
+                    /// Number of GPU->CPU culling fallback events in the last completed frame.
+                    /// </summary>
+                    public static int GpuCpuFallbackEvents => _lastFrameGpuCpuFallbackEvents;
 
-                /// <summary>
-                /// Records a forbidden fallback attempt (fallback blocked by profile policy).
-                /// </summary>
-                public static void RecordForbiddenGpuFallback(int eventCount = 1)
-                {
-                    if (!EnableTracking || eventCount <= 0)
-                        return;
+                    /// <summary>
+                    /// Number of commands recovered by GPU->CPU fallback in the last completed frame.
+                    /// </summary>
+                    public static int GpuCpuFallbackRecoveredCommands => _lastFrameGpuCpuFallbackRecoveredCommands;
 
-                    Interlocked.Add(ref _forbiddenGpuFallbackEvents, eventCount);
+                    /// <summary>
+                    /// Number of forbidden fallback attempts observed in the last completed frame.
+                    /// Forbidden fallbacks indicate shipping-profile behavior would have fallen back but was blocked.
+                    /// </summary>
+                    public static int ForbiddenGpuFallbackEvents => _lastFrameForbiddenGpuFallbackEvents;
+
+                    internal static void SnapshotAndReset()
+                    {
+                        _lastFrameGpuCpuFallbackEvents = Interlocked.Exchange(ref _gpuCpuFallbackEvents, 0);
+                        _lastFrameGpuCpuFallbackRecoveredCommands = Interlocked.Exchange(ref _gpuCpuFallbackRecoveredCommands, 0);
+                        _lastFrameForbiddenGpuFallbackEvents = Interlocked.Exchange(ref _forbiddenGpuFallbackEvents, 0);
+                    }
+
+                    /// <summary>
+                    /// Records usage of GPU->CPU fallback recovery during culling.
+                    /// </summary>
+                    public static void RecordGpuCpuFallback(int eventCount, int recoveredCommands)
+                    {
+                        if (!EnableTracking || eventCount <= 0)
+                            return;
+
+                        Interlocked.Add(ref _gpuCpuFallbackEvents, eventCount);
+                        if (recoveredCommands > 0)
+                            Interlocked.Add(ref _gpuCpuFallbackRecoveredCommands, recoveredCommands);
+                    }
+
+                    /// <summary>
+                    /// Records a forbidden fallback attempt (fallback blocked by profile policy).
+                    /// </summary>
+                    public static void RecordForbiddenGpuFallback(int eventCount = 1)
+                    {
+                        if (!EnableTracking || eventCount <= 0)
+                            return;
+
+                        Interlocked.Add(ref _forbiddenGpuFallbackEvents, eventCount);
+                    }
                 }
             }
         }

@@ -133,17 +133,17 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
             commands.AddCPU(new RenderCommandMethod2D(pass, () =>
             {
                 drawCalls++;
-                Engine.Rendering.Stats.IncrementDrawCalls();
+                Engine.Rendering.Stats.Frame.IncrementDrawCalls();
             }));
             commands.AddCPU(new RenderCommandMethod2D(pass, () =>
             {
                 drawCalls++;
-                Engine.Rendering.Stats.IncrementDrawCalls();
+                Engine.Rendering.Stats.Frame.IncrementDrawCalls();
             }));
             commands.AddCPU(new RenderCommandMethod2D(pass, () =>
             {
                 drawCalls++;
-                Engine.Rendering.Stats.IncrementDrawCalls();
+                Engine.Rendering.Stats.Frame.IncrementDrawCalls();
             }));
             commands.SwapBuffers();
 
@@ -171,7 +171,7 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
             Engine.Rendering.Stats.BeginFrame();
 
             drawCalls.ShouldBe(3);
-            Engine.Rendering.Stats.DrawCalls.ShouldBe(3);
+            Engine.Rendering.Stats.Frame.DrawCalls.ShouldBe(3);
             canvas.BatchCollector.Enabled.ShouldBeFalse();
             canvas.BatchCollector.HasBatchData.ShouldBeFalse();
         }
@@ -276,8 +276,8 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
         statsSource.ShouldContain("RecordVulkanPipelineCacheMiss");
         statsSource.ShouldContain("VulkanPipelineCacheMissSummary");
         packetSource.ShouldContain("VulkanPipelineCacheMissSummary");
-        senderSource.ShouldContain("VulkanPipelineCacheMissSummary = Rendering.Stats.VulkanPipelineCacheMissSummary");
-        editorSource.ShouldContain("VulkanPipelineCacheMissSummary = Engine.Rendering.Stats.VulkanPipelineCacheMissSummary");
+        senderSource.ShouldContain("VulkanPipelineCacheMissSummary = Rendering.Stats.Vulkan.VulkanPipelineCacheMissSummary");
+        editorSource.ShouldContain("VulkanPipelineCacheMissSummary = Engine.Rendering.Stats.Vulkan.VulkanPipelineCacheMissSummary");
         profilerUiSource.ShouldContain("Vulkan Pipeline Misses");
     }
 

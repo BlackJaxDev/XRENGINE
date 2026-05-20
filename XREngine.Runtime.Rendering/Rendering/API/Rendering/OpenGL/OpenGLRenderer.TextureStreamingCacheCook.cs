@@ -185,7 +185,7 @@ public partial class OpenGLRenderer
                 return false;
             }
 
-            RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(totalBytes);
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(totalBytes);
 
             PendingTextureStreamingCacheMipChainReadback pending = new()
             {

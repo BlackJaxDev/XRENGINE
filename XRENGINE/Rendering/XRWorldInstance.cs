@@ -696,7 +696,7 @@ namespace XREngine.Rendering
                 applied++;
             }
 
-            Engine.Rendering.Stats.RecordRenderMatrixApplied(applied);
+            Engine.Rendering.Stats.RenderMatrix.RecordRenderMatrixApplied(applied);
         }
 
         private void GlobalSwapBuffers()
@@ -717,10 +717,10 @@ namespace XREngine.Rendering
                 VisualScene.GlobalSwapBuffers();
             }
 
-            Engine.Rendering.Stats.SwapSkinnedBoundsStats();
+            Engine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();
             
             // Swap octree stats after octree commands are consumed.
-            Engine.Rendering.Stats.SwapOctreeStats();
+            Engine.Rendering.Stats.Octree.SwapOctreeStats();
             //PhysicsScene.SwapDebugBuffers();
             using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.Lights"))
             {
@@ -728,7 +728,7 @@ namespace XREngine.Rendering
             }
 
             // Swap render-matrix stats after all SwapBuffers work is done.
-            Engine.Rendering.Stats.SwapRenderMatrixStats();
+            Engine.Rendering.Stats.RenderMatrix.SwapRenderMatrixStats();
         }
 
         /// <summary>

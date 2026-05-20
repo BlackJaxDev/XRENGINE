@@ -114,7 +114,7 @@ public unsafe partial class VulkanRenderer
         {
             bool success = TryCopyMemoryIndirectNv(commandAddress, 1, (uint)sizeof(CopyMemoryIndirectCommandNV));
             if (success)
-                RuntimeEngine.Rendering.Stats.RecordRtxIoCopyIndirect((long)Math.Min(size, long.MaxValue), stopwatch.Elapsed);
+                RuntimeEngine.Rendering.Stats.RtxIo.RecordRtxIoCopyIndirect((long)Math.Min(size, long.MaxValue), stopwatch.Elapsed);
             return success;
         }
         finally
@@ -166,7 +166,7 @@ public unsafe partial class VulkanRenderer
             if (success)
             {
                 ulong pixelCount = Math.Max(imageExtent.Width, 1u) * Math.Max(imageExtent.Height, 1u) * Math.Max(imageExtent.Depth, 1u);
-                RuntimeEngine.Rendering.Stats.RecordRtxIoCopyIndirect((long)Math.Min(pixelCount, long.MaxValue), stopwatch.Elapsed);
+                RuntimeEngine.Rendering.Stats.RtxIo.RecordRtxIoCopyIndirect((long)Math.Min(pixelCount, long.MaxValue), stopwatch.Elapsed);
             }
 
             return success;

@@ -1,4 +1,4 @@
-﻿// =====================================================================================
+// =====================================================================================
 // GPUScene.Materials.cs - Material / mesh / LOD ID maps and the public Material/LOD lookup API.
 // Part of the GPUScene partial class. See GPUScene.cs for the canonical class summary.
 // =====================================================================================
@@ -225,7 +225,7 @@ namespace XREngine.Rendering.Commands
                         if (buffer.IsMapped)
                         {
                             mappedTemporarily = true;
-                            RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
+                            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
                         }
                     }
 
@@ -248,7 +248,7 @@ namespace XREngine.Rendering.Commands
                                 if (lodMask == 0)
                                     continue;
 
-                                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
+                                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
                                 requests.Add((logicalMeshId, lodMask));
                                 ptr[logicalMeshId] = 0u;
                                 modified = true;

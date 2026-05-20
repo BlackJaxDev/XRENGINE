@@ -52,6 +52,12 @@ namespace XREngine
         [ThreadStatic]
         private static int _depth;
 
+        // Marker embedded in rewrapped messages so outer frames know the failure has
+        // already been annotated with the innermost (most precise) context. Without this,
+        // every layer in the chain would re-wrap and the printed Depth/ExpectedType would
+        // reflect the OUTERMOST frame, masking the actual failing property.
+        private const string AnnotationMarker = "[XREngineYamlContext]";
+
         public bool Deserialize(IParser reader, Type expectedType, Func<IParser, Type, object?> nestedObjectDeserializer, out object? value, ObjectDeserializer rootDeserializer)
         {
             _depth++;
@@ -65,20 +71,42 @@ namespace XREngine
 
                 return innerDeserializer.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
             }
-            catch (YamlException ex)
+            catch (YamlException ex) when (!ex.Message.Contains(AnnotationMarker, StringComparison.Ordinal))
             {
-                string parserEvent = reader.Current?.GetType().Name ?? "<null>";
+                // Only the innermost frame annotates. Outer frames let the original (already
+                // annotated) exception bubble unchanged so the diagnostic points at the deepest
+                // location that actually failed, not at the root deserialize call.
+                ParsingEvent? current = reader.Current;
+                string parserEvent = current?.GetType().Name ?? "<null>";
+                string parserDetail = current switch
+                {
+                    Scalar s => $"Scalar('{Truncate(s.Value, 64)}')",
+                    MappingStart => "MappingStart",
+                    MappingEnd => "MappingEnd",
+                    SequenceStart => "SequenceStart",
+                    SequenceEnd => "SequenceEnd",
+                    _ => parserEvent,
+                };
+                Mark startMark = current?.Start ?? ex.Start;
+                Mark endMark = current?.End ?? ex.End;
                 string expectedTypeName = expectedType.FullName ?? expectedType.Name;
                 throw new YamlException(
-                    ex.Start,
-                    ex.End,
-                    $"{ex.Message} [ExpectedType={expectedTypeName}, ParserEvent={parserEvent}, Depth={_depth}]",
+                    startMark,
+                    endMark,
+                    $"{ex.Message} {AnnotationMarker}[ExpectedType={expectedTypeName}, ParserEvent={parserDetail}, Depth={_depth}, Mark={startMark.Line}:{startMark.Column}]",
                     ex);
             }
             finally
             {
                 _depth--;
             }
+        }
+
+        private static string Truncate(string? value, int max)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+            return value.Length <= max ? value : value.Substring(0, max) + "…";
         }
 
         // Property to access the current depth
@@ -551,7 +579,51 @@ namespace XREngine
             }
 
             value = ResolveExternalReference(guid, expectedType);
+            if (value is null)
+            {
+                // The reference target could not be resolved (asset DB does not have this ID and no
+                // backing file exists for it). Returning null here lets YamlDotNet's nullability
+                // enforcement crash on non-nullable XRAsset properties with a misleading
+                // "Strict nullability enforcement error". Synthesize a default-constructed
+                // placeholder carrying the parsed ID so the parent loads and a future save can
+                // either recover or rewrite the reference. Diagnostics still records the miss.
+                value = TryCreateMissingAssetPlaceholder(guid, expectedType);
+                AssetDiagnostics.RecordMissingAsset(
+                    guid.ToString(),
+                    expectedType.Name,
+                    $"XRAssetDeserializer (nested {{ID: guid}}; file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}'; placeholder={(value is null ? "no" : "yes")})");
+            }
             return true;
+        }
+
+        /// <summary>
+        /// Creates a default-constructed <see cref="XRAsset"/> for an unresolved reference, carrying the
+        /// original GUID so the parent owner round-trips with a stable identity. Returns null when the
+        /// expected type cannot be instantiated (abstract, interface, or no parameterless constructor).
+        /// </summary>
+        private static XRAsset? TryCreateMissingAssetPlaceholder(Guid id, Type expectedType)
+        {
+            if (expectedType.IsAbstract || expectedType.IsInterface)
+                return null;
+            if (!typeof(XRAsset).IsAssignableFrom(expectedType))
+                return null;
+            try
+            {
+                if (Activator.CreateInstance(expectedType) is not XRAsset asset)
+                    return null;
+                // XRObjectBase.ID has an internal setter not visible from this assembly. Set it
+                // via reflection so the placeholder carries the original GUID for round-trip
+                // identity (re-save will rewrite the parent owner pointing at the same ID).
+                var idProp = asset.GetType().GetProperty(
+                    "ID",
+                    BindingFlags.Public | BindingFlags.Instance);
+                idProp?.SetValue(asset, id);
+                return asset;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static bool TryResolveNestedAssetDiscriminator(string? typeName, Type expectedType, out Type? concreteType)
@@ -861,6 +933,12 @@ namespace XREngine
                 return false;
 
             if (string.IsNullOrWhiteSpace(asset.FilePath))
+                return false;
+
+            // A compact {ID} reference must be resolvable in a later process. Native .asset
+            // files carry their own ID into metadata; generated auxiliaries such as font atlas
+            // PNGs do not, even though they exist on disk during cache serialization.
+            if (!string.Equals(Path.GetExtension(asset.FilePath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return false;
 
             return File.Exists(asset.FilePath);

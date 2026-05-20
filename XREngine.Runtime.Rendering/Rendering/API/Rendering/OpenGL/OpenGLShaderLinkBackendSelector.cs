@@ -35,7 +35,8 @@ internal readonly record struct OpenGLShaderLinkBackendContext(
     bool IsKnownAsyncLinkHazard,
     bool PreferSharedContextForLargeSource,
     bool HashPreviouslyFailed,
-    bool AllowSynchronousSourceLink);
+    bool AllowSynchronousSourceLink,
+    bool ForceSynchronousSourceRetry = false);
 
 internal static class OpenGLShaderLinkBackendSelector
 {
@@ -46,6 +47,14 @@ internal static class OpenGLShaderLinkBackendSelector
             return new OpenGLShaderLinkBackendSelection(
                 EOpenGLProgramBuildLane.FailedHash,
                 "hash is marked failed",
+                IsAsync: false);
+        }
+
+        if (context.ForceSynchronousSourceRetry)
+        {
+            return new OpenGLShaderLinkBackendSelection(
+                EOpenGLProgramBuildLane.SynchronousSource,
+                "driver-parallel source link timed out; retrying synchronously",
                 IsAsync: false);
         }
 

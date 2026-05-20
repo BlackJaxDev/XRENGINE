@@ -92,6 +92,20 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
     }
 
     [Test]
+    public void TimedOutDriverParallelSource_RetriesWithSynchronousSource()
+    {
+        OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            strategy: EOpenGLShaderLinkStrategy.Auto,
+            driverParallelAvailable: true,
+            sharedContextCompileAvailable: true,
+            forceSynchronousSourceRetry: true));
+
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SynchronousSource);
+        selection.IsAsync.ShouldBeFalse();
+        selection.Reason.ShouldContain("timed out");
+    }
+
+    [Test]
     public void SynchronousStrategy_StillAllowsConfiguredAsyncBinaryUploads()
     {
         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
@@ -199,7 +213,8 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
         bool isKnownAsyncLinkHazard = false,
         bool preferSharedContextForLargeSource = false,
         bool hashPreviouslyFailed = false,
-        bool allowSynchronousSourceLink = false)
+        bool allowSynchronousSourceLink = false,
+        bool forceSynchronousSourceRetry = false)
         => new(
             strategy,
             asyncProgramCompilation,
@@ -215,7 +230,8 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
             isKnownAsyncLinkHazard,
             preferSharedContextForLargeSource,
             hashPreviouslyFailed,
-            allowSynchronousSourceLink);
+            allowSynchronousSourceLink,
+            forceSynchronousSourceRetry);
 
     private static ShaderBinaryRuntimeFingerprint CreateFingerprint()
         => new("4.6", "TestVendor", "TestRenderer", "4.60");

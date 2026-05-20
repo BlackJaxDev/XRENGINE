@@ -109,6 +109,8 @@ namespace XREngine.Components.Capture.Lights
             material.Textures = [previewTexture ?? XRTexture2D.GetRoleAwareFallbackTexture("Texture0")];
             material.Shaders = [previewShader];
             material.RenderPass = pass;
+            // Tag preview-sphere pixels as a gizmo so PostProcess.fs skips tonemap/grade/bloom-add/etc.
+            XRMaterial.ConfigureGizmoMaterial(material);
         }
 
         private void CachePreviewSphere()
@@ -136,7 +138,7 @@ namespace XREngine.Components.Capture.Lights
                 return;
             }
 
-            int pass = (int)EDefaultRenderPass.OpaqueForward;
+            int pass = (int)EDefaultRenderPass.OnTopForward;
             XRShader previewShader = XRShader.EngineShader(previewShaderPath, EShaderType.Fragment);
             _previewSphereTexture = previewTexture;
             if (previewTexture is not null)

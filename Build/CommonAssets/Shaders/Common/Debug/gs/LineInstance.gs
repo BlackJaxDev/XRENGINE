@@ -5,7 +5,9 @@ layout(triangle_strip, max_vertices = 4) out;
 
 layout(location = 0) in int instanceID[];
 layout(location = 1) in vec3 vPos[];
-layout(location = 0) out vec4 MatColor;
+layout(location = 0) flat out vec4 LineMatColor;
+layout(location = 1) noperspective out float LineEdgeCoord;
+layout(location = 2) flat out float LineHalfWidthPixels;
 
 layout(std430, binding = 0) buffer LinesBuffer
 {

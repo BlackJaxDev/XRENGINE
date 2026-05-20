@@ -139,6 +139,7 @@ namespace XREngine.Scene.Components.Editing
         private readonly RenderCommandMethod3D _rc;
 
         private readonly XRMaterial[] _axisMat = new XRMaterial[3];
+        private readonly XRMaterial[] _axisArrowMat = new XRMaterial[3];
         private readonly XRMaterial[] _rotationAxisMat = new XRMaterial[3];
         private readonly XRMaterial[] _transPlaneMat = new XRMaterial[6];
         private readonly XRMaterial[] _scalePlaneMat = new XRMaterial[3];
@@ -230,10 +231,9 @@ namespace XREngine.Scene.Components.Editing
             screenRotationMeshes = [];
             screenTranslationMeshes = [];
 
-            _screenMat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.LightGray);
+            _screenMat = CreateGizmoLineMaterial(ColorF4.LightGray);
             _screenMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
             _screenMat.RenderOptions.ExcludeFromGpuIndirect = true;
-            //_screenMat.RenderOptions.LineWidth = 1.0f;
 
             GetSphere(rotationMeshes);
 
@@ -251,6 +251,7 @@ namespace XREngine.Scene.Components.Editing
                     unit1,
                     unit2,
                     out XRMaterial axisMat,
+                    out XRMaterial axisArrowMat,
                     out XRMaterial rotationAxisMat,
                     out XRMaterial planeMat1,
                     out XRMaterial planeMat2,
@@ -282,7 +283,7 @@ namespace XREngine.Scene.Components.Editing
 
                 //isRotate = false
                 nonRotationMeshes.Add(new SubMesh(axisPrim, axisMat));
-                nonRotationMeshes.Add(new SubMesh(arrowPrim, axisMat));
+                nonRotationMeshes.Add(new SubMesh(arrowPrim, axisArrowMat));
 
                 //isTranslate = true
                 translationMeshes.Add(new SubMesh(transPrim1, planeMat1));
@@ -328,10 +329,8 @@ namespace XREngine.Scene.Components.Editing
         {
             //string axis = ((char)('X' + normalAxis)).ToString();
 
-            float coneHeight = _axisLength - _coneDistance;
-
             axisPrim = XRMesh.Create(axisLine)!;
-            arrowPrim = XRMesh.Shapes.SolidCone(unit * (_coneDistance + coneHeight * 0.5f), unit, coneHeight, _coneRadius, 6, false);
+            arrowPrim = XRMesh.Create(new VertexLine(axisLine.Vertex0.Position, axisLine.Vertex1.Position));
             transPrim1 = XRMesh.Create(transLine1);
             transPrim2 = XRMesh.Create(transLine2);
             scalePrim = XRMesh.Create(scaleLine1, scaleLine2);
@@ -366,20 +365,25 @@ namespace XREngine.Scene.Components.Editing
             Vector3 unit1,
             Vector3 unit2,
             out XRMaterial axisMat,
+            out XRMaterial axisArrowMat,
             out XRMaterial rotationAxisMat,
             out XRMaterial planeMat1,
             out XRMaterial planeMat2,
             out XRMaterial scalePlaneMat)
         {
-            axisMat = XRMaterial.CreateUnlitColorMaterialForward(unit);
+            axisMat = CreateGizmoLineMaterial(unit);
             axisMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
             axisMat.RenderOptions.CullMode = ECullMode.None;
             axisMat.RenderOptions.ExcludeFromGpuIndirect = true;
-            //axisMat.RenderOptions.LineWidth = 1.0f;
             _axisMat[normalAxis] = axisMat;
 
-            rotationAxisMat = XRMaterial.CreateUnlitColorMaterialForward(unit);
-            rotationAxisMat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+            axisArrowMat = CreateGizmoArrowHeadMaterial(unit);
+            axisArrowMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            axisArrowMat.RenderOptions.CullMode = ECullMode.None;
+            axisArrowMat.RenderOptions.ExcludeFromGpuIndirect = true;
+            _axisArrowMat[normalAxis] = axisArrowMat;
+
+            rotationAxisMat = CreateGizmoLineMaterial(unit);
             rotationAxisMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
             rotationAxisMat.RenderOptions.DepthTest.UpdateDepth = false;
             rotationAxisMat.RenderOptions.DepthTest.Function = Rendering.Models.Materials.EComparison.Lequal;
@@ -387,23 +391,73 @@ namespace XREngine.Scene.Components.Editing
             rotationAxisMat.RenderOptions.ExcludeFromGpuIndirect = true;
             _rotationAxisMat[normalAxis] = rotationAxisMat;
 
-            planeMat1 = XRMaterial.CreateUnlitColorMaterialForward(unit1);
+            planeMat1 = CreateGizmoLineMaterial(unit1);
             planeMat1.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
             planeMat1.RenderOptions.ExcludeFromGpuIndirect = true;
-            //planeMat1.RenderOptions.LineWidth = 1.0f;
             _transPlaneMat[(normalAxis << 1) + 0] = planeMat1;
 
-            planeMat2 = XRMaterial.CreateUnlitColorMaterialForward(unit2);
+            planeMat2 = CreateGizmoLineMaterial(unit2);
             planeMat2.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
             planeMat2.RenderOptions.ExcludeFromGpuIndirect = true;
-            //planeMat2.RenderOptions.LineWidth = 1.0f;
             _transPlaneMat[(normalAxis << 1) + 1] = planeMat2;
 
-            scalePlaneMat = XRMaterial.CreateUnlitColorMaterialForward(unit);
+            scalePlaneMat = CreateGizmoLineMaterial(unit);
             scalePlaneMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
             scalePlaneMat.RenderOptions.ExcludeFromGpuIndirect = true;
-            //scalePlaneMat.RenderOptions.LineWidth = 1.0f;
             _scalePlaneMat[normalAxis] = scalePlaneMat;
+        }
+
+        private static XRMaterial CreateGizmoLineMaterial(ColorF4 color)
+        {
+            ShaderVar[] parameters =
+            [
+                new ShaderVector4(color, "MatColor"),
+                new ShaderFloat(_gizmoLineWidthPixels, "LineWidth"),
+            ];
+
+            XRShader geometryShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoLine.gs"), EShaderType.Geometry);
+            XRShader fragmentShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoLine.fs"), EShaderType.Fragment);
+            XRMaterial material = new(parameters, [geometryShader, fragmentShader]);
+            material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            material.RenderOptions.CullMode = ECullMode.None;
+            ConfigurePremultipliedGizmoTransparency(material);
+            XRMaterial.ConfigureGizmoMaterial(material);
+            return material;
+        }
+
+        private static XRMaterial CreateGizmoArrowHeadMaterial(ColorF4 color)
+        {
+            ShaderVar[] parameters =
+            [
+                new ShaderVector4(color, "MatColor"),
+                new ShaderFloat(_arrowHeadLengthPixels, "ArrowHeadLengthPixels"),
+                new ShaderFloat(_arrowHeadHalfWidthPixels, "ArrowHeadHalfWidthPixels"),
+            ];
+
+            XRShader geometryShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoArrowHead.gs"), EShaderType.Geometry);
+            XRShader fragmentShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoTriangle.fs"), EShaderType.Fragment);
+            XRMaterial material = new(parameters, [geometryShader, fragmentShader]);
+            material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            material.RenderOptions.CullMode = ECullMode.None;
+            ConfigurePremultipliedGizmoTransparency(material);
+            XRMaterial.ConfigureGizmoMaterial(material);
+            return material;
+        }
+
+        private static void ConfigurePremultipliedGizmoTransparency(XRMaterial material)
+        {
+            material.TransparencyMode = ETransparencyMode.PremultipliedAlpha;
+            material.RenderOptions.BlendModeAllDrawBuffers = new BlendMode()
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                RgbSrcFactor = EBlendingFactor.One,
+                RgbDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+                AlphaSrcFactor = EBlendingFactor.One,
+                AlphaDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+            };
+            material.RenderOptions.BlendModesPerDrawBuffer = null;
+            material.RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
+            material.RenderOptions.DepthTest.UpdateDepth = false;
         }
 
         private static void GetUnits(int normalAxis, out Vector3 unit, out Vector3 unit1, out Vector3 unit2)
@@ -801,10 +855,11 @@ namespace XREngine.Scene.Components.Editing
         private const float _axisSelectRange = 0.1f; //Selection error range for axes
         private const float _selectOrbScale = _selectRange / _orbRadius;
         private const float _circOrbScale = 1.2f;
+        private const float _gizmoLineWidthPixels = 1.45f;
+        private const float _arrowHeadLengthPixels = 20.0f;
+        private const float _arrowHeadHalfWidthPixels = 7.0f;
         private const float _axisLength = _orbRadius * 2.0f;
         private const float _axisHalfLength = _orbRadius * 0.75f;
-        private const float _coneRadius = _orbRadius * 0.1f;
-        private const float _coneDistance = _orbRadius * 1.5f;
         private const float _scaleHalf1LDist = _orbRadius * 0.8f;
         private const float _scaleHalf2LDist = _orbRadius * 1.2f;
 
@@ -1380,6 +1435,9 @@ namespace XREngine.Scene.Components.Editing
                 _axisMat[0].Parameter<ShaderVector4>(0)!.Value = xColor;
                 _axisMat[1].Parameter<ShaderVector4>(0)!.Value = yColor;
                 _axisMat[2].Parameter<ShaderVector4>(0)!.Value = zColor;
+                _axisArrowMat[0].Parameter<ShaderVector4>(0)!.Value = xColor;
+                _axisArrowMat[1].Parameter<ShaderVector4>(0)!.Value = yColor;
+                _axisArrowMat[2].Parameter<ShaderVector4>(0)!.Value = zColor;
                 _rotationAxisMat[0].Parameter<ShaderVector4>(0)!.Value = xColor;
                 _rotationAxisMat[1].Parameter<ShaderVector4>(0)!.Value = yColor;
                 _rotationAxisMat[2].Parameter<ShaderVector4>(0)!.Value = zColor;

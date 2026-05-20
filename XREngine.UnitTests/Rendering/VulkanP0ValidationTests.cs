@@ -47,8 +47,8 @@ public sealed class VulkanP0ValidationTests
 
         packetSource.ShouldContain("VulkanDroppedFrameOps");
         packetSource.ShouldContain("VulkanFrameDiagnosticSummary");
-        profilerSenderSource.ShouldContain("VulkanDroppedFrameOps = Rendering.Stats.VulkanDroppedFrameOps");
-        editorSource.ShouldContain("VulkanDroppedFrameOps = Engine.Rendering.Stats.VulkanDroppedFrameOps");
+        profilerSenderSource.ShouldContain("VulkanDroppedFrameOps = Rendering.Stats.Vulkan.VulkanDroppedFrameOps");
+        editorSource.ShouldContain("VulkanDroppedFrameOps = Engine.Rendering.Stats.Vulkan.VulkanDroppedFrameOps");
         profilerUiSource.ShouldContain("Vulkan Frame Diagnostics:");
     }
 

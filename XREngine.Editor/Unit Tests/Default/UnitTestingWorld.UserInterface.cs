@@ -71,12 +71,12 @@ public static partial class EditorUnitTests
             double renderMs = Engine.Time.Timer.Render.Delta * 1000.0;
             double updateMs = Engine.Time.Timer.Update.Delta * 1000.0;
             double fixedMs = Engine.Time.Timer.FixedUpdateDelta * 1000.0;
-            int drawCalls = Engine.Rendering.Stats.DrawCalls;
-            int multiDrawCalls = Engine.Rendering.Stats.MultiDrawCalls;
-            int trianglesRendered = Engine.Rendering.Stats.TrianglesRendered;
-            double cpuFrameMs = Engine.Rendering.Stats.VulkanFrameTotalMs;
-            double gpuCmdMs = Engine.Rendering.Stats.VulkanFrameGpuCommandBufferMs;
-            int fallbackEvents = Engine.Rendering.Stats.GpuCpuFallbackEvents;
+            int drawCalls = Engine.Rendering.Stats.Frame.DrawCalls;
+            int multiDrawCalls = Engine.Rendering.Stats.Frame.MultiDrawCalls;
+            int trianglesRendered = Engine.Rendering.Stats.Frame.TrianglesRendered;
+            double cpuFrameMs = Engine.Rendering.Stats.Vulkan.VulkanFrameTotalMs;
+            double gpuCmdMs = Engine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs;
+            int fallbackEvents = Engine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
 
             var builder = _fpsTextBuilder;
             builder.Clear();

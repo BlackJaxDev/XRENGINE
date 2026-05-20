@@ -128,7 +128,7 @@ namespace XREngine.Scene
                 using var octreeSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
                 int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - cpuCommandsBefore);
-                RuntimeEngine.Rendering.Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
+                RuntimeEngine.Rendering.Stats.Octree.RecordOctreeCollect(visibleRenderables, emittedCommands);
             }
 
             if (modelDiagActive)

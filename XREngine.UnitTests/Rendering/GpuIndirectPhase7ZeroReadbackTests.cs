@@ -27,7 +27,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             XREngine.Engine.Rendering.Stats.BeginFrame();
             XREngine.Engine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.GpuReadbackBytes.ShouldBe(
+            XREngine.Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ShouldBe(
                 0L,
                 customMessage: "A representative zero-readback frame must finish without recording GPU->CPU bytes.");
         }

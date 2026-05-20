@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
@@ -106,6 +107,37 @@ namespace XREngine.Rendering
         public static bool IsMeshletDebugDisplayEnabled(XRCamera? camera)
             => TryResolve(camera, out GpuBvhDebugSettings? settings) &&
                settings?.MeshletDebugDisplayEnabled == true;
+
+        /// <summary>
+        /// Returns true when the given render pass is one of the geometry passes
+        /// whose generated meshlet shader honors the meshlet debug display uniform.
+        /// </summary>
+        public static bool SupportsMeshletDebugDisplayPass(int renderPass)
+            => renderPass == (int)EDefaultRenderPass.OpaqueDeferred ||
+               renderPass == (int)EDefaultRenderPass.OpaqueForward ||
+               renderPass == (int)EDefaultRenderPass.MaskedForward ||
+               renderPass == (int)EDefaultRenderPass.TransparentForward ||
+               renderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward ||
+               renderPass == (int)EDefaultRenderPass.PerPixelLinkedListForward ||
+               renderPass == (int)EDefaultRenderPass.DepthPeelingForward;
+
+        /// <summary>
+        /// Returns true when meshlet debug visualization is enabled for the given camera and pass,
+        /// the active renderer supports production meshlet dispatch, and the pass is one whose
+        /// generated meshlet shader honors the debug uniform. Used to force the meshlet pipeline
+        /// for the duration of a single GPU pass when the user toggles the debug overlay on a
+        /// camera whose default submission strategy is non-meshlet (e.g. GpuIndirectZeroReadback).
+        /// </summary>
+        public static bool ShouldForceMeshletForDebugDisplay(XRCamera? camera, int renderPass)
+        {
+            if (!SupportsMeshletDebugDisplayPass(renderPass))
+                return false;
+
+            if (!IsMeshletDebugDisplayEnabled(camera))
+                return false;
+
+            return AbstractRenderer.Current?.SupportsMeshletDispatch() == true;
+        }
 
         // No GPU uniforms to push; the corresponding pipeline command reads
         // these properties directly when issuing debug visualization passes.

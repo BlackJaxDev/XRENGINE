@@ -5,6 +5,7 @@ Last updated: 2026-05-13
 Tracks the remaining test, allocation-audit, and hardware-validation work for the OpenXR timing pipeline. The production-code todo (Phases 0-8) is complete and has been removed; this file is what is left.
 
 Sibling future-work tracker: [openxr-future-work-todo.md](../rendering/vr/openxr-future-work-todo.md).
+No-HMD runtime testing design: [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md).
 
 ## Contract Tests
 
@@ -44,6 +45,15 @@ Per-row checks:
 - [ ] Capture a baseline run with `OpenXrDebugLifecycle=true` on a reference scene; archive lifecycle logs under `Build/Logs/`.
 - [ ] Re-run baseline with `DedicatedThread` enabled and attach updated lifecycle logs + stats to the validation PR.
 
+## Monado Mock Runtime Lane
+
+- [ ] Create a dedicated branch for the Monado OpenXR testing pipeline work, for example `openxr-monado-testing-pipeline`.
+- [ ] Add a local smoke runner that launches Unit Testing World with `XR_RUNTIME_JSON` pointing at a Monado runtime manifest.
+- [ ] Assert instance/system/session/swapchain/frame lifecycle markers from logs or a structured OpenXR smoke summary.
+- [ ] Keep the existing `EmulatedVRPawn` lane as non-API scene/pawn coverage and document that it does not exercise OpenXR calls.
+- [ ] Promote the Monado lane to optional CI only after the runtime artifact/version and license flow are pinned.
+- [ ] Merge the dedicated branch back into `main` after implementation and validation.
+
 ## Phase 4 Input Audit (deferred from main todo)
 
 - [ ] Audit input listeners on action edges for sensitivity to the `OpenXrActionSyncPolicy.PredictedOnly` default (Phase 4 changed behavior from two-sync to one-sync per frame). Regression sweep on existing bindings; flip to `PredictedAndLate` per-binding if any consumer regresses.
@@ -51,4 +61,5 @@ Per-row checks:
 ## Related
 
 - [OpenXR VR Rendering (architecture)](../../../architecture/rendering/openxr-vr-rendering.md)
+- [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md)
 - [OpenXR Future Work TODO](../rendering/vr/openxr-future-work-todo.md)

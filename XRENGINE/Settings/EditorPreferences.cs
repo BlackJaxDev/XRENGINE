@@ -1396,6 +1396,8 @@ namespace XREngine
         private int _depthPeelingMaxLayers = 4;
         private bool _renderLightProbeTetrahedra = false;
         private float _debugTextMaxLifespan;
+        private float _debugPointSize = 0.005f;
+        private float _debugLineWidth = 0.0015f;
         private bool _enableThreadAllocationTracking;
         private bool _useDebugOpaquePipeline;
         private bool _forceGpuPassthroughCulling = false;
@@ -1675,6 +1677,24 @@ namespace XREngine
         {
             get => _debugTextMaxLifespan;
             set => SetField(ref _debugTextMaxLifespan, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Debug Point Size")]
+        [Description("Camera-relative size for Engine.Rendering.Debug point primitives.")]
+        public float DebugPointSize
+        {
+            get => _debugPointSize;
+            set => SetField(ref _debugPointSize, Math.Clamp(value, 0.0001f, 0.1f));
+        }
+
+        [Category("Debug")]
+        [DisplayName("Debug Line Width")]
+        [Description("Screen-relative width for Engine.Rendering.Debug line primitives.")]
+        public float DebugLineWidth
+        {
+            get => _debugLineWidth;
+            set => SetField(ref _debugLineWidth, Math.Clamp(value, 0.0001f, 0.05f));
         }
 
         [Category("Debug")]
@@ -2397,6 +2417,8 @@ namespace XREngine
             VisualizeTransparencyOverdrawHeatmap = source.VisualizeTransparencyOverdrawHeatmap;
             RenderLightProbeTetrahedra = source.RenderLightProbeTetrahedra;
             DebugTextMaxLifespan = source.DebugTextMaxLifespan;
+            DebugPointSize = source.DebugPointSize;
+            DebugLineWidth = source.DebugLineWidth;
             EnableThreadAllocationTracking = source.EnableThreadAllocationTracking;
             UseDebugOpaquePipeline = source.UseDebugOpaquePipeline;
             ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
@@ -2499,6 +2521,10 @@ namespace XREngine
                 RenderLightProbeTetrahedra = tetra.Value;
             if (overrides.DebugTextMaxLifespanOverride is { HasOverride: true } lifespan)
                 DebugTextMaxLifespan = lifespan.Value;
+            if (overrides.DebugPointSizeOverride is { HasOverride: true } pointSize)
+                DebugPointSize = pointSize.Value;
+            if (overrides.DebugLineWidthOverride is { HasOverride: true } lineWidth)
+                DebugLineWidth = lineWidth.Value;
             if (overrides.EnableThreadAllocationTrackingOverride is { HasOverride: true } alloc)
                 EnableThreadAllocationTracking = alloc.Value;
             if (overrides.UseDebugOpaquePipelineOverride is { HasOverride: true } debugOpaque)

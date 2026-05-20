@@ -173,8 +173,8 @@ namespace XREngine.Rendering.Vulkan
                 UseCount: false,
                 CaptureFrameOpContext()));
 
-            RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
-            RuntimeEngine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
+            RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
+            RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls((int)drawCount);
         }
 
         public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset)
@@ -217,9 +217,9 @@ namespace XREngine.Rendering.Vulkan
                 UseCount: true,
                 CaptureFrameOpContext()));
 
-            RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
+            RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
             // Actual draw count is determined by GPU; we track max as approximation
-            RuntimeEngine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
+            RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls((int)maxDrawCount);
         }
 
         private static IndexType ToVkIndexType(IndexSize size)
