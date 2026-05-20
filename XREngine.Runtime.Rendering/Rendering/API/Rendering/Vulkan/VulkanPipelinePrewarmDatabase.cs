@@ -371,7 +371,7 @@ public unsafe partial class VulkanRenderer
 
         bool knownAtStartup = _pipelinePrewarmDatabase?.Contains(entry.Key) == true;
         _pipelinePrewarmDatabase?.Record(entry);
-        RuntimeEngine.Rendering.Stats.RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary(knownAtStartup));
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary(knownAtStartup));
     }
 
     internal void RecordVulkanComputePipelineCacheMiss(
@@ -395,7 +395,7 @@ public unsafe partial class VulkanRenderer
 
         bool knownAtStartup = _pipelinePrewarmDatabase?.Contains(entry.Key) == true;
         _pipelinePrewarmDatabase?.Record(entry);
-        RuntimeEngine.Rendering.Stats.RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary(knownAtStartup));
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary(knownAtStartup));
     }
 
     private static string ResolveRenderPassName(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata)

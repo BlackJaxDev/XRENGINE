@@ -1474,6 +1474,52 @@ namespace XREngine.Rendering
         public static XRMaterial CreateUnlitColorMaterialForward(ColorF4 color)
             => new([new ShaderVector4(color, "MatColor")], ShaderHelper.UnlitColorFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
+        /// <summary>
+        /// Stencil bit reserved for tagging editor gizmo pixels (e.g. transform tool, light probe preview).
+        /// PostProcess.fs / PostProcessStereo.fs early-out for pixels with this bit set so gizmos bypass
+        /// tonemap, color grading, vignette, exposure, atmosphere, fog, and bloom add.
+        /// Bits 0x1 and 0x2 are reserved for hover and selection highlighting; mirrors use the low bit
+        /// range as well via increments. 0x80 (bit 7) is the highest free bit unlikely to collide.
+        /// </summary>
+        public const uint GizmoStencilBit = 0x80u;
+
+        /// <summary>
+        /// Configures a gizmo material so it bypasses post-processing:
+        ///   - Forces RenderPass to OnTopForward so the draw runs after bloom/temporal/atmosphere/fog.
+        ///   - Writes <see cref="GizmoStencilBit"/> into the stencil buffer for every drawn pixel so the
+        ///     post-process shaders can early-out on those pixels.
+        /// Safe to call multiple times.
+        /// </summary>
+        public static void ConfigureGizmoMaterial(XRMaterial material)
+        {
+            if (material is null)
+                return;
+
+            material.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+
+            var ro = material.RenderOptions;
+            var stencil = ro.StencilTest ?? new StencilTest();
+            stencil.Enabled = ERenderParamUsage.Enabled;
+            stencil.FrontFace = MakeGizmoStencilFace(stencil.FrontFace);
+            stencil.BackFace = MakeGizmoStencilFace(stencil.BackFace);
+            ro.StencilTest = stencil;
+        }
+
+        private static StencilTestFace MakeGizmoStencilFace(StencilTestFace? source)
+        {
+            source ??= new StencilTestFace();
+            return new StencilTestFace
+            {
+                Function = EComparison.Always,
+                Reference = source.Reference | (int)GizmoStencilBit,
+                ReadMask = source.ReadMask | GizmoStencilBit,
+                WriteMask = source.WriteMask | GizmoStencilBit,
+                BothFailOp = source.BothFailOp,
+                StencilPassDepthFailOp = source.StencilPassDepthFailOp,
+                BothPassOp = EStencilOp.Replace,
+            };
+        }
+
         public static XRMaterial CreateLitColorMaterial(bool deferred = true)
             => CreateLitColorMaterial(Color.DarkTurquoise, deferred);
 

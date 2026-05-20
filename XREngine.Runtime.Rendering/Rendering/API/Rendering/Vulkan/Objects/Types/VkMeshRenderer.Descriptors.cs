@@ -99,7 +99,7 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
 			}
 
 			DescriptorSetLayout[] layoutArray = [.. layouts];
@@ -252,7 +252,7 @@ public unsafe partial class VulkanRenderer
 			};
 
 		private void RecordDescriptorFailure(DescriptorBindingInfo binding, string reason, bool skippedDraw = true)
-			=> RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+			=> RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 				_program?.Data?.Name,
 				GetDescriptorBindingClass(binding.DescriptorType),
 				binding.Name,
@@ -263,7 +263,7 @@ public unsafe partial class VulkanRenderer
 				reason);
 
 		private void RecordDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
-			=> RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorFallback(
+			=> RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorFallback(
 				_program?.Data?.Name,
 				GetDescriptorBindingClass(binding.DescriptorType),
 				binding.Name,

@@ -338,6 +338,15 @@ void main()
   //Normalize uv from [-1, 1] to [0, 1]
   uv = uv * 0.5f + 0.5f;
   vec2 sceneUv = SceneSourceUv(uv);
+
+  // Gizmo bypass: pixels tagged with the gizmo stencil bit (0x80) skip tonemap,
+  // color grading, vignette, exposure, atmosphere, fog, and bloom add. They are
+  // emitted as raw HDR scene color so editor gizmos look unprocessed.
+  if ((SampleSceneStencil(uv) & 0x80u) != 0u)
+  {
+      OutColor = vec4(texture(HDRSceneTex, sceneUv).rgb, 1.0f);
+      return;
+  }
   
   //Perform HDR operations
   vec3 hdrSceneColor;

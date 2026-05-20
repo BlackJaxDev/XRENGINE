@@ -640,7 +640,7 @@ public partial class OpenGLRenderer
             Api.GetBufferSubData(GLEnum.PixelPackBuffer, IntPtr.Zero, size, ptr);
         }
         Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
-        RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes((long)size);
+        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((long)size);
 
         return true;
     }

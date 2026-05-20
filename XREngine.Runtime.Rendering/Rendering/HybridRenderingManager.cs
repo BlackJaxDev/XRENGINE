@@ -419,7 +419,7 @@ namespace XREngine.Rendering
                  renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet) &&
                 !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
-                RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+                RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
                 XREngine.Debug.RenderingWarningEvery(
                     $"RenderDispatch.ZeroReadbackScatterMissing.{currentRenderPass}",
                     TimeSpan.FromSeconds(2),
@@ -2251,7 +2251,7 @@ namespace XREngine.Rendering
             int currentRenderPass)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuMeshlet.RenderMaterialTable");
-            RuntimeEngine.Rendering.Stats.RecordGpuMeshletStrategyRequested(
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletStrategyRequested(
                 currentRenderPass,
                 EMeshSubmissionStrategy.GpuMeshlet,
                 EMeshSubmissionStrategy.GpuMeshlet,
@@ -2438,8 +2438,8 @@ namespace XREngine.Rendering
 
             if (submitted)
             {
-                RuntimeEngine.Rendering.Stats.RecordGpuMeshletProductionFrame(1);
-                RuntimeEngine.Rendering.Stats.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
                 XREngine.Debug.Meshes(
                     $"Meshlet.BackendSelected pass={currentRenderPass} requested={EMeshSubmissionStrategy.GpuMeshlet} selected={EMeshSubmissionStrategy.GpuMeshlet} dialect={renderer.MeshShaderDialect} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
             }
@@ -2604,8 +2604,8 @@ namespace XREngine.Rendering
 
         private static void WarnMeshletMaterialFallback(int currentRenderPass, string reason)
         {
-            RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
-            RuntimeEngine.Rendering.Stats.RecordGpuMeshletFallback(1);
+            RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletFallback(1);
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderDispatch.GpuMeshletMaterialFallback.{currentRenderPass}.{reason.GetHashCode()}",
                 TimeSpan.FromSeconds(2),
@@ -4095,7 +4095,7 @@ namespace XREngine.Rendering
             //}
 
             var activeBatches = CoalesceContiguousBatches(overrideBatches ?? batches);
-            RuntimeEngine.Rendering.Stats.RecordVulkanIndirectBatchMerge(batches.Count, activeBatches.Count);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectBatchMerge(batches.Count, activeBatches.Count);
 
             if (activeBatches.Count != batches.Count)
             {
@@ -5045,7 +5045,7 @@ namespace XREngine.Rendering
                 return true;
             }
 
-            RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+            RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
             var backend = graphicsProgram.ShaderMetadata.Backend;
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderDispatch.ProgramNotReady.{context}.{RuntimeHelpers.GetHashCode(graphicsProgram)}",

@@ -807,6 +807,11 @@ public partial class DefaultRenderPipeline2
             c.Add<VPRC_DepthWrite>().Allow = false;
             // GPU path currently ignores override materials; force CPU so motion vectors render with the correct material.
             // Skip background/on-top passes so skyboxes/UI do not pollute the velocity buffer.
+            // OnTopForward gizmos are intentionally excluded: they use custom depth-trick vertex shaders
+            // (z forced to near plane) that the engine-generated VS used by the velocity pass does not
+            // honor, so velocity would only be written where the gizmo is unoccluded, while motion blur
+            // and TAA reprojection would still rely on those values for on-top pixels and produce smears
+            // / ghosting. TAA sharpness for gizmos is handled in the TAA/TSR shader via the gizmo stencil bit.
             using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyMotionVectorsProgramBindings))
             {
                 c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,

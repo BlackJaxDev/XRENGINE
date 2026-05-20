@@ -69,7 +69,7 @@ public unsafe partial class OpenGLRenderer
         BindParameterBuffer(countBuffer);
         _glMultiDrawMeshTasksIndirectCountExt((void*)byteOffset, (nint)countByteOffset, (int)maxDrawCount, (int)stride);
 
-        RuntimeEngine.Rendering.Stats.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
         failureReason = string.Empty;
         return true;
     }

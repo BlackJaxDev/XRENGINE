@@ -390,7 +390,7 @@ namespace XREngine.Rendering.OpenGL
                 bool shouldUseImmutableStorage = ShouldUseImmutableStorage();
                 bool remapAfterUpload = Data.ActivelyMapping.Contains(this);
 
-                if (!RuntimeEngine.Rendering.Stats.CanAllocateVram(Data.Length, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                if (!RuntimeEngine.Rendering.Stats.Vram.CanAllocateVram(Data.Length, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
                 {
                     Debug.OpenGLWarning($"[VRAM Budget] Skipping buffer allocation for '{GetDescribingName()}' ({Data.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
                     return;
@@ -447,7 +447,7 @@ namespace XREngine.Rendering.OpenGL
                 // Track VRAM deallocation of previous buffer if any
                 if (_allocatedVRAMBytes > 0)
                 {
-                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.Vram.RemoveBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
 
@@ -461,7 +461,7 @@ namespace XREngine.Rendering.OpenGL
 
                 // Track VRAM allocation
                 _allocatedVRAMBytes = Data.Length;
-                RuntimeEngine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.Vram.AddBufferAllocation(_allocatedVRAMBytes);
 
                 if (Data.DisposeOnPush)
                     Data.Dispose();
@@ -546,10 +546,10 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (_allocatedVRAMBytes > 0)
                 {
-                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.Vram.RemoveBufferAllocation(_allocatedVRAMBytes);
                 }
                 _allocatedVRAMBytes = bytes;
-                RuntimeEngine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.Vram.AddBufferAllocation(_allocatedVRAMBytes);
             }
 
             /// <summary>
@@ -946,7 +946,7 @@ namespace XREngine.Rendering.OpenGL
                 // Track VRAM deallocation of previous buffer if any
                 if (_allocatedVRAMBytes > 0)
                 {
-                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.Vram.RemoveBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
 
@@ -965,7 +965,7 @@ namespace XREngine.Rendering.OpenGL
 
                 // Track VRAM allocation
                 _allocatedVRAMBytes = length;
-                RuntimeEngine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.Vram.AddBufferAllocation(_allocatedVRAMBytes);
             }
             // ------------------------------------------------------
 
@@ -1088,7 +1088,7 @@ namespace XREngine.Rendering.OpenGL
                 // Track VRAM deallocation
                 if (_allocatedVRAMBytes > 0)
                 {
-                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.Vram.RemoveBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
             }

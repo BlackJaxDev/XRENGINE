@@ -264,6 +264,15 @@ void main()
 
     vec3 uvi = vec3(duv, gl_ViewID_OVR);
 
+    // Gizmo bypass: pixels tagged with the gizmo stencil bit (0x80) skip tonemap,
+    // color grading, vignette, exposure, atmosphere, fog, and bloom add. They are
+    // emitted as raw HDR scene color so editor gizmos look unprocessed.
+    if ((texture(StencilView, uvi).r & 0x80u) != 0u)
+    {
+        OutColor = vec4(texture(HDRSceneTex, uvi).rgb, 1.0);
+        return;
+    }
+
     vec3 hdrSceneColor;
 
     if (ChromaticAberrationIntensity > 0.0)

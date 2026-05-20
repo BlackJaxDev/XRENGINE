@@ -321,9 +321,10 @@ public partial class DefaultRenderPipeline2
         XRTexture depthTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
         XRTexture historyDepthTexture = GetTexture<XRTexture>(HistoryDepthViewTextureName)!;
         XRTexture historyColorTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
+        XRTexture stencilTexture = GetTexture<XRTexture>(StencilViewTextureName)!;
         XRTexture outputTexture = GetTexture<XRTexture>(FxaaOutputTextureName)!;
         XRShader upscaleShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"), EShaderType.Fragment);
-        XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture], upscaleShader)
+        XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture, stencilTexture], upscaleShader)
         {
             RenderOptions = new RenderingParameters()
             {

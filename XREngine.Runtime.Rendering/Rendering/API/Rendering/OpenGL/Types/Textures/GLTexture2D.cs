@@ -226,7 +226,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         // Track VRAM deallocation.
         if (_allocatedVRAMBytes > 0)
         {
-            RuntimeEngine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+            RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(_allocatedVRAMBytes);
             _allocatedVRAMBytes = 0;
         }
 

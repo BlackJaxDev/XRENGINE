@@ -71,6 +71,28 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            // Meshlet debug display force-flip:
+            // The post-process MeshletDebugDisplayEnabled toggle requires the production meshlet
+            // dispatch path so the generated meshlet fragment shader can write FragMeshletDebugColor.
+            // When the camera's default strategy is non-meshlet (e.g. GpuIndirectZeroReadback) we
+            // override MeshSubmissionStrategy/UseMeshletPipeline for this pass *before* the meshlet
+            // expansion gate runs. Restored in finally so the override never bleeds into other passes
+            // or subsequent frames.
+            EMeshSubmissionStrategy savedStrategy = MeshSubmissionStrategy;
+            bool savedUseMeshletPipeline = UseMeshletPipeline;
+            bool meshletDebugForced =
+                savedStrategy != EMeshSubmissionStrategy.CpuDirect &&
+                savedStrategy != EMeshSubmissionStrategy.GpuMeshlet &&
+                GpuBvhDebugSettings.ShouldForceMeshletForDebugDisplay(camera, RenderPass);
+
+            if (meshletDebugForced)
+            {
+                MeshSubmissionStrategy = EMeshSubmissionStrategy.GpuMeshlet;
+                UseMeshletPipeline = true;
+            }
+
+            try
+            {
             _gpuBatchingPreparedThisFrame = false;
             _zeroReadbackMaterialScatterPreparedThisFrame = false;
             _zeroReadbackActiveBucketListPreparedThisFrame = false;
@@ -79,8 +101,8 @@ namespace XREngine.Rendering.Commands
             Stopwatch resetStopwatch = Stopwatch.StartNew();
             ResetCounters();
             resetStopwatch.Stop();
-            RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Reset,
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
+                RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Reset,
                 resetStopwatch.Elapsed);
 
             Cull(scene, camera);
@@ -149,8 +171,8 @@ namespace XREngine.Rendering.Commands
 
             if (indirectStageElapsed > TimeSpan.Zero)
             {
-                RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                    RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Indirect,
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
+                    RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Indirect,
                     indirectStageElapsed);
             }
 
@@ -169,8 +191,8 @@ namespace XREngine.Rendering.Commands
             Stopwatch drawStopwatch = Stopwatch.StartNew();
             _renderManager.Render(this, camera, scene, _indirectDrawBuffer!, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
             drawStopwatch.Stop();
-            RuntimeEngine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
-                RuntimeEngine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Draw,
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
+                RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Draw,
                 drawStopwatch.Elapsed);
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render submission done");
@@ -184,6 +206,15 @@ namespace XREngine.Rendering.Commands
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render end");
             Dbg("Render end", "Lifecycle");
             ClearPassPolicySnapshot();
+            }
+            finally
+            {
+                if (meshletDebugForced)
+                {
+                    MeshSubmissionStrategy = savedStrategy;
+                    UseMeshletPipeline = savedUseMeshletPipeline;
+                }
+            }
         }
 
         /// <summary>
@@ -405,7 +436,7 @@ namespace XREngine.Rendering.Commands
             uint dispatchCommands = Math.Min(inputs.VisibleCommandUpperBound, CommandCapacity);
             if (dispatchCommands == 0u || inputs.MeshletRangeBuffer.ElementCount == 0u)
             {
-                RuntimeEngine.Rendering.Stats.RecordGpuMeshletDispatchSkipped(1);
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatchSkipped(1);
                 return;
             }
 
@@ -439,13 +470,13 @@ namespace XREngine.Rendering.Commands
             _expandMeshletsComputeShader.DispatchCompute(dispatchGroups, 1, 1, postExpandBarrier);
             AbstractRenderer.Current?.MemoryBarrier(postExpandBarrier);
             _meshletExpansionPreparedThisFrame = true;
-            RuntimeEngine.Rendering.Stats.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
             Dbg($"Meshlet expansion dispatch groups={dispatchGroups} commands={dispatchCommands} taskCapacity={_visibleMeshletTaskBuffer.ElementCount}", "Meshlet");
         }
 
         private void LogMeshletDispatchSkipped(string reason, uint commandCount)
         {
-            RuntimeEngine.Rendering.Stats.RecordGpuMeshletDispatchSkipped(1);
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatchSkipped(1);
             XREngine.Debug.RenderingWarningEvery(
                 $"Meshlet.DispatchSkipped.{RenderPass}.{reason.GetHashCode()}",
                 TimeSpan.FromSeconds(2),
@@ -858,7 +889,7 @@ namespace XREngine.Rendering.Commands
                 MaskedVisibleCommandCount = 0u;
                 ApproximateTransparentVisibleCommandCount = 0u;
                 ExactTransparentVisibleCommandCount = 0u;
-                RuntimeEngine.Rendering.Stats.RecordGpuTransparencyDomainCounts(0, 0, 0, 0);
+                RuntimeEngine.Rendering.Stats.GpuTransparency.RecordGpuTransparencyDomainCounts(0, 0, 0, 0);
                 return;
             }
 
@@ -888,7 +919,7 @@ namespace XREngine.Rendering.Commands
                 ApproximateTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentApproximate);
                 ExactTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentExact);
 
-                RuntimeEngine.Rendering.Stats.RecordGpuTransparencyDomainCounts(
+                RuntimeEngine.Rendering.Stats.GpuTransparency.RecordGpuTransparencyDomainCounts(
                     opaqueOrOtherCount,
                     MaskedVisibleCommandCount,
                     ApproximateTransparentVisibleCommandCount,
@@ -1065,7 +1096,7 @@ namespace XREngine.Rendering.Commands
                     _gpuBatchRangeBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
                     _gpuBatchRangeBuffer.MapBufferData();
                     mappedHere = true;
-                    RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
+                    RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
                 }
 
                 VoidPtr mapped = _gpuBatchRangeBuffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
@@ -1073,7 +1104,7 @@ namespace XREngine.Rendering.Commands
                     return null;
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
-                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes((int)(batchCount * GPUBatchingLayout.BatchRangeStride));
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((int)(batchCount * GPUBatchingLayout.BatchRangeStride));
 
                 uint stride = _gpuBatchRangeBuffer.ElementSize;
                 if (stride == 0)
@@ -1140,7 +1171,7 @@ namespace XREngine.Rendering.Commands
                     _materialTierActiveBucketBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
                     _materialTierActiveBucketBuffer.MapBufferData();
                     mappedHere = true;
-                    RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
+                    RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
                 }
 
                 VoidPtr mapped = _materialTierActiveBucketBuffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
@@ -1148,7 +1179,7 @@ namespace XREngine.Rendering.Commands
                     return null;
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
-                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes((int)(activeCount * sizeof(uint)));
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((int)(activeCount * sizeof(uint)));
 
                 var buckets = new List<uint>((int)activeCount);
                 unsafe
@@ -1764,7 +1795,7 @@ namespace XREngine.Rendering.Commands
                 uint requestedDraws = scene.TotalCommandCount;
                 uint emittedDraws = VisibleCommandCount;
                 uint culledDraws = requestedDraws > emittedDraws ? requestedDraws - emittedDraws : 0u;
-                RuntimeEngine.Rendering.Stats.RecordVulkanIndirectEffectiveness(
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectEffectiveness(
                     requestedDraws,
                     culledDraws,
                     emittedDraws,
@@ -1798,7 +1829,7 @@ namespace XREngine.Rendering.Commands
                 Dbg($"Overflow flags cull={cullOv} indirect={indOv} trunc={trunc} meshletExpand={meshletExpandOv}", "Stats");
                 if (meshletExpandOv != 0u)
                 {
-                    RuntimeEngine.Rendering.Stats.RecordGpuMeshletExpansionOverflow(meshletExpandOv);
+                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletExpansionOverflow(meshletExpandOv);
                     Debug.MeshesWarning($"{FormatDebugPrefix("Stats")} Meshlet.ExpandOverflow pass={RenderPass} count={meshletExpandOv} capacity={MaxVisibleMeshletTaskCapacity}");
                 }
 
@@ -1849,19 +1880,19 @@ namespace XREngine.Rendering.Commands
             ReadUints(_statsBuffer, values);
 
             var stats = new GpuRenderStats(values);
-            int cpuFallbackEvents = RuntimeEngine.Rendering.Stats.GpuCpuFallbackEvents;
-            int cpuFallbackRecovered = RuntimeEngine.Rendering.Stats.GpuCpuFallbackRecoveredCommands;
+            int cpuFallbackEvents = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
+            int cpuFallbackRecovered = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackRecoveredCommands;
             uint consumedDrawCount = 0u;
             if (!IsCpuReadbackCountDisabledForPass() && _drawCountBuffer is not null)
                 consumedDrawCount = ReadUIntAt(_drawCountBuffer, 0u);
 
-            RuntimeEngine.Rendering.Stats.RecordVulkanIndirectEffectiveness(
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectEffectiveness(
                 requestedDraws: stats.Input,
                 culledDraws: stats.Culled,
                 emittedIndirectDraws: stats.Drawn,
                 consumedDraws: consumedDrawCount,
                 overflowCount: overflowCount);
-            RuntimeEngine.Rendering.Stats.RecordGpuMeshletTaskStats(
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(
                 stats.MeshletTaskRecordsEmitted,
                 stats.MeshletTaskRecordsFrustumCulled,
                 stats.MeshletTaskRecordsConeCulled,
@@ -1896,10 +1927,10 @@ namespace XREngine.Rendering.Commands
             }
 
             LogTransparencyDomainStats(
-                (uint)RuntimeEngine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
-                (uint)RuntimeEngine.Rendering.Stats.GpuTransparencyMaskedVisible,
-                (uint)RuntimeEngine.Rendering.Stats.GpuTransparencyApproximateVisible,
-                (uint)RuntimeEngine.Rendering.Stats.GpuTransparencyExactVisible);
+                (uint)RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyOpaqueOrOtherVisible,
+                (uint)RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyMaskedVisible,
+                (uint)RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyApproximateVisible,
+                (uint)RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyExactVisible);
 
             Dbg($"Stats in={stats.Input} culled={stats.Culled} draws={stats.Drawn} tris={stats.Triangles} " +
                 $"frustumRej={stats.FrustumRejected} distRej={stats.DistanceRejected} " +
@@ -2128,7 +2159,7 @@ namespace XREngine.Rendering.Commands
                         buffer.RangeFlags |= EBufferMapRangeFlags.Read;
                         buffer.MapBufferData();
                         _mappedHere = true;
-                        RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
+                        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
                     }
 
                     var culledPtr = buffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
@@ -2158,7 +2189,7 @@ namespace XREngine.Rendering.Commands
                 if (_basePtr == IntPtr.Zero)
                     return false;
 
-                RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(Unsafe.SizeOf<GPUIndirectRenderCommand>());
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(Unsafe.SizeOf<GPUIndirectRenderCommand>());
 
                 unsafe
                 {

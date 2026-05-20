@@ -127,11 +127,11 @@ public unsafe partial class OpenXRAPI
         }
         long waitEnd = Stopwatch.GetTimestamp();
         long waitTicks = waitEnd - waitStart;
-        RuntimeEngine.Rendering.Stats.RecordVrXrWaitFrameBlockTime(TimeSpan.FromSeconds(waitTicks / (double)Stopwatch.Frequency));
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrWaitFrameBlockTime(TimeSpan.FromSeconds(waitTicks / (double)Stopwatch.Frequency));
 
         _frameState = frameState;
         double leadMs = TryGetPredictedDisplayLeadTimeMs(frameState, waitEnd);
-        RuntimeEngine.Rendering.Stats.RecordVrXrPredictedDisplayLeadTime(leadMs);
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrPredictedDisplayLeadTime(leadMs);
 
         return true;
     }
@@ -190,7 +190,7 @@ public unsafe partial class OpenXRAPI
 
         double safetyMarginNanoseconds = Math.Max(0.0, OpenXrDeadlineSafetyMarginMs) * 1_000_000.0;
         if (submitEndXrTime + safetyMarginNanoseconds >= displayTime)
-            RuntimeEngine.Rendering.Stats.RecordVrXrMissedDeadlineFrame();
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrXrMissedDeadlineFrame();
     }
 
     private Result EndFrameWithTiming(in FrameEndInfo frameEndInfo)
@@ -200,7 +200,7 @@ public unsafe partial class OpenXRAPI
         var result = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
         long end = Stopwatch.GetTimestamp();
         long ticks = end - start;
-        RuntimeEngine.Rendering.Stats.RecordVrXrEndFrameSubmitTime(TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency));
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency));
         RecordDeadlineStatus(frameEndInfo.DisplayTime, end, frameEndInfo.LayerCount);
         return result;
     }
@@ -249,7 +249,7 @@ public unsafe partial class OpenXRAPI
             return true;
         }
 
-        RuntimeEngine.Rendering.Stats.RecordVrXrTrackingLossFrame();
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrTrackingLossFrame();
 
         // Rate-limit allocation: emit a single warning per tracking-loss streak. The flag resets when
         // CacheLastValidViews() runs again (tracking recovered). Cold-frame allocation is acceptable.

@@ -1,4 +1,4 @@
-﻿// =====================================================================================
+// =====================================================================================
 // GPUScene.AddRemove.cs - Add / Remove / Update of GPU draw commands.
 // Part of the GPUScene partial class. See GPUScene.cs for the canonical class summary.
 // =====================================================================================
@@ -699,17 +699,17 @@ namespace XREngine.Rendering.Commands
             {
                 if (payload is null)
                 {
-                    RuntimeEngine.Rendering.Stats.RecordGpuMeshletCacheMiss(1);
+                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(1);
                     Debug.Meshes($"Meshlet.CacheMissing meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' commandCount={TotalCommandCount}");
                 }
                 else if (!fresh)
                 {
-                    RuntimeEngine.Rendering.Stats.RecordGpuMeshletCacheStale(1);
+                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheStale(1);
                     Debug.Meshes($"Meshlet.CacheStale meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' commandCount={TotalCommandCount}");
                 }
                 else
                 {
-                    RuntimeEngine.Rendering.Stats.RecordGpuMeshletCacheMiss(1);
+                    RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(1);
                     Debug.Meshes($"Meshlet.CacheMissing meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' reason='payload has no meshlets' commandCount={TotalCommandCount}");
                 }
 
@@ -723,7 +723,7 @@ namespace XREngine.Rendering.Commands
                 _meshletRangesByMeshId.TryGetValue(meshID, out GpuMeshletRange existingRange) &&
                 existingRange.MeshletCount == meshletCount)
             {
-                RuntimeEngine.Rendering.Stats.RecordGpuMeshletCacheHit(1);
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
                 return;
             }
 
@@ -764,8 +764,8 @@ namespace XREngine.Rendering.Commands
                 VertexIndexOffset = vertexIndexOffset,
                 TriangleIndexOffset = triangleByteOffset,
             });
-            RuntimeEngine.Rendering.Stats.RecordGpuMeshletCacheHit(1);
-            RuntimeEngine.Rendering.Stats.RecordGpuMeshletBufferBytesResident(MeshletBufferBytesResident);
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(MeshletBufferBytesResident);
             Debug.Meshes(
                 $"Meshlet.SceneBufferUpload meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' meshletCount={meshletCount} vertexIndexCount={vertexIndexCount} triangleByteCount={triangleByteCount} capacity={MeshletDescriptorBuffer.ElementCount} residentBytes={MeshletBufferBytesResident}");
         }

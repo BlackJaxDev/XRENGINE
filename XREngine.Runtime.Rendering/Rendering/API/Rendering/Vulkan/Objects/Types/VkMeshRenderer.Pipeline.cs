@@ -239,7 +239,7 @@ public unsafe partial class VulkanRenderer
 			// Check pipeline cache before creating a new pipeline object
 			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0 && !_pipelineDirty)
 			{
-				RuntimeEngine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: true);
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: true);
 				return true;
 			}
 

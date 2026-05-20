@@ -48,7 +48,7 @@ namespace XREngine.Rendering.Physics.Physx
             set => SetField(ref _pointSize, value);
         }
 
-        private float _lineWidth = 0.001f;
+        private float _lineWidth = 0.0015f;
         public float LineWidth
         {
             get => _lineWidth;
@@ -843,8 +843,8 @@ namespace XREngine.Rendering.Physics.Physx
                 mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-                mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-                //mat.EnableTransparency();
+                mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
+                XRMaterial.ConfigureGizmoMaterial(mat);
                 return mat;
             }
             catch (Exception e)
@@ -867,7 +867,7 @@ namespace XREngine.Rendering.Physics.Physx
                 XRShader geomShader = ShaderHelper.LoadEngineShader(
                     Path.Combine("Common", "Debug", "gs", _useCompressedBuffers ? "LineInstanceCompressed.gs" : "LineInstance.gs"),
                     EShaderType.Geometry);
-                XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
+                XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitiveLine.fs"), EShaderType.Fragment);
                 ShaderVar[] vars =
                 [
                     new ShaderFloat(LineWidth, "LineWidth"),
@@ -877,8 +877,8 @@ namespace XREngine.Rendering.Physics.Physx
                 mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-                mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-                //mat.EnableTransparency();
+                mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
+                XRMaterial.ConfigureGizmoMaterial(mat);
                 return mat;
             }
             catch (Exception e)
@@ -910,8 +910,7 @@ namespace XREngine.Rendering.Physics.Physx
                 mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-                mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-                //mat.EnableTransparency();
+                XRMaterial.ConfigureGizmoMaterial(mat);
                 return mat;
             }
             catch (Exception e)

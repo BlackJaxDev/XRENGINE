@@ -45,7 +45,7 @@ public unsafe partial class OpenXRAPI
             // In DedicatedThread mode the pacing thread is responsible for publishing the next frame.
             // If we got here without one, the render thread is effectively starved by the pacing thread.
             if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.DedicatedThread && _sessionBegun)
-                RuntimeEngine.Rendering.Stats.RecordVrXrPacingHandoffStall();
+                RuntimeEngine.Rendering.Stats.Vr.RecordVrXrPacingHandoffStall();
             return;
         }
 
@@ -149,7 +149,7 @@ public unsafe partial class OpenXRAPI
 
         long submitEnd = Stopwatch.GetTimestamp();
         double submitMs = (submitEnd - submitStart) * 1000.0 / Stopwatch.Frequency;
-        RuntimeEngine.Rendering.Stats.RecordVrRenderSubmitTime(TimeSpan.FromMilliseconds(submitMs));
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrRenderSubmitTime(TimeSpan.FromMilliseconds(submitMs));
 
         Volatile.Write(ref _pendingXrFrame, 0);
         Volatile.Write(ref _pendingXrFrameCollected, 0);
@@ -315,7 +315,7 @@ public unsafe partial class OpenXRAPI
                     lateHead = _openXrLateHeadLocalPose;
 
                 var (posDist, rotDeg) = ComputePoseDelta(predHead, lateHead);
-                RuntimeEngine.Rendering.Stats.RecordVrXrPredictedToLatePoseDelta(posDist, rotDeg);
+                RuntimeEngine.Rendering.Stats.Vr.RecordVrXrPredictedToLatePoseDelta(posDist, rotDeg);
 
                 // Debug: log pose delta between predicted and late sampling.
                 int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
@@ -647,7 +647,7 @@ public unsafe partial class OpenXRAPI
 
             float leftFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
             float rightFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
-            RuntimeEngine.Rendering.Stats.RecordVrXrCollectFrustumExpansionDegrees(Math.Max(leftFrustumPadding, rightFrustumPadding));
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrXrCollectFrustumExpansionDegrees(Math.Max(leftFrustumPadding, rightFrustumPadding));
 
             // NOTE: Do not call World.Lights.UpdateCameraLightIntersections() for the OpenXR eye cameras.
             // That data is stored on the light components (not scoped per camera), so updating it here can
@@ -691,13 +691,13 @@ public unsafe partial class OpenXRAPI
                 rightBuildTicks = Stopwatch.GetTimestamp() - rightStarted;
             }
 
-            RuntimeEngine.Rendering.Stats.RecordVrPerViewVisibleCounts(
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrPerViewVisibleCounts(
                 (uint)Math.Max(0, leftAdded),
                 (uint)Math.Max(0, rightAdded));
-            RuntimeEngine.Rendering.Stats.RecordVrPerViewDrawCounts(
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrPerViewDrawCounts(
                 (uint)Math.Max(0, leftAdded),
                 (uint)Math.Max(0, rightAdded));
-            RuntimeEngine.Rendering.Stats.RecordVrCommandBuildTimes(
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrCommandBuildTimes(
                 TimeSpan.FromSeconds(leftBuildTicks / (double)Stopwatch.Frequency),
                 TimeSpan.FromSeconds(rightBuildTicks / (double)Stopwatch.Frequency));
 
@@ -1024,7 +1024,7 @@ public unsafe partial class OpenXRAPI
             relocateTicks = Stopwatch.GetTimestamp() - relocateStart;
         }
 
-        RuntimeEngine.Rendering.Stats.RecordVrXrRelocatePredictedTime(
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrRelocatePredictedTime(
             TimeSpan.FromSeconds(relocateTicks / (double)Stopwatch.Frequency));
 
         try

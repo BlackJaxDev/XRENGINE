@@ -1,11 +1,11 @@
 // Clips a line segment to the near plane and emits a screen-space quad.
 // Requires the following to be defined before including:
-//   uniform mat4 InverseViewMatrix;
-//   uniform mat4 ProjMatrix;
 //   uniform float LineWidth;
 //   uniform float ScreenWidth;
 //   uniform float ScreenHeight;
-//   layout(location = 0) out vec4 MatColor;
+//   layout(location = 0) flat out vec4 LineMatColor;
+//   layout(location = 1) noperspective out float LineEdgeCoord;
+//   layout(location = 2) flat out float LineHalfWidthPixels;
 
 const float kEpsilon = 1e-6;
 
@@ -44,7 +44,7 @@ void EmitLineQuad(vec4 start, vec4 end, vec4 color)
     if (!ClipLineToNearPlane(start, end))
         return;
 
-    MatColor = color;
+    LineMatColor = color;
 
     vec2 ndcStart = start.xy / start.w;
     vec2 ndcEnd   = end.xy   / end.w;
@@ -64,21 +64,28 @@ void EmitLineQuad(vec4 start, vec4 end, vec4 color)
 
     // Preserve existing LineWidth semantics by interpreting it as NDC width relative to the *min* screen dimension.
     float minDim = min(w, h);
-    float halfWidthPixels = LineWidth * (minDim * 0.5);
-    vec2 offsetNdc = (perpScreen * halfWidthPixels) * (2.0 / viewport);
+    float halfWidthPixels = max(0.5, LineWidth * (minDim * 0.5));
+    float rasterHalfWidthPixels = halfWidthPixels + 2.0;
+    LineHalfWidthPixels = halfWidthPixels;
+
+    vec2 offsetNdc = (perpScreen * rasterHalfWidthPixels) * (2.0 / viewport);
 
     vec4 startOffset = vec4(offsetNdc * start.w, 0.0, 0.0);
     vec4 endOffset   = vec4(offsetNdc * end.w,   0.0, 0.0);
 
+    LineEdgeCoord = rasterHalfWidthPixels;
     gl_Position = start + startOffset;
     EmitVertex();
 
+    LineEdgeCoord = -rasterHalfWidthPixels;
     gl_Position = start - startOffset;
     EmitVertex();
 
+    LineEdgeCoord = rasterHalfWidthPixels;
     gl_Position = end + endOffset;
     EmitVertex();
 
+    LineEdgeCoord = -rasterHalfWidthPixels;
     gl_Position = end - endOffset;
     EmitVertex();
 

@@ -317,7 +317,7 @@ namespace XREngine.Rendering.Commands
 
         private void RecordForbiddenFallback(string reason)
         {
-            RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+            RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
             if (_forbiddenFallbackLogBudget <= 0)
                 return;
 

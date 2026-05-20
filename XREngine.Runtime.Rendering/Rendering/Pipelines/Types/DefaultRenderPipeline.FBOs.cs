@@ -54,13 +54,13 @@ public partial class DefaultRenderPipeline
             ]
             :
             [
-                GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2D HDRSceneTex
-                GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2D BloomBlurTexture
-                GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2D DepthView
-                GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2D StencilView
-                GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
-                GetTexture<XRTexture>(AtmosphereColorTextureName)!, // binding 5: sampler2D AtmosphereColor
-                GetTexture<XRTexture>(VolumetricFogColorTextureName)!, // binding 6: sampler2D VolumetricFogColor
+                GetTexture<XRTexture>(HDRSceneTextureName)!,            // binding 0: sampler2D HDRSceneTex
+                GetTexture<XRTexture>(BloomBlurTextureName)!,           // binding 1: sampler2D BloomBlurTexture
+                GetTexture<XRTexture>(DepthViewTextureName)!,           // binding 2: sampler2D DepthView
+                GetTexture<XRTexture>(StencilViewTextureName)!,         // binding 3: usampler2D StencilView
+                GetTexture<XRTexture>(AutoExposureTextureName)!,        // binding 4: sampler2D AutoExposureTex
+                GetTexture<XRTexture>(AtmosphereColorTextureName)!,     // binding 5: sampler2D AtmosphereColor
+                GetTexture<XRTexture>(VolumetricFogColorTextureName)!,  // binding 6: sampler2D VolumetricFogColor
             ];
         XRShader postProcessShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, PostProcessShaderName()), EShaderType.Fragment);
         XRMaterial postProcessMat = new(postProcessRefs, postProcessShader)
@@ -540,9 +540,10 @@ public partial class DefaultRenderPipeline
         XRTexture depthTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
         XRTexture historyDepthTexture = GetTexture<XRTexture>(HistoryDepthViewTextureName)!;
         XRTexture historyColorTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
+        XRTexture stencilTexture = GetTexture<XRTexture>(StencilViewTextureName)!;
         IFrameBufferAttachement outputAttach = EnsureTextureAttachment(FxaaOutputTextureName, CreateFxaaOutputTexture);
         XRShader upscaleShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"), EShaderType.Fragment);
-        XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture], upscaleShader)
+        XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture, stencilTexture], upscaleShader)
         {
             RenderOptions = new RenderingParameters()
             {

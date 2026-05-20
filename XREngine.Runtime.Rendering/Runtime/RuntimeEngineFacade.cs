@@ -1193,6 +1193,286 @@ internal static partial class RuntimeEngine
                 if (isError)
                     VulkanValidationErrorCountCurrentFrame++;
             }
+
+            public static class Frame
+            {
+                public static int DrawCalls => Stats.DrawCalls;
+                public static int MultiDrawCalls => Stats.MultiDrawCalls;
+                public static int TrianglesRendered => Stats.TrianglesRendered;
+                public static void IncrementDrawCalls(int count = 1) => Stats.IncrementDrawCalls(count);
+                public static void IncrementMultiDrawCalls(int count = 1) => Stats.IncrementMultiDrawCalls(count);
+                public static void AddTrianglesRendered(int count) => Stats.AddTrianglesRendered(count);
+            }
+
+            public static class Vram
+            {
+                public static void AddBufferAllocation(long bytes) => Stats.AddBufferAllocation(bytes);
+                public static void RemoveBufferAllocation(long bytes) => Stats.RemoveBufferAllocation(bytes);
+                public static void AddTextureAllocation(long bytes) => Stats.AddTextureAllocation(bytes);
+                public static void RemoveTextureAllocation(long bytes) => Stats.RemoveTextureAllocation(bytes);
+                public static void AddRenderBufferAllocation(long bytes) => Stats.AddRenderBufferAllocation(bytes);
+                public static void RemoveRenderBufferAllocation(long bytes) => Stats.RemoveRenderBufferAllocation(bytes);
+                public static bool CanAllocateVram(long requestedBytes, long currentAllocationBytes, out long projectedBytes, out long budgetBytes)
+                    => Stats.CanAllocateVram(requestedBytes, currentAllocationBytes, out projectedBytes, out budgetBytes);
+            }
+
+            public static class GpuReadback
+            {
+                public static void RecordGpuBufferMapped(int count = 1) => Stats.RecordGpuBufferMapped(count);
+                public static void RecordGpuReadbackBytes(long bytes) => Stats.RecordGpuReadbackBytes(bytes);
+            }
+
+            public static class GpuFallback
+            {
+                public static int GpuCpuFallbackEvents => Stats.GpuCpuFallbackEvents;
+                public static int GpuCpuFallbackRecoveredCommands => Stats.GpuCpuFallbackRecoveredCommands;
+                public static void RecordGpuCpuFallback(int events, int recoveredCommands) => Stats.RecordGpuCpuFallback(events, recoveredCommands);
+                public static void RecordForbiddenGpuFallback(int events = 1) => Stats.RecordForbiddenGpuFallback(events);
+            }
+
+            public static class GpuTransparency
+            {
+                public static int GpuTransparencyOpaqueOrOtherVisible => Stats.GpuTransparencyOpaqueOrOtherVisible;
+                public static int GpuTransparencyMaskedVisible => Stats.GpuTransparencyMaskedVisible;
+                public static int GpuTransparencyApproximateVisible => Stats.GpuTransparencyApproximateVisible;
+                public static int GpuTransparencyExactVisible => Stats.GpuTransparencyExactVisible;
+                public static void RecordGpuTransparencyDomainCounts(int opaqueOrOther, int masked, int approximate, int exact)
+                    => Stats.RecordGpuTransparencyDomainCounts(opaqueOrOther, masked, approximate, exact);
+                public static void RecordGpuTransparencyDomainCounts(uint opaqueOrOther, uint masked, uint approximate, uint exact)
+                    => Stats.RecordGpuTransparencyDomainCounts(opaqueOrOther, masked, approximate, exact);
+            }
+
+            public static class GpuMeshlets
+            {
+                public static int GpuMeshletRequestedFrames => Stats.GpuMeshletRequestedFrames;
+                public static int GpuMeshletProductionFrames => Stats.GpuMeshletProductionFrames;
+                public static int GpuMeshletFallbackFrames => Stats.GpuMeshletFallbackFrames;
+                public static int GpuMeshletDispatchSkipped => Stats.GpuMeshletDispatchSkipped;
+                public static long GpuMeshletTaskRecordsEmitted => Stats.GpuMeshletTaskRecordsEmitted;
+                public static long GpuMeshletTaskRecordsFrustumCulled => Stats.GpuMeshletTaskRecordsFrustumCulled;
+                public static long GpuMeshletTaskRecordsConeCulled => Stats.GpuMeshletTaskRecordsConeCulled;
+                public static long GpuMeshletTaskRecordsHiZCulled => Stats.GpuMeshletTaskRecordsHiZCulled;
+                public static long GpuMeshletExpansionOverflowCount => Stats.GpuMeshletExpansionOverflowCount;
+                public static long GpuMeshletBufferBytesResident => Stats.GpuMeshletBufferBytesResident;
+                public static int GpuMeshletCacheHits => Stats.GpuMeshletCacheHits;
+                public static int GpuMeshletCacheMisses => Stats.GpuMeshletCacheMisses;
+                public static int GpuMeshletCacheStale => Stats.GpuMeshletCacheStale;
+                public static void RecordGpuMeshletStrategyRequested(
+                    int renderPass,
+                    EMeshSubmissionStrategy requestedStrategy,
+                    EMeshSubmissionStrategy selectedStrategy,
+                    EMeshShaderDialect dialect,
+                    uint commandCount,
+                    uint taskCapacity)
+                    => Stats.RecordGpuMeshletStrategyRequested(renderPass, requestedStrategy, selectedStrategy, dialect, commandCount, taskCapacity);
+                public static void RecordGpuMeshletProductionFrame(int eventCount = 1) => Stats.RecordGpuMeshletProductionFrame(eventCount);
+                public static void RecordGpuMeshletFallback(int eventCount = 1) => Stats.RecordGpuMeshletFallback(eventCount);
+                public static void RecordGpuMeshletDispatchSkipped(int eventCount = 1) => Stats.RecordGpuMeshletDispatchSkipped(eventCount);
+                public static void RecordGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
+                    => Stats.RecordGpuMeshletTaskStats(emitted, frustumCulled, coneCulled, hiZCulled);
+                public static void RecordGpuMeshletExpansionOverflow(uint overflowCount) => Stats.RecordGpuMeshletExpansionOverflow(overflowCount);
+                public static void RecordGpuMeshletBufferBytesResident(ulong bytes) => Stats.RecordGpuMeshletBufferBytesResident(bytes);
+                public static void RecordGpuMeshletCacheHit(int eventCount = 1) => Stats.RecordGpuMeshletCacheHit(eventCount);
+                public static void RecordGpuMeshletCacheMiss(int eventCount = 1) => Stats.RecordGpuMeshletCacheMiss(eventCount);
+                public static void RecordGpuMeshletCacheStale(int eventCount = 1) => Stats.RecordGpuMeshletCacheStale(eventCount);
+            }
+
+            public static class Octree
+            {
+                public static void RecordOctreeCollect(int visibleRenderables, int emittedCommands)
+                    => Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
+            }
+
+            public static class RtxIo
+            {
+                public static void RecordRtxIoCopyIndirect(long bytes, TimeSpan elapsed) => Stats.RecordRtxIoCopyIndirect(bytes, elapsed);
+                public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan elapsed)
+                    => Stats.RecordRtxIoDecompression(compressedBytes, decompressedBytes, elapsed);
+            }
+
+            public static class SkinnedBounds
+            {
+                public static void RecordSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded)
+                    => Stats.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
+                public static void RecordSkinnedBoundsRefreshDeferredScheduled()
+                    => Stats.RecordSkinnedBoundsRefreshDeferredScheduled();
+                public static void RecordSkinnedBoundsRefreshGpuCompleted(long gpuTicks, long applyTicks)
+                    => Stats.RecordSkinnedBoundsRefreshGpuCompleted(gpuTicks, applyTicks);
+            }
+
+            public static class Vr
+            {
+                public static void RecordVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime)
+                    => Stats.RecordVrCommandBuildTimes(leftBuildTime, rightBuildTime);
+                public static void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
+                    => Stats.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
+                public static void RecordVrPerViewVisibleCounts(uint leftVisible, uint rightVisible)
+                    => Stats.RecordVrPerViewVisibleCounts(leftVisible, rightVisible);
+                public static void RecordVrRenderSubmitTime(TimeSpan elapsed) => Stats.RecordVrRenderSubmitTime(elapsed);
+                public static void RecordVrXrWaitFrameBlockTime(TimeSpan elapsed) => Stats.RecordVrXrWaitFrameBlockTime(elapsed);
+                public static void RecordVrXrEndFrameSubmitTime(TimeSpan elapsed) => Stats.RecordVrXrEndFrameSubmitTime(elapsed);
+                public static void RecordVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
+                    => Stats.RecordVrXrPredictedToLatePoseDelta(millimeters, degrees);
+                public static void RecordVrXrPredictedDisplayLeadTime(double leadTimeMs)
+                    => Stats.RecordVrXrPredictedDisplayLeadTime(leadTimeMs);
+                public static void RecordVrXrMissedDeadlineFrame() => Stats.RecordVrXrMissedDeadlineFrame();
+                public static void RecordVrXrTrackingLossFrame() => Stats.RecordVrXrTrackingLossFrame();
+                public static void RecordVrXrRelocatePredictedTime(TimeSpan elapsed) => Stats.RecordVrXrRelocatePredictedTime(elapsed);
+                public static void RecordVrXrCollectFrustumExpansionDegrees(double degrees)
+                    => Stats.RecordVrXrCollectFrustumExpansionDegrees(degrees);
+                public static void RecordVrXrPacingThreadIdleTime(TimeSpan elapsed) => Stats.RecordVrXrPacingThreadIdleTime(elapsed);
+                public static void RecordVrXrPacingHandoffStall() => Stats.RecordVrXrPacingHandoffStall();
+            }
+
+            public static class Vulkan
+            {
+                public static long VulkanRequestedDraws => Stats.VulkanRequestedDraws;
+                public static long VulkanCulledDraws => Stats.VulkanCulledDraws;
+                public static long VulkanEmittedIndirectDraws => Stats.VulkanEmittedIndirectDraws;
+                public static long VulkanConsumedDraws => Stats.VulkanConsumedDraws;
+                public static int VulkanQueueOwnershipTransfers => Stats.VulkanQueueOwnershipTransfers;
+                public static int VulkanBarrierStageFlushes => Stats.VulkanBarrierStageFlushes;
+                public static int VulkanDescriptorBindSkips => Stats.VulkanDescriptorBindSkips;
+                public static int VulkanDescriptorFallbacksCurrentFrame => Stats.VulkanDescriptorFallbacksCurrentFrame;
+                public static int VulkanDescriptorBindingFailuresCurrentFrame => Stats.VulkanDescriptorBindingFailuresCurrentFrame;
+                public static int VulkanOomFallbackCount => Stats.VulkanOomFallbackCount;
+                public static int VulkanValidationMessageCountCurrentFrame => Stats.VulkanValidationMessageCountCurrentFrame;
+                public static int VulkanValidationErrorCountCurrentFrame => Stats.VulkanValidationErrorCountCurrentFrame;
+
+                public enum EVulkanGpuDrivenStageTiming
+                {
+                    Reset,
+                    Cull,
+                    Occlusion,
+                    Indirect,
+                    Draw,
+                }
+
+                public enum EVulkanAllocationTelemetryClass
+                {
+                    DeviceLocal,
+                    Upload,
+                    Readback,
+                }
+
+                public static void RecordVulkanAdhocBarrier(int emittedCount = 0, int redundantCount = 0)
+                    => Stats.RecordVulkanAdhocBarrier(emittedCount, redundantCount);
+                public static void RecordVulkanAllocation(EVulkanAllocationTelemetryClass allocationClass, long bytes)
+                    => Stats.RecordVulkanAllocation((Stats.EVulkanAllocationTelemetryClass)allocationClass, bytes);
+                public static void RecordVulkanBarrierPlannerPass(int imageBarrierCount = 0, int bufferBarrierCount = 0, int queueOwnershipTransfers = 0, int stageFlushes = 0)
+                    => Stats.RecordVulkanBarrierPlannerPass(imageBarrierCount, bufferBarrierCount, queueOwnershipTransfers, stageFlushes);
+                public static void RecordVulkanBindChurn(
+                    int pipelineBinds = 0,
+                    int descriptorBinds = 0,
+                    int pushConstantWrites = 0,
+                    int vertexBufferBinds = 0,
+                    int indexBufferBinds = 0,
+                    int pipelineBindSkips = 0,
+                    int descriptorBindSkips = 0,
+                    int vertexBufferBindSkips = 0,
+                    int indexBufferBindSkips = 0)
+                    => Stats.RecordVulkanBindChurn(
+                        pipelineBinds,
+                        descriptorBinds,
+                        pushConstantWrites,
+                        vertexBufferBinds,
+                        indexBufferBinds,
+                        pipelineBindSkips,
+                        descriptorBindSkips,
+                        vertexBufferBindSkips,
+                        indexBufferBindSkips);
+                public static void RecordVulkanDescriptorBindingFailure(
+                    string? programName = null,
+                    string? bindingClass = null,
+                    string? bindingName = null,
+                    uint set = 0,
+                    uint binding = 0,
+                    bool skippedDraw = false,
+                    bool skippedDispatch = false,
+                    string? reason = null)
+                    => Stats.RecordVulkanDescriptorBindingFailure(programName, bindingClass, bindingName, set, binding, skippedDraw, skippedDispatch, reason);
+                public static void RecordVulkanDescriptorFallback(
+                    string? programName,
+                    string? bindingClass,
+                    string? bindingName,
+                    uint set,
+                    uint binding,
+                    int count = 1)
+                    => Stats.RecordVulkanDescriptorFallback(programName, bindingClass, bindingName, set, binding, count);
+                public static void RecordVulkanDescriptorPoolCreate() => Stats.RecordVulkanDescriptorPoolCreate();
+                public static void RecordVulkanDescriptorPoolDestroy() => Stats.RecordVulkanDescriptorPoolDestroy();
+                public static void RecordVulkanDescriptorPoolReset() => Stats.RecordVulkanDescriptorPoolReset();
+                public static void RecordVulkanDynamicUniformAllocation(long bytes) => Stats.RecordVulkanDynamicUniformAllocation(bytes);
+                public static void RecordVulkanDynamicUniformExhaustion() => Stats.RecordVulkanDynamicUniformExhaustion();
+                public static void RecordVulkanFrameDiagnostics(
+                    int droppedFrameOps,
+                    int droppedDrawOps,
+                    int droppedComputeOps,
+                    int sceneSwapchainWriters,
+                    int overlaySwapchainWriters,
+                    int forcedDiagnosticSwapchainWriters,
+                    int fboOnlyDrawOps,
+                    int fboOnlyBlitOps,
+                    bool missingSceneSwapchainWriters,
+                    string? firstFailedOpType,
+                    int firstFailedPassIndex,
+                    int firstFailedPipelineIdentity,
+                    int firstFailedViewportIdentity,
+                    string? firstFailedTargetName,
+                    string? firstFailedMaterialName,
+                    string? firstFailedShaderName,
+                    string? firstFailedMessage,
+                    string? diagnosticSummary)
+                    => Stats.RecordVulkanFrameDiagnostics(
+                        droppedFrameOps,
+                        droppedDrawOps,
+                        droppedComputeOps,
+                        sceneSwapchainWriters,
+                        overlaySwapchainWriters,
+                        forcedDiagnosticSwapchainWriters,
+                        fboOnlyDrawOps,
+                        fboOnlyBlitOps,
+                        missingSceneSwapchainWriters,
+                        firstFailedOpType,
+                        firstFailedPassIndex,
+                        firstFailedPipelineIdentity,
+                        firstFailedViewportIdentity,
+                        firstFailedTargetName,
+                        firstFailedMaterialName,
+                        firstFailedShaderName,
+                        firstFailedMessage,
+                        diagnosticSummary);
+                public static void RecordVulkanFrameGpuCommandBufferTime(TimeSpan elapsed) => Stats.RecordVulkanFrameGpuCommandBufferTime(elapsed);
+                public static void RecordVulkanFrameLifecycleTiming(
+                    TimeSpan waitFence,
+                    TimeSpan acquireImage,
+                    TimeSpan recordCommandBuffer,
+                    TimeSpan submit,
+                    TimeSpan trim,
+                    TimeSpan present,
+                    TimeSpan total)
+                    => Stats.RecordVulkanFrameLifecycleTiming(waitFence, acquireImage, recordCommandBuffer, submit, trim, present, total);
+                public static void RecordVulkanGpuDrivenStageTiming(EVulkanGpuDrivenStageTiming stage, TimeSpan elapsed)
+                    => Stats.RecordVulkanGpuDrivenStageTiming((Stats.EVulkanGpuDrivenStageTiming)stage, elapsed);
+                public static void RecordVulkanIndirectBatchMerge(int requestedBatches, int mergedBatches)
+                    => Stats.RecordVulkanIndirectBatchMerge(requestedBatches, mergedBatches);
+                public static void RecordVulkanIndirectEffectiveness(uint requestedDraws, uint culledDraws, uint emittedIndirectDraws, uint consumedDraws, uint overflowCount = 0u)
+                    => Stats.RecordVulkanIndirectEffectiveness(requestedDraws, culledDraws, emittedIndirectDraws, consumedDraws, overflowCount);
+                public static void RecordVulkanIndirectRecordingMode(bool usedSecondary = false, bool usedParallel = false, int opCount = 0)
+                    => Stats.RecordVulkanIndirectRecordingMode(usedSecondary, usedParallel, opCount);
+                public static void RecordVulkanIndirectSubmission(bool usedCountPath = false, bool usedLoopFallback = false, int apiCalls = 0, uint submittedDraws = 0u)
+                    => Stats.RecordVulkanIndirectSubmission(usedCountPath, usedLoopFallback, apiCalls, submittedDraws);
+                public static void RecordVulkanOomFallback() => Stats.RecordVulkanOomFallback();
+                public static void RecordVulkanPipelineCacheLookup(bool cacheHit) => Stats.RecordVulkanPipelineCacheLookup(cacheHit);
+                public static void RecordVulkanPipelineCacheMiss(string? summary) => Stats.RecordVulkanPipelineCacheMiss(summary);
+                public static void RecordVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
+                    => Stats.RecordVulkanQueueOverlapWindow(overlapCandidatePasses, transferCost, frameDelta, promotedMode, demotedMode);
+                public static void RecordVulkanQueueSubmit() => Stats.RecordVulkanQueueSubmit();
+                public static void RecordVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
+                    => Stats.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
+                public static void RecordVulkanValidationMessage(bool isError, string message)
+                    => Stats.RecordVulkanValidationMessage(isError, message);
+            }
         }
 
         public static class State
@@ -1381,16 +1661,16 @@ internal static partial class RuntimeEngine
             private bool _isIntel;
             private bool _isVulkan;
 
-                public ulong RenderFrameId => RuntimeRenderingHostServices.Current.CurrentRenderFrameId;
-                public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+            public ulong RenderFrameId => RuntimeRenderingHostServices.Current.CurrentRenderFrameId;
+            public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
             public XRRenderPipelineInstance? CurrentRenderingPipeline
                 => PipelineOverrideStack.Count != 0
                     ? PipelineOverrideStack.Peek()
                     : RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance ?? (PipelineStack.Count != 0 ? PipelineStack.Peek() : null);
-                public XRRenderPipelineInstance.RenderingState? RenderingPipelineState => CurrentRenderingPipeline?.RenderState;
-                public XRViewport? RenderingViewport => CurrentRenderingPipeline?.RenderState.WindowViewport ?? CurrentRenderingPipeline?.LastWindowViewport;
-                public IRuntimeRenderWorld? RenderingWorld => RenderingViewport?.World;
-                public XRCamera? RenderingCamera => RenderingCameraOverride ?? RenderingPipelineState?.RenderingCamera;
+            public XRRenderPipelineInstance.RenderingState? RenderingPipelineState => CurrentRenderingPipeline?.RenderState;
+            public XRViewport? RenderingViewport => CurrentRenderingPipeline?.RenderState.WindowViewport ?? CurrentRenderingPipeline?.LastWindowViewport;
+            public IRuntimeRenderWorld? RenderingWorld => RenderingViewport?.World;
+            public XRCamera? RenderingCamera => RenderingCameraOverride ?? RenderingPipelineState?.RenderingCamera;
             public XRCamera? RenderingCameraOverride
             {
                 get => _cameraOverrides.Count == 0 ? null : _cameraOverrides.Peek();

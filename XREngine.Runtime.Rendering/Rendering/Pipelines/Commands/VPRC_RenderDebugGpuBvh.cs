@@ -198,7 +198,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
     {
         XRShader vert = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
         XRShader geom = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "LineInstance.gs"), EShaderType.Geometry);
-        XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
+        XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitiveLine.fs"), EShaderType.Fragment);
 
         ShaderVar[] vars =
         [
@@ -210,8 +210,8 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
         mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
         mat.RenderOptions.CullMode = ECullMode.None;
         mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-        mat.EnableTransparency();
-        mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+        mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
+        XRMaterial.ConfigureGizmoMaterial(mat);
         return mat;
     }
 

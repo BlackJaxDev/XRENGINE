@@ -150,7 +150,7 @@ public unsafe partial class VulkanRenderer
 			// The first successful draw sets 'drew = true' so we skip the non-indexed fallback.
 			bool drew = false;
 			if (_triangleIndexBuffer?.BufferHandle is { } triHandle && triHandle.Handle != 0)
-				drew |= DrawIndexed(_triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList, count => RuntimeEngine.Rendering.Stats.AddTrianglesRendered((int)(count / 3 * drawInstances)));
+				drew |= DrawIndexed(_triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList, count => RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(count / 3 * drawInstances)));
 			if (_lineIndexBuffer?.BufferHandle is { } lineHandle && lineHandle.Handle != 0)
 				drew |= DrawIndexed(_lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList, _ => { });
 			if (_pointIndexBuffer?.BufferHandle is { } pointHandle && pointHandle.Handle != 0)
@@ -192,8 +192,8 @@ public unsafe partial class VulkanRenderer
 					PushPerDrawConstants(commandBuffer, material, drawCopy);
 
 					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
-					RuntimeEngine.Rendering.Stats.IncrementDrawCalls();
-					RuntimeEngine.Rendering.Stats.AddTrianglesRendered((int)(vertexCount / 3 * drawInstances));
+					RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
+					RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(vertexCount / 3 * drawInstances));
 				}
 			}
 		}
@@ -257,7 +257,7 @@ public unsafe partial class VulkanRenderer
 			if (!EnsureDescriptorSets(material))
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=EnsureDescriptorSets returned false");
-				RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 					programName,
 					"descriptor-set",
 					materialName,
@@ -272,7 +272,7 @@ public unsafe partial class VulkanRenderer
 			if (_descriptorSets is null || _descriptorSets.Length == 0)
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array is null or empty");
-				RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 					programName,
 					"descriptor-set",
 					materialName,
@@ -294,7 +294,7 @@ public unsafe partial class VulkanRenderer
 			if (sets.Length == 0)
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array at imageIndex {imageIndex} is empty");
-				RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 					programName,
 					"descriptor-set",
 					materialName,

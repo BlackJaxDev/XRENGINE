@@ -9,55 +9,68 @@ namespace XREngine
         {
             public static partial class Stats
             {
-                private static int _rtxIoDecompressCalls;
-                private static int _rtxIoCopyIndirectCalls;
-                private static long _rtxIoCompressedBytes;
-                private static long _rtxIoDecompressedBytes;
-                private static long _rtxIoCopyBytes;
-                private static long _rtxIoSubmissionTimeTicks;
-                private static int _lastFrameRtxIoDecompressCalls;
-                private static int _lastFrameRtxIoCopyIndirectCalls;
-                private static long _lastFrameRtxIoCompressedBytes;
-                private static long _lastFrameRtxIoDecompressedBytes;
-                private static long _lastFrameRtxIoCopyBytes;
-                private static long _lastFrameRtxIoSubmissionTimeTicks;
-
-                public static int RtxIoDecompressCalls => _lastFrameRtxIoDecompressCalls;
-                public static int RtxIoCopyIndirectCalls => _lastFrameRtxIoCopyIndirectCalls;
-                public static long RtxIoCompressedBytes => _lastFrameRtxIoCompressedBytes;
-                public static long RtxIoDecompressedBytes => _lastFrameRtxIoDecompressedBytes;
-                public static long RtxIoCopyBytes => _lastFrameRtxIoCopyBytes;
-                public static double RtxIoSubmissionTimeMs => TimeSpan.FromTicks(_lastFrameRtxIoSubmissionTimeTicks).TotalMilliseconds;
-
-                public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime)
+                public static class RtxIo
                 {
-                    if (!EnableTracking)
-                        return;
+                    private static int _rtxIoDecompressCalls;
+                    private static int _rtxIoCopyIndirectCalls;
+                    private static long _rtxIoCompressedBytes;
+                    private static long _rtxIoDecompressedBytes;
+                    private static long _rtxIoCopyBytes;
+                    private static long _rtxIoSubmissionTimeTicks;
+                    private static int _lastFrameRtxIoDecompressCalls;
+                    private static int _lastFrameRtxIoCopyIndirectCalls;
+                    private static long _lastFrameRtxIoCompressedBytes;
+                    private static long _lastFrameRtxIoDecompressedBytes;
+                    private static long _lastFrameRtxIoCopyBytes;
+                    private static long _lastFrameRtxIoSubmissionTimeTicks;
 
-                    Interlocked.Increment(ref _rtxIoDecompressCalls);
+                    public static int RtxIoDecompressCalls => _lastFrameRtxIoDecompressCalls;
+                    public static int RtxIoCopyIndirectCalls => _lastFrameRtxIoCopyIndirectCalls;
+                    public static long RtxIoCompressedBytes => _lastFrameRtxIoCompressedBytes;
+                    public static long RtxIoDecompressedBytes => _lastFrameRtxIoDecompressedBytes;
+                    public static long RtxIoCopyBytes => _lastFrameRtxIoCopyBytes;
+                    public static double RtxIoSubmissionTimeMs => TimeSpan.FromTicks(_lastFrameRtxIoSubmissionTimeTicks).TotalMilliseconds;
 
-                    if (compressedBytes > 0)
-                        Interlocked.Add(ref _rtxIoCompressedBytes, compressedBytes);
+                    internal static void SnapshotAndReset()
+                    {
+                        _lastFrameRtxIoDecompressCalls = Interlocked.Exchange(ref _rtxIoDecompressCalls, 0);
+                        _lastFrameRtxIoCopyIndirectCalls = Interlocked.Exchange(ref _rtxIoCopyIndirectCalls, 0);
+                        _lastFrameRtxIoCompressedBytes = Interlocked.Exchange(ref _rtxIoCompressedBytes, 0);
+                        _lastFrameRtxIoDecompressedBytes = Interlocked.Exchange(ref _rtxIoDecompressedBytes, 0);
+                        _lastFrameRtxIoCopyBytes = Interlocked.Exchange(ref _rtxIoCopyBytes, 0);
+                        _lastFrameRtxIoSubmissionTimeTicks = Interlocked.Exchange(ref _rtxIoSubmissionTimeTicks, 0);
+                    }
 
-                    if (decompressedBytes > 0)
-                        Interlocked.Add(ref _rtxIoDecompressedBytes, decompressedBytes);
+                    public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime)
+                    {
+                        if (!EnableTracking)
+                            return;
 
-                    if (submissionTime.Ticks > 0)
-                        Interlocked.Add(ref _rtxIoSubmissionTimeTicks, submissionTime.Ticks);
-                }
+                        Interlocked.Increment(ref _rtxIoDecompressCalls);
 
-                public static void RecordRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime)
-                {
-                    if (!EnableTracking)
-                        return;
+                        if (compressedBytes > 0)
+                            Interlocked.Add(ref _rtxIoCompressedBytes, compressedBytes);
 
-                    Interlocked.Increment(ref _rtxIoCopyIndirectCalls);
+                        if (decompressedBytes > 0)
+                            Interlocked.Add(ref _rtxIoDecompressedBytes, decompressedBytes);
 
-                    if (copiedBytes > 0)
-                        Interlocked.Add(ref _rtxIoCopyBytes, copiedBytes);
+                        if (submissionTime.Ticks > 0)
+                            Interlocked.Add(ref _rtxIoSubmissionTimeTicks, submissionTime.Ticks);
+                    }
 
-                    if (submissionTime.Ticks > 0)
-                        Interlocked.Add(ref _rtxIoSubmissionTimeTicks, submissionTime.Ticks);
+                    public static void RecordRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Increment(ref _rtxIoCopyIndirectCalls);
+
+                        if (copiedBytes > 0)
+                            Interlocked.Add(ref _rtxIoCopyBytes, copiedBytes);
+
+                        if (submissionTime.Ticks > 0)
+                            Interlocked.Add(ref _rtxIoSubmissionTimeTicks, submissionTime.Ticks);
+                    }
                 }
             }
         }

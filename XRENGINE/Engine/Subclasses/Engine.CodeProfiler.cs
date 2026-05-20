@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -1238,82 +1238,82 @@ namespace XREngine
 
             private static void AppendRenderMatrixStatsSnapshot(StringBuilder builder)
             {
-                if (!Rendering.Stats.RenderMatrixStatsReady)
+                if (!Rendering.Stats.RenderMatrix.RenderMatrixStatsReady)
                     return;
 
                 builder.AppendLine("RenderMatrixStats:");
-                builder.Append("  Applied: ").Append(Rendering.Stats.RenderMatrixApplied.ToString("N0")).AppendLine();
-                builder.Append("  NonEmptyBatches: ").Append(Rendering.Stats.RenderMatrixBatchCount.ToString("N0")).AppendLine();
-                builder.Append("  MaxBatchSize: ").Append(Rendering.Stats.RenderMatrixMaxBatchSize.ToString("N0")).AppendLine();
-                builder.Append("  SetCalls: ").Append(Rendering.Stats.RenderMatrixSetCalls.ToString("N0")).AppendLine();
-                builder.Append("  ListenerInvocations: ").Append(Rendering.Stats.RenderMatrixListenerInvocations.ToString("N0")).AppendLine();
+                builder.Append("  Applied: ").Append(Rendering.Stats.RenderMatrix.RenderMatrixApplied.ToString("N0")).AppendLine();
+                builder.Append("  NonEmptyBatches: ").Append(Rendering.Stats.RenderMatrix.RenderMatrixBatchCount.ToString("N0")).AppendLine();
+                builder.Append("  MaxBatchSize: ").Append(Rendering.Stats.RenderMatrix.RenderMatrixMaxBatchSize.ToString("N0")).AppendLine();
+                builder.Append("  SetCalls: ").Append(Rendering.Stats.RenderMatrix.RenderMatrixSetCalls.ToString("N0")).AppendLine();
+                builder.Append("  ListenerInvocations: ").Append(Rendering.Stats.RenderMatrix.RenderMatrixListenerInvocations.ToString("N0")).AppendLine();
             }
 
             private static void AppendOctreeStatsSnapshot(StringBuilder builder)
             {
-                if (!Rendering.Stats.OctreeStatsReady)
+                if (!Rendering.Stats.Octree.OctreeStatsReady)
                     return;
 
                 builder.AppendLine("OctreeStats:");
-                builder.Append("  CollectCalls: ").Append(Rendering.Stats.OctreeCollectCallCount.ToString("N0")).AppendLine();
-                builder.Append("  VisibleRenderables: ").Append(Rendering.Stats.OctreeVisibleRenderableCount.ToString("N0")).AppendLine();
-                builder.Append("  EmittedCommands: ").Append(Rendering.Stats.OctreeEmittedCommandCount.ToString("N0")).AppendLine();
-                builder.Append("  MaxVisiblePerCollect: ").Append(Rendering.Stats.OctreeMaxVisibleRenderablesPerCollect.ToString("N0")).AppendLine();
-                builder.Append("  MaxCommandsPerCollect: ").Append(Rendering.Stats.OctreeMaxEmittedCommandsPerCollect.ToString("N0")).AppendLine();
-                builder.Append("  Add: ").Append(Rendering.Stats.OctreeAddCount.ToString("N0")).AppendLine();
-                builder.Append("  Move: ").Append(Rendering.Stats.OctreeMoveCount.ToString("N0")).AppendLine();
-                builder.Append("  Remove: ").Append(Rendering.Stats.OctreeRemoveCount.ToString("N0")).AppendLine();
-                builder.Append("  SkippedMove: ").Append(Rendering.Stats.OctreeSkippedMoveCount.ToString("N0")).AppendLine();
-                builder.Append("  SwapDrainedCommands: ").Append(Rendering.Stats.OctreeSwapDrainedCommandCount.ToString("N0")).AppendLine();
-                builder.Append("  SwapBufferedCommands: ").Append(Rendering.Stats.OctreeSwapBufferedCommandCount.ToString("N0")).AppendLine();
-                builder.Append("  SwapExecutedCommands: ").Append(Rendering.Stats.OctreeSwapExecutedCommandCount.ToString("N0")).AppendLine();
-                builder.Append("  SwapDrainMs: ").Append(Rendering.Stats.OctreeSwapDrainMs.ToString("F3")).AppendLine();
-                builder.Append("  SwapExecuteMs: ").Append(Rendering.Stats.OctreeSwapExecuteMs.ToString("F3")).AppendLine();
-                builder.Append("  SwapMaxCommandMs: ").Append(Rendering.Stats.OctreeSwapMaxCommandMs.ToString("F3")).AppendLine();
-                builder.Append("  SwapMaxCommandKind: ").Append(Rendering.Stats.OctreeSwapMaxCommandKind).AppendLine();
-                builder.Append("  RaycastProcessedCommands: ").Append(Rendering.Stats.OctreeRaycastProcessedCommandCount.ToString("N0")).AppendLine();
-                builder.Append("  RaycastDroppedCommands: ").Append(Rendering.Stats.OctreeRaycastDroppedCommandCount.ToString("N0")).AppendLine();
-                builder.Append("  RaycastTraversalMs: ").Append(Rendering.Stats.OctreeRaycastTraversalMs.ToString("F3")).AppendLine();
-                builder.Append("  RaycastCallbackMs: ").Append(Rendering.Stats.OctreeRaycastCallbackMs.ToString("F3")).AppendLine();
-                builder.Append("  RaycastMaxTraversalMs: ").Append(Rendering.Stats.OctreeRaycastMaxTraversalMs.ToString("F3")).AppendLine();
-                builder.Append("  RaycastMaxCallbackMs: ").Append(Rendering.Stats.OctreeRaycastMaxCallbackMs.ToString("F3")).AppendLine();
-                builder.Append("  RaycastMaxCommandMs: ").Append(Rendering.Stats.OctreeRaycastMaxCommandMs.ToString("F3")).AppendLine();
+                builder.Append("  CollectCalls: ").Append(Rendering.Stats.Octree.OctreeCollectCallCount.ToString("N0")).AppendLine();
+                builder.Append("  VisibleRenderables: ").Append(Rendering.Stats.Octree.OctreeVisibleRenderableCount.ToString("N0")).AppendLine();
+                builder.Append("  EmittedCommands: ").Append(Rendering.Stats.Octree.OctreeEmittedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  MaxVisiblePerCollect: ").Append(Rendering.Stats.Octree.OctreeMaxVisibleRenderablesPerCollect.ToString("N0")).AppendLine();
+                builder.Append("  MaxCommandsPerCollect: ").Append(Rendering.Stats.Octree.OctreeMaxEmittedCommandsPerCollect.ToString("N0")).AppendLine();
+                builder.Append("  Add: ").Append(Rendering.Stats.Octree.OctreeAddCount.ToString("N0")).AppendLine();
+                builder.Append("  Move: ").Append(Rendering.Stats.Octree.OctreeMoveCount.ToString("N0")).AppendLine();
+                builder.Append("  Remove: ").Append(Rendering.Stats.Octree.OctreeRemoveCount.ToString("N0")).AppendLine();
+                builder.Append("  SkippedMove: ").Append(Rendering.Stats.Octree.OctreeSkippedMoveCount.ToString("N0")).AppendLine();
+                builder.Append("  SwapDrainedCommands: ").Append(Rendering.Stats.Octree.OctreeSwapDrainedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  SwapBufferedCommands: ").Append(Rendering.Stats.Octree.OctreeSwapBufferedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  SwapExecutedCommands: ").Append(Rendering.Stats.Octree.OctreeSwapExecutedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  SwapDrainMs: ").Append(Rendering.Stats.Octree.OctreeSwapDrainMs.ToString("F3")).AppendLine();
+                builder.Append("  SwapExecuteMs: ").Append(Rendering.Stats.Octree.OctreeSwapExecuteMs.ToString("F3")).AppendLine();
+                builder.Append("  SwapMaxCommandMs: ").Append(Rendering.Stats.Octree.OctreeSwapMaxCommandMs.ToString("F3")).AppendLine();
+                builder.Append("  SwapMaxCommandKind: ").Append(Rendering.Stats.Octree.OctreeSwapMaxCommandKind).AppendLine();
+                builder.Append("  RaycastProcessedCommands: ").Append(Rendering.Stats.Octree.OctreeRaycastProcessedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  RaycastDroppedCommands: ").Append(Rendering.Stats.Octree.OctreeRaycastDroppedCommandCount.ToString("N0")).AppendLine();
+                builder.Append("  RaycastTraversalMs: ").Append(Rendering.Stats.Octree.OctreeRaycastTraversalMs.ToString("F3")).AppendLine();
+                builder.Append("  RaycastCallbackMs: ").Append(Rendering.Stats.Octree.OctreeRaycastCallbackMs.ToString("F3")).AppendLine();
+                builder.Append("  RaycastMaxTraversalMs: ").Append(Rendering.Stats.Octree.OctreeRaycastMaxTraversalMs.ToString("F3")).AppendLine();
+                builder.Append("  RaycastMaxCallbackMs: ").Append(Rendering.Stats.Octree.OctreeRaycastMaxCallbackMs.ToString("F3")).AppendLine();
+                builder.Append("  RaycastMaxCommandMs: ").Append(Rendering.Stats.Octree.OctreeRaycastMaxCommandMs.ToString("F3")).AppendLine();
             }
 
             private static void AppendSkinnedBoundsStatsSnapshot(StringBuilder builder)
             {
-                if (!Rendering.Stats.SkinnedBoundsStatsReady)
+                if (!Rendering.Stats.SkinnedBounds.SkinnedBoundsStatsReady)
                     return;
 
-                int deferredFinished = Rendering.Stats.SkinnedBoundsDeferredCompletedCount + Rendering.Stats.SkinnedBoundsDeferredFailedCount;
-                double deferredAvgQueueMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsDeferredQueueWaitMs / deferredFinished;
-                double deferredAvgCpuJobMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsDeferredCpuJobMs / deferredFinished;
-                double deferredAvgApplyMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsDeferredApplyMs / deferredFinished;
-                double gpuAvgComputeMs = Rendering.Stats.SkinnedBoundsGpuCompletedCount <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsGpuComputeMs / Rendering.Stats.SkinnedBoundsGpuCompletedCount;
-                double gpuAvgApplyMs = Rendering.Stats.SkinnedBoundsGpuCompletedCount <= 0 ? 0.0 : Rendering.Stats.SkinnedBoundsGpuApplyMs / Rendering.Stats.SkinnedBoundsGpuCompletedCount;
+                int deferredFinished = Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredCompletedCount + Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredFailedCount;
+                double deferredAvgQueueMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredQueueWaitMs / deferredFinished;
+                double deferredAvgCpuJobMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredCpuJobMs / deferredFinished;
+                double deferredAvgApplyMs = deferredFinished <= 0 ? 0.0 : Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredApplyMs / deferredFinished;
+                double gpuAvgComputeMs = Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuCompletedCount <= 0 ? 0.0 : Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuComputeMs / Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuCompletedCount;
+                double gpuAvgApplyMs = Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuCompletedCount <= 0 ? 0.0 : Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuApplyMs / Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuCompletedCount;
 
                 builder.AppendLine("SkinnedBoundsStats:");
-                builder.Append("  DeferredScheduled: ").Append(Rendering.Stats.SkinnedBoundsDeferredScheduledCount.ToString("N0")).AppendLine();
-                builder.Append("  DeferredCompleted: ").Append(Rendering.Stats.SkinnedBoundsDeferredCompletedCount.ToString("N0")).AppendLine();
-                builder.Append("  DeferredFailed: ").Append(Rendering.Stats.SkinnedBoundsDeferredFailedCount.ToString("N0")).AppendLine();
-                builder.Append("  DeferredInFlight: ").Append(Rendering.Stats.SkinnedBoundsDeferredInFlightCount.ToString("N0")).AppendLine();
-                builder.Append("  DeferredMaxInFlight: ").Append(Rendering.Stats.SkinnedBoundsDeferredMaxInFlightCount.ToString("N0")).AppendLine();
-                builder.Append("  DeferredQueueWaitMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredQueueWaitMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredScheduled: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredScheduledCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredCompleted: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredCompletedCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredFailed: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredFailedCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredInFlight: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredInFlightCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredMaxInFlight: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredMaxInFlightCount.ToString("N0")).AppendLine();
+                builder.Append("  DeferredQueueWaitMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredQueueWaitMs.ToString("F3")).AppendLine();
                 builder.Append("  DeferredAvgQueueWaitMs: ").Append(deferredAvgQueueMs.ToString("F3")).AppendLine();
-                builder.Append("  DeferredMaxQueueWaitMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredMaxQueueWaitMs.ToString("F3")).AppendLine();
-                builder.Append("  DeferredCpuJobMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredCpuJobMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredMaxQueueWaitMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredMaxQueueWaitMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredCpuJobMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredCpuJobMs.ToString("F3")).AppendLine();
                 builder.Append("  DeferredAvgCpuJobMs: ").Append(deferredAvgCpuJobMs.ToString("F3")).AppendLine();
-                builder.Append("  DeferredMaxCpuJobMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredMaxCpuJobMs.ToString("F3")).AppendLine();
-                builder.Append("  DeferredApplyMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredMaxCpuJobMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredMaxCpuJobMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredApplyMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredApplyMs.ToString("F3")).AppendLine();
                 builder.Append("  DeferredAvgApplyMs: ").Append(deferredAvgApplyMs.ToString("F3")).AppendLine();
-                builder.Append("  DeferredMaxApplyMs: ").Append(Rendering.Stats.SkinnedBoundsDeferredMaxApplyMs.ToString("F3")).AppendLine();
-                builder.Append("  GpuCompleted: ").Append(Rendering.Stats.SkinnedBoundsGpuCompletedCount.ToString("N0")).AppendLine();
-                builder.Append("  GpuComputeMs: ").Append(Rendering.Stats.SkinnedBoundsGpuComputeMs.ToString("F3")).AppendLine();
+                builder.Append("  DeferredMaxApplyMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsDeferredMaxApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuCompleted: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuCompletedCount.ToString("N0")).AppendLine();
+                builder.Append("  GpuComputeMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuComputeMs.ToString("F3")).AppendLine();
                 builder.Append("  GpuAvgComputeMs: ").Append(gpuAvgComputeMs.ToString("F3")).AppendLine();
-                builder.Append("  GpuMaxComputeMs: ").Append(Rendering.Stats.SkinnedBoundsGpuMaxComputeMs.ToString("F3")).AppendLine();
-                builder.Append("  GpuApplyMs: ").Append(Rendering.Stats.SkinnedBoundsGpuApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuMaxComputeMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuMaxComputeMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuApplyMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuApplyMs.ToString("F3")).AppendLine();
                 builder.Append("  GpuAvgApplyMs: ").Append(gpuAvgApplyMs.ToString("F3")).AppendLine();
-                builder.Append("  GpuMaxApplyMs: ").Append(Rendering.Stats.SkinnedBoundsGpuMaxApplyMs.ToString("F3")).AppendLine();
+                builder.Append("  GpuMaxApplyMs: ").Append(Rendering.Stats.SkinnedBounds.SkinnedBoundsGpuMaxApplyMs.ToString("F3")).AppendLine();
             }
 
             private static float GetMedianTailMs(float[] samples, int takeCount, int skipFromEnd)

@@ -17,13 +17,13 @@ public sealed class GpuIndirectPhase10HardeningTests
             XREngine.Engine.Rendering.Stats.EnableTracking = true;
 
             XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.RecordForbiddenGpuFallback(2);
+            XREngine.Engine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(2);
             XREngine.Engine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.ForbiddenGpuFallbackEvents.ShouldBe(2);
+            XREngine.Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(2);
 
             XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.ForbiddenGpuFallbackEvents.ShouldBe(0);
+            XREngine.Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(0);
         }
         finally
         {
@@ -40,35 +40,35 @@ public sealed class GpuIndirectPhase10HardeningTests
             XREngine.Engine.Rendering.Stats.EnableTracking = true;
 
             XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletStrategyRequested(2);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletProductionFrame(1);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletFallback(1);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletDispatchSkipped(3);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletTaskStats(100, 10, 5, 2);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletExpansionOverflow(4);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletBufferBytesResident(4096);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletCacheHit(7);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletCacheMiss(8);
-            XREngine.Engine.Rendering.Stats.RecordGpuMeshletCacheStale(9);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletStrategyRequested(2);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletFallback(1);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatchSkipped(3);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(100, 10, 5, 2);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletExpansionOverflow(4);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(4096);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(7);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(8);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheStale(9);
             XREngine.Engine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.GpuMeshletRequestedFrames.ShouldBe(2);
-            XREngine.Engine.Rendering.Stats.GpuMeshletProductionFrames.ShouldBe(1);
-            XREngine.Engine.Rendering.Stats.GpuMeshletFallbackFrames.ShouldBe(1);
-            XREngine.Engine.Rendering.Stats.GpuMeshletDispatchSkipped.ShouldBe(3);
-            XREngine.Engine.Rendering.Stats.GpuMeshletTaskRecordsEmitted.ShouldBe(100);
-            XREngine.Engine.Rendering.Stats.GpuMeshletTaskRecordsFrustumCulled.ShouldBe(10);
-            XREngine.Engine.Rendering.Stats.GpuMeshletTaskRecordsConeCulled.ShouldBe(5);
-            XREngine.Engine.Rendering.Stats.GpuMeshletTaskRecordsHiZCulled.ShouldBe(2);
-            XREngine.Engine.Rendering.Stats.GpuMeshletExpansionOverflowCount.ShouldBe(4);
-            XREngine.Engine.Rendering.Stats.GpuMeshletBufferBytesResident.ShouldBe(4096);
-            XREngine.Engine.Rendering.Stats.GpuMeshletCacheHits.ShouldBe(7);
-            XREngine.Engine.Rendering.Stats.GpuMeshletCacheMisses.ShouldBe(8);
-            XREngine.Engine.Rendering.Stats.GpuMeshletCacheStale.ShouldBe(9);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletRequestedFrames.ShouldBe(2);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletProductionFrames.ShouldBe(1);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletFallbackFrames.ShouldBe(1);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletDispatchSkipped.ShouldBe(3);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted.ShouldBe(100);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsFrustumCulled.ShouldBe(10);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsConeCulled.ShouldBe(5);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsHiZCulled.ShouldBe(2);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletExpansionOverflowCount.ShouldBe(4);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletBufferBytesResident.ShouldBe(4096);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheHits.ShouldBe(7);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheMisses.ShouldBe(8);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheStale.ShouldBe(9);
 
             XREngine.Engine.Rendering.Stats.BeginFrame();
-            XREngine.Engine.Rendering.Stats.GpuMeshletRequestedFrames.ShouldBe(0);
-            XREngine.Engine.Rendering.Stats.GpuMeshletTaskRecordsEmitted.ShouldBe(0);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletRequestedFrames.ShouldBe(0);
+            XREngine.Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsEmitted.ShouldBe(0);
         }
         finally
         {
@@ -107,7 +107,7 @@ public sealed class GpuIndirectPhase10HardeningTests
             XREngine.Engine.Rendering.Stats.EnableTracking = true;
             XREngine.Engine.Rendering.Stats.BeginFrame();
 
-            XREngine.Engine.Rendering.Stats.ForbiddenGpuFallbackEvents.ShouldBe(
+            XREngine.Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents.ShouldBe(
                 0,
                 customMessage: "Golden-scene CI requires zero forbidden fallback attempts in ShippingFast profile.");
         }

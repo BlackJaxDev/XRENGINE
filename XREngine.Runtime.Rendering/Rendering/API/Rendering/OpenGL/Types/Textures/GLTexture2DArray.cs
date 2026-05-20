@@ -211,7 +211,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (_allocatedVRAMBytes > 0)
             {
-                RuntimeEngine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(_allocatedVRAMBytes);
                 _allocatedVRAMBytes = 0;
             }
 
@@ -236,7 +236,7 @@ namespace XREngine.Rendering.OpenGL
                 return;
 
             long requestedBytes = CalculateTextureArrayVRAMSize(width, height, depth, levels, desiredFormat);
-            if (!RuntimeEngine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+            if (!RuntimeEngine.Rendering.Stats.Vram.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
             {
                 Debug.OpenGLWarning($"[VRAM Budget] Skipping 2D array texture allocation for '{Data.Name ?? BindingId.ToString()}' ({requestedBytes} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
                 return;
@@ -244,7 +244,7 @@ namespace XREngine.Rendering.OpenGL
 
             if (_allocatedVRAMBytes > 0)
             {
-                RuntimeEngine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(_allocatedVRAMBytes);
                 _allocatedVRAMBytes = 0;
             }
 
@@ -256,7 +256,7 @@ namespace XREngine.Rendering.OpenGL
             _allocatedDepth = depth;
             _allocatedLevels = levels;
             _allocatedVRAMBytes = requestedBytes;
-            RuntimeEngine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+            RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(_allocatedVRAMBytes);
             TextureRuntimeDiagnostics.LogStorageAllocated(
                 RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
                 GetDescribingName(),

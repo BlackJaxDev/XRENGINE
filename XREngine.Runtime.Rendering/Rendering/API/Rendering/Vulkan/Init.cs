@@ -206,7 +206,7 @@ namespace XREngine.Rendering.Vulkan
                     $"[Vulkan] OOM for buffer (requested {requiredProperties}). Falling back to {fallback}.");
                 if (alloc.TryAllocateForBuffer(Api!, device, buffer, fallback, out allocation))
                 {
-                    RuntimeEngine.Rendering.Stats.RecordVulkanOomFallback();
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
                     return allocation;
                 }
             }
@@ -249,7 +249,7 @@ namespace XREngine.Rendering.Vulkan
                     $"[Vulkan] OOM for image (requested {requiredProperties}). Falling back to {fallback}.");
                 if (alloc.TryAllocateForImage(Api!, device, image, fallback, out allocation))
                 {
-                    RuntimeEngine.Rendering.Stats.RecordVulkanOomFallback();
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
                     return allocation;
                 }
             }

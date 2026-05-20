@@ -81,8 +81,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public long LastUpdateTimestampTicks => Engine.Time.Timer.Update.LastTimestampTicks;
     public double RenderDeltaSeconds => Engine.Time.Timer.Render.Delta;
     public long LastRenderTimestampTicks => Engine.Time.Timer.Render.LastTimestampTicks;
-    public long TrackedVramBytes => Engine.Rendering.Stats.AllocatedVRAMBytes;
-    public long TrackedVramBudgetBytes => Engine.Rendering.Stats.VramBudgetBytes;
+    public long TrackedVramBytes => Engine.Rendering.Stats.Vram.AllocatedVRAMBytes;
+    public long TrackedVramBudgetBytes => Engine.Rendering.Stats.Vram.VramBudgetBytes;
     public bool EnableGpuIndirectDebugLogging => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
     public EOcclusionCullingMode GpuOcclusionCullingMode => Engine.EffectiveSettings.GpuOcclusionCullingMode;
     public int CpuQueryOcclusionRetestPeriodFrames => Engine.Rendering.Settings.CpuQueryOcclusionRetestPeriodFrames;
@@ -322,7 +322,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         => Engine.Rendering.State.PushTransformId(transformId);
 
     public void RecordOctreeSkippedMove()
-        => Engine.Rendering.Stats.RecordOctreeSkippedMove();
+        => Engine.Rendering.Stats.Octree.RecordOctreeSkippedMove();
 
     public void ProcessGpuPhysicsChainDispatches()
         => GPUPhysicsChainDispatcher.Instance.ProcessDispatches();
@@ -418,145 +418,145 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         => Engine.Rendering.Stats.BeginFrame();
 
     public void IncrementRenderDrawCalls(int count)
-        => Engine.Rendering.Stats.IncrementDrawCalls(count);
+        => Engine.Rendering.Stats.Frame.IncrementDrawCalls(count);
 
     public void IncrementRenderMultiDrawCalls(int count)
-        => Engine.Rendering.Stats.IncrementMultiDrawCalls(count);
+        => Engine.Rendering.Stats.Frame.IncrementMultiDrawCalls(count);
 
     public void AddRenderTrianglesRendered(int count)
-        => Engine.Rendering.Stats.AddTrianglesRendered(count);
+        => Engine.Rendering.Stats.Frame.AddTrianglesRendered(count);
 
     public void AddRenderGpuBufferAllocation(long bytes)
-        => Engine.Rendering.Stats.AddBufferAllocation(bytes);
+        => Engine.Rendering.Stats.Vram.AddBufferAllocation(bytes);
 
     public void RemoveRenderGpuBufferAllocation(long bytes)
-        => Engine.Rendering.Stats.RemoveBufferAllocation(bytes);
+        => Engine.Rendering.Stats.Vram.RemoveBufferAllocation(bytes);
 
     public void AddRenderGpuTextureAllocation(long bytes)
-        => Engine.Rendering.Stats.AddTextureAllocation(bytes);
+        => Engine.Rendering.Stats.Vram.AddTextureAllocation(bytes);
 
     public void RemoveRenderGpuTextureAllocation(long bytes)
-        => Engine.Rendering.Stats.RemoveTextureAllocation(bytes);
+        => Engine.Rendering.Stats.Vram.RemoveTextureAllocation(bytes);
 
     public void AddRenderGpuRenderBufferAllocation(long bytes)
-        => Engine.Rendering.Stats.AddRenderBufferAllocation(bytes);
+        => Engine.Rendering.Stats.Vram.AddRenderBufferAllocation(bytes);
 
     public void RemoveRenderGpuRenderBufferAllocation(long bytes)
-        => Engine.Rendering.Stats.RemoveRenderBufferAllocation(bytes);
+        => Engine.Rendering.Stats.Vram.RemoveRenderBufferAllocation(bytes);
 
     public bool CanAllocateRenderVram(long requestedBytes, long existingAllocationBytes, out long projectedBytes, out long budgetBytes)
-        => Engine.Rendering.Stats.CanAllocateVram(requestedBytes, existingAllocationBytes, out projectedBytes, out budgetBytes);
+        => Engine.Rendering.Stats.Vram.CanAllocateVram(requestedBytes, existingAllocationBytes, out projectedBytes, out budgetBytes);
 
     public void RecordRenderGpuBufferMapped(int count = 1)
-        => Engine.Rendering.Stats.RecordGpuBufferMapped(count);
+        => Engine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped(count);
 
     public void RecordRenderGpuReadbackBytes(long bytes)
-        => Engine.Rendering.Stats.RecordGpuReadbackBytes(bytes);
+        => Engine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(bytes);
 
     public void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands)
-        => Engine.Rendering.Stats.RecordGpuCpuFallback(eventCount, recoveredCommands);
+        => Engine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(eventCount, recoveredCommands);
 
     public void RecordRenderForbiddenGpuFallback(int eventCount = 1)
-        => Engine.Rendering.Stats.RecordForbiddenGpuFallback(eventCount);
+        => Engine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(eventCount);
 
     public void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible)
-        => Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(opaqueOrOtherVisible, maskedVisible, approximateVisible, exactVisible);
+        => Engine.Rendering.Stats.GpuTransparency.RecordGpuTransparencyDomainCounts(opaqueOrOtherVisible, maskedVisible, approximateVisible, exactVisible);
 
     public void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1)
-        => Engine.Rendering.Stats.RecordGpuMeshletStrategyRequested(eventCount);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletStrategyRequested(eventCount);
 
     public void RecordRenderGpuMeshletProductionFrame(int eventCount = 1)
-        => Engine.Rendering.Stats.RecordGpuMeshletProductionFrame(eventCount);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(eventCount);
 
     public void RecordRenderGpuMeshletFallback(int eventCount = 1)
-        => Engine.Rendering.Stats.RecordGpuMeshletFallback(eventCount);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletFallback(eventCount);
 
     public void RecordRenderGpuMeshletDispatchSkipped(int eventCount = 1)
-        => Engine.Rendering.Stats.RecordGpuMeshletDispatchSkipped(eventCount);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletDispatchSkipped(eventCount);
 
     public void RecordRenderGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
-        => Engine.Rendering.Stats.RecordGpuMeshletTaskStats(emitted, frustumCulled, coneCulled, hiZCulled);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletTaskStats(emitted, frustumCulled, coneCulled, hiZCulled);
 
     public void RecordRenderGpuMeshletExpansionOverflow(uint overflowCount)
-        => Engine.Rendering.Stats.RecordGpuMeshletExpansionOverflow(overflowCount);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletExpansionOverflow(overflowCount);
 
     public void RecordRenderGpuMeshletBufferBytesResident(long bytes)
-        => Engine.Rendering.Stats.RecordGpuMeshletBufferBytesResident(bytes < 0 ? 0UL : (ulong)bytes);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(bytes < 0 ? 0UL : (ulong)bytes);
 
     public void RecordRenderGpuMeshletCacheHit(int eventCount = 1)
-        => Engine.Rendering.Stats.RecordGpuMeshletCacheHit(eventCount);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(eventCount);
 
     public void RecordRenderGpuMeshletCacheMiss(int eventCount = 1)
-        => Engine.Rendering.Stats.RecordGpuMeshletCacheMiss(eventCount);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(eventCount);
 
     public void RecordRenderGpuMeshletCacheStale(int eventCount = 1)
-        => Engine.Rendering.Stats.RecordGpuMeshletCacheStale(eventCount);
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheStale(eventCount);
 
     public void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands)
-        => Engine.Rendering.Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
+        => Engine.Rendering.Stats.Octree.RecordOctreeCollect(visibleRenderables, emittedCommands);
 
     public void RecordRenderRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime)
-        => Engine.Rendering.Stats.RecordRtxIoCopyIndirect(copiedBytes, submissionTime);
+        => Engine.Rendering.Stats.RtxIo.RecordRtxIoCopyIndirect(copiedBytes, submissionTime);
 
     public void RecordRenderRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime)
-        => Engine.Rendering.Stats.RecordRtxIoDecompression(compressedBytes, decompressedBytes, submissionTime);
+        => Engine.Rendering.Stats.RtxIo.RecordRtxIoDecompression(compressedBytes, decompressedBytes, submissionTime);
 
     public void RecordRenderSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded)
-        => Engine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
+        => Engine.Rendering.Stats.SkinnedBounds.RecordSkinnedBoundsRefreshDeferredFinished(queueWaitTicks, cpuJobTicks, applyTicks, succeeded);
 
     public void RecordRenderSkinnedBoundsRefreshDeferredScheduled()
-        => Engine.Rendering.Stats.RecordSkinnedBoundsRefreshDeferredScheduled();
+        => Engine.Rendering.Stats.SkinnedBounds.RecordSkinnedBoundsRefreshDeferredScheduled();
 
     public void RecordRenderSkinnedBoundsRefreshGpuCompleted(long computeTicks, long applyTicks)
-        => Engine.Rendering.Stats.RecordSkinnedBoundsRefreshGpuCompleted(computeTicks, applyTicks);
+        => Engine.Rendering.Stats.SkinnedBounds.RecordSkinnedBoundsRefreshGpuCompleted(computeTicks, applyTicks);
 
     public void RecordRenderVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime)
-        => Engine.Rendering.Stats.RecordVrCommandBuildTimes(leftBuildTime, rightBuildTime);
+        => Engine.Rendering.Stats.Vr.RecordVrCommandBuildTimes(leftBuildTime, rightBuildTime);
 
     public void RecordRenderVrPerViewVisibleCounts(uint leftVisible, uint rightVisible)
-        => Engine.Rendering.Stats.RecordVrPerViewVisibleCounts(leftVisible, rightVisible);
+        => Engine.Rendering.Stats.Vr.RecordVrPerViewVisibleCounts(leftVisible, rightVisible);
 
     public void RecordRenderVrRenderSubmitTime(TimeSpan submitTime)
-        => Engine.Rendering.Stats.RecordVrRenderSubmitTime(submitTime);
+        => Engine.Rendering.Stats.Vr.RecordVrRenderSubmitTime(submitTime);
 
     public void RecordRenderVrXrWaitFrameBlockTime(TimeSpan waitTime)
-        => Engine.Rendering.Stats.RecordVrXrWaitFrameBlockTime(waitTime);
+        => Engine.Rendering.Stats.Vr.RecordVrXrWaitFrameBlockTime(waitTime);
 
     public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime)
-        => Engine.Rendering.Stats.RecordVrXrEndFrameSubmitTime(submitTime);
+        => Engine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(submitTime);
 
     public void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
-        => Engine.Rendering.Stats.RecordVrXrPredictedToLatePoseDelta(millimeters, degrees);
+        => Engine.Rendering.Stats.Vr.RecordVrXrPredictedToLatePoseDelta(millimeters, degrees);
 
     public void RecordRenderVrXrPredictedDisplayLeadTime(double leadTimeMs)
-        => Engine.Rendering.Stats.RecordVrXrPredictedDisplayLeadTime(leadTimeMs);
+        => Engine.Rendering.Stats.Vr.RecordVrXrPredictedDisplayLeadTime(leadTimeMs);
 
     public void RecordRenderVrXrMissedDeadlineFrame()
-        => Engine.Rendering.Stats.RecordVrXrMissedDeadlineFrame();
+        => Engine.Rendering.Stats.Vr.RecordVrXrMissedDeadlineFrame();
 
     public void RecordRenderVrXrTrackingLossFrame()
-        => Engine.Rendering.Stats.RecordVrXrTrackingLossFrame();
+        => Engine.Rendering.Stats.Vr.RecordVrXrTrackingLossFrame();
 
     public void RecordRenderVrXrRelocatePredictedTime(TimeSpan elapsed)
-        => Engine.Rendering.Stats.RecordVrXrRelocatePredictedTime(elapsed);
+        => Engine.Rendering.Stats.Vr.RecordVrXrRelocatePredictedTime(elapsed);
 
     public void RecordRenderVrXrCollectFrustumExpansionDegrees(double degrees)
-        => Engine.Rendering.Stats.RecordVrXrCollectFrustumExpansionDegrees(degrees);
+        => Engine.Rendering.Stats.Vr.RecordVrXrCollectFrustumExpansionDegrees(degrees);
 
     public void RecordRenderVrXrPacingThreadIdleTime(TimeSpan elapsed)
-        => Engine.Rendering.Stats.RecordVrXrPacingThreadIdleTime(elapsed);
+        => Engine.Rendering.Stats.Vr.RecordVrXrPacingThreadIdleTime(elapsed);
 
     public void RecordRenderVrXrPacingHandoffStall()
-        => Engine.Rendering.Stats.RecordVrXrPacingHandoffStall();
+        => Engine.Rendering.Stats.Vr.RecordVrXrPacingHandoffStall();
 
     public void RecordRenderVulkanAdhocBarrier(int emittedCount, int redundantCount)
-        => Engine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount, redundantCount);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount, redundantCount);
 
     public void RecordRenderVulkanAllocation(int allocationClass, long bytes)
-        => Engine.Rendering.Stats.RecordVulkanAllocation((Engine.Rendering.Stats.EVulkanAllocationTelemetryClass)allocationClass, bytes);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanAllocation((Engine.Rendering.Stats.Vulkan.EVulkanAllocationTelemetryClass)allocationClass, bytes);
 
     public void RecordRenderVulkanBarrierPlannerPass(int imageBarrierCount, int bufferBarrierCount, int queueOwnershipTransfers, int stageFlushes)
-        => Engine.Rendering.Stats.RecordVulkanBarrierPlannerPass(imageBarrierCount, bufferBarrierCount, queueOwnershipTransfers, stageFlushes);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanBarrierPlannerPass(imageBarrierCount, bufferBarrierCount, queueOwnershipTransfers, stageFlushes);
 
     public void RecordRenderVulkanBindChurn(
         int pipelineBinds = 0,
@@ -568,7 +568,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         int descriptorBindSkips = 0,
         int vertexBufferBindSkips = 0,
         int indexBufferBindSkips = 0)
-        => Engine.Rendering.Stats.RecordVulkanBindChurn(
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(
             pipelineBinds,
             descriptorBinds,
             pushConstantWrites,
@@ -588,7 +588,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         bool skippedDraw,
         bool skippedDispatch,
         string? message)
-        => Engine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
             programName,
             bindingClass,
             bindingName,
@@ -605,7 +605,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         uint set,
         uint binding,
         int count = 1)
-        => Engine.Rendering.Stats.RecordVulkanDescriptorFallback(
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanDescriptorFallback(
             programName,
             bindingClass,
             bindingName,
@@ -614,19 +614,19 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             count);
 
     public void RecordRenderVulkanDescriptorPoolCreate()
-        => Engine.Rendering.Stats.RecordVulkanDescriptorPoolCreate();
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
 
     public void RecordRenderVulkanDescriptorPoolDestroy()
-        => Engine.Rendering.Stats.RecordVulkanDescriptorPoolDestroy();
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
 
     public void RecordRenderVulkanDescriptorPoolReset()
-        => Engine.Rendering.Stats.RecordVulkanDescriptorPoolReset();
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolReset();
 
     public void RecordRenderVulkanDynamicUniformAllocation(long bytes)
-        => Engine.Rendering.Stats.RecordVulkanDynamicUniformAllocation(bytes);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformAllocation(bytes);
 
     public void RecordRenderVulkanDynamicUniformExhaustion()
-        => Engine.Rendering.Stats.RecordVulkanDynamicUniformExhaustion();
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformExhaustion();
 
     public void RecordRenderVulkanFrameDiagnostics(
         int droppedFrameOps,
@@ -647,7 +647,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         string? firstFailedShaderName,
         string? firstFailedMessage,
         string? diagnosticSummary)
-        => Engine.Rendering.Stats.RecordVulkanFrameDiagnostics(
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanFrameDiagnostics(
             droppedFrameOps,
             droppedDrawOps,
             droppedComputeOps,
@@ -668,7 +668,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             diagnosticSummary);
 
     public void RecordRenderVulkanFrameGpuCommandBufferTime(TimeSpan elapsed)
-        => Engine.Rendering.Stats.RecordVulkanFrameGpuCommandBufferTime(elapsed);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTime(elapsed);
 
     public void RecordRenderVulkanFrameLifecycleTiming(
         TimeSpan waitFence,
@@ -678,7 +678,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         TimeSpan trim,
         TimeSpan present,
         TimeSpan total)
-        => Engine.Rendering.Stats.RecordVulkanFrameLifecycleTiming(
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanFrameLifecycleTiming(
             waitFence,
             acquireImage,
             recordCommandBuffer,
@@ -688,40 +688,40 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             total);
 
     public void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed)
-        => Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming((Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming)stage, elapsed);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming((Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming)stage, elapsed);
 
     public void RecordRenderVulkanIndirectBatchMerge(int requestedBatchCount, int mergedBatchCount)
-        => Engine.Rendering.Stats.RecordVulkanIndirectBatchMerge(requestedBatchCount, mergedBatchCount);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanIndirectBatchMerge(requestedBatchCount, mergedBatchCount);
 
     public void RecordRenderVulkanIndirectEffectiveness(uint requestedDraws, uint culledDraws, uint emittedIndirectDraws, uint consumedDraws, uint overflowCount = 0u)
-        => Engine.Rendering.Stats.RecordVulkanIndirectEffectiveness(requestedDraws, culledDraws, emittedIndirectDraws, consumedDraws, overflowCount);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanIndirectEffectiveness(requestedDraws, culledDraws, emittedIndirectDraws, consumedDraws, overflowCount);
 
     public void RecordRenderVulkanIndirectRecordingMode(bool usedSecondary, bool usedParallel, int opCount)
-        => Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(usedSecondary, usedParallel, opCount);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanIndirectRecordingMode(usedSecondary, usedParallel, opCount);
 
     public void RecordRenderVulkanIndirectSubmission(bool usedCountPath, bool usedLoopFallback, int apiCalls, uint submittedDraws)
-        => Engine.Rendering.Stats.RecordVulkanIndirectSubmission(usedCountPath, usedLoopFallback, apiCalls, submittedDraws);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanIndirectSubmission(usedCountPath, usedLoopFallback, apiCalls, submittedDraws);
 
     public void RecordRenderVulkanOomFallback()
-        => Engine.Rendering.Stats.RecordVulkanOomFallback();
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
 
     public void RecordRenderVulkanPipelineCacheLookup(bool cacheHit)
-        => Engine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit);
 
     public void RecordRenderVulkanPipelineCacheMiss(string? summary)
-        => Engine.Rendering.Stats.RecordVulkanPipelineCacheMiss(summary);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheMiss(summary);
 
     public void RecordRenderVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
-        => Engine.Rendering.Stats.RecordVulkanQueueOverlapWindow(overlapCandidatePasses, transferCost, frameDelta, promotedMode, demotedMode);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanQueueOverlapWindow(overlapCandidatePasses, transferCost, frameDelta, promotedMode, demotedMode);
 
     public void RecordRenderVulkanQueueSubmit()
-        => Engine.Rendering.Stats.RecordVulkanQueueSubmit();
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
 
     public void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
-        => Engine.Rendering.Stats.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
 
     public void RecordRenderVulkanValidationMessage(bool isError, string? message)
-        => Engine.Rendering.Stats.RecordVulkanValidationMessage(isError, message);
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanValidationMessage(isError, message);
 
     public bool IsWindowScenePanelPresentationEnabled
         => Engine.IsEditor &&
@@ -765,7 +765,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         => _ = Engine.VRState.OpenXRApi?.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
 
     public void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
-        => Engine.Rendering.Stats.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
+        => Engine.Rendering.Stats.Vr.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
 
     public void DestroyObjectsForRenderer(IRuntimeRendererHost renderer)
     {
@@ -796,10 +796,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         => ExactTransparencyShaderBindings.ConfigureMaterialProgram(material, program);
 
     public int GetBytesPerPixel(ESizedInternalFormat format)
-        => Engine.Rendering.Stats.GetBytesPerPixel(format);
+        => Engine.Rendering.Stats.PixelFormats.GetBytesPerPixel(format);
 
     public int GetBytesPerPixel(ERenderBufferStorage storage)
-        => Engine.Rendering.Stats.GetBytesPerPixel(storage);
+        => Engine.Rendering.Stats.PixelFormats.GetBytesPerPixel(storage);
 
     private static OpenGLRenderer? GetPrimaryOpenGlRenderer()
     {
@@ -816,7 +816,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     }
 
     public void AddFrameBufferBandwidth(long totalBytes)
-        => Engine.Rendering.Stats.AddFBOBandwidth(totalBytes);
+        => Engine.Rendering.Stats.Vram.AddFBOBandwidth(totalBytes);
 
     public void DispatchCompute(XRRenderProgram program, uint groupCountX, uint groupCountY, uint groupCountZ)
         => AbstractRenderer.Current?.DispatchCompute(program, (int)groupCountX, (int)groupCountY, (int)groupCountZ);

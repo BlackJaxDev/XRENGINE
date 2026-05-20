@@ -779,7 +779,7 @@ public unsafe partial class VulkanRenderer
         {
             if (_computePipeline.Handle != 0)
             {
-                RuntimeEngine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: true);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: true);
                 return _computePipeline;
             }
 
@@ -895,7 +895,7 @@ public unsafe partial class VulkanRenderer
 
             if (pendingWrites.Count == 0)
             {
-                RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                     Data.Name,
                     "descriptor-set",
                     "<none>",
@@ -933,7 +933,7 @@ public unsafe partial class VulkanRenderer
                     out bool isNewAllocation))
                 {
                     WarnComputeOnce("Failed to acquire cached Vulkan compute descriptor sets.");
-                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                         Data.Name,
                         "descriptor-set",
                         "<cached-compute>",
@@ -957,7 +957,7 @@ public unsafe partial class VulkanRenderer
                     out descriptorSets))
                 {
                     WarnComputeOnce("Failed to allocate transient Vulkan compute descriptor sets.");
-                    RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                         Data.Name,
                         "descriptor-set",
                         "<transient-compute>",
@@ -1191,7 +1191,7 @@ public unsafe partial class VulkanRenderer
             };
 
         private void RecordComputeDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
-            => RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorFallback(
+            => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorFallback(
                 Data.Name,
                 GetDescriptorBindingClass(binding.DescriptorType),
                 binding.Name,
@@ -1200,7 +1200,7 @@ public unsafe partial class VulkanRenderer
                 count);
 
         private void RecordComputeDescriptorFailure(DescriptorBindingInfo binding, string reason, bool skippedDispatch)
-            => RuntimeEngine.Rendering.Stats.RecordVulkanDescriptorBindingFailure(
+            => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
                 Data.Name,
                 GetDescriptorBindingClass(binding.DescriptorType),
                 binding.Name,

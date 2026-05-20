@@ -49,7 +49,7 @@ internal static class VPRC_RenderMeshesPassTraditional
         {
             if (ShouldUseOpenGLZeroReadbackProgramWarmupFallback(command.MeshSubmissionStrategy, gpuPass))
             {
-                RuntimeEngine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
+                RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
                 WarnZeroReadbackProgramWarmupFallback(command.RenderPass, gpuPass.ZeroReadbackProgramPendingCountThisFrame);
                 activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
                 return;
@@ -63,13 +63,13 @@ internal static class VPRC_RenderMeshesPassTraditional
 
             if (allowCpuSafetyNet)
             {
-                RuntimeEngine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
+                RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
                 WarnCpuSafetyNetFallback(command.RenderPass, shaderWarmupFallback);
                 activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
             }
             else
             {
-                RuntimeEngine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+                RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
                 if (Interlocked.Decrement(ref _forbiddenFallbackLogBudget) >= 0)
                 {
                     XREngine.Debug.LogWarning(

@@ -114,7 +114,7 @@ public unsafe partial class OpenXRAPI
                 // Consume the signal so the next iteration parks until the render thread signals again.
                 _openXrPacingWakeEvent.Reset();
 
-                RuntimeEngine.Rendering.Stats.RecordVrXrPacingThreadIdleTime(
+                RuntimeEngine.Rendering.Stats.Vr.RecordVrXrPacingThreadIdleTime(
                     TimeSpan.FromSeconds((idleEnd - idleStart) / (double)Stopwatch.Frequency));
 
                 if (!_sessionBegun)

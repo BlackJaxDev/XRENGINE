@@ -207,7 +207,7 @@ public sealed partial class GpuBvhTree
             return 0u;
 
         _overflowFlagBuffer.MapBufferData();
-        RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
+        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
         try
         {
             foreach (var addr in _overflowFlagBuffer.GetMappedAddresses())
@@ -220,7 +220,7 @@ public sealed partial class GpuBvhTree
                         // recorded in Engine.Rendering.Stats so
                         // GpuReadbackBytes stays honest under the instrumented
                         // strategy. This is a 4-byte read, but it counts.
-                        RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
+                        RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(sizeof(uint));
                         return *((uint*)addr.Pointer);
                     }
                 }

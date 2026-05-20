@@ -344,7 +344,7 @@ public unsafe partial class VulkanRenderer
             // (the logical allocation is gone even if the GPU handle lingers).
             if (_ownsImageMemory && _allocatedVRAMBytes > 0)
             {
-                RuntimeEngine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(_allocatedVRAMBytes);
                 _allocatedVRAMBytes = 0;
             }
 
@@ -589,7 +589,7 @@ public unsafe partial class VulkanRenderer
 
             // Record the allocation for VRAM usage statistics.
             _allocatedVRAMBytes = (long)memRequirements.Size;
-            RuntimeEngine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+            RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(_allocatedVRAMBytes);
         }
 
         #endregion

@@ -40,8 +40,8 @@ public sealed class VulkanP1ValidationTests
 
         packetSource.ShouldContain("VulkanDescriptorFallbackSampledImages");
         packetSource.ShouldContain("VulkanDescriptorBindingFailures");
-        senderSource.ShouldContain("VulkanDescriptorFallbackSampledImages = Rendering.Stats.VulkanDescriptorFallbackSampledImages");
-        editorSource.ShouldContain("VulkanDescriptorFallbackSampledImages = Engine.Rendering.Stats.VulkanDescriptorFallbackSampledImages");
+        senderSource.ShouldContain("VulkanDescriptorFallbackSampledImages = Rendering.Stats.Vulkan.VulkanDescriptorFallbackSampledImages");
+        editorSource.ShouldContain("VulkanDescriptorFallbackSampledImages = Engine.Rendering.Stats.Vulkan.VulkanDescriptorFallbackSampledImages");
         profilerUiSource.ShouldContain("Descriptor Fallbacks:");
         profilerUiSource.ShouldContain("Descriptor Failures:");
     }

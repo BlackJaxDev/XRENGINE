@@ -636,14 +636,15 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 5)
+        if (textures.Count != 6)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName))
             || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VelocityTextureName))
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
-            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName)))
+            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(StencilViewTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -658,6 +659,14 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private bool NeedsRecreatePostProcessFbo(XRFrameBuffer fbo)
     {
+        // See DefaultRenderPipeline.NeedsRecreatePostProcessFbo: bloom is skipped on
+        // light-probe / scene-capture passes, so BloomBlurTextureName is unregistered
+        // during them. Preserve the cached main-camera FBO instead of destroying and
+        // recreating it with a null bloom slot.
+        if (RuntimeEngine.Rendering.State.IsLightProbePass
+            || RuntimeEngine.Rendering.State.IsSceneCapturePass)
+            return false;
+
         if (!fbo.IsLastCheckComplete)
             return true;
 

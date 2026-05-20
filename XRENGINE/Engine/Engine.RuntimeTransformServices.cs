@@ -35,7 +35,7 @@ internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
     public ColorF4 TransformCapsuleColor => Engine.EditorPreferences.Theme.TransformCapsuleColor;
 
     public void RecordRenderMatrixChange(Delegate? listeners)
-        => Engine.Rendering.Stats.RecordRenderMatrixChange(listeners);
+        => Engine.Rendering.Stats.RenderMatrix.RecordRenderMatrixChange(listeners);
 
     public void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
         => Engine.Rendering.Debug.RenderLine(start, end, color);

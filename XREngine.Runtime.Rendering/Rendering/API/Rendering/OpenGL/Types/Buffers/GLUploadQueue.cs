@@ -231,7 +231,7 @@ namespace XREngine.Rendering.OpenGL
                     return UploadExecutionResult.Failure;
                 }
 
-                if (!RuntimeEngine.Rendering.Stats.CanAllocateVram(dataLength, buffer.AllocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                if (!RuntimeEngine.Rendering.Stats.Vram.CanAllocateVram(dataLength, buffer.AllocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
                 {
                     buffer.FailQueuedUpload();
                     _pendingBuffers.TryRemove(buffer, out _);

@@ -646,14 +646,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 5)
+        if (textures.Count != 6)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName))
             || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VelocityTextureName))
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
-            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName)))
+            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(StencilViewTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -668,6 +669,18 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private bool NeedsRecreatePostProcessFbo(XRFrameBuffer fbo)
     {
+        // Light-probe and scene-capture passes skip the bloom pass (see ShouldUseBloom),
+        // so BloomBlurTextureName is unregistered while they run. If we let the texture
+        // mismatch check fire here, the cached main-camera PostProcess FBO gets destroyed
+        // and recreated with a null bloom slot, which OpenGL substitutes with a 1x1 black
+        // fallback texture. The next main-camera frame reuses that broken FBO and bloom
+        // appears as solid black quadrants in the debug viz. Preserve the cached FBO
+        // during these passes; the next main-camera frame will recreate it correctly if
+        // anything legitimately changed.
+        if (RuntimeEngine.Rendering.State.IsLightProbePass
+            || RuntimeEngine.Rendering.State.IsSceneCapturePass)
+            return false;
+
         if (!fbo.IsLastCheckComplete)
             return true;
 
@@ -2166,6 +2179,11 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_DepthWrite>().Allow = false;
                 // GPU path currently ignores override materials; force CPU so motion vectors render with the correct material.
                 // Skip background/on-top passes so skyboxes/UI do not pollute the velocity buffer.
+                // OnTopForward gizmos are intentionally excluded: they use custom depth-trick vertex shaders
+                // (z forced to near plane) that the engine-generated VS used by the velocity pass does not
+                // honor, so velocity would only be written where the gizmo is unoccluded, while motion blur
+                // and TAA reprojection would still rely on those values for on-top pixels and produce smears
+                // / ghosting. TAA sharpness for gizmos is handled in the TAA/TSR shader via the gizmo stencil bit.
                 c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,
                     new[]
                     {

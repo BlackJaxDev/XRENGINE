@@ -1552,7 +1552,8 @@ public partial class PhysicsChainComponent
         mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
         mat.RenderOptions.CullMode = ECullMode.None;
         mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-        mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+        mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
+        XRMaterial.ConfigureGizmoMaterial(mat);
         return mat;
     }
 
@@ -1562,7 +1563,7 @@ public partial class PhysicsChainComponent
         XRShader[] vertexShaders = [vertShader];
 
         XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "LineInstance.gs"), EShaderType.Geometry);
-        XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
+        XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitiveLine.fs"), EShaderType.Fragment);
         ShaderVar[] vars =
         [
             new ShaderFloat(0.001f, "LineWidth"),
@@ -1572,7 +1573,8 @@ public partial class PhysicsChainComponent
         mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
         mat.RenderOptions.CullMode = ECullMode.None;
         mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-        mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+        mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
+        XRMaterial.ConfigureGizmoMaterial(mat);
         return mat;
     }
 }

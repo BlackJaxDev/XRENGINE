@@ -180,7 +180,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                     if (_allocatedVRAMBytes > 0)
                     {
-                        RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                        RuntimeEngine.Rendering.Stats.Vram.RemoveBufferAllocation(_allocatedVRAMBytes);
                         _allocatedVRAMBytes = 0;
                     }
 
@@ -252,7 +252,7 @@ namespace XREngine.Rendering.Vulkan
 
                     // Track VRAM allocation only when the backing allocation is recreated.
                     _allocatedVRAMBytes = (long)_bufferSize;
-                    RuntimeEngine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.Vram.AddBufferAllocation(_allocatedVRAMBytes);
                 }
                 else
                 {
@@ -628,7 +628,7 @@ namespace XREngine.Rendering.Vulkan
                 // Track VRAM deallocation
                 if (_allocatedVRAMBytes > 0)
                 {
-                    RuntimeEngine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    RuntimeEngine.Rendering.Stats.Vram.RemoveBufferAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
 
@@ -1084,8 +1084,8 @@ namespace XREngine.Rendering.Vulkan
 
             mappedPtr = localMappedPtr;
             InvalidateBuffer(memory, offset, mappedLength);
-            RuntimeEngine.Rendering.Stats.RecordGpuBufferMapped();
-            RuntimeEngine.Rendering.Stats.RecordGpuReadbackBytes((long)length);
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((long)length);
             return true;
         }
 
@@ -1133,19 +1133,19 @@ namespace XREngine.Rendering.Vulkan
             if ((properties & MemoryPropertyFlags.DeviceLocalBit) != 0 &&
                 (properties & MemoryPropertyFlags.HostVisibleBit) == 0)
             {
-                RuntimeEngine.Rendering.Stats.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.EVulkanAllocationTelemetryClass.DeviceLocal, bytes);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.Vulkan.EVulkanAllocationTelemetryClass.DeviceLocal, bytes);
                 return;
             }
 
             if ((properties & MemoryPropertyFlags.HostVisibleBit) != 0 &&
                 (properties & MemoryPropertyFlags.HostCachedBit) != 0)
             {
-                RuntimeEngine.Rendering.Stats.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.EVulkanAllocationTelemetryClass.Readback, bytes);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.Vulkan.EVulkanAllocationTelemetryClass.Readback, bytes);
                 return;
             }
 
             if ((properties & MemoryPropertyFlags.HostVisibleBit) != 0)
-                RuntimeEngine.Rendering.Stats.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.EVulkanAllocationTelemetryClass.Upload, bytes);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAllocation(RuntimeEngine.Rendering.Stats.Vulkan.EVulkanAllocationTelemetryClass.Upload, bytes);
         }
     }
 } 
