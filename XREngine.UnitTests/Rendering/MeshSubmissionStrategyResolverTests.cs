@@ -17,13 +17,71 @@ public sealed class MeshSubmissionStrategyResolverTests
     }
 
     [Test]
-    public void ResolveMeshSubmissionStrategy_ForcedStrategy_BypassesProfileAndCapabilities()
+    public void ResolveMeshSubmissionStrategy_ForcedNonMeshletStrategy_BypassesProfileAndCapabilities()
+    {
+        Resolve(
+                forcedStrategy: EMeshSubmissionStrategy.GpuIndirectZeroReadback,
+                requestedGpuDispatch: false,
+                supportsIndirectCountDraw: false)
+            .ShouldBe(EMeshSubmissionStrategy.GpuIndirectZeroReadback);
+    }
+
+    [Test]
+    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletWithProductionSupport_UsesGpuMeshlet()
     {
         Resolve(
                 forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
-                requestedGpuDispatch: false,
-                supportsIndirectCountDraw: false)
+                meshShaderDialect: EMeshShaderDialect.VulkanEXT,
+                supportsIndirectCountDraw: true,
+                supportsIndirectCountMeshTaskDispatch: true,
+                supportsMeshletDispatch: true)
             .ShouldBe(EMeshSubmissionStrategy.GpuMeshlet);
+    }
+
+    [Test]
+    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletUnsupportedWithIndirectCount_FallsBackToZeroReadback()
+    {
+        Resolve(
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                meshShaderDialect: EMeshShaderDialect.None,
+                supportsIndirectCountDraw: true,
+                supportsMeshletDispatch: false)
+            .ShouldBe(EMeshSubmissionStrategy.GpuIndirectZeroReadback);
+    }
+
+    [Test]
+    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletDiagnosticDirectDispatch_FallsBackToZeroReadback()
+    {
+        Resolve(
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                meshShaderDialect: EMeshShaderDialect.OpenGLNV,
+                supportsIndirectCountDraw: true,
+                supportsDirectMeshTaskDispatch: true,
+                supportsIndirectCountMeshTaskDispatch: false,
+                supportsMeshletDispatch: false)
+            .ShouldBe(EMeshSubmissionStrategy.GpuIndirectZeroReadback);
+    }
+
+    [Test]
+    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletUnsupportedWithoutIndirectCountStrict_UsesCpuDirect()
+    {
+        Resolve(
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                supportsIndirectCountDraw: false,
+                enforceStrictNoFallbacks: true,
+                supportsMeshletDispatch: false)
+            .ShouldBe(EMeshSubmissionStrategy.CpuDirect);
+    }
+
+    [Test]
+    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletUnsupportedWithoutIndirectCountPermissive_UsesInstrumented()
+    {
+        Resolve(
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                supportsIndirectCountDraw: false,
+                enforceStrictNoFallbacks: false,
+                supportsMeshletDispatch: false)
+            .ShouldBe(EMeshSubmissionStrategy.GpuIndirectInstrumented);
     }
 
     [Test]
@@ -79,6 +137,9 @@ public sealed class MeshSubmissionStrategyResolverTests
         EVulkanGpuDrivenProfile activeProfile = EVulkanGpuDrivenProfile.DevParity,
         bool enforceStrictNoFallbacks = false,
         bool supportsIndirectCountDraw = true,
+        EMeshShaderDialect meshShaderDialect = EMeshShaderDialect.None,
+        bool supportsDirectMeshTaskDispatch = false,
+        bool supportsIndirectCountMeshTaskDispatch = false,
         bool supportsMeshletDispatch = false)
     {
         var inputs = new Engine.Rendering.MeshSubmissionStrategyResolverInputs(
@@ -93,6 +154,9 @@ public sealed class MeshSubmissionStrategyResolverTests
             ActiveVulkanProfile: activeProfile,
             EnforceStrictNoFallbacks: enforceStrictNoFallbacks,
             SupportsIndirectCountDraw: supportsIndirectCountDraw,
+            MeshShaderDialect: meshShaderDialect,
+            SupportsDirectMeshTaskDispatch: supportsDirectMeshTaskDispatch,
+            SupportsIndirectCountMeshTaskDispatch: supportsIndirectCountMeshTaskDispatch,
             SupportsMeshletDispatch: supportsMeshletDispatch);
 
         return Engine.Rendering.ResolveMeshSubmissionStrategy(inputs);

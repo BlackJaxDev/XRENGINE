@@ -27,6 +27,11 @@ namespace XREngine.Rendering
 
         public const uint StatsTriangleCount = 17;
 
-        public const uint FieldCount = 18;
+        public const uint MeshletTaskRecordsEmitted = 18;
+        public const uint MeshletTaskRecordsFrustumCulled = 19;
+        public const uint MeshletTaskRecordsConeCulled = 20;
+        public const uint MeshletTaskRecordsHiZCulled = 21;
+
+        public const uint FieldCount = 22;
     }
 }

@@ -455,6 +455,46 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletProductionFrame(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletFallback(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletDispatchSkipped(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
+        {
+        }
+
+        public void RecordRenderGpuMeshletExpansionOverflow(uint overflowCount)
+        {
+        }
+
+        public void RecordRenderGpuMeshletBufferBytesResident(long bytes)
+        {
+        }
+
+        public void RecordRenderGpuMeshletCacheHit(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletCacheMiss(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletCacheStale(int eventCount = 1)
+        {
+        }
+
         public void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands)
         {
         }

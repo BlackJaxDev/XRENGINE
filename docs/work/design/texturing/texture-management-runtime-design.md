@@ -1,8 +1,13 @@
 # Texture Management Runtime Design
 
-Last Updated: 2026-05-04
-Status: implemented design; service boundaries refreshed after texture streaming consolidation
+Last Updated: 2026-05-19
+Status: historical; superseded by [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
 Scope: runtime texture residency, upload scheduling, diagnostics, and render-thread safety for imported and engine-owned textures.
+
+This file is preserved as the implementation-era design record for the texture-management runtime work. New architecture and follow-up planning should use the canonical design and TODO:
+
+- [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
+- [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 
 Related docs:
 

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System;
 using System.Threading;
 using XREngine.Data.Rendering;
@@ -15,7 +15,7 @@ namespace XREngine
             /// <summary>
             /// Contains rendering statistics tracked per frame.
             /// </summary>
-            public static class Stats
+            public static partial class Stats
             {
                 private static int _drawCalls;
                 private static int _trianglesRendered;
@@ -23,20 +23,6 @@ namespace XREngine
                 private static int _lastFrameDrawCalls;
                 private static int _lastFrameTrianglesRendered;
                 private static int _lastFrameMultiDrawCalls;
-                private static int _gpuCpuFallbackEvents;
-                private static int _gpuCpuFallbackRecoveredCommands;
-                private static int _forbiddenGpuFallbackEvents;
-                private static int _lastFrameGpuCpuFallbackEvents;
-                private static int _lastFrameGpuCpuFallbackRecoveredCommands;
-                private static int _lastFrameForbiddenGpuFallbackEvents;
-                private static int _gpuTransparencyOpaqueOrOtherVisible;
-                private static int _gpuTransparencyMaskedVisible;
-                private static int _gpuTransparencyApproximateVisible;
-                private static int _gpuTransparencyExactVisible;
-                private static int _lastFrameGpuTransparencyOpaqueOrOtherVisible;
-                private static int _lastFrameGpuTransparencyMaskedVisible;
-                private static int _lastFrameGpuTransparencyApproximateVisible;
-                private static int _lastFrameGpuTransparencyExactVisible;
                 private static int _vulkanIndirectCountPathCalls;
                 private static int _vulkanIndirectNonCountPathCalls;
                 private static int _vulkanIndirectLoopFallbackCalls;
@@ -237,127 +223,6 @@ namespace XREngine
                 private static int _lastFrameVulkanRetiredResourcePlanBuffers;
                 private static readonly object _vulkanDiagnosticLock = new();
 
-                // GPU->CPU readback / mapping counters (per-frame)
-                private static int _gpuMappedBuffers;
-                private static long _gpuReadbackBytes;
-                private static int _lastFrameGpuMappedBuffers;
-                private static long _lastFrameGpuReadbackBytes;
-                private static int _rtxIoDecompressCalls;
-                private static int _rtxIoCopyIndirectCalls;
-                private static long _rtxIoCompressedBytes;
-                private static long _rtxIoDecompressedBytes;
-                private static long _rtxIoCopyBytes;
-                private static long _rtxIoSubmissionTimeTicks;
-                private static int _lastFrameRtxIoDecompressCalls;
-                private static int _lastFrameRtxIoCopyIndirectCalls;
-                private static long _lastFrameRtxIoCompressedBytes;
-                private static long _lastFrameRtxIoDecompressedBytes;
-                private static long _lastFrameRtxIoCopyBytes;
-                private static long _lastFrameRtxIoSubmissionTimeTicks;
-                private static int _vrLeftEyeDraws;
-                private static int _vrRightEyeDraws;
-                private static int _lastFrameVrLeftEyeDraws;
-                private static int _lastFrameVrRightEyeDraws;
-                private static int _vrLeftEyeVisible;
-                private static int _vrRightEyeVisible;
-                private static int _lastFrameVrLeftEyeVisible;
-                private static int _lastFrameVrRightEyeVisible;
-                private static long _vrLeftWorkerBuildTimeTicks;
-                private static long _vrRightWorkerBuildTimeTicks;
-                private static long _lastFrameVrLeftWorkerBuildTimeTicks;
-                private static long _lastFrameVrRightWorkerBuildTimeTicks;
-                private static long _vrRenderSubmitTimeTicks;
-                private static long _lastFrameVrRenderSubmitTimeTicks;
-                private static long _vrXrWaitFrameBlockTimeTicks;
-                private static long _lastFrameVrXrWaitFrameBlockTimeTicks;
-                private static long _vrXrEndFrameSubmitTimeTicks;
-                private static long _lastFrameVrXrEndFrameSubmitTimeTicks;
-                private static long _vrXrPredictedToLatePoseDeltaMillimetersBits;
-                private static long _lastFrameVrXrPredictedToLatePoseDeltaMillimetersBits;
-                private static long _vrXrPredictedToLatePoseDeltaDegreesBits;
-                private static long _lastFrameVrXrPredictedToLatePoseDeltaDegreesBits;
-                private static long _vrXrPredictedDisplayLeadTimeMsBits = BitConverter.DoubleToInt64Bits(double.NaN);
-                private static long _lastFrameVrXrPredictedDisplayLeadTimeMsBits = BitConverter.DoubleToInt64Bits(double.NaN);
-                private static int _vrXrMissedDeadlineFrames;
-                private static int _lastFrameVrXrMissedDeadlineFrames;
-                private static int _vrXrTrackingLossFrames;
-                private static int _lastFrameVrXrTrackingLossFrames;
-                private static long _vrXrRelocatePredictedTimeTicks;
-                private static long _lastFrameVrXrRelocatePredictedTimeTicks;
-                private static long _vrXrCollectFrustumExpansionDegreesBits;
-                private static long _lastFrameVrXrCollectFrustumExpansionDegreesBits;
-                private static long _vrXrPacingThreadIdleTimeTicks;
-                private static long _lastFrameVrXrPacingThreadIdleTimeTicks;
-                private static int _vrXrPacingHandoffStalls;
-                private static int _lastFrameVrXrPacingHandoffStalls;
-
-                // Render-matrix stats use a separate swap cycle aligned with SwapBuffers phase.
-                // Current = being written now, Display = last completed swap, Ready = waiting to become Display.
-                private static int _renderMatrixAppliedCurrent;
-                private static int _renderMatrixBatchCountCurrent;
-                private static int _renderMatrixMaxBatchSizeCurrent;
-                private static int _renderMatrixSetCallsCurrent;
-                private static int _renderMatrixListenerInvocationsCurrent;
-                private static int _renderMatrixAppliedDisplay;
-                private static int _renderMatrixBatchCountDisplay;
-                private static int _renderMatrixMaxBatchSizeDisplay;
-                private static int _renderMatrixSetCallsDisplay;
-                private static int _renderMatrixListenerInvocationsDisplay;
-                private static readonly object _renderMatrixStatsLock = new();
-                private static Dictionary<string, int> _renderMatrixListenerCountsCurrent = new(StringComparer.Ordinal);
-                private static Dictionary<string, int> _renderMatrixListenerCountsDisplay = new(StringComparer.Ordinal);
-                private static bool _renderMatrixStatsReady;
-                private static int _renderMatrixStatsDirty;
-
-                // Skinned-bounds refresh stats use the same swap-cycle model as render-matrix stats.
-                private static int _skinnedBoundsDeferredScheduledCurrent;
-                private static int _skinnedBoundsDeferredCompletedCurrent;
-                private static int _skinnedBoundsDeferredFailedCurrent;
-                private static int _skinnedBoundsDeferredInFlightLive;
-                private static int _skinnedBoundsDeferredMaxInFlightCurrent;
-                private static long _skinnedBoundsDeferredQueueWaitTicksCurrent;
-                private static long _skinnedBoundsDeferredCpuJobTicksCurrent;
-                private static long _skinnedBoundsDeferredApplyTicksCurrent;
-                private static long _skinnedBoundsDeferredMaxQueueWaitTicksCurrent;
-                private static long _skinnedBoundsDeferredMaxCpuJobTicksCurrent;
-                private static long _skinnedBoundsDeferredMaxApplyTicksCurrent;
-                private static int _skinnedBoundsGpuCompletedCurrent;
-                private static long _skinnedBoundsGpuComputeTicksCurrent;
-                private static long _skinnedBoundsGpuApplyTicksCurrent;
-                private static long _skinnedBoundsGpuMaxComputeTicksCurrent;
-                private static long _skinnedBoundsGpuMaxApplyTicksCurrent;
-                private static int _skinnedBoundsDeferredScheduledDisplay;
-                private static int _skinnedBoundsDeferredCompletedDisplay;
-                private static int _skinnedBoundsDeferredFailedDisplay;
-                private static int _skinnedBoundsDeferredInFlightDisplay;
-                private static int _skinnedBoundsDeferredMaxInFlightDisplay;
-                private static long _skinnedBoundsDeferredQueueWaitTicksDisplay;
-                private static long _skinnedBoundsDeferredCpuJobTicksDisplay;
-                private static long _skinnedBoundsDeferredApplyTicksDisplay;
-                private static long _skinnedBoundsDeferredMaxQueueWaitTicksDisplay;
-                private static long _skinnedBoundsDeferredMaxCpuJobTicksDisplay;
-                private static long _skinnedBoundsDeferredMaxApplyTicksDisplay;
-                private static int _skinnedBoundsGpuCompletedDisplay;
-                private static long _skinnedBoundsGpuComputeTicksDisplay;
-                private static long _skinnedBoundsGpuApplyTicksDisplay;
-                private static long _skinnedBoundsGpuMaxComputeTicksDisplay;
-                private static long _skinnedBoundsGpuMaxApplyTicksDisplay;
-                private static bool _skinnedBoundsStatsReady;
-                private static int _skinnedBoundsStatsDirty;
-
-                // VRAM tracking fields
-                private static long _allocatedVRAMBytes;
-                private static long _allocatedBufferBytes;
-                private static long _allocatedTextureBytes;
-                private static long _allocatedRenderBufferBytes;
-
-                // FBO bandwidth tracking fields (per-frame)
-                private static long _fboBandwidthBytes;
-                private static int _fboBindCount;
-                private static long _lastFrameFBOBandwidthBytes;
-                private static int _lastFrameFBOBindCount;
-
-                /// <summary>
                 /// The number of draw calls in the last completed frame.
                 /// </summary>
                 public static int DrawCalls => _lastFrameDrawCalls;
@@ -371,46 +236,6 @@ namespace XREngine
                 /// The number of multi-draw indirect calls in the last completed frame.
                 /// </summary>
                 public static int MultiDrawCalls => _lastFrameMultiDrawCalls;
-
-                /// <summary>
-                /// Number of GPU->CPU culling fallback events in the last completed frame.
-                /// </summary>
-                public static int GpuCpuFallbackEvents => _lastFrameGpuCpuFallbackEvents;
-
-                /// <summary>
-                /// Number of commands recovered by GPU->CPU fallback in the last completed frame.
-                /// </summary>
-                public static int GpuCpuFallbackRecoveredCommands => _lastFrameGpuCpuFallbackRecoveredCommands;
-
-                /// <summary>
-                /// Number of forbidden fallback attempts observed in the last completed frame.
-                /// Forbidden fallbacks indicate shipping-profile behavior would have fallen back but was blocked.
-                /// </summary>
-                public static int ForbiddenGpuFallbackEvents => _lastFrameForbiddenGpuFallbackEvents;
-
-                public static int GpuTransparencyOpaqueOrOtherVisible => _lastFrameGpuTransparencyOpaqueOrOtherVisible;
-
-                public static int GpuTransparencyMaskedVisible => _lastFrameGpuTransparencyMaskedVisible;
-
-                public static int GpuTransparencyApproximateVisible => _lastFrameGpuTransparencyApproximateVisible;
-
-                public static int GpuTransparencyExactVisible => _lastFrameGpuTransparencyExactVisible;
-
-                /// <summary>
-                /// Number of GPU buffers mapped for CPU access in the last completed frame.
-                /// </summary>
-                public static int GpuMappedBuffers => _lastFrameGpuMappedBuffers;
-
-                /// <summary>
-                /// Total bytes read back from GPU buffers in the last completed frame.
-                /// </summary>
-                public static long GpuReadbackBytes => _lastFrameGpuReadbackBytes;
-                public static int RtxIoDecompressCalls => _lastFrameRtxIoDecompressCalls;
-                public static int RtxIoCopyIndirectCalls => _lastFrameRtxIoCopyIndirectCalls;
-                public static long RtxIoCompressedBytes => _lastFrameRtxIoCompressedBytes;
-                public static long RtxIoDecompressedBytes => _lastFrameRtxIoDecompressedBytes;
-                public static long RtxIoCopyBytes => _lastFrameRtxIoCopyBytes;
-                public static double RtxIoSubmissionTimeMs => TimeSpan.FromTicks(_lastFrameRtxIoSubmissionTimeTicks).TotalMilliseconds;
                 public static int VulkanIndirectCountPathCalls => _lastFrameVulkanIndirectCountPathCalls;
                 public static int VulkanIndirectNonCountPathCalls => _lastFrameVulkanIndirectNonCountPathCalls;
                 public static int VulkanIndirectLoopFallbackCalls => _lastFrameVulkanIndirectLoopFallbackCalls;
@@ -432,155 +257,106 @@ namespace XREngine
                 public static int VulkanOverlapModeDemotions => _lastFrameVulkanOverlapModeDemotions;
                 public static int VulkanAdhocBarrierEmits => _lastFrameVulkanAdhocBarrierEmits;
                 public static int VulkanAdhocBarrierRedundant => _lastFrameVulkanAdhocBarrierRedundant;
-                                public static int VulkanPipelineBinds => _lastFrameVulkanPipelineBinds;
-                                public static int VulkanDescriptorBinds => _lastFrameVulkanDescriptorBinds;
-                                public static int VulkanPushConstantWrites => _lastFrameVulkanPushConstantWrites;
-                                public static int VulkanVertexBufferBinds => _lastFrameVulkanVertexBufferBinds;
-                                public static int VulkanIndexBufferBinds => _lastFrameVulkanIndexBufferBinds;
-                                public static int VulkanPipelineBindSkips => _lastFrameVulkanPipelineBindSkips;
-                                public static int VulkanDescriptorBindSkips => _lastFrameVulkanDescriptorBindSkips;
-                                public static int VulkanVertexBufferBindSkips => _lastFrameVulkanVertexBufferBindSkips;
-                                public static int VulkanIndexBufferBindSkips => _lastFrameVulkanIndexBufferBindSkips;
-                                public static int VulkanPipelineCacheLookupHits => _lastFrameVulkanPipelineCacheLookupHits;
-                                public static int VulkanPipelineCacheLookupMisses => _lastFrameVulkanPipelineCacheLookupMisses;
-                                public static string VulkanPipelineCacheMissSummary => _lastFrameVulkanPipelineCacheMissSummary;
-                                public static long VulkanRequestedDraws => _lastFrameVulkanRequestedDraws;
-                                public static long VulkanCulledDraws => _lastFrameVulkanCulledDraws;
-                                public static long VulkanEmittedIndirectDraws => _lastFrameVulkanEmittedIndirectDraws;
-                                public static long VulkanConsumedDraws => _lastFrameVulkanConsumedDraws;
-                                public static long VulkanOverflowCount => _lastFrameVulkanOverflowCount;
-                                public static double VulkanCullEfficiency
-                                    => _lastFrameVulkanRequestedDraws <= 0
-                                    ? 1.0
-                                    : Math.Max(0.0, 1.0 - ((double)_lastFrameVulkanCulledDraws / _lastFrameVulkanRequestedDraws));
-                                public static double VulkanResetStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageResetTicks).TotalMilliseconds;
-                                public static double VulkanCullStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageCullTicks).TotalMilliseconds;
-                                public static double VulkanOcclusionStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageOcclusionTicks).TotalMilliseconds;
-                                public static double VulkanIndirectStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageIndirectTicks).TotalMilliseconds;
-                                public static double VulkanDrawStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageDrawTicks).TotalMilliseconds;
-                                public static double VulkanFrameWaitFenceMs => TimeSpan.FromTicks(_lastFrameVulkanFrameWaitFenceTicks).TotalMilliseconds;
-                                public static double VulkanFrameAcquireImageMs => TimeSpan.FromTicks(_lastFrameVulkanFrameAcquireImageTicks).TotalMilliseconds;
-                                public static double VulkanFrameRecordCommandBufferMs => TimeSpan.FromTicks(_lastFrameVulkanFrameRecordCommandBufferTicks).TotalMilliseconds;
-                                public static double VulkanFrameSubmitMs => TimeSpan.FromTicks(_lastFrameVulkanFrameSubmitTicks).TotalMilliseconds;
-                                public static double VulkanFrameTrimMs => TimeSpan.FromTicks(_lastFrameVulkanFrameTrimTicks).TotalMilliseconds;
-                                public static double VulkanFramePresentMs => TimeSpan.FromTicks(_lastFrameVulkanFramePresentTicks).TotalMilliseconds;
-                                public static double VulkanFrameTotalMs => TimeSpan.FromTicks(_lastFrameVulkanFrameTotalTicks).TotalMilliseconds;
-                                public static double VulkanFrameGpuCommandBufferMs => TimeSpan.FromTicks(_lastFrameVulkanFrameGpuCommandBufferTicks).TotalMilliseconds;
-                                public static int VulkanDeviceLocalAllocationCount => _lastFrameVulkanDeviceLocalAllocationCount;
-                                public static long VulkanDeviceLocalAllocatedBytes => _lastFrameVulkanDeviceLocalAllocatedBytes;
-                                public static int VulkanUploadAllocationCount => _lastFrameVulkanUploadAllocationCount;
-                                public static long VulkanUploadAllocatedBytes => _lastFrameVulkanUploadAllocatedBytes;
-                                public static int VulkanReadbackAllocationCount => _lastFrameVulkanReadbackAllocationCount;
-                                public static long VulkanReadbackAllocatedBytes => _lastFrameVulkanReadbackAllocatedBytes;
-                                public static int VulkanDescriptorPoolCreateCount => _lastFrameVulkanDescriptorPoolCreateCount;
-                                public static int VulkanDescriptorPoolDestroyCount => _lastFrameVulkanDescriptorPoolDestroyCount;
-                                public static int VulkanDescriptorPoolResetCount => _lastFrameVulkanDescriptorPoolResetCount;
-                                public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
-                                public static int VulkanOomFallbackCount => _lastFrameVulkanOomFallbackCount;
-                                public static int VulkanDroppedFrameOps => _lastFrameVulkanDroppedFrameOps;
-                                public static int VulkanDroppedDrawOps => _lastFrameVulkanDroppedDrawOps;
-                                public static int VulkanDroppedComputeOps => _lastFrameVulkanDroppedComputeOps;
-                                public static int VulkanSceneSwapchainWriters => _lastFrameVulkanSceneSwapchainWriters;
-                                public static int VulkanOverlaySwapchainWriters => _lastFrameVulkanOverlaySwapchainWriters;
-                                public static int VulkanForcedDiagnosticSwapchainWriters => _lastFrameVulkanForcedDiagnosticSwapchainWriters;
-                                public static int VulkanFboOnlyDrawOps => _lastFrameVulkanFboOnlyDrawOps;
-                                public static int VulkanFboOnlyBlitOps => _lastFrameVulkanFboOnlyBlitOps;
-                                public static int VulkanMissingSceneSwapchainWriteFrames => _lastFrameVulkanMissingSceneSwapchainWriteFrames;
-                                public static int VulkanFirstFailedFrameOpPassIndex => _lastFrameVulkanFirstFailedFrameOpPassIndex;
-                                public static int VulkanFirstFailedFrameOpPipelineIdentity => _lastFrameVulkanFirstFailedFrameOpPipelineIdentity;
-                                public static int VulkanFirstFailedFrameOpViewportIdentity => _lastFrameVulkanFirstFailedFrameOpViewportIdentity;
-                                public static string VulkanFirstFailedFrameOpType => _lastFrameVulkanFirstFailedFrameOpType;
-                                public static string VulkanFirstFailedFrameOpTargetName => _lastFrameVulkanFirstFailedFrameOpTargetName;
-                                public static string VulkanFirstFailedFrameOpMaterialName => _lastFrameVulkanFirstFailedFrameOpMaterialName;
-                                public static string VulkanFirstFailedFrameOpShaderName => _lastFrameVulkanFirstFailedFrameOpShaderName;
-                                public static string VulkanFirstFailedFrameOpMessage => _lastFrameVulkanFirstFailedFrameOpMessage;
-                                public static string VulkanFrameDiagnosticSummary => _lastFrameVulkanFrameDiagnosticSummary;
-                                public static int VulkanValidationMessageCount => _lastFrameVulkanValidationMessageCount;
-                                public static int VulkanValidationErrorCount => _lastFrameVulkanValidationErrorCount;
-                                public static string VulkanLastValidationMessage => _lastFrameVulkanLastValidationMessage;
-                                public static int VulkanValidationMessageCountCurrentFrame => Volatile.Read(ref _vulkanValidationMessageCount);
-                                public static int VulkanValidationErrorCountCurrentFrame => Volatile.Read(ref _vulkanValidationErrorCount);
-                                public static int VulkanDescriptorFallbackSampledImages => _lastFrameVulkanDescriptorFallbackSampledImages;
-                                public static int VulkanDescriptorFallbackStorageImages => _lastFrameVulkanDescriptorFallbackStorageImages;
-                                public static int VulkanDescriptorFallbackUniformBuffers => _lastFrameVulkanDescriptorFallbackUniformBuffers;
-                                public static int VulkanDescriptorFallbackStorageBuffers => _lastFrameVulkanDescriptorFallbackStorageBuffers;
-                                public static int VulkanDescriptorFallbackTexelBuffers => _lastFrameVulkanDescriptorFallbackTexelBuffers;
-                                public static int VulkanDescriptorBindingFailures => _lastFrameVulkanDescriptorBindingFailures;
-                                public static int VulkanDescriptorSkippedDraws => _lastFrameVulkanDescriptorSkippedDraws;
-                                public static int VulkanDescriptorSkippedDispatches => _lastFrameVulkanDescriptorSkippedDispatches;
-                                public static string VulkanDescriptorFallbackSummary => _lastFrameVulkanDescriptorFallbackSummary;
-                                public static string VulkanDescriptorFailureSummary => _lastFrameVulkanDescriptorFailureSummary;
-                                public static int VulkanDescriptorFallbacksCurrentFrame =>
-                                    Volatile.Read(ref _vulkanDescriptorFallbackSampledImages) +
-                                    Volatile.Read(ref _vulkanDescriptorFallbackStorageImages) +
-                                    Volatile.Read(ref _vulkanDescriptorFallbackUniformBuffers) +
-                                    Volatile.Read(ref _vulkanDescriptorFallbackStorageBuffers) +
-                                    Volatile.Read(ref _vulkanDescriptorFallbackTexelBuffers);
-                                public static int VulkanDescriptorBindingFailuresCurrentFrame => Volatile.Read(ref _vulkanDescriptorBindingFailures);
-                                public static int VulkanDynamicUniformAllocations => _lastFrameVulkanDynamicUniformAllocations;
-                                public static long VulkanDynamicUniformAllocatedBytes => _lastFrameVulkanDynamicUniformAllocatedBytes;
-                                public static int VulkanDynamicUniformExhaustions => _lastFrameVulkanDynamicUniformExhaustions;
-                                public static int VulkanRetiredResourcePlanReplacements => _lastFrameVulkanRetiredResourcePlanReplacements;
-                                public static int VulkanRetiredResourcePlanImages => _lastFrameVulkanRetiredResourcePlanImages;
-                                public static int VulkanRetiredResourcePlanBuffers => _lastFrameVulkanRetiredResourcePlanBuffers;
-                                public static double VulkanPipelineCacheLookupHitRate
-                                        => (_lastFrameVulkanPipelineCacheLookupHits + _lastFrameVulkanPipelineCacheLookupMisses) <= 0
-                                                ? 1.0
-                                                : (double)_lastFrameVulkanPipelineCacheLookupHits /
-                                                    (_lastFrameVulkanPipelineCacheLookupHits + _lastFrameVulkanPipelineCacheLookupMisses);
+                public static int VulkanPipelineBinds => _lastFrameVulkanPipelineBinds;
+                public static int VulkanDescriptorBinds => _lastFrameVulkanDescriptorBinds;
+                public static int VulkanPushConstantWrites => _lastFrameVulkanPushConstantWrites;
+                public static int VulkanVertexBufferBinds => _lastFrameVulkanVertexBufferBinds;
+                public static int VulkanIndexBufferBinds => _lastFrameVulkanIndexBufferBinds;
+                public static int VulkanPipelineBindSkips => _lastFrameVulkanPipelineBindSkips;
+                public static int VulkanDescriptorBindSkips => _lastFrameVulkanDescriptorBindSkips;
+                public static int VulkanVertexBufferBindSkips => _lastFrameVulkanVertexBufferBindSkips;
+                public static int VulkanIndexBufferBindSkips => _lastFrameVulkanIndexBufferBindSkips;
+                public static int VulkanPipelineCacheLookupHits => _lastFrameVulkanPipelineCacheLookupHits;
+                public static int VulkanPipelineCacheLookupMisses => _lastFrameVulkanPipelineCacheLookupMisses;
+                public static string VulkanPipelineCacheMissSummary => _lastFrameVulkanPipelineCacheMissSummary;
+                public static long VulkanRequestedDraws => _lastFrameVulkanRequestedDraws;
+                public static long VulkanCulledDraws => _lastFrameVulkanCulledDraws;
+                public static long VulkanEmittedIndirectDraws => _lastFrameVulkanEmittedIndirectDraws;
+                public static long VulkanConsumedDraws => _lastFrameVulkanConsumedDraws;
+                public static long VulkanOverflowCount => _lastFrameVulkanOverflowCount;
+                public static double VulkanCullEfficiency
+                    => _lastFrameVulkanRequestedDraws <= 0
+                    ? 1.0
+                    : Math.Max(0.0, 1.0 - ((double)_lastFrameVulkanCulledDraws / _lastFrameVulkanRequestedDraws));
+                public static double VulkanResetStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageResetTicks).TotalMilliseconds;
+                public static double VulkanCullStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageCullTicks).TotalMilliseconds;
+                public static double VulkanOcclusionStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageOcclusionTicks).TotalMilliseconds;
+                public static double VulkanIndirectStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageIndirectTicks).TotalMilliseconds;
+                public static double VulkanDrawStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageDrawTicks).TotalMilliseconds;
+                public static double VulkanFrameWaitFenceMs => TimeSpan.FromTicks(_lastFrameVulkanFrameWaitFenceTicks).TotalMilliseconds;
+                public static double VulkanFrameAcquireImageMs => TimeSpan.FromTicks(_lastFrameVulkanFrameAcquireImageTicks).TotalMilliseconds;
+                public static double VulkanFrameRecordCommandBufferMs => TimeSpan.FromTicks(_lastFrameVulkanFrameRecordCommandBufferTicks).TotalMilliseconds;
+                public static double VulkanFrameSubmitMs => TimeSpan.FromTicks(_lastFrameVulkanFrameSubmitTicks).TotalMilliseconds;
+                public static double VulkanFrameTrimMs => TimeSpan.FromTicks(_lastFrameVulkanFrameTrimTicks).TotalMilliseconds;
+                public static double VulkanFramePresentMs => TimeSpan.FromTicks(_lastFrameVulkanFramePresentTicks).TotalMilliseconds;
+                public static double VulkanFrameTotalMs => TimeSpan.FromTicks(_lastFrameVulkanFrameTotalTicks).TotalMilliseconds;
+                public static double VulkanFrameGpuCommandBufferMs => TimeSpan.FromTicks(_lastFrameVulkanFrameGpuCommandBufferTicks).TotalMilliseconds;
+                public static int VulkanDeviceLocalAllocationCount => _lastFrameVulkanDeviceLocalAllocationCount;
+                public static long VulkanDeviceLocalAllocatedBytes => _lastFrameVulkanDeviceLocalAllocatedBytes;
+                public static int VulkanUploadAllocationCount => _lastFrameVulkanUploadAllocationCount;
+                public static long VulkanUploadAllocatedBytes => _lastFrameVulkanUploadAllocatedBytes;
+                public static int VulkanReadbackAllocationCount => _lastFrameVulkanReadbackAllocationCount;
+                public static long VulkanReadbackAllocatedBytes => _lastFrameVulkanReadbackAllocatedBytes;
+                public static int VulkanDescriptorPoolCreateCount => _lastFrameVulkanDescriptorPoolCreateCount;
+                public static int VulkanDescriptorPoolDestroyCount => _lastFrameVulkanDescriptorPoolDestroyCount;
+                public static int VulkanDescriptorPoolResetCount => _lastFrameVulkanDescriptorPoolResetCount;
+                public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
+                public static int VulkanOomFallbackCount => _lastFrameVulkanOomFallbackCount;
+                public static int VulkanDroppedFrameOps => _lastFrameVulkanDroppedFrameOps;
+                public static int VulkanDroppedDrawOps => _lastFrameVulkanDroppedDrawOps;
+                public static int VulkanDroppedComputeOps => _lastFrameVulkanDroppedComputeOps;
+                public static int VulkanSceneSwapchainWriters => _lastFrameVulkanSceneSwapchainWriters;
+                public static int VulkanOverlaySwapchainWriters => _lastFrameVulkanOverlaySwapchainWriters;
+                public static int VulkanForcedDiagnosticSwapchainWriters => _lastFrameVulkanForcedDiagnosticSwapchainWriters;
+                public static int VulkanFboOnlyDrawOps => _lastFrameVulkanFboOnlyDrawOps;
+                public static int VulkanFboOnlyBlitOps => _lastFrameVulkanFboOnlyBlitOps;
+                public static int VulkanMissingSceneSwapchainWriteFrames => _lastFrameVulkanMissingSceneSwapchainWriteFrames;
+                public static int VulkanFirstFailedFrameOpPassIndex => _lastFrameVulkanFirstFailedFrameOpPassIndex;
+                public static int VulkanFirstFailedFrameOpPipelineIdentity => _lastFrameVulkanFirstFailedFrameOpPipelineIdentity;
+                public static int VulkanFirstFailedFrameOpViewportIdentity => _lastFrameVulkanFirstFailedFrameOpViewportIdentity;
+                public static string VulkanFirstFailedFrameOpType => _lastFrameVulkanFirstFailedFrameOpType;
+                public static string VulkanFirstFailedFrameOpTargetName => _lastFrameVulkanFirstFailedFrameOpTargetName;
+                public static string VulkanFirstFailedFrameOpMaterialName => _lastFrameVulkanFirstFailedFrameOpMaterialName;
+                public static string VulkanFirstFailedFrameOpShaderName => _lastFrameVulkanFirstFailedFrameOpShaderName;
+                public static string VulkanFirstFailedFrameOpMessage => _lastFrameVulkanFirstFailedFrameOpMessage;
+                public static string VulkanFrameDiagnosticSummary => _lastFrameVulkanFrameDiagnosticSummary;
+                public static int VulkanValidationMessageCount => _lastFrameVulkanValidationMessageCount;
+                public static int VulkanValidationErrorCount => _lastFrameVulkanValidationErrorCount;
+                public static string VulkanLastValidationMessage => _lastFrameVulkanLastValidationMessage;
+                public static int VulkanValidationMessageCountCurrentFrame => Volatile.Read(ref _vulkanValidationMessageCount);
+                public static int VulkanValidationErrorCountCurrentFrame => Volatile.Read(ref _vulkanValidationErrorCount);
+                public static int VulkanDescriptorFallbackSampledImages => _lastFrameVulkanDescriptorFallbackSampledImages;
+                public static int VulkanDescriptorFallbackStorageImages => _lastFrameVulkanDescriptorFallbackStorageImages;
+                public static int VulkanDescriptorFallbackUniformBuffers => _lastFrameVulkanDescriptorFallbackUniformBuffers;
+                public static int VulkanDescriptorFallbackStorageBuffers => _lastFrameVulkanDescriptorFallbackStorageBuffers;
+                public static int VulkanDescriptorFallbackTexelBuffers => _lastFrameVulkanDescriptorFallbackTexelBuffers;
+                public static int VulkanDescriptorBindingFailures => _lastFrameVulkanDescriptorBindingFailures;
+                public static int VulkanDescriptorSkippedDraws => _lastFrameVulkanDescriptorSkippedDraws;
+                public static int VulkanDescriptorSkippedDispatches => _lastFrameVulkanDescriptorSkippedDispatches;
+                public static string VulkanDescriptorFallbackSummary => _lastFrameVulkanDescriptorFallbackSummary;
+                public static string VulkanDescriptorFailureSummary => _lastFrameVulkanDescriptorFailureSummary;
+                public static int VulkanDescriptorFallbacksCurrentFrame =>
+                    Volatile.Read(ref _vulkanDescriptorFallbackSampledImages) +
+                    Volatile.Read(ref _vulkanDescriptorFallbackStorageImages) +
+                    Volatile.Read(ref _vulkanDescriptorFallbackUniformBuffers) +
+                    Volatile.Read(ref _vulkanDescriptorFallbackStorageBuffers) +
+                    Volatile.Read(ref _vulkanDescriptorFallbackTexelBuffers);
+                public static int VulkanDescriptorBindingFailuresCurrentFrame => Volatile.Read(ref _vulkanDescriptorBindingFailures);
+                public static int VulkanDynamicUniformAllocations => _lastFrameVulkanDynamicUniformAllocations;
+                public static long VulkanDynamicUniformAllocatedBytes => _lastFrameVulkanDynamicUniformAllocatedBytes;
+                public static int VulkanDynamicUniformExhaustions => _lastFrameVulkanDynamicUniformExhaustions;
+                public static int VulkanRetiredResourcePlanReplacements => _lastFrameVulkanRetiredResourcePlanReplacements;
+                public static int VulkanRetiredResourcePlanImages => _lastFrameVulkanRetiredResourcePlanImages;
+                public static int VulkanRetiredResourcePlanBuffers => _lastFrameVulkanRetiredResourcePlanBuffers;
+                public static double VulkanPipelineCacheLookupHitRate
+                    => (_lastFrameVulkanPipelineCacheLookupHits + _lastFrameVulkanPipelineCacheLookupMisses) <= 0
+                        ? 1.0
+                        : (double)_lastFrameVulkanPipelineCacheLookupHits /
+                            (_lastFrameVulkanPipelineCacheLookupHits + _lastFrameVulkanPipelineCacheLookupMisses);
                 public static double VulkanIndirectBatchMergeRatio
                     => _lastFrameVulkanIndirectRequestedBatches <= 0
                         ? 1.0
                         : (double)_lastFrameVulkanIndirectMergedBatches / _lastFrameVulkanIndirectRequestedBatches;
-                public static int VrLeftEyeDraws => _lastFrameVrLeftEyeDraws;
-                public static int VrRightEyeDraws => _lastFrameVrRightEyeDraws;
-                public static int VrLeftEyeVisible => _lastFrameVrLeftEyeVisible;
-                public static int VrRightEyeVisible => _lastFrameVrRightEyeVisible;
-                public static double VrLeftWorkerBuildTimeMs => TimeSpan.FromTicks(_lastFrameVrLeftWorkerBuildTimeTicks).TotalMilliseconds;
-                public static double VrRightWorkerBuildTimeMs => TimeSpan.FromTicks(_lastFrameVrRightWorkerBuildTimeTicks).TotalMilliseconds;
-                public static double VrRenderSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrRenderSubmitTimeTicks).TotalMilliseconds;
-                public static double VrXrWaitFrameBlockTimeMs => TimeSpan.FromTicks(_lastFrameVrXrWaitFrameBlockTimeTicks).TotalMilliseconds;
-                public static double VrXrEndFrameSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrXrEndFrameSubmitTimeTicks).TotalMilliseconds;
-                public static double VrXrPredictedToLatePoseDeltaMillimeters => BitConverter.Int64BitsToDouble(_lastFrameVrXrPredictedToLatePoseDeltaMillimetersBits);
-                public static double VrXrPredictedToLatePoseDeltaDegrees => BitConverter.Int64BitsToDouble(_lastFrameVrXrPredictedToLatePoseDeltaDegreesBits);
-                public static double VrXrPredictedDisplayLeadTimeMs => BitConverter.Int64BitsToDouble(_lastFrameVrXrPredictedDisplayLeadTimeMsBits);
-                public static int VrXrMissedDeadlineFrames => _lastFrameVrXrMissedDeadlineFrames;
-                public static int VrXrTrackingLossFrames => _lastFrameVrXrTrackingLossFrames;
-                public static double VrXrRelocatePredictedTimeMs => TimeSpan.FromTicks(_lastFrameVrXrRelocatePredictedTimeTicks).TotalMilliseconds;
-                public static double VrXrCollectFrustumExpansionDegrees => BitConverter.Int64BitsToDouble(_lastFrameVrXrCollectFrustumExpansionDegreesBits);
-                public static double VrXrPacingThreadIdleTimeMs => TimeSpan.FromTicks(_lastFrameVrXrPacingThreadIdleTimeTicks).TotalMilliseconds;
-                public static int VrXrPacingHandoffStalls => _lastFrameVrXrPacingHandoffStalls;
-
-                /// <summary>
-                /// Enables collection of render-matrix statistics.
-                /// </summary>
-                public static bool EnableRenderMatrixStats { get; set; } =
-#if XRE_PUBLISHED
-                    false;
-#else
-                    true;
-#endif
-
-                /// <summary>
-                /// Enables detailed render-matrix listener tracking (per listener type).
-                /// </summary>
-                public static bool EnableRenderMatrixListenerTracking { get; set; } =
-#if XRE_PUBLISHED
-                    false;
-#else
-                    true;
-#endif
-
-                /// <summary>
-                /// Enables collection of deferred skinned-bounds refresh statistics.
-                /// </summary>
-                public static bool EnableSkinnedBoundsStats { get; set; } =
-#if XRE_PUBLISHED
-                    false;
-#else
-                    true;
-#endif
-
                 /// <summary>
                 /// When false, disables all per-frame statistics tracking to reduce overhead.
                 /// VRAM tracking remains enabled as it's not per-frame.
@@ -592,150 +368,6 @@ namespace XREngine
                     true;
 #endif
 
-                /// <summary>
-                /// Whether render-matrix stats have been populated at least once.
-                /// </summary>
-                public static bool RenderMatrixStatsReady => _renderMatrixStatsReady;
-
-                /// <summary>
-                /// Number of render-matrix updates applied in the last completed frame.
-                /// </summary>
-                public static int RenderMatrixApplied => _renderMatrixAppliedDisplay;
-
-                /// <summary>
-                /// Number of non-empty render-matrix batches applied in the last completed frame.
-                /// </summary>
-                public static int RenderMatrixBatchCount => _renderMatrixBatchCountDisplay;
-
-                /// <summary>
-                /// Largest render-matrix batch applied in the last completed frame.
-                /// </summary>
-                public static int RenderMatrixMaxBatchSize => _renderMatrixMaxBatchSizeDisplay;
-
-                /// <summary>
-                /// Number of SetRenderMatrix calls in the last completed frame.
-                /// </summary>
-                public static int RenderMatrixSetCalls => _renderMatrixSetCallsDisplay;
-
-                /// <summary>
-                /// Total number of render-matrix listener invocations in the last completed frame.
-                /// </summary>
-                public static int RenderMatrixListenerInvocations => _renderMatrixListenerInvocationsDisplay;
-
-                /// <summary>
-                /// Whether skinned-bounds refresh stats have been populated at least once.
-                /// </summary>
-                public static bool SkinnedBoundsStatsReady => _skinnedBoundsStatsReady;
-
-                public static int SkinnedBoundsDeferredScheduledCount => _skinnedBoundsDeferredScheduledDisplay;
-                public static int SkinnedBoundsDeferredCompletedCount => _skinnedBoundsDeferredCompletedDisplay;
-                public static int SkinnedBoundsDeferredFailedCount => _skinnedBoundsDeferredFailedDisplay;
-                public static int SkinnedBoundsDeferredInFlightCount => _skinnedBoundsDeferredInFlightDisplay;
-                public static int SkinnedBoundsDeferredMaxInFlightCount => _skinnedBoundsDeferredMaxInFlightDisplay;
-                public static double SkinnedBoundsDeferredQueueWaitMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredQueueWaitTicksDisplay);
-                public static double SkinnedBoundsDeferredCpuJobMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredCpuJobTicksDisplay);
-                public static double SkinnedBoundsDeferredApplyMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredApplyTicksDisplay);
-                public static double SkinnedBoundsDeferredMaxQueueWaitMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredMaxQueueWaitTicksDisplay);
-                public static double SkinnedBoundsDeferredMaxCpuJobMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredMaxCpuJobTicksDisplay);
-                public static double SkinnedBoundsDeferredMaxApplyMs => StopwatchTicksToMilliseconds(_skinnedBoundsDeferredMaxApplyTicksDisplay);
-                public static int SkinnedBoundsGpuCompletedCount => _skinnedBoundsGpuCompletedDisplay;
-                public static double SkinnedBoundsGpuComputeMs => StopwatchTicksToMilliseconds(_skinnedBoundsGpuComputeTicksDisplay);
-                public static double SkinnedBoundsGpuApplyMs => StopwatchTicksToMilliseconds(_skinnedBoundsGpuApplyTicksDisplay);
-                public static double SkinnedBoundsGpuMaxComputeMs => StopwatchTicksToMilliseconds(_skinnedBoundsGpuMaxComputeTicksDisplay);
-                public static double SkinnedBoundsGpuMaxApplyMs => StopwatchTicksToMilliseconds(_skinnedBoundsGpuMaxApplyTicksDisplay);
-
-                /// <summary>
-                /// Total currently allocated GPU VRAM in bytes.
-                /// </summary>
-                public static long AllocatedVRAMBytes => Interlocked.Read(ref _allocatedVRAMBytes);
-
-                /// <summary>
-                /// Currently allocated GPU buffer memory in bytes.
-                /// </summary>
-                public static long AllocatedBufferBytes => Interlocked.Read(ref _allocatedBufferBytes);
-
-                /// <summary>
-                /// Currently allocated GPU texture memory in bytes.
-                /// </summary>
-                public static long AllocatedTextureBytes => Interlocked.Read(ref _allocatedTextureBytes);
-
-                /// <summary>
-                /// Currently allocated GPU render buffer memory in bytes.
-                /// </summary>
-                public static long AllocatedRenderBufferBytes => Interlocked.Read(ref _allocatedRenderBufferBytes);
-
-                /// <summary>
-                /// Total currently allocated GPU VRAM in megabytes.
-                /// </summary>
-                public static double AllocatedVRAMMB => AllocatedVRAMBytes / (1024.0 * 1024.0);
-
-                /// <summary>
-                /// Configured VRAM budget in bytes. Returns long.MaxValue when budgeting is disabled.
-                /// </summary>
-                public static long VramBudgetBytes
-                    => Engine.Rendering.Settings.EnableVramBudget
-                        ? Math.Max(1L, (long)Engine.Rendering.Settings.VramBudgetMB) * 1024L * 1024L
-                        : long.MaxValue;
-
-                /// <summary>
-                /// Determines whether a tracked GPU allocation would fit inside the configured VRAM budget.
-                /// </summary>
-                public static bool CanAllocateVram(long requestedBytes, long existingAllocationBytes, out long projectedBytes, out long budgetBytes)
-                {
-                    budgetBytes = VramBudgetBytes;
-                    long currentBytes = AllocatedVRAMBytes;
-                    long retainedBytes = Math.Max(0L, existingAllocationBytes);
-                    projectedBytes = Math.Max(0L, currentBytes - retainedBytes) + Math.Max(0L, requestedBytes);
-                    return projectedBytes <= budgetBytes;
-                }
-
-                /// <summary>
-                /// Total FBO render bandwidth in bytes for the last completed frame.
-                /// This represents the total size of all render targets written to during rendering.
-                /// </summary>
-                public static long FBOBandwidthBytes => _lastFrameFBOBandwidthBytes;
-
-                /// <summary>
-                /// Total FBO render bandwidth in megabytes for the last completed frame.
-                /// </summary>
-                public static double FBOBandwidthMB => _lastFrameFBOBandwidthBytes / (1024.0 * 1024.0);
-
-                /// <summary>
-                /// Number of times FBOs were bound for writing in the last completed frame.
-                /// </summary>
-                public static int FBOBindCount => _lastFrameFBOBindCount;
-
-                public static bool GpuRenderPipelineProfilingEnabled
-                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Enabled;
-
-                public static bool GpuRenderPipelineProfilingSupported
-                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Supported;
-
-                public static bool GpuRenderPipelineTimingsReady
-                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Ready;
-
-                public static string GpuRenderPipelineBackend
-                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.BackendName;
-
-                public static string GpuRenderPipelineStatusMessage
-                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.StatusMessage;
-
-                public static double GpuRenderPipelineFrameMs
-                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.FrameMilliseconds;
-
-                public static Data.Profiling.GpuPipelineTimingNodeData[] GetGpuRenderPipelineTimingRoots()
-                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Roots;
-
-                public static bool TryDumpGpuRenderPipelineTimingHistory(
-                    string pipelineName,
-                    out string fileName,
-                    out string? error)
-                    => RenderPipelineGpuProfiler.Instance.TryDumpTimingHistory(pipelineName, out fileName, out error);
-
-                public static bool TryDumpAllGpuRenderPipelineTimingHistories(
-                    out string[] fileNames,
-                    out string? error)
-                    => RenderPipelineGpuProfiler.Instance.TryDumpAllTimingHistories(out fileNames, out error);
 
                 /// <summary>
                 /// Call this at the start of each frame to reset the counters.
@@ -761,6 +393,19 @@ namespace XREngine
                     _lastFrameGpuTransparencyMaskedVisible = _gpuTransparencyMaskedVisible;
                     _lastFrameGpuTransparencyApproximateVisible = _gpuTransparencyApproximateVisible;
                     _lastFrameGpuTransparencyExactVisible = _gpuTransparencyExactVisible;
+                    _lastFrameGpuMeshletRequestedFrames = _gpuMeshletRequestedFrames;
+                    _lastFrameGpuMeshletProductionFrames = _gpuMeshletProductionFrames;
+                    _lastFrameGpuMeshletFallbackFrames = _gpuMeshletFallbackFrames;
+                    _lastFrameGpuMeshletDispatchSkipped = _gpuMeshletDispatchSkipped;
+                    _lastFrameGpuMeshletTaskRecordsEmitted = _gpuMeshletTaskRecordsEmitted;
+                    _lastFrameGpuMeshletTaskRecordsFrustumCulled = _gpuMeshletTaskRecordsFrustumCulled;
+                    _lastFrameGpuMeshletTaskRecordsConeCulled = _gpuMeshletTaskRecordsConeCulled;
+                    _lastFrameGpuMeshletTaskRecordsHiZCulled = _gpuMeshletTaskRecordsHiZCulled;
+                    _lastFrameGpuMeshletExpansionOverflowCount = _gpuMeshletExpansionOverflowCount;
+                    _lastFrameGpuMeshletBufferBytesResident = _gpuMeshletBufferBytesResident;
+                    _lastFrameGpuMeshletCacheHits = _gpuMeshletCacheHits;
+                    _lastFrameGpuMeshletCacheMisses = _gpuMeshletCacheMisses;
+                    _lastFrameGpuMeshletCacheStale = _gpuMeshletCacheStale;
                     _lastFrameGpuMappedBuffers = _gpuMappedBuffers;
                     _lastFrameGpuReadbackBytes = _gpuReadbackBytes;
                     _lastFrameRtxIoDecompressCalls = _rtxIoDecompressCalls;
@@ -906,6 +551,19 @@ namespace XREngine
                     _gpuTransparencyMaskedVisible = 0;
                     _gpuTransparencyApproximateVisible = 0;
                     _gpuTransparencyExactVisible = 0;
+                    _gpuMeshletRequestedFrames = 0;
+                    _gpuMeshletProductionFrames = 0;
+                    _gpuMeshletFallbackFrames = 0;
+                    _gpuMeshletDispatchSkipped = 0;
+                    _gpuMeshletTaskRecordsEmitted = 0;
+                    _gpuMeshletTaskRecordsFrustumCulled = 0;
+                    _gpuMeshletTaskRecordsConeCulled = 0;
+                    _gpuMeshletTaskRecordsHiZCulled = 0;
+                    _gpuMeshletExpansionOverflowCount = 0;
+                    _gpuMeshletBufferBytesResident = 0;
+                    _gpuMeshletCacheHits = 0;
+                    _gpuMeshletCacheMisses = 0;
+                    _gpuMeshletCacheStale = 0;
                     _gpuMappedBuffers = 0;
                     _gpuReadbackBytes = 0;
                     _rtxIoDecompressCalls = 0;
@@ -1037,28 +695,6 @@ namespace XREngine
                     _fboBandwidthBytes = 0;
                     _fboBindCount = 0;
                     // Note: render-matrix and skinned-bounds stats are swapped separately during swap-buffers.
-                }
-
-                /// <summary>
-                /// Records that a GPU buffer was mapped for CPU access.
-                /// </summary>
-                public static void RecordGpuBufferMapped(int count = 1)
-                {
-                    if (!EnableTracking || count <= 0)
-                        return;
-
-                    Interlocked.Add(ref _gpuMappedBuffers, count);
-                }
-
-                /// <summary>
-                /// Records the number of bytes read back from GPU buffers.
-                /// </summary>
-                public static void RecordGpuReadbackBytes(long bytes)
-                {
-                    if (!EnableTracking || bytes <= 0)
-                        return;
-
-                    Interlocked.Add(ref _gpuReadbackBytes, bytes);
                 }
 
                 public enum EVulkanAllocationTelemetryClass
@@ -1291,199 +927,6 @@ namespace XREngine
                     AddNonNegative(ref _vulkanRetiredResourcePlanBuffers, bufferCount);
                 }
 
-                private static void AddNonNegative(ref int field, int value)
-                {
-                    if (value > 0)
-                        Interlocked.Add(ref field, value);
-                }
-
-                private static string NormalizeDescriptorBindingClass(string? bindingClass)
-                {
-                    if (string.IsNullOrWhiteSpace(bindingClass))
-                        return "sampled-image";
-
-                    return bindingClass.Trim().ToLowerInvariant();
-                }
-
-                private static string AppendDiagnosticToken(string existing, string token, int maxLength = 2048)
-                {
-                    token = TruncateDiagnosticText(token, 512);
-                    if (string.IsNullOrEmpty(token))
-                        return existing;
-
-                    if (string.IsNullOrEmpty(existing))
-                        return token.Length <= maxLength ? token : token[..maxLength];
-
-                    string appended = existing + " | " + token;
-                    return appended.Length <= maxLength ? appended : appended[..maxLength];
-                }
-
-                private static string TruncateDiagnosticText(string? value, int maxLength = 512)
-                {
-                    if (string.IsNullOrWhiteSpace(value))
-                        return string.Empty;
-
-                    value = value.Trim();
-                    return value.Length <= maxLength
-                        ? value
-                        : value[..maxLength];
-                }
-
-                public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Increment(ref _rtxIoDecompressCalls);
-
-                    if (compressedBytes > 0)
-                        Interlocked.Add(ref _rtxIoCompressedBytes, compressedBytes);
-
-                    if (decompressedBytes > 0)
-                        Interlocked.Add(ref _rtxIoDecompressedBytes, decompressedBytes);
-
-                    if (submissionTime.Ticks > 0)
-                        Interlocked.Add(ref _rtxIoSubmissionTimeTicks, submissionTime.Ticks);
-                }
-
-                public static void RecordRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Increment(ref _rtxIoCopyIndirectCalls);
-
-                    if (copiedBytes > 0)
-                        Interlocked.Add(ref _rtxIoCopyBytes, copiedBytes);
-
-                    if (submissionTime.Ticks > 0)
-                        Interlocked.Add(ref _rtxIoSubmissionTimeTicks, submissionTime.Ticks);
-                }
-
-                public static void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrLeftEyeDraws, (int)Math.Min(leftDraws, int.MaxValue));
-                    Interlocked.Exchange(ref _vrRightEyeDraws, (int)Math.Min(rightDraws, int.MaxValue));
-                }
-
-                public static void RecordVrPerViewVisibleCounts(uint leftVisible, uint rightVisible)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrLeftEyeVisible, (int)Math.Min(leftVisible, int.MaxValue));
-                    Interlocked.Exchange(ref _vrRightEyeVisible, (int)Math.Min(rightVisible, int.MaxValue));
-                }
-
-                public static void RecordVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrLeftWorkerBuildTimeTicks, leftBuildTime.Ticks);
-                    Interlocked.Exchange(ref _vrRightWorkerBuildTimeTicks, rightBuildTime.Ticks);
-                }
-
-                public static void RecordVrRenderSubmitTime(TimeSpan submitTime)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrRenderSubmitTimeTicks, submitTime.Ticks);
-                }
-
-                public static void RecordVrXrWaitFrameBlockTime(TimeSpan waitTime)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrXrWaitFrameBlockTimeTicks, waitTime.Ticks);
-                }
-
-                public static void RecordVrXrEndFrameSubmitTime(TimeSpan submitTime)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrXrEndFrameSubmitTimeTicks, submitTime.Ticks);
-                }
-
-                public static void RecordVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrXrPredictedToLatePoseDeltaMillimetersBits, BitConverter.DoubleToInt64Bits(millimeters));
-                    Interlocked.Exchange(ref _vrXrPredictedToLatePoseDeltaDegreesBits, BitConverter.DoubleToInt64Bits(degrees));
-                }
-
-                public static void RecordVrXrPredictedDisplayLeadTime(double leadTimeMs)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrXrPredictedDisplayLeadTimeMsBits, BitConverter.DoubleToInt64Bits(leadTimeMs));
-                }
-
-                public static void RecordVrXrMissedDeadlineFrame()
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Increment(ref _vrXrMissedDeadlineFrames);
-                }
-
-                public static void RecordVrXrTrackingLossFrame()
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Increment(ref _vrXrTrackingLossFrames);
-                }
-
-                public static void RecordVrXrRelocatePredictedTime(TimeSpan elapsed)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrXrRelocatePredictedTimeTicks, elapsed.Ticks);
-                }
-
-                public static void RecordVrXrCollectFrustumExpansionDegrees(double degrees)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _vrXrCollectFrustumExpansionDegreesBits, BitConverter.DoubleToInt64Bits(degrees));
-                }
-
-                /// <summary>
-                /// Records the time the OpenXR pacing thread spent idle waiting for the render thread's frame-submit signal.
-                /// Accumulated across pacing-thread wakes in a single frame.
-                /// </summary>
-                public static void RecordVrXrPacingThreadIdleTime(TimeSpan elapsed)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Add(ref _vrXrPacingThreadIdleTimeTicks, elapsed.Ticks);
-                }
-
-                /// <summary>
-                /// Records that the render thread had to stall because the pacing thread had not yet published the
-                /// next OpenXR frame (predicted views) before the engine wanted to render.
-                /// </summary>
-                public static void RecordVrXrPacingHandoffStall()
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Increment(ref _vrXrPacingHandoffStalls);
-                }
-
                 public static void RecordVulkanFrameLifecycleTiming(
                     TimeSpan waitFence,
                     TimeSpan acquireImage,
@@ -1512,444 +955,6 @@ namespace XREngine
 
                     Interlocked.Exchange(ref _vulkanFrameGpuCommandBufferTicks, commandBufferTime.Ticks);
                 }
-
-                /// <summary>
-                /// Swaps render-matrix stats from current to display buffer. Call from SwapBuffers phase.
-                /// </summary>
-                public static void SwapRenderMatrixStats()
-                {
-                    if (!EnableRenderMatrixStats)
-                        return;
-
-                    if (Interlocked.Exchange(ref _renderMatrixStatsDirty, 0) == 0)
-                        return;
-
-                    // Atomically copy current values to display and reset current.
-                    _renderMatrixAppliedDisplay = Interlocked.Exchange(ref _renderMatrixAppliedCurrent, 0);
-                    _renderMatrixBatchCountDisplay = Interlocked.Exchange(ref _renderMatrixBatchCountCurrent, 0);
-                    _renderMatrixMaxBatchSizeDisplay = Interlocked.Exchange(ref _renderMatrixMaxBatchSizeCurrent, 0);
-                    _renderMatrixSetCallsDisplay = Interlocked.Exchange(ref _renderMatrixSetCallsCurrent, 0);
-                    _renderMatrixListenerInvocationsDisplay = Interlocked.Exchange(ref _renderMatrixListenerInvocationsCurrent, 0);
-
-                    lock (_renderMatrixStatsLock)
-                    {
-                        var temp = _renderMatrixListenerCountsDisplay;
-                        _renderMatrixListenerCountsDisplay = _renderMatrixListenerCountsCurrent;
-                        _renderMatrixListenerCountsCurrent = temp;
-                        _renderMatrixListenerCountsCurrent.Clear();
-                    }
-
-                    _renderMatrixStatsReady = true;
-                }
-
-                /// <summary>
-                /// Swaps skinned-bounds refresh stats from current to display buffer. Call from SwapBuffers phase.
-                /// </summary>
-                public static void SwapSkinnedBoundsStats()
-                {
-                    if (!EnableSkinnedBoundsStats)
-                        return;
-
-                    if (Interlocked.Exchange(ref _skinnedBoundsStatsDirty, 0) == 0)
-                        return;
-
-                    _skinnedBoundsDeferredScheduledDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredScheduledCurrent, 0);
-                    _skinnedBoundsDeferredCompletedDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredCompletedCurrent, 0);
-                    _skinnedBoundsDeferredFailedDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredFailedCurrent, 0);
-                    _skinnedBoundsDeferredInFlightDisplay = Math.Max(0, Volatile.Read(ref _skinnedBoundsDeferredInFlightLive));
-                    _skinnedBoundsDeferredMaxInFlightDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredMaxInFlightCurrent, 0);
-                    _skinnedBoundsDeferredQueueWaitTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredQueueWaitTicksCurrent, 0);
-                    _skinnedBoundsDeferredCpuJobTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredCpuJobTicksCurrent, 0);
-                    _skinnedBoundsDeferredApplyTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredApplyTicksCurrent, 0);
-                    _skinnedBoundsDeferredMaxQueueWaitTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredMaxQueueWaitTicksCurrent, 0);
-                    _skinnedBoundsDeferredMaxCpuJobTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredMaxCpuJobTicksCurrent, 0);
-                    _skinnedBoundsDeferredMaxApplyTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsDeferredMaxApplyTicksCurrent, 0);
-                    _skinnedBoundsGpuCompletedDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuCompletedCurrent, 0);
-                    _skinnedBoundsGpuComputeTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuComputeTicksCurrent, 0);
-                    _skinnedBoundsGpuApplyTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuApplyTicksCurrent, 0);
-                    _skinnedBoundsGpuMaxComputeTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuMaxComputeTicksCurrent, 0);
-                    _skinnedBoundsGpuMaxApplyTicksDisplay = Interlocked.Exchange(ref _skinnedBoundsGpuMaxApplyTicksCurrent, 0);
-                    _skinnedBoundsStatsReady = true;
-                }
-
-                /// <summary>
-                /// Record the number of render-matrix updates applied during swap buffers.
-                /// </summary>
-                public static void RecordRenderMatrixApplied(int count)
-                {
-                    if (!EnableRenderMatrixStats || count <= 0)
-                        return;
-
-                    Interlocked.Add(ref _renderMatrixAppliedCurrent, count);
-                    Interlocked.Increment(ref _renderMatrixBatchCountCurrent);
-                    UpdateMaxCounter(ref _renderMatrixMaxBatchSizeCurrent, count);
-                    Interlocked.Exchange(ref _renderMatrixStatsDirty, 1);
-                }
-
-                /// <summary>
-                /// Record a render-matrix change event and (optionally) its listeners.
-                /// </summary>
-                public static void RecordRenderMatrixChange(Delegate? listeners)
-                {
-                    if (!EnableRenderMatrixStats)
-                        return;
-
-                    Interlocked.Increment(ref _renderMatrixSetCallsCurrent);
-                    Interlocked.Exchange(ref _renderMatrixStatsDirty, 1);
-
-                    if (!EnableRenderMatrixListenerTracking || listeners is null)
-                        return;
-
-                    var invocationList = listeners.GetInvocationList();
-                    Interlocked.Add(ref _renderMatrixListenerInvocationsCurrent, invocationList.Length);
-
-                    lock (_renderMatrixStatsLock)
-                    {
-                        foreach (var handler in invocationList)
-                        {
-                            var key = handler.Target?.GetType().Name ?? handler.Method.DeclaringType?.Name ?? "Static";
-                            if (_renderMatrixListenerCountsCurrent.TryGetValue(key, out int current))
-                                _renderMatrixListenerCountsCurrent[key] = current + 1;
-                            else
-                                _renderMatrixListenerCountsCurrent[key] = 1;
-                        }
-                    }
-                }
-
-                /// <summary>
-                /// Returns the last-frame snapshot of render-matrix listener counts per listener type.
-                /// </summary>
-                public static KeyValuePair<string, int>[] GetRenderMatrixListenerSnapshot()
-                {
-                    lock (_renderMatrixStatsLock)
-                    {
-                        if (_renderMatrixListenerCountsDisplay.Count == 0)
-                            return [];
-
-                        var copy = new KeyValuePair<string, int>[_renderMatrixListenerCountsDisplay.Count];
-                        int index = 0;
-                        foreach (var pair in _renderMatrixListenerCountsDisplay)
-                            copy[index++] = pair;
-                        return copy;
-                    }
-                }
-
-                public static void RecordSkinnedBoundsRefreshDeferredScheduled()
-                {
-                    if (!EnableSkinnedBoundsStats)
-                        return;
-
-                    int inFlight = Interlocked.Increment(ref _skinnedBoundsDeferredInFlightLive);
-                    Interlocked.Increment(ref _skinnedBoundsDeferredScheduledCurrent);
-                    UpdateMaxCounter(ref _skinnedBoundsDeferredMaxInFlightCurrent, inFlight);
-                    Interlocked.Exchange(ref _skinnedBoundsStatsDirty, 1);
-                }
-
-                public static void RecordSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded)
-                {
-                    if (!EnableSkinnedBoundsStats)
-                        return;
-
-                    if (succeeded)
-                        Interlocked.Increment(ref _skinnedBoundsDeferredCompletedCurrent);
-                    else
-                        Interlocked.Increment(ref _skinnedBoundsDeferredFailedCurrent);
-
-                    queueWaitTicks = Math.Max(0L, queueWaitTicks);
-                    cpuJobTicks = Math.Max(0L, cpuJobTicks);
-                    applyTicks = Math.Max(0L, applyTicks);
-
-                    Interlocked.Add(ref _skinnedBoundsDeferredQueueWaitTicksCurrent, queueWaitTicks);
-                    Interlocked.Add(ref _skinnedBoundsDeferredCpuJobTicksCurrent, cpuJobTicks);
-                    Interlocked.Add(ref _skinnedBoundsDeferredApplyTicksCurrent, applyTicks);
-                    UpdateMaxCounter(ref _skinnedBoundsDeferredMaxQueueWaitTicksCurrent, queueWaitTicks);
-                    UpdateMaxCounter(ref _skinnedBoundsDeferredMaxCpuJobTicksCurrent, cpuJobTicks);
-                    UpdateMaxCounter(ref _skinnedBoundsDeferredMaxApplyTicksCurrent, applyTicks);
-
-                    int inFlight = Interlocked.Decrement(ref _skinnedBoundsDeferredInFlightLive);
-                    if (inFlight < 0)
-                    {
-                        Interlocked.Exchange(ref _skinnedBoundsDeferredInFlightLive, 0);
-                    }
-
-                    Interlocked.Exchange(ref _skinnedBoundsStatsDirty, 1);
-                }
-
-                public static void RecordSkinnedBoundsRefreshGpuCompleted(long computeTicks, long applyTicks)
-                {
-                    if (!EnableSkinnedBoundsStats)
-                        return;
-
-                    computeTicks = Math.Max(0L, computeTicks);
-                    applyTicks = Math.Max(0L, applyTicks);
-
-                    Interlocked.Increment(ref _skinnedBoundsGpuCompletedCurrent);
-                    Interlocked.Add(ref _skinnedBoundsGpuComputeTicksCurrent, computeTicks);
-                    Interlocked.Add(ref _skinnedBoundsGpuApplyTicksCurrent, applyTicks);
-                    UpdateMaxCounter(ref _skinnedBoundsGpuMaxComputeTicksCurrent, computeTicks);
-                    UpdateMaxCounter(ref _skinnedBoundsGpuMaxApplyTicksCurrent, applyTicks);
-                    Interlocked.Exchange(ref _skinnedBoundsStatsDirty, 1);
-                }
-
-                private static void UpdateMaxCounter(ref int target, int candidate)
-                {
-                    int current;
-                    while (candidate > (current = Volatile.Read(ref target)) &&
-                           Interlocked.CompareExchange(ref target, candidate, current) != current)
-                    {
-                    }
-                }
-
-                private static void UpdateMaxCounter(ref long target, long candidate)
-                {
-                    long current;
-                    while (candidate > (current = Interlocked.Read(ref target)) &&
-                           Interlocked.CompareExchange(ref target, candidate, current) != current)
-                    {
-                    }
-                }
-
-                private static double StopwatchTicksToMilliseconds(long ticks)
-                    => EngineTimer.TicksToSeconds(Math.Max(0L, ticks)) * 1000.0;
-
-                // Octree stats
-                private static readonly object _octreeTimingStatsLock = new();
-                private static int _octreeCollectCallsCurrent;
-                private static int _octreeVisibleRenderablesCurrent;
-                private static int _octreeEmittedCommandsCurrent;
-                private static int _octreeMaxVisibleRenderablesCurrent;
-                private static int _octreeMaxEmittedCommandsCurrent;
-                private static int _octreeAddCommandsCurrent;
-                private static int _octreeMoveCommandsCurrent;
-                private static int _octreeRemoveCommandsCurrent;
-                private static int _octreeSkippedMovesCurrent;
-                private static int _octreeSwapDrainedCommandsCurrent;
-                private static int _octreeSwapBufferedCommandsCurrent;
-                private static int _octreeSwapExecutedCommandsCurrent;
-                private static long _octreeSwapDrainTicksCurrent;
-                private static long _octreeSwapExecuteTicksCurrent;
-                private static long _octreeSwapMaxCommandTicksCurrent;
-                private static int _octreeSwapMaxCommandKindCurrent;
-                private static int _octreeRaycastProcessedCommandsCurrent;
-                private static int _octreeRaycastDroppedCommandsCurrent;
-                private static long _octreeRaycastTraversalTicksCurrent;
-                private static long _octreeRaycastCallbackTicksCurrent;
-                private static long _octreeRaycastMaxTraversalTicksCurrent;
-                private static long _octreeRaycastMaxCallbackTicksCurrent;
-                private static long _octreeRaycastMaxCommandTicksCurrent;
-                private static int _octreeCollectCallsDisplay;
-                private static int _octreeVisibleRenderablesDisplay;
-                private static int _octreeEmittedCommandsDisplay;
-                private static int _octreeMaxVisibleRenderablesDisplay;
-                private static int _octreeMaxEmittedCommandsDisplay;
-                private static int _octreeAddCommandsDisplay;
-                private static int _octreeMoveCommandsDisplay;
-                private static int _octreeRemoveCommandsDisplay;
-                private static int _octreeSkippedMovesDisplay;
-                private static int _octreeSwapDrainedCommandsDisplay;
-                private static int _octreeSwapBufferedCommandsDisplay;
-                private static int _octreeSwapExecutedCommandsDisplay;
-                private static long _octreeSwapDrainTicksDisplay;
-                private static long _octreeSwapExecuteTicksDisplay;
-                private static long _octreeSwapMaxCommandTicksDisplay;
-                private static int _octreeSwapMaxCommandKindDisplay;
-                private static int _octreeRaycastProcessedCommandsDisplay;
-                private static int _octreeRaycastDroppedCommandsDisplay;
-                private static long _octreeRaycastTraversalTicksDisplay;
-                private static long _octreeRaycastCallbackTicksDisplay;
-                private static long _octreeRaycastMaxTraversalTicksDisplay;
-                private static long _octreeRaycastMaxCallbackTicksDisplay;
-                private static long _octreeRaycastMaxCommandTicksDisplay;
-                private static int _octreeStatsDirty;
-                private static bool _octreeStatsReady;
-
-                public static bool EnableOctreeStats { get; set; } =
-#if XRE_PUBLISHED
-                    false;
-#else
-                    true;
-#endif
-                public static bool OctreeStatsReady => _octreeStatsReady;
-                public static int OctreeCollectCallCount => _octreeCollectCallsDisplay;
-                public static int OctreeVisibleRenderableCount => _octreeVisibleRenderablesDisplay;
-                public static int OctreeEmittedCommandCount => _octreeEmittedCommandsDisplay;
-                public static int OctreeMaxVisibleRenderablesPerCollect => _octreeMaxVisibleRenderablesDisplay;
-                public static int OctreeMaxEmittedCommandsPerCollect => _octreeMaxEmittedCommandsDisplay;
-                public static int OctreeAddCount => _octreeAddCommandsDisplay;
-                public static int OctreeMoveCount => _octreeMoveCommandsDisplay;
-                public static int OctreeRemoveCount => _octreeRemoveCommandsDisplay;
-                public static int OctreeSkippedMoveCount => _octreeSkippedMovesDisplay;
-                public static int OctreeSwapDrainedCommandCount => _octreeSwapDrainedCommandsDisplay;
-                public static int OctreeSwapBufferedCommandCount => _octreeSwapBufferedCommandsDisplay;
-                public static int OctreeSwapExecutedCommandCount => _octreeSwapExecutedCommandsDisplay;
-                public static double OctreeSwapDrainMs => StopwatchTicksToMilliseconds(_octreeSwapDrainTicksDisplay);
-                public static double OctreeSwapExecuteMs => StopwatchTicksToMilliseconds(_octreeSwapExecuteTicksDisplay);
-                public static double OctreeSwapMaxCommandMs => StopwatchTicksToMilliseconds(_octreeSwapMaxCommandTicksDisplay);
-                public static string OctreeSwapMaxCommandKind => GetOctreeCommandKindName(_octreeSwapMaxCommandKindDisplay);
-                public static int OctreeRaycastProcessedCommandCount => _octreeRaycastProcessedCommandsDisplay;
-                public static int OctreeRaycastDroppedCommandCount => _octreeRaycastDroppedCommandsDisplay;
-                public static double OctreeRaycastTraversalMs => StopwatchTicksToMilliseconds(_octreeRaycastTraversalTicksDisplay);
-                public static double OctreeRaycastCallbackMs => StopwatchTicksToMilliseconds(_octreeRaycastCallbackTicksDisplay);
-                public static double OctreeRaycastMaxTraversalMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxTraversalTicksDisplay);
-                public static double OctreeRaycastMaxCallbackMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxCallbackTicksDisplay);
-                public static double OctreeRaycastMaxCommandMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxCommandTicksDisplay);
-
-                public static void RecordOctreeAdd()
-                {
-                    if (!EnableOctreeStats) return;
-                    Interlocked.Increment(ref _octreeAddCommandsCurrent);
-                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
-                }
-
-                public static void RecordOctreeMove()
-                {
-                    if (!EnableOctreeStats) return;
-                    Interlocked.Increment(ref _octreeMoveCommandsCurrent);
-                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
-                }
-
-                public static void RecordOctreeRemove()
-                {
-                    if (!EnableOctreeStats) return;
-                    Interlocked.Increment(ref _octreeRemoveCommandsCurrent);
-                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
-                }
-
-                public static void RecordOctreeSkippedMove()
-                {
-                    if (!EnableOctreeStats) return;
-                    Interlocked.Increment(ref _octreeSkippedMovesCurrent);
-                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
-                }
-
-                public static void RecordOctreeCollect(int visibleRenderables, int emittedCommands)
-                {
-                    if (!EnableOctreeStats)
-                        return;
-
-                    Interlocked.Increment(ref _octreeCollectCallsCurrent);
-                    if (visibleRenderables > 0)
-                    {
-                        Interlocked.Add(ref _octreeVisibleRenderablesCurrent, visibleRenderables);
-                        UpdateMaxCounter(ref _octreeMaxVisibleRenderablesCurrent, visibleRenderables);
-                    }
-
-                    if (emittedCommands > 0)
-                    {
-                        Interlocked.Add(ref _octreeEmittedCommandsCurrent, emittedCommands);
-                        UpdateMaxCounter(ref _octreeMaxEmittedCommandsCurrent, emittedCommands);
-                    }
-
-                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
-                }
-
-                public static void RecordOctreeSwapTiming(OctreeSwapTimingStats stats)
-                {
-                    if (!EnableOctreeStats)
-                        return;
-
-                    lock (_octreeTimingStatsLock)
-                    {
-                        _octreeSwapDrainedCommandsCurrent += stats.DrainedCommandCount;
-                        _octreeSwapBufferedCommandsCurrent += stats.BufferedCommandCount;
-                        _octreeSwapExecutedCommandsCurrent += stats.ExecutedCommandCount;
-                        _octreeSwapDrainTicksCurrent += stats.DrainTicks;
-                        _octreeSwapExecuteTicksCurrent += stats.ExecuteTicks;
-
-                        if (stats.MaxCommandTicks > _octreeSwapMaxCommandTicksCurrent)
-                        {
-                            _octreeSwapMaxCommandTicksCurrent = stats.MaxCommandTicks;
-                            _octreeSwapMaxCommandKindCurrent = (int)stats.MaxCommandKind;
-                        }
-                    }
-
-                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
-                }
-
-                public static void RecordOctreeRaycastTiming(OctreeRaycastTimingStats stats)
-                {
-                    if (!EnableOctreeStats)
-                        return;
-
-                    lock (_octreeTimingStatsLock)
-                    {
-                        _octreeRaycastProcessedCommandsCurrent += stats.ProcessedCommandCount;
-                        _octreeRaycastDroppedCommandsCurrent += stats.DroppedCommandCount;
-                        _octreeRaycastTraversalTicksCurrent += stats.TraversalTicks;
-                        _octreeRaycastCallbackTicksCurrent += stats.CallbackTicks;
-
-                        if (stats.MaxTraversalTicks > _octreeRaycastMaxTraversalTicksCurrent)
-                            _octreeRaycastMaxTraversalTicksCurrent = stats.MaxTraversalTicks;
-
-                        if (stats.MaxCallbackTicks > _octreeRaycastMaxCallbackTicksCurrent)
-                            _octreeRaycastMaxCallbackTicksCurrent = stats.MaxCallbackTicks;
-
-                        if (stats.MaxCommandTicks > _octreeRaycastMaxCommandTicksCurrent)
-                            _octreeRaycastMaxCommandTicksCurrent = stats.MaxCommandTicks;
-                    }
-
-                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
-                }
-
-                public static void SwapOctreeStats()
-                {
-                    if (!EnableOctreeStats) return;
-                    if (Interlocked.Exchange(ref _octreeStatsDirty, 0) == 0) return;
-
-                    _octreeCollectCallsDisplay = Interlocked.Exchange(ref _octreeCollectCallsCurrent, 0);
-                    _octreeVisibleRenderablesDisplay = Interlocked.Exchange(ref _octreeVisibleRenderablesCurrent, 0);
-                    _octreeEmittedCommandsDisplay = Interlocked.Exchange(ref _octreeEmittedCommandsCurrent, 0);
-                    _octreeMaxVisibleRenderablesDisplay = Interlocked.Exchange(ref _octreeMaxVisibleRenderablesCurrent, 0);
-                    _octreeMaxEmittedCommandsDisplay = Interlocked.Exchange(ref _octreeMaxEmittedCommandsCurrent, 0);
-                    _octreeAddCommandsDisplay = Interlocked.Exchange(ref _octreeAddCommandsCurrent, 0);
-                    _octreeMoveCommandsDisplay = Interlocked.Exchange(ref _octreeMoveCommandsCurrent, 0);
-                    _octreeRemoveCommandsDisplay = Interlocked.Exchange(ref _octreeRemoveCommandsCurrent, 0);
-                    _octreeSkippedMovesDisplay = Interlocked.Exchange(ref _octreeSkippedMovesCurrent, 0);
-
-                    lock (_octreeTimingStatsLock)
-                    {
-                        _octreeSwapDrainedCommandsDisplay = _octreeSwapDrainedCommandsCurrent;
-                        _octreeSwapBufferedCommandsDisplay = _octreeSwapBufferedCommandsCurrent;
-                        _octreeSwapExecutedCommandsDisplay = _octreeSwapExecutedCommandsCurrent;
-                        _octreeSwapDrainTicksDisplay = _octreeSwapDrainTicksCurrent;
-                        _octreeSwapExecuteTicksDisplay = _octreeSwapExecuteTicksCurrent;
-                        _octreeSwapMaxCommandTicksDisplay = _octreeSwapMaxCommandTicksCurrent;
-                        _octreeSwapMaxCommandKindDisplay = _octreeSwapMaxCommandKindCurrent;
-                        _octreeRaycastProcessedCommandsDisplay = _octreeRaycastProcessedCommandsCurrent;
-                        _octreeRaycastDroppedCommandsDisplay = _octreeRaycastDroppedCommandsCurrent;
-                        _octreeRaycastTraversalTicksDisplay = _octreeRaycastTraversalTicksCurrent;
-                        _octreeRaycastCallbackTicksDisplay = _octreeRaycastCallbackTicksCurrent;
-                        _octreeRaycastMaxTraversalTicksDisplay = _octreeRaycastMaxTraversalTicksCurrent;
-                        _octreeRaycastMaxCallbackTicksDisplay = _octreeRaycastMaxCallbackTicksCurrent;
-                        _octreeRaycastMaxCommandTicksDisplay = _octreeRaycastMaxCommandTicksCurrent;
-
-                        _octreeSwapDrainedCommandsCurrent = 0;
-                        _octreeSwapBufferedCommandsCurrent = 0;
-                        _octreeSwapExecutedCommandsCurrent = 0;
-                        _octreeSwapDrainTicksCurrent = 0L;
-                        _octreeSwapExecuteTicksCurrent = 0L;
-                        _octreeSwapMaxCommandTicksCurrent = 0L;
-                        _octreeSwapMaxCommandKindCurrent = 0;
-                        _octreeRaycastProcessedCommandsCurrent = 0;
-                        _octreeRaycastDroppedCommandsCurrent = 0;
-                        _octreeRaycastTraversalTicksCurrent = 0L;
-                        _octreeRaycastCallbackTicksCurrent = 0L;
-                        _octreeRaycastMaxTraversalTicksCurrent = 0L;
-                        _octreeRaycastMaxCallbackTicksCurrent = 0L;
-                        _octreeRaycastMaxCommandTicksCurrent = 0L;
-                    }
-
-                    _octreeStatsReady = true;
-                }
-
-                private static string GetOctreeCommandKindName(int kind)
-                    => kind switch
-                    {
-                        (int)EOctreeCommandKind.Add => nameof(EOctreeCommandKind.Add),
-                        (int)EOctreeCommandKind.Move => nameof(EOctreeCommandKind.Move),
-                        (int)EOctreeCommandKind.Remove => nameof(EOctreeCommandKind.Remove),
-                        _ => nameof(EOctreeCommandKind.None),
-                    };
 
                 /// <summary>
                 /// Increment the draw call counter.
@@ -1997,29 +1002,6 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// Records usage of GPU->CPU fallback recovery during culling.
-                /// </summary>
-                public static void RecordGpuCpuFallback(int eventCount, int recoveredCommands)
-                {
-                    if (!EnableTracking || eventCount <= 0)
-                        return;
-
-                    Interlocked.Add(ref _gpuCpuFallbackEvents, eventCount);
-                    if (recoveredCommands > 0)
-                        Interlocked.Add(ref _gpuCpuFallbackRecoveredCommands, recoveredCommands);
-                }
-
-                /// <summary>
-                /// Records a forbidden fallback attempt (fallback blocked by profile policy).
-                /// </summary>
-                public static void RecordForbiddenGpuFallback(int eventCount = 1)
-                {
-                    if (!EnableTracking || eventCount <= 0)
-                        return;
-
-                    Interlocked.Add(ref _forbiddenGpuFallbackEvents, eventCount);
-                }
-
                 public static void RecordVulkanIndirectSubmission(bool usedCountPath, bool usedLoopFallback, int apiCalls, uint submittedDraws)
                 {
                     if (!EnableTracking)
@@ -2208,21 +1190,6 @@ namespace XREngine
                         Interlocked.Add(ref _vulkanOverflowCount, overflowCount);
                 }
 
-                public static void RecordGpuTransparencyDomainCounts(
-                    uint opaqueOrOtherVisible,
-                    uint maskedVisible,
-                    uint approximateVisible,
-                    uint exactVisible)
-                {
-                    if (!EnableTracking)
-                        return;
-
-                    Interlocked.Exchange(ref _gpuTransparencyOpaqueOrOtherVisible, checked((int)opaqueOrOtherVisible));
-                    Interlocked.Exchange(ref _gpuTransparencyMaskedVisible, checked((int)maskedVisible));
-                    Interlocked.Exchange(ref _gpuTransparencyApproximateVisible, checked((int)approximateVisible));
-                    Interlocked.Exchange(ref _gpuTransparencyExactVisible, checked((int)exactVisible));
-                }
-
                 public enum EVulkanGpuDrivenStageTiming
                 {
                     Reset = 0,
@@ -2257,248 +1224,6 @@ namespace XREngine
                     }
                 }
 
-                /// <summary>
-                /// Record a GPU buffer memory allocation.
-                /// </summary>
-                /// <param name="bytes">The number of bytes allocated.</param>
-                public static void AddBufferAllocation(long bytes)
-                {
-                    if (bytes <= 0) return;
-                    Interlocked.Add(ref _allocatedBufferBytes, bytes);
-                    Interlocked.Add(ref _allocatedVRAMBytes, bytes);
-                }
-
-                /// <summary>
-                /// Record a GPU buffer memory deallocation.
-                /// </summary>
-                /// <param name="bytes">The number of bytes deallocated.</param>
-                public static void RemoveBufferAllocation(long bytes)
-                {
-                    if (bytes <= 0) return;
-                    Interlocked.Add(ref _allocatedBufferBytes, -bytes);
-                    Interlocked.Add(ref _allocatedVRAMBytes, -bytes);
-                }
-
-                /// <summary>
-                /// Record a GPU texture memory allocation.
-                /// </summary>
-                /// <param name="bytes">The number of bytes allocated.</param>
-                public static void AddTextureAllocation(long bytes)
-                {
-                    if (bytes <= 0) return;
-                    Interlocked.Add(ref _allocatedTextureBytes, bytes);
-                    Interlocked.Add(ref _allocatedVRAMBytes, bytes);
-                }
-
-                /// <summary>
-                /// Record a GPU texture memory deallocation.
-                /// </summary>
-                /// <param name="bytes">The number of bytes deallocated.</param>
-                public static void RemoveTextureAllocation(long bytes)
-                {
-                    if (bytes <= 0) return;
-                    Interlocked.Add(ref _allocatedTextureBytes, -bytes);
-                    Interlocked.Add(ref _allocatedVRAMBytes, -bytes);
-                }
-
-                /// <summary>
-                /// Record a GPU render buffer memory allocation.
-                /// </summary>
-                /// <param name="bytes">The number of bytes allocated.</param>
-                public static void AddRenderBufferAllocation(long bytes)
-                {
-                    if (bytes <= 0) return;
-                    Interlocked.Add(ref _allocatedRenderBufferBytes, bytes);
-                    Interlocked.Add(ref _allocatedVRAMBytes, bytes);
-                }
-
-                /// <summary>
-                /// Record a GPU render buffer memory deallocation.
-                /// </summary>
-                /// <param name="bytes">The number of bytes deallocated.</param>
-                public static void RemoveRenderBufferAllocation(long bytes)
-                {
-                    if (bytes <= 0) return;
-                    Interlocked.Add(ref _allocatedRenderBufferBytes, -bytes);
-                    Interlocked.Add(ref _allocatedVRAMBytes, -bytes);
-                }
-
-                /// <summary>
-                /// Record FBO render bandwidth when an FBO is bound for writing.
-                /// The bandwidth is calculated as the total size of all render target attachments.
-                /// </summary>
-                /// <param name="bytes">The total size of all render target attachments in bytes.</param>
-                public static void AddFBOBandwidth(long bytes)
-                {
-                    if (bytes <= 0) return;
-                    Interlocked.Add(ref _fboBandwidthBytes, bytes);
-                    Interlocked.Increment(ref _fboBindCount);
-                }
-
-                /// <summary>
-                /// Gets the bytes per pixel for a given sized internal format.
-                /// </summary>
-                public static int GetBytesPerPixel(ESizedInternalFormat format)
-                {
-                    return format switch
-                    {
-                        // 1-byte formats
-                        ESizedInternalFormat.R8 => 1,
-                        ESizedInternalFormat.R8Snorm => 1,
-                        ESizedInternalFormat.R8i => 1,
-                        ESizedInternalFormat.R8ui => 1,
-                        ESizedInternalFormat.StencilIndex8 => 1,
-
-                        // 2-byte formats
-                        ESizedInternalFormat.R16 => 2,
-                        ESizedInternalFormat.R16Snorm => 2,
-                        ESizedInternalFormat.R16f => 2,
-                        ESizedInternalFormat.R16i => 2,
-                        ESizedInternalFormat.R16ui => 2,
-                        ESizedInternalFormat.Rg8 => 2,
-                        ESizedInternalFormat.Rg8Snorm => 2,
-                        ESizedInternalFormat.Rg8i => 2,
-                        ESizedInternalFormat.Rg8ui => 2,
-                        ESizedInternalFormat.DepthComponent16 => 2,
-
-                        // 3-byte formats
-                        ESizedInternalFormat.Rgb8 => 3,
-                        ESizedInternalFormat.Rgb8Snorm => 3,
-                        ESizedInternalFormat.Srgb8 => 3,
-                        ESizedInternalFormat.Rgb8i => 3,
-                        ESizedInternalFormat.Rgb8ui => 3,
-                        ESizedInternalFormat.DepthComponent24 => 3,
-
-                        // 4-byte formats
-                        ESizedInternalFormat.R32f => 4,
-                        ESizedInternalFormat.R32i => 4,
-                        ESizedInternalFormat.R32ui => 4,
-                        ESizedInternalFormat.Rg16 => 4,
-                        ESizedInternalFormat.Rg16Snorm => 4,
-                        ESizedInternalFormat.Rg16f => 4,
-                        ESizedInternalFormat.Rg16i => 4,
-                        ESizedInternalFormat.Rg16ui => 4,
-                        ESizedInternalFormat.Rgba8 => 4,
-                        ESizedInternalFormat.Rgba8Snorm => 4,
-                        ESizedInternalFormat.Srgb8Alpha8 => 4,
-                        ESizedInternalFormat.Rgba8i => 4,
-                        ESizedInternalFormat.Rgba8ui => 4,
-                        ESizedInternalFormat.Rgb10A2 => 4,
-                        ESizedInternalFormat.R11fG11fB10f => 4,
-                        ESizedInternalFormat.Rgb9E5 => 4,
-                        ESizedInternalFormat.DepthComponent32f => 4,
-                        ESizedInternalFormat.Depth24Stencil8 => 4,
-
-                        // 5-byte formats
-                        ESizedInternalFormat.Depth32fStencil8 => 5,
-
-                        // 6-byte formats
-                        ESizedInternalFormat.Rgb16f => 6,
-                        ESizedInternalFormat.Rgb16Snorm => 6,
-                        ESizedInternalFormat.Rgb16i => 6,
-                        ESizedInternalFormat.Rgb16ui => 6,
-
-                        // 8-byte formats
-                        ESizedInternalFormat.Rg32f => 8,
-                        ESizedInternalFormat.Rg32i => 8,
-                        ESizedInternalFormat.Rg32ui => 8,
-                        ESizedInternalFormat.Rgba16 => 8,
-                        ESizedInternalFormat.Rgba16f => 8,
-                        ESizedInternalFormat.Rgba16i => 8,
-                        ESizedInternalFormat.Rgba16ui => 8,
-
-                        // 12-byte formats
-                        ESizedInternalFormat.Rgb32f => 12,
-                        ESizedInternalFormat.Rgb32i => 12,
-                        ESizedInternalFormat.Rgb32ui => 12,
-
-                        // 16-byte formats
-                        ESizedInternalFormat.Rgba32f => 16,
-                        ESizedInternalFormat.Rgba32i => 16,
-                        ESizedInternalFormat.Rgba32ui => 16,
-
-                        // Default fallback (estimate 4 bytes for unknown formats)
-                        _ => 4
-                    };
-                }
-
-                /// <summary>
-                /// Gets the bytes per pixel for a given render buffer storage format.
-                /// </summary>
-                public static int GetBytesPerPixel(ERenderBufferStorage format)
-                {
-                    return format switch
-                    {
-                        // 1-byte formats
-                        ERenderBufferStorage.R8 => 1,
-                        ERenderBufferStorage.R8i => 1,
-                        ERenderBufferStorage.R8ui => 1,
-                        ERenderBufferStorage.StencilIndex1 => 1,
-                        ERenderBufferStorage.StencilIndex4 => 1,
-                        ERenderBufferStorage.StencilIndex8 => 1,
-
-                        // 2-byte formats
-                        ERenderBufferStorage.R16 => 2,
-                        ERenderBufferStorage.R16f => 2,
-                        ERenderBufferStorage.R16i => 2,
-                        ERenderBufferStorage.R16ui => 2,
-                        ERenderBufferStorage.DepthComponent16 => 2,
-                        ERenderBufferStorage.StencilIndex16 => 2,
-
-                        // 3-byte formats
-                        ERenderBufferStorage.Rgb8 => 3,
-                        ERenderBufferStorage.Srgb8 => 3,
-                        ERenderBufferStorage.Rgb8i => 3,
-                        ERenderBufferStorage.Rgb8ui => 3,
-                        ERenderBufferStorage.DepthComponent24 => 3,
-
-                        // 4-byte formats
-                        ERenderBufferStorage.R32f => 4,
-                        ERenderBufferStorage.R32i => 4,
-                        ERenderBufferStorage.R32ui => 4,
-                        ERenderBufferStorage.Rgba8 => 4,
-                        ERenderBufferStorage.Srgb8Alpha8 => 4,
-                        ERenderBufferStorage.Rgba8i => 4,
-                        ERenderBufferStorage.Rgba8ui => 4,
-                        ERenderBufferStorage.Rgb10A2 => 4,
-                        ERenderBufferStorage.Rgb10A2ui => 4,
-                        ERenderBufferStorage.R11fG11fB10f => 4,
-                        ERenderBufferStorage.Rgb9E5 => 4,
-                        ERenderBufferStorage.DepthComponent32 => 4,
-                        ERenderBufferStorage.DepthComponent32f => 4,
-                        ERenderBufferStorage.Depth24Stencil8 => 4,
-                        ERenderBufferStorage.DepthComponent => 4,
-                        ERenderBufferStorage.DepthStencil => 4,
-
-                        // 5-byte formats
-                        ERenderBufferStorage.Depth32fStencil8 => 5,
-
-                        // 6-byte formats
-                        ERenderBufferStorage.Rgb16 => 6,
-                        ERenderBufferStorage.Rgb16f => 6,
-                        ERenderBufferStorage.Rgb16i => 6,
-                        ERenderBufferStorage.Rgb16ui => 6,
-
-                        // 8-byte formats
-                        ERenderBufferStorage.Rgba16 => 8,
-                        ERenderBufferStorage.Rgba16f => 8,
-                        ERenderBufferStorage.Rgba16i => 8,
-                        ERenderBufferStorage.Rgba16ui => 8,
-
-                        // 12-byte formats
-                        ERenderBufferStorage.Rgb32f => 12,
-                        ERenderBufferStorage.Rgb32i => 12,
-                        ERenderBufferStorage.Rgb32ui => 12,
-
-                        // 16-byte formats
-                        ERenderBufferStorage.Rgba32f => 16,
-                        ERenderBufferStorage.Rgba32i => 16,
-                        ERenderBufferStorage.Rgba32ui => 16,
-
-                        // Default fallback (estimate 4 bytes for unknown formats)
-                        _ => 4
-                    };
-                }
             }
         }
     }

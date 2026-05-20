@@ -13,25 +13,74 @@ public sealed class MeshletBuildResult
     public required byte[] TriangleIndices { get; init; }
     public required MeshletVertex[] Vertices { get; init; }
     public required MeshOptimizerMeshletStats Stats { get; init; }
+    public required MeshletPayload Payload { get; init; }
 }
 
 public static class MeshOptimizerIntegration
 {
+    private static long s_meshletBuildInvocationCount;
+
+    public static long MeshletBuildInvocationCount
+        => Interlocked.Read(ref s_meshletBuildInvocationCount);
+
+    public static string MeshOptimizerVersionKey
+        => MeshOptimizerNative.VersionKey;
+
+    public static void ResetMeshletBuildDiagnosticsForTests()
+        => Interlocked.Exchange(ref s_meshletBuildInvocationCount, 0);
+
     public static MeshletBuildResult BuildMeshlets(XRMesh mesh, MeshletGenerationSettings settings)
+        => BuildMeshlets(mesh, settings, null, null);
+
+    public static MeshletBuildResult BuildMeshlets(
+        XRMesh mesh,
+        MeshletGenerationSettings settings,
+        MeshLodGenerationSettings? lodSettings,
+        string? sourceMeshIdentity)
     {
         if (mesh is null)
             throw new ArgumentNullException(nameof(mesh));
+        if (settings is null)
+            throw new ArgumentNullException(nameof(settings));
 
-        int[] indices = mesh.GetIndices(EPrimitiveType.Triangles) ?? [];
-        if (indices.Length == 0 || mesh.VertexCount == 0)
+        if (!settings.Enabled)
         {
+            MeshletPayload disabledPayload = MeshletPayload.CreateDisabled(mesh, settings, lodSettings, sourceMeshIdentity);
             return new MeshletBuildResult
             {
                 Meshlets = [],
                 VertexIndices = [],
                 TriangleIndices = [],
                 Vertices = [],
-                Stats = new MeshOptimizerMeshletStats(0, 0, 0, 0),
+                Stats = disabledPayload.Stats,
+                Payload = disabledPayload,
+            };
+        }
+
+        Interlocked.Increment(ref s_meshletBuildInvocationCount);
+
+        int[] indices = mesh.GetIndices(EPrimitiveType.Triangles) ?? [];
+        if (indices.Length == 0 || mesh.VertexCount == 0)
+        {
+            MeshletPayload emptyPayload = CreatePayload(
+                mesh,
+                settings,
+                lodSettings,
+                sourceMeshIdentity,
+                [],
+                [],
+                [],
+                [],
+                new MeshOptimizerMeshletStats(0, 0, 0, 0));
+
+            return new MeshletBuildResult
+            {
+                Meshlets = [],
+                VertexIndices = [],
+                TriangleIndices = [],
+                Vertices = [],
+                Stats = emptyPayload.Stats,
+                Payload = emptyPayload,
             };
         }
 
@@ -48,13 +97,25 @@ public static class MeshOptimizerIntegration
         nuint maxMeshlets = MeshOptimizerNative.BuildMeshletsBound((nuint)sourceIndices.Length, settings.MaxVertices, minTriangles);
         if (maxMeshlets == 0)
         {
+            MeshletPayload emptyPayload = CreatePayload(
+                mesh,
+                settings,
+                lodSettings,
+                sourceMeshIdentity,
+                [],
+                [],
+                [],
+                vertices,
+                new MeshOptimizerMeshletStats(0, 0, 0, 0));
+
             return new MeshletBuildResult
             {
                 Meshlets = [],
                 VertexIndices = [],
                 TriangleIndices = [],
                 Vertices = vertices,
-                Stats = new MeshOptimizerMeshletStats(0, 0, 0, 0),
+                Stats = emptyPayload.Stats,
+                Payload = emptyPayload,
             };
         }
 
@@ -79,13 +140,25 @@ public static class MeshOptimizerIntegration
 
         if (meshletCount == 0)
         {
+            MeshletPayload emptyPayload = CreatePayload(
+                mesh,
+                settings,
+                lodSettings,
+                sourceMeshIdentity,
+                [],
+                [],
+                [],
+                vertices,
+                new MeshOptimizerMeshletStats(0, 0, 0, 0));
+
             return new MeshletBuildResult
             {
                 Meshlets = [],
                 VertexIndices = [],
                 TriangleIndices = [],
                 Vertices = vertices,
-                Stats = new MeshOptimizerMeshletStats(0, 0, 0, 0),
+                Stats = emptyPayload.Stats,
+                Payload = emptyPayload,
             };
         }
 
@@ -113,13 +186,14 @@ public static class MeshOptimizerIntegration
 
         int encodedByteCount = 0;
         Meshlet[] results = new Meshlet[finalMeshletCount];
+        CpuMeshletDescriptor[] descriptors = new CpuMeshletDescriptor[finalMeshletCount];
         float[] positionArray = GetPositionArray(mesh);
         for (int i = 0; i < finalMeshletCount; i++)
         {
             MeshOptimizerNative.MeshoptMeshlet meshlet = meshoptMeshlets[i];
-            Vector4 sphere = settings.ComputeBounds
-                ? ComputeMeshletSphere(meshletVertices, meshletTriangles, meshlet, positionArray, mesh.VertexCount)
-                : ComputeFallbackBounds(mesh, meshletVertices, meshlet);
+            CpuMeshletDescriptor descriptor = settings.ComputeBounds
+                ? ComputeMeshletDescriptor(meshletVertices, meshletTriangles, meshlet, positionArray, mesh.VertexCount)
+                : ComputeFallbackDescriptor(mesh, meshletVertices, meshlet);
 
             if (settings.EncodeMeshlets)
             {
@@ -130,18 +204,21 @@ public static class MeshOptimizerIntegration
                 encodedByteCount += MeshOptimizerNative.EncodeMeshlet(encodedVertices, encodedTriangles, (int)settings.MaxVertices, (int)settings.MaxTriangles);
             }
 
-            results[i] = new Meshlet
-            {
-                BoundingSphere = sphere,
-                VertexOffset = meshlet.VertexOffset,
-                TriangleOffset = meshlet.TriangleOffset,
-                VertexCount = meshlet.VertexCount,
-                TriangleCount = meshlet.TriangleCount,
-                MeshID = 0,
-                MaterialID = 0,
-                RenderPass = 0,
-            };
+            descriptors[i] = descriptor;
+            results[i] = descriptor.ToGpuMeshlet();
         }
+
+        MeshOptimizerMeshletStats stats = new(finalMeshletCount, vertexReferenceCount, triangleByteCount, encodedByteCount);
+        MeshletPayload payload = CreatePayload(
+            mesh,
+            settings,
+            lodSettings,
+            sourceMeshIdentity,
+            descriptors,
+            meshletVertices,
+            meshletTriangles,
+            vertices,
+            stats);
 
         return new MeshletBuildResult
         {
@@ -149,7 +226,48 @@ public static class MeshOptimizerIntegration
             VertexIndices = meshletVertices,
             TriangleIndices = meshletTriangles,
             Vertices = vertices,
-            Stats = new MeshOptimizerMeshletStats(finalMeshletCount, vertexReferenceCount, triangleByteCount, encodedByteCount),
+            Stats = stats,
+            Payload = payload,
+        };
+    }
+
+    private static MeshletPayload CreatePayload(
+        XRMesh mesh,
+        MeshletGenerationSettings settings,
+        MeshLodGenerationSettings? lodSettings,
+        string? sourceMeshIdentity,
+        CpuMeshletDescriptor[] descriptors,
+        uint[] vertexIndices,
+        byte[] triangleIndices,
+        MeshletVertex[] vertices,
+        MeshOptimizerMeshletStats stats)
+    {
+        MeshletGenerationSettingsSnapshot meshletSnapshot = MeshletGenerationSettingsSnapshot.From(settings);
+        MeshLodGenerationSettingsSnapshot lodSnapshot = MeshLodGenerationSettingsSnapshot.From(lodSettings);
+        string identity = MeshletPayloadUtility.ResolveSourceMeshIdentity(mesh, sourceMeshIdentity);
+        ulong sourceHash = MeshletPayloadUtility.ComputeSourceMeshHash(mesh);
+        ulong meshletSettingsHash = MeshletPayloadUtility.ComputeHash(meshletSnapshot);
+        ulong lodSettingsHash = MeshletPayloadUtility.ComputeHash(lodSnapshot);
+        string versionKey = MeshOptimizerVersionKey;
+
+        return new MeshletPayload
+        {
+            GenerationEnabled = settings.Enabled,
+            MeshOptimizerVersionKey = versionKey,
+            SourceMeshIdentity = identity,
+            SourceVertexCount = mesh.VertexCount,
+            SourceTriangleCount = (mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3,
+            SourceMeshHash = sourceHash,
+            MeshletSettingsHash = meshletSettingsHash,
+            LodSettingsHash = lodSettingsHash,
+            FreshnessHash = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, meshletSettingsHash, lodSettingsHash, versionKey),
+            MeshletSettings = meshletSnapshot,
+            LodSettings = lodSnapshot,
+            Meshlets = descriptors,
+            VertexIndices = vertexIndices,
+            TriangleIndices = triangleIndices,
+            Vertices = vertices,
+            Stats = stats,
         };
     }
 
@@ -440,20 +558,31 @@ public static class MeshOptimizerIntegration
         return vertices;
     }
 
-    private static Vector4 ComputeMeshletSphere(uint[] meshletVertices, byte[] meshletTriangles, MeshOptimizerNative.MeshoptMeshlet meshlet, float[] positions, int vertexCount)
+    public static MeshletVertex[] BuildMeshletVerticesForPayload(XRMesh mesh)
+        => BuildMeshletVertices(mesh);
+
+    private static CpuMeshletDescriptor ComputeMeshletDescriptor(uint[] meshletVertices, byte[] meshletTriangles, MeshOptimizerNative.MeshoptMeshlet meshlet, float[] positions, int vertexCount)
     {
         MeshOptimizerNative.MeshoptBounds bounds = MeshOptimizerNative.ComputeMeshletBounds(
             meshletVertices.AsSpan((int)meshlet.VertexOffset, (int)meshlet.VertexCount),
             meshletTriangles.AsSpan((int)meshlet.TriangleOffset, GetTriangleByteCount(meshlet.TriangleCount)),
             positions,
             vertexCount);
-        return new Vector4(bounds.CenterX, bounds.CenterY, bounds.CenterZ, bounds.Radius);
+        return CreateDescriptor(meshlet, bounds);
     }
 
-    private static Vector4 ComputeFallbackBounds(XRMesh mesh, IReadOnlyList<uint> meshletVertices, MeshOptimizerNative.MeshoptMeshlet meshlet)
+    private static CpuMeshletDescriptor ComputeFallbackDescriptor(XRMesh mesh, IReadOnlyList<uint> meshletVertices, MeshOptimizerNative.MeshoptMeshlet meshlet)
     {
         if (meshlet.VertexCount == 0)
-            return Vector4.Zero;
+            return new CpuMeshletDescriptor(
+                Vector4.Zero,
+                meshlet.VertexOffset,
+                meshlet.TriangleOffset,
+                meshlet.VertexCount,
+                meshlet.TriangleCount,
+                Vector4.Zero,
+                Vector4.Zero,
+                0u);
 
         Vector3 center = Vector3.Zero;
         for (int i = 0; i < meshlet.VertexCount; i++)
@@ -463,8 +592,34 @@ public static class MeshOptimizerIntegration
         float radius = 0.0f;
         for (int i = 0; i < meshlet.VertexCount; i++)
             radius = Math.Max(radius, Vector3.Distance(center, mesh.GetPosition(meshletVertices[(int)(meshlet.VertexOffset + i)])));
-        return new Vector4(center, radius);
+
+        return new CpuMeshletDescriptor(
+            new Vector4(center, radius),
+            meshlet.VertexOffset,
+            meshlet.TriangleOffset,
+            meshlet.VertexCount,
+            meshlet.TriangleCount,
+            Vector4.Zero,
+            Vector4.Zero,
+            0u);
     }
+
+    private static CpuMeshletDescriptor CreateDescriptor(MeshOptimizerNative.MeshoptMeshlet meshlet, MeshOptimizerNative.MeshoptBounds bounds)
+        => new(
+            new Vector4(bounds.CenterX, bounds.CenterY, bounds.CenterZ, bounds.Radius),
+            meshlet.VertexOffset,
+            meshlet.TriangleOffset,
+            meshlet.VertexCount,
+            meshlet.TriangleCount,
+            new Vector4(bounds.ConeAxisX, bounds.ConeAxisY, bounds.ConeAxisZ, bounds.ConeCutoff),
+            new Vector4(bounds.ConeApexX, bounds.ConeApexY, bounds.ConeApexZ, 0.0f),
+            PackCone(bounds.ConeAxisS8X, bounds.ConeAxisS8Y, bounds.ConeAxisS8Z, bounds.ConeCutoffS8));
+
+    private static uint PackCone(sbyte axisX, sbyte axisY, sbyte axisZ, sbyte cutoff)
+        => (uint)(byte)axisX |
+           ((uint)(byte)axisY << 8) |
+           ((uint)(byte)axisZ << 16) |
+           ((uint)(byte)cutoff << 24);
 
     private static float[] GetPositionArray(XRMesh mesh)
         => GetPositionArray(mesh.Vertices);
@@ -712,12 +867,17 @@ public static class MeshOptimizerIntegration
 internal static class MeshOptimizerNative
 {
     private const string NativeLibraryName = "meshoptimizer";
+    private const int InteropVersion = 1;
     private const uint SimplifyPermissiveWithSeamsMask = (uint)MeshOptimizerSimplifyOptions.Permissive;
     private static readonly Lazy<nint> s_nativeLibraryHandle = new(LoadNativeLibraryHandle, LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly Lazy<MeshoptVersionDelegate?> s_version = new(() => TryLoadExport<MeshoptVersionDelegate>("meshopt_version"), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<MeshoptOptimizeMeshletLevelDelegate?> s_optimizeMeshletLevel = new(() => TryLoadExport<MeshoptOptimizeMeshletLevelDelegate>("meshopt_optimizeMeshletLevel"), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<MeshoptOptimizeMeshletDelegate?> s_optimizeMeshlet = new(() => TryLoadExport<MeshoptOptimizeMeshletDelegate>("meshopt_optimizeMeshlet"), LazyThreadSafetyMode.ExecutionAndPublication);
     private static int s_loggedLegacyOptimizeLevelFallback;
     private static int s_loggedMissingOptimizeMeshletExport;
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int MeshoptVersionDelegate();
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private unsafe delegate void MeshoptOptimizeMeshletLevelDelegate(uint* meshletVertices, nuint vertexCount, byte* meshletTriangles, nuint triangleCount, int level);
@@ -836,6 +996,17 @@ internal static class MeshOptimizerNative
 
     [DllImport(NativeLibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "meshopt_simplifyScale")]
     private static extern unsafe float MeshoptSimplifyScale(float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride);
+
+    public static string VersionKey
+    {
+        get
+        {
+            if (s_version.Value is { } version)
+                return $"meshoptimizer:{version()};interop:{InteropVersion}";
+
+            return $"meshoptimizer:unknown;interop:{InteropVersion}";
+        }
+    }
 
     public static nuint BuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles)
         => MeshoptBuildMeshletsBound(indexCount, maxVertices, maxTriangles);

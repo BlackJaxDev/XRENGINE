@@ -21,17 +21,21 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class RuntimeRenderingHostServicesTests
 {
     private IRuntimeRenderingHostServices? _previousServices;
+    private IRuntimeShaderServices? _previousShaderServices;
 
     [SetUp]
     public void SetUp()
     {
         _previousServices = RuntimeRenderingHostServices.Current;
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
     }
 
     [TearDown]
     public void TearDown()
     {
         RuntimeRenderingHostServices.Current = _previousServices ?? new TestRuntimeRenderingHostServices();
+        RuntimeShaderServices.Current = _previousShaderServices;
     }
 
     [Test]
@@ -589,6 +593,46 @@ public sealed class RuntimeRenderingHostServicesTests
         }
 
         public void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible)
+        {
+        }
+
+        public void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletProductionFrame(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletFallback(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletDispatchSkipped(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
+        {
+        }
+
+        public void RecordRenderGpuMeshletExpansionOverflow(uint overflowCount)
+        {
+        }
+
+        public void RecordRenderGpuMeshletBufferBytesResident(long bytes)
+        {
+        }
+
+        public void RecordRenderGpuMeshletCacheHit(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletCacheMiss(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderGpuMeshletCacheStale(int eventCount = 1)
         {
         }
 

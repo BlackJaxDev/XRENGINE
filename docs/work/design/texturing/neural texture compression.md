@@ -1,13 +1,18 @@
 # Neural Texture Compression Implementation Plan
 
-Last Updated: 2026-03-20
-Status: design
+Last Updated: 2026-05-19
+Status: historical; superseded by [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
 Scope: add a production-usable neural texture compression pipeline to XRENGINE, starting with offline decode-on-load for broad support and reserving shader decode for later hardware tiers.
+
+This file is preserved as the original neural texture compression design record. Ongoing texturing architecture and phased work now live in:
+
+- [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
+- [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 
 Related docs:
 
 - `bindless-deferred-texturing-plan.md`
-- `zero-readback-gpu-driven-rendering-plan.md`
+- `../rendering/zero-readback-gpu-driven-rendering-plan.md`
 - `docs/features/gi/light-volumes.md`
 - `docs/features/gi/global-illumination.md`
 
@@ -42,7 +47,7 @@ The most relevant existing code and plans are:
 
 - `XRENGINE/Rendering/Materials/GPUMaterialTable.cs`
 - `XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`
-- `docs/work/design/bindless-deferred-texturing-plan.md`
+- `docs/work/design/texturing/bindless-deferred-texturing-plan.md`
 - `XRENGINE/Core/ModelImporter.cs`
 - `XRENGINE/Scene/Components/Landscape/LandscapeComponent.cs`
 

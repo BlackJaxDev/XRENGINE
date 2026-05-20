@@ -11,9 +11,20 @@ namespace XREngine.Rendering.Models
         private float _generatedTargetIndexRatio;
         private float _generatedNormalizedError;
         private float _generatedObjectSpaceError;
+        private float _minProjectedScreenRadiusPixels = float.NaN;
 
         public SubMeshLOD() 
             : this(null, null, 0) { }
+
+        public SubMeshLOD(
+            XRMaterial? material,
+            XRMesh? mesh,
+            float maxVisibleDistance,
+            float minProjectedScreenRadiusPixels)
+            : this(material, mesh, maxVisibleDistance)
+        {
+            _minProjectedScreenRadiusPixels = NormalizeProjectedRadius(minProjectedScreenRadiusPixels);
+        }
 
         /// <summary>
         /// The material to use for this LOD.
@@ -38,6 +49,19 @@ namespace XREngine.Rendering.Models
             get => maxVisibleDistance;
             set => SetField(ref maxVisibleDistance, value);
         }
+
+        /// <summary>
+        /// Minimum projected bounding-sphere radius in pixels required to use this LOD in the GPU-driven path.
+        /// NaN means the GPU scene should use its default projected-radius threshold for this LOD level.
+        /// </summary>
+        public float MinProjectedScreenRadiusPixels
+        {
+            get => _minProjectedScreenRadiusPixels;
+            set => SetField(ref _minProjectedScreenRadiusPixels, NormalizeProjectedRadius(value));
+        }
+
+        private static float NormalizeProjectedRadius(float value)
+            => float.IsFinite(value) ? System.MathF.Max(0.0f, value) : float.NaN;
 
         private bool _generateAsync;
 

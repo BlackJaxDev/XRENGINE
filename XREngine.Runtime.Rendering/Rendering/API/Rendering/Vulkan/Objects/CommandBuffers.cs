@@ -111,6 +111,12 @@ namespace XREngine.Rendering.Vulkan
                     $"{Environment.NewLine}[Vulkan]   Context: pass={indirectOp.PassIndex} target='{targetName}' pipe={indirectOp.Context.PipelineIdentity}({pipelineLabel}) vp={indirectOp.Context.ViewportIdentity} drawCount={indirectOp.DrawCount} stride={indirectOp.Stride} useCount={indirectOp.UseCount}";
             }
 
+            if (op is MeshTaskDispatchIndirectCountOp meshTaskOp)
+            {
+                return
+                    $"{Environment.NewLine}[Vulkan]   Context: pass={meshTaskOp.PassIndex} target='{targetName}' pipe={meshTaskOp.Context.PipelineIdentity}({pipelineLabel}) vp={meshTaskOp.Context.ViewportIdentity} maxDrawCount={meshTaskOp.MaxDrawCount} stride={meshTaskOp.Stride}";
+            }
+
             return
                 $"{Environment.NewLine}[Vulkan]   Context: pass={op.PassIndex} target='{targetName}' pipe={op.Context.PipelineIdentity}({pipelineLabel}) vp={op.Context.ViewportIdentity}";
         }
@@ -125,6 +131,8 @@ namespace XREngine.Rendering.Vulkan
                     $"pass={drawOp.PassIndex} pipe={drawOp.Context.PipelineIdentity}({pipelineLabel}) vp={drawOp.Context.ViewportIdentity} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' instances={drawOp.Draw.Instances} stereo={drawOp.Draw.IsStereoPass}",
                 IndirectDrawOp indirectOp =>
                     $"pass={indirectOp.PassIndex} pipe={indirectOp.Context.PipelineIdentity}({pipelineLabel}) vp={indirectOp.Context.ViewportIdentity} indirectDraws={indirectOp.DrawCount} useCount={indirectOp.UseCount}",
+                MeshTaskDispatchIndirectCountOp meshTaskOp =>
+                    $"pass={meshTaskOp.PassIndex} pipe={meshTaskOp.Context.PipelineIdentity}({pipelineLabel}) vp={meshTaskOp.Context.ViewportIdentity} meshTaskMaxDraws={meshTaskOp.MaxDrawCount}",
                 BlitOp blitOp =>
                     $"pass={blitOp.PassIndex} pipe={blitOp.Context.PipelineIdentity}({pipelineLabel}) vp={blitOp.Context.ViewportIdentity} color={blitOp.ColorBit} depth={blitOp.DepthBit} stencil={blitOp.StencilBit}",
                 ClearOp clearOp =>
@@ -1045,6 +1053,13 @@ namespace XREngine.Rendering.Vulkan
                             fboOnlyDrawOps++;
                         }
                         break;
+                    case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
+                        RememberPipelineName(meshTaskDispatch.Context);
+                        drawCount++;
+                        swapchainWriteCount++;
+                        swapchainDrawWrites++;
+                        MarkSwapchainWriter(nameof(MeshTaskDispatchIndirectCountOp), BuildSwapchainWriterDetail(meshTaskDispatch), meshTaskDispatch.PassIndex, opScanIndex, meshTaskDispatch.Context.PipelineIdentity);
+                        break;
                     case BlitOp blit:
                         RememberPipelineName(blit.Context);
                         blitCount++;
@@ -1649,7 +1664,7 @@ namespace XREngine.Rendering.Vulkan
                                 op.PassIndex != int.MinValue || activePassIndex != int.MinValue,
                                 "Vulkan frame op reached recording with int.MinValue pass index outside a documented active-pass bootstrap.");
                             droppedFrameOps++;
-                            if (op is MeshDrawOp or IndirectDrawOp)
+                            if (op is MeshDrawOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
                                 droppedDrawOps++;
                             if (op is ComputeDispatchOp)
                                 droppedComputeOps++;
@@ -1666,7 +1681,7 @@ namespace XREngine.Rendering.Vulkan
                         if (skipUiPipelineOps && op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
                         {
                             droppedFrameOps++;
-                            if (op is MeshDrawOp or IndirectDrawOp)
+                            if (op is MeshDrawOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
                                 droppedDrawOps++;
                             if (op is ComputeDispatchOp)
                                 droppedComputeOps++;
@@ -1819,6 +1834,18 @@ namespace XREngine.Rendering.Vulkan
                         }
                         break;
 
+                    case MeshTaskDispatchIndirectCountOp meshTaskOp:
+                        if (!renderPassActive || activeTarget is not null)
+                        {
+                            EndActiveRenderPass();
+                            BeginRenderPassForTarget(null, opPassIndex, activeContext);
+                        }
+
+                        CmdBeginLabel(commandBuffer, "MeshTaskDispatchIndirectCount");
+                        RecordMeshTaskDispatchIndirectCountOp(commandBuffer, meshTaskOp);
+                        CmdEndLabel(commandBuffer);
+                        break;
+
                     case ComputeDispatchOp computeOp:
                         EndActiveRenderPass();
                         if (secondaryBucketByStart is not null &&
@@ -1839,7 +1866,7 @@ namespace XREngine.Rendering.Vulkan
                     catch (Exception opEx)
                     {
                         droppedFrameOps++;
-                        if (op is MeshDrawOp or IndirectDrawOp)
+                        if (op is MeshDrawOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
                             droppedDrawOps++;
                         if (op is ComputeDispatchOp)
                             droppedComputeOps++;
@@ -2122,6 +2149,9 @@ namespace XREngine.Rendering.Vulkan
                     break;
                 case IndirectDrawOp indirectDrawOp:
                     RecordIndirectDrawOp(secondaryCommandBuffer, indirectDrawOp);
+                    break;
+                case MeshTaskDispatchIndirectCountOp meshTaskDispatchOp:
+                    RecordMeshTaskDispatchIndirectCountOp(secondaryCommandBuffer, meshTaskDispatchOp);
                     break;
                 case ComputeDispatchOp computeDispatchOp:
                     RecordComputeDispatchOp(secondaryCommandBuffer, imageIndex, computeDispatchOp);
@@ -2527,6 +2557,84 @@ namespace XREngine.Rendering.Vulkan
                     apiCalls: 1,
                     submittedDraws: op.DrawCount);
             }
+        }
+
+        private void RecordMeshTaskDispatchIndirectCountOp(CommandBuffer commandBuffer, MeshTaskDispatchIndirectCountOp op)
+        {
+            if (!SupportsVulkanMeshTaskIndirectCount || _extMeshShader is null)
+            {
+                Debug.VulkanWarning("RecordMeshTaskDispatchIndirectCountOp: VK_EXT_mesh_shader indirect-count dispatch is unavailable.");
+                return;
+            }
+
+            var indirectBuffer = op.IndirectBuffer.BufferHandle;
+            if (indirectBuffer is null || !indirectBuffer.HasValue)
+            {
+                Debug.VulkanWarning("RecordMeshTaskDispatchIndirectCountOp: Invalid indirect buffer.");
+                return;
+            }
+
+            var countBuffer = op.CountBuffer.BufferHandle;
+            if (countBuffer is null || !countBuffer.HasValue)
+            {
+                Debug.VulkanWarning("RecordMeshTaskDispatchIndirectCountOp: Invalid count buffer.");
+                return;
+            }
+
+            if (op.MaxDrawCount == 0u)
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.MeshTaskIndirect.ZeroMaxDrawCount",
+                    TimeSpan.FromSeconds(1),
+                    "RecordMeshTaskDispatchIndirectCountOp skipped: maxDrawCount was zero.");
+                return;
+            }
+
+            bool plannerCoversIndirectBarrier =
+                PlannerCoversIndirectBufferTransition(op.PassIndex, indirectBuffer.Value) &&
+                PlannerCoversIndirectBufferTransition(op.PassIndex, countBuffer.Value);
+            if (!plannerCoversIndirectBarrier)
+            {
+                MemoryBarrier memoryBarrier = new()
+                {
+                    SType = StructureType.MemoryBarrier,
+                    SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
+                    DstAccessMask = AccessFlags.IndirectCommandReadBit,
+                };
+
+                CmdPipelineBarrierTracked(
+                    commandBuffer,
+                    PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+                    PipelineStageFlags.DrawIndirectBit,
+                    DependencyFlags.None,
+                    1,
+                    &memoryBarrier,
+                    0,
+                    null,
+                    0,
+                    null);
+
+                RuntimeEngine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
+            }
+            else
+            {
+                RuntimeEngine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount: 0, redundantCount: 1);
+            }
+
+            _extMeshShader.CmdDrawMeshTasksIndirectCount(
+                commandBuffer,
+                indirectBuffer.Value,
+                (ulong)op.ByteOffset,
+                countBuffer.Value,
+                (ulong)op.CountByteOffset,
+                op.MaxDrawCount,
+                op.Stride);
+
+            RuntimeEngine.Rendering.Stats.RecordVulkanIndirectSubmission(
+                usedCountPath: true,
+                usedLoopFallback: false,
+                apiCalls: 1,
+                submittedDraws: op.MaxDrawCount);
         }
 
         private void RecordComputeDispatchOp(CommandBuffer commandBuffer, uint imageIndex, ComputeDispatchOp op)

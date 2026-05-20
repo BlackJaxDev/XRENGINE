@@ -1,16 +1,21 @@
 # Bindless Deferred Texturing Plan
 
-Last Updated: 2026-03-16
-Status: design
+Last Updated: 2026-05-19
+Status: historical; superseded by [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
 Scope: renderer-level plan for adding bindless deferred texturing to XRENGINE across OpenGL and Vulkan, using TheRealMJP DeferredTexturing sample as the main external reference point.
+
+This file is preserved as the original bindless deferred texturing design record. Ongoing texturing architecture and phased work now live in:
+
+- [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
+- [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 
 Related docs:
 
-- [Production GPU-driven rendering roadmap](../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
-- [GPU Render Pass Pipeline](gpu-render-pass-pipeline.md)
-- [Transparency And OIT Implementation Plan](transparency-and-oit-implementation-plan.md)
-- [OpenGL Renderer](../../architecture/rendering/opengl-renderer.md)
-- [Vulkan Renderer](../../architecture/rendering/vulkan-renderer.md)
+- [Production GPU-driven rendering roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
+- [GPU Render Pass Pipeline](../rendering/gpu/gpu-render-pass-pipeline.md)
+- [Transparency And OIT Implementation Plan](../rendering/transparency-and-oit-implementation-plan.md)
+- [OpenGL Renderer](../../../architecture/rendering/opengl-renderer.md)
+- [Vulkan Renderer](../../../architecture/rendering/vulkan-renderer.md)
 
 ---
 

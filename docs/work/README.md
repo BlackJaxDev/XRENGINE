@@ -34,7 +34,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Model import cooked asset cache | Active | [todo/assets/model-import-binary-cache-todo.md](todo/assets/model-import-binary-cache-todo.md), [design/assets/model-import-binary-cache-design.md](design/assets/model-import-binary-cache-design.md), [../features/model-import.md](../features/model-import.md) | Engine-native cooked `.asset` cache authority for warm model imports, including cached LOD and meshlet payloads plus manual source reimport. |
 | Advanced flat mirrors | Active | [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md) | Planar reflection design covering CPU/GPU dispatch, forward/deferred integration, stencil masking, reflection targets, recursion, and VR. |
 | Shadow filtering and atlas allocation | Active | [todo/rendering/shadows/directional-cascade-layered-rendering-todo.md](todo/rendering/shadows/directional-cascade-layered-rendering-todo.md), [todo/rendering/shadows/local-shadow-frustum-culling-todo.md](todo/rendering/shadows/local-shadow-frustum-culling-todo.md), [todo/rendering/shadows/shadow-atlas-overhaul-todo.md](todo/rendering/shadows/shadow-atlas-overhaul-todo.md), [design/shadow-filtering-vsm-evsm-plan.md](design/shadow-filtering-vsm-evsm-plan.md), [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md), [design/shadow-resource-migration-audit.md](design/shadow-resource-migration-audit.md), [design/post-v1-advanced-shadow-features-plan.md](design/post-v1-advanced-shadow-features-plan.md) | VSM/EVSM filtering, allocator performance, relevance-driven request resolution, per-cascade and per-face stability under contention, and post-v1 advanced shadow follow-ups for directional, spot, and point lights. Directional cascade layered rendering and the first shadow-atlas allocator/stability overhaul slice are implemented, including resident TTL reuse and point-face group publication; broader receiver-aware relevance and editor diagnostics remain active. |
-| Texture management runtime | Implemented + validation | [todo/texturing/texture-streaming-consolidation-todo.md](todo/texturing/texture-streaming-consolidation-todo.md), [todo/texturing/texture-management-runtime-todo.md](todo/texturing/texture-management-runtime-todo.md), [todo/texturing/texture-streaming-cooked-cache-todo.md](todo/texturing/texture-streaming-cooked-cache-todo.md), [design/texturing/texture-management-runtime-design.md](design/texturing/texture-management-runtime-design.md) | Consolidated runtime texture residency, upload scheduling, GL storage safety, VRAM telemetry, cooked-cache manifest reads, and dedicated texture logging. Editor scene validation remains. |
+| Texture runtime, streaming, and virtual texturing | Active | [design/texturing/texture-runtime-streaming-virtual-texturing-design.md](design/texturing/texture-runtime-streaming-virtual-texturing-design.md), [todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md](todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md), [testing/texture-runtime-streaming-validation.md](testing/texture-runtime-streaming-validation.md) | Canonical texturing roadmap. v1 runtime streaming is implemented and needs scene validation; next phases cover safe sparse pages, full SVT, Vulkan parity, bindless deferred texturing, RVT, and neural compression. |
 | OpenVR VRClient GPU handoff | Active | [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md) | Zero-readback cross-process eye-texture handoff from the engine app to the legacy OpenVR companion process. |
 | GPU-driven animation | Active | [todo/gpu-driven-animation-todo.md](todo/gpu-driven-animation-todo.md) | Phased execution tracker for the [GPU-driven animation architecture](design/gpu-driven-animation.md). |
 | GPU skinning buffer compression | Active | [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md) | XRMesh and XRMeshRenderer influence/palette compression plan for direct and compute skinning. |
@@ -76,7 +76,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
 - [todo/rendering/shadows/shadow-atlas-overhaul-todo.md](todo/rendering/shadows/shadow-atlas-overhaul-todo.md)
 - [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md)
-- [todo/texturing/texture-streaming-consolidation-todo.md](todo/texturing/texture-streaming-consolidation-todo.md)
+- [todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md](todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 - [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md)
 - [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
 - [todo/vulkan.md](todo/vulkan.md)
@@ -87,7 +87,6 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
 - [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md)
 - [design/atmospheric-scattering-component-design.md](design/atmospheric-scattering-component-design.md)
-- [design/bindless-deferred-texturing-plan.md](design/bindless-deferred-texturing-plan.md)
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
 - [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)
 - [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
@@ -113,8 +112,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/source-backed-csharp-script-components.md](design/source-backed-csharp-script-components.md)
 - [design/startup-fps-drop-remediation-plan.md](design/startup-fps-drop-remediation-plan.md)
 - [design/transparency-and-oit-implementation-plan.md](design/transparency-and-oit-implementation-plan.md)
-- [design/texturing/texture-management-runtime-design.md](design/texturing/texture-management-runtime-design.md)
-- [design/texturing/sparse-texture-streaming-plan.md](design/texturing/sparse-texture-streaming-plan.md)
+- [design/texturing/texture-runtime-streaming-virtual-texturing-design.md](design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 - [design/vxao-implementation-plan.md](design/vxao-implementation-plan.md)
 - [design/zero-readback-gpu-driven-rendering-plan.md](design/zero-readback-gpu-driven-rendering-plan.md)
 
@@ -128,6 +126,7 @@ Generated audit outputs should be treated as disposable report artifacts rather 
 - [testing/gltf-import.md](testing/gltf-import.md)
 - [testing/physics-chain-performance.md](testing/physics-chain-performance.md)
 - [testing/texture-management-runtime-baseline-2026-05-01.md](testing/texture-management-runtime-baseline-2026-05-01.md)
+- [testing/texture-runtime-streaming-validation.md](testing/texture-runtime-streaming-validation.md)
 - [testing/texture-streaming-run-analysis-2026-05-01-180642.md](testing/texture-streaming-run-analysis-2026-05-01-180642.md)
 
 ## Notes

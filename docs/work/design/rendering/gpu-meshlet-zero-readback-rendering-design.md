@@ -66,7 +66,7 @@ Source import/cache
 
 ### 4.1 Backend Capability
 
-`OpenGLRenderer` detects `NVMeshShader`, but `AbstractRenderer.SupportsMeshletDispatch()` defaults to `false` and OpenGL does not override it. This means `GpuMeshlet` can still fall back before the meshlet path runs.
+The renderer abstraction exposes mesh shader dialect and dispatch probes. `SupportsMeshletDispatch()` is production-only: it must remain false until a backend has matching shaders plus indirect-count mesh task dispatch from GPU-written counts. OpenGL `GL_NV_mesh_shader` direct dispatch is diagnostic-only and does not satisfy production `GpuMeshlet`.
 
 Required change:
 
@@ -426,8 +426,8 @@ Logs should include render pass, strategy, backend dialect, source model/cache p
 
 ### Phase 1: Capability And Bring-Up Honesty
 
-- Override `SupportsMeshletDispatch()` only for backends that can run the current path.
-- Add dialect reporting.
+- Override `SupportsMeshletDispatch()` only for backends that can run the production zero-readback path.
+- Add dialect and direct-vs-indirect-count dispatch reporting.
 - Keep `GL_NV_mesh_shader` direct dispatch as experimental if indirect-count dispatch is not available.
 - Add tests proving `GpuMeshlet` fallback is explicit.
 

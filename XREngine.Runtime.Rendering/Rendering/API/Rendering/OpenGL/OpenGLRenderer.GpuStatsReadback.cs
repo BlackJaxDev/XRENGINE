@@ -248,6 +248,15 @@ namespace XREngine.Rendering.OpenGL
                         if (triangles > 0u)
                             RuntimeEngine.Rendering.Stats.AddTrianglesRendered(SaturateToInt(triangles));
                     }
+
+                    if (values.Length > (int)GpuStatsLayout.MeshletTaskRecordsHiZCulled)
+                    {
+                        RuntimeEngine.Rendering.Stats.RecordGpuMeshletTaskStats(
+                            values[(int)GpuStatsLayout.MeshletTaskRecordsEmitted],
+                            values[(int)GpuStatsLayout.MeshletTaskRecordsFrustumCulled],
+                            values[(int)GpuStatsLayout.MeshletTaskRecordsConeCulled],
+                            values[(int)GpuStatsLayout.MeshletTaskRecordsHiZCulled]);
+                    }
                     break;
                 }
             }

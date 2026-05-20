@@ -138,6 +138,7 @@ public partial class XRMesh : ICookedBinarySerializable
 
         size += plan.Skinning.GetSerializedLength();
         size += plan.Blendshapes.GetSerializedLength();
+        size += CalculateMeshletPayloadSize(MeshletPayload);
 
         plan.TotalSize = size;
         return plan;
@@ -169,6 +170,7 @@ public partial class XRMesh : ICookedBinarySerializable
 
         WriteSkinningData(writer, plan.Skinning);
         WriteBlendshapeData(writer, plan.Blendshapes);
+        WriteMeshletPayload(writer, MeshletPayload);
     }
 
     private void ReadMeshPayload(CookedBinaryReader reader)
@@ -208,6 +210,7 @@ public partial class XRMesh : ICookedBinarySerializable
 
         ReadSkinningData(reader);
         ReadBlendshapeData(reader);
+        MeshletPayload = ReadMeshletPayload(reader);
     }
 
     private void ApplyMetadata(MeshMetadata metadata)
@@ -356,6 +359,7 @@ public partial class XRMesh : ICookedBinarySerializable
             && TrySkipVertexBuffers(reader, metadata)
             && TrySkipSkinningData(reader)
             && TrySkipBlendshapeData(reader)
+            && TrySkipMeshletPayload(reader)
             && reader.Position == reader.Length;
     }
 

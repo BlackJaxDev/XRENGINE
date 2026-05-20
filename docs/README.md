@@ -36,7 +36,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Dynamic Shadow Atlas And LOD Allocation Plan](work/design/dynamic-shadow-atlas-lod-plan.md)
 - [Post-v1 Advanced Shadow Features Plan](work/design/post-v1-advanced-shadow-features-plan.md)
 - [Advanced Flat Mirror Rendering Design](work/design/advanced-flat-mirror-rendering-design.md)
-- [Bindless Deferred Texturing Plan](work/design/bindless-deferred-texturing-plan.md)
+- [Texture Runtime, Streaming, And Virtual Texturing Design](work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 - [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md)
 - [Light Volumes](features/gi/light-volumes.md)
 - [Secondary GPU Context](architecture/secondary-gpu-context.md)
@@ -69,7 +69,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Work Docs (WIP / TODO / Design)
 - [Work Docs Index](work/README.md)
 - Active TODOs and design docs are tracked from [Work Docs Index](work/README.md).
-- Representative design docs: [GPU-Driven Animation Architecture](work/design/gpu-driven-animation.md), [Advanced Flat Mirror Rendering Design](work/design/advanced-flat-mirror-rendering-design.md), [Affine Matrix Integration Plan](work/design/affine-matrix-integration-plan.md), [Bindless Deferred Texturing Plan](work/design/bindless-deferred-texturing-plan.md), [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md), [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md), [Runtime Modularization And Bootstrap Extraction Plan](work/design/runtime-modularization-plan.md)
+- Representative design docs: [GPU-Driven Animation Architecture](work/design/gpu-driven-animation.md), [Advanced Flat Mirror Rendering Design](work/design/advanced-flat-mirror-rendering-design.md), [Affine Matrix Integration Plan](work/design/affine-matrix-integration-plan.md), [Texture Runtime, Streaming, And Virtual Texturing Design](work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md), [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md), [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md), [Runtime Modularization And Bootstrap Extraction Plan](work/design/runtime-modularization-plan.md)
 - Representative TODOs: [GPU-Driven Animation TODO](work/todo/gpu-driven-animation-todo.md)
 
 ## Tips

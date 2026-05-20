@@ -11,7 +11,7 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 | `CpuDirect` | CPU traversal and direct mesh draw submission. | None in the steady-state render path. | Not applicable. | CPU renderer diagnostics only. |
 | `GpuIndirectInstrumented` | GPU indirect path for bring-up, validation, and inspection. | Allowed and counted. | Allowed only when explicitly requested and strict profiles are not active. | Allowed. |
 | `GpuIndirectZeroReadback` | Production GPU indirect path. | Forbidden in the steady-state render path. | Forbidden. | Forbidden; use counters and warnings outside the hot path. |
-| `GpuMeshlet` | Meshlet/task-mesh submission. | Forbidden by contract. | No implicit CPU fallback; unsupported renderers fall back to traditional GPU indirect with a warning. | Backend bring-up only. |
+| `GpuMeshlet` | Production meshlet/task-mesh submission from GPU-written counts. | Forbidden by contract. | No implicit CPU fallback; unsupported renderers fall back visibly to `GpuIndirectZeroReadback` when possible. | Backend bring-up only when explicitly diagnostic. |
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
@@ -23,10 +23,25 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 - `Engine.EffectiveSettings.VulkanGpuDrivenProfile`
 - `EnableGpuIndirectDebugLogging`, `EnableGpuIndirectValidationLogging`, and `EnableGpuIndirectCpuFallback`
 - `EnableZeroReadbackMaterialScatter`
-- active renderer probes: `SupportsIndirectCountDraw()` and `SupportsMeshletDispatch()`
+- active renderer probes: `SupportsIndirectCountDraw()`, `MeshShaderDialect`, `SupportsDirectMeshTaskDispatch()`, `SupportsIndirectCountMeshTaskDispatch()`, `SupportsProductionMeshletShaders()`, and `SupportsMeshletDispatch()`
 - `ForceMeshSubmissionStrategy` or `XRE_FORCE_MESH_SUBMISSION_STRATEGY`
 
 Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolves to `GpuIndirectZeroReadback` when indirect-count draw is supported. If zero-readback is requested but indirect-count draw is missing, strict profiles downgrade to `CpuDirect` with a visible warning; permissive profiles downgrade to `GpuIndirectInstrumented`.
+
+## Meshlet Capability Contract
+
+`SupportsMeshletDispatch()` means the backend can run the production zero-readback meshlet path: matching shader dialect, production task/mesh shaders, and indirect-count mesh-task dispatch from GPU-written counts.
+
+The lower-level probes describe partial backend support:
+
+- `MeshShaderDialect` reports `None`, `OpenGLNV`, `OpenGLEXT`, or `VulkanEXT`.
+- `SupportsDirectMeshTaskDispatch()` covers CPU-specified task counts and is diagnostic-only.
+- `SupportsIndirectCountMeshTaskDispatch()` covers backend mesh-task dispatch from GPU-written indirect arguments and GPU-written indirect-command counts.
+- `SupportsProductionMeshletShaders()` covers the task/mesh shader source and binding side of the production path.
+
+OpenGL `GL_NV_mesh_shader` currently exposes direct task dispatch only. It is useful for bring-up and shader diagnostics, but it does not satisfy production `GpuMeshlet`. OpenGL `GL_EXT_mesh_shader` and Vulkan `VK_EXT_mesh_shader` can expose indirect-count task dispatch, but `SupportsMeshletDispatch()` remains false until production task-record shaders are wired for that dialect.
+
+When `GpuMeshlet` is forced on unsupported hardware, the resolver chooses `GpuIndirectZeroReadback` if indirect-count draw is available. If neither production meshlets nor zero-readback indirect can run, strict profiles resolve to `CpuDirect`; permissive diagnostic profiles resolve to `GpuIndirectInstrumented`. Warnings and GPU profiler labels include the requested strategy, selected strategy, backend dialect, and fallback reason.
 
 ## Zero-Readback Material Draw Paths
 
@@ -68,3 +83,5 @@ Dynamic material-table layouts for additional deferred, forward+, Uber, and anno
 ## Kill Switch
 
 Use `Engine.Rendering.Settings.ForceMeshSubmissionStrategy` for local triage. The environment variable `XRE_FORCE_MESH_SUBMISSION_STRATEGY` accepts any `EMeshSubmissionStrategy` name and takes precedence over the setting for the current process.
+
+Forced non-meshlet strategies bypass the resolver. Forced `GpuMeshlet` is capability-gated so it cannot silently select the experimental CPU-count mesh shader path.

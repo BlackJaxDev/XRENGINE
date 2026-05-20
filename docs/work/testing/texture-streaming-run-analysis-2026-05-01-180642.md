@@ -1,8 +1,8 @@
 # Texture Streaming Run Analysis - 2026-05-01 18:06
 
-Status: active investigation
+Status: historical analysis
 
-Follow-up TODO: [Texture Streaming Cooked Cache TODO](../todo/texturing/texture-streaming-cooked-cache-todo.md)
+Follow-up validation: [Texture Runtime Streaming Validation](texture-runtime-streaming-validation.md)
 
 This note analyzes the texture loading, streaming, and VRAM telemetry from the May 1 run where Sponza textures were still slow to become resident, some surfaces stayed visibly low resolution, and slower CPUs could leave surfaces black or placeholder-only for too long.
 

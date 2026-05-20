@@ -272,9 +272,48 @@ internal static partial class RuntimeEngine
 
         public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(bool? requestedGpuDispatch = null)
         {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            bool rendererKnown = renderer is not null;
+            bool supportsIndirectCount = rendererKnown ? renderer!.SupportsIndirectCountDraw() : true;
+            EMeshShaderDialect meshShaderDialect = renderer?.MeshShaderDialect ?? EMeshShaderDialect.None;
+            bool supportsDirectMeshTaskDispatch = renderer?.SupportsDirectMeshTaskDispatch() ?? false;
+            bool supportsIndirectCountMeshTaskDispatch = renderer?.SupportsIndirectCountMeshTaskDispatch() ?? false;
+            bool supportsMeshletDispatch = renderer?.SupportsMeshletDispatch() ?? false;
+
             EMeshSubmissionStrategy? forced = RuntimeEngine.EffectiveSettings.ForceMeshSubmissionStrategy;
             if (forced.HasValue)
+            {
+                if (forced.Value == EMeshSubmissionStrategy.GpuMeshlet)
+                {
+                    EMeshSubmissionStrategy resolved = ResolveForcedMeshletSubmissionStrategy(
+                        supportsMeshletDispatch,
+                        supportsIndirectCount);
+
+                    if (resolved != EMeshSubmissionStrategy.GpuMeshlet)
+                    {
+                        string reason = GetMeshletFallbackReason(
+                            supportsMeshletDispatch,
+                            meshShaderDialect,
+                            supportsDirectMeshTaskDispatch,
+                            supportsIndirectCountMeshTaskDispatch);
+
+                        XREngine.Debug.RenderingWarningEvery(
+                            "RenderDispatch.MeshSubmissionStrategy.UnsupportedGpuMeshlet",
+                            TimeSpan.FromSeconds(2),
+                            "[RenderDispatch] Mesh submission strategy downgraded from {0} to {1}. Dialect={2}; DirectTaskDispatch={3}; IndirectCountTaskDispatch={4}; FallbackReason={5}.",
+                            EMeshSubmissionStrategy.GpuMeshlet,
+                            resolved,
+                            meshShaderDialect,
+                            supportsDirectMeshTaskDispatch,
+                            supportsIndirectCountMeshTaskDispatch,
+                            reason);
+                    }
+
+                    return resolved;
+                }
+
                 return forced.Value;
+            }
 
             if (!(requestedGpuDispatch ?? RuntimeEngine.EffectiveSettings.GPURenderDispatch))
                 return EMeshSubmissionStrategy.CpuDirect;
@@ -291,7 +330,6 @@ internal static partial class RuntimeEngine
                 || RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging
                 || RuntimeEngine.EffectiveSettings.EnableGpuIndirectCpuFallback;
 
-            bool supportsIndirectCount = AbstractRenderer.Current?.SupportsIndirectCountDraw() ?? true;
             if (zeroReadbackRequested)
             {
                 if (supportsIndirectCount)
@@ -308,6 +346,42 @@ internal static partial class RuntimeEngine
             return supportsIndirectCount
                 ? EMeshSubmissionStrategy.GpuIndirectInstrumented
                 : EMeshSubmissionStrategy.CpuDirect;
+        }
+
+        private static EMeshSubmissionStrategy ResolveForcedMeshletSubmissionStrategy(
+            bool supportsMeshletDispatch,
+            bool supportsIndirectCountDraw)
+        {
+            if (supportsMeshletDispatch)
+                return EMeshSubmissionStrategy.GpuMeshlet;
+
+            if (supportsIndirectCountDraw)
+                return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
+            return VulkanFeatureProfile.EnforceStrictNoFallbacks
+                ? EMeshSubmissionStrategy.CpuDirect
+                : EMeshSubmissionStrategy.GpuIndirectInstrumented;
+        }
+
+        private static string GetMeshletFallbackReason(
+            bool supportsMeshletDispatch,
+            EMeshShaderDialect meshShaderDialect,
+            bool supportsDirectMeshTaskDispatch,
+            bool supportsIndirectCountMeshTaskDispatch)
+        {
+            if (supportsMeshletDispatch)
+                return "production meshlet dispatch is available";
+
+            if (meshShaderDialect == EMeshShaderDialect.None)
+                return "no mesh shader dialect is available";
+
+            if (supportsDirectMeshTaskDispatch && !supportsIndirectCountMeshTaskDispatch)
+                return "only diagnostic CPU-count mesh task dispatch is available";
+
+            if (!supportsIndirectCountMeshTaskDispatch)
+                return "production indirect-count mesh task dispatch is unavailable";
+
+            return "production meshlet dispatch is unavailable";
         }
 
         internal static void RaiseSettingsChanged() => SettingsChangedHandlers?.Invoke();
@@ -375,6 +449,19 @@ internal static partial class RuntimeEngine
             public static int GpuTransparencyMaskedVisible { get; private set; }
             public static int GpuTransparencyApproximateVisible { get; private set; }
             public static int GpuTransparencyExactVisible { get; private set; }
+            public static int GpuMeshletRequestedFrames { get; private set; }
+            public static int GpuMeshletProductionFrames { get; private set; }
+            public static int GpuMeshletFallbackFrames { get; private set; }
+            public static int GpuMeshletDispatchSkipped { get; private set; }
+            public static long GpuMeshletTaskRecordsEmitted { get; private set; }
+            public static long GpuMeshletTaskRecordsFrustumCulled { get; private set; }
+            public static long GpuMeshletTaskRecordsConeCulled { get; private set; }
+            public static long GpuMeshletTaskRecordsHiZCulled { get; private set; }
+            public static long GpuMeshletExpansionOverflowCount { get; private set; }
+            public static long GpuMeshletBufferBytesResident { get; private set; }
+            public static int GpuMeshletCacheHits { get; private set; }
+            public static int GpuMeshletCacheMisses { get; private set; }
+            public static int GpuMeshletCacheStale { get; private set; }
             public static long VulkanRequestedDraws { get; private set; }
             public static long VulkanCulledDraws { get; private set; }
             public static long VulkanEmittedIndirectDraws { get; private set; }
@@ -571,6 +658,156 @@ internal static partial class RuntimeEngine
             }
             public static void RecordGpuTransparencyDomainCounts(uint opaqueOrOther, uint masked, uint approximate, uint exact)
                 => RecordGpuTransparencyDomainCounts((int)opaqueOrOther, (int)masked, (int)approximate, (int)exact);
+
+            public static void RecordGpuMeshletStrategyRequested(
+                int renderPass,
+                EMeshSubmissionStrategy requestedStrategy,
+                EMeshSubmissionStrategy selectedStrategy,
+                EMeshShaderDialect dialect,
+                uint commandCount,
+                uint taskCapacity)
+            {
+                if (!EnableTracking)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletStrategyRequested();
+                    return;
+                }
+
+                GpuMeshletRequestedFrames++;
+            }
+
+            public static void RecordGpuMeshletProductionFrame(int eventCount = 1)
+            {
+                if (!EnableTracking || eventCount <= 0)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletProductionFrame(eventCount);
+                    return;
+                }
+
+                GpuMeshletProductionFrames += eventCount;
+            }
+
+            public static void RecordGpuMeshletFallback(int eventCount = 1)
+            {
+                if (!EnableTracking || eventCount <= 0)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletFallback(eventCount);
+                    return;
+                }
+
+                GpuMeshletFallbackFrames += eventCount;
+            }
+
+            public static void RecordGpuMeshletDispatchSkipped(int eventCount = 1)
+            {
+                if (!EnableTracking || eventCount <= 0)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletDispatchSkipped(eventCount);
+                    return;
+                }
+
+                GpuMeshletDispatchSkipped += eventCount;
+            }
+
+            public static void RecordGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled)
+            {
+                if (!EnableTracking)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletTaskStats(emitted, frustumCulled, coneCulled, hiZCulled);
+                    return;
+                }
+
+                GpuMeshletTaskRecordsEmitted += emitted;
+                GpuMeshletTaskRecordsFrustumCulled += frustumCulled;
+                GpuMeshletTaskRecordsConeCulled += coneCulled;
+                GpuMeshletTaskRecordsHiZCulled += hiZCulled;
+            }
+
+            public static void RecordGpuMeshletExpansionOverflow(uint overflowCount)
+            {
+                if (!EnableTracking || overflowCount == 0u)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletExpansionOverflow(overflowCount);
+                    return;
+                }
+
+                GpuMeshletExpansionOverflowCount += overflowCount;
+            }
+
+            public static void RecordGpuMeshletBufferBytesResident(ulong bytes)
+            {
+                if (!EnableTracking)
+                    return;
+
+                long saturated = bytes > long.MaxValue ? long.MaxValue : (long)bytes;
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletBufferBytesResident(saturated);
+                    return;
+                }
+
+                GpuMeshletBufferBytesResident = Math.Max(GpuMeshletBufferBytesResident, saturated);
+            }
+
+            public static void RecordGpuMeshletCacheHit(int eventCount = 1)
+            {
+                if (!EnableTracking || eventCount <= 0)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletCacheHit(eventCount);
+                    return;
+                }
+
+                GpuMeshletCacheHits += eventCount;
+            }
+
+            public static void RecordGpuMeshletCacheMiss(int eventCount = 1)
+            {
+                if (!EnableTracking || eventCount <= 0)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletCacheMiss(eventCount);
+                    return;
+                }
+
+                GpuMeshletCacheMisses += eventCount;
+            }
+
+            public static void RecordGpuMeshletCacheStale(int eventCount = 1)
+            {
+                if (!EnableTracking || eventCount <= 0)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletCacheStale(eventCount);
+                    return;
+                }
+
+                GpuMeshletCacheStale += eventCount;
+            }
 
             public static void RecordOctreeCollect(int visibleRenderables, int emittedCommands)
             {

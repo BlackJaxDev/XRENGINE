@@ -50,8 +50,8 @@ namespace XREngine.Rendering.Meshlets
         private void Initialize()
         {
             // Create shader program with task and mesh shaders
-            var taskShader = ShaderHelper.LoadEngineShader(Path.Combine("Meshlets", "MeshletCulling.task"), EShaderType.Task);
-            var meshShader = ShaderHelper.LoadEngineShader(Path.Combine("Meshlets", "MeshletRender.mesh"), EShaderType.Mesh);
+            var taskShader = ShaderHelper.LoadEngineShader(Path.Combine("Meshlets", "MeshletCullingDiagnostic.task"), EShaderType.Task);
+            var meshShader = ShaderHelper.LoadEngineShader(Path.Combine("Meshlets", "MeshletRenderDiagnostic.mesh"), EShaderType.Mesh);
             var fragmentShader = ShaderHelper.LoadEngineShader(Path.Combine("Meshlets", "MeshletShading.fs"), EShaderType.Fragment);
 
             _taskMeshProgram = new XRRenderProgram(false, true, taskShader, meshShader, fragmentShader);
@@ -78,8 +78,6 @@ namespace XREngine.Rendering.Meshlets
         /// </summary>
         public void AddMesh(XRMesh mesh, uint instanceID, uint materialID, int renderPass, Matrix4x4 transform, MeshletGenerationSettings? settings = null)
         {
-            EnsureInitialized();
-
             settings ??= new MeshletGenerationSettings
             {
                 Enabled = true,
@@ -89,18 +87,20 @@ namespace XREngine.Rendering.Meshlets
             if (!settings.Enabled)
                 return;
 
-            MeshletBuildResult build = MeshletGenerator.Build(mesh, settings);
-            if (build.Meshlets.Length == 0)
+            if (!mesh.TryGetFreshMeshletPayload(settings, lodSettings: null, sourceMeshIdentity: null, out MeshletPayload payload) ||
+                !payload.HasMeshlets)
+            {
                 return;
+            }
 
             // Adjust offsets in returned meshlets and append to global lists
             uint baseVertexOffset = (uint)_vertices.Count;
             uint baseVertOffset = (uint)_vertexIndices.Count;
             uint baseTriOffset = (uint)_triangleIndices.Count;
 
-            for (int i = 0; i < build.Meshlets.Length; i++)
+            for (int i = 0; i < payload.Meshlets.Length; i++)
             {
-                var m = build.Meshlets[i];
+                Meshlet m = payload.Meshlets[i].ToGpuMeshlet(instanceID, materialID, (uint)renderPass);
                 m.MeshID = instanceID;
                 m.MaterialID = materialID;
                 m.RenderPass = (uint)renderPass;
@@ -109,12 +109,12 @@ namespace XREngine.Rendering.Meshlets
                 _meshlets.Add(m);
             }
 
-            _vertices.AddRange(build.Vertices);
-            for (int i = 0; i < build.VertexIndices.Length; i++)
-                _vertexIndices.Add(build.VertexIndices[i] + baseVertexOffset);
-            _triangleIndices.AddRange(build.TriangleIndices);
+            _vertices.AddRange(payload.Vertices);
+            for (int i = 0; i < payload.VertexIndices.Length; i++)
+                _vertexIndices.Add(payload.VertexIndices[i] + baseVertexOffset);
+            _triangleIndices.AddRange(payload.TriangleIndices);
 
-            _meshletOffsets[instanceID] = (_meshlets.Count - build.Meshlets.Length, build.Meshlets.Length);
+            _meshletOffsets[instanceID] = (_meshlets.Count - payload.Meshlets.Length, payload.Meshlets.Length);
             _transforms[instanceID] = transform;
             _buffersDirty = true;
             _transformBufferDirty = true;
@@ -125,8 +125,6 @@ namespace XREngine.Rendering.Meshlets
         /// </summary>
         public void AddMaterial(uint materialID, MeshletMaterial material)
         {
-            EnsureInitialized();
-
             // Ensure materials list is large enough
             while (_materials.Count <= materialID)
                 _materials.Add(default);
@@ -140,7 +138,6 @@ namespace XREngine.Rendering.Meshlets
         /// </summary>
         public void UpdateTransform(uint instanceID, Matrix4x4 transform)
         {
-            EnsureInitialized();
             _transforms[instanceID] = transform;
             _transformBufferDirty = true;
         }

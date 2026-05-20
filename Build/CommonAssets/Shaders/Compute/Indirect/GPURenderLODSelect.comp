@@ -3,6 +3,12 @@
 layout(local_size_x = 256) in;
 
 const uint COMMAND_FLOATS = 20u;
+const uint COMMAND_MESH_ID = 4u;
+const uint COMMAND_SUBMESH_ID = 5u;
+const uint COMMAND_LOD_LEVEL = 12u;
+const uint COMMAND_FLAGS = 13u;
+const uint COMMAND_LOGICAL_MESH_ID = 14u;
+const uint COMMAND_DRAW_ID = 19u;
 const uint LOD_TABLE_FLOATS = 12u;
 const uint FLAG_LOD_ENABLED = 1u << 15u;
 const uint LOD_TRANSITION_UINTS = 4u;
@@ -36,6 +42,8 @@ layout(std430, binding = 4) buffer LODTransitionBuffer
 };
 
 uniform vec3 CameraPosition;
+uniform vec2 ProjectionScale;
+uniform vec2 ViewportSize;
 uniform int InputCommandCount;
 uniform float TransitionFrameStep;
 
@@ -44,9 +52,18 @@ uint ReadMeshDataId(uint entryBase, uint lodLevel)
     return floatBitsToUint(lodTable[entryBase + 1u + lodLevel]);
 }
 
-float ReadMaxDistance(uint entryBase, uint lodLevel)
+float ReadMinProjectedRadius(uint entryBase, uint lodLevel)
 {
     return lodTable[entryBase + 5u + lodLevel];
+}
+
+float ComputeProjectedScreenRadius(vec3 center, float radius)
+{
+    float distanceToCenter = max(length(CameraPosition - center), 0.001);
+    float pixelScaleX = abs(ProjectionScale.x) * max(ViewportSize.x, 1.0) * 0.5;
+    float pixelScaleY = abs(ProjectionScale.y) * max(ViewportSize.y, 1.0) * 0.5;
+    float pixelScale = max(pixelScaleX, pixelScaleY);
+    return max(radius, 0.0) * pixelScale / distanceToCenter;
 }
 
 uint FindNearestLoadedMeshDataId(uint entryBase, uint lodCount, uint preferredLevel, out uint resolvedLevel)
@@ -92,11 +109,11 @@ void main()
     if (base + COMMAND_FLOATS > uint(culled.length()))
         return;
 
-    uint flags = floatBitsToUint(culled[base + 13u]);
+    uint flags = floatBitsToUint(culled[base + COMMAND_FLAGS]);
     if ((flags & FLAG_LOD_ENABLED) == 0u)
         return;
 
-    uint logicalMeshID = floatBitsToUint(culled[base + 14u]);
+    uint logicalMeshID = floatBitsToUint(culled[base + COMMAND_LOGICAL_MESH_ID]);
     if (logicalMeshID == 0u)
         return;
 
@@ -110,14 +127,14 @@ void main()
 
     vec3 center = vec3(culled[base + 0u], culled[base + 1u], culled[base + 2u]);
     float radius = culled[base + 3u];
-    float distanceToCamera = max(0.0, length(CameraPosition - center) - radius);
+    float projectedScreenRadius = ComputeProjectedScreenRadius(center, radius);
 
     uint selectedLevel = 0u;
     uint maxLevel = min(lodCount, 4u);
     for (uint lodLevel = 0u; lodLevel < maxLevel; ++lodLevel)
     {
         selectedLevel = lodLevel;
-        if (distanceToCamera <= ReadMaxDistance(entryBase, lodLevel))
+        if (lodLevel == maxLevel - 1u || projectedScreenRadius >= ReadMinProjectedRadius(entryBase, lodLevel))
             break;
     }
 
@@ -129,9 +146,9 @@ void main()
     if (resolvedLevel != selectedLevel && logicalMeshID < uint(lodRequestMask.length()))
         atomicOr(lodRequestMask[logicalMeshID], 1u << min(selectedLevel, 31u));
 
-    uint currentMeshID = floatBitsToUint(culled[base + 4u]);
-    uint currentLodLevel = floatBitsToUint(culled[base + 12u]);
-    uint drawID = floatBitsToUint(culled[base + 19u]);
+    uint currentMeshID = floatBitsToUint(culled[base + COMMAND_MESH_ID]);
+    uint currentLodLevel = floatBitsToUint(culled[base + COMMAND_LOD_LEVEL]);
+    uint drawID = floatBitsToUint(culled[base + COMMAND_DRAW_ID]);
     uint transitionBase = drawID * LOD_TRANSITION_UINTS;
     if (transitionBase + 3u >= uint(lodTransitions.length()))
         return;
@@ -160,9 +177,9 @@ void main()
         }
     }
 
-    culled[base + 4u] = uintBitsToFloat(selectedMeshID);
-    culled[base + 5u] = uintBitsToFloat((selectedMeshID << 16u) | (floatBitsToUint(culled[base + 5u]) & 0xFFFFu));
-    culled[base + 12u] = uintBitsToFloat(resolvedLevel);
+    culled[base + COMMAND_MESH_ID] = uintBitsToFloat(selectedMeshID);
+    culled[base + COMMAND_SUBMESH_ID] = uintBitsToFloat((selectedMeshID << 16u) | (floatBitsToUint(culled[base + COMMAND_SUBMESH_ID]) & 0xFFFFu));
+    culled[base + COMMAND_LOD_LEVEL] = uintBitsToFloat(resolvedLevel);
 
     lodTransitions[transitionBase + 0u] = previousMeshID;
     lodTransitions[transitionBase + 1u] = previousLodLevel;

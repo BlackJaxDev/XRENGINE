@@ -345,15 +345,15 @@ public class GpuRenderingBacklogTests
         var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
         var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
 
-        scene.RegisterLogicalMeshLODs([(lod0, 5.0f), (lod1, 25.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+        scene.RegisterLogicalMeshLODs([(lod0, 96.0f), (lod1, 0.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
         scene.RebuildAtlasIfDirty(EAtlasTier.Dynamic);
 
         scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry entry).ShouldBeTrue();
         entry.LODCount.ShouldBe(2u);
         entry.LOD0_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod0));
         entry.LOD1_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod1));
-        entry.LOD0_MaxDistance.ShouldBe(5.0f);
-        entry.LOD1_MaxDistance.ShouldBe(float.MaxValue);
+        entry.LOD0_MinProjectedRadiusPixels.ShouldBe(96.0f);
+        entry.LOD1_MinProjectedRadiusPixels.ShouldBe(0.0f);
 
         scene.TryGetMeshDataEntry(entry.LOD0_MeshDataID, out _).ShouldBeTrue();
         scene.TryGetMeshDataEntry(entry.LOD1_MeshDataID, out _).ShouldBeTrue();
@@ -365,12 +365,12 @@ public class GpuRenderingBacklogTests
         var scene = new GPUScene();
         var mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
 
-        scene.RegisterLogicalMeshLODs([(mesh, 10.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+        scene.RegisterLogicalMeshLODs([(mesh, 64.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
 
         scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry entry).ShouldBeTrue();
         entry.LODCount.ShouldBe(1u);
         entry.LOD0_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, mesh));
-        entry.LOD0_MaxDistance.ShouldBe(float.MaxValue);
+        entry.LOD0_MinProjectedRadiusPixels.ShouldBe(0.0f);
         entry.LOD1_MeshDataID.ShouldBe(0u);
     }
 
@@ -381,7 +381,7 @@ public class GpuRenderingBacklogTests
         var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
         var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
 
-        scene.RegisterLogicalMeshLODs([(lod0, 5.0f), (lod1, 25.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+        scene.RegisterLogicalMeshLODs([(lod0, 96.0f), (lod1, 0.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
         uint lod1MeshId = GetOrCreateMeshId(scene, lod1);
 
         scene.ReleaseLOD(logicalMeshId, 1, out string? releaseFailure).ShouldBeTrue(releaseFailure);
@@ -400,7 +400,7 @@ public class GpuRenderingBacklogTests
         var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
         var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
 
-        scene.RegisterLogicalMeshLODs([(lod0, 5.0f), (lod1, 25.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+        scene.RegisterLogicalMeshLODs([(lod0, 96.0f), (lod1, 0.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
         scene.LODRequestBuffer.SetDataRawAtIndex(logicalMeshId, 0b10u);
 
         List<(uint logicalMeshId, uint lodMask)> requests = scene.DrainLODRequests();
@@ -416,11 +416,73 @@ public class GpuRenderingBacklogTests
         string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp");
 
         source.ShouldContain("FLAG_LOD_ENABLED");
-        source.ShouldContain("uint logicalMeshID = floatBitsToUint(culled[base + 46u])");
+        source.ShouldContain("const uint COMMAND_LOGICAL_MESH_ID = 14u;");
+        source.ShouldContain("uint logicalMeshID = floatBitsToUint(culled[base + COMMAND_LOGICAL_MESH_ID])");
         source.ShouldContain("uint lodCount = floatBitsToUint(lodTable[entryBase + 0u])");
         source.ShouldContain("atomicOr(lodRequestMask[logicalMeshID], 1u << min(selectedLevel, 31u))");
-        source.ShouldContain("culled[base + 36u] = uintBitsToFloat(selectedMeshID)");
-        source.ShouldContain("culled[base + 44u] = uintBitsToFloat(resolvedLevel)");
+        source.ShouldContain("culled[base + COMMAND_MESH_ID] = uintBitsToFloat(selectedMeshID)");
+        source.ShouldContain("culled[base + COMMAND_LOD_LEVEL] = uintBitsToFloat(resolvedLevel)");
+    }
+
+    [Test]
+    public void LOD_SelectShader_UsesProjectedScreenSpaceRadius()
+    {
+        string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string lodSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Models/Meshes/SubMeshLOD.cs");
+        string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AtlasManagement.cs");
+
+        shaderSource.ShouldContain("uniform vec2 ProjectionScale;");
+        shaderSource.ShouldContain("uniform vec2 ViewportSize;");
+        shaderSource.ShouldContain("float ComputeProjectedScreenRadius(vec3 center, float radius)");
+        shaderSource.ShouldContain("projectedScreenRadius >= ReadMinProjectedRadius(entryBase, lodLevel)");
+        shaderSource.ShouldNotContain("ReadMaxDistance");
+        shaderSource.ShouldNotContain("distanceToCamera <= ReadMaxDistance");
+
+        passSource.ShouldContain("_lodSelectComputeShader.Uniform(\"ProjectionScale\", ResolveLodProjectionScale(camera));");
+        passSource.ShouldContain("_lodSelectComputeShader.Uniform(\"ViewportSize\", ResolveLodViewportSize());");
+        passSource.ShouldContain("RuntimeEngine.Rendering.State.RenderArea");
+        lodSource.ShouldContain("public float MinProjectedScreenRadiusPixels");
+        gpuSceneSource.ShouldContain("ResolveMinProjectedRadiusPixels(lod, lodMeshes.Count)");
+        gpuSceneSource.ShouldContain("DefaultLod0MinProjectedRadiusPixels");
+        gpuSceneSource.ShouldNotContain("lodMeshes.Add((lodMesh, lod.MaxVisibleDistance))");
+    }
+
+    [Test]
+    public void LOD_ProjectRadiusSelection_DifferentiatesLargeNearAndSmallNearMeshes()
+    {
+        Vector2 projectionScale = Vector2.One;
+        Vector2 viewportSize = new(1280.0f, 720.0f);
+        float cameraDistance = 10.0f;
+        float lod0MinProjectedRadius = 80.0f;
+
+        float largeProjectedRadius = ComputeProjectedRadiusPixels(2.0f, cameraDistance, projectionScale, viewportSize);
+        float smallProjectedRadius = ComputeProjectedRadiusPixels(0.25f, cameraDistance, projectionScale, viewportSize);
+
+        largeProjectedRadius.ShouldBeGreaterThan(lod0MinProjectedRadius);
+        smallProjectedRadius.ShouldBeLessThan(lod0MinProjectedRadius);
+        SelectProjectedLodLevel(largeProjectedRadius, [lod0MinProjectedRadius, 0.0f]).ShouldBe(0u);
+        SelectProjectedLodLevel(smallProjectedRadius, [lod0MinProjectedRadius, 0.0f]).ShouldBe(1u);
+
+        static float ComputeProjectedRadiusPixels(float radius, float distanceToCenter, Vector2 projectionScale, Vector2 viewportSize)
+        {
+            float pixelScaleX = MathF.Abs(projectionScale.X) * MathF.Max(viewportSize.X, 1.0f) * 0.5f;
+            float pixelScaleY = MathF.Abs(projectionScale.Y) * MathF.Max(viewportSize.Y, 1.0f) * 0.5f;
+            float pixelScale = MathF.Max(pixelScaleX, pixelScaleY);
+            return MathF.Max(radius, 0.0f) * pixelScale / MathF.Max(distanceToCenter, 0.001f);
+        }
+
+        static uint SelectProjectedLodLevel(float projectedScreenRadius, ReadOnlySpan<float> minProjectedRadii)
+        {
+            int maxLevel = Math.Min(minProjectedRadii.Length, 4);
+            for (int lodLevel = 0; lodLevel < maxLevel; lodLevel++)
+            {
+                if (lodLevel == maxLevel - 1 || projectedScreenRadius >= minProjectedRadii[lodLevel])
+                    return (uint)lodLevel;
+            }
+
+            return 0u;
+        }
     }
 
     [Test]

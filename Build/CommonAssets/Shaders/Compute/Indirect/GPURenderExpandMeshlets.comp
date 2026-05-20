@@ -1,0 +1,242 @@
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+const uint COMMAND_FLOATS = 20u;
+const uint HOT_COMMAND_UINTS = 20u;
+const uint MESHLET_RANGE_UINTS = 4u;
+const uint LOD_TRANSITION_UINTS = 4u;
+const uint LOD_TRANSITION_ACTIVE = 1u;
+const uint MESHLET_TASK_PREVIOUS_LOD_FLAG = 0x80000000u;
+const uint MESHLET_TASK_INDEX_MASK = 0x7FFFFFFFu;
+
+const uint COMMAND_MESH_ID = 4u;
+const uint COMMAND_MATERIAL_ID = 6u;
+const uint COMMAND_DRAW_ID = 19u;
+const uint COMMAND_TRANSFORM_ID = 15u;
+const uint HOT_COMMAND_MESH_ID = 4u;
+const uint HOT_COMMAND_MATERIAL_ID = 6u;
+const uint HOT_COMMAND_DRAW_ID = 14u;
+const uint HOT_COMMAND_TRANSFORM_ID = 16u;
+
+struct DrawMetadata
+{
+    uint DrawID;
+    uint MeshID;
+    uint SubmeshID;
+    uint MaterialID;
+    uint TransformID;
+    uint SkinID;
+    uint RenderPassMask;
+    uint LayerMask;
+    uint Flags;
+    uint LodPolicy;
+    uint StateClassID;
+    uint InstanceCount;
+    uint RenderPass;
+    uint ShaderProgramID;
+    uint LogicalMeshID;
+    uint BoundsID;
+};
+
+struct GpuMeshletRange
+{
+    uint MeshletOffset;
+    uint MeshletCount;
+    uint VertexIndexOffset;
+    uint TriangleIndexOffset;
+};
+
+struct GpuMeshletTaskRecord
+{
+    uint MeshletIndex;
+    uint DrawID;
+    uint TransformID;
+    uint MaterialID;
+};
+
+struct GpuMeshletDescriptor
+{
+    vec4 BoundsSphere;
+    uint VertexOffset;
+    uint TriangleByteOffset;
+    uint VertexCount;
+    uint TriangleCount;
+    vec4 Cone;
+    vec4 ConeApex;
+    uint PackedCone;
+    uint Reserved0;
+    uint Reserved1;
+    uint Reserved2;
+};
+
+layout(std430, binding = 0) readonly buffer VisibleCommandsBuffer { float visibleCommands[]; };
+layout(std430, binding = 1) readonly buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
+layout(std430, binding = 2) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
+layout(std430, binding = 3) readonly buffer MeshDataBuffer { uint meshData[]; };
+layout(std430, binding = 4) readonly buffer MeshletRangeBuffer { GpuMeshletRange meshletRanges[]; };
+layout(std430, binding = 5) readonly buffer MeshletDescriptorBuffer { GpuMeshletDescriptor meshletDescriptors[]; };
+layout(std430, binding = 6) readonly buffer MeshletVertexIndexBuffer { uint meshletVertexIndices[]; };
+layout(std430, binding = 7) readonly buffer MeshletTriangleIndexBuffer { uint meshletTriangleIndices[]; };
+layout(std430, binding = 8) readonly buffer LodTransitionBuffer { uint lodTransitions[]; };
+layout(std430, binding = 9) buffer VisibleMeshletTaskBuffer { GpuMeshletTaskRecord meshletTasks[]; };
+layout(std430, binding = 10) buffer VisibleMeshletTaskCountBuffer { uint MeshletTaskCount; };
+layout(std430, binding = 11) buffer MeshletDispatchIndirectBuffer
+{
+    uint MeshletDispatchX;
+    uint MeshletDispatchY;
+    uint MeshletDispatchZ;
+};
+layout(std430, binding = 12) buffer MeshletExpansionOverflowFlagBuffer { uint MeshletExpansionOverflowFlag; };
+layout(std430, binding = 13) readonly buffer VisibleHotCommandsBuffer { uint visibleHotCommands[]; };
+layout(std430, binding = 14) buffer MeshletDispatchCountBuffer { uint MeshletDispatchCount; };
+
+uniform int InputCommandCount;
+uniform int MaxMeshletTaskRecords;
+uniform int UseHotCommands;
+uniform int ExpandPreviousLodTransitions;
+
+bool TryReserveTaskSlot(out uint outIndex)
+{
+    outIndex = 0u;
+
+    if (MaxMeshletTaskRecords <= 0)
+    {
+        atomicExchange(MeshletExpansionOverflowFlag, 1u);
+        return false;
+    }
+
+    uint capacity = uint(MaxMeshletTaskRecords);
+    while (true)
+    {
+        uint current = MeshletTaskCount;
+        if (current >= capacity)
+        {
+            atomicExchange(MeshletExpansionOverflowFlag, 1u);
+            return false;
+        }
+
+        uint observed = atomicCompSwap(MeshletTaskCount, current, current + 1u);
+        if (observed == current)
+        {
+            outIndex = current;
+            atomicMax(MeshletDispatchX, current + 1u);
+            MeshletDispatchY = 1u;
+            MeshletDispatchZ = 1u;
+            MeshletDispatchCount = 1u;
+            return true;
+        }
+    }
+}
+
+void AppendTask(uint meshletIndex, uint drawID, uint transformID, uint materialID)
+{
+    uint taskIndex;
+    if (!TryReserveTaskSlot(taskIndex))
+        return;
+
+    meshletTasks[taskIndex].MeshletIndex = meshletIndex;
+    meshletTasks[taskIndex].DrawID = drawID;
+    meshletTasks[taskIndex].TransformID = transformID;
+    meshletTasks[taskIndex].MaterialID = materialID;
+}
+
+void ExpandMeshletRange(uint meshID, uint drawID, uint transformID, uint materialID, bool previousLod)
+{
+    if (meshID == 0u || meshID >= uint(meshletRanges.length()))
+        return;
+
+    GpuMeshletRange range = meshletRanges[meshID];
+    if (range.MeshletCount == 0u)
+        return;
+
+    if (range.MeshletOffset >= uint(meshletDescriptors.length()))
+    {
+        atomicExchange(MeshletExpansionOverflowFlag, 1u);
+        return;
+    }
+
+    uint maxMeshlets = uint(meshletDescriptors.length()) - range.MeshletOffset;
+    uint count = min(range.MeshletCount, maxMeshlets);
+    if (count != range.MeshletCount)
+        atomicExchange(MeshletExpansionOverflowFlag, 1u);
+
+    for (uint i = 0u; i < count; ++i)
+    {
+        uint meshletIndex = range.MeshletOffset + i;
+        if ((meshletIndex & MESHLET_TASK_PREVIOUS_LOD_FLAG) != 0u)
+        {
+            atomicExchange(MeshletExpansionOverflowFlag, 1u);
+            return;
+        }
+
+        if (previousLod)
+            meshletIndex |= MESHLET_TASK_PREVIOUS_LOD_FLAG;
+
+        AppendTask(meshletIndex, drawID, transformID, materialID);
+    }
+}
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    uint cpuUpperBound = InputCommandCount > 0 ? uint(InputCommandCount) : 0u;
+    uint total = min(CulledCount, cpuUpperBound);
+
+    if (idx >= total)
+        return;
+
+    uint meshID;
+    uint drawID;
+    uint transformID;
+    uint materialID;
+
+    if (UseHotCommands != 0)
+    {
+        uint base = idx * HOT_COMMAND_UINTS;
+        meshID = visibleHotCommands[base + HOT_COMMAND_MESH_ID];
+        drawID = visibleHotCommands[base + HOT_COMMAND_DRAW_ID];
+        transformID = visibleHotCommands[base + HOT_COMMAND_TRANSFORM_ID];
+        materialID = visibleHotCommands[base + HOT_COMMAND_MATERIAL_ID];
+    }
+    else
+    {
+        uint base = idx * COMMAND_FLOATS;
+        meshID = floatBitsToUint(visibleCommands[base + COMMAND_MESH_ID]);
+        drawID = floatBitsToUint(visibleCommands[base + COMMAND_DRAW_ID]);
+        transformID = floatBitsToUint(visibleCommands[base + COMMAND_TRANSFORM_ID]);
+        materialID = floatBitsToUint(visibleCommands[base + COMMAND_MATERIAL_ID]);
+    }
+
+    if (drawID < uint(Draws.length()))
+    {
+        DrawMetadata meta = Draws[drawID];
+        transformID = meta.TransformID;
+        materialID = meta.MaterialID;
+    }
+
+    if (meshID >= uint(meshData.length()) / MESHLET_RANGE_UINTS)
+        return;
+
+    ExpandMeshletRange(meshID, drawID, transformID, materialID, false);
+
+    if (ExpandPreviousLodTransitions == 0)
+        return;
+
+    uint transitionBase = drawID * LOD_TRANSITION_UINTS;
+    if (transitionBase + 3u >= uint(lodTransitions.length()))
+        return;
+
+    uint previousMeshID = lodTransitions[transitionBase + 0u];
+    uint transitionFlags = lodTransitions[transitionBase + 2u];
+    float transitionProgress = clamp(uintBitsToFloat(lodTransitions[transitionBase + 3u]), 0.0, 1.0);
+    bool transitionActive = (transitionFlags & LOD_TRANSITION_ACTIVE) != 0u && previousMeshID != 0u && transitionProgress < 1.0;
+
+    if (transitionActive)
+        ExpandMeshletRange(previousMeshID, drawID, transformID, materialID, true);
+}

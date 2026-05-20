@@ -1,5 +1,15 @@
 # Sparse Texture Streaming Plan
 
+Last Updated: 2026-05-19
+Status: historical; superseded by [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
+
+This file is preserved as the sparse-texture implementation ledger. The current canonical design records the codebase reality that sparse mip residency is active, while partial page residency is scaffolded but disabled by policy until safer feedback or material-domain requests exist.
+
+Current design and execution tracker:
+
+- [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
+- [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
+
 ## Implementation Status
 
 | Phase | Description | Status |

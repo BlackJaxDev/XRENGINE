@@ -117,7 +117,10 @@ Decision: `DefaultRenderPipeline2` is in scope and was updated alongside the can
   - optional `ForceMeshSubmissionStrategy` override (kill switch)
 - [x] Define backend capability surface on the renderer abstraction:
   - `IRenderer.SupportsIndirectCountDraw`
-  - `IRenderer.SupportsMeshletDispatch` (placeholder; may be `false` everywhere initially)
+  - `IRenderer.MeshShaderDialect`
+  - `IRenderer.SupportsDirectMeshTaskDispatch`
+  - `IRenderer.SupportsIndirectCountMeshTaskDispatch`
+  - `IRenderer.SupportsMeshletDispatch` for production zero-readback meshlet dispatch only
   - Implementations for OpenGL, Vulkan, and DX12 backends; conservative defaults for unknown backends.
 - [x] Add `ForceMeshSubmissionStrategy` setting / CVar that, when set, bypasses the resolver. Used for triage and not intended for production profiles.
 - [x] Ensure `ShippingFast` resolves to `GpuIndirectZeroReadback` when GPU dispatch is requested and supported.

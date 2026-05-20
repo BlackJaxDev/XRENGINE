@@ -13,6 +13,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 
@@ -858,8 +859,121 @@ namespace XREngine.Rendering
         /// <summary>
         /// Returns whether the current API supports task/mesh shader dispatch for meshlet rendering.
         /// </summary>
-        public virtual bool SupportsMeshletDispatch()
+        public virtual EMeshShaderDialect MeshShaderDialect
+            => EMeshShaderDialect.None;
+
+        public virtual bool SupportsDirectMeshTaskDispatch()
             => false;
+
+        public virtual bool SupportsIndirectCountMeshTaskDispatch()
+            => false;
+
+        public virtual bool SupportsProductionMeshletShaders()
+            => false;
+
+        public virtual bool TryDrawMeshTasksIndirectCount(
+            XRDataBuffer indirectBuffer,
+            XRDataBuffer countBuffer,
+            uint maxDrawCount,
+            uint stride,
+            out string failureReason,
+            nuint byteOffset = 0,
+            nuint countByteOffset = 0)
+        {
+            if (!ValidateMeshTasksIndirectCountArgs(
+                indirectBuffer,
+                countBuffer,
+                maxDrawCount,
+                stride,
+                byteOffset,
+                countByteOffset,
+                out failureReason))
+            {
+                return false;
+            }
+
+            failureReason = MeshletDispatchUnsupportedReason;
+            return false;
+        }
+
+        public static bool ValidateMeshTasksIndirectCountArgs(
+            XRDataBuffer? indirectBuffer,
+            XRDataBuffer? countBuffer,
+            uint maxDrawCount,
+            uint stride,
+            nuint byteOffset,
+            nuint countByteOffset,
+            out string failureReason)
+        {
+            if (indirectBuffer is null)
+            {
+                failureReason = "Mesh-task indirect dispatch requires a draw-indirect command buffer.";
+                return false;
+            }
+
+            if (countBuffer is null)
+            {
+                failureReason = "Mesh-task indirect dispatch requires a GPU-written indirect-command count buffer.";
+                return false;
+            }
+
+            if (indirectBuffer.Target != EBufferTarget.DrawIndirectBuffer)
+            {
+                failureReason = $"Mesh-task indirect commands must use {nameof(EBufferTarget.DrawIndirectBuffer)} so OpenGL and Vulkan backends can consume the same buffer.";
+                return false;
+            }
+
+            if (countBuffer.Target is not EBufferTarget.ShaderStorageBuffer and not EBufferTarget.ParameterBuffer)
+            {
+                failureReason = $"Mesh-task indirect command counts must use {nameof(EBufferTarget.ShaderStorageBuffer)} or {nameof(EBufferTarget.ParameterBuffer)}.";
+                return false;
+            }
+
+            if (maxDrawCount == 0u)
+            {
+                failureReason = "Mesh-task indirect dispatch requires maxDrawCount > 0.";
+                return false;
+            }
+
+            if (stride < GPUMeshletLayout.MeshTaskIndirectCommandStride || (stride & 3u) != 0u)
+            {
+                failureReason = $"Mesh-task indirect stride must be at least {GPUMeshletLayout.MeshTaskIndirectCommandStride} bytes and 4-byte aligned.";
+                return false;
+            }
+
+            if (((ulong)byteOffset & 3ul) != 0ul || ((ulong)countByteOffset & 3ul) != 0ul)
+            {
+                failureReason = "Mesh-task indirect byte offsets must be 4-byte aligned.";
+                return false;
+            }
+
+            ulong indirectBytesRequired = (ulong)byteOffset + ((ulong)stride * maxDrawCount);
+            if (indirectBytesRequired > indirectBuffer.Length)
+            {
+                failureReason = $"Mesh-task indirect buffer is too small for maxDrawCount={maxDrawCount}, stride={stride}, offset={byteOffset}.";
+                return false;
+            }
+
+            ulong countBytesRequired = (ulong)countByteOffset + sizeof(uint);
+            if (countBytesRequired > countBuffer.Length)
+            {
+                failureReason = $"Mesh-task dispatch count buffer is too small for offset={countByteOffset}.";
+                return false;
+            }
+
+            failureReason = string.Empty;
+            return true;
+        }
+
+        public virtual string MeshletDispatchUnsupportedReason
+            => MeshShaderDialect == EMeshShaderDialect.None
+                ? "No mesh shader dialect is available on the active renderer."
+                : "The active renderer does not expose production indirect-count mesh task dispatch.";
+
+        public virtual bool SupportsMeshletDispatch()
+            => MeshShaderDialect != EMeshShaderDialect.None &&
+               SupportsIndirectCountMeshTaskDispatch() &&
+               SupportsProductionMeshletShaders();
 
         /// <summary>
         /// Blocks the CPU until all GPU commands have completed.

@@ -13,6 +13,7 @@ namespace XREngine.Rendering.Vulkan
         /// The KHR_draw_indirect_count extension handle, loaded at device creation if available.
         /// </summary>
         private KhrDrawIndirectCount? _khrDrawIndirectCount;
+        private ExtMeshShader? _extMeshShader;
         private KhrExternalMemoryWin32? _khrExternalMemoryWin32;
         private KhrExternalSemaphoreWin32? _khrExternalSemaphoreWin32;
 
@@ -20,6 +21,9 @@ namespace XREngine.Rendering.Vulkan
         /// Indicates whether VK_KHR_draw_indirect_count extension is supported and loaded.
         /// </summary>
         private bool _supportsDrawIndirectCount;
+        private bool _supportsVulkanTaskShaderFeature;
+        private bool _supportsVulkanMeshShaderFeature;
+        private bool _supportsVulkanMeshTaskIndirectCount;
         private bool _supportsDescriptorIndexing;
         private bool _supportsRuntimeDescriptorArray;
         private bool _supportsDescriptorBindingPartiallyBound;
@@ -48,6 +52,7 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsExternalMemoryWin32 => _supportsExternalMemoryWin32 && _khrExternalMemoryWin32 is not null;
         public bool SupportsExternalSemaphoreWin32 => _supportsExternalSemaphoreWin32 && _khrExternalSemaphoreWin32 is not null;
         public bool SupportsBufferDeviceAddress => _supportsBufferDeviceAddress;
+        public bool SupportsVulkanMeshTaskIndirectCount => _supportsVulkanMeshTaskIndirectCount && _extMeshShader is not null;
         public bool SupportsDynamicRendering => _supportsDynamicRendering;
         public bool SupportsIndexTypeUint8 => _supportsIndexTypeUint8;
         public bool SupportsSynchronization2 => _supportsSynchronization2;
@@ -114,6 +119,7 @@ namespace XREngine.Rendering.Vulkan
             "VK_KHR_buffer_device_address",
             "VK_KHR_dynamic_rendering",
             "VK_KHR_maintenance4",
+            "VK_EXT_mesh_shader",
             "VK_NV_memory_decompression",
             "VK_NV_copy_memory_indirect"
         ];
