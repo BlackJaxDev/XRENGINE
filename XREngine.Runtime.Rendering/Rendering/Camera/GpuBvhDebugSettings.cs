@@ -23,6 +23,7 @@ namespace XREngine.Rendering
         private bool _fullOverdrawEnabled = false;
         private int _fullOverdrawSaturationCount = DefaultFullOverdrawSaturationCount;
         private float _fullOverdrawOverlayOpacity = 1.0f;
+        private bool _meshletDebugDisplayEnabled = false;
         private bool _enabled = false;
         private int _maxNodes = 16384;
         private float _lineWidth = 0.0015f;
@@ -48,6 +49,12 @@ namespace XREngine.Rendering
         {
             get => _fullOverdrawOverlayOpacity;
             set => SetField(ref _fullOverdrawOverlayOpacity, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        public bool MeshletDebugDisplayEnabled
+        {
+            get => _meshletDebugDisplayEnabled;
+            set => SetField(ref _meshletDebugDisplayEnabled, value);
         }
 
         public bool Enabled
@@ -95,6 +102,10 @@ namespace XREngine.Rendering
             settings = null;
             return false;
         }
+
+        public static bool IsMeshletDebugDisplayEnabled(XRCamera? camera)
+            => TryResolve(camera, out GpuBvhDebugSettings? settings) &&
+               settings?.MeshletDebugDisplayEnabled == true;
 
         // No GPU uniforms to push; the corresponding pipeline command reads
         // these properties directly when issuing debug visualization passes.

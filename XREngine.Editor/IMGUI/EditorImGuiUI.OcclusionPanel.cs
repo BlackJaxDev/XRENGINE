@@ -177,6 +177,9 @@ public static partial class EditorImGuiUI
         {
             ImGui.Text($"  Passes Active     : {gpuPasses}");
             ImGui.Text($"  Passes w/ Readback: {gpuRb}");
+            int depthHistory = OcclusionTelemetry.GpuDepthSourceHistory;
+            int depthCurrent = OcclusionTelemetry.GpuDepthSourceCurrent;
+            ImGui.Text($"  Depth Source      : history={depthHistory} current={depthCurrent}");
             int passthroughDirty = OcclusionTelemetry.GpuPassesPassthroughDirty;
             if (passthroughDirty > 0)
             {
@@ -199,7 +202,14 @@ public static partial class EditorImGuiUI
                     "  To verify GPU Hi-Z culling counts, temporarily switch the mesh submission strategy " +
                     "to GpuIndirectInstrumented; counts are CPU-readable in that mode.");
             }
-            if (gpuRbAvail && gpuCands > 0 && gpuOccl == 0)
+            if (gpuRbAvail && gpuCands > 0 && gpuOccl == 0 && (depthHistory > 0 || depthCurrent > 0))
+            {
+                string reason = depthHistory > 0
+                    ? "  Nothing occluded - history depth was sampled; tested mesh bounds may still overlap visible pixels."
+                    : "  Nothing occluded - current depth may be empty this early in the frame, or no occluders are in view.";
+                ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f), reason);
+            }
+            if (gpuRbAvail && gpuCands > 0 && gpuOccl == 0 && depthHistory == 0 && depthCurrent == 0)
                 ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f),
                     "  Nothing occluded — depth pyramid may be empty, or no occluders in view.");
         }

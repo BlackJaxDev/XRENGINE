@@ -45,11 +45,15 @@ namespace XREngine.Rendering.Occlusion
         // every candidate through. Next frame's pyramid is built from the freshly
         // rendered depth and the cull resumes normally.
         private static int _gpuPassesPassthroughDirty;
+        private static int _gpuDepthSourceHistory;
+        private static int _gpuDepthSourceCurrent;
         private static int _lastFrameGpuCandidates;
         private static int _lastFrameGpuOccluded;
         private static int _lastFrameGpuPassesActive;
         private static int _lastFrameGpuPassesWithReadback;
         private static int _lastFrameGpuPassesPassthroughDirty;
+        private static int _lastFrameGpuDepthSourceHistory;
+        private static int _lastFrameGpuDepthSourceCurrent;
 
         // Effective mode observed during the completed frame. RenderCPU can be
         // called again later for no-camera passes; aggregate the frame so those
@@ -88,7 +92,7 @@ namespace XREngine.Rendering.Occlusion
         private static int _cpuDecisionCached;           // Same-frame cache hit (prepass+color sharing)
         private static int _cpuDecisionVisibleQuery;    // Query last reported samples-passed
         private static int _cpuDecisionVisibleHyst;     // Query reported zero, hysteresis still visible
-        private static int _cpuDecisionProbe;            // ProbeOnly (retest / camera-jump seed)
+        private static int _cpuDecisionProbe;            // ProbeOnly (periodic depth-proxy retest)
         private static int _cpuDecisionSkip;             // Skip (fully occluded)
         private static int _lastFrameCpuDecisionSeed;
         private static int _lastFrameCpuDecisionCached;
@@ -122,6 +126,10 @@ namespace XREngine.Rendering.Occlusion
         public static int GpuPassesWithReadback => _lastFrameGpuPassesWithReadback;
         /// <summary>Last completed frame: GPU Hi-Z passes that bypassed cull due to dirty temporal state (C-GPU-3).</summary>
         public static int GpuPassesPassthroughDirty => _lastFrameGpuPassesPassthroughDirty;
+        /// <summary>Last completed frame: GPU Hi-Z passes that sampled previous-frame history depth.</summary>
+        public static int GpuDepthSourceHistory => _lastFrameGpuDepthSourceHistory;
+        /// <summary>Last completed frame: GPU Hi-Z passes that sampled current-frame depth.</summary>
+        public static int GpuDepthSourceCurrent => _lastFrameGpuDepthSourceCurrent;
         /// <summary>True when at least one GPU Hi-Z pass produced an accurate count this frame.</summary>
         public static bool LastFrameGpuOcclusionAvailable => _lastFrameGpuPassesWithReadback > 0;
 
@@ -174,6 +182,8 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameGpuPassesActive = _gpuPassesActive;
             _lastFrameGpuPassesWithReadback = _gpuPassesWithReadback;
             _lastFrameGpuPassesPassthroughDirty = _gpuPassesPassthroughDirty;
+            _lastFrameGpuDepthSourceHistory = _gpuDepthSourceHistory;
+            _lastFrameGpuDepthSourceCurrent = _gpuDepthSourceCurrent;
             lock (ActiveModeLock)
             {
                 _lastEffectiveMode = _currentEffectiveMode;
@@ -210,6 +220,8 @@ namespace XREngine.Rendering.Occlusion
             _gpuPassesActive = 0;
             _gpuPassesWithReadback = 0;
             _gpuPassesPassthroughDirty = 0;
+            _gpuDepthSourceHistory = 0;
+            _gpuDepthSourceCurrent = 0;
             _cpuSocTested = 0;
             _cpuSocCulled = 0;
             _cpuSocOccludersSelected = 0;
@@ -268,6 +280,15 @@ namespace XREngine.Rendering.Occlusion
                 if (occluded > 0)
                     Interlocked.Add(ref _gpuOccluded, occluded);
             }
+        }
+
+        /// <summary>Records which depth source a GPU Hi-Z pass sampled.</summary>
+        public static void RecordGpuDepthSource(bool history)
+        {
+            if (history)
+                Interlocked.Increment(ref _gpuDepthSourceHistory);
+            else
+                Interlocked.Increment(ref _gpuDepthSourceCurrent);
         }
 
         /// <summary>

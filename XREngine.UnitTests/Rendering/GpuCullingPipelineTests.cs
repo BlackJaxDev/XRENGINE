@@ -101,6 +101,17 @@ public class GpuCullingPipelineTests
     }
 
     [Test]
+    public void GPURenderHiZGenShader_ClampsOddMipEdges()
+    {
+        string source = LoadShaderSource("Compute/Occlusion/HiZGen.comp");
+
+        source.ShouldNotBeNullOrEmpty();
+        source.ShouldContain("textureSize(depthTexture, SrcMip)");
+        source.ShouldContain("sourceSize - ivec2(1)");
+        source.ShouldContain("texelFetch(depthTexture, c3, SrcMip)");
+    }
+
+    [Test]
     public void GPURenderOcclusionHiZShader_Loads_AndContainsExpectedUniforms()
     {
         string source = LoadShaderSource("Compute/Occlusion/GPURenderOcclusionHiZ.comp");
@@ -110,6 +121,15 @@ public class GpuCullingPipelineTests
         source.ShouldContain("ViewProj");
         source.ShouldContain("HiZMaxMip");
         source.ShouldContain("IsReversedDepth");
+        source.ShouldContain("layout(std430, binding = 5) readonly buffer BoundsBuffer");
+        source.ShouldContain("hotBase + HOT_UINTS > inHotCommands.length()");
+        source.ShouldContain("const int HIZ_TARGET_TEXEL_SPAN = 6;");
+        source.ShouldContain("SampleHiZConservative");
+        source.ShouldContain("HiZOccludedAabb");
+        source.ShouldContain("AabbMin");
+        source.ShouldContain("AabbMax");
+        source.ShouldContain("clampedUvMin");
+        source.ShouldContain("uvMax.x < 0.0");
     }
 
     [Test]

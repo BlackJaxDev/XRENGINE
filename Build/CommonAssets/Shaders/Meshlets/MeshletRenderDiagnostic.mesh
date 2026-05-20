@@ -37,6 +37,7 @@ layout(location = 1) out vec3 out_normal[];
 layout(location = 2) out vec2 out_texCoord[];
 layout(location = 3) out vec4 out_tangent[];
 layout(location = 4) flat out uint out_materialID[];
+layout(location = 5) flat out uint out_meshletIndex[];
 
 uniform mat4 ViewProjectionMatrix;
 
@@ -75,6 +76,7 @@ void main()
         out_texCoord[tid] = v.texCoord;
         out_tangent[tid] = vec4(normalize(normalMatrix * v.tangent.xyz), v.tangent.w);
         out_materialID[tid] = m.Meta.y;
+        out_meshletIndex[tid] = meshletIndex;
     }
 
     for (uint tri = tid; tri < m.Indices.w; tri += GROUP_SIZE)

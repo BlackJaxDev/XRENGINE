@@ -210,7 +210,9 @@ public partial class XRMesh : ICookedBinarySerializable
 
         ReadSkinningData(reader);
         ReadBlendshapeData(reader);
-        MeshletPayload = ReadMeshletPayload(reader);
+        MeshletPayload = reader.Remaining > 0
+            ? ReadMeshletPayload(reader)
+            : null;
     }
 
     private void ApplyMetadata(MeshMetadata metadata)
@@ -353,13 +355,20 @@ public partial class XRMesh : ICookedBinarySerializable
 
     private static bool TrySkipRemainingPayload(CookedBinaryReader reader, MeshMetadata metadata)
     {
-        return TrySkipIndexedData(reader, 3)
-            && TrySkipIndexedData(reader, 2)
-            && TrySkipPointData(reader)
-            && TrySkipVertexBuffers(reader, metadata)
-            && TrySkipSkinningData(reader)
-            && TrySkipBlendshapeData(reader)
-            && TrySkipMeshletPayload(reader)
+        if (!TrySkipIndexedData(reader, 3)
+            || !TrySkipIndexedData(reader, 2)
+            || !TrySkipPointData(reader)
+            || !TrySkipVertexBuffers(reader, metadata)
+            || !TrySkipSkinningData(reader)
+            || !TrySkipBlendshapeData(reader))
+        {
+            return false;
+        }
+
+        if (reader.Position == reader.Length)
+            return true;
+
+        return TrySkipMeshletPayload(reader)
             && reader.Position == reader.Length;
     }
 

@@ -213,6 +213,61 @@ public interface IRuntimeRenderingHostServices
     bool EnableGpuIndirectDebugLogging { get; }
 
     /// <summary>
+    /// Gets the active occlusion culling mode resolved by the host.
+    /// </summary>
+    EOcclusionCullingMode GpuOcclusionCullingMode { get; }
+
+    /// <summary>
+    /// Gets the frame period for periodically retesting meshes culled by CPU hardware queries.
+    /// </summary>
+    int CpuQueryOcclusionRetestPeriodFrames { get; }
+
+    /// <summary>
+    /// Gets whether the legacy CPU software occlusion culling side toggle is enabled.
+    /// </summary>
+    bool EnableCpuSoftwareOcclusionCulling { get; }
+
+    /// <summary>
+    /// Gets the CPU software occlusion buffer width in pixels.
+    /// </summary>
+    int CpuSocBufferWidth { get; }
+
+    /// <summary>
+    /// Gets the CPU software occlusion buffer height in pixels.
+    /// </summary>
+    int CpuSocBufferHeight { get; }
+
+    /// <summary>
+    /// Gets the triangle budget for CPU software occlusion rasterization.
+    /// </summary>
+    int CpuSocOccluderTriangleBudget { get; }
+
+    /// <summary>
+    /// Gets the maximum number of CPU software occlusion occluders.
+    /// </summary>
+    int CpuSocMaxOccluders { get; }
+
+    /// <summary>
+    /// Gets the minimum screen-area fraction for CPU software occlusion occluders.
+    /// </summary>
+    float CpuSocMinOccluderScreenArea { get; }
+
+    /// <summary>
+    /// Gets whether AVX2 acceleration is allowed for CPU software occlusion.
+    /// </summary>
+    bool CpuSocUseAvx2 { get; }
+
+    /// <summary>
+    /// Gets whether CPU software occlusion debug visualization is enabled.
+    /// </summary>
+    bool CpuSocDebugVisualization { get; }
+
+    /// <summary>
+    /// Gets whether CPU software occlusion should force every test visible for diagnostics.
+    /// </summary>
+    bool CpuSocDebugForceVisible { get; }
+
+    /// <summary>
     /// Gets the host preference for splitting a window between two local players.
     /// </summary>
     ETwoPlayerPreference TwoPlayerViewportPreference { get; }

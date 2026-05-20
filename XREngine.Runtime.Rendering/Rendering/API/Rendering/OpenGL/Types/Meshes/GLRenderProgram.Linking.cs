@@ -698,6 +698,15 @@ namespace XREngine.Rendering.OpenGL
                 return false;
             }
 
+            private static bool ShouldPreferSharedContextForLargeSource(ulong hash, GLProgramCompileLinkQueue.ShaderInput[]? inputs)
+                => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect &&
+                   (hash == 0 || !SharedContextLargeSourceTimeouts.ContainsKey(hash)) &&
+                   ShouldPreferSharedContextForLargeSource(inputs);
+
+            private static bool IsSharedContextAbandonedLink(string? errorLog)
+                => !string.IsNullOrWhiteSpace(errorLog) &&
+                   errorLog.Contains(SharedContextAbandonedLinkMarker, StringComparison.Ordinal);
+
             private bool IsLinkPreparationPending
                 => Volatile.Read(ref _linkPreparationPendingGeneration) == Volatile.Read(ref _linkPreparationGeneration);
 
@@ -731,6 +740,8 @@ namespace XREngine.Rendering.OpenGL
 
             //private static object HashLock = new();
             private static readonly ConcurrentDictionary<ulong, byte> Failed = new();
+            private static readonly ConcurrentDictionary<ulong, byte> SharedContextLargeSourceTimeouts = new();
+            private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
 
             // Phase 3: per-hash diagnostic record captured the first time a hash fails,
             // and used to rate-limit follow-up SOURCE_FAILED_SKIPPED logs and supply
@@ -2386,6 +2397,41 @@ namespace XREngine.Rendering.OpenGL
                 IsLinked = false;
             }
 
+            private void DeferRetryAfterSharedContextSourceTimeout(uint abandonedProgramId)
+            {
+                if (Hash != 0)
+                {
+                    SharedContextLargeSourceTimeouts.TryAdd(Hash, 0);
+                    InFlightCompilations.TryRemove(Hash, out _);
+                }
+
+                _asyncCompileDuplicateHashWaitPending = false;
+                _asyncCompileLinkQueueWaitPending = false;
+                _asyncCompileLinkPending = false;
+                IsLinked = false;
+
+                if (abandonedProgramId != 0)
+                {
+                    bool abandonedReplacement = _replacementProgramPending && _replacementProgramId == abandonedProgramId;
+                    if (abandonedReplacement)
+                    {
+                        _replacementProgramId = 0;
+                        _replacementProgramPending = false;
+                    }
+                    else if (TryGetBindingId(out uint currentProgramId) && currentProgramId == abandonedProgramId)
+                    {
+                        OrphanForDeferredDelete();
+                    }
+
+                    DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, abandonedProgramId, []));
+                }
+
+                _hashComputed = false;
+                InvalidatePreparedLinkData();
+                BeginPrepareLinkData();
+                RegisterPendingAsyncProgram();
+            }
+
             public bool Link(bool force = false, bool nonBlocking = false)
             {
                 using var prof = RuntimeEngine.Profiler.Start("GLRenderProgram.Link", ProfilerScopeKind.ConditionalLoop);
@@ -2510,6 +2556,8 @@ namespace XREngine.Rendering.OpenGL
                             CompleteUberBackendTracking(false, compileResult.ErrorLog, compileResult.CompileMilliseconds, compileResult.LinkMilliseconds);
                             string errorKind = compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.CompileFailed
                                 ? "compile" : "link";
+                            bool sharedContextAbandonedLink = compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.LinkFailed &&
+                                IsSharedContextAbandonedLink(compileResult.ErrorLog);
                             PrintLinkDebug(pendingId2, compileResult.ErrorLog, $"Async {errorKind} failed");
                             PublishBackendStatus(
                                 EShaderProgramBackendStage.Failed,
@@ -2530,10 +2578,17 @@ namespace XREngine.Rendering.OpenGL
                                 compileResult.CompileMilliseconds,
                                 compileResult.LinkMilliseconds,
                                 failureReason: compileResult.ErrorLog);
-                            MarkHashFailed(compileResult.ErrorLog ?? $"async {errorKind} failed");
-                            InFlightCompilations.TryRemove(Hash, out _);
-                            _asyncCompileDuplicateHashWaitPending = false;
-                            MarkBuildFailed();
+                            if (sharedContextAbandonedLink)
+                            {
+                                DeferRetryAfterSharedContextSourceTimeout(pendingId2);
+                            }
+                            else
+                            {
+                                MarkHashFailed(compileResult.ErrorLog ?? $"async {errorKind} failed");
+                                InFlightCompilations.TryRemove(Hash, out _);
+                                _asyncCompileDuplicateHashWaitPending = false;
+                                MarkBuildFailed();
+                            }
                             return IsLinked;
                         }
                     }
@@ -2933,7 +2988,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                     bool preferSharedContextForLargeSource = Renderer.UseDriverParallelShaderCompile &&
                         compileQueue is { IsAvailable: true } &&
-                        ShouldPreferSharedContextForLargeSource(inputs);
+                        ShouldPreferSharedContextForLargeSource(Hash, inputs);
 
                     OpenGLShaderLinkBackendSelection sourceSelection = OpenGLShaderLinkBackendSelector.Select(new OpenGLShaderLinkBackendContext(
                         RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy,

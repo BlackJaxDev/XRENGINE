@@ -9,6 +9,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
@@ -116,6 +117,22 @@ namespace XREngine.Rendering.Commands
         {
             public int ConsecutiveOccludedFrames;
             public ulong LastTouchedFrame;
+        }
+
+        private readonly struct GpuHiZDepthInput(
+            XRTexture sampler,
+            uint width,
+            uint height,
+            Matrix4x4 viewProjection,
+            string textureName,
+            bool history)
+        {
+            public XRTexture Sampler { get; } = sampler;
+            public uint Width { get; } = width;
+            public uint Height { get; } = height;
+            public Matrix4x4 ViewProjection { get; } = viewProjection;
+            public string TextureName { get; } = textureName;
+            public bool History { get; } = history;
         }
 
         private const int TemporalOcclusionHysteresisFrames = 2;
@@ -374,10 +391,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            // DefaultRenderPipeline's current depth view texture name is stable across passes.
-            // If the pipeline doesn't provide it, we can't build Hi-Z.
-            const string DepthViewTextureName = DefaultRenderPipeline.DepthViewTextureName;
-            if (!pipeline.TryGetTexture(DepthViewTextureName, out XRTexture? depthTex) || depthTex is null)
+            if (!TryResolveGpuHiZDepthInput(pipeline, camera, out GpuHiZDepthInput depthInput, out string missingDepthName))
             {
                 HiZStageStats.Record("GpuHiZ.Exit.NoDepthTexture", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
@@ -387,14 +401,24 @@ namespace XREngine.Rendering.Commands
                     Log(LogCategory.Culling, LogLevel.Warning,
                         "Occlusion mode {0} missing depth texture '{1}' for pass {2}; keeping {3} candidates visible.",
                         EOcclusionCullingMode.GpuHiZ,
-                        DepthViewTextureName,
+                        missingDepthName,
                         RenderPass,
                         candidates);
                 }
                 return;
             }
 
-            if (!TryResolveHiZDepthSource(depthTex, out XRTexture depthSampler, out uint depthWidth, out uint depthHeight))
+            XRTexture depthSampler = depthInput.Sampler;
+            uint depthWidth = depthInput.Width;
+            uint depthHeight = depthInput.Height;
+
+            if (depthInput.History)
+                HiZStageStats.Record("GpuHiZ.DepthSource.History", 0.0);
+            else
+                HiZStageStats.Record("GpuHiZ.DepthSource.Current", 0.0);
+            XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuDepthSource(depthInput.History);
+
+            if (depthWidth == 0u || depthHeight == 0u)
             {
                 HiZStageStats.Record("GpuHiZ.Exit.DepthUnsupportedView", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
@@ -404,8 +428,8 @@ namespace XREngine.Rendering.Commands
                     Log(LogCategory.Culling, LogLevel.Warning,
                         "Occlusion mode {0}: depth texture '{1}' is an unsupported view kind ({2}) for pass {3}; keeping {4} candidates visible.",
                         EOcclusionCullingMode.GpuHiZ,
-                        DepthViewTextureName,
-                        depthTex.GetType().Name,
+                        depthInput.TextureName,
+                        depthSampler.GetType().Name,
                         RenderPass,
                         candidates);
                 }
@@ -503,7 +527,7 @@ namespace XREngine.Rendering.Commands
             // Write refined visible commands into the ping-pong buffer and final counts into _culledCountBuffer.
             Crumb($"HiZ.Refine.BEGIN pass={RenderPass} cand={candidates}");
             long _refineStart = Stopwatch.GetTimestamp();
-            ApplyHiZOcclusionRefine(camera);
+            ApplyHiZOcclusionRefine(scene, camera, depthInput.ViewProjection);
             HiZStageStats.Record("Refine", (Stopwatch.GetTimestamp() - _refineStart) * 1000.0 / Stopwatch.Frequency);
             Crumb($"HiZ.Refine.END pass={RenderPass}");
 
@@ -625,6 +649,65 @@ namespace XREngine.Rendering.Commands
                 ref _gpuHiZLastProjection);
 
             return sceneChanged || cameraChanged;
+        }
+
+        private static bool TryResolveGpuHiZDepthInput(
+            XRRenderPipelineInstance pipeline,
+            XRCamera camera,
+            out GpuHiZDepthInput input,
+            out string missingTextureName)
+        {
+            if (TryResolveGpuHiZHistoryDepthInput(pipeline, out input))
+            {
+                missingTextureName = string.Empty;
+                return true;
+            }
+
+            const string currentDepthName = DefaultRenderPipeline.DepthViewTextureName;
+            if (!pipeline.TryGetTexture(currentDepthName, out XRTexture? depthTex) || depthTex is null)
+            {
+                input = default;
+                missingTextureName = currentDepthName;
+                return false;
+            }
+
+            if (!TryResolveHiZDepthSource(depthTex, out XRTexture sampler, out uint width, out uint height))
+            {
+                input = new GpuHiZDepthInput(depthTex, 0u, 0u, camera.ViewProjectionMatrix, currentDepthName, history: false);
+                missingTextureName = string.Empty;
+                return true;
+            }
+
+            input = new GpuHiZDepthInput(sampler, width, height, camera.ViewProjectionMatrix, currentDepthName, history: false);
+            missingTextureName = string.Empty;
+            return true;
+        }
+
+        private static bool TryResolveGpuHiZHistoryDepthInput(
+            XRRenderPipelineInstance pipeline,
+            out GpuHiZDepthInput input)
+        {
+            input = default;
+
+            if (!VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData) ||
+                !temporalData.HistoryReady)
+                return false;
+
+            const string historyDepthName = DefaultRenderPipeline.HistoryDepthViewTextureName;
+            if (!pipeline.TryGetTexture(historyDepthName, out XRTexture? historyDepthTex) || historyDepthTex is null)
+                return false;
+
+            if (!TryResolveHiZDepthSource(historyDepthTex, out XRTexture sampler, out uint width, out uint height))
+                return false;
+
+            input = new GpuHiZDepthInput(
+                sampler,
+                width,
+                height,
+                temporalData.PrevViewProjection,
+                historyDepthName,
+                history: true);
+            return true;
         }
 
         /// <summary>
@@ -805,7 +888,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void ApplyHiZOcclusionRefine(XRCamera camera)
+        private void ApplyHiZOcclusionRefine(GPUScene scene, XRCamera camera, in Matrix4x4 viewProjection)
         {
             if (_hiZDepthPyramid is null)
                 return;
@@ -818,12 +901,10 @@ namespace XREngine.Rendering.Commands
             WriteUInt(_occlusionOverflowFlagBuffer!, 0u);
 
             // Prepare uniforms
-            Matrix4x4 view = camera.Transform.InverseRenderMatrix;
-            Matrix4x4 viewProj = view * camera.ProjectionMatrix;
             uint reversed = camera.IsReversedDepth ? 1u : 0u;
 
             _hiZOcclusionProgram!.Use();
-            _hiZOcclusionProgram.Uniform("ViewProj", viewProj);
+            _hiZOcclusionProgram.Uniform("ViewProj", viewProjection);
             _hiZOcclusionProgram.Uniform("HiZMaxMip", _hiZMaxMip);
             _hiZOcclusionProgram.Uniform("IsReversedDepth", reversed);
             _hiZOcclusionProgram.Uniform("MaxOutputCommands", (int)CulledSceneToRenderBuffer!.ElementCount);
@@ -848,6 +929,7 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_hiZOcclusionProgram, _culledCountBuffer!, 2);
             BindStorageBuffer(_hiZOcclusionProgram, _cullCountScratchBuffer!, 3);
             _hiZOcclusionProgram.BindBuffer(_occlusionOverflowFlagBuffer!, 4);
+            scene.BoundsBuffer.BindTo(_hiZOcclusionProgram, 5);
             if (useHotCommands)
             {
                 _hiZOcclusionProgram.BindBuffer(_culledHotCommandBuffer!, 9);

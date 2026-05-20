@@ -15,12 +15,18 @@ void main()
     if (coord.x >= mipLevelSize.x || coord.y >= mipLevelSize.y)
         return;
 
-    // Fetch 2x2 block of depth values from the previous level
+    // Fetch a 2x2 block of depth values from the previous level. Clamp source
+    // coordinates so odd-sized mips do not sample outside the source level.
+    ivec2 sourceSize = textureSize(depthTexture, SrcMip);
     ivec2 baseCoord = coord * 2;
-    float d0 = texelFetch(depthTexture, baseCoord, SrcMip).r;
-    float d1 = texelFetch(depthTexture, baseCoord + ivec2(1, 0), SrcMip).r;
-    float d2 = texelFetch(depthTexture, baseCoord + ivec2(0, 1), SrcMip).r;
-    float d3 = texelFetch(depthTexture, baseCoord + ivec2(1, 1), SrcMip).r;
+    ivec2 c0 = min(baseCoord, sourceSize - ivec2(1));
+    ivec2 c1 = min(baseCoord + ivec2(1, 0), sourceSize - ivec2(1));
+    ivec2 c2 = min(baseCoord + ivec2(0, 1), sourceSize - ivec2(1));
+    ivec2 c3 = min(baseCoord + ivec2(1, 1), sourceSize - ivec2(1));
+    float d0 = texelFetch(depthTexture, c0, SrcMip).r;
+    float d1 = texelFetch(depthTexture, c1, SrcMip).r;
+    float d2 = texelFetch(depthTexture, c2, SrcMip).r;
+    float d3 = texelFetch(depthTexture, c3, SrcMip).r;
 
     float reducedDepth;
     if (UseMinReduction != 0u)
