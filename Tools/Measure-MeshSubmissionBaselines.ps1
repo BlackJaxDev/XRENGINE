@@ -1,9 +1,9 @@
-# Sequential FPS measurement of all three mesh-submission strategies.
+# Sequential FPS measurement of mesh-submission strategies.
 # Used by the render-submission perf debug plan section 10.5 step 6.
 param(
     [int]$WarmupSec = 25,
     [int]$CaptureSec = 60,
-    [string[]]$Strategies = @('CpuDirect','GpuIndirectInstrumented','GpuIndirectZeroReadback'),
+    [string[]]$Strategies = @('CpuDirect','GpuIndirectInstrumented','GpuIndirectZeroReadback','GpuMeshletInstrumented','GpuMeshletZeroReadback'),
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
     [switch]$NoClearCachesBetweenVariants
@@ -17,7 +17,7 @@ if (-not (Test-Path -LiteralPath $exe)) {
 }
 $exe = (Resolve-Path -LiteralPath $exe).Path
 
-$validStrategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshlet')
+$validStrategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshletInstrumented', 'GpuMeshletZeroReadback')
 
 function Clear-VariantCaches {
     param([string]$Name)

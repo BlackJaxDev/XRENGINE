@@ -26,11 +26,15 @@ namespace XREngine.Scene
 
         [YamlIgnore]
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
+        private readonly CpuBvhRenderTree<RenderInfo3D> _bvhRenderTree = new(new AABB());
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
         private bool _isGpuDispatchActive = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect;
         private bool _isCpuGpuCommandMirrorActive = false;
         private bool _useGpuBvhActive = RuntimeEngine.EffectiveSettings.UseGpuBvh;
+        private ECpuSceneCullingStructure _cpuSceneCullingStructureActive = RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure;
+        private I3DRenderTree<RenderInfo3D> ActiveCpuRenderTree
+            => _cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh ? _bvhRenderTree : RenderTree;
         public BvhRaycastDispatcher BvhRaycasts { get; } = new();
 
         public VisualScene3D()
@@ -51,15 +55,15 @@ namespace XREngine.Scene
             if (_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
                 GPUCommands.Bounds = bounds;
             else
-                RenderTree.Remake(bounds);
+                ActiveCpuRenderTree.Remake(bounds);
 
             //Lights.LightProbeTree.Remake(bounds);
         }
 
-        public override IRenderTree GenericRenderTree => RenderTree;
+        public override IRenderTree GenericRenderTree => ActiveCpuRenderTree;
 
         public override void DebugRender(IRuntimeCullingCamera? camera, bool onlyContainingItems = false)
-            => RenderTree.DebugRender(camera?.WorldFrustum(), onlyContainingItems, RenderAABB);
+            => ActiveCpuRenderTree.DebugRender(camera?.WorldFrustum(), RenderAABB, onlyContainingItems);
 
         private void RenderAABB(Vector3 extents, Vector3 center, Color color)
             => RuntimeEngine.Rendering.Debug.RenderAABB(extents, center, false, color);
@@ -69,13 +73,23 @@ namespace XREngine.Scene
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> items,
             Func<RenderInfo3D, Segment, (float? distance, object? data)> directTest,
             Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
-            => RenderTree.RaycastAsync(worldSegment, items, directTest, finishedCallback);
+        {
+            if (_cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh)
+                _bvhRenderTree.RaycastAsync(worldSegment, items, directTest, finishedCallback);
+            else
+                RenderTree.RaycastAsync(worldSegment, items, directTest, finishedCallback);
+        }
 
         public void Raycast(
             Segment worldSegment,
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> items,
             Func<RenderInfo3D, Segment, (float? distance, object? data)> directTest)
-            => RenderTree.Raycast(worldSegment, items, directTest);
+        {
+            if (_cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh)
+                _bvhRenderTree.Raycast(worldSegment, items, directTest);
+            else
+                RenderTree.Raycast(worldSegment, items, directTest);
+        }
 
         public override void CollectRenderedItems(
             RenderCommandCollection meshRenderCommands,
@@ -106,15 +120,12 @@ namespace XREngine.Scene
                 return allowed;
             }
 
-            void AddRenderCommands(ITreeItem item)
+            void AddRenderCommands(RenderInfo3D renderable)
             {
-                if (item is RenderInfo renderable)
-                {
-                    visibleRenderables++;
-                    if (modelDiagActive && renderable is RenderInfo3D renderInfo3D)
-                        ModelRenderDiagnostics.LogVisibilityAccepted(renderInfo3D, commands, camera, collectMirrors);
-                    renderable.CollectCommands(commands, camera);
-                }
+                visibleRenderables++;
+                if (modelDiagActive)
+                    ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
+                renderable.CollectCommands(commands, camera);
             }
 
             if (IsGpuCulling)
@@ -124,11 +135,22 @@ namespace XREngine.Scene
             }
             else
             {
+                I3DRenderTree<RenderInfo3D> cpuTree = ActiveCpuRenderTree;
                 int cpuCommandsBefore = commands.GetUpdatingCommandCount();
-                using var octreeSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Octree", ProfilerScopeKind.AlwaysOnHotPathLoop);
-                RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
+                long collectStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                using var cpuSample = RuntimeEngine.Profiler.Start(
+                    _cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh
+                        ? "VisualScene3D.CollectRenderedItems.CpuBvh"
+                        : "VisualScene3D.CollectRenderedItems.Octree",
+                    ProfilerScopeKind.AlwaysOnHotPathLoop);
+                cpuTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
+                long collectTicks = System.Diagnostics.Stopwatch.GetTimestamp() - collectStart;
                 int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - cpuCommandsBefore);
                 RuntimeEngine.Rendering.Stats.Octree.RecordOctreeCollect(visibleRenderables, emittedCommands);
+                RuntimeEngine.Rendering.Stats.Octree.RecordCpuSpatialTreeStats(
+                    _cpuSceneCullingStructureActive.ToString(),
+                    cpuTree.GetOccupancyStats(),
+                    collectTicks);
             }
 
             if (modelDiagActive)
@@ -171,10 +193,11 @@ namespace XREngine.Scene
         public override void GlobalCollectVisible()
         {
             base.GlobalCollectVisible();
+            SyncCpuSceneCullingStructurePreference();
             ProcessPendingRenderableOperations();
 
             if (!_isGpuDispatchActive)
-                RenderTree.Swap();
+                ActiveCpuRenderTree.Swap();
         }
 
         public override void GlobalPreRender()
@@ -269,8 +292,8 @@ namespace XREngine.Scene
             if (useGpu)
             {
                 // GPU dispatch: remove from RenderTree, keep in GPUCommands.
-                RenderTree.RemoveRange(_renderables);
-                RenderTree.Swap();
+                ActiveCpuRenderTree.RemoveRange(_renderables);
+                ActiveCpuRenderTree.Swap();
 
                 if (_hasSceneBounds)
                     GPUCommands.Bounds = _sceneBounds;
@@ -294,12 +317,12 @@ namespace XREngine.Scene
                 // GPUCommands mirroring is handled separately and only enabled when
                 // an active surfel consumer actually needs it.
                 if (_hasSceneBounds)
-                    RenderTree.Remake(_sceneBounds);
+                    ActiveCpuRenderTree.Remake(_sceneBounds);
                 else
-                    RenderTree.Remake();
+                    ActiveCpuRenderTree.Remake();
 
-                RenderTree.AddRange(_renderables);
-                RenderTree.Swap();
+                ActiveCpuRenderTree.AddRange(_renderables);
+                ActiveCpuRenderTree.Swap();
             }
 
             _isGpuDispatchActive = useGpu;
@@ -328,6 +351,35 @@ namespace XREngine.Scene
             }
         }
 
+        public void ApplyCpuSceneCullingStructurePreference(ECpuSceneCullingStructure structure)
+        {
+            if (_cpuSceneCullingStructureActive == structure)
+                return;
+
+            I3DRenderTree<RenderInfo3D> oldTree = ActiveCpuRenderTree;
+            if (!_isGpuDispatchActive)
+            {
+                oldTree.RemoveRange(_renderables);
+                oldTree.Swap();
+            }
+
+            _cpuSceneCullingStructureActive = structure;
+            I3DRenderTree<RenderInfo3D> newTree = ActiveCpuRenderTree;
+
+            if (_hasSceneBounds)
+                newTree.Remake(_sceneBounds);
+            else
+                newTree.Remake();
+
+            if (!_isGpuDispatchActive)
+            {
+                newTree.AddRange(_renderables);
+                newTree.Swap();
+            }
+
+            Debug.Out($"[VisualScene3D] CPU scene culling structure set to {structure}.");
+        }
+
         public override IEnumerator<RenderInfo> GetEnumerator()
         {
             foreach (var renderable in _renderables)
@@ -350,7 +402,7 @@ namespace XREngine.Scene
                             GPUCommands.Add(operation.renderable);
 
                         if (!_isGpuDispatchActive)
-                            RenderTree.Add(operation.renderable);
+                            ActiveCpuRenderTree.Add(operation.renderable);
 
                         ModelRenderDiagnostics.LogSceneRegistration(
                             this,
@@ -369,7 +421,7 @@ namespace XREngine.Scene
                     GPUCommands.Remove(operation.renderable);
 
                     if (!_isGpuDispatchActive)
-                        RenderTree.Remove(operation.renderable);
+                        ActiveCpuRenderTree.Remove(operation.renderable);
 
                     _renderables.Remove(operation.renderable);
                     ModelRenderDiagnostics.LogSceneRegistration(
@@ -388,6 +440,13 @@ namespace XREngine.Scene
             if ((_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
                 && command is IRenderCommandMesh meshCmd)
                 GPUCommands.TryUpdateMeshCommand(info, meshCmd);
+        }
+
+        private void SyncCpuSceneCullingStructurePreference()
+        {
+            ECpuSceneCullingStructure structure = RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure;
+            if (structure != _cpuSceneCullingStructureActive)
+                ApplyCpuSceneCullingStructurePreference(structure);
         }
 
         /// <summary>

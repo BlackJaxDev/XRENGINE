@@ -27,22 +27,77 @@ public sealed class MeshSubmissionStrategyResolverTests
     }
 
     [Test]
-    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletWithProductionSupport_UsesGpuMeshlet()
+    public void MeshSubmissionStrategyPredicates_ClassifyMeshletVariants()
+    {
+        EMeshSubmissionStrategy.GpuMeshletZeroReadback.IsAnyMeshletStrategy().ShouldBeTrue();
+        EMeshSubmissionStrategy.GpuMeshletInstrumented.IsAnyMeshletStrategy().ShouldBeTrue();
+        EMeshSubmissionStrategy.GpuIndirectZeroReadback.IsAnyMeshletStrategy().ShouldBeFalse();
+
+        EMeshSubmissionStrategy.GpuMeshletInstrumented.IsInstrumentedMeshletStrategy().ShouldBeTrue();
+        EMeshSubmissionStrategy.GpuMeshletZeroReadback.IsInstrumentedMeshletStrategy().ShouldBeFalse();
+
+        EMeshSubmissionStrategy.GpuMeshletZeroReadback.IsZeroReadbackMeshletStrategy().ShouldBeTrue();
+        EMeshSubmissionStrategy.GpuMeshletInstrumented.IsZeroReadbackMeshletStrategy().ShouldBeFalse();
+        EMeshSubmissionStrategy.GpuMeshletInstrumented.ToZeroReadbackMeshletStrategy()
+            .ShouldBe(EMeshSubmissionStrategy.GpuMeshletZeroReadback);
+    }
+
+    [Test]
+    public void MeshSubmissionStrategyParser_AcceptsLegacyGpuMeshletTokenAsZeroReadback()
+    {
+        EMeshSubmissionStrategyExtensions.TryParseMeshSubmissionStrategy(
+                "GpuMeshlet",
+                out EMeshSubmissionStrategy strategy,
+                out bool usedLegacyName)
+            .ShouldBeTrue();
+
+        strategy.ShouldBe(EMeshSubmissionStrategy.GpuMeshletZeroReadback);
+        usedLegacyName.ShouldBeTrue();
+    }
+
+    [Test]
+    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletZeroReadbackWithProductionSupport_UsesZeroReadback()
     {
         Resolve(
-                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshletZeroReadback,
                 meshShaderDialect: EMeshShaderDialect.VulkanEXT,
                 supportsIndirectCountDraw: true,
                 supportsIndirectCountMeshTaskDispatch: true,
                 supportsMeshletDispatch: true)
-            .ShouldBe(EMeshSubmissionStrategy.GpuMeshlet);
+            .ShouldBe(EMeshSubmissionStrategy.GpuMeshletZeroReadback);
+    }
+
+    [Test]
+    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletInstrumentedWithDiagnostics_UsesInstrumented()
+    {
+        Resolve(
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshletInstrumented,
+                meshShaderDialect: EMeshShaderDialect.VulkanEXT,
+                activeProfile: EVulkanGpuDrivenProfile.Diagnostics,
+                vulkanProfileActive: true,
+                supportsIndirectCountDraw: true,
+                supportsIndirectCountMeshTaskDispatch: true,
+                supportsMeshletDispatch: true)
+            .ShouldBe(EMeshSubmissionStrategy.GpuMeshletInstrumented);
+    }
+
+    [Test]
+    public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletInstrumentedWithoutDiagnostics_FallsBackToZeroReadback()
+    {
+        Resolve(
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshletInstrumented,
+                meshShaderDialect: EMeshShaderDialect.VulkanEXT,
+                supportsIndirectCountDraw: true,
+                supportsIndirectCountMeshTaskDispatch: true,
+                supportsMeshletDispatch: true)
+            .ShouldBe(EMeshSubmissionStrategy.GpuMeshletZeroReadback);
     }
 
     [Test]
     public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletUnsupportedWithIndirectCount_FallsBackToZeroReadback()
     {
         Resolve(
-                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshletZeroReadback,
                 meshShaderDialect: EMeshShaderDialect.None,
                 supportsIndirectCountDraw: true,
                 supportsMeshletDispatch: false)
@@ -53,7 +108,7 @@ public sealed class MeshSubmissionStrategyResolverTests
     public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletDiagnosticDirectDispatch_FallsBackToZeroReadback()
     {
         Resolve(
-                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshletZeroReadback,
                 meshShaderDialect: EMeshShaderDialect.OpenGLNV,
                 supportsIndirectCountDraw: true,
                 supportsDirectMeshTaskDispatch: true,
@@ -66,7 +121,7 @@ public sealed class MeshSubmissionStrategyResolverTests
     public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletUnsupportedWithoutIndirectCountStrict_UsesCpuDirect()
     {
         Resolve(
-                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshletZeroReadback,
                 supportsIndirectCountDraw: false,
                 enforceStrictNoFallbacks: true,
                 supportsMeshletDispatch: false)
@@ -77,7 +132,7 @@ public sealed class MeshSubmissionStrategyResolverTests
     public void ResolveMeshSubmissionStrategy_ForcedGpuMeshletUnsupportedWithoutIndirectCountPermissive_UsesInstrumented()
     {
         Resolve(
-                forcedStrategy: EMeshSubmissionStrategy.GpuMeshlet,
+                forcedStrategy: EMeshSubmissionStrategy.GpuMeshletZeroReadback,
                 supportsIndirectCountDraw: false,
                 enforceStrictNoFallbacks: false,
                 supportsMeshletDispatch: false)

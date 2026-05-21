@@ -21,8 +21,14 @@ namespace XREngine.Data.Rendering
         GpuIndirectZeroReadback = 2,
 
         /// <summary>
-        /// Use the meshlet/task-mesh submission path when the active renderer supports it.
+        /// Use the production meshlet/task-mesh submission path without hot-path CPU readbacks.
         /// </summary>
-        GpuMeshlet = 3,
+        GpuMeshletZeroReadback = 3,
+
+        /// <summary>
+        /// Use the diagnostic meshlet/task-mesh submission path. CPU readback, timestamp queries,
+        /// and per-batch logging are permitted when diagnostics are explicitly enabled.
+        /// </summary>
+        GpuMeshletInstrumented = 4,
     }
 }

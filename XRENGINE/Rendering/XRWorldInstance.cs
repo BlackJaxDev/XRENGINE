@@ -764,6 +764,12 @@ namespace XREngine.Rendering
                 scene3D.ApplyGpuBvhPreference(useGpuBvh);
         }
 
+        internal void ApplyCpuSceneCullingStructurePreference(ECpuSceneCullingStructure structure)
+        {
+            if (VisualScene is VisualScene3D scene3D)
+                scene3D.ApplyCpuSceneCullingStructurePreference(structure);
+        }
+
         private void PreUpdate()
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.PreUpdate");

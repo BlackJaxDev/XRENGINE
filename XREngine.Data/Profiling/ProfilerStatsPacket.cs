@@ -32,6 +32,11 @@ public sealed partial class RenderStatsPacket
     public long GpuMeshletTaskRecordsHiZCulled { get; set; }
     public long GpuMeshletExpansionOverflowCount { get; set; }
     public long GpuMeshletBufferBytesResident { get; set; }
+    public long GpuMeshletLastVisibleMeshletCount { get; set; }
+    public long GpuMeshletLastDispatchedMeshletCount { get; set; }
+    public long GpuMeshletLastTaskRecordOverflowCount { get; set; }
+    public double GpuMeshletLastDispatchMs { get; set; }
+    public long GpuMeshletLastReadbackBytes { get; set; }
     public int GpuMeshletCacheHits { get; set; }
     public int GpuMeshletCacheMisses { get; set; }
     public int GpuMeshletCacheStale { get; set; }
@@ -203,6 +208,15 @@ public sealed partial class RenderStatsPacket
     public double OctreeRaycastMaxTraversalMs { get; set; }
     public double OctreeRaycastMaxCallbackMs { get; set; }
     public double OctreeRaycastMaxCommandMs { get; set; }
+    public string CpuSpatialTreeMode { get; set; } = string.Empty;
+    public int CpuSpatialTreeNodeCount { get; set; }
+    public int CpuSpatialTreeItemCount { get; set; }
+    public int CpuSpatialTreeRootItemCount { get; set; }
+    public int CpuSpatialTreeMaxNodeItemCount { get; set; }
+    public int CpuSpatialTreeMaxDepth { get; set; }
+    public int CpuSpatialTreeUnboundedItemCount { get; set; }
+    public double CpuSpatialTreeCollectMs { get; set; }
+    public double CpuSpatialTreeMaxCollectMs { get; set; }
 
     // GPU render-pipeline command timings
     public bool GpuRenderPipelineProfilingEnabled { get; set; }

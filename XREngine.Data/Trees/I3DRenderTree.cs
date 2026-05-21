@@ -13,6 +13,7 @@ namespace XREngine.Data.Trees
         void CollectVisible(IVolume? volume, bool onlyContainingItems, Action<IOctreeItem> action, OctreeNode<IOctreeItem>.DelIntersectionTestGeneric intersectionTest);
         void CollectAll(Action<IOctreeItem> action);
         void CollectVisibleNodes(IVolume? cullingVolume, bool containsOnly, Action<(OctreeNodeBase node, bool intersects)> action);
+        SpatialTreeOccupancyStats GetOccupancyStats();
     }
     public interface I3DRenderTree<T> : I3DRenderTree, IRenderTree<T> where T : class, IOctreeItem
     {

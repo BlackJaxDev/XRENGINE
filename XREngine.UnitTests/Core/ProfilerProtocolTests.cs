@@ -124,6 +124,11 @@ public sealed class ProfilerProtocolTests
             GpuMeshletTaskRecordsHiZCulled = 250,
             GpuMeshletExpansionOverflowCount = 3,
             GpuMeshletBufferBytesResident = 2_097_152,
+            GpuMeshletLastVisibleMeshletCount = 512,
+            GpuMeshletLastDispatchedMeshletCount = 384,
+            GpuMeshletLastTaskRecordOverflowCount = 1,
+            GpuMeshletLastDispatchMs = 0.625,
+            GpuMeshletLastReadbackBytes = 12,
             GpuMeshletCacheHits = 8,
             GpuMeshletCacheMisses = 2,
             GpuMeshletCacheStale = 1,
@@ -244,6 +249,15 @@ public sealed class ProfilerProtocolTests
             OctreeRaycastMaxTraversalMs = 8.25,
             OctreeRaycastMaxCallbackMs = 2.0,
             OctreeRaycastMaxCommandMs = 9.75,
+            CpuSpatialTreeMode = "Bvh",
+            CpuSpatialTreeNodeCount = 31,
+            CpuSpatialTreeItemCount = 128,
+            CpuSpatialTreeRootItemCount = 4,
+            CpuSpatialTreeMaxNodeItemCount = 8,
+            CpuSpatialTreeMaxDepth = 5,
+            CpuSpatialTreeUnboundedItemCount = 4,
+            CpuSpatialTreeCollectMs = 1.25,
+            CpuSpatialTreeMaxCollectMs = 0.75,
             GpuRenderPipelineProfilingEnabled = true,
             GpuRenderPipelineProfilingSupported = true,
             GpuRenderPipelineTimingsReady = true,
@@ -291,6 +305,11 @@ public sealed class ProfilerProtocolTests
         clone.GpuMeshletTaskRecordsHiZCulled.ShouldBe(250);
         clone.GpuMeshletExpansionOverflowCount.ShouldBe(3);
         clone.GpuMeshletBufferBytesResident.ShouldBe(2_097_152);
+        clone.GpuMeshletLastVisibleMeshletCount.ShouldBe(512);
+        clone.GpuMeshletLastDispatchedMeshletCount.ShouldBe(384);
+        clone.GpuMeshletLastTaskRecordOverflowCount.ShouldBe(1);
+        clone.GpuMeshletLastDispatchMs.ShouldBe(0.625);
+        clone.GpuMeshletLastReadbackBytes.ShouldBe(12);
         clone.GpuMeshletCacheHits.ShouldBe(8);
         clone.GpuMeshletCacheMisses.ShouldBe(2);
         clone.GpuMeshletCacheStale.ShouldBe(1);
@@ -395,6 +414,15 @@ public sealed class ProfilerProtocolTests
         clone.OctreeRaycastMaxTraversalMs.ShouldBe(8.25);
         clone.OctreeRaycastMaxCallbackMs.ShouldBe(2.0);
         clone.OctreeRaycastMaxCommandMs.ShouldBe(9.75);
+        clone.CpuSpatialTreeMode.ShouldBe("Bvh");
+        clone.CpuSpatialTreeNodeCount.ShouldBe(31);
+        clone.CpuSpatialTreeItemCount.ShouldBe(128);
+        clone.CpuSpatialTreeRootItemCount.ShouldBe(4);
+        clone.CpuSpatialTreeMaxNodeItemCount.ShouldBe(8);
+        clone.CpuSpatialTreeMaxDepth.ShouldBe(5);
+        clone.CpuSpatialTreeUnboundedItemCount.ShouldBe(4);
+        clone.CpuSpatialTreeCollectMs.ShouldBe(1.25);
+        clone.CpuSpatialTreeMaxCollectMs.ShouldBe(0.75);
         clone.GpuRenderPipelineProfilingEnabled.ShouldBeTrue();
         clone.GpuRenderPipelineProfilingSupported.ShouldBeTrue();
         clone.GpuRenderPipelineTimingsReady.ShouldBeTrue();

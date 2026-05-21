@@ -95,7 +95,7 @@ public sealed partial class GpuBvhTree
 
         // Strict zero-readback profiling cannot enqueue or consume even a
         // 4-byte diagnostic readback.
-        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
             return false;
 
         XRGpuFence? fence = AbstractRenderer.Current?.InsertGpuFence();
@@ -115,7 +115,7 @@ public sealed partial class GpuBvhTree
         if (_pendingOverflowFence is null)
             return false;
 
-        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
         {
             DropPendingOverflowFence("zero-readback strategy is active", warnIfOld: false);
             return false;
@@ -173,7 +173,7 @@ public sealed partial class GpuBvhTree
         // Strict zero-readback profiling cannot map even a 4-byte overflow
         // flag. Capacity is sized conservatively up front; keep the BVH
         // GPU-resident.
-        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
             return false;
 
         // Map only after a queued GPU fence has already signaled. Backends

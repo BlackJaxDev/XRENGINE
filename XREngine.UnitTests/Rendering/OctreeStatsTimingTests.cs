@@ -57,6 +57,17 @@ public sealed class OctreeStatsTimingTests
                 MaxCallbackTicks: EngineTimer.SecondsToStopwatchTicks(0.0005),
                 MaxCommandTicks: EngineTimer.SecondsToStopwatchTicks(0.0025)));
 
+            XREngine.Engine.Rendering.Stats.Octree.RecordCpuSpatialTreeStats(
+                "Bvh",
+                new SpatialTreeOccupancyStats(
+                    NodeCount: 31,
+                    ItemCount: 128,
+                    RootItemCount: 4,
+                    MaxNodeItemCount: 8,
+                    MaxDepth: 5,
+                    UnboundedItemCount: 4),
+                EngineTimer.SecondsToStopwatchTicks(0.00125));
+
             XREngine.Engine.Rendering.Stats.Octree.SwapOctreeStats();
 
             XREngine.Engine.Rendering.Stats.Octree.OctreeSwapDrainedCommandCount.ShouldBe(4);
@@ -73,6 +84,15 @@ public sealed class OctreeStatsTimingTests
             XREngine.Engine.Rendering.Stats.Octree.OctreeRaycastMaxTraversalMs.ShouldBe(5.0, 0.05);
             XREngine.Engine.Rendering.Stats.Octree.OctreeRaycastMaxCallbackMs.ShouldBe(1.5, 0.05);
             XREngine.Engine.Rendering.Stats.Octree.OctreeRaycastMaxCommandMs.ShouldBe(6.5, 0.05);
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeMode.ShouldBe("Bvh");
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeNodeCount.ShouldBe(31);
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeItemCount.ShouldBe(128);
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeRootItemCount.ShouldBe(4);
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeMaxNodeItemCount.ShouldBe(8);
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeMaxDepth.ShouldBe(5);
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeUnboundedItemCount.ShouldBe(4);
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeCollectMs.ShouldBe(1.25, 0.05);
+            XREngine.Engine.Rendering.Stats.Octree.CpuSpatialTreeMaxCollectMs.ShouldBe(1.25, 0.05);
         }
         finally
         {

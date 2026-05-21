@@ -1,9 +1,9 @@
-# Measures the game loop and default render pipeline across the three non-meshlet render paths.
+# Measures the game loop and default render pipeline across mesh-submission strategies.
 param(
     [int]$WarmupSec = 25,
     [int]$CaptureSec = 60,
     [int]$Repetitions = 1,
-    [string[]]$Strategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback'),
+    [string[]]$Strategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshletInstrumented', 'GpuMeshletZeroReadback'),
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [switch]$NoClearCachesBetweenVariants,
@@ -22,10 +22,10 @@ if (-not (Test-Path -LiteralPath $exe)) {
 }
 $exe = (Resolve-Path -LiteralPath $exe).Path
 
-$validStrategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback')
+$validStrategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshletInstrumented', 'GpuMeshletZeroReadback')
 $invalidStrategies = @($Strategies | Where-Object { $validStrategies -notcontains $_ })
 if ($invalidStrategies.Count -gt 0) {
-    throw "Invalid render path(s): $($invalidStrategies -join ', '). This harness intentionally excludes meshlet testing. Allowed: $($validStrategies -join ', ')"
+    throw "Invalid render path(s): $($invalidStrategies -join ', '). Allowed: $($validStrategies -join ', ')"
 }
 
 if ($WarmupSec -lt 0 -or $CaptureSec -le 0 -or $Repetitions -le 0 -or $ShutdownGraceSec -lt 1 -or $NoSampleHangSec -lt 0 -or $RetainedRunCount -lt 1) {
@@ -571,7 +571,7 @@ function Measure-Variant {
             $noteParts.Add('no render-stats samples parsed') | Out-Null
         }
     }
-    if ($Strategy -eq 'GpuIndirectZeroReadback') {
+    if ($Strategy -eq 'GpuIndirectZeroReadback' -or $Strategy -eq 'GpuMeshletZeroReadback') {
         if ($captureReadbackTotal -ne 0 -or $captureMappedTotal -ne 0 -or $allReadbackTotal -ne 0 -or $allMappedTotal -ne 0) {
             $noteParts.Add("zero-readback violation capture(readbackBytes=$captureReadbackTotal mappedBuffers=$captureMappedTotal) all(readbackBytes=$allReadbackTotal mappedBuffers=$allMappedTotal)") | Out-Null
         }

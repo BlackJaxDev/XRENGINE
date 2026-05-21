@@ -373,6 +373,7 @@ namespace XREngine
         private OverrideableSetting<bool> _enableZeroReadbackMaterialScatterOverride = new();
         private OverrideableSetting<EZeroReadbackMaterialDrawPath> _zeroReadbackMaterialDrawPathOverride = new();
         private OverrideableSetting<bool> _useGpuBvhOverride = new();
+        private OverrideableSetting<ECpuSceneCullingStructure> _cpuSceneCullingStructureOverride = new();
         private OverrideableSetting<uint> _bvhLeafMaxPrimsOverride = new();
         private OverrideableSetting<EBvhMode> _bvhModeOverride = new();
         private OverrideableSetting<bool> _bvhRefitOnlyWhenStableOverride = new();
@@ -576,6 +577,18 @@ namespace XREngine
         {
             get => _useGpuBvhOverride;
             set => SetField(ref _useGpuBvhOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the CPU spatial structure used by CPU render visibility.
+        /// Takes precedence over engine defaults when HasOverride is true. Can be further overridden by environment settings.
+        /// </summary>
+        [Category("BVH Overrides")]
+        [Description("Project override for the CPU spatial structure used by CPU render visibility.")]
+        public OverrideableSetting<ECpuSceneCullingStructure> CpuSceneCullingStructureOverride
+        {
+            get => _cpuSceneCullingStructureOverride;
+            set => SetField(ref _cpuSceneCullingStructureOverride, value ?? new());
         }
 
         /// <summary>

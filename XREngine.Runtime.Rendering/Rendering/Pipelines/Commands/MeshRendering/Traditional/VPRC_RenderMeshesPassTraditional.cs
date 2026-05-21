@@ -121,14 +121,14 @@ internal static class VPRC_RenderMeshesPassTraditional
     }
 
     private static bool ShouldUseOpenGLShaderWarmupFallback(EMeshSubmissionStrategy strategy)
-        => strategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
+        => strategy.IsGpuZeroReadbackStrategy()
            && IsActiveRendererOpenGL()
            && OpenGLRenderer.GLRenderProgram.HasPendingAsyncPrograms;
 
     private static bool ShouldUseOpenGLZeroReadbackProgramWarmupFallback(
         EMeshSubmissionStrategy strategy,
         GPURenderPassCollection gpuPass)
-        => strategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
+        => strategy.IsGpuZeroReadbackStrategy()
            && IsActiveRendererOpenGL()
            && gpuPass.ZeroReadbackProgramPendingThisFrame;
 

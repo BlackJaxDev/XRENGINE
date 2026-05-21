@@ -12,6 +12,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
+using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering;
@@ -283,15 +284,18 @@ internal static partial class RuntimeEngine
             EMeshSubmissionStrategy? forced = RuntimeEngine.EffectiveSettings.ForceMeshSubmissionStrategy;
             if (forced.HasValue)
             {
-                if (forced.Value == EMeshSubmissionStrategy.GpuMeshlet)
+                if (forced.Value.IsAnyMeshletStrategy())
                 {
                     EMeshSubmissionStrategy resolved = ResolveForcedMeshletSubmissionStrategy(
+                        forced.Value,
+                        IsMeshletInstrumentationAllowed(),
                         supportsMeshletDispatch,
                         supportsIndirectCount);
 
-                    if (resolved != EMeshSubmissionStrategy.GpuMeshlet)
+                    if (resolved != forced.Value)
                     {
                         string reason = GetMeshletFallbackReason(
+                            forced.Value,
                             supportsMeshletDispatch,
                             meshShaderDialect,
                             supportsDirectMeshTaskDispatch,
@@ -301,7 +305,7 @@ internal static partial class RuntimeEngine
                             "RenderDispatch.MeshSubmissionStrategy.UnsupportedGpuMeshlet",
                             TimeSpan.FromSeconds(2),
                             "[RenderDispatch] Mesh submission strategy downgraded from {0} to {1}. Dialect={2}; DirectTaskDispatch={3}; IndirectCountTaskDispatch={4}; FallbackReason={5}.",
-                            EMeshSubmissionStrategy.GpuMeshlet,
+                            forced.Value,
                             resolved,
                             meshShaderDialect,
                             supportsDirectMeshTaskDispatch,
@@ -349,11 +353,18 @@ internal static partial class RuntimeEngine
         }
 
         private static EMeshSubmissionStrategy ResolveForcedMeshletSubmissionStrategy(
+            EMeshSubmissionStrategy requestedStrategy,
+            bool instrumentationAllowed,
             bool supportsMeshletDispatch,
             bool supportsIndirectCountDraw)
         {
             if (supportsMeshletDispatch)
-                return EMeshSubmissionStrategy.GpuMeshlet;
+            {
+                if (requestedStrategy == EMeshSubmissionStrategy.GpuMeshletInstrumented && instrumentationAllowed)
+                    return EMeshSubmissionStrategy.GpuMeshletInstrumented;
+
+                return EMeshSubmissionStrategy.GpuMeshletZeroReadback;
+            }
 
             if (supportsIndirectCountDraw)
                 return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
@@ -363,14 +374,28 @@ internal static partial class RuntimeEngine
                 : EMeshSubmissionStrategy.GpuIndirectInstrumented;
         }
 
+        private static bool IsMeshletInstrumentationAllowed()
+            => (VulkanFeatureProfile.IsActive &&
+                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics) ||
+               RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+
         private static string GetMeshletFallbackReason(
+            EMeshSubmissionStrategy requestedStrategy,
             bool supportsMeshletDispatch,
             EMeshShaderDialect meshShaderDialect,
             bool supportsDirectMeshTaskDispatch,
             bool supportsIndirectCountMeshTaskDispatch)
         {
             if (supportsMeshletDispatch)
+            {
+                if (requestedStrategy == EMeshSubmissionStrategy.GpuMeshletInstrumented &&
+                    !IsMeshletInstrumentationAllowed())
+                {
+                    return "meshlet instrumentation requires the Diagnostics Vulkan profile or EnableGpuIndirectDebugLogging";
+                }
+
                 return "production meshlet dispatch is available";
+            }
 
             if (meshShaderDialect == EMeshShaderDialect.None)
                 return "no mesh shader dialect is available";
@@ -459,6 +484,11 @@ internal static partial class RuntimeEngine
             public static long GpuMeshletTaskRecordsHiZCulled { get; private set; }
             public static long GpuMeshletExpansionOverflowCount { get; private set; }
             public static long GpuMeshletBufferBytesResident { get; private set; }
+            public static long LastVisibleMeshletCount { get; private set; }
+            public static long LastDispatchedMeshletCount { get; private set; }
+            public static long LastTaskRecordOverflowCount { get; private set; }
+            public static TimeSpan LastDispatchTime { get; private set; }
+            public static long LastReadbackBytes { get; private set; }
             public static int GpuMeshletCacheHits { get; private set; }
             public static int GpuMeshletCacheMisses { get; private set; }
             public static int GpuMeshletCacheStale { get; private set; }
@@ -767,6 +797,34 @@ internal static partial class RuntimeEngine
                 GpuMeshletBufferBytesResident = Math.Max(GpuMeshletBufferBytesResident, saturated);
             }
 
+            public static void RecordGpuMeshletInstrumentation(
+                uint visibleMeshletCount,
+                uint dispatchedMeshletCount,
+                uint taskRecordOverflowCount,
+                TimeSpan dispatchTime,
+                uint readbackBytes)
+            {
+                if (!EnableTracking)
+                    return;
+
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuMeshletInstrumentation(
+                        visibleMeshletCount,
+                        dispatchedMeshletCount,
+                        taskRecordOverflowCount,
+                        dispatchTime,
+                        readbackBytes);
+                    return;
+                }
+
+                LastVisibleMeshletCount = visibleMeshletCount;
+                LastDispatchedMeshletCount = dispatchedMeshletCount;
+                LastTaskRecordOverflowCount = taskRecordOverflowCount;
+                LastDispatchTime = dispatchTime;
+                LastReadbackBytes += readbackBytes;
+            }
+
             public static void RecordGpuMeshletCacheHit(int eventCount = 1)
             {
                 if (!EnableTracking || eventCount <= 0)
@@ -813,6 +871,12 @@ internal static partial class RuntimeEngine
             {
                 if (HasHostStats)
                     RuntimeRenderingHostServices.Current.RecordRenderOctreeCollect(visibleRenderables, emittedCommands);
+            }
+
+            public static void RecordCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderCpuSpatialTreeStats(mode, occupancy, collectTicks);
             }
 
             public static void RecordRtxIoCopyIndirect(long bytes, TimeSpan elapsed)
@@ -1254,6 +1318,11 @@ internal static partial class RuntimeEngine
                 public static long GpuMeshletTaskRecordsHiZCulled => Stats.GpuMeshletTaskRecordsHiZCulled;
                 public static long GpuMeshletExpansionOverflowCount => Stats.GpuMeshletExpansionOverflowCount;
                 public static long GpuMeshletBufferBytesResident => Stats.GpuMeshletBufferBytesResident;
+                public static long LastVisibleMeshletCount => Stats.LastVisibleMeshletCount;
+                public static long LastDispatchedMeshletCount => Stats.LastDispatchedMeshletCount;
+                public static long LastTaskRecordOverflowCount => Stats.LastTaskRecordOverflowCount;
+                public static TimeSpan LastDispatchTime => Stats.LastDispatchTime;
+                public static long LastReadbackBytes => Stats.LastReadbackBytes;
                 public static int GpuMeshletCacheHits => Stats.GpuMeshletCacheHits;
                 public static int GpuMeshletCacheMisses => Stats.GpuMeshletCacheMisses;
                 public static int GpuMeshletCacheStale => Stats.GpuMeshletCacheStale;
@@ -1272,6 +1341,18 @@ internal static partial class RuntimeEngine
                     => Stats.RecordGpuMeshletTaskStats(emitted, frustumCulled, coneCulled, hiZCulled);
                 public static void RecordGpuMeshletExpansionOverflow(uint overflowCount) => Stats.RecordGpuMeshletExpansionOverflow(overflowCount);
                 public static void RecordGpuMeshletBufferBytesResident(ulong bytes) => Stats.RecordGpuMeshletBufferBytesResident(bytes);
+                public static void RecordGpuMeshletInstrumentation(
+                    uint visibleMeshletCount,
+                    uint dispatchedMeshletCount,
+                    uint taskRecordOverflowCount,
+                    TimeSpan dispatchTime,
+                    uint readbackBytes)
+                    => Stats.RecordGpuMeshletInstrumentation(
+                        visibleMeshletCount,
+                        dispatchedMeshletCount,
+                        taskRecordOverflowCount,
+                        dispatchTime,
+                        readbackBytes);
                 public static void RecordGpuMeshletCacheHit(int eventCount = 1) => Stats.RecordGpuMeshletCacheHit(eventCount);
                 public static void RecordGpuMeshletCacheMiss(int eventCount = 1) => Stats.RecordGpuMeshletCacheMiss(eventCount);
                 public static void RecordGpuMeshletCacheStale(int eventCount = 1) => Stats.RecordGpuMeshletCacheStale(eventCount);
@@ -1281,6 +1362,9 @@ internal static partial class RuntimeEngine
             {
                 public static void RecordOctreeCollect(int visibleRenderables, int emittedCommands)
                     => Stats.RecordOctreeCollect(visibleRenderables, emittedCommands);
+
+                public static void RecordCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks)
+                    => Stats.RecordCpuSpatialTreeStats(mode, occupancy, collectTicks);
             }
 
             public static class RtxIo
@@ -2238,16 +2322,46 @@ internal sealed class RuntimeEffectiveSettings
         get
         {
             string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
-            return !string.IsNullOrWhiteSpace(raw) &&
-                Enum.TryParse(raw.Trim(), ignoreCase: true, out EMeshSubmissionStrategy parsed)
-                ? parsed
-                : _forceMeshSubmissionStrategy;
+            if (EMeshSubmissionStrategyExtensions.TryParseMeshSubmissionStrategy(
+                    raw,
+                    out EMeshSubmissionStrategy parsed,
+                    out bool usedLegacyName))
+            {
+                if (usedLegacyName && !_legacyGpuMeshletForceStrategyWarningLogged)
+                {
+                    _legacyGpuMeshletForceStrategyWarningLogged = true;
+                    RuntimeEngine.LogWarning(
+                        "XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuMeshlet is deprecated; use GpuMeshletZeroReadback.");
+                }
+
+                return parsed;
+            }
+
+            return _forceMeshSubmissionStrategy;
         }
         set => _forceMeshSubmissionStrategy = value;
     }
     public uint MsaaSampleCount { get; set; } = 1u;
     public ESkinnedBoundsRecomputePolicy SkinnedBoundsRecomputePolicy { get; set; } = ESkinnedBoundsRecomputePolicy.Selective;
     public bool UseGpuBvh { get; set; }
+    private ECpuSceneCullingStructure _cpuSceneCullingStructure = ECpuSceneCullingStructure.Octree;
+    public ECpuSceneCullingStructure CpuSceneCullingStructure
+    {
+        get
+        {
+            string? raw = Environment.GetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE");
+            if (!string.IsNullOrWhiteSpace(raw) &&
+                Enum.TryParse(raw.Trim(), ignoreCase: true, out ECpuSceneCullingStructure parsed))
+            {
+                return parsed;
+            }
+
+            return TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+                ? services.CpuSceneCullingStructure
+                : _cpuSceneCullingStructure;
+        }
+        set => _cpuSceneCullingStructure = value;
+    }
     public bool ValidateVulkanDescriptorContracts { get; set; }
     public EVulkanGeometryFetchMode VulkanGeometryFetchMode { get; set; } = EVulkanGeometryFetchMode.Atlas;
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile { get; set; } = EVulkanGpuDrivenProfile.Auto;
@@ -2255,6 +2369,7 @@ internal sealed class RuntimeEffectiveSettings
     public EXessQualityMode XessQuality { get; set; } = EXessQualityMode.Quality;
 
     private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy;
+    private bool _legacyGpuMeshletForceStrategyWarningLogged;
     private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
 
     private static bool TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)

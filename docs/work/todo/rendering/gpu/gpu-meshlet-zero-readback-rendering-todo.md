@@ -35,7 +35,7 @@ Keep the parent Phase E checklist and this table in sync when changing meshlet s
 
 ## Goal
 
-Promote `GpuMeshlet` from an experimental mesh-shader path into a production mesh submission strategy that shares the existing GPU-resident scene database and zero-readback render pipeline.
+Promote `GpuMeshletZeroReadback` from an experimental mesh-shader path into a production mesh submission strategy that shares the existing GPU-resident scene database and zero-readback render pipeline. Keep `GpuMeshletInstrumented` as the matching diagnostic meshlet strategy for readback-assisted bring-up.
 
 The production path should be:
 
@@ -51,10 +51,10 @@ The production path should be:
 ## Non-Negotiable Rules
 
 - [x] Create a dedicated branch before implementation, for example `rendering-gpu-meshlet-zero-readback`.
-- [x] Keep `GpuMeshlet` zero-readback in steady-state Release frames: no `ReadUIntAt`, `MapBufferData`, `GetDataArrayRawAtIndex`, render-thread `WaitForGpu`, or equivalent count/visibility readback. Done 2026-05-19 at source-contract level; runtime `GpuReadbackBytes == 0` stress validation remains below.
-- [x] Do not allow implicit CPU mesh rendering fallback from production `GpuMeshlet`. Done 2026-05-19.
+- [x] Keep `GpuMeshletZeroReadback` zero-readback in steady-state Release frames: no `ReadUIntAt`, `MapBufferData`, `GetDataArrayRawAtIndex`, render-thread `WaitForGpu`, or equivalent count/visibility readback. Done 2026-05-19 at source-contract level; runtime `GpuReadbackBytes == 0` stress validation remains below.
+- [x] Do not allow implicit CPU mesh rendering fallback from production `GpuMeshletZeroReadback`. Done 2026-05-19.
 - [x] Unsupported production meshlet backends must fall back visibly to `GpuIndirectZeroReadback` when available. Done 2026-05-19.
-- [x] Keep direct CPU-count mesh task dispatch diagnostic-only; it must not satisfy the shipping `GpuMeshlet` strategy. Done 2026-05-19.
+- [x] Keep direct CPU-count mesh task dispatch diagnostic-only; it must not satisfy the shipping `GpuMeshletZeroReadback` strategy. Done 2026-05-19.
 - [x] Generate and cache meshlets during import/cache repair, not first render. Done 2026-05-19 for cooked `XRMesh` payloads; full model-cache container integration stays with the model-cache TODO.
 - [x] Store production meshlet data in `GPUScene`, keyed by `MeshDataID` and LOD, not in `MeshletCollection` sidecar ownership. Done 2026-05-19.
 - [x] Share `DrawMetadataBuffer`, `TransformBuffer`, `PrevTransformBuffer`, `BoundsBuffer`, `MaterialStateBuffer`, `LODTableBuffer`, atlas tiers, material table, and GPU visibility results with the traditional indirect path. Done 2026-05-19.
@@ -64,8 +64,8 @@ The production path should be:
 
 ## Success Criteria
 
-- [ ] `GpuMeshlet` renders B1 and B2 with visual parity against `GpuIndirectZeroReadback`, within expected material/pass tolerances.
-- [ ] `Engine.Rendering.Stats.GpuReadbackBytes` remains zero for steady-state `GpuMeshlet` Release frames. Source-contract protected; 100K/runtime Release stress remains open below.
+- [ ] `GpuMeshletZeroReadback` renders B1 and B2 with visual parity against `GpuIndirectZeroReadback`, within expected material/pass tolerances.
+- [ ] `Engine.Rendering.Stats.GpuReadbackBytes` remains zero for steady-state `GpuMeshletZeroReadback` Release frames. Source-contract protected; 100K/runtime Release stress remains open below.
 - [x] Meshlet data is stored in `GPUScene` and keyed by `MeshDataID`/LOD, with no production dependency on `MeshletCollection` sidecar ownership.
 - [x] Meshlet dispatch consumes GPU-written counts.
 - [x] Task shaders perform frustum culling, cone culling, and primary-view Hi-Z culling where enabled.
@@ -99,10 +99,10 @@ The production path should be:
 **Goal:** isolate the meshlet production work and record the current fallback and bring-up behavior before changing strategy resolution.
 
 - [x] Create the dedicated branch `rendering-gpu-meshlet-zero-readback`. Done 2026-05-19.
-- [x] Confirm current `GpuMeshlet` resolution behavior with the active renderer and record whether it falls back before `VPRC_RenderMeshesPassMeshlet` runs. Done 2026-05-19 before Phase 1: `AbstractRenderer.SupportsMeshletDispatch()` defaulted to `false`, and no renderer override existed yet. `VPRC_RenderMeshesPassShared.Execute()` checked this probe before calling `VPRC_RenderMeshesPassMeshlet.Execute()`, warned, then fell through to traditional GPU indirect submission. Phase 1 replaced the forced-strategy caveat with explicit dialect probes and capability-gated forced `GpuMeshlet` fallback.
+- [x] Confirm current meshlet strategy resolution behavior with the active renderer and record whether it falls back before `VPRC_RenderMeshesPassMeshlet` runs. Done 2026-05-19 before Phase 1: `AbstractRenderer.SupportsMeshletDispatch()` defaulted to `false`, and no renderer override existed yet. `VPRC_RenderMeshesPassShared.Execute()` checked this probe before calling `VPRC_RenderMeshesPassMeshlet.Execute()`, warned, then fell through to traditional GPU indirect submission. Phase 1 replaced the forced-strategy caveat with explicit dialect probes and capability-gated forced `GpuMeshletZeroReadback` fallback; the 2026-05-20 split added `GpuMeshletInstrumented` with diagnostics gating.
 - [x] Capture current `MeshletCollection` buffer ownership, direct `DrawMeshTask(0, numGroups)` dispatch behavior, and shader support. Done 2026-05-19: `GPUScene` owns a `MeshletCollection` sidecar, but production meshlet data is not in shared scene buffers. `MeshletCollection` owns `MeshletBuffer`, `VisibleMeshletBuffer`, `VertexBuffer`, `IndexBuffer`, `TriangleBuffer`, `TransformBuffer`, `MaterialBuffer`, and `CommandVisibilityBuffer`; it rebuilds from `_commandIndexLookup` via `RebuildMeshletsFromUpdatingCommands()` and calls `MeshletGenerator.Build(...)` during the render-ready path. The task/mesh shaders require `GL_NV_mesh_shader`, and `MeshletCollection.Render(...)` requires `OpenGLRenderer.NVMeshShader` before issuing CPU-count direct dispatch through `DrawMeshTask(0, numGroups)`.
 - [ ] Capture current B1/B2 `GpuIndirectZeroReadback` baseline logs and `GpuReadbackBytes` status for comparison. Not complete: the current local `Assets/UnitTestingWorldSettings.jsonc` is not the documented B1/B2 scene; it has one Sponza import and lights enabled, not two Sponzas/lights-off or B1 plus 100 idle skinned avatars. A short Release smoke run was attempted with `Tools/Measure-GameLoopRenderPipeline.ps1 -Strategies GpuIndirectZeroReadback -Configuration Release -WarmupSec 5 -CaptureSec 8 -RunLabel meshlet-phase0-smoke`; it wrote `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-05-19_10-59-17/summary.json` with `GpuReadbackBytesTotal = 0`, but no render-stats samples were parsed, so it is not a valid baseline.
-- [x] Decide whether OpenGL NV mesh shaders are diagnostic-only for v1 if indirect-count task dispatch is unavailable. Decision 2026-05-19: yes. The existing OpenGL NV path is diagnostic/bring-up only until a validated GPU-written-count task dispatch path exists. CPU-count direct `DrawMeshTask(...)` cannot satisfy production `GpuMeshlet`.
+- [x] Decide whether OpenGL NV mesh shaders are diagnostic-only for v1 if indirect-count task dispatch is unavailable. Decision 2026-05-19: yes. The existing OpenGL NV path is diagnostic/bring-up only until a validated GPU-written-count task dispatch path exists. CPU-count direct `DrawMeshTask(...)` cannot satisfy production `GpuMeshletZeroReadback`.
 - [x] Decide whether streaming-tier/editable meshes route through traditional indirect rendering in the first production milestone. Decision 2026-05-19: yes. The first production milestone should meshlet-submit only cached, resident static/skinned LOD payloads with scene-owned meshlet ranges; streaming/editable meshes and meshes missing meshlet payloads route through `GpuIndirectZeroReadback`.
 - [x] List hardware/backend validation targets available locally: OpenGL NV, OpenGL EXT, Vulkan EXT, or fallback-only. Done 2026-05-19: local adapters are NVIDIA GeForce RTX 4070 Laptop GPU and Intel Arc Graphics. `vulkaninfo` reports `VK_EXT_mesh_shader`, `VK_NV_mesh_shader`, `VK_KHR_draw_indirect_count`, and `VK_KHR_buffer_device_address`; Vulkan EXT is the main production validation target. OpenGL has no `glinfo` utility available; `GL_NV_mesh_shader` must be confirmed through a live engine context, and no OpenGL EXT mesh-shader source path exists yet. Fallback-only validation remains required.
 
@@ -114,22 +114,22 @@ The production path should be:
 
 ## Phase 1: Capability And Strategy Honesty
 
-**Goal:** make `GpuMeshlet` resolution tell the truth about whether a backend can run a production zero-readback meshlet path.
+**Goal:** make meshlet strategy resolution tell the truth about whether a backend can run a production zero-readback meshlet path, and whether diagnostics can use the instrumented meshlet path.
 
 - [x] Add an explicit mesh shader dialect model: `None`, `OpenGLNV`, `OpenGLEXT`, and `VulkanEXT`.
 - [x] Split capability probes so direct mesh task dispatch and indirect-count mesh task dispatch are distinct capabilities.
 - [x] Return `SupportsMeshletDispatch()` only when the selected dialect has matching shader sources and production dispatch functions.
 - [x] Keep OpenGL NV direct dispatch available only under a diagnostic or bring-up mode if indirect-count dispatch is not available.
 - [x] Update strategy logs and profiler labels to report requested strategy, selected strategy, backend dialect, and fallback reason.
-- [x] Ensure forced `GpuMeshlet` on unsupported hardware warns and falls back to `GpuIndirectZeroReadback` when available.
+- [x] Ensure forced `GpuMeshletZeroReadback` or `GpuMeshletInstrumented` on unsupported hardware warns and falls back to `GpuIndirectZeroReadback` when available.
 - [x] Ensure strict no-fallback profiles skip GPU mesh submission with a visible warning if neither production meshlet nor zero-readback indirect can run.
 - [x] Add resolver tests for supported, unsupported, diagnostic-only, and strict fallback combinations.
 - [x] Update [Mesh submission strategies](../../../../architecture/rendering/mesh-submission-strategies.md) if the capability contract changes.
 
 ### Exit Criteria
 
-- [x] `GpuMeshlet` cannot silently mean "experimental CPU-count mesh shader path."
-- [x] Unsupported `GpuMeshlet` requests produce visible, tested fallback behavior.
+- [x] `GpuMeshletZeroReadback` cannot silently mean "experimental CPU-count mesh shader path."
+- [x] Unsupported meshlet strategy requests produce visible, tested fallback behavior.
 
 ## Phase 2: Import-Generated Meshlet Payloads
 
@@ -214,13 +214,13 @@ The production path should be:
 - [x] Map OpenGL EXT to `glDrawMeshTasksIndirectCountEXT` or the available extension-equivalent entry point. Done 2026-05-19: OpenGL EXT uses the raw `glMultiDrawMeshTasksIndirectCountEXT` entry point because Silk.NET does not expose an OpenGL EXT mesh-shader wrapper.
 - [x] Keep OpenGL NV production-disabled unless an equivalent indirect/count path is available and validated. Done 2026-05-19: NV remains direct-dispatch/diagnostic-only and never satisfies production `SupportsIndirectCountMeshTaskDispatch()`.
 - [x] Ensure dispatch count, stride, max groups, offsets, and resource barriers are backend-validated. Done 2026-05-19: shared validation enforces draw-indirect target, count-buffer target, stride, count, and 4-byte offsets; Vulkan records compute/transfer-to-indirect barriers for both indirect and count buffers.
-- [x] Ensure CPU-specified direct mesh task counts are diagnostic-only and cannot satisfy production `GpuMeshlet`. Done 2026-05-19: `SupportsMeshletDispatch()` now also requires `SupportsProductionMeshletShaders()`, so backend direct-count diagnostics cannot select production meshlets.
+- [x] Ensure CPU-specified direct mesh task counts are diagnostic-only and cannot satisfy production `GpuMeshletZeroReadback`. Done 2026-05-19: `SupportsMeshletDispatch()` now also requires `SupportsProductionMeshletShaders()`, so backend direct-count diagnostics cannot select production meshlets.
 - [x] Add backend capability and dispatch tests with mock/fake renderer coverage where hardware tests are unavailable. Done 2026-05-19: `MeshOptimizerInteropTests.MeshTaskIndirectCountDispatch_UsesBackendCountPathAndShaderGate` pins the abstraction, Vulkan EXT mapping, OpenGL EXT entry point, and shader gate.
 
 ### Exit Criteria
 
-- [x] Production `GpuMeshlet` dispatch uses GPU-written counts. The backend dispatch abstraction now consumes a GPU-written indirect command plus a GPU-written indirect-command count; actual production selection remains Phase 7 shader-gated.
-- [x] Backends without production count dispatch cannot accidentally select production `GpuMeshlet`.
+- [x] Production `GpuMeshletZeroReadback` dispatch uses GPU-written counts. The backend dispatch abstraction now consumes a GPU-written indirect command plus a GPU-written indirect-command count; actual production selection remains Phase 7 shader-gated.
+- [x] Backends without production count dispatch cannot accidentally select production `GpuMeshletZeroReadback`.
 
 ## Phase 7: Production Task And Mesh Shaders
 
@@ -274,9 +274,9 @@ Phase 7 implementation note: production shader filenames now use the task-record
 - [x] Add structured logs for `Meshlet.BackendSelected`, `Meshlet.BackendUnsupported`, `Meshlet.SceneBufferUpload`, `Meshlet.ExpandOverflow`, `Meshlet.DispatchSkipped`, `Meshlet.CacheMissing`, and `Meshlet.CacheStale`. Done 2026-05-19.
 - [x] Include render pass, requested strategy, selected strategy, backend dialect, source model/cache path, command count, meshlet count, and capacity where relevant. Done 2026-05-19: fields are included where the event has that context; cache-path logging currently reports the runtime cooked-payload authority until the model-cache container work owns a durable path.
 - [x] Add source-contract tests forbidding readback helpers in production meshlet paths. Done 2026-05-19: production meshlet dispatch is checked for forbidden readback helpers and CPU renderer fallbacks.
-- [x] Add tests proving `GpuMeshlet` does not CPU-fallback render meshes. Done 2026-05-19.
+- [x] Add tests proving `GpuMeshletZeroReadback` does not CPU-fallback render meshes. Done 2026-05-19.
 - [ ] Add integration tests for GL NV/EXT and Vulkan EXT where hardware is available. Not run in this shell; requires mesh-shader-capable OpenGL/Vulkan hardware and scene harness runs.
-- [x] Add fallback-only tests for environments without mesh shader support. Done 2026-05-19: resolver/source-contract tests cover unsupported and diagnostic-direct-only backends falling back away from production `GpuMeshlet`; hardware fallback-only runtime smoke remains in Phase 10 backlog.
+- [x] Add fallback-only tests for environments without mesh shader support. Done 2026-05-19: resolver/source-contract tests cover unsupported and diagnostic-direct-only backends falling back away from production `GpuMeshletZeroReadback`; 2026-05-20 tests also cover `GpuMeshletInstrumented` diagnostics gating. Hardware fallback-only runtime smoke remains in Phase 10 backlog.
 
 ### Exit Criteria
 
@@ -295,7 +295,7 @@ Phase 7 implementation note: production shader filenames now use the task-record
 - [ ] Run masked foliage validation. Not run in this shell.
 - [ ] Run stereo OpenVR/OpenXR smoke when backend support is available. Not run in this shell.
 - [ ] Run 100K command stress with `Stats.GpuReadbackBytes == 0`. Not run in this shell.
-- [ ] Run a 30 minute `GpuMeshlet` Release soak. Not run in this shell.
+- [ ] Run a 30 minute `GpuMeshletZeroReadback` Release soak. Not run in this shell.
 - [ ] Run OpenGL/Vulkan parity tests where backend support is available. Not run in this shell.
 - [x] Run the narrowest useful build or test command if full validation is blocked. Done 2026-05-19: targeted unit/source-contract filters above were run because hardware scene parity and soak validation were not available here.
 - [x] Report unrelated build/test failures instead of hiding them in this tracker. Done 2026-05-19: validation still reports existing NuGet vulnerability warnings for `Magick.NET-Q16-HDRI-AnyCPU` and `SharpCompress`, plus existing compiler warnings in `XRENGINE`/unit-test files such as `TransformBaseYamlTypeConverter.cs`, `InterfaceCollectionYamlNodeDeserializer.cs`, `FontGlyphSet.cs`, `AssetManager*.cs`, `ModelImporter.cs`, `Engine.RuntimeRenderingHostServices.cs`, and `UberShaderForwardContractTests.cs`.
@@ -303,11 +303,11 @@ Phase 7 implementation note: production shader filenames now use the task-record
 
 ## Suggested Test Names
 
-- [x] `GpuMeshlet_BackendUnsupported_FallsBackToZeroReadback`
+- [x] `GpuMeshletZeroReadback_BackendUnsupported_FallsBackToZeroReadback`
 - [x] `GpuMeshlet_DiagnosticDirectDispatch_DoesNotSatisfyProductionStrategy`
-- [x] `GpuMeshlet_NoCpuRenderFallback`
-- [x] `GpuMeshlet_NoReadbackHelpersInShippingPath`
-- [ ] `GpuMeshlet_StatsGpuReadbackBytesRemainZero` - runtime Release stress remains open.
+- [x] `GpuMeshletZeroReadback_NoCpuRenderFallback`
+- [x] `GpuMeshletZeroReadback_NoReadbackHelpersInShippingPath`
+- [ ] `GpuMeshletZeroReadback_StatsGpuReadbackBytesRemainZero` - runtime Release stress remains open.
 - [x] `MeshletData_StoredInGPUScene_NotMeshletCollectionOwner`
 - [x] `MeshletRange_PerLODMeshDataID`
 - [x] `MeshletRegistration_UsesCachedPayload_NoRuntimeBuild`

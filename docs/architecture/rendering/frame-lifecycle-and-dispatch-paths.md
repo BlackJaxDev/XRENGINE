@@ -107,7 +107,7 @@ For a world instance this currently means:
 
 - `XRWorldInstance.PreCollectVisible()` calls `VisualScene.GlobalCollectVisible()`.
 
-This phase is used for scene-owned housekeeping that must complete before viewports start collecting. In 3D, `VisualScene3D.GlobalCollectVisible()` flushes pending renderable add/remove operations. In CPU-dispatch mode it also swaps the octree state needed for subsequent tree walks.
+This phase is used for scene-owned housekeeping that must complete before viewports start collecting. In 3D, `VisualScene3D.GlobalCollectVisible()` flushes pending renderable add/remove operations. In CPU-dispatch mode it also swaps the active CPU spatial tree (`Octree` by default, or `Bvh` when selected) needed for subsequent tree walks.
 
 ### 3. CollectVisible
 
@@ -247,14 +247,15 @@ CPU 3D collection path:
 ```text
 XRViewport.CollectVisible()
   -> VisualScene3D.CollectRenderedItems(...)
-       -> RenderTree.CollectVisible(...)
+       -> ActiveCpuRenderTree.CollectVisible(...)
             -> RenderInfo3D.AllowRender(...)
             -> renderable.CollectCommands(...)
 ```
 
 Important note:
 
-- This is the structure that answers the practical question "what are we culling 3D renderables with on the CPU today?" The answer is still the octree.
+- This is the structure that answers the practical question "what are we culling 3D renderables with on the CPU today?" The default is still the octree, but `Engine.Rendering.Settings.CpuSceneCullingStructure`, `GameStartupSettings.CpuSceneCullingStructureOverride`, or `XRE_CPU_SCENE_CULLING_STRUCTURE=Bvh` can switch CPU-dispatch visibility to the CPU BVH path.
+- The profiler's render stats now report CPU spatial tree mode, collect time, total nodes/items, root-held items, max items per node, max depth, and unbounded items. High octree root-held counts are the signal for origin-crossing bounds piling up in the main octree region.
 
 ### GPUScene command mirror: GPU-driven collection handoff
 
@@ -393,7 +394,7 @@ The codebase has a path split for `Traditional` versus `Meshlet` mesh rendering 
 The dedicated meshlet render command path is still experimental:
 
 - `VPRC_RenderMeshesPassShared` can route to `Traditional` or `Meshlet` intent.
-- `GpuMeshlet` requires production `SupportsMeshletDispatch()` from the active renderer, not just visible mesh shader extensions.
+- `GpuMeshletZeroReadback` requires production `SupportsMeshletDispatch()` from the active renderer, not just visible mesh shader extensions. `GpuMeshletInstrumented` uses the same capability gate and is selected only for explicit diagnostics.
 - `MeshShaderDialect`, `SupportsDirectMeshTaskDispatch()`, and `SupportsIndirectCountMeshTaskDispatch()` expose partial backend support for diagnostics.
 - unsupported production meshlet dispatch logs a warning and falls back to `GpuIndirectZeroReadback` when available, or to the profile-approved non-meshlet fallback.
 
@@ -533,11 +534,11 @@ Viewport responsibilities:
 If you need the practical, non-aspirational summary of the engine as it exists today:
 
 - 2D scene visibility uses a quadtree.
-- 3D CPU scene visibility uses an octree.
+- 3D CPU scene visibility uses an octree by default, with an opt-in CPU BVH via engine setting, project override, or `XRE_CPU_SCENE_CULLING_STRUCTURE=Bvh`.
 - GPU-driven rendering uses `GPUScene` plus `GPURenderPassCollection` for later GPU culling and indirect generation.
 - GPU BVH exists and is wired for GPU command culling, but it is optional and not the same thing as replacing the CPU octree scene tree.
 - Per-mesh CPU BVHs exist for picking/raycast/skinned-mesh work.
-- Meshlet infrastructure exists, but `GpuMeshlet` is experimental until a backend exposes production indirect-count mesh task dispatch; unsupported requests fall back visibly through the mesh submission strategy resolver.
+- Meshlet infrastructure exists, with `GpuMeshletZeroReadback` as the production zero-readback strategy and `GpuMeshletInstrumented` as the diagnostics strategy. Both require production indirect-count mesh task dispatch; unsupported requests fall back visibly through the mesh submission strategy resolver.
 
 ## Source Code Guide
 

@@ -26,7 +26,7 @@ XRENGINE renders each world through a staged pipeline that separates scene updat
 - Extensive diagnostics (`IndirectDebugSettings`) allow forcing CPU rebuilds, reading back counts, or dumping command samples without modifying runtime code.
 
 ## Mesh Submission Strategies
-- Mesh pass submission is selected with `EMeshSubmissionStrategy`: `CpuDirect`, `GpuIndirectInstrumented`, `GpuIndirectZeroReadback`, or `GpuMeshlet`.
+- Mesh pass submission is selected with `EMeshSubmissionStrategy`: `CpuDirect`, `GpuIndirectInstrumented`, `GpuIndirectZeroReadback`, `GpuMeshletInstrumented`, or `GpuMeshletZeroReadback`.
 - `Engine.Rendering.ResolveMeshSubmissionStrategy()` maps settings, Vulkan GPU-driven profile, and renderer capability probes into the effective strategy. `ForceMeshSubmissionStrategy` or `XRE_FORCE_MESH_SUBMISSION_STRATEGY` can override it for local triage.
 - `GpuIndirectInstrumented` is the only GPU strategy that may read GPU buffers back to the CPU or run explicit CPU mesh fallback diagnostics. `GpuIndirectZeroReadback` is the production strategy and consumes GPU-written count and material-tier buffers without hot-path readbacks.
 - Zero-readback material submission is selected with `EZeroReadbackMaterialDrawPath` through `Engine.Rendering.Settings.ZeroReadbackMaterialDrawPath`, user/project overrides, the ImGui debug preference, or `XRE_ZERO_READBACK_MATERIAL_DRAW_PATH`. The options are `FullBucketScan`, `ActiveBucketList`, `MaterialTable`, and `BindlessMaterialTable`.

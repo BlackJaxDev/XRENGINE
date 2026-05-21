@@ -565,6 +565,20 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.Text($"  Exact: {stats.GpuTransparencyExactVisible:N0}");
         }
 
+        if (stats.GpuMeshletRequestedFrames > 0 ||
+            stats.GpuMeshletProductionFrames > 0 ||
+            stats.GpuMeshletFallbackFrames > 0 ||
+            stats.GpuMeshletLastVisibleMeshletCount > 0)
+        {
+            ImGui.Separator();
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.55f, 1.0f), "GPU Meshlets:");
+            ImGui.Text($"  Requested/Production/Fallback: {stats.GpuMeshletRequestedFrames:N0} / {stats.GpuMeshletProductionFrames:N0} / {stats.GpuMeshletFallbackFrames:N0}");
+            ImGui.Text($"  Task Records: {stats.GpuMeshletTaskRecordsEmitted:N0} emitted, {stats.GpuMeshletTaskRecordsFrustumCulled:N0} frustum, {stats.GpuMeshletTaskRecordsConeCulled:N0} cone, {stats.GpuMeshletTaskRecordsHiZCulled:N0} Hi-Z");
+            ImGui.Text($"  Last Visible/Dispatched: {stats.GpuMeshletLastVisibleMeshletCount:N0} / {stats.GpuMeshletLastDispatchedMeshletCount:N0}");
+            ImGui.Text($"  Overflow/Readback: {stats.GpuMeshletLastTaskRecordOverflowCount:N0} / {stats.GpuMeshletLastReadbackBytes:N0} bytes");
+            ImGui.Text($"  Dispatch: {stats.GpuMeshletLastDispatchMs:F3} ms");
+        }
+
         ImGui.Separator();
         ImGui.Text("Vulkan Bind/Cache Churn:");
         ImGui.Text($"  Pipeline Binds: {stats.VulkanPipelineBinds:N0} (skipped {stats.VulkanPipelineBindSkips:N0})");
@@ -734,13 +748,21 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         }
 
         ImGui.Separator();
-        ImGui.Text("Octree Commands:");
+        ImGui.Text("CPU Spatial Tree:");
         if (!stats.OctreeStatsReady)
         {
             ImGui.TextDisabled("  Waiting for stats...");
         }
         else
         {
+            ImGui.Text($"  Mode: {stats.CpuSpatialTreeMode}");
+            ImGui.Text($"  Collect ms: {stats.CpuSpatialTreeCollectMs:F3}");
+            ImGui.Text($"  Max collect ms: {stats.CpuSpatialTreeMaxCollectMs:F3}");
+            ImGui.Text($"  Nodes: {stats.CpuSpatialTreeNodeCount:N0}");
+            ImGui.Text($"  Items: {stats.CpuSpatialTreeItemCount:N0}");
+            ImGui.Text($"  Root/unbounded items: {stats.CpuSpatialTreeRootItemCount:N0} / {stats.CpuSpatialTreeUnboundedItemCount:N0}");
+            ImGui.Text($"  Max items/node: {stats.CpuSpatialTreeMaxNodeItemCount:N0}");
+            ImGui.Text($"  Max depth: {stats.CpuSpatialTreeMaxDepth:N0}");
             ImGui.Text($"  Collect calls: {stats.OctreeCollectCallCount:N0}");
             ImGui.Text($"  Visible renderables: {stats.OctreeVisibleRenderableCount:N0}");
             ImGui.Text($"  Emitted commands: {stats.OctreeEmittedCommandCount:N0}");

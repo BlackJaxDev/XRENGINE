@@ -49,7 +49,7 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
         // the BVH. Bypasses the CPU 8-corner transform for these slots.
         if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader
             && (RuntimeEngine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite ||
-                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback))
+                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy()))
         {
             SkinnedMeshBoundsCalculator.Instance.RefreshAllSkinnedAabbs(gpuScene);
         }

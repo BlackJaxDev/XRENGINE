@@ -166,7 +166,7 @@ public partial class OpenGLRenderer
     {
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
 
-        if (IsGpuIndirectZeroReadbackActive())
+        if (IsGpuZeroReadbackActive())
         {
             callback(false, 0.0f);
             return;
@@ -957,7 +957,7 @@ void main()
     {
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
 
-        if (IsGpuIndirectZeroReadbackActive())
+        if (IsGpuZeroReadbackActive())
         {
             callback(false, 0.0f);
             return;
@@ -1027,7 +1027,7 @@ void main()
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminance");
 
         dotLuminance = 1.0f;
-        if (IsGpuIndirectZeroReadbackActive())
+        if (IsGpuZeroReadbackActive())
             return false;
 
         var glTex = GenericToAPI<GLTexture2DArray>(texture);
@@ -1078,7 +1078,7 @@ void main()
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminance");
 
         dotLuminance = 1.0f;
-        if (IsGpuIndirectZeroReadbackActive())
+        if (IsGpuZeroReadbackActive())
             return false;
 
         var glTex = GenericToAPI<GLTexture2D>(texture);
@@ -1109,7 +1109,7 @@ void main()
     /// <inheritdoc/>
     public override unsafe float ReadTextureCenterRedMip0(XRTexture2D texture)
     {
-        if (IsGpuIndirectZeroReadbackActive())
+        if (IsGpuZeroReadbackActive())
             return 0.0f;
 
         var glTex = GenericToAPI<GLTexture2D>(texture);
@@ -1142,7 +1142,7 @@ void main()
     {
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsync");
 
-        if (IsGpuIndirectZeroReadbackActive())
+        if (IsGpuZeroReadbackActive())
         {
             QueueCachedFrontLuminanceCallback(callback);
             return;
@@ -1267,7 +1267,7 @@ void main()
     {
         using var prof = RuntimeEngine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsyncCompute");
 
-        if (IsGpuIndirectZeroReadbackActive())
+        if (IsGpuZeroReadbackActive())
         {
             QueueCachedFrontLuminanceCallback(callback);
             return;

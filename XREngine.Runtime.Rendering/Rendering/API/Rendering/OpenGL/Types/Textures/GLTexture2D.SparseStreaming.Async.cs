@@ -31,7 +31,7 @@ public partial class GLTexture2D
     {
         // The async promotion path is completed by polling a GL sync object. Keep
         // strict zero-readback profiling on the single-context fallback path.
-        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+        if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
             return false;
 
         if (!TryPrepareSparseTransitionForAsyncPromotion(request, out PreparedSparseTransition prepared))

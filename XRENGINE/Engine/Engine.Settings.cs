@@ -496,6 +496,7 @@ namespace XREngine
 
             // ── GPU BVH ──
             h[nameof(GameStartupSettings.UseGpuBvhOverride)] = Rendering.ApplyGpuBvhPreference;
+            h[nameof(GameStartupSettings.CpuSceneCullingStructureOverride)] = Rendering.ApplyCpuSceneCullingStructurePreference;
 
             // ── Vulkan GPU-driven profile (compound) ──
             static void ApplyVulkanProfileSettings()
@@ -577,6 +578,7 @@ namespace XREngine
             Rendering.ApplyAntiAliasingPreference();
             Rendering.ApplyGpuRenderDispatchPreference();
             Rendering.ApplyGpuBvhPreference();
+            Rendering.ApplyCpuSceneCullingStructurePreference();
             Rendering.ApplyNvidiaDlssPreference();
             Rendering.ApplyIntelXessPreference();
             Rendering.ApplyTickGroupedItemsInParallelPreference();

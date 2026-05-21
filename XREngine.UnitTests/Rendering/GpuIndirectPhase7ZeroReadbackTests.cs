@@ -70,7 +70,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             "AssertZeroReadbackProductionInvariantsForPass(strategy);",
             StringComparison.Ordinal);
 
-        policySnapshot.ShouldContain("bool meshlet = strategy == EMeshSubmissionStrategy.GpuMeshlet;");
+        policySnapshot.ShouldContain("bool meshlet = strategy.IsAnyMeshletStrategy();");
         policySnapshot.ShouldContain("_passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented || meshlet;");
         policySnapshot.ShouldContain("_passDisableCpuReadbackCount = !instrumented;");
 
@@ -143,9 +143,9 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         string bvhCommandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_BuildAccelerationStructure.cs");
 
         renderableSource.ShouldContain("ShouldUseGpuResidentSkinnedBoundsPath");
-        renderableSource.ShouldContain("RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback");
+        renderableSource.ShouldContain("RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy()");
         renderableSource.ShouldContain("ApplyGpuResidentSkinnedBoundsDispatchLocked()");
-        bvhCommandSource.ShouldContain("RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback");
+        bvhCommandSource.ShouldContain("RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy()");
 
         string directPath = Slice(
             renderableSource,

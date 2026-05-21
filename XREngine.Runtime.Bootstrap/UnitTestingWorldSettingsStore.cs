@@ -6,6 +6,11 @@ namespace XREngine.Runtime.Bootstrap;
 public static class UnitTestingWorldSettingsStore
 {
     public const string SettingsFileName = "UnitTestingWorldSettings.jsonc";
+    private static readonly JsonSerializerSettings JsonSettings = new()
+    {
+        Formatting = Formatting.Indented,
+        Converters = [new MeshSubmissionStrategyJsonConverter()]
+    };
 
     public static UnitTestingWorldSettings Load(bool writeBackAfterRead)
     {
@@ -15,15 +20,15 @@ public static class UnitTestingWorldSettingsStore
         string filePath = Path.Combine(dir, "Assets", SettingsFileName);
 
         if (!File.Exists(filePath))
-            File.WriteAllText(filePath, JsonConvert.SerializeObject(settings = new UnitTestingWorldSettings(), Formatting.Indented));
+            File.WriteAllText(filePath, JsonConvert.SerializeObject(settings = new UnitTestingWorldSettings(), JsonSettings));
         else
         {
             string? content = File.ReadAllText(filePath);
             if (content is not null)
             {
-                settings = JsonConvert.DeserializeObject<UnitTestingWorldSettings>(content) ?? new UnitTestingWorldSettings();
+                settings = JsonConvert.DeserializeObject<UnitTestingWorldSettings>(content, JsonSettings) ?? new UnitTestingWorldSettings();
                 if (writeBackAfterRead)
-                    File.WriteAllText(filePath, JsonConvert.SerializeObject(settings, Formatting.Indented));
+                    File.WriteAllText(filePath, JsonConvert.SerializeObject(settings, JsonSettings));
             }
             else
                 settings = new UnitTestingWorldSettings();

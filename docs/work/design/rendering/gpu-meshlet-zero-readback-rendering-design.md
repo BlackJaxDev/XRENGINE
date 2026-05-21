@@ -41,7 +41,7 @@ Source import/cache
     -> shared material-table shading
 ```
 
-`GpuMeshlet` becomes a shipping strategy where supported. `GpuIndirectZeroReadback` remains the shipping baseline and fallback on platforms without mesh shaders.
+`GpuMeshletZeroReadback` becomes a shipping strategy where supported. `GpuMeshletInstrumented` is the matching diagnostics strategy. `GpuIndirectZeroReadback` remains the shipping baseline and fallback on platforms without mesh shaders.
 
 ## 2. Goals
 
@@ -66,7 +66,7 @@ Source import/cache
 
 ### 4.1 Backend Capability
 
-The renderer abstraction exposes mesh shader dialect and dispatch probes. `SupportsMeshletDispatch()` is production-only: it must remain false until a backend has matching shaders plus indirect-count mesh task dispatch from GPU-written counts. OpenGL `GL_NV_mesh_shader` direct dispatch is diagnostic-only and does not satisfy production `GpuMeshlet`.
+The renderer abstraction exposes mesh shader dialect and dispatch probes. `SupportsMeshletDispatch()` is production-only: it must remain false until a backend has matching shaders plus indirect-count mesh task dispatch from GPU-written counts. OpenGL `GL_NV_mesh_shader` direct dispatch is diagnostic-only and does not satisfy production `GpuMeshletZeroReadback`.
 
 Required change:
 
@@ -298,9 +298,9 @@ Backend mapping:
 
 - Vulkan: `vkCmdDrawMeshTasksIndirectCountEXT`
 - OpenGL EXT: `glDrawMeshTasksIndirectCountEXT` or available equivalent
-- OpenGL NV: use NV-specific indirect/count support if available; otherwise support only a bring-up direct dispatch path and keep production `GpuMeshlet` disabled for that dialect
+- OpenGL NV: use NV-specific indirect/count support if available; otherwise support only a bring-up direct dispatch path and keep production `GpuMeshletZeroReadback` disabled for that dialect
 
-If a backend only supports CPU-specified direct task counts, it can be used for diagnostics but must not satisfy the shipping `GpuMeshlet` strategy.
+If a backend only supports CPU-specified direct task counts, it can be used for diagnostics but must not satisfy the shipping `GpuMeshletZeroReadback` strategy.
 
 ### 6.5 Task Shader
 
@@ -364,7 +364,7 @@ The existing per-material shader path may remain available for diagnostics, but 
 
 ## 7. Zero-Readback Contract
 
-`GpuMeshlet` is a shipping strategy. Therefore:
+`GpuMeshletZeroReadback` is a shipping strategy. Therefore:
 
 - no `ReadUIntAt`
 - no `MapBufferData` for counts
@@ -382,14 +382,15 @@ Allowed CPU work:
 - logging capability warnings outside tight loops
 - reading async diagnostics only under instrumented strategies
 
-`Engine.Rendering.Stats.GpuReadbackBytes` must remain zero for steady-state `GpuMeshlet` frames.
+`Engine.Rendering.Stats.GpuReadbackBytes` must remain zero for steady-state `GpuMeshletZeroReadback` frames.
 
 ## 8. Fallback Rules
 
 Strategy resolution:
 
-1. If `GpuMeshlet` is forced and backend supports a production meshlet dialect, use meshlets.
-2. If `GpuMeshlet` is forced and backend lacks production support, warn and fall back to `GpuIndirectZeroReadback` when available.
+1. If `GpuMeshletZeroReadback` is forced and backend supports a production meshlet dialect, use meshlets.
+2. If `GpuMeshletInstrumented` is forced and backend supports production meshlets plus diagnostics are enabled, use instrumented meshlets; otherwise collapse to `GpuMeshletZeroReadback` when production meshlets are available.
+3. If either meshlet strategy is forced and backend lacks production support, warn and fall back to `GpuIndirectZeroReadback` when available.
 3. If zero-readback indirect is unavailable and strict no-fallback mode is active, skip GPU mesh submission with a visible warning rather than drawing CPU meshes.
 4. Diagnostic profiles may use bring-up meshlet direct dispatch or CPU validation readbacks only under `GpuIndirectInstrumented` or an explicit meshlet diagnostics mode.
 
@@ -429,7 +430,7 @@ Logs should include render pass, strategy, backend dialect, source model/cache p
 - Override `SupportsMeshletDispatch()` only for backends that can run the production zero-readback path.
 - Add dialect and direct-vs-indirect-count dispatch reporting.
 - Keep `GL_NV_mesh_shader` direct dispatch as experimental if indirect-count dispatch is not available.
-- Add tests proving `GpuMeshlet` fallback is explicit.
+- Add tests proving meshlet strategy fallback is explicit.
 
 ### Phase 2: Import-Generated Meshlet Assets
 
@@ -472,7 +473,7 @@ Logs should include render pass, strategy, backend dialect, source model/cache p
 
 ### Phase 7: Hardening
 
-- 30 minute `GpuMeshlet` soak.
+- 30 minute `GpuMeshletZeroReadback` soak.
 - 100K command stress with zero readbacks.
 - B1/B2 visual parity against `GpuIndirectZeroReadback`.
 - Dense geometry performance target: meshlet path within 10 percent of indirect path at minimum, ahead on geometry-heavy scenes.
@@ -482,9 +483,9 @@ Logs should include render pass, strategy, backend dialect, source model/cache p
 
 Unit/source-contract tests:
 
-- `GpuMeshlet_BackendUnsupported_FallsBackToZeroReadback`
-- `GpuMeshlet_NoCpuRenderFallback`
-- `GpuMeshlet_NoReadbackHelpersInShippingPath`
+- `GpuMeshletZeroReadback_BackendUnsupported_FallsBackToZeroReadback`
+- `GpuMeshletZeroReadback_NoCpuRenderFallback`
+- `GpuMeshletZeroReadback_NoReadbackHelpersInShippingPath`
 - `MeshletData_StoredInGPUScene_NotMeshletCollectionOwner`
 - `MeshletRange_PerLODMeshDataID`
 - `MeshletExpand_UsesCulledCommandBufferAndLODSelection`
@@ -515,8 +516,8 @@ Scene validation:
 
 ## 12. Acceptance Criteria
 
-- `GpuMeshlet` renders B1 and B2 identically to `GpuIndirectZeroReadback` within expected material/pass tolerances.
-- `GpuMeshlet` records zero `Stats.GpuReadbackBytes` in steady-state Release frames.
+- `GpuMeshletZeroReadback` renders B1 and B2 identically to `GpuIndirectZeroReadback` within expected material/pass tolerances.
+- `GpuMeshletZeroReadback` records zero `Stats.GpuReadbackBytes` in steady-state Release frames.
 - Meshlet data is stored in `GPUScene` and keyed by `MeshDataID`/LOD, with no production dependency on `MeshletCollection` sidecar ownership.
 - Meshlet dispatch consumes GPU-written counts.
 - Meshlet task shaders perform frustum culling, cone culling, and primary-view Hi-Z culling where enabled.

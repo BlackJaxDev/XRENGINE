@@ -1254,7 +1254,16 @@ namespace XREngine
                 if (!Rendering.Stats.Octree.OctreeStatsReady)
                     return;
 
-                builder.AppendLine("OctreeStats:");
+                builder.AppendLine("CpuSpatialTreeStats:");
+                builder.Append("  Mode: ").Append(Rendering.Stats.Octree.CpuSpatialTreeMode).AppendLine();
+                builder.Append("  CollectMs: ").Append(Rendering.Stats.Octree.CpuSpatialTreeCollectMs.ToString("F3")).AppendLine();
+                builder.Append("  MaxCollectMs: ").Append(Rendering.Stats.Octree.CpuSpatialTreeMaxCollectMs.ToString("F3")).AppendLine();
+                builder.Append("  Nodes: ").Append(Rendering.Stats.Octree.CpuSpatialTreeNodeCount.ToString("N0")).AppendLine();
+                builder.Append("  Items: ").Append(Rendering.Stats.Octree.CpuSpatialTreeItemCount.ToString("N0")).AppendLine();
+                builder.Append("  RootItems: ").Append(Rendering.Stats.Octree.CpuSpatialTreeRootItemCount.ToString("N0")).AppendLine();
+                builder.Append("  MaxItemsPerNode: ").Append(Rendering.Stats.Octree.CpuSpatialTreeMaxNodeItemCount.ToString("N0")).AppendLine();
+                builder.Append("  MaxDepth: ").Append(Rendering.Stats.Octree.CpuSpatialTreeMaxDepth.ToString("N0")).AppendLine();
+                builder.Append("  UnboundedItems: ").Append(Rendering.Stats.Octree.CpuSpatialTreeUnboundedItemCount.ToString("N0")).AppendLine();
                 builder.Append("  CollectCalls: ").Append(Rendering.Stats.Octree.OctreeCollectCallCount.ToString("N0")).AppendLine();
                 builder.Append("  VisibleRenderables: ").Append(Rendering.Stats.Octree.OctreeVisibleRenderableCount.ToString("N0")).AppendLine();
                 builder.Append("  EmittedCommands: ").Append(Rendering.Stats.Octree.OctreeEmittedCommandCount.ToString("N0")).AppendLine();
