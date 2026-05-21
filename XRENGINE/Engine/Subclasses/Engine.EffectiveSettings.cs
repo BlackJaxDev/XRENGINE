@@ -145,6 +145,29 @@ namespace XREngine
                     null);
 
             /// <summary>
+            /// Gets the CPU spatial structure used for render visibility when GPU dispatch is disabled.
+            /// Resolved from: Environment Override > Project Override > Engine Default.
+            /// Environment override: XRE_CPU_SCENE_CULLING_STRUCTURE=Octree|Bvh.
+            /// </summary>
+            public static ECpuSceneCullingStructure CpuSceneCullingStructure
+                => ResolveCpuSceneCullingStructure();
+
+            private static ECpuSceneCullingStructure ResolveCpuSceneCullingStructure()
+            {
+                string? raw = Environment.GetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE");
+                if (!string.IsNullOrWhiteSpace(raw) &&
+                    Enum.TryParse(raw.Trim(), ignoreCase: true, out ECpuSceneCullingStructure parsed))
+                {
+                    return parsed;
+                }
+
+                return OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.CpuSceneCullingStructure,
+                    GameSettings?.CpuSceneCullingStructureOverride,
+                    null);
+            }
+
+            /// <summary>
             /// Gets the active GPU culling data layout mode.
             /// </summary>
             public static EGpuCullingDataLayout GpuCullingDataLayout
@@ -313,12 +336,23 @@ namespace XREngine
             public static EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
                 => ResolveForcedMeshSubmissionStrategy();
 
+            private static bool _legacyGpuMeshletForceStrategyWarningLogged;
+
             private static EMeshSubmissionStrategy? ResolveForcedMeshSubmissionStrategy()
             {
                 string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
-                if (!string.IsNullOrWhiteSpace(raw) &&
-                    Enum.TryParse(raw.Trim(), ignoreCase: true, out EMeshSubmissionStrategy parsed))
+                if (EMeshSubmissionStrategyExtensions.TryParseMeshSubmissionStrategy(
+                        raw,
+                        out EMeshSubmissionStrategy parsed,
+                        out bool usedLegacyName))
                 {
+                    if (usedLegacyName && !_legacyGpuMeshletForceStrategyWarningLogged)
+                    {
+                        _legacyGpuMeshletForceStrategyWarningLogged = true;
+                        Debug.RenderingWarning(
+                            "XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuMeshlet is deprecated; use GpuMeshletZeroReadback.");
+                    }
+
                     return parsed;
                 }
 

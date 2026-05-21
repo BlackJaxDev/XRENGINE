@@ -114,7 +114,7 @@ cause GC pauses visible on the main thread.
 | Code | Type | Frequency | Content |
 |------|------|-----------|---------|
 | `0x01` | `ProfilerFrame` | ~30 Hz | Per-thread call trees, timing history |
-| `0x02` | `RenderStats` | ~30 Hz | Draw calls, VRAM, FBO, render matrix, octree |
+| `0x02` | `RenderStats` | ~30 Hz | Draw calls, VRAM, FBO, render matrix, CPU spatial tree |
 | `0x03` | `ThreadAllocations` | ~30 Hz | Per-phase GC allocation ring buffers |
 | `0x04` | `BvhMetrics` | ~30 Hz | Build/refit/cull/raycast counts and timings |
 | `0x05` | `JobSystemStats` | ~30 Hz | Worker count, queue state, per-priority stats |
@@ -134,7 +134,7 @@ A standalone Silk.NET window (GLFW + OpenGL 3.3 + ImGui with docking) that:
 3. Renders 9 dockable panels via `ProfilerPanelRenderer`:
    - **Profiler Tree** — call-tree hierarchy with root method graphs (`PlotLines`) and worst-frame tracking
    - **FPS Drop Spikes** — sortable table of frame-time anomalies with hottest call path
-   - **Render Stats** — draw calls, VRAM, FBO bandwidth, render matrix, octree
+   - **Render Stats** — draw calls, VRAM, FBO bandwidth, render matrix, CPU spatial tree
   - **GPU Pipeline** — generic render-pipeline command GPU timings, root history plots, and hierarchical pass breakdowns
    - **Thread Allocations** — per-phase GC allocation stats (last / avg / max KB)
    - **BVH Metrics** — build, refit, cull, raycast counts and timings

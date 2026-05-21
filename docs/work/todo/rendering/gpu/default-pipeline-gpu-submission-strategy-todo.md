@@ -55,7 +55,8 @@ public enum EMeshSubmissionStrategy
     CpuDirect,
     GpuIndirectInstrumented,
     GpuIndirectZeroReadback,
-    GpuMeshlet,
+    GpuMeshletZeroReadback,
+    GpuMeshletInstrumented,
 }
 ```
 
@@ -68,7 +69,8 @@ The exact names can change, but the model should preserve these semantics. `GpuI
 | `CpuDirect` | Compatibility, simple debugging, unsupported GPU path | Allowed | N/A (already CPU) | Existing rules apply | Standard |
 | `GpuIndirectInstrumented` | GPU path with explicit inspection and fallback | Allowed (counted in `GpuReadbackBytes`) | Allowed, warn-once | Forbidden | Verbose |
 | `GpuIndirectZeroReadback` | Production GPU-driven indirect path | Forbidden | Forbidden in strict profiles; warn-once + downgrade in permissive | Forbidden | Errors only |
-| `GpuMeshlet` | Future meshlet/task-shader path | Forbidden in production | Forbidden in production | Forbidden | Errors only |
+| `GpuMeshletInstrumented` | Meshlet/task-shader path with explicit inspection | Allowed only under diagnostics | Forbidden in production | Forbidden | Verbose |
+| `GpuMeshletZeroReadback` | Production meshlet/task-shader path | Forbidden in production | Forbidden in production | Forbidden | Errors only |
 
 Orthogonality note: "readback allowed" and "CPU fallback allowed" are conceptually independent. They are bundled per strategy here for simplicity; if more combinations are needed, split into orthogonal flags rather than adding more enum values.
 

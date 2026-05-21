@@ -7,6 +7,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Diagnostics;
 using XREngine.Components;
@@ -324,6 +325,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordOctreeSkippedMove()
         => Engine.Rendering.Stats.Octree.RecordOctreeSkippedMove();
 
+    public ECpuSceneCullingStructure CpuSceneCullingStructure
+        => Engine.EffectiveSettings.CpuSceneCullingStructure;
+
     public void ProcessGpuPhysicsChainDispatches()
         => GPUPhysicsChainDispatcher.Instance.ProcessDispatches();
 
@@ -483,6 +487,19 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderGpuMeshletBufferBytesResident(long bytes)
         => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(bytes < 0 ? 0UL : (ulong)bytes);
 
+    public void RecordRenderGpuMeshletInstrumentation(
+        uint visibleMeshletCount,
+        uint dispatchedMeshletCount,
+        uint taskRecordOverflowCount,
+        TimeSpan dispatchTime,
+        uint readbackBytes)
+        => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletInstrumentation(
+            visibleMeshletCount,
+            dispatchedMeshletCount,
+            taskRecordOverflowCount,
+            dispatchTime,
+            readbackBytes);
+
     public void RecordRenderGpuMeshletCacheHit(int eventCount = 1)
         => Engine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(eventCount);
 
@@ -494,6 +511,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands)
         => Engine.Rendering.Stats.Octree.RecordOctreeCollect(visibleRenderables, emittedCommands);
+
+    public void RecordRenderCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks)
+        => Engine.Rendering.Stats.Octree.RecordCpuSpatialTreeStats(mode, occupancy, collectTicks);
 
     public void RecordRenderRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime)
         => Engine.Rendering.Stats.RtxIo.RecordRtxIoCopyIndirect(copiedBytes, submissionTime);

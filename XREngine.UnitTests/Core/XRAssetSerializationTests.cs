@@ -1,10 +1,13 @@
 using NUnit.Framework;
+using Newtonsoft.Json;
 using Shouldly;
 using XREngine.Core.Files;
 using System.Collections.Generic;
 using System.IO;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
+using XREngine.Runtime.Bootstrap;
 using YamlDotNet.Core;
 
 namespace XREngine.UnitTests.Core;
@@ -183,6 +186,34 @@ DebugShapePopulationMode: JobSystem
         clone.DebugShapePopulationMode.ShouldBe(EDebugShapePopulationMode.Tasks);
     }
 
+    [Test]
+    public void YamlDeserializer_Reads_Legacy_GpuMeshlet_As_GpuMeshletZeroReadback()
+    {
+        const string yaml = """
+Strategy: GpuMeshlet
+""";
+
+        MeshSubmissionStrategyYamlContainer clone = AssetManager.Deserializer.Deserialize<MeshSubmissionStrategyYamlContainer>(yaml)
+            .ShouldNotBeNull();
+
+        clone.Strategy.ShouldBe(EMeshSubmissionStrategy.GpuMeshletZeroReadback);
+    }
+
+    [Test]
+    public void JsonConverter_Reads_Legacy_GpuMeshlet_As_GpuMeshletZeroReadback()
+    {
+        const string json = """
+{"Strategy":"GpuMeshlet"}
+""";
+        JsonSerializerSettings settings = new();
+        settings.Converters.Add(new MeshSubmissionStrategyJsonConverter());
+
+        MeshSubmissionStrategyYamlContainer clone = JsonConvert.DeserializeObject<MeshSubmissionStrategyYamlContainer>(json, settings)
+            .ShouldNotBeNull();
+
+        clone.Strategy.ShouldBe(EMeshSubmissionStrategy.GpuMeshletZeroReadback);
+    }
+
     private sealed class StubAsset : XRAsset
     {
         public string? Payload { get; set; }
@@ -205,6 +236,11 @@ DebugShapePopulationMode: JobSystem
         public ColorF4 Color4 { get; set; }
         public ColorF4 Color4Alias { get; set; }
         public ColorF3 Color3 { get; set; }
+    }
+
+    private sealed class MeshSubmissionStrategyYamlContainer
+    {
+        public EMeshSubmissionStrategy Strategy { get; set; }
     }
 
     private sealed class NestedAliasAsset : XRAsset

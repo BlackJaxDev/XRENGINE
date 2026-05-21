@@ -127,7 +127,8 @@ namespace XREngine.Rendering
     private static bool IsGpuIndirectLoggingEnabled()
         => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
     private static bool IsInstrumentedStrategy(GPURenderPassCollection renderPasses)
-        => renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented;
+        => renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented ||
+           renderPasses.MeshSubmissionStrategy.IsInstrumentedMeshletStrategy();
 
     /// <summary>
     /// Logs a GPU indirect debugging message using the new structured logger.
@@ -333,7 +334,7 @@ namespace XREngine.Rendering
         //     & IndexedVaoValid
         //     & SupportsIndirectCountDraw
         //     & !DebugSettings.DisableCountDrawPath
-        // Under EMeshSubmissionStrategy.GpuIndirectZeroReadback the GPU count-draw path MUST be
+        // Under zero-readback GPU strategies the GPU count-draw path MUST be
         // active. Any diagnostic flag (DisableCountDrawPath, ForceCpuFallbackCount,
         // ForceCpuIndirectBuild, !DisableCpuReadbackCount, EnableCpuBatching) that defeats it is a
         // shipping bug. These asserts compile out of Release.
@@ -341,7 +342,8 @@ namespace XREngine.Rendering
         [System.Diagnostics.Conditional("DEBUG")]
         private static void AssertZeroReadbackUsesGpuCountPath(in IndirectParityChecklist parity, string callsite)
         {
-            if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            EMeshSubmissionStrategy strategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+            if (!strategy.IsGpuZeroReadbackStrategy())
                 return;
 
             if (parity.UsesCountDrawPath)
@@ -357,36 +359,37 @@ namespace XREngine.Rendering
                 : "unknown";
 
             System.Diagnostics.Debug.Assert(false,
-                $"[C-GPU-2] {callsite}: GpuIndirectZeroReadback requires UsesCountDrawPath but parity={reason}. " +
+                $"[C-GPU-2] {callsite}: {strategy} requires UsesCountDrawPath but parity={reason}. " +
                 "Shipping path must consume the GPU-written count buffer via glMultiDrawElementsIndirectCount.");
         }
 
         [System.Diagnostics.Conditional("DEBUG")]
         private static void AssertZeroReadbackProductionInvariants(string callsite)
         {
-            if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            EMeshSubmissionStrategy strategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+            if (!strategy.IsGpuZeroReadbackStrategy())
                 return;
 
             var d = GPURenderPassCollection.IndirectDebug;
 
             System.Diagnostics.Debug.Assert(!d.DisableCountDrawPath,
-                $"[C-GPU-2] {callsite}: IndirectDebug.DisableCountDrawPath=true while strategy=GpuIndirectZeroReadback. " +
+                $"[C-GPU-2] {callsite}: IndirectDebug.DisableCountDrawPath=true while strategy={strategy}. " +
                 "Diagnostic switch must be OFF in production — it forces a CPU-readback fallback that breaks zero-readback.");
 
             System.Diagnostics.Debug.Assert(!d.ForceCpuFallbackCount,
-                $"[C-GPU-2] {callsite}: IndirectDebug.ForceCpuFallbackCount=true while strategy=GpuIndirectZeroReadback. " +
+                $"[C-GPU-2] {callsite}: IndirectDebug.ForceCpuFallbackCount=true while strategy={strategy}. " +
                 "Diagnostic switch must be OFF in production.");
 
             System.Diagnostics.Debug.Assert(!d.ForceCpuIndirectBuild,
-                $"[C-GPU-2] {callsite}: IndirectDebug.ForceCpuIndirectBuild=true while strategy=GpuIndirectZeroReadback. " +
+                $"[C-GPU-2] {callsite}: IndirectDebug.ForceCpuIndirectBuild=true while strategy={strategy}. " +
                 "Diagnostic switch must be OFF in production.");
 
             System.Diagnostics.Debug.Assert(d.DisableCpuReadbackCount,
-                $"[C-GPU-2] {callsite}: IndirectDebug.DisableCpuReadbackCount=false while strategy=GpuIndirectZeroReadback. " +
+                $"[C-GPU-2] {callsite}: IndirectDebug.DisableCpuReadbackCount=false while strategy={strategy}. " +
                 "Production zero-readback must suppress map/unmap of the GPU count buffer.");
 
             System.Diagnostics.Debug.Assert(!d.EnableCpuBatching,
-                $"[C-GPU-2] {callsite}: IndirectDebug.EnableCpuBatching=true while strategy=GpuIndirectZeroReadback. " +
+                $"[C-GPU-2] {callsite}: IndirectDebug.EnableCpuBatching=true while strategy={strategy}. " +
                 "Diagnostic switch must be OFF in production — it forces a CPU map of the culled command buffer.");
         }
 
@@ -409,14 +412,14 @@ namespace XREngine.Rendering
                 return;
 
             if (_useMeshletPipeline &&
-                renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet &&
+                renderPasses.MeshSubmissionStrategy.IsAnyMeshletStrategy() &&
                 TryRenderMeshletMaterialTable(renderPasses, camera, scene, currentRenderPass))
             {
                 return;
             }
 
             if ((renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback ||
-                 renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet) &&
+                 renderPasses.MeshSubmissionStrategy.IsAnyMeshletStrategy()) &&
                 !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
@@ -2251,10 +2254,11 @@ namespace XREngine.Rendering
             int currentRenderPass)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuMeshlet.RenderMaterialTable");
+            EMeshSubmissionStrategy requestedStrategy = renderPasses.MeshSubmissionStrategy;
             RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletStrategyRequested(
                 currentRenderPass,
-                EMeshSubmissionStrategy.GpuMeshlet,
-                EMeshSubmissionStrategy.GpuMeshlet,
+                requestedStrategy,
+                requestedStrategy,
                 AbstractRenderer.Current?.MeshShaderDialect ?? EMeshShaderDialect.None,
                 scene.TotalCommandCount,
                 renderPasses.MaxVisibleMeshletTaskCapacity);
@@ -2262,25 +2266,25 @@ namespace XREngine.Rendering
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
             {
-                WarnMeshletMaterialFallback(currentRenderPass, "No active renderer is available for meshlet dispatch.");
+                WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, "No active renderer is available for meshlet dispatch.");
                 return false;
             }
 
             if (!renderer.SupportsMeshletDispatch())
             {
-                WarnMeshletMaterialFallback(currentRenderPass, renderer.MeshletDispatchUnsupportedReason);
+                WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, renderer.MeshletDispatchUnsupportedReason);
                 return false;
             }
 
             if (!renderPasses.MeshletExpansionPreparedThisFrame)
             {
-                WarnMeshletMaterialFallback(currentRenderPass, "Visible meshlet task expansion was not prepared for this pass.");
+                WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, "Visible meshlet task expansion was not prepared for this pass.");
                 return false;
             }
 
             if (!renderPasses.TryGetMeshletExpansionInputs(scene, out GpuMeshletExpansionInputs inputs))
             {
-                WarnMeshletMaterialFallback(currentRenderPass, "Meshlet expansion inputs are incomplete.");
+                WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, "Meshlet expansion inputs are incomplete.");
                 return false;
             }
 
@@ -2288,6 +2292,7 @@ namespace XREngine.Rendering
             {
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
+                    requestedStrategy,
                     "The current render pass is not implemented by the direct meshlet material-table shader.");
                 return false;
             }
@@ -2299,6 +2304,7 @@ namespace XREngine.Rendering
             {
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
+                    requestedStrategy,
                     "Override/depth-normal material variants require the traditional zero-readback material-tier path.");
                 return false;
             }
@@ -2307,6 +2313,7 @@ namespace XREngine.Rendering
             {
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
+                    requestedStrategy,
                     "Scene-owned skinned meshlet vertex-weight buffers are not wired yet; preserving skinned meshes through the traditional zero-readback path.");
                 return false;
             }
@@ -2318,6 +2325,7 @@ namespace XREngine.Rendering
             {
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
+                    requestedStrategy,
                     $"Meshlet production dispatch requires a material-table draw path; current path is {drawPath}.");
                 return false;
             }
@@ -2327,7 +2335,7 @@ namespace XREngine.Rendering
                 MaterialBindingResolverResult result = MaterialBindingResolverResult.PerMaterial(
                     $"Pass {currentRenderPass} does not expose a generated material-table layout.");
                 renderPasses.RecordMaterialBindingResolverResult(result);
-                WarnMeshletMaterialFallback(currentRenderPass, result.Reason);
+                WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, result.Reason);
                 return false;
             }
 
@@ -2355,6 +2363,7 @@ namespace XREngine.Rendering
             {
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
+                    requestedStrategy,
                     "One or more meshlet material-table buffers are missing; routing through traditional zero-readback indirect rendering.");
                 return false;
             }
@@ -2369,6 +2378,7 @@ namespace XREngine.Rendering
                 _bindlessMaterialTableUnsupportedLogBudget--;
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
+                    requestedStrategy,
                     "Bindless/descriptor-indexed material-table meshlets were requested, but the active backend cannot bind the material texture handle table.");
             }
 
@@ -2413,6 +2423,7 @@ namespace XREngine.Rendering
             renderer.SetEngineUniforms(program, camera);
 
             bool submitted = false;
+            TimeSpan dispatchElapsed = TimeSpan.Zero;
             try
             {
                 renderer.MemoryBarrier(
@@ -2420,15 +2431,18 @@ namespace XREngine.Rendering
                     EMemoryBarrierMask.Command |
                     EMemoryBarrierMask.TextureFetch);
 
+                System.Diagnostics.Stopwatch dispatchStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 submitted = renderer.TryDrawMeshTasksIndirectCount(
                     dispatchIndirectBuffer,
                     dispatchCountBuffer,
                     GPUMeshletLayout.MeshTaskIndirectCommandMaxDrawCount,
                     GPUMeshletLayout.MeshTaskIndirectCommandStride,
                     out string failureReason);
+                dispatchStopwatch.Stop();
+                dispatchElapsed = dispatchStopwatch.Elapsed;
 
                 if (!submitted)
-                    WarnMeshletMaterialFallback(currentRenderPass, failureReason);
+                    WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, failureReason);
             }
             finally
             {
@@ -2440,8 +2454,9 @@ namespace XREngine.Rendering
             {
                 RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletProductionFrame(1);
                 RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletBufferBytesResident(scene.MeshletBufferBytesResident);
+                renderPasses.CaptureMeshletInstrumentationAfterDispatch(dispatchElapsed);
                 XREngine.Debug.Meshes(
-                    $"Meshlet.BackendSelected pass={currentRenderPass} requested={EMeshSubmissionStrategy.GpuMeshlet} selected={EMeshSubmissionStrategy.GpuMeshlet} dialect={renderer.MeshShaderDialect} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
+                    $"Meshlet.BackendSelected pass={currentRenderPass} requested={requestedStrategy} selected={requestedStrategy} dialect={renderer.MeshShaderDialect} commandCount={scene.TotalCommandCount} meshletCount={scene.MeshletDescriptorCount} capacity={renderPasses.MaxVisibleMeshletTaskCapacity}");
             }
 
             return submitted;
@@ -2602,7 +2617,10 @@ namespace XREngine.Rendering
                 program.Uniform(MeshletFrustumPlaneUniformNames[i], planes[i].AsVector4());
         }
 
-        private static void WarnMeshletMaterialFallback(int currentRenderPass, string reason)
+        private static void WarnMeshletMaterialFallback(
+            int currentRenderPass,
+            EMeshSubmissionStrategy requestedStrategy,
+            string reason)
         {
             RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
             RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletFallback(1);
@@ -2612,7 +2630,7 @@ namespace XREngine.Rendering
                 "[RenderDispatch] Meshlet.BackendUnsupported pass={0} requested={2} selected={3} reason='{1}' routing through traditional zero-readback indirect rendering",
                 currentRenderPass,
                 reason,
-                EMeshSubmissionStrategy.GpuMeshlet,
+                requestedStrategy,
                 EMeshSubmissionStrategy.GpuIndirectZeroReadback);
         }
 

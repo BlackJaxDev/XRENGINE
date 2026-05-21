@@ -8,6 +8,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
@@ -118,6 +119,7 @@ public static class RuntimeRenderingHostServices
         public bool CpuSocUseAvx2 => RuntimeRenderingHostServiceDefaults.CpuSocUseAvx2;
         public bool CpuSocDebugVisualization => RuntimeRenderingHostServiceDefaults.CpuSocDebugVisualization;
         public bool CpuSocDebugForceVisible => RuntimeRenderingHostServiceDefaults.CpuSocDebugForceVisible;
+        public ECpuSceneCullingStructure CpuSceneCullingStructure => ECpuSceneCullingStructure.Octree;
         public ETwoPlayerPreference TwoPlayerViewportPreference => RuntimeRenderingHostServiceDefaults.TwoPlayerViewportPreference;
         public EThreePlayerPreference ThreePlayerViewportPreference => RuntimeRenderingHostServiceDefaults.ThreePlayerViewportPreference;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeRenderingHostServiceDefaults.CurrentRenderBackend;
@@ -494,6 +496,15 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderGpuMeshletInstrumentation(
+            uint visibleMeshletCount,
+            uint dispatchedMeshletCount,
+            uint taskRecordOverflowCount,
+            TimeSpan dispatchTime,
+            uint readbackBytes)
+        {
+        }
+
         public void RecordRenderGpuMeshletCacheHit(int eventCount = 1)
         {
         }
@@ -507,6 +518,10 @@ public static class RuntimeRenderingHostServices
         }
 
         public void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands)
+        {
+        }
+
+        public void RecordRenderCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks)
         {
         }
 

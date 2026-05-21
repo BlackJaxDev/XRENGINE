@@ -1039,7 +1039,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private static bool ShouldUseGpuResidentSkinnedBoundsPath()
             => RuntimeEngine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite ||
-               RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() == EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+               RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy();
 
         private bool ApplySkinnedBoundsResult(SkinnedMeshBoundsCalculator.Result result, bool markBvhDirty)
         {

@@ -642,7 +642,7 @@ public sealed class MeshOptimizerInteropTests
         hybridSource.ShouldNotContain("MeshletCollection");
         hybridSource.ShouldNotContain("Rendering.Meshlets");
 
-        passCore.ShouldContain("bool meshlet = strategy == EMeshSubmissionStrategy.GpuMeshlet;");
+        passCore.ShouldContain("bool meshlet = strategy.IsAnyMeshletStrategy();");
         passCore.ShouldContain("_passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented || meshlet;");
 
         openGlSource.ShouldContain("public override bool SupportsProductionMeshletShaders()");
@@ -690,9 +690,10 @@ public sealed class MeshOptimizerInteropTests
     public void GpuMeshletPhase9_DiagnosticsCountersAndStructuredEventsAreWired()
     {
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs").Replace("\r\n", "\n");
+        string passCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs").Replace("\r\n", "\n");
         string passIndirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs").Replace("\r\n", "\n");
         string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AddRemove.cs").Replace("\r\n", "\n");
-        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs").Replace("\r\n", "\n");
+        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.GpuMeshlets.cs").Replace("\r\n", "\n");
         string taskShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletCulling.task").Replace("\r\n", "\n");
         string extTaskShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletCullingExt.task").Replace("\r\n", "\n");
 
@@ -707,6 +708,7 @@ public sealed class MeshOptimizerInteropTests
         passIndirect.ShouldContain("RecordGpuMeshletTaskStats");
         passIndirect.ShouldContain("Meshlet.DispatchSkipped");
         passIndirect.ShouldContain("Meshlet.ExpandOverflow");
+        passCore.ShouldContain("RecordGpuMeshletInstrumentation");
 
         gpuSceneSource.ShouldContain("RecordGpuMeshletCacheHit");
         gpuSceneSource.ShouldContain("RecordGpuMeshletCacheMiss");

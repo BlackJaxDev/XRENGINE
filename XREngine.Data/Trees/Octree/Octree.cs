@@ -545,5 +545,12 @@ namespace XREngine.Data.Trees
 
         public void DebugRender(IVolume? cullingVolume, DelRenderAABB render, bool onlyContainingItems = false)
             => _head.DebugRender(true, onlyContainingItems, cullingVolume, render);
+
+        public SpatialTreeOccupancyStats GetOccupancyStats()
+        {
+            SpatialTreeOccupancyStatsBuilder stats = default;
+            _head.CollectOccupancyStats(ref stats, true);
+            return stats.ToStats();
+        }
     }
 }

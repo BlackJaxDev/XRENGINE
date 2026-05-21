@@ -97,8 +97,8 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 return $"VPRC_RenderMeshesPass[{FormatRenderPassName(RenderPass)};{MeshSubmissionStrategy};{PathIntent}]";
 
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            EMeshSubmissionStrategy selectedStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer);
-            string fallbackReason = selectedStrategy == EMeshSubmissionStrategy.GpuMeshlet
+            EMeshSubmissionStrategy selectedStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer, MeshSubmissionStrategy);
+            string fallbackReason = selectedStrategy.IsAnyMeshletStrategy()
                 ? "Ready"
                 : renderer?.MeshletDispatchUnsupportedReason ?? "No active renderer.";
 
@@ -117,7 +117,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         EMeshSubmissionStrategy originalStrategy = MeshSubmissionStrategy;
         bool forceMeshletDebugDisplay = ShouldForceMeshletDebugDisplay();
         if (forceMeshletDebugDisplay)
-            MeshSubmissionStrategy = EMeshSubmissionStrategy.GpuMeshlet;
+            MeshSubmissionStrategy = ResolveMeshletDebugDisplayStrategy();
 
         try
         {
@@ -130,7 +130,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                     return;
                 }
 
-                EMeshSubmissionStrategy fallbackStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer);
+                EMeshSubmissionStrategy fallbackStrategy = ResolveSelectedMeshletSubmissionStrategy(renderer, MeshSubmissionStrategy);
 
                 XREngine.Debug.RenderingWarningEvery(
                     $"RenderMeshesPass.MeshletUnsupported.{RenderPass}",
@@ -162,13 +162,13 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     }
 
     private bool IsMeshletRequested()
-        => MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet ||
+        => MeshSubmissionStrategy.IsAnyMeshletStrategy() ||
            PathIntent == EMeshRenderingPathIntent.Meshlet;
 
     private bool ShouldForceMeshletDebugDisplay()
     {
         if (MeshSubmissionStrategy == EMeshSubmissionStrategy.CpuDirect ||
-            MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuMeshlet ||
+            MeshSubmissionStrategy.IsAnyMeshletStrategy() ||
             !SupportsMeshletDebugDisplayPass(RenderPass))
         {
             return false;
@@ -196,13 +196,19 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
            renderPass == (int)EDefaultRenderPass.PerPixelLinkedListForward ||
            renderPass == (int)EDefaultRenderPass.DepthPeelingForward;
 
-    private static EMeshSubmissionStrategy ResolveSelectedMeshletSubmissionStrategy(AbstractRenderer? renderer)
+    private static EMeshSubmissionStrategy ResolveSelectedMeshletSubmissionStrategy(
+        AbstractRenderer? renderer,
+        EMeshSubmissionStrategy requestedStrategy)
     {
         if (renderer?.SupportsMeshletDispatch() == true)
-            return EMeshSubmissionStrategy.GpuMeshlet;
+        {
+            return requestedStrategy.IsAnyMeshletStrategy()
+                ? requestedStrategy
+                : EMeshSubmissionStrategy.GpuMeshletZeroReadback;
+        }
 
         EMeshSubmissionStrategy fallbackStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true);
-        if (fallbackStrategy != EMeshSubmissionStrategy.GpuMeshlet)
+        if (!fallbackStrategy.IsAnyMeshletStrategy())
             return fallbackStrategy;
 
         if (renderer?.SupportsIndirectCountDraw() == true)
@@ -212,6 +218,11 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             ? EMeshSubmissionStrategy.CpuDirect
             : EMeshSubmissionStrategy.GpuIndirectInstrumented;
     }
+
+    private static EMeshSubmissionStrategy ResolveMeshletDebugDisplayStrategy()
+        => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging
+            ? EMeshSubmissionStrategy.GpuMeshletInstrumented
+            : EMeshSubmissionStrategy.GpuMeshletZeroReadback;
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {

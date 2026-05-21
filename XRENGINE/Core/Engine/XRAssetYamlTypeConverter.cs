@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using XREngine.Core;
 using XREngine.Core.Files;
+using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
@@ -115,6 +116,8 @@ namespace XREngine
 
     internal sealed class LegacyEnumYamlNodeDeserializer : INodeDeserializer
     {
+        private static bool _legacyGpuMeshletWarningLogged;
+
         public bool Deserialize(IParser reader, Type expectedType, Func<IParser, Type, object?> nestedObjectDeserializer, out object? value, ObjectDeserializer rootDeserializer)
         {
             Type targetType = Nullable.GetUnderlyingType(expectedType) ?? expectedType;
@@ -133,6 +136,22 @@ namespace XREngine
                 // thread; normalize old assets to the thread-pool Tasks path instead.
                 reader.Consume<Scalar>();
                 value = EDebugShapePopulationMode.Tasks;
+                return true;
+            }
+
+            if (targetType == typeof(EMeshSubmissionStrategy)
+                && string.Equals(scalar.Value, EMeshSubmissionStrategyExtensions.LegacyGpuMeshletName, StringComparison.OrdinalIgnoreCase))
+            {
+                reader.Consume<Scalar>();
+                value = EMeshSubmissionStrategy.GpuMeshletZeroReadback;
+
+                if (!_legacyGpuMeshletWarningLogged)
+                {
+                    _legacyGpuMeshletWarningLogged = true;
+                    Debug.RenderingWarning(
+                        "Legacy mesh submission strategy 'GpuMeshlet' was remapped to 'GpuMeshletZeroReadback'.");
+                }
+
                 return true;
             }
 

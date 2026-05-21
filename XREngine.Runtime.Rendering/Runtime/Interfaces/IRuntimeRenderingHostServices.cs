@@ -6,6 +6,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
@@ -266,6 +267,11 @@ public interface IRuntimeRenderingHostServices
     /// Gets whether CPU software occlusion should force every test visible for diagnostics.
     /// </summary>
     bool CpuSocDebugForceVisible { get; }
+
+    /// <summary>
+    /// Gets the CPU spatial structure used for render visibility when GPU dispatch is disabled.
+    /// </summary>
+    ECpuSceneCullingStructure CpuSceneCullingStructure { get; }
 
     /// <summary>
     /// Gets the host preference for splitting a window between two local players.
@@ -814,10 +820,12 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderGpuMeshletTaskStats(uint emitted, uint frustumCulled, uint coneCulled, uint hiZCulled);
     void RecordRenderGpuMeshletExpansionOverflow(uint overflowCount);
     void RecordRenderGpuMeshletBufferBytesResident(long bytes);
+    void RecordRenderGpuMeshletInstrumentation(uint visibleMeshletCount, uint dispatchedMeshletCount, uint taskRecordOverflowCount, TimeSpan dispatchTime, uint readbackBytes);
     void RecordRenderGpuMeshletCacheHit(int eventCount = 1);
     void RecordRenderGpuMeshletCacheMiss(int eventCount = 1);
     void RecordRenderGpuMeshletCacheStale(int eventCount = 1);
     void RecordRenderOctreeCollect(int visibleRenderables, int emittedCommands);
+    void RecordRenderCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks);
     void RecordRenderRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime);
     void RecordRenderRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime);
     void RecordRenderSkinnedBoundsRefreshDeferredFinished(long queueWaitTicks, long cpuJobTicks, long applyTicks, bool succeeded);

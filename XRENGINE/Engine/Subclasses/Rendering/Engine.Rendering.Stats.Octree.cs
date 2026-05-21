@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using XREngine.Data.Trees;
 
@@ -35,6 +36,15 @@ namespace XREngine
                     private static long _octreeRaycastMaxTraversalTicksCurrent;
                     private static long _octreeRaycastMaxCallbackTicksCurrent;
                     private static long _octreeRaycastMaxCommandTicksCurrent;
+                    private static string _cpuSpatialTreeModeCurrent = string.Empty;
+                    private static int _cpuSpatialTreeNodeCountCurrent;
+                    private static int _cpuSpatialTreeItemCountCurrent;
+                    private static int _cpuSpatialTreeRootItemCountCurrent;
+                    private static int _cpuSpatialTreeMaxNodeItemCountCurrent;
+                    private static int _cpuSpatialTreeMaxDepthCurrent;
+                    private static int _cpuSpatialTreeUnboundedItemCountCurrent;
+                    private static long _cpuSpatialTreeCollectTicksCurrent;
+                    private static long _cpuSpatialTreeMaxCollectTicksCurrent;
                     private static int _octreeCollectCallsDisplay;
                     private static int _octreeVisibleRenderablesDisplay;
                     private static int _octreeEmittedCommandsDisplay;
@@ -58,6 +68,15 @@ namespace XREngine
                     private static long _octreeRaycastMaxTraversalTicksDisplay;
                     private static long _octreeRaycastMaxCallbackTicksDisplay;
                     private static long _octreeRaycastMaxCommandTicksDisplay;
+                    private static string _cpuSpatialTreeModeDisplay = string.Empty;
+                    private static int _cpuSpatialTreeNodeCountDisplay;
+                    private static int _cpuSpatialTreeItemCountDisplay;
+                    private static int _cpuSpatialTreeRootItemCountDisplay;
+                    private static int _cpuSpatialTreeMaxNodeItemCountDisplay;
+                    private static int _cpuSpatialTreeMaxDepthDisplay;
+                    private static int _cpuSpatialTreeUnboundedItemCountDisplay;
+                    private static long _cpuSpatialTreeCollectTicksDisplay;
+                    private static long _cpuSpatialTreeMaxCollectTicksDisplay;
                     private static int _octreeStatsDirty;
                     private static bool _octreeStatsReady;
 
@@ -91,6 +110,15 @@ namespace XREngine
                     public static double OctreeRaycastMaxTraversalMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxTraversalTicksDisplay);
                     public static double OctreeRaycastMaxCallbackMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxCallbackTicksDisplay);
                     public static double OctreeRaycastMaxCommandMs => StopwatchTicksToMilliseconds(_octreeRaycastMaxCommandTicksDisplay);
+                    public static string CpuSpatialTreeMode => _cpuSpatialTreeModeDisplay;
+                    public static int CpuSpatialTreeNodeCount => _cpuSpatialTreeNodeCountDisplay;
+                    public static int CpuSpatialTreeItemCount => _cpuSpatialTreeItemCountDisplay;
+                    public static int CpuSpatialTreeRootItemCount => _cpuSpatialTreeRootItemCountDisplay;
+                    public static int CpuSpatialTreeMaxNodeItemCount => _cpuSpatialTreeMaxNodeItemCountDisplay;
+                    public static int CpuSpatialTreeMaxDepth => _cpuSpatialTreeMaxDepthDisplay;
+                    public static int CpuSpatialTreeUnboundedItemCount => _cpuSpatialTreeUnboundedItemCountDisplay;
+                    public static double CpuSpatialTreeCollectMs => StopwatchTicksToMilliseconds(_cpuSpatialTreeCollectTicksDisplay);
+                    public static double CpuSpatialTreeMaxCollectMs => StopwatchTicksToMilliseconds(_cpuSpatialTreeMaxCollectTicksDisplay);
 
                     public static void RecordOctreeAdd()
                     {
@@ -189,6 +217,29 @@ namespace XREngine
                         Interlocked.Exchange(ref _octreeStatsDirty, 1);
                     }
 
+                    public static void RecordCpuSpatialTreeStats(string mode, SpatialTreeOccupancyStats occupancy, long collectTicks)
+                    {
+                        if (!EnableOctreeStats)
+                            return;
+
+                        lock (_octreeTimingStatsLock)
+                        {
+                            _cpuSpatialTreeModeCurrent = mode;
+                            _cpuSpatialTreeNodeCountCurrent = occupancy.NodeCount;
+                            _cpuSpatialTreeItemCountCurrent = occupancy.ItemCount;
+                            _cpuSpatialTreeRootItemCountCurrent = occupancy.RootItemCount;
+                            _cpuSpatialTreeMaxNodeItemCountCurrent = occupancy.MaxNodeItemCount;
+                            _cpuSpatialTreeMaxDepthCurrent = occupancy.MaxDepth;
+                            _cpuSpatialTreeUnboundedItemCountCurrent = occupancy.UnboundedItemCount;
+                            _cpuSpatialTreeCollectTicksCurrent += Math.Max(0L, collectTicks);
+
+                            if (collectTicks > _cpuSpatialTreeMaxCollectTicksCurrent)
+                                _cpuSpatialTreeMaxCollectTicksCurrent = collectTicks;
+                        }
+
+                        Interlocked.Exchange(ref _octreeStatsDirty, 1);
+                    }
+
                     public static void SwapOctreeStats()
                     {
                         if (!EnableOctreeStats) return;
@@ -220,6 +271,15 @@ namespace XREngine
                             _octreeRaycastMaxTraversalTicksDisplay = _octreeRaycastMaxTraversalTicksCurrent;
                             _octreeRaycastMaxCallbackTicksDisplay = _octreeRaycastMaxCallbackTicksCurrent;
                             _octreeRaycastMaxCommandTicksDisplay = _octreeRaycastMaxCommandTicksCurrent;
+                            _cpuSpatialTreeModeDisplay = _cpuSpatialTreeModeCurrent;
+                            _cpuSpatialTreeNodeCountDisplay = _cpuSpatialTreeNodeCountCurrent;
+                            _cpuSpatialTreeItemCountDisplay = _cpuSpatialTreeItemCountCurrent;
+                            _cpuSpatialTreeRootItemCountDisplay = _cpuSpatialTreeRootItemCountCurrent;
+                            _cpuSpatialTreeMaxNodeItemCountDisplay = _cpuSpatialTreeMaxNodeItemCountCurrent;
+                            _cpuSpatialTreeMaxDepthDisplay = _cpuSpatialTreeMaxDepthCurrent;
+                            _cpuSpatialTreeUnboundedItemCountDisplay = _cpuSpatialTreeUnboundedItemCountCurrent;
+                            _cpuSpatialTreeCollectTicksDisplay = _cpuSpatialTreeCollectTicksCurrent;
+                            _cpuSpatialTreeMaxCollectTicksDisplay = _cpuSpatialTreeMaxCollectTicksCurrent;
 
                             _octreeSwapDrainedCommandsCurrent = 0;
                             _octreeSwapBufferedCommandsCurrent = 0;
@@ -235,6 +295,8 @@ namespace XREngine
                             _octreeRaycastMaxTraversalTicksCurrent = 0L;
                             _octreeRaycastMaxCallbackTicksCurrent = 0L;
                             _octreeRaycastMaxCommandTicksCurrent = 0L;
+                            _cpuSpatialTreeCollectTicksCurrent = 0L;
+                            _cpuSpatialTreeMaxCollectTicksCurrent = 0L;
                         }
 
                         _octreeStatsReady = true;

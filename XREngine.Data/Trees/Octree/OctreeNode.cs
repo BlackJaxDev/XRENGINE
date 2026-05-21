@@ -46,6 +46,29 @@ namespace XREngine.Data.Trees
         }
         public EventList<T> Items => _items;
 
+        internal void CollectOccupancyStats(ref SpatialTreeOccupancyStatsBuilder stats, bool isRoot)
+        {
+            stats.NodeCount++;
+            stats.ItemCount += _items.Count;
+            if (isRoot)
+                stats.RootItemCount = _items.Count;
+
+            if (_items.Count > stats.MaxNodeItemCount)
+                stats.MaxNodeItemCount = _items.Count;
+
+            if (_subDivLevel > stats.MaxDepth)
+                stats.MaxDepth = _subDivLevel;
+
+            for (int i = 0; i < _items.Count; i++)
+            {
+                if (_items[i].WorldCullingVolume is null)
+                    stats.UnboundedItemCount++;
+            }
+
+            for (int i = 0; i < OctreeBase.MaxChildNodeCount; ++i)
+                _subNodes[i]?.CollectOccupancyStats(ref stats, false);
+        }
+
         #region Child movement
         public override void QueueItemMoved(IOctreeItem item)
         {
@@ -593,5 +616,24 @@ namespace XREngine.Data.Trees
         }
 
         #endregion
+    }
+
+    internal struct SpatialTreeOccupancyStatsBuilder
+    {
+        public int NodeCount;
+        public int ItemCount;
+        public int RootItemCount;
+        public int MaxNodeItemCount;
+        public int MaxDepth;
+        public int UnboundedItemCount;
+
+        public readonly SpatialTreeOccupancyStats ToStats()
+            => new(
+                NodeCount,
+                ItemCount,
+                RootItemCount,
+                MaxNodeItemCount,
+                MaxDepth,
+                UnboundedItemCount);
     }
 }

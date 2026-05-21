@@ -192,22 +192,22 @@ namespace XREngine.Rendering.Commands
         private bool IsCpuReadbackCountDisabledForPass()
             => _passPolicySnapshotValid
                 ? _passDisableCpuReadbackCount
-                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback || IndirectDebug.DisableCpuReadbackCount);
+                : (MeshSubmissionStrategy.IsGpuZeroReadbackStrategy() || IndirectDebug.DisableCpuReadbackCount);
 
         private bool IsCpuBatchingEnabledForPass()
             => _passPolicySnapshotValid
                 ? _passEnableCpuBatching
-                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented && IndirectDebug.EnableCpuBatching);
+                : (IsInstrumentedGpuStrategy(MeshSubmissionStrategy) && IndirectDebug.EnableCpuBatching);
 
         private bool IsSourceCommandProbeEnabledForPass()
             => _passPolicySnapshotValid
                 ? _passProbeSourceCommands
-                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented && IndirectDebug.ProbeSourceCommandsBeforeCopy);
+                : (IsInstrumentedGpuStrategy(MeshSubmissionStrategy) && IndirectDebug.ProbeSourceCommandsBeforeCopy);
 
         private bool IsCountBufferWriteLoggingEnabledForPass()
             => _passPolicySnapshotValid
                 ? _passLogCountBufferWrites
-                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented && IndirectDebug.LogCountBufferWrites && RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging);
+                : (IsInstrumentedGpuStrategy(MeshSubmissionStrategy) && IndirectDebug.LogCountBufferWrites && RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging);
 
         private bool IsCopyBoundsValidationEnabledForPass()
             => _passPolicySnapshotValid
@@ -217,7 +217,7 @@ namespace XREngine.Rendering.Commands
         private bool ShouldCaptureDiagnosticReadbacksForPass()
             => _passPolicySnapshotValid
                 ? _passDiagnosticReadbacksEnabled
-                : (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+                : (IsInstrumentedGpuStrategy(MeshSubmissionStrategy) &&
                     (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
                      RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging ||
                      !IndirectDebug.DisableCpuReadbackCount ||
@@ -248,9 +248,9 @@ namespace XREngine.Rendering.Commands
         private void CapturePassPolicySnapshot()
         {
             EMeshSubmissionStrategy strategy = MeshSubmissionStrategy;
-            bool instrumented = strategy == EMeshSubmissionStrategy.GpuIndirectInstrumented;
-            bool zeroReadback = strategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback;
-            bool meshlet = strategy == EMeshSubmissionStrategy.GpuMeshlet;
+            bool instrumented = IsInstrumentedGpuStrategy(strategy);
+            bool zeroReadback = strategy.IsGpuZeroReadbackStrategy();
+            bool meshlet = strategy.IsAnyMeshletStrategy();
 
             _passDebugLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
             _passValidationLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging;
@@ -288,28 +288,32 @@ namespace XREngine.Rendering.Commands
             AssertZeroReadbackProductionInvariantsForPass(strategy);
         }
 
+        private static bool IsInstrumentedGpuStrategy(EMeshSubmissionStrategy strategy)
+            => strategy == EMeshSubmissionStrategy.GpuIndirectInstrumented ||
+               strategy.IsInstrumentedMeshletStrategy();
+
         // C-GPU-2: per-pass DEBUG assertion that the diagnostic IndirectDebug switches that would
         // defeat the zero-readback contract are all OFF when the pass is configured for
         // GpuIndirectZeroReadback. Compiles out in Release.
         [System.Diagnostics.Conditional("DEBUG")]
         private static void AssertZeroReadbackProductionInvariantsForPass(EMeshSubmissionStrategy strategy)
         {
-            if (strategy != EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            if (!strategy.IsGpuZeroReadbackStrategy())
                 return;
 
             var d = IndirectDebug;
             System.Diagnostics.Debug.Assert(!d.DisableCountDrawPath,
-                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.DisableCountDrawPath=true under GpuIndirectZeroReadback. " +
+                $"[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.DisableCountDrawPath=true under {strategy}. " +
                 "Diagnostic switch must be OFF in production.");
             System.Diagnostics.Debug.Assert(!d.ForceCpuFallbackCount,
-                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.ForceCpuFallbackCount=true under GpuIndirectZeroReadback.");
+                $"[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.ForceCpuFallbackCount=true under {strategy}.");
             System.Diagnostics.Debug.Assert(!d.ForceCpuIndirectBuild,
-                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.ForceCpuIndirectBuild=true under GpuIndirectZeroReadback.");
+                $"[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.ForceCpuIndirectBuild=true under {strategy}.");
             System.Diagnostics.Debug.Assert(d.DisableCpuReadbackCount,
-                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.DisableCpuReadbackCount=false under GpuIndirectZeroReadback. " +
+                $"[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.DisableCpuReadbackCount=false under {strategy}. " +
                 "Zero-readback must suppress GPU count-buffer map/unmap.");
             System.Diagnostics.Debug.Assert(!d.EnableCpuBatching,
-                "[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.EnableCpuBatching=true under GpuIndirectZeroReadback.");
+                $"[C-GPU-2] CapturePassPolicySnapshot: IndirectDebug.EnableCpuBatching=true under {strategy}.");
         }
 
         private void ClearPassPolicySnapshot()
@@ -819,6 +823,40 @@ namespace XREngine.Rendering.Commands
                 scene.LodTransitionBuffer,
                 visibleCommandUpperBound);
             return true;
+        }
+
+        internal void CaptureMeshletInstrumentationAfterDispatch(TimeSpan dispatchElapsed)
+        {
+            if (!MeshSubmissionStrategy.IsInstrumentedMeshletStrategy() ||
+                !RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            {
+                return;
+            }
+
+            uint visibleMeshlets = VisibleMeshletTaskCountBuffer is not null
+                ? ReadUIntAt(VisibleMeshletTaskCountBuffer, 0u)
+                : 0u;
+            uint dispatchedMeshlets = MeshletDispatchCountBuffer is not null
+                ? ReadUIntAt(MeshletDispatchCountBuffer, 0u)
+                : 0u;
+            uint overflowCount = MeshletExpansionOverflowFlagBuffer is not null
+                ? ReadUIntAt(MeshletExpansionOverflowFlagBuffer, 0u)
+                : 0u;
+
+            uint readbackBytes = 0u;
+            if (VisibleMeshletTaskCountBuffer is not null)
+                readbackBytes += sizeof(uint);
+            if (MeshletDispatchCountBuffer is not null)
+                readbackBytes += sizeof(uint);
+            if (MeshletExpansionOverflowFlagBuffer is not null)
+                readbackBytes += sizeof(uint);
+
+            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletInstrumentation(
+                visibleMeshlets,
+                dispatchedMeshlets,
+                overflowCount,
+                dispatchElapsed,
+                readbackBytes);
         }
 
         // Returns the current scene material map (ID -> XRMaterial)

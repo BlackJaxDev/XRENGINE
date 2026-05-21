@@ -811,7 +811,7 @@ internal class Program
         PreserveReferencesHandling = PreserveReferencesHandling.All,
         ObjectCreationHandling = ObjectCreationHandling.Replace,
         NullValueHandling = NullValueHandling.Include,
-        Converters = [new StringEnumConverter()]
+        Converters = [new MeshSubmissionStrategyJsonConverter(), new StringEnumConverter()]
     };
 
     static EditorRenderInfo2D RenderInfo2DConstructor(IRenderable owner, RenderCommand[] commands)

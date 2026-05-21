@@ -488,6 +488,7 @@ namespace XREngine
                 private bool _allowInitialSkinnedBoundsBuildWhenNever = true;
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = true;
+                private ECpuSceneCullingStructure _cpuSceneCullingStructure = ECpuSceneCullingStructure.Octree;
                 private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Diagnostics;
                 private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
                 private bool _enableVulkanDescriptorIndexing = true;
@@ -1274,6 +1275,18 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// Selects the CPU spatial structure used for render visibility when GPU dispatch is disabled.
+                /// Can be overridden with XRE_CPU_SCENE_CULLING_STRUCTURE=Octree|Bvh.
+                /// </summary>
+                [Category("BVH")]
+                [Description("Selects the CPU spatial structure used for render visibility when GPU dispatch is disabled. Can be overridden with XRE_CPU_SCENE_CULLING_STRUCTURE=Octree|Bvh.")]
+                public ECpuSceneCullingStructure CpuSceneCullingStructure
+                {
+                    get => _cpuSceneCullingStructure;
+                    set => SetField(ref _cpuSceneCullingStructure, value, null, _ => Rendering.ApplyCpuSceneCullingStructurePreference());
+                }
+
+                /// <summary>
                 /// Selects the Vulkan GPU-driven runtime profile used to gate feature policy.
                 /// Auto maps Debug builds to DevParity and non-Debug builds to ShippingFast.
                 /// </summary>
@@ -2032,6 +2045,9 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
                     Engine.Rendering.ApplyGpuBvhPreference();
+
+                if (applyAll || propertyName == nameof(EngineSettings.CpuSceneCullingStructure))
+                    Engine.Rendering.ApplyCpuSceneCullingStructurePreference();
 
                 if (applyAll || propertyName == nameof(EngineSettings.VulkanGpuDrivenProfile)
                     || propertyName == nameof(EngineSettings.EnableZeroReadbackMaterialScatter)

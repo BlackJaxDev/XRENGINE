@@ -349,9 +349,20 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath)
                 => TryResolveEnvironmentEnumSource<EZeroReadbackMaterialDrawPath>("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH", out source),
             nameof(Engine.EffectiveSettings.ForceMeshSubmissionStrategy)
-                => TryResolveEnvironmentEnumSource<EMeshSubmissionStrategy>("XRE_FORCE_MESH_SUBMISSION_STRATEGY", out source),
+                => TryResolveMeshSubmissionStrategyEnvironmentSource(out source),
             _ => NoEnvironmentSource(out source),
         };
+    }
+
+    private static bool TryResolveMeshSubmissionStrategyEnvironmentSource(out string source)
+    {
+        source = string.Empty;
+        string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
+        if (!EMeshSubmissionStrategyExtensions.TryParseMeshSubmissionStrategy(raw, out _, out _))
+            return false;
+
+        source = "Environment";
+        return true;
     }
 
     private static bool TryResolveEnvironmentEnumSource<TEnum>(string variableName, out string source)

@@ -82,12 +82,12 @@ namespace XREngine.Rendering.Commands
             bool savedUseMeshletPipeline = UseMeshletPipeline;
             bool meshletDebugForced =
                 savedStrategy != EMeshSubmissionStrategy.CpuDirect &&
-                savedStrategy != EMeshSubmissionStrategy.GpuMeshlet &&
+                !savedStrategy.IsAnyMeshletStrategy() &&
                 GpuBvhDebugSettings.ShouldForceMeshletForDebugDisplay(camera, RenderPass);
 
             if (meshletDebugForced)
             {
-                MeshSubmissionStrategy = EMeshSubmissionStrategy.GpuMeshlet;
+                MeshSubmissionStrategy = ResolveMeshletDebugDisplayStrategy();
                 UseMeshletPipeline = true;
             }
 
@@ -251,6 +251,11 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
+        private static EMeshSubmissionStrategy ResolveMeshletDebugDisplayStrategy()
+            => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging
+                ? EMeshSubmissionStrategy.GpuMeshletInstrumented
+                : EMeshSubmissionStrategy.GpuMeshletZeroReadback;
+
         #endregion
 
         #region Counter Management
@@ -408,7 +413,7 @@ namespace XREngine.Rendering.Commands
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuMeshlet.ExpandVisibleMeshlets");
 
-            if (!UseMeshletPipeline && MeshSubmissionStrategy != EMeshSubmissionStrategy.GpuMeshlet)
+            if (!UseMeshletPipeline && !MeshSubmissionStrategy.IsAnyMeshletStrategy())
                 return;
 
             if (_expandMeshletsComputeShader is null ||
@@ -1150,7 +1155,7 @@ namespace XREngine.Rendering.Commands
             if (activeCount == 0u)
                 return null;
 
-            if (MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+            if (MeshSubmissionStrategy.IsGpuZeroReadbackStrategy())
             {
                 XREngine.Debug.RenderingWarningEvery(
                     $"RenderDispatch.ZeroReadbackActiveBucketReadback.{RenderPass}",

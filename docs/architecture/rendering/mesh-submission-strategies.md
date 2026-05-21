@@ -11,7 +11,8 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 | `CpuDirect` | CPU traversal and direct mesh draw submission. | None in the steady-state render path. | Not applicable. | CPU renderer diagnostics only. |
 | `GpuIndirectInstrumented` | GPU indirect path for bring-up, validation, and inspection. | Allowed and counted. | Allowed only when explicitly requested and strict profiles are not active. | Allowed. |
 | `GpuIndirectZeroReadback` | Production GPU indirect path. | Forbidden in the steady-state render path. | Forbidden. | Forbidden; use counters and warnings outside the hot path. |
-| `GpuMeshlet` | Production meshlet/task-mesh submission from GPU-written counts. | Forbidden by contract. | No implicit CPU fallback; unsupported renderers fall back visibly to `GpuIndirectZeroReadback` when possible. | Backend bring-up only when explicitly diagnostic. |
+| `GpuMeshletInstrumented` | Meshlet/task-mesh path for bring-up, validation, and inspection. | Allowed only when diagnostics are explicitly enabled, and counted. | No implicit CPU fallback; unsupported renderers fall back visibly to the non-meshlet resolver path. | Allowed. |
+| `GpuMeshletZeroReadback` | Production meshlet/task-mesh submission from GPU-written counts. | Forbidden by contract. | No implicit CPU fallback; unsupported renderers fall back visibly to `GpuIndirectZeroReadback` when possible. | Forbidden; use counters and warnings outside the hot path. |
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
@@ -39,9 +40,9 @@ The lower-level probes describe partial backend support:
 - `SupportsIndirectCountMeshTaskDispatch()` covers backend mesh-task dispatch from GPU-written indirect arguments and GPU-written indirect-command counts.
 - `SupportsProductionMeshletShaders()` covers the task/mesh shader source and binding side of the production path.
 
-OpenGL `GL_NV_mesh_shader` currently exposes direct task dispatch only. It is useful for bring-up and shader diagnostics, but it does not satisfy production `GpuMeshlet`. OpenGL `GL_EXT_mesh_shader` and Vulkan `VK_EXT_mesh_shader` can expose indirect-count task dispatch, but `SupportsMeshletDispatch()` remains false until production task-record shaders are wired for that dialect.
+OpenGL `GL_NV_mesh_shader` currently exposes direct task dispatch only. It is useful for bring-up and shader diagnostics, but it does not satisfy production `GpuMeshletZeroReadback`. OpenGL `GL_EXT_mesh_shader` and Vulkan `VK_EXT_mesh_shader` can expose indirect-count task dispatch, but `SupportsMeshletDispatch()` remains false until production task-record shaders are wired for that dialect.
 
-When `GpuMeshlet` is forced on unsupported hardware, the resolver chooses `GpuIndirectZeroReadback` if indirect-count draw is available. If neither production meshlets nor zero-readback indirect can run, strict profiles resolve to `CpuDirect`; permissive diagnostic profiles resolve to `GpuIndirectInstrumented`. Warnings and GPU profiler labels include the requested strategy, selected strategy, backend dialect, and fallback reason.
+When either meshlet strategy is forced on unsupported hardware, the resolver chooses `GpuIndirectZeroReadback` if indirect-count draw is available. If neither production meshlets nor zero-readback indirect can run, strict profiles resolve to `CpuDirect`; permissive diagnostic profiles resolve to `GpuIndirectInstrumented`. Forced `GpuMeshletInstrumented` is honored only with the Diagnostics Vulkan profile or `EnableGpuIndirectDebugLogging`; otherwise it collapses to `GpuMeshletZeroReadback` when production meshlet dispatch is available. Warnings and GPU profiler labels include the requested strategy, selected strategy, backend dialect, and fallback reason.
 
 ## Zero-Readback Material Draw Paths
 
@@ -78,10 +79,12 @@ Dynamic material-table layouts for additional deferred, forward+, Uber, and anno
 - `CpuDirect` does not consume GPU Hi-Z visibility snapshots. Hardware CPU queries remain the default occlusion path, and optional CPU masked software occlusion can pre-cull traditional CPU mesh draws before hardware-query submission when explicitly enabled.
 - `GpuIndirectZeroReadback` enables state-class/tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts. Use `FullBucketScan` when validating the strict no-readback material path; the active-bucket and material-table variants intentionally read back the compact active bucket list for diagnostics.
 - `GpuIndirectInstrumented` is the only strategy allowed to read back batch ranges, count buffers, per-view draw counts, or indirect command dumps. It still uses the material-tier scatter draw path by default so diagnostics render with the same per-material shaders and textures as the production GPU path. CPU masked software occlusion can also run here by preparing CPU occluders, reading the GPU-cull count, and compacting the culled indirect command buffer for validation.
+- `GpuMeshletZeroReadback` uses the same GPU-resident scene database and material-table policy as the zero-readback indirect path, then dispatches mesh tasks from GPU-written task records and counts. It must not read count/visibility buffers back in steady state.
+- `GpuMeshletInstrumented` uses the meshlet path with diagnostic readbacks and timing stats enabled only under explicit diagnostics. Current readbacks include visible meshlet count, dispatched meshlet count, expansion overflow, dispatch duration, and readback-byte accounting.
 - CPU safety-net mesh fallback is only available for `GpuIndirectInstrumented` and only when fallback diagnostics are explicitly enabled.
 
 ## Kill Switch
 
 Use `Engine.Rendering.Settings.ForceMeshSubmissionStrategy` for local triage. The environment variable `XRE_FORCE_MESH_SUBMISSION_STRATEGY` accepts any `EMeshSubmissionStrategy` name and takes precedence over the setting for the current process.
 
-Forced non-meshlet strategies bypass the resolver. Forced `GpuMeshlet` is capability-gated so it cannot silently select the experimental CPU-count mesh shader path.
+Forced non-meshlet strategies bypass the resolver. Forced meshlet strategies are capability-gated so they cannot silently select the experimental CPU-count mesh shader path. For one migration window, serialized or environment values that use the legacy token `GpuMeshlet` are accepted and remapped to `GpuMeshletZeroReadback` with a deprecation warning.

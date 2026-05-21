@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 
 namespace XREngine
@@ -20,6 +21,11 @@ namespace XREngine
                     private static long _gpuMeshletTaskRecordsHiZCulled;
                     private static long _gpuMeshletExpansionOverflowCount;
                     private static long _gpuMeshletBufferBytesResident;
+                    private static long _gpuMeshletLastVisibleMeshletCount;
+                    private static long _gpuMeshletLastDispatchedMeshletCount;
+                    private static long _gpuMeshletLastTaskRecordOverflowCount;
+                    private static long _gpuMeshletLastDispatchTicks;
+                    private static long _gpuMeshletLastReadbackBytes;
                     private static int _gpuMeshletCacheHits;
                     private static int _gpuMeshletCacheMisses;
                     private static int _gpuMeshletCacheStale;
@@ -33,6 +39,11 @@ namespace XREngine
                     private static long _lastFrameGpuMeshletTaskRecordsHiZCulled;
                     private static long _lastFrameGpuMeshletExpansionOverflowCount;
                     private static long _lastFrameGpuMeshletBufferBytesResident;
+                    private static long _lastFrameGpuMeshletLastVisibleMeshletCount;
+                    private static long _lastFrameGpuMeshletLastDispatchedMeshletCount;
+                    private static long _lastFrameGpuMeshletLastTaskRecordOverflowCount;
+                    private static long _lastFrameGpuMeshletLastDispatchTicks;
+                    private static long _lastFrameGpuMeshletLastReadbackBytes;
                     private static int _lastFrameGpuMeshletCacheHits;
                     private static int _lastFrameGpuMeshletCacheMisses;
                     private static int _lastFrameGpuMeshletCacheStale;
@@ -47,6 +58,11 @@ namespace XREngine
                     public static long GpuMeshletTaskRecordsHiZCulled => _lastFrameGpuMeshletTaskRecordsHiZCulled;
                     public static long GpuMeshletExpansionOverflowCount => _lastFrameGpuMeshletExpansionOverflowCount;
                     public static long GpuMeshletBufferBytesResident => _lastFrameGpuMeshletBufferBytesResident;
+                    public static long LastVisibleMeshletCount => _lastFrameGpuMeshletLastVisibleMeshletCount;
+                    public static long LastDispatchedMeshletCount => _lastFrameGpuMeshletLastDispatchedMeshletCount;
+                    public static long LastTaskRecordOverflowCount => _lastFrameGpuMeshletLastTaskRecordOverflowCount;
+                    public static TimeSpan LastDispatchTime => TimeSpan.FromTicks(_lastFrameGpuMeshletLastDispatchTicks);
+                    public static long LastReadbackBytes => _lastFrameGpuMeshletLastReadbackBytes;
                     public static int GpuMeshletCacheHits => _lastFrameGpuMeshletCacheHits;
                     public static int GpuMeshletCacheMisses => _lastFrameGpuMeshletCacheMisses;
                     public static int GpuMeshletCacheStale => _lastFrameGpuMeshletCacheStale;
@@ -63,6 +79,11 @@ namespace XREngine
                         _lastFrameGpuMeshletTaskRecordsHiZCulled = Interlocked.Exchange(ref _gpuMeshletTaskRecordsHiZCulled, 0);
                         _lastFrameGpuMeshletExpansionOverflowCount = Interlocked.Exchange(ref _gpuMeshletExpansionOverflowCount, 0);
                         _lastFrameGpuMeshletBufferBytesResident = Interlocked.Exchange(ref _gpuMeshletBufferBytesResident, 0);
+                        _lastFrameGpuMeshletLastVisibleMeshletCount = Interlocked.Exchange(ref _gpuMeshletLastVisibleMeshletCount, 0);
+                        _lastFrameGpuMeshletLastDispatchedMeshletCount = Interlocked.Exchange(ref _gpuMeshletLastDispatchedMeshletCount, 0);
+                        _lastFrameGpuMeshletLastTaskRecordOverflowCount = Interlocked.Exchange(ref _gpuMeshletLastTaskRecordOverflowCount, 0);
+                        _lastFrameGpuMeshletLastDispatchTicks = Interlocked.Exchange(ref _gpuMeshletLastDispatchTicks, 0);
+                        _lastFrameGpuMeshletLastReadbackBytes = Interlocked.Exchange(ref _gpuMeshletLastReadbackBytes, 0);
                         _lastFrameGpuMeshletCacheHits = Interlocked.Exchange(ref _gpuMeshletCacheHits, 0);
                         _lastFrameGpuMeshletCacheMisses = Interlocked.Exchange(ref _gpuMeshletCacheMisses, 0);
                         _lastFrameGpuMeshletCacheStale = Interlocked.Exchange(ref _gpuMeshletCacheStale, 0);
@@ -136,6 +157,24 @@ namespace XREngine
                             if (saturated <= snapshot)
                                 return;
                         } while (Interlocked.CompareExchange(ref _gpuMeshletBufferBytesResident, saturated, snapshot) != snapshot);
+                    }
+
+                    public static void RecordGpuMeshletInstrumentation(
+                        uint visibleMeshletCount,
+                        uint dispatchedMeshletCount,
+                        uint taskRecordOverflowCount,
+                        TimeSpan dispatchTime,
+                        uint readbackBytes)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Exchange(ref _gpuMeshletLastVisibleMeshletCount, visibleMeshletCount);
+                        Interlocked.Exchange(ref _gpuMeshletLastDispatchedMeshletCount, dispatchedMeshletCount);
+                        Interlocked.Exchange(ref _gpuMeshletLastTaskRecordOverflowCount, taskRecordOverflowCount);
+                        Interlocked.Exchange(ref _gpuMeshletLastDispatchTicks, dispatchTime.Ticks);
+                        if (readbackBytes > 0u)
+                            Interlocked.Add(ref _gpuMeshletLastReadbackBytes, readbackBytes);
                     }
 
                     public static void RecordGpuMeshletCacheHit(int eventCount = 1)

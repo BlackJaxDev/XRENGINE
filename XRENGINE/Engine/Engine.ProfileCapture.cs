@@ -432,6 +432,11 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "gpu_meshlet_task_records_hiz_culled", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletTaskRecordsHiZCulled, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_expansion_overflow_count", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletExpansionOverflowCount, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_buffer_bytes_resident", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletBufferBytesResident, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_last_visible_meshlet_count", Engine.Rendering.Stats.GpuMeshlets.LastVisibleMeshletCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_last_dispatched_meshlet_count", Engine.Rendering.Stats.GpuMeshlets.LastDispatchedMeshletCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_last_task_record_overflow_count", Engine.Rendering.Stats.GpuMeshlets.LastTaskRecordOverflowCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_last_dispatch_ms", Engine.Rendering.Stats.GpuMeshlets.LastDispatchTime.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_last_readback_bytes", Engine.Rendering.Stats.GpuMeshlets.LastReadbackBytes, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_hits", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheHits, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_misses", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheMisses, ref first);
             AppendNumberField(s_lineBuilder, "gpu_meshlet_cache_stale", Engine.Rendering.Stats.GpuMeshlets.GpuMeshletCacheStale, ref first);

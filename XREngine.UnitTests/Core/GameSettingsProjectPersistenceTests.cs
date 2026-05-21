@@ -39,6 +39,8 @@ public sealed class GameSettingsProjectPersistenceTests
             Engine.GameSettings.TargetFramesPerSecond = 144.0f;
             Engine.GameSettings.CalculateSkinningInComputeShaderOverride = new OverrideableSetting<bool>(false, true);
             Engine.GameSettings.UseDetailPreservingComputeMipmapsOverride = new OverrideableSetting<bool>(true, true);
+            Engine.GameSettings.CpuSceneCullingStructureOverride =
+                new OverrideableSetting<ECpuSceneCullingStructure>(ECpuSceneCullingStructure.Bvh, true);
 
             Engine.SaveProjectGameSettings();
 
@@ -48,6 +50,8 @@ public sealed class GameSettingsProjectPersistenceTests
             Engine.GameSettings.TargetFramesPerSecond = 60.0f;
             Engine.GameSettings.CalculateSkinningInComputeShaderOverride = new OverrideableSetting<bool>(true, false);
             Engine.GameSettings.UseDetailPreservingComputeMipmapsOverride = new OverrideableSetting<bool>(false, false);
+            Engine.GameSettings.CpuSceneCullingStructureOverride =
+                new OverrideableSetting<ECpuSceneCullingStructure>(ECpuSceneCullingStructure.Octree, false);
 
             Engine.LoadProject(project).ShouldBeTrue();
 
@@ -57,6 +61,8 @@ public sealed class GameSettingsProjectPersistenceTests
             Engine.GameSettings.CalculateSkinningInComputeShaderOverride.Value.ShouldBeFalse();
             Engine.GameSettings.UseDetailPreservingComputeMipmapsOverride.HasOverride.ShouldBeTrue();
             Engine.GameSettings.UseDetailPreservingComputeMipmapsOverride.Value.ShouldBeTrue();
+            Engine.GameSettings.CpuSceneCullingStructureOverride.HasOverride.ShouldBeTrue();
+            Engine.GameSettings.CpuSceneCullingStructureOverride.Value.ShouldBe(ECpuSceneCullingStructure.Bvh);
         }
         finally
         {

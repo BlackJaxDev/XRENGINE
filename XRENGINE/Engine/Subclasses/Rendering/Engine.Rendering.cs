@@ -243,7 +243,7 @@ namespace XREngine
             {
                 if (inputs.ForcedStrategy.HasValue)
                 {
-                    if (inputs.ForcedStrategy.Value == EMeshSubmissionStrategy.GpuMeshlet)
+                    if (inputs.ForcedStrategy.Value.IsAnyMeshletStrategy())
                         return ResolveForcedMeshletSubmissionStrategy(inputs);
 
                     return inputs.ForcedStrategy.Value;
@@ -285,7 +285,15 @@ namespace XREngine
             private static EMeshSubmissionStrategy ResolveForcedMeshletSubmissionStrategy(MeshSubmissionStrategyResolverInputs inputs)
             {
                 if (inputs.SupportsMeshletDispatch)
-                    return EMeshSubmissionStrategy.GpuMeshlet;
+                {
+                    if (inputs.ForcedStrategy == EMeshSubmissionStrategy.GpuMeshletInstrumented &&
+                        IsMeshletInstrumentationAllowed(inputs))
+                    {
+                        return EMeshSubmissionStrategy.GpuMeshletInstrumented;
+                    }
+
+                    return EMeshSubmissionStrategy.GpuMeshletZeroReadback;
+                }
 
                 if (inputs.SupportsIndirectCountDraw)
                     return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
@@ -294,6 +302,12 @@ namespace XREngine
                     ? EMeshSubmissionStrategy.CpuDirect
                     : EMeshSubmissionStrategy.GpuIndirectInstrumented;
             }
+
+            private static bool IsMeshletInstrumentationAllowed(MeshSubmissionStrategyResolverInputs inputs)
+                => inputs.SupportsMeshletDispatch &&
+                   ((inputs.VulkanFeatureProfileActive &&
+                     inputs.ActiveVulkanProfile == EVulkanGpuDrivenProfile.Diagnostics) ||
+                    inputs.EnableGpuIndirectDebugLogging);
 
             public static bool ResolveGpuRenderDispatchPreference(bool requestedGpuDispatch)
             {
@@ -360,15 +374,16 @@ namespace XREngine
                 if (!inputs.RequestedGpuDispatch)
                     return;
 
-                if (inputs.ForcedStrategy == EMeshSubmissionStrategy.GpuMeshlet &&
-                    strategy != EMeshSubmissionStrategy.GpuMeshlet)
+                if (inputs.ForcedStrategy is { } forcedStrategy &&
+                    forcedStrategy.IsAnyMeshletStrategy() &&
+                    strategy != forcedStrategy)
                 {
                     string reason = GetMeshletFallbackReason(inputs);
                     XREngine.Debug.RenderingWarningEvery(
                         "RenderDispatch.MeshSubmissionStrategy.UnsupportedGpuMeshlet",
                         TimeSpan.FromSeconds(2),
                         "[RenderDispatch] Mesh submission strategy downgraded from {0} to {1}. Dialect={2}; DirectTaskDispatch={3}; IndirectCountTaskDispatch={4}; FallbackReason={5}.",
-                        EMeshSubmissionStrategy.GpuMeshlet,
+                        forcedStrategy,
                         strategy,
                         inputs.MeshShaderDialect,
                         inputs.SupportsDirectMeshTaskDispatch,
@@ -413,7 +428,15 @@ namespace XREngine
             private static string GetMeshletFallbackReason(MeshSubmissionStrategyResolverInputs inputs)
             {
                 if (inputs.SupportsMeshletDispatch)
+                {
+                    if (inputs.ForcedStrategy == EMeshSubmissionStrategy.GpuMeshletInstrumented &&
+                        !IsMeshletInstrumentationAllowed(inputs))
+                    {
+                        return "meshlet instrumentation requires the Diagnostics Vulkan profile or EnableGpuIndirectDebugLogging";
+                    }
+
                     return "production meshlet dispatch is available";
+                }
 
                 if (inputs.MeshShaderDialect == EMeshShaderDialect.None)
                     return "no mesh shader dialect is available";
@@ -438,6 +461,18 @@ namespace XREngine
 
                 Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyGpuBvhPreference", true);
                 LogVulkanFeatureProfileFingerprint();
+            }
+
+            public static void ApplyCpuSceneCullingStructurePreference()
+            {
+                static void Apply()
+                {
+                    ECpuSceneCullingStructure structure = Engine.EffectiveSettings.CpuSceneCullingStructure;
+                    foreach (var worldInstance in Engine.WorldInstances)
+                        worldInstance?.ApplyCpuSceneCullingStructurePreference(structure);
+                }
+
+                Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyCpuSceneCullingStructurePreference", true);
             }
 
             public static void LogVulkanFeatureProfileFingerprint(bool force = false)
