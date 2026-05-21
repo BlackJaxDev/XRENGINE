@@ -89,8 +89,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             // Rasterize the motion-vector pass against the same unjittered projection
             // used for the reprojection uniforms so coverage and depth testing line up.
             using var unjitteredProjectionTicket = rs.PushUnjitteredProjection();
-            // Force shader pipeline mode so the override material is actually used.
-            // In combined shader mode, material overrides are ignored and meshes render with their original shaders.
+            // Request shader pipeline mode when enabled; combined mode builds an override-specific program.
             using var pipelineTicket = rs.PushForceShaderPipelines();
             // Motion vectors require the engine-generated mesh vertex varyings (notably FragPosLocal).
             // Some custom material vertex shaders do not emit those varyings, which leaves the velocity pass blank.

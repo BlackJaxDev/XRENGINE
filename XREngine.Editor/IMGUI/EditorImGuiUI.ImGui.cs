@@ -236,6 +236,7 @@ public static partial class EditorImGuiUI
             bool RenderApiObjects,
             bool RenderApiErrors,
             bool RenderApiExtensions,
+            bool ShaderProgramLinks,
             bool MissingAssets,
             bool Networking,
             bool AnimationClipEditor,
@@ -623,6 +624,8 @@ public static partial class EditorImGuiUI
                 DrawOpenGLErrorsPanel();
             using (Engine.Profiler.Start("UI.DrawRenderApiExtensionsPanel"))
                 DrawRenderApiExtensionsPanel();
+            using (Engine.Profiler.Start("UI.DrawShaderProgramLinksPanel"))
+                DrawShaderProgramLinksPanel();
             if (XREngine.Diagnostics.AssetDiagnostics.ConsumePendingDisplayFlag())
                 _showMissingAssets = true;
             DrawMissingAssetsPanel();
@@ -1277,6 +1280,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Render API Objects", null, ref _showOpenGLApiObjects);
                 ImGui.MenuItem("Render API Errors", null, ref _showOpenGLErrors);
                 ImGui.MenuItem("Render API Extensions", null, ref _showRenderApiExtensions);
+                ImGui.MenuItem("Shader Program Links", null, ref _showShaderProgramLinks);
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
                 ImGui.MenuItem("Animation Clip Editor", null, ref _showAnimationClipEditor);
@@ -2120,6 +2124,7 @@ public static partial class EditorImGuiUI
                 RenderApiObjects: _showOpenGLApiObjects,
                 RenderApiErrors: _showOpenGLErrors,
                 RenderApiExtensions: _showRenderApiExtensions,
+                ShaderProgramLinks: _showShaderProgramLinks,
                 MissingAssets: _showMissingAssets,
                 Networking: _showNetworking,
                 AnimationClipEditor: _showAnimationClipEditor,
@@ -2181,6 +2186,9 @@ public static partial class EditorImGuiUI
                 case "RenderApiExtensions":
                     _showRenderApiExtensions = value;
                     break;
+                case "ShaderProgramLinks":
+                    _showShaderProgramLinks = value;
+                    break;
                 case "MissingAssets":
                     _showMissingAssets = value;
                     break;
@@ -2222,6 +2230,7 @@ public static partial class EditorImGuiUI
             builder.AppendLine($"RenderApiObjects={FormatIniBoolean(state.RenderApiObjects)}");
             builder.AppendLine($"RenderApiErrors={FormatIniBoolean(state.RenderApiErrors)}");
             builder.AppendLine($"RenderApiExtensions={FormatIniBoolean(state.RenderApiExtensions)}");
+            builder.AppendLine($"ShaderProgramLinks={FormatIniBoolean(state.ShaderProgramLinks)}");
             builder.AppendLine($"MissingAssets={FormatIniBoolean(state.MissingAssets)}");
             builder.AppendLine($"Networking={FormatIniBoolean(state.Networking)}");
             builder.AppendLine($"AnimationClipEditor={FormatIniBoolean(state.AnimationClipEditor)}");

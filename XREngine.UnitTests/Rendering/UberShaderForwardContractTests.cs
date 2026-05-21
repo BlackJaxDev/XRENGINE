@@ -387,15 +387,16 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
-    public void CpuDirectUberMainPass_UsesSeparableOpenGlPrograms()
+    public void CpuDirectUberMainPass_RespectsShaderPipelineSetting()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
 
-        source.ShouldContain("ShouldForceSeparableUberProgram");
-        source.ShouldContain("monolithic Uber fragment + generated vertex programs");
-        source.ShouldContain("!xrMaterial.ActiveUberVariant.IsEmpty");
-        source.ShouldContain("|| forceSeparableUber");
-        source.ShouldContain("Path.GetFileName(path), \"UberShader.frag\"");
+        source.ShouldContain("UseShaderPipelinesForThisRenderer()");
+        source.ShouldContain("Combined mode builds a monolithic program for the active material");
+        source.ShouldContain("EnsureCombinedProgramForMaterial");
+        source.ShouldContain("material.Data.DestroyShaderPipelineProgram();");
+        source.ShouldNotContain("ShouldForceSeparableUberProgram");
+        source.ShouldNotContain("|| forceSeparableUber");
     }
 
     [Test]

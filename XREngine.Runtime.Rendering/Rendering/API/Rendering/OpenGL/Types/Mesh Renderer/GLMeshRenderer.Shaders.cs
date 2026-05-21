@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
@@ -45,12 +44,10 @@ namespace XREngine.Rendering.OpenGL
                 CollectBuffers();
                 Dbg($"Collected {_bufferCache.Count} buffer(s)", "Buffers");
 
-                bool forceSeparableUber = ShouldForceSeparableUberProgram(material);
-                if ((RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
-                    || forceSeparableUber)
+                if (UseShaderPipelinesForThisRenderer())
                 {
-                    _combinedProgram?.Destroy();
-                    _combinedProgram = null;
+                    DestroyCombinedProgram();
+                    material.Data.EnsureShaderPipelineProgram();
 
                     IEnumerable<XRShader> shaders = material.Data.VertexShaders;
                     CreateSeparatedVertexProgram(
@@ -64,12 +61,13 @@ namespace XREngine.Rendering.OpenGL
                 }
                 else
                 {
-                    _separatedVertexProgram?.Destroy();
-                    _separatedVertexProgram = null;
+                    DestroySeparablePrograms();
+                    material.Data.DestroyShaderPipelineProgram();
 
                     IEnumerable<XRShader> shaders = material.Data.Shaders;
                     CreateCombinedProgram(
                         ref _combinedProgram,
+                        material.Data,
                         hasNoVertexShaders,
                         shaders,
                         Data.VertexShaderSelector,
@@ -77,6 +75,29 @@ namespace XREngine.Rendering.OpenGL
 
                     Dbg("GenProgramsAndBuffers: combined program initiated", "Programs");
                 }
+            }
+
+            private bool UseShaderPipelinesForThisRenderer()
+                => RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;
+
+            private void DestroyCombinedProgram()
+            {
+                _combinedProgram?.Destroy();
+                _combinedProgram = null;
+                _combinedProgramMaterialKey = null;
+                _combinedProgramMaterialShaderStateRevision = 0;
+            }
+
+            private void DestroySeparablePrograms()
+            {
+                _pipeline?.Destroy();
+                _pipeline = null;
+
+                _separatedVertexProgram?.Destroy();
+                _separatedVertexProgram = null;
+
+                _forcedGeneratedVertexProgram?.Destroy();
+                _forcedGeneratedVertexProgram = null;
             }
 
             private void EnsureRuntimeDeformationBuffers()
@@ -101,14 +122,9 @@ namespace XREngine.Rendering.OpenGL
                 _shaderConfigVersion = settingsVersion;
                 System.Threading.Interlocked.Increment(ref _programDestructionCount);
 
-                _combinedProgram?.Destroy();
-                _combinedProgram = null;
-
-                _separatedVertexProgram?.Destroy();
-                _separatedVertexProgram = null;
-
-                _forcedGeneratedVertexProgram?.Destroy();
-                _forcedGeneratedVertexProgram = null;
+                DestroyCombinedProgram();
+                DestroySeparablePrograms();
+                MeshRenderer.Material?.SyncShaderPipelineProgramForCurrentSettings();
 
                 if (!RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
                     && !RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader)
@@ -137,17 +153,8 @@ namespace XREngine.Rendering.OpenGL
                 _programMaterialShaderStateRevision = shaderStateRevision;
                 System.Threading.Interlocked.Increment(ref _programDestructionCount);
 
-                _combinedProgram?.Destroy();
-                _combinedProgram = null;
-
-                _separatedVertexProgram?.Destroy();
-                _separatedVertexProgram = null;
-
-                _forcedGeneratedVertexProgram?.Destroy();
-                _forcedGeneratedVertexProgram = null;
-
-                _pipeline?.Destroy();
-                _pipeline = null;
+                DestroyCombinedProgram();
+                DestroySeparablePrograms();
 
                 Data.ResetVertexShaderSource();
                 BuffersBound = false;
@@ -374,7 +381,7 @@ namespace XREngine.Rendering.OpenGL
                 long matRev = xrMaterial?.ShaderStateRevision ?? 0;
                 int settingsVer = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
                 bool forceShaderPipelines = RuntimeEngine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
-                bool allowPipelines = RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;
+                bool allowPipelines = UseShaderPipelinesForThisRenderer();
                 string versionType = Data?.GetType()?.Name ?? "<null>";
                 string vsSel = Data?.VertexShaderSelector?.Method?.Name ?? "<null>";
 
@@ -396,6 +403,7 @@ namespace XREngine.Rendering.OpenGL
                     " settingsVer=", settingsVer.ToString(),
                     " capVer=", _shaderConfigVersion.ToString(),
                     " combNull=", (_combinedProgram is null).ToString(),
+                    " combMat=", _combinedProgramMaterialKey?.Name ?? "<null>",
                     " sepNull=", (_separatedVertexProgram is null).ToString(),
                     " forcedNull=", (_forcedGeneratedVertexProgram is null).ToString(),
                     " pipelineMode=", allowPipelines.ToString(),
@@ -444,25 +452,20 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Get the appropriate vertex/material programs based on engine settings.
-            /// When ForceShaderPipelines is enabled (e.g., during motion vectors pass with material override),
-            /// pipeline mode is used regardless of global settings to ensure override materials work correctly.
+            /// Combined mode builds a monolithic program for the active material, including
+            /// render-pass overrides, so disabling shader pipelines does not leave behind
+            /// separable programs.
             /// </summary>
             private bool GetPrograms(
                 GLMaterial material,
                 [MaybeNullWhen(false)] out GLRenderProgram? vertexProgram,
                 [MaybeNullWhen(false)] out GLRenderProgram? materialProgram)
             {
-                bool forceShaderPipelines = RuntimeEngine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
-                bool materialDiffers = !ReferenceEquals(material.Data, MeshRenderer.Material);
-                bool forceSeparableUber = ShouldForceSeparableUberProgram(material);
-                bool usePipelines = (RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
-                    || forceShaderPipelines
-                    || materialDiffers
-                    || forceSeparableUber;
+                bool usePipelines = UseShaderPipelinesForThisRenderer();
                 
                 return usePipelines
                     ? GetPipelinePrograms(material, out vertexProgram, out materialProgram)
-                    : GetCombinedProgram(out vertexProgram, out materialProgram);
+                    : GetCombinedProgram(material, out vertexProgram, out materialProgram);
             }
 
             private bool ShouldSkipShadowDrawForProgramBuild(GLMaterial material)
@@ -471,11 +474,7 @@ namespace XREngine.Rendering.OpenGL
                 if (renderState?.ShadowPass != true)
                     return false;
 
-                bool forceShaderPipelines = renderState.ForceShaderPipelines;
-                bool materialDiffers = !ReferenceEquals(material.Data, MeshRenderer.Material);
-                bool usePipelines = (RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
-                    || forceShaderPipelines
-                    || materialDiffers;
+                bool usePipelines = UseShaderPipelinesForThisRenderer();
 
                 if (!usePipelines)
                     return _combinedProgram?.IsAsyncBuildPending ?? false;
@@ -499,51 +498,13 @@ namespace XREngine.Rendering.OpenGL
                 return vertexProgram?.IsAsyncBuildPending ?? false;
             }
 
-            private static bool ShouldForceSeparableUberProgram(GLMaterial material)
-            {
-                if (RuntimeEngine.Rendering.State.IsShadowPass)
-                    return false;
-
-                XRMaterial xrMaterial = material.Data;
-                if (!xrMaterial.ActiveUberVariant.IsEmpty)
-                    return true;
-
-                IReadOnlyList<XRShader> fragmentShaders = xrMaterial.FragmentShaders;
-                bool hasUberFragment = false;
-                for (int i = 0; i < fragmentShaders.Count; i++)
-                {
-                    if (IsUberFragmentShader(fragmentShaders[i]))
-                    {
-                        hasUberFragment = true;
-                        break;
-                    }
-                }
-
-                if (!hasUberFragment)
-                    return false;
-
-                // CPU-direct main passes may have shader pipelines globally disabled, but
-                // monolithic Uber fragment + generated vertex programs are large enough to
-                // wedge shared-context linking on imported scenes. Keep CPU mesh submission;
-                // split the GL programs so the lit pass uses the same stable separable route
-                // already used by prepass and override passes.
-                return true;
-            }
-
-            private static bool IsUberFragmentShader(XRShader shader)
-            {
-                if (shader.Type != EShaderType.Fragment)
-                    return false;
-
-                string? path = shader.Source.FilePath ?? shader.FilePath;
-                return string.Equals(Path.GetFileName(path), "UberShader.frag", StringComparison.OrdinalIgnoreCase);
-            }
-
             /// <summary>
             /// Get the combined program when pipeline mode is disabled.
             /// </summary>
-            private bool GetCombinedProgram(out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
+            private bool GetCombinedProgram(GLMaterial material, out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
             {
+                EnsureCombinedProgramForMaterial(material);
+
                 if ((vertexProgram = materialProgram = _combinedProgram) is null)
                 {
                     Dbg("GetCombinedProgram: program null", "Programs");
@@ -566,6 +527,32 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
+            private void EnsureCombinedProgramForMaterial(GLMaterial material)
+            {
+                XRMaterial xrMaterial = material.Data;
+                long shaderStateRevision = xrMaterial.ShaderStateRevision;
+                if (_combinedProgram is not null &&
+                    ReferenceEquals(_combinedProgramMaterialKey, xrMaterial) &&
+                    _combinedProgramMaterialShaderStateRevision == shaderStateRevision)
+                {
+                    return;
+                }
+
+                DestroyCombinedProgram();
+                xrMaterial.DestroyShaderPipelineProgram();
+
+                bool hasNoVertexShaders = xrMaterial.VertexShaders.Count == 0;
+                CreateCombinedProgram(
+                    ref _combinedProgram,
+                    xrMaterial,
+                    hasNoVertexShaders,
+                    xrMaterial.Shaders,
+                    Data.VertexShaderSelector,
+                    () => Data.VertexShaderSource ?? string.Empty);
+
+                BuffersBound = false;
+            }
+
             /// <summary>
             /// Get the separable vertex/material programs when pipeline mode is enabled.
             /// </summary>
@@ -579,8 +566,7 @@ namespace XREngine.Rendering.OpenGL
                 _pipeline.Bind();
                 _pipeline.Clear(EProgramStageMask.AllShaderBits);
 
-                // When AllowShaderPipelines is globally disabled, materials skip creating their
-                // ShaderPipelineProgram. Create it on-demand when a pass force-enables pipelines.
+                // Materials only own a separable program while shader pipeline mode is active.
                 material.Data.EnsureShaderPipelineProgram();
 
                 materialProgram = material.SeparableProgram;
@@ -693,6 +679,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void CreateCombinedProgram(
                 ref GLRenderProgram? program,
+                XRMaterial material,
                 bool hasNoVertexShaders,
                 IEnumerable<XRShader> shaders,
                 Func<XRShader, bool> vertexShaderSelector,
@@ -710,8 +697,11 @@ namespace XREngine.Rendering.OpenGL
 
                 var combinedData = new XRRenderProgram(false, false, shaders)
                 {
-                    Name = $"Combined:{MeshRenderer.Material?.Name ?? "unknown"}",
+                    Name = $"Combined:{material.Name ?? "unknown"}",
                 };
+                material.ApplyShaderProgramMetadata(combinedData);
+                _combinedProgramMaterialKey = material;
+                _combinedProgramMaterialShaderStateRevision = material.ShaderStateRevision;
                 program = Renderer.GenericToAPI<GLRenderProgram>(combinedData)!;
                 program.PropertyChanged += CheckProgramLinked;
                 InitiateLink(program);

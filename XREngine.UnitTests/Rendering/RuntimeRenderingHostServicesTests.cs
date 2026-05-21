@@ -91,6 +91,32 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
+    [NonParallelizable]
+    public void EffectiveCpuSceneCullingStructure_UsesRuntimeRenderingHostServicesAndEnvOverride()
+    {
+        string? previousStructure = Environment.GetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", null);
+
+            RuntimeRenderingHostServices.Current = new TestRuntimeRenderingHostServices
+            {
+                CpuSceneCullingStructure = ECpuSceneCullingStructure.Bvh,
+            };
+
+            RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Bvh);
+
+            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", "Octree");
+            RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", previousStructure);
+        }
+    }
+
+    [Test]
     public void CameraRenderPipeline_UsesRuntimeRenderingHostServicesFactory()
     {
         TestRenderPipeline pipeline = new();

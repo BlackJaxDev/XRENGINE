@@ -348,9 +348,22 @@ namespace XREngine
         /// </summary>
         private static void HandleOverrideableSettingChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            if (sender is IOverrideableSetting setting && _overrideableSettingPropertyMap.TryGetValue(setting, out var propertyName))
-                ApplyEffectiveSettingsForProperty(propertyName);
+            if (sender is not IOverrideableSetting setting || !_overrideableSettingPropertyMap.TryGetValue(setting, out var propertyName))
+                return;
+
+            if (IsEditorPreferencesOverrideSetting(setting))
+            {
+                UpdateEffectiveEditorPreferences();
+                return;
+            }
+
+            ApplyEffectiveSettingsForProperty(propertyName);
         }
+
+        private static bool IsEditorPreferencesOverrideSetting(IOverrideableSetting setting)
+            => _trackedEditorOverrideableSettings.Contains(setting)
+                || _trackedEditorThemeOverrideableSettings.Contains(setting)
+                || _trackedEditorDebugOverrideableSettings.Contains(setting);
 
         private static void RefreshEditorPreferencesOverrideableSettingsTracking(object? sender, IXRPropertyChangedEventArgs e)
         {
@@ -447,7 +460,10 @@ namespace XREngine
             ClearPendingSettingsCascades();
 
             if (applyEditorPreferences)
+            {
+                ApplyEditorPreferencesRuntimeSideEffects();
                 Rendering.ApplyEditorPreferencesChange(null);
+            }
 
             if (applyRuntimeSettings)
                 ApplyEffectiveSettingsRuntime();
@@ -567,6 +583,12 @@ namespace XREngine
 
             return h;
         }
+
+        /// <summary>
+        /// Replays editor-preference side effects that cannot rely on value-changing setters during startup.
+        /// </summary>
+        private static void ApplyEditorPreferencesRuntimeSideEffects()
+            => _editorPreferences?.ApplyRuntimeSideEffects();
 
         /// <summary>
         /// Applies all runtime-effective settings (called when settings change globally).
@@ -891,6 +913,7 @@ namespace XREngine
             }
             else
             {
+                ApplyEditorPreferencesRuntimeSideEffects();
                 Rendering.ApplyEditorPreferencesChange(null);
                 ApplyAudioPreferences();
             }

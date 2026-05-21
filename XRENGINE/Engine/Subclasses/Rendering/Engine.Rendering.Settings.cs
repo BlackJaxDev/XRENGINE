@@ -77,6 +77,7 @@ namespace XREngine
                         _globalDefaultSettings = _settings;
 
                     ApplyEngineSettingChange(null);
+                    global::XREngine.Rendering.XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
                     SettingsChanged?.Invoke();
                 }
             }
@@ -948,7 +949,11 @@ namespace XREngine
                 public bool AllowShaderPipelines
                 {
                     get => _allowShaderPipelines;
-                    set => SetField(ref _allowShaderPipelines, value, null, _ => BumpShaderConfigVersion());
+                    set => SetField(ref _allowShaderPipelines, value, null, _ =>
+                    {
+                        BumpShaderConfigVersion();
+                        global::XREngine.Rendering.XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
+                    });
                 }
 
                 /// <summary>

@@ -2948,19 +2948,19 @@ namespace XREngine.Rendering
 
             sb.AppendLine("layout(location=0) out vec3 FragPos;");
             sb.AppendLine("layout(location=1) out vec3 FragNorm;");
-            if (hasTangents)
-            {
-                sb.AppendLine("layout(location=2) out vec3 FragTan;");
-                sb.AppendLine("layout(location=3) out vec3 FragBinorm;");
-            }
+            sb.AppendLine("layout(location=2) out vec3 FragTan;");
+            sb.AppendLine("layout(location=3) out vec3 FragBinorm;");
 
             for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
                 sb.AppendLine($"layout(location={4 + i}) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, i)};");
             if (texCoordBindings.Count == 0)
                 sb.AppendLine($"layout(location=4) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)};");
 
-            for (int i = 0; i < colorBindings.Count && i < 8; ++i)
-                sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
+            if (colorBindings.Count == 0)
+                sb.AppendLine($"layout(location=12) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, 0)};");
+            else
+                for (int i = 0; i < colorBindings.Count && i < 8; ++i)
+                    sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
 
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             if (emitTransformId)
@@ -3057,7 +3057,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    FragPos = worldPos.xyz;");
             sb.AppendLine();
 
-            if (hasNormals || hasTangents)
+            if (hasNormals)
                 sb.AppendLine("    mat3 normalMatrix = transpose(inverse(mat3(ModelMatrix)));");
 
             if (hasNormals)
@@ -3068,15 +3068,17 @@ namespace XREngine.Rendering
                     sb.AppendLine("    FragTan = normalize(normalMatrix * Tangent.xyz);");
                     sb.AppendLine("    FragBinorm = normalize(cross(FragNorm, FragTan) * Tangent.w);");
                 }
-            }
-            else
-            {
-                sb.AppendLine("    FragNorm = vec3(0.0, 0.0, 1.0);");
-                if (hasTangents)
+                else
                 {
                     sb.AppendLine("    FragTan = vec3(1.0, 0.0, 0.0);");
                     sb.AppendLine("    FragBinorm = vec3(0.0, 1.0, 0.0);");
                 }
+            }
+            else
+            {
+                sb.AppendLine("    FragNorm = vec3(0.0, 0.0, 1.0);");
+                sb.AppendLine("    FragTan = vec3(1.0, 0.0, 0.0);");
+                sb.AppendLine("    FragBinorm = vec3(0.0, 1.0, 0.0);");
             }
 
             for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
@@ -3086,6 +3088,8 @@ namespace XREngine.Rendering
 
             for (int i = 0; i < colorBindings.Count && i < 8; ++i)
                 sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragColorName, i)} = {colorBindings[i]};");
+            if (colorBindings.Count == 0)
+                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragColorName, 0)} = vec4(1.0);");
 
             sb.AppendLine("    gl_Position = clipPos;");
             sb.AppendLine("}");
@@ -3922,17 +3926,19 @@ namespace XREngine.Rendering
 
             sb.AppendLine("layout(location=0) out vec3 FragPos;");
             sb.AppendLine("layout(location=1) out vec3 FragNorm;");
-            if (hasTangents)
-            {
-                sb.AppendLine("layout(location=2) out vec3 FragTan;");
-                sb.AppendLine("layout(location=3) out vec3 FragBinorm;");
-            }
+            sb.AppendLine("layout(location=2) out vec3 FragTan;");
+            sb.AppendLine("layout(location=3) out vec3 FragBinorm;");
 
             for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
                 sb.AppendLine($"layout(location={4 + i}) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, i)};");
+            if (texCoordBindings.Count == 0)
+                sb.AppendLine($"layout(location=4) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)};");
 
-            for (int i = 0; i < colorBindings.Count && i < 8; ++i)
-                sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
+            if (colorBindings.Count == 0)
+                sb.AppendLine($"layout(location=12) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, 0)};");
+            else
+                for (int i = 0; i < colorBindings.Count && i < 8; ++i)
+                    sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
 
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
             sb.AppendLine($"layout(location=22) out float {DefaultVertexShaderGenerator.FragViewIndexName};");
@@ -3957,7 +3963,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    FragPos = worldPos.xyz;");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragViewIndexName} = 0.0;");
 
-            if (hasNormals || hasTangents)
+            if (hasNormals)
                 sb.AppendLine("    mat3 normalMatrix = transpose(inverse(mat3(ModelMatrix)));");
 
             if (hasNormals)
@@ -3968,22 +3974,28 @@ namespace XREngine.Rendering
                     sb.AppendLine("    FragTan = normalize(normalMatrix * Tangent.xyz);");
                     sb.AppendLine("    FragBinorm = normalize(cross(FragNorm, FragTan) * Tangent.w);");
                 }
-            }
-            else
-            {
-                sb.AppendLine("    FragNorm = vec3(0.0, 0.0, 1.0);");
-                if (hasTangents)
+                else
                 {
                     sb.AppendLine("    FragTan = vec3(1.0, 0.0, 0.0);");
                     sb.AppendLine("    FragBinorm = vec3(0.0, 1.0, 0.0);");
                 }
             }
+            else
+            {
+                sb.AppendLine("    FragNorm = vec3(0.0, 0.0, 1.0);");
+                sb.AppendLine("    FragTan = vec3(1.0, 0.0, 0.0);");
+                sb.AppendLine("    FragBinorm = vec3(0.0, 1.0, 0.0);");
+            }
 
             for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
                 sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, i)} = {texCoordBindings[i]};");
+            if (texCoordBindings.Count == 0)
+                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)} = vec2(0.0);");
 
             for (int i = 0; i < colorBindings.Count && i < 8; ++i)
                 sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragColorName, i)} = {colorBindings[i]};");
+            if (colorBindings.Count == 0)
+                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragColorName, 0)} = vec4(1.0);");
 
             sb.AppendLine("    gl_Position = clipPos;");
             sb.AppendLine("}");

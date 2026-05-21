@@ -76,6 +76,8 @@ public partial class XRMaterial
         if (program is null)
             return;
 
+        program.Name = BuildShaderPipelineProgramName();
+
         if (ActiveUberVariant.IsEmpty || ActiveUberVariant.VariantHash == 0)
         {
             program.SetShaderVariantMetadata(null);
@@ -86,6 +88,22 @@ public partial class XRMaterial
             ShaderProgramMaterialVariantKind,
             ActiveUberVariant.VariantHash,
             XRRenderProgram.EShaderProgramBinaryCachePolicy.BypassWhenDriverParallelCompile));
+    }
+
+    private string BuildShaderPipelineProgramName()
+    {
+        string materialName = string.IsNullOrWhiteSpace(Name)
+            ? "<unnamed material>"
+            : Name!;
+
+        if (ActiveUberVariant.IsEmpty || ActiveUberVariant.VariantHash == 0)
+            return string.Concat("MaterialPipeline:", materialName);
+
+        return string.Concat(
+            "MaterialPipelineVariant:",
+            materialName,
+            ":",
+            ActiveUberVariant.VariantHash.ToString("x16", CultureInfo.InvariantCulture));
     }
 
     public bool IsUberFeatureEnabled(string featureId, bool defaultEnabled)

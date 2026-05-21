@@ -359,8 +359,9 @@ The cache-hit branch in `GLRenderProgram.Link()` calls
 the cacheKey), the call is treated as backpressure: it records
 `RecordBackpressure()`, publishes `QueueBackpressure`, emits a
 `BINARY_UPLOAD_COALESCED` event, registers as a pending async program, and
-returns. The deferred caller retries next frame and typically hits the
-populated cache by then.
+sets the binary-upload queue-wait flag before returning. The deferred caller
+stays in the async pump, retries next frame, and typically hits the populated
+cache by then.
 
 The reservation lifetime is **from successful TryReserve to worker
 completion (or worker failure)**: the worker lambda inside `EnqueueUpload`
@@ -371,6 +372,11 @@ Each `GLRenderProgram` instance still owns a unique `programId` and receives
 its own `glProgramBinary` upload. Coalescing only serializes simultaneous
 duplicate uploads; total throughput is preserved while bursts spread across
 frames.
+
+If a program is destroyed or reset while its binary upload is still in flight,
+`CancelUpload(programId)` discards any completed result or marks the worker
+result for discard. This releases the in-flight program slot without requiring
+the original `GLRenderProgram` to consume a result it no longer owns.
 
 Why this matters: the cold-start `Sponza` flood has a top duplicate cacheKey
 of ~50 program instances. With `MaxInFlight = 32`, 18 jobs would still

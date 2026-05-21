@@ -235,6 +235,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
                 _asyncAttachedShaderIds = null;
                 _asyncLinkedProgramId = 0;
+                _asyncBinaryUploadQueueWaitPending = false;
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
                 _asyncCompileLinkQueueWaitPending = false;

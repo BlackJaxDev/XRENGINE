@@ -39,6 +39,8 @@ namespace XREngine.Rendering.OpenGL
             private List<GLDataBuffer> _allBuffersList = [];
             private GLRenderProgramPipeline? _pipeline;
             private GLRenderProgram? _combinedProgram;
+            private XRMaterial? _combinedProgramMaterialKey;
+            private long _combinedProgramMaterialShaderStateRevision;
             private GLRenderProgram? _separatedVertexProgram;
             private GLRenderProgram? _forcedGeneratedVertexProgram;
             private int _shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
@@ -442,8 +444,11 @@ namespace XREngine.Rendering.OpenGL
                 if (_combinedProgram is not null)
                     return _combinedProgram;
 
-                if (Material?.SeparableProgram?.Data.GetShaderTypeMask().HasFlag(EProgramStageMask.VertexShaderBit) ?? false)
+                if (UseShaderPipelinesForThisRenderer() &&
+                    (Material?.SeparableProgram?.Data.GetShaderTypeMask().HasFlag(EProgramStageMask.VertexShaderBit) ?? false))
+                {
                     return Material.SeparableProgram!;
+                }
 
                 return _separatedVertexProgram!;
             }

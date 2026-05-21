@@ -54,8 +54,8 @@ namespace XREngine.Rendering.Commands
                 if (!SetField(ref _useGpuBvh, value))
                     return;
 
-                string path = value ? "GPU BVH" : "GPU octree";
-                Debug.Meshes($"[GPUScene] Active traversal path set to {path}.");
+                //string path = value ? "GPU BVH" : "GPU octree";
+                //Debug.Meshes($"[GPUScene] Active traversal path set to {path}.");
             }
         }
 
