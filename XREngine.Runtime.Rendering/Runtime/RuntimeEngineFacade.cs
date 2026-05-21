@@ -1878,7 +1878,13 @@ internal sealed class RuntimeRenderSettings
         get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
             ? services.AllowShaderPipelines
             : _allowShaderPipelines;
-        set => SetShaderSetting(ref _allowShaderPipelines, value);
+        set
+        {
+            bool previous = AllowShaderPipelines;
+            SetShaderSetting(ref _allowShaderPipelines, value);
+            if (previous != AllowShaderPipelines)
+                XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
+        }
     }
     public bool AllowSkinning
     {

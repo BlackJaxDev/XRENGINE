@@ -965,6 +965,7 @@ public sealed class ShadowAtlasManager
             }
 
             bool criticalDirectionalRefresh = ShouldRenderDirectionalRefreshPastBudget(request);
+            bool criticalRefreshPastTimeBudget = criticalDirectionalRefresh || ShouldRenderRefreshPastTimeBudget(request);
             if (scheduled >= budget && !(budget > 0 && criticalDirectionalRefresh))
             {
                 deferredByBudget = _requests.Count - i;
@@ -973,7 +974,7 @@ public sealed class ShadowAtlasManager
             }
 
             if (scheduled > 0 &&
-                !criticalDirectionalRefresh &&
+                !criticalRefreshPastTimeBudget &&
                 HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
             {
                 deferredByBudget = _requests.Count - i;
@@ -1008,7 +1009,7 @@ public sealed class ShadowAtlasManager
                     checkedTiles += group.CascadeCount;
 
                     if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
-                        !ShouldRenderDirectionalRefreshPastBudgetAtIndex(i + 1))
+                        !ShouldRenderRefreshPastTimeBudgetAtIndex(i + 1))
                     {
                         int nextRequestIndex = i + 1;
                         deferredByBudget = _requests.Count - nextRequestIndex;
@@ -1038,7 +1039,8 @@ public sealed class ShadowAtlasManager
                     scheduled += pointGroup.FaceCount;
                     checkedTiles += pointGroup.FaceCount;
 
-                    if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
+                    if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
+                        !ShouldRenderRefreshPastTimeBudgetAtIndex(i + 1))
                     {
                         int nextRequestIndex = i + 1;
                         deferredByBudget = _requests.Count - nextRequestIndex;
@@ -1082,7 +1084,7 @@ public sealed class ShadowAtlasManager
             scheduled++;
 
             if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
-                !ShouldRenderDirectionalRefreshPastBudgetAtIndex(i + 1))
+                !ShouldRenderRefreshPastTimeBudgetAtIndex(i + 1))
             {
                 int nextRequestIndex = i + 1;
                 deferredByBudget = _requests.Count - nextRequestIndex;
@@ -1167,11 +1169,43 @@ public sealed class ShadowAtlasManager
         return ShouldRenderDirectionalRefreshPastBudget(_requests[requestIndex]);
     }
 
+    private bool ShouldRenderRefreshPastTimeBudgetAtIndex(int requestIndex)
+    {
+        if ((uint)requestIndex >= (uint)_requests.Count)
+            return false;
+
+        return ShouldRenderRefreshPastTimeBudget(_requests[requestIndex]);
+    }
+
     private static bool ShouldRenderDirectionalRefreshPastBudget(ShadowMapRequest request)
     {
         if (!IsDirectionalRequest(request) || !request.IsDirty)
             return false;
 
+        return HasCriticalDirtyReason(request);
+    }
+
+    /// <summary>
+    /// Local lights (spot/point face) get the same soft-time-budget bypass as directional
+    /// when they are dirty for an interactive reason: this prevents single-frame editor
+    /// transforms (drags, gizmo updates, dynamic light movement) from being deferred when
+    /// directional cascades happened to consume the time budget first. The hard tile
+    /// budget (`MaxTilesRenderedPerFrame`) still applies.
+    /// </summary>
+    private static bool ShouldRenderRefreshPastTimeBudget(ShadowMapRequest request)
+    {
+        if (!request.IsDirty)
+            return false;
+
+        if (IsDirectionalRequest(request))
+            return HasCriticalDirtyReason(request);
+
+        return request.ProjectionType is EShadowProjectionType.PointFace or EShadowProjectionType.SpotPrimary
+            && HasCriticalDirtyReason(request);
+    }
+
+    private static bool HasCriticalDirtyReason(ShadowMapRequest request)
+    {
         const ShadowDirtyReason criticalReasons =
             ShadowDirtyReason.FirstSubmission |
             ShadowDirtyReason.ContentChanged |

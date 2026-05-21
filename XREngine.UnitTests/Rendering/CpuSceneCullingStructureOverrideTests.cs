@@ -2,6 +2,9 @@ using NUnit.Framework;
 using Shouldly;
 using System;
 using XREngine.Data.Core;
+using XREngine.Data.Trees;
+using XREngine.Rendering.Info;
+using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -37,5 +40,17 @@ public sealed class CpuSceneCullingStructureOverrideTests
             Engine.Rendering.Settings.CpuSceneCullingStructure = originalStructure;
             Engine.GameSettings = originalGameSettings;
         }
+    }
+
+    [Test]
+    public void VisualScene3D_ApplyCpuSceneCullingStructurePreference_SwitchesGenericRenderTree()
+    {
+        VisualScene3D scene = new();
+
+        scene.ApplyCpuSceneCullingStructurePreference(ECpuSceneCullingStructure.Bvh);
+        scene.GenericRenderTree.ShouldBeOfType<CpuBvhRenderTree<RenderInfo3D>>();
+
+        scene.ApplyCpuSceneCullingStructurePreference(ECpuSceneCullingStructure.Octree);
+        scene.GenericRenderTree.ShouldBeOfType<Octree<RenderInfo3D>>();
     }
 }

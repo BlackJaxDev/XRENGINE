@@ -73,6 +73,7 @@ namespace XREngine.Rendering.OpenGL
                 _shadowVariantKey = null;
                 _shadowMaterialCache = null;
                 Data.ResetVertexShaderSource();
+                MeshRenderer.Material?.SyncShaderPipelineProgramForCurrentSettings();
 
                 if (RuntimeEngine.IsRenderThread)
                     RegenerateProgramsAndBuffers();
@@ -83,17 +84,8 @@ namespace XREngine.Rendering.OpenGL
             private void RegenerateProgramsAndBuffers()
             {
                 System.Threading.Interlocked.Increment(ref _programDestructionCount);
-                _combinedProgram?.Destroy();
-                _combinedProgram = null;
-
-                _separatedVertexProgram?.Destroy();
-                _separatedVertexProgram = null;
-
-                _forcedGeneratedVertexProgram?.Destroy();
-                _forcedGeneratedVertexProgram = null;
-
-                _pipeline?.Destroy();
-                _pipeline = null;
+                DestroyCombinedProgram();
+                DestroySeparablePrograms();
 
                 BuffersBound = false;
 
@@ -153,17 +145,8 @@ namespace XREngine.Rendering.OpenGL
                 _batchedTextSamplesQuery?.Destroy(true);
                 _batchedTextSamplesQuery = null;
 
-                _pipeline?.Destroy();
-                _pipeline = null;
-
-                _separatedVertexProgram?.Destroy();
-                _separatedVertexProgram = null;
-
-                _forcedGeneratedVertexProgram?.Destroy();
-                _forcedGeneratedVertexProgram = null;
-
-                _combinedProgram?.Destroy();
-                _combinedProgram = null;
+                DestroySeparablePrograms();
+                DestroyCombinedProgram();
 
                 DestroySkinnedBuffers();
                 BuffersBound = false;

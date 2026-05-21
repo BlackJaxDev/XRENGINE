@@ -30,3 +30,22 @@ Startup may create:
 The binary and source lanes are intentionally separate. A driver stall inside a
 source link can make the source worker unhealthy without starving binary cache
 uploads or unrelated shared upload work.
+
+The ImGui editor exposes `View > Shader Program Links` for sampled OpenGL
+program link diagnostics. The panel lists linked, queued, compiling/linking,
+prepared, failed, and abandoned programs with the selected backend lane, hash,
+shader stages, binary cache state, worker queue depth, active link settings, and
+recent compile/link timings. `Prepared` means hash/cache lookup has completed but
+no GL link/upload work is currently registered; `Pending` is reserved for
+queued/running backend work. The panel refreshes from a throttled snapshot by
+default so it does not poll every render frame; use `Refresh Now`, the `Update`
+interval, or `Freeze` when diagnosing startup floods or intermittent shader
+worker backpressure. The visible row set and summary counters are cached until
+the snapshot, sort, or filters change, so a frozen panel does not rescan every
+tracked program each frame. Narrow/portrait layouts switch to a compact table
+with a `Use` column; material fragment programs are named from their source
+material and uber variant hash when available. Binary-cache upload backpressure,
+including duplicate cache-key coalescing, is represented by a durable pending
+state so the async pump keeps retrying until the upload can enqueue; abandoned
+binary-upload results are cancelled so they do not leave phantom in-flight queue
+slots behind.

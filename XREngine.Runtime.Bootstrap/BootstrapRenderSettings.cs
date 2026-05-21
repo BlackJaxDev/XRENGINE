@@ -7,6 +7,7 @@ namespace XREngine.Runtime.Bootstrap;
 public static class BootstrapRenderSettings
 {
     private static bool _emulatedVrStereoPreviewHooked;
+    private static string? _lastOpenGLShaderLinkSettingsLog;
 
     private static void EnsureEmulatedVRStereoPreviewRenderingHooked()
     {
@@ -64,14 +65,51 @@ public static class BootstrapRenderSettings
     public static void ApplyOpenGLShaderLinkSettings(UnitTestingWorldSettings settings)
     {
         var renderSettings = Engine.Rendering.Settings;
+        int rawCompilerThreadCount = settings.OpenGLShaderCompilerThreadCount;
+        int compilerThreadCount = ResolveOpenGLShaderCompilerThreadCount(settings.OpenGLShaderLinkStrategy, rawCompilerThreadCount);
+
         renderSettings.AllowBinaryProgramCaching = settings.AllowBinaryProgramCaching;
         renderSettings.AsyncProgramBinaryUpload = settings.AsyncProgramBinaryUpload;
         renderSettings.AsyncProgramCompilation = settings.AsyncProgramCompilation;
         renderSettings.OpenGLProgramCompileLinkWorkerCount = settings.OpenGLProgramCompileLinkWorkerCount;
         renderSettings.MaxAsyncShaderProgramsPerFrame = settings.MaxAsyncShaderProgramsPerFrame;
         renderSettings.OpenGLShaderLinkStrategy = settings.OpenGLShaderLinkStrategy;
-        renderSettings.OpenGLShaderCompilerThreadCount = settings.OpenGLShaderCompilerThreadCount;
+        renderSettings.OpenGLShaderCompilerThreadCount = compilerThreadCount;
         renderSettings.OpenGLParallelShaderCompileProbeEnabled = settings.OpenGLParallelShaderCompileProbeEnabled;
         renderSettings.OpenGLParallelShaderCompileProbeTimeoutMs = settings.OpenGLParallelShaderCompileProbeTimeoutMs;
+
+        LogOpenGLShaderLinkSettings(settings, rawCompilerThreadCount, compilerThreadCount);
+    }
+
+    private static int ResolveOpenGLShaderCompilerThreadCount(EOpenGLShaderLinkStrategy strategy, int configuredThreadCount)
+    {
+        if (strategy == EOpenGLShaderLinkStrategy.DriverParallel && configuredThreadCount == 0)
+        {
+            Debug.Out("[BootstrapRenderSettings] OpenGLShaderCompilerThreadCount=0 disables driver compiler threads; using -1 because OpenGLShaderLinkStrategy=DriverParallel.");
+            return -1;
+        }
+
+        return configuredThreadCount;
+    }
+
+    private static void LogOpenGLShaderLinkSettings(
+        UnitTestingWorldSettings settings,
+        int rawCompilerThreadCount,
+        int appliedCompilerThreadCount)
+    {
+        string compilerThreads = rawCompilerThreadCount == appliedCompilerThreadCount
+            ? appliedCompilerThreadCount.ToString()
+            : $"{rawCompilerThreadCount}->{appliedCompilerThreadCount}";
+
+        string summary =
+            $"strategy={settings.OpenGLShaderLinkStrategy}, cache={settings.AllowBinaryProgramCaching}, asyncBinaryUpload={settings.AsyncProgramBinaryUpload}, " +
+            $"asyncSource={settings.AsyncProgramCompilation}, sharedWorkers={settings.OpenGLProgramCompileLinkWorkerCount}, maxAsyncPerFrame={settings.MaxAsyncShaderProgramsPerFrame}, " +
+            $"compilerThreads={compilerThreads}, probe={settings.OpenGLParallelShaderCompileProbeEnabled}, probeTimeoutMs={settings.OpenGLParallelShaderCompileProbeTimeoutMs}";
+
+        if (string.Equals(_lastOpenGLShaderLinkSettingsLog, summary, StringComparison.Ordinal))
+            return;
+
+        _lastOpenGLShaderLinkSettingsLog = summary;
+        Debug.Out($"[BootstrapRenderSettings] OpenGL shader linking: {summary}");
     }
 }

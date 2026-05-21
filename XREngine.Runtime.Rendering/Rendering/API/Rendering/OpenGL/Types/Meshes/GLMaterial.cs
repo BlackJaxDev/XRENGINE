@@ -103,8 +103,7 @@ namespace XREngine.Rendering.OpenGL
                     Renderer.ApplyRenderParameters(renderOptions);
                 }
 
-                bool usePipelines = RuntimeEngine.Rendering.Settings.AllowShaderPipelines
-                    || (RuntimeEngine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false);
+                bool usePipelines = RuntimeEngine.Rendering.Settings.AllowShaderPipelines;
                 if (usePipelines)
                     materialProgram ??= SeparableProgram;
 

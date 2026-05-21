@@ -20,6 +20,8 @@ namespace XREngine.Rendering.OpenGL
         {
             private readonly GLSharedContext _sharedContext = sharedContext;
             private readonly ConcurrentDictionary<uint, UploadResult> _completed = new();
+            private readonly ConcurrentDictionary<uint, byte> _inFlightProgramIds = new();
+            private readonly ConcurrentDictionary<uint, byte> _cancelledProgramIds = new();
             // Phase 4: dedup uploads by cacheKey so 50 different program instances
             // sharing the same shader binary do not flood the queue simultaneously.
             // Reservations are released as soon as the worker has finished writing to
@@ -127,13 +129,14 @@ namespace XREngine.Rendering.OpenGL
                     format,
                     length,
                     $"inFlight={InFlightCount}/{MaxInFlight}");
+                _inFlightProgramIds[programId] = 0;
                 Interlocked.Increment(ref _inFlight);
                 _sharedContext.Enqueue(gl =>
                 {
                     LogRenderingUploadEvent("WORKER_BEGIN", programId, hash, cacheKey, format, length, null);
                     if (_sharedContext.IsDisposeRequested)
                     {
-                        _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                        DropUpload(programId, cacheKey);
                         return;
                     }
 
@@ -160,7 +163,7 @@ namespace XREngine.Rendering.OpenGL
 
                     if (_sharedContext.IsDisposeRequested)
                     {
-                        _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                        DropUpload(programId, cacheKey);
                         return;
                     }
 
@@ -185,7 +188,7 @@ namespace XREngine.Rendering.OpenGL
                         {
                             if (_sharedContext.IsDisposeRequested)
                             {
-                                _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                                DropUpload(programId, cacheKey);
                                 return;
                             }
 
@@ -208,7 +211,7 @@ namespace XREngine.Rendering.OpenGL
                     // shared-context resource uploads.
                     if (_sharedContext.IsDisposeRequested)
                     {
-                        _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                        DropUpload(programId, cacheKey);
                         return;
                     }
 
@@ -229,14 +232,15 @@ namespace XREngine.Rendering.OpenGL
                         format,
                         length,
                         $"loadMs={loadMilliseconds:F2} error={errorLog ?? error.ToString()}");
-                    _completed[programId] = new UploadResult(
+                    var result = new UploadResult(
                         error == GLEnum.NoError && linkStatus != 0 ? UploadStatus.Success : UploadStatus.Failed,
                         format,
                         hash,
                         cacheKey,
                         loadMilliseconds,
                         errorLog);
-                    if (error == GLEnum.NoError && linkStatus != 0)
+                    bool success = error == GLEnum.NoError && linkStatus != 0;
+                    if (success)
                         Interlocked.Increment(ref _completedCount);
                     else
                         Interlocked.Increment(ref _failedCount);
@@ -244,7 +248,27 @@ namespace XREngine.Rendering.OpenGL
                     // landed (or failed). A sibling caller can pick up its own upload
                     // on the next frame without deadlock.
                     _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                    if (_cancelledProgramIds.TryRemove(programId, out _))
+                    {
+                        CompleteCancelledUpload(programId);
+                        return;
+                    }
+                    _completed[programId] = result;
                 }, $"ProgramBinaryUpload:{cacheKey}");
+            }
+
+            public bool CancelUpload(uint programId)
+            {
+                if (programId == 0 || !_inFlightProgramIds.ContainsKey(programId))
+                    return false;
+
+                _cancelledProgramIds[programId] = 0;
+                if (_completed.TryRemove(programId, out _))
+                {
+                    _cancelledProgramIds.TryRemove(programId, out _);
+                    CompleteCancelledUpload(programId);
+                }
+                return true;
             }
 
             /// <summary>
@@ -256,10 +280,26 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (_completed.TryRemove(programId, out result))
                 {
+                    _cancelledProgramIds.TryRemove(programId, out _);
+                    _inFlightProgramIds.TryRemove(programId, out _);
                     Interlocked.Decrement(ref _inFlight);
                     return true;
                 }
                 return false;
+            }
+
+            private void DropUpload(uint programId, string cacheKey)
+            {
+                _inFlightCacheKeys.TryRemove(cacheKey, out _);
+                _cancelledProgramIds.TryRemove(programId, out _);
+                if (_inFlightProgramIds.TryRemove(programId, out _))
+                    Interlocked.Decrement(ref _inFlight);
+            }
+
+            private void CompleteCancelledUpload(uint programId)
+            {
+                if (_inFlightProgramIds.TryRemove(programId, out _))
+                    Interlocked.Decrement(ref _inFlight);
             }
 
             private static double MeasureRenderingWorkerGlCall(

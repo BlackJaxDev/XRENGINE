@@ -473,6 +473,7 @@ namespace XREngine.Rendering.OpenGL
             // Async binary upload state: set when a glProgramBinary call has been
             // dispatched to the shared context thread and we are waiting for completion.
             private volatile bool _asyncBinaryUploadPending;
+            private volatile bool _asyncBinaryUploadQueueWaitPending;
 
             // Async compile+link state: set when shader compilation and program linking
             // have been dispatched to the shared context thread.
@@ -814,15 +815,22 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            private bool HasPendingAsyncWork
+            private bool IsRegisteredPendingAsyncProgram
+                => PendingAsyncPrograms.ContainsKey(this);
+
+            private bool HasQueuedOrRunningAsyncWork
                 => IsLinkPreparationPending ||
-                   _linkDataPrepared ||
                    _replacementProgramPending ||
+                   _asyncBinaryUploadQueueWaitPending ||
                    _asyncBinaryUploadPending ||
                    _asyncCompileLinkPending ||
                    _asyncCompileLinkQueueWaitPending ||
                    _asyncCompileDuplicateHashWaitPending ||
                    _asyncLinkPhase != EAsyncLinkPhase.Idle;
+
+            private bool HasPendingAsyncWork
+                => HasQueuedOrRunningAsyncWork ||
+                   (_linkDataPrepared && IsRegisteredPendingAsyncProgram);
 
             /// <summary>
             /// True while this program has no usable linked build and is still being built asynchronously.
@@ -1267,6 +1275,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncCompileDuplicateHashWaitPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
                 _asyncCompileLinkPending = false;
+                _asyncBinaryUploadQueueWaitPending = false;
 
                 // Orphan program/shader handles locally so nothing in this engine ever
                 // touches them again. We do NOT enqueue a deferred cleanup because the
@@ -1453,6 +1462,8 @@ namespace XREngine.Rendering.OpenGL
                 // delete it after the driver reports completion.
                 OrphanForDeferredDelete();
                 DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, programId, []));
+                if (_asyncBinaryUploadPending)
+                    Renderer.ProgramBinaryUploadQueue?.CancelUpload(programId);
                 foreach (GLShader shader in _shaderCache.Values)
                     shader.Destroy();
                 return true;
@@ -1465,6 +1476,9 @@ namespace XREngine.Rendering.OpenGL
 
                 ReleaseSharedLinkedProgramReference();
 
+                if (_asyncBinaryUploadPending && TryGetBindingId(out uint pendingBinaryProgramId))
+                    Renderer.ProgramBinaryUploadQueue?.CancelUpload(pendingBinaryProgramId);
+
                 if (TryGetBindingId(out _))
                     OrphanForDeferredDelete();
 
@@ -1476,6 +1490,7 @@ namespace XREngine.Rendering.OpenGL
                 _asyncAttachedShaderIds = null;
                 _asyncLinkedProgramId = 0;
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                _asyncBinaryUploadQueueWaitPending = false;
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
@@ -1504,6 +1519,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     CleanupAsyncLink();
                 }
+                _asyncBinaryUploadQueueWaitPending = false;
                 _asyncBinaryUploadPending = false;
                 _asyncCompileLinkPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
@@ -2400,6 +2416,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void MarkBuildFailed()
             {
+                _asyncBinaryUploadQueueWaitPending = false;
                 _asyncCompileDuplicateHashWaitPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
 
@@ -2425,6 +2442,7 @@ namespace XREngine.Rendering.OpenGL
                     InFlightCompilations.TryRemove(Hash, out _);
                 }
 
+                _asyncBinaryUploadQueueWaitPending = false;
                 _asyncCompileDuplicateHashWaitPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
                 _asyncCompileLinkPending = false;
@@ -2477,6 +2495,7 @@ namespace XREngine.Rendering.OpenGL
                     if (queue is not null && TryGetBuildBindingId(out uint pendingId) && queue.TryGetResult(pendingId, out var asyncResult))
                     {
                         _asyncBinaryUploadPending = false;
+                        _asyncBinaryUploadQueueWaitPending = false;
                         if (asyncResult.Status == GLProgramBinaryUploadQueue.UploadStatus.Success)
                         {
                             AdoptLinkedBuildProgram(pendingId);
@@ -2707,10 +2726,14 @@ namespace XREngine.Rendering.OpenGL
                         binaryBytes: binProg.Length,
                         binaryFormat: format.ToString());
                     if (TryUseSharedLinkedProgram(binProg))
+                    {
+                        _asyncBinaryUploadQueueWaitPending = false;
                         return true;
+                    }
 
                     if (!RuntimeEngine.Rendering.Stats.Vram.CanAllocateVram(binProg.Length, 0, out long projectedBytes, out long budgetBytes))
                     {
+                        _asyncBinaryUploadQueueWaitPending = false;
                         Debug.OpenGLWarning($"[VRAM Budget] Skipping cached program binary load for hash {Hash} ({binProg.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes. Deleting from cache.");
                         DeleteFromBinaryShaderCache(binProg.CacheKey, format);
                     }
@@ -2736,6 +2759,7 @@ namespace XREngine.Rendering.OpenGL
 
                         if (selection.Lane == EOpenGLProgramBuildLane.BinaryQueueBackpressure)
                         {
+                            _asyncBinaryUploadQueueWaitPending = true;
                             uploadQueue?.RecordBackpressure();
                             PublishBackendStatus(
                                 EShaderProgramBackendStage.QueueBackpressure,
@@ -2764,6 +2788,7 @@ namespace XREngine.Rendering.OpenGL
                             // populated; serialization just prevents queue saturation).
                             if (!uploadQueue.TryReserveCacheKey(binProg.CacheKey))
                             {
+                                _asyncBinaryUploadQueueWaitPending = true;
                                 uploadQueue.RecordBackpressure();
                                 PublishBackendStatus(
                                     EShaderProgramBackendStage.QueueBackpressure,
@@ -2782,6 +2807,7 @@ namespace XREngine.Rendering.OpenGL
                                 return ReturnPendingBuildResult();
                             }
 
+                            _asyncBinaryUploadQueueWaitPending = false;
                             BeginBuildTelemetry("BinaryUploadAsync", binProg.CacheKey);
                             uploadQueue.EnqueueUpload(bindingId, binProg.Binary, format, binProg.Length, Hash, binProg.CacheKey);
                             _asyncBinaryUploadPending = true;
@@ -2802,6 +2828,7 @@ namespace XREngine.Rendering.OpenGL
                             return ReturnPendingBuildResult();
                         }
 
+                        _asyncBinaryUploadQueueWaitPending = false;
                         BeginBuildTelemetry("BinaryUploadSynchronous", binProg.CacheKey);
                         LogRenderingProgramBuildEvent(
                             "BINARY_UPLOAD_SYNC_BEGIN",
@@ -2902,6 +2929,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 else
                 {
+                    _asyncBinaryUploadQueueWaitPending = false;
                     // Phase 3: short-circuit known-failed hashes BEFORE the
                     // BINARY_CACHE_MISS log + ShaderProgramSourceSummary so repeated
                     // failed hashes do not regenerate full miss records every frame.

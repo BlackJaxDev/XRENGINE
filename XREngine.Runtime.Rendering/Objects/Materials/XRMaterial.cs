@@ -531,6 +531,9 @@ namespace XREngine.Rendering
                 case nameof(Shaders):
                     PostShadersSet();
                     break;
+                case nameof(Name):
+                    ApplyShaderProgramMetadata(ShaderPipelineProgram);
+                    break;
                 case nameof(RenderPass):
                     if (!IsManagedTransparencyRenderPass(RenderPass))
                         _opaqueRenderPass = RenderPass;
@@ -849,11 +852,7 @@ namespace XREngine.Rendering
                     }
                 }
 
-            ShaderPipelineProgram?.Destroy();
-            ShaderPipelineProgram = RuntimeRenderingHostServices.Current.AllowShaderPipelines
-                ? new XRRenderProgram(true, true, Shaders.Where(x => x.Type != EShaderType.Vertex))
-                : null;
-            ApplyShaderProgramMetadata(ShaderPipelineProgram);
+            RecreateShaderPipelineProgramForCurrentSettings();
 
             SyncParametersToShaderUniforms();
             SyncRequiredEngineUniforms();
@@ -862,13 +861,69 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// Lazily creates the <see cref="XRMaterialBase.ShaderPipelineProgram"/> when it was
-        /// not created at material init time (because <c>AllowShaderPipelines</c> was false).
-        /// Called by passes that force-enable pipeline mode (e.g., forward depth-normal prepass).
+        /// Lazily creates the <see cref="XRMaterialBase.ShaderPipelineProgram"/> when shader
+        /// pipeline mode is active.
         /// </summary>
         public void EnsureShaderPipelineProgram()
         {
+            if (!RuntimeRenderingHostServices.Current.AllowShaderPipelines)
+            {
+                DestroyShaderPipelineProgram();
+                return;
+            }
+
             if (ShaderPipelineProgram is not null)
+                return;
+
+            var nonVertexShaders = Shaders.Where(x => x.Type != EShaderType.Vertex);
+            if (!nonVertexShaders.Any())
+                return;
+
+            ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders);
+            ApplyShaderProgramMetadata(ShaderPipelineProgram);
+        }
+
+        public void DestroyShaderPipelineProgram()
+        {
+            if (ShaderPipelineProgram is null)
+                return;
+
+            ShaderPipelineProgram.Destroy();
+            ShaderPipelineProgram = null;
+        }
+
+        public void SyncShaderPipelineProgramForCurrentSettings()
+        {
+            if (RuntimeRenderingHostServices.Current.AllowShaderPipelines)
+                EnsureShaderPipelineProgram();
+            else
+                DestroyShaderPipelineProgram();
+        }
+
+        public static void DisposeShaderPipelineProgramsWhenDisabled()
+        {
+            if (RuntimeRenderingHostServices.Current.AllowShaderPipelines)
+                return;
+
+            List<GenericRenderObject> materials;
+            lock (GenericRenderObject.RenderObjectCache)
+            {
+                if (!GenericRenderObject.RenderObjectCache.TryGetValue(typeof(XRMaterial), out List<GenericRenderObject>? cachedMaterials))
+                    return;
+
+                materials = [.. cachedMaterials];
+            }
+
+            foreach (GenericRenderObject renderObject in materials)
+                if (renderObject is XRMaterial material)
+                    material.DestroyShaderPipelineProgram();
+        }
+
+        private void RecreateShaderPipelineProgramForCurrentSettings()
+        {
+            DestroyShaderPipelineProgram();
+
+            if (!RuntimeRenderingHostServices.Current.AllowShaderPipelines)
                 return;
 
             var nonVertexShaders = Shaders.Where(x => x.Type != EShaderType.Vertex);

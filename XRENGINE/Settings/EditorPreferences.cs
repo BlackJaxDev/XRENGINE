@@ -929,6 +929,9 @@ namespace XREngine
             if (overrides.GltfImporterBackendOverride is { HasOverride: true } gltfBackendOverride)
                 GltfImporterBackend = gltfBackendOverride.Value;
         }
+
+        public void ApplyRuntimeSideEffects()
+            => Debug.ApplyRuntimeSideEffects();
     }
 
     [Serializable]
@@ -2390,6 +2393,44 @@ namespace XREngine
         {
             get => _profilerPanelShowMainThreadInvokes;
             set => SetField(ref _profilerPanelShowMainThreadInvokes, value);
+        }
+
+        public void ApplyRuntimeSideEffects()
+        {
+#if XRE_PUBLISHED
+            Engine.Profiler.EnableFrameLogging = false;
+            Engine.Profiler.EnableComponentTiming = false;
+            Engine.Rendering.Stats.EnableTracking = false;
+            XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = false;
+            UdpProfilerSender.Stop();
+#else
+            Engine.Profiler.EnableFrameLogging = EnableProfilerFrameLogging;
+            Engine.Profiler.EnableComponentTiming = EnableProfilerComponentTiming;
+            Engine.Rendering.Stats.EnableTracking = EnableRenderStatisticsTracking;
+            XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = EnableUILayoutDebugLogging;
+
+            if (EnableProfilerUdpSending)
+            {
+                Engine.WireProfilerSenderCollectors();
+                UdpProfilerSender.Start();
+            }
+            else
+            {
+                UdpProfilerSender.Stop();
+            }
+#endif
+
+            Engine.Profiler.DebugOutputMinElapsedMs = CodeProfilerDebugOutputMinElapsedMs;
+            Engine.Profiler.StatsThreadIntervalMs = CodeProfilerStatsThreadIntervalMs;
+            Engine.Profiler.SnapshotIntervalMs = CodeProfilerSnapshotIntervalMs;
+            Engine.Profiler.ThreadHistoryCapacity = CodeProfilerThreadHistoryCapacity;
+            Engine.Profiler.MaxOverflowPerCycle = CodeProfilerMaxOverflowPerCycle;
+            Engine.Profiler.MaxOverflowQueueSize = CodeProfilerMaxOverflowQueueSize;
+            Engine.Profiler.ProducerBufferCapacity = CodeProfilerProducerBufferCapacity;
+            Engine.Profiler.FpsDropBaselineWindowSamples = CodeProfilerFpsDropBaselineWindowSamples;
+            Engine.Profiler.FpsDropMinPreviousFps = CodeProfilerFpsDropMinPreviousFps;
+            Engine.Profiler.FpsDropMinDeltaMs = CodeProfilerFpsDropMinDeltaMs;
+            Engine.Profiler.RenderStallThresholdMs = CodeProfilerRenderStallThresholdMs;
         }
 
         public void CopyFrom(EditorDebugOptions source)

@@ -3,6 +3,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Data;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 
 namespace XREngine.UnitTests.Rendering;
@@ -50,6 +51,137 @@ public sealed class CpuSpatialRenderTreeTests
         collected.ShouldBe(items.Count);
     }
 
+    [Test]
+    public void CpuBvhMoveRebuildsVisibility()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        var item = new TestRenderItem
+        {
+            LocalCullingVolume = AABB.FromCenterSize(new Vector3(-20.0f, 0.0f, 0.0f), new Vector3(2.0f)),
+        };
+
+        tree.Add(item);
+        tree.Swap();
+
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(-20.0f, 0.0f, 0.0f), new Vector3(4.0f))).ShouldBe(1);
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(20.0f, 0.0f, 0.0f), new Vector3(4.0f))).ShouldBe(0);
+
+        item.LocalCullingVolume = AABB.FromCenterSize(new Vector3(20.0f, 0.0f, 0.0f), new Vector3(2.0f));
+        item.OctreeNode.ShouldNotBeNull();
+        item.OctreeNode!.QueueItemMoved(item);
+        tree.Swap();
+
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(-20.0f, 0.0f, 0.0f), new Vector3(4.0f))).ShouldBe(0);
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(20.0f, 0.0f, 0.0f), new Vector3(4.0f))).ShouldBe(1);
+    }
+
+    [Test]
+    public void CpuBvhRemoveExcludesItem()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        var items = CreateOriginCrossingItems(3);
+
+        tree.AddRange(items);
+        tree.Swap();
+        tree.Remove(items[1]);
+        tree.Swap();
+
+        List<TestRenderItem> collected = [];
+        tree.CollectAll(collected.Add);
+
+        collected.Count.ShouldBe(2);
+        collected.ShouldNotContain(items[1]);
+        items[1].OctreeNode.ShouldBeNull();
+    }
+
+    [Test]
+    public void CpuBvhRaycastSyncAndAsyncHitBoundedItems()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        var near = new TestRenderItem
+        {
+            LocalCullingVolume = AABB.FromCenterSize(Vector3.Zero, new Vector3(2.0f)),
+        };
+        var far = new TestRenderItem
+        {
+            LocalCullingVolume = AABB.FromCenterSize(new Vector3(20.0f, 0.0f, 0.0f), new Vector3(2.0f)),
+        };
+        var segment = new Segment(new Vector3(-5.0f, 0.0f, 0.0f), new Vector3(5.0f, 0.0f, 0.0f));
+
+        tree.AddRange([near, far]);
+        tree.Swap();
+
+        var syncResults = new SortedDictionary<float, List<(TestRenderItem item, object? data)>>();
+        tree.Raycast(segment, syncResults, DirectHit);
+
+        syncResults.Count.ShouldBe(1);
+        syncResults[0.0f].Single().item.ShouldBeSameAs(near);
+
+        bool callbackCalled = false;
+        var asyncResults = new SortedDictionary<float, List<(TestRenderItem item, object? data)>>();
+        tree.RaycastAsync(
+            segment,
+            asyncResults,
+            DirectHit,
+            results =>
+            {
+                callbackCalled = true;
+                results.Count.ShouldBe(1);
+                results[0.0f].Single().item.ShouldBeSameAs(near);
+            });
+
+        tree.Swap();
+
+        callbackCalled.ShouldBeTrue();
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void CpuBvhReportsSwapAndRaycastTiming()
+    {
+        var previousSwapHook = IRenderTree.OctreeSwapTimingHook;
+        var previousRaycastHook = IRenderTree.OctreeRaycastTimingHook;
+
+        try
+        {
+            OctreeSwapTimingStats? swapStats = null;
+            OctreeRaycastTimingStats? raycastStats = null;
+            IRenderTree.OctreeSwapTimingHook = stats => swapStats = stats;
+            IRenderTree.OctreeRaycastTimingHook = stats => raycastStats = stats;
+
+            var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+            var item = new TestRenderItem
+            {
+                LocalCullingVolume = AABB.FromCenterSize(Vector3.Zero, new Vector3(2.0f)),
+            };
+            var segment = new Segment(new Vector3(-5.0f, 0.0f, 0.0f), new Vector3(5.0f, 0.0f, 0.0f));
+
+            tree.Add(item);
+            tree.Swap();
+
+            swapStats.ShouldNotBeNull();
+            swapStats.Value.DrainedCommandCount.ShouldBe(1);
+            swapStats.Value.ExecutedCommandCount.ShouldBe(1);
+            swapStats.Value.MaxCommandKind.ShouldBe(EOctreeCommandKind.Add);
+
+            tree.RaycastAsync(
+                segment,
+                new SortedDictionary<float, List<(TestRenderItem item, object? data)>>(),
+                DirectHit,
+                _ => { });
+
+            tree.Swap();
+
+            raycastStats.ShouldNotBeNull();
+            raycastStats.Value.ProcessedCommandCount.ShouldBe(1);
+        }
+        finally
+        {
+            IRenderTree.OctreeSwapTimingHook = previousSwapHook;
+            IRenderTree.OctreeRaycastTimingHook = previousRaycastHook;
+        }
+    }
+
     private static List<TestRenderItem> CreateOriginCrossingItems(int count)
     {
         var items = new List<TestRenderItem>(count);
@@ -71,11 +203,44 @@ public sealed class CpuSpatialRenderTreeTests
             tree.Swap();
     }
 
+    private static int CountVisible(CpuBvhRenderTree<TestRenderItem> tree, AABB volume)
+    {
+        int count = 0;
+        tree.CollectVisible(volume, false, _ => count++, Intersects);
+        return count;
+    }
+
+    private static bool Intersects(TestRenderItem item, IVolume? cullingVolume, bool containsOnly)
+    {
+        if (cullingVolume is null)
+            return true;
+
+        Box? worldCullingVolume = item.LocalCullingVolume?.ToBox(item.CullingOffsetMatrix);
+        if (worldCullingVolume is null)
+            return true;
+
+        AABB itemBounds = worldCullingVolume.Value.GetAABB(true);
+        EContainment containment = cullingVolume.ContainsAABB(itemBounds);
+        if (containment == EContainment.Disjoint &&
+            cullingVolume is AABB aabb &&
+            aabb.Intersects(itemBounds))
+        {
+            containment = EContainment.Intersects;
+        }
+
+        return containsOnly
+            ? containment == EContainment.Contains
+            : containment != EContainment.Disjoint;
+    }
+
+    private static (float? distance, object? data) DirectHit(TestRenderItem item, Segment segment)
+        => (0.0f, item);
+
     private sealed class TestRenderItem : IOctreeItem
     {
         public bool ShouldRender => true;
         public IRenderableBase? Owner => null;
-        public AABB? LocalCullingVolume { get; init; }
+        public AABB? LocalCullingVolume { get; set; }
         public Matrix4x4 CullingOffsetMatrix { get; set; } = Matrix4x4.Identity;
         public OctreeNodeBase? OctreeNode { get; set; }
     }

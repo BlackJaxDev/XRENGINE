@@ -111,6 +111,19 @@ public sealed class GpuIndirectProgramContractTests
     }
 
     [Test]
+    public void IndirectVertexShaders_EmitDefaultForwardVaryingsWhenOptionalMeshBuffersAreMissing()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+
+        CountOccurrences(source, "layout(location=2) out vec3 FragTan;").ShouldBeGreaterThanOrEqualTo(2);
+        CountOccurrences(source, "layout(location=3) out vec3 FragBinorm;").ShouldBeGreaterThanOrEqualTo(2);
+        CountOccurrences(source, "layout(location=4) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, 0)};").ShouldBeGreaterThanOrEqualTo(2);
+        CountOccurrences(source, "layout(location=12) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, 0)};").ShouldBeGreaterThanOrEqualTo(2);
+        CountOccurrences(source, "{string.Format(DefaultVertexShaderGenerator.FragUVName, 0)} = vec2(0.0);").ShouldBeGreaterThanOrEqualTo(2);
+        CountOccurrences(source, "{string.Format(DefaultVertexShaderGenerator.FragColorName, 0)} = vec4(1.0);").ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
     public void IndirectLodAugmentation_GuardsPrepassOnlyTransformIdDeclarations()
     {
         string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Uber/UberShader.frag");
@@ -157,4 +170,7 @@ public sealed class GpuIndirectProgramContractTests
         ((bool)method.Invoke(null, args)!).ShouldBeTrue();
         return (string)args[1]!;
     }
+
+    private static int CountOccurrences(string source, string value)
+        => source.Split(value, StringSplitOptions.None).Length - 1;
 }
