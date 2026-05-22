@@ -196,6 +196,12 @@ public static partial class EditorUnitTests
             public bool SplitSubmeshesIntoSeparateModelComponents { get; set; } = false;
 
             /// <summary>
+            /// When true, imported submeshes are analyzed for disconnected triangle islands
+            /// and each island is emitted as its own submesh.
+            /// </summary>
+            public bool SeparateMeshIslands { get; set; } = false;
+
+            /// <summary>
             /// Optional additional local-space rotation to apply after import.
             /// Values are degrees.
             /// </summary>
@@ -239,7 +245,7 @@ public static partial class EditorUnitTests
         /// <summary>
         /// Startup model imports processed when the Unit Testing World boots. Each array item
         /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
-        /// Path, ImportFlags, Scale, ZUp, and optional YawPitchRoll/Translation objects.
+        /// Path, ImportFlags, Scale, ZUp, SeparateMeshIslands, and optional YawPitchRoll/Translation objects.
         /// Paths are relative to the process working directory unless absolute.
         /// </summary>
         public List<ModelImportSettings> ModelsToImport { get; set; } = [];

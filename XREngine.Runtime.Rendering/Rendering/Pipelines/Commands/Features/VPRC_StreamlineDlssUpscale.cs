@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// to the standard quad blit when DLSS is unavailable or errors out.
     /// </summary>
     [RenderPipelineScriptCommand]
-    public class VPRC_StreamlineDlssUpscale : VPRC_RenderQuadFBO
+    public class VPRC_StreamlineDlssUpscale : VPRC_RenderQuadToFBO
     {
         public string? DepthTextureName { get; set; }
         public string? MotionTextureName { get; set; }

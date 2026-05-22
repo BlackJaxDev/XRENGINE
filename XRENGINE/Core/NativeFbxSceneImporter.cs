@@ -312,6 +312,7 @@ internal static class NativeFbxSceneImporter
 
                 MeshBuildResult?[] buildResults = new MeshBuildResult?[workItems.Count];
                 bool generateMeshRenderersAsync = importOptions?.GenerateMeshRenderersAsync ?? true;
+                bool separateMeshIslands = importOptions?.SeparateMeshIslands ?? false;
 
                 if (workItems.Count > 0)
                 {
@@ -344,7 +345,8 @@ internal static class NativeFbxSceneImporter
                             flipUvY,
                             cancellationToken,
                             rootNode.Transform,
-                            generateMeshRenderersAsync);
+                            generateMeshRenderersAsync,
+                            separateMeshIslands);
 
                         buildResults[workItemIndex] = new MeshBuildResult(
                             workItem.ModelObjectId,
@@ -389,7 +391,7 @@ internal static class NativeFbxSceneImporter
     }
 
     private static string DescribeImportOptions(ModelImportOptions? importOptions, float scaleConversion, bool zUp, int importLayer, Matrix4x4? rootTransformMatrix)
-        => $"scale={scaleConversion}, zUp={zUp}, layer={importLayer}, fbxBackend={importOptions?.FbxBackend.ToString() ?? "Auto"}, pivotPolicy={importOptions?.FbxPivotPolicy.ToString() ?? FbxSceneSemanticsPolicy.Default.PivotImportPolicy.ToString()}, splitSubmeshes={importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false}, processMeshesAsync={importOptions?.ProcessMeshesAsynchronously?.ToString() ?? "inherit"}, batchSubmeshAdds={importOptions?.BatchSubmeshAddsDuringAsyncImport.ToString() ?? "inherit"}, rootTransformApplied={rootTransformMatrix.HasValue}";
+        => $"scale={scaleConversion}, zUp={zUp}, layer={importLayer}, fbxBackend={importOptions?.FbxBackend.ToString() ?? "Auto"}, pivotPolicy={importOptions?.FbxPivotPolicy.ToString() ?? FbxSceneSemanticsPolicy.Default.PivotImportPolicy.ToString()}, splitSubmeshes={importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false}, separateMeshIslands={importOptions?.SeparateMeshIslands ?? false}, processMeshesAsync={importOptions?.ProcessMeshesAsynchronously?.ToString() ?? "inherit"}, batchSubmeshAdds={importOptions?.BatchSubmeshAddsDuringAsyncImport.ToString() ?? "inherit"}, rootTransformApplied={rootTransformMatrix.HasValue}";
 
     private static int CountSceneNodes(SceneNode rootNode)
     {
@@ -517,7 +519,8 @@ internal static class NativeFbxSceneImporter
         bool flipUvY,
         CancellationToken cancellationToken,
         TransformBase rootTransform,
-        bool generateMeshRenderersAsync)
+        bool generateMeshRenderersAsync,
+        bool separateMeshIslands)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         int materialSlotCount = Math.Max(1, nodeMaterials.Count);
@@ -612,9 +615,6 @@ internal static class NativeFbxSceneImporter
                         xrMesh.BlendshapeNames = blendShapeNames;
                         xrMesh.RebuildBlendshapeBuffersFromVertices();
                     }
-                    lock (createdAssetsSync)
-                        createdMeshes.Add(xrMesh);
-
                     SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
                     {
                         GenerateAsync = generateMeshRenderersAsync,
@@ -624,7 +624,10 @@ internal static class NativeFbxSceneImporter
                         RootTransform = rootTransform,
                     };
 
-                    subMeshes.Add(subMesh);
+                    IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(subMesh, separateMeshIslands);
+                    subMeshes.AddRange(finalSubMeshes);
+                    lock (createdAssetsSync)
+                        ModelImportMeshIslandSplitter.AddMeshes(finalSubMeshes, createdMeshes.Add);
                 }
             }
         }

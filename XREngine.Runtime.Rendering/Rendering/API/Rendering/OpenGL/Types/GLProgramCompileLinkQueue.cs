@@ -3,6 +3,7 @@ using Silk.NET.OpenGL.Extensions.ARB;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using XREngine.Rendering.Shaders;
@@ -39,7 +40,8 @@ namespace XREngine.Rendering.OpenGL
             private long _backpressureCount;
             private const int WorkerCompletionFastPollIterations = 64;
             private const double WorkerCompletionStuckFlushMilliseconds = 5000.0;
-            private const double WorkerCompletionHardAbandonMilliseconds = 30000.0;
+            private const double DefaultWorkerCompletionHardAbandonMilliseconds = 180000.0;
+            private static readonly double WorkerCompletionHardAbandonMilliseconds = ResolveWorkerCompletionHardAbandonMilliseconds();
             private static readonly bool DisableCompletionPollingForSharedContextWorkerPrograms = string.Equals(
                 Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_DISABLE_COMPLETION_POLLING"),
                 "1",
@@ -102,6 +104,18 @@ namespace XREngine.Rendering.OpenGL
             public long FailedCount => Interlocked.Read(ref _failedCount);
             public long RejectedCount => Interlocked.Read(ref _rejectedCount);
             public long BackpressureCount => Interlocked.Read(ref _backpressureCount);
+
+            private static double ResolveWorkerCompletionHardAbandonMilliseconds()
+            {
+                string? configured = Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS");
+                if (double.TryParse(configured, NumberStyles.Float, CultureInfo.InvariantCulture, out double milliseconds) &&
+                    milliseconds >= WorkerCompletionStuckFlushMilliseconds)
+                {
+                    return milliseconds;
+                }
+
+                return DefaultWorkerCompletionHardAbandonMilliseconds;
+            }
 
             public double OldestPendingAgeSeconds
             {

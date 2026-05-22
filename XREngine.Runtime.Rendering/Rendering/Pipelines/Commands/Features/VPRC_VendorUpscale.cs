@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// via a passthrough quad instead of re-running the source quad shader directly to the backbuffer.
     /// </summary>
     [RenderPipelineScriptCommand]
-    public class VPRC_VendorUpscale : VPRC_RenderQuadFBO
+    public class VPRC_VendorUpscale : VPRC_RenderQuadToFBO
     {
         private static readonly bool _diagEnabled =
             !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DIAG_VENDOR_UPSCALE"));

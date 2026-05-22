@@ -1,6 +1,5 @@
 using System;
 using XREngine.Rendering.RenderGraph;
-using System.Linq;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -18,13 +17,38 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public string? SourceQuadFBOName { get; set; }
         public string? DestinationFBOName { get; set; } = null;
+        public string? FrameBufferName
+        {
+            get => SourceQuadFBOName;
+            set => SourceQuadFBOName = value;
+        }
+        public string? TargetFrameBufferName
+        {
+            get => DestinationFBOName;
+            set => DestinationFBOName = value;
+        }
+        public bool RenderToSourceFrameBuffer { get; set; }
         public bool MatchDestinationRenderArea { get; set; }
 
-        public void SetTargets(string sourceQuadFBOName, string? destinationFBOName = null, bool matchDestinationRenderArea = false)
+        public VPRC_RenderQuadToFBO SetTargets(string sourceQuadFBOName, string? destinationFBOName = null, bool matchDestinationRenderArea = false)
         {
             SourceQuadFBOName = sourceQuadFBOName;
             DestinationFBOName = destinationFBOName;
+            RenderToSourceFrameBuffer = false;
             MatchDestinationRenderArea = matchDestinationRenderArea;
+            return this;
+        }
+
+        public VPRC_RenderQuadToFBO SetOptions(
+            string frameBufferName,
+            string? targetFrameBufferName = null,
+            bool renderToSourceFrameBuffer = false)
+        {
+            SourceQuadFBOName = frameBufferName;
+            DestinationFBOName = targetFrameBufferName;
+            RenderToSourceFrameBuffer = renderToSourceFrameBuffer;
+            MatchDestinationRenderArea = false;
+            return this;
         }
 
         protected override void Execute()
@@ -45,6 +69,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             string destination = DestinationFBOName
+                ?? (RenderToSourceFrameBuffer ? SourceQuadFBOName : null)
                 ?? activeInstance.RenderState.OutputFBO?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
@@ -61,7 +86,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var destFBO = DestinationFBOName is null ? null : activeInstance.GetFBO<XRFrameBuffer>(DestinationFBOName);
+            var destFBO = DestinationFBOName is not null
+                ? activeInstance.GetFBO<XRFrameBuffer>(DestinationFBOName)
+                : RenderToSourceFrameBuffer ? sourceFBO : null;
             if (_diagEnabled && DestinationFBOName is not null && destFBO is null)
                 Debug.RenderingWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
 
@@ -106,8 +133,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (metadata is null)
                 return int.MinValue;
 
-            var match = metadata.FirstOrDefault(m => string.Equals(m.Name, passName, StringComparison.OrdinalIgnoreCase));
-            return match?.PassIndex ?? int.MinValue;
+            foreach (var match in metadata)
+            {
+                if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
+                    return match.PassIndex;
+            }
+
+            return int.MinValue;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
@@ -118,6 +150,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             string destination = DestinationFBOName
+                ?? (RenderToSourceFrameBuffer ? SourceQuadFBOName : null)
                 ?? context.CurrentRenderTarget?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 

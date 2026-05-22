@@ -342,20 +342,20 @@ public sealed class AlphaToCoveragePhase2Tests
     public void TransparencyResolveQuads_RenderIntoTheirOwnExplicitTargets()
     {
         string pipelineCommandSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
-        pipelineCommandSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);");
-        pipelineCommandSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);");
+        pipelineCommandSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);");
+        pipelineCommandSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);");
 
         string pipelineExactSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.ExactTransparency.cs").Replace("\r\n", "\n");
-        pipelineExactSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);");
-        pipelineExactSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);");
+        pipelineExactSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);");
+        pipelineExactSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);");
 
         string pipeline2CommandSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
-        pipeline2CommandSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);");
-        pipeline2CommandSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);");
+        pipeline2CommandSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);");
+        pipeline2CommandSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);");
 
         string pipeline2ExactSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.ExactTransparency.cs").Replace("\r\n", "\n");
-        pipeline2ExactSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);");
-        pipeline2ExactSource.ShouldContain("c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);");
+        pipeline2ExactSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);");
+        pipeline2ExactSource.ShouldContain("c.Add<VPRC_RenderQuadToFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);");
     }
 
     [Test]

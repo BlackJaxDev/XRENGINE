@@ -92,12 +92,27 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
     }
 
     [Test]
-    public void TimedOutDriverParallelSource_RetriesWithSynchronousSource()
+    public void TimedOutAsyncSource_RetriesWithSynchronousSource()
     {
         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
             strategy: EOpenGLShaderLinkStrategy.Auto,
             driverParallelAvailable: true,
             sharedContextCompileAvailable: true,
+            forceSynchronousSourceRetry: true));
+
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SynchronousSource);
+        selection.IsAsync.ShouldBeFalse();
+        selection.Reason.ShouldContain("timed out");
+    }
+
+    [Test]
+    public void TimedOutAsyncSource_RetriesSynchronously_EvenForKnownHazards()
+    {
+        OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            strategy: EOpenGLShaderLinkStrategy.Auto,
+            driverParallelAvailable: true,
+            sharedContextCompileAvailable: true,
+            isKnownAsyncLinkHazard: true,
             forceSynchronousSourceRetry: true));
 
         selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SynchronousSource);

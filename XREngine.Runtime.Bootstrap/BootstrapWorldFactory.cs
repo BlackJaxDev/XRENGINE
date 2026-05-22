@@ -23,7 +23,13 @@ public static class BootstrapWorldFactory
     // Bootstrap worlds create and possess their own pawn during scene setup.
     // Prevent play-mode fallback from spawning a second default pawn over it.
     private static XRWorld CreateBootstrapWorld(string name, XRScene scene)
-        => new(name, CreatePreplacedPawnGameMode(), scene);
+    {
+        var settings = RuntimeBootstrapState.Settings;
+        var world = new XRWorld(name, CreatePreplacedPawnGameMode(), scene);
+        world.Settings.PreviewOctrees = settings.VisualizeOctree;
+        world.Settings.PreviewQuadtrees = settings.VisualizeQuadtree;
+        return world;
+    }
 
     private static GameMode CreatePreplacedPawnGameMode()
         => new CustomGameMode
@@ -52,9 +58,6 @@ public static class BootstrapWorldFactory
         var scene = new XRScene("Main Scene");
         var rootNode = new SceneNode("Root Node");
         scene.RootNodes.Add(rootNode);
-
-        if (settings.VisualizeOctree)
-            rootNode.AddComponent<DebugVisualizeOctreeComponent>();
 
         SceneNode? characterPawnModelParentNode = BootstrapPawnFactory.CreatePlayerPawn(setUI, isServer, rootNode);
 

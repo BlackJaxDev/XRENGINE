@@ -63,6 +63,7 @@ public partial class DefaultRenderPipeline
                 // GPU BVH wireframe overlay; no-op unless toggled via the
                 // GpuBvhDebugSettings post-process stage on the active camera.
                 c.Add<VPRC_RenderDebugGpuBvh>();
+                c.Add<VPRC_RenderDebugShapes>();
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
@@ -519,7 +520,7 @@ public partial class DefaultRenderPipeline
     private void AppendTransparencyPasses(ViewportRenderCommandContainer c)
     {
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
-        c.Add<VPRC_RenderQuadFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
+        c.Add<VPRC_RenderQuadToFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
         c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
@@ -529,7 +530,7 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_DepthWrite>().Allow = false;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
         }
-        c.Add<VPRC_RenderQuadFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
+        c.Add<VPRC_RenderQuadToFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
 
         AppendExactTransparencyCommands(c);
     }
@@ -616,6 +617,7 @@ public partial class DefaultRenderPipeline
             // GPU BVH wireframe overlay; no-op unless toggled via the
             // GpuBvhDebugSettings post-process stage on the active camera.
             c.Add<VPRC_RenderDebugGpuBvh>();
+            c.Add<VPRC_RenderDebugShapes>();
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
             c.Add<VPRC_DepthWrite>().Allow = true;
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
@@ -1089,7 +1091,7 @@ public partial class DefaultRenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
-                c.Add<VPRC_RenderQuadFBO>().SetOptions(ForwardPassFBOName);
+                c.Add<VPRC_RenderQuadToFBO>().SetOptions(ForwardPassFBOName);
                 AppendDebugOverlay(c);
             }
         }

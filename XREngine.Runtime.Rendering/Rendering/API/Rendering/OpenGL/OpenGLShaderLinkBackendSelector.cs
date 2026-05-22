@@ -54,7 +54,7 @@ internal static class OpenGLShaderLinkBackendSelector
         {
             return new OpenGLShaderLinkBackendSelection(
                 EOpenGLProgramBuildLane.SynchronousSource,
-                "driver-parallel source link timed out; retrying synchronously",
+                "async source link timed out; retrying synchronously",
                 IsAsync: false);
         }
 

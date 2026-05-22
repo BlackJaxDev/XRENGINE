@@ -368,9 +368,6 @@ public static partial class EditorUnitTests
                 }
             }
 
-            if (Toggles.VisualizeQuadtree)
-                rootCanvasNode.AddComponent<DebugVisualizeQuadtreeComponent>();
-
             screenSpaceCamera?.UserInterface = Toggles.CameraUIDrawSpaceOnInit == CameraUIDrawMode.Screen ? canvas : null;
 
             if (Toggles.VRPawn && Toggles.PreviewVRStereoViews)

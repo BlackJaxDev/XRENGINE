@@ -109,6 +109,7 @@ namespace XREngine
 
                 DumpWorldRenderablesOncePerPhase(worldInstance, phase);
                 DumpWorldHierarchyRootsOncePerPhase(worldInstance, phase);
+                SnapshotDiagnostics.LogWorldInstanceAssetSummary(worldInstance, $"ViewportRebind.{phase}.BeforeWindowRebind");
 
                 foreach (var window in _windows)
                 {
@@ -243,6 +244,8 @@ namespace XREngine
                         mainPlayer.OnPawnCameraChanged();
                     }
                 }
+
+                SnapshotDiagnostics.LogWorldInstanceAssetSummary(worldInstance, $"ViewportRebind.{phase}.AfterWindowRebind");
             }
             catch (Exception ex)
             {

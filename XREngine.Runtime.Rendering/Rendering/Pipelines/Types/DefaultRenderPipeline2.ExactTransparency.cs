@@ -197,7 +197,7 @@ public partial class DefaultRenderPipeline2
         }))
         using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyPpllResolveProgramBindings))
         {
-            c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
+            c.Add<VPRC_RenderQuadToFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
         }
 
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
@@ -217,7 +217,7 @@ public partial class DefaultRenderPipeline2
         }
         using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingResolveProgramBindings))
         {
-            c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
+            c.Add<VPRC_RenderQuadToFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
         }
         var clearLayer = c.Add<VPRC_SetVariable>();
         clearLayer.VariableName = ActiveDepthPeelLayerVariableName;

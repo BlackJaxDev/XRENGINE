@@ -15,6 +15,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.RenderRequested += Render;
                 MeshRenderer.PropertyChanged += OnMeshRendererPropertyChanged;
                 MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;
+                SubscribeRendererBuffers(MeshRenderer.Buffers);
 
                 if (Mesh != null)
                     Mesh.DataChanged += OnMeshChanged;
@@ -34,9 +35,11 @@ namespace XREngine.Rendering.OpenGL
                 Data.RenderRequested -= Render;
                 MeshRenderer.PropertyChanged -= OnMeshRendererPropertyChanged;
                 MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;
+                SubscribeRendererBuffers(null);
 
                 if (Mesh != null)
                     Mesh.DataChanged -= OnMeshChanged;
+                SubscribeMeshBufferCollection(null);
 
                 Dbg("UnlinkData complete", "Lifecycle");
             }
@@ -52,6 +55,8 @@ namespace XREngine.Rendering.OpenGL
                 switch (e.PropertyName)
                 {
                     case nameof(XRMeshRenderer.Mesh):
+                        if (Mesh != null)
+                            Mesh.DataChanged += OnMeshChanged;
                         OnMeshChanged(Mesh);
                         break;
                     case nameof(XRMeshRenderer.Material):
@@ -62,7 +67,12 @@ namespace XREngine.Rendering.OpenGL
 
             private void OnMeshRendererPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
             {
-                
+                if (e.PropertyName == nameof(XRMeshRenderer.Mesh) && e.CurrentValue is XRMesh currentMesh)
+                {
+                    currentMesh.DataChanged -= OnMeshChanged;
+                    if (ReferenceEquals(_subscribedMeshBuffers, currentMesh.Buffers))
+                        SubscribeMeshBufferCollection(null);
+                }
             }
 
             private void OnMaterialChanged()
@@ -105,6 +115,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Dbg($"OnMeshChanged -> {mesh?.Name ?? "null"}", "Lifecycle");
                 System.Threading.Interlocked.Increment(ref _meshChangedCount);
+                SubscribeMeshBuffers(mesh);
                 Destroy();
 
                 if (mesh is not null)
@@ -112,6 +123,69 @@ namespace XREngine.Rendering.OpenGL
                     Renderer.MeshGenerationQueue.ResetRetries(this);
                     Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                 }
+            }
+
+            private void SubscribeRendererBuffers(XRMesh.BufferCollection? buffers)
+            {
+                if (ReferenceEquals(_subscribedRendererBuffers, buffers))
+                    return;
+
+                if (_subscribedRendererBuffers is not null)
+                    _subscribedRendererBuffers.Changed -= Buffers_Changed;
+
+                _subscribedRendererBuffers = buffers;
+
+                if (_subscribedRendererBuffers is not null)
+                    _subscribedRendererBuffers.Changed += Buffers_Changed;
+            }
+
+            private void SubscribeMeshBuffers(XRMesh? mesh)
+                => SubscribeMeshBufferCollection(mesh?.Buffers);
+
+            private void SubscribeMeshBufferCollection(XRMesh.BufferCollection? buffers)
+            {
+                if (ReferenceEquals(_subscribedMeshBuffers, buffers))
+                    return;
+
+                if (_subscribedMeshBuffers is not null)
+                    _subscribedMeshBuffers.Changed -= Buffers_Changed;
+
+                _subscribedMeshBuffers = buffers;
+
+                if (_subscribedMeshBuffers is not null)
+                    _subscribedMeshBuffers.Changed += Buffers_Changed;
+            }
+
+            private void Buffers_Changed()
+            {
+                System.Threading.Interlocked.Exchange(ref _bufferCollectionsDirty, 1);
+                BuffersBound = false;
+
+                if (RuntimeEngine.IsRenderThread)
+                {
+                    RefreshCollectedBuffersFromCollections();
+                    return;
+                }
+
+                if (System.Threading.Interlocked.Exchange(ref _bufferCollectionRefreshQueued, 1) == 0)
+                {
+                    RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+                        RefreshCollectedBuffersFromCollections,
+                        "GLMeshRenderer.BuffersChanged");
+                }
+            }
+
+            private void RefreshCollectedBuffersFromCollections()
+            {
+                System.Threading.Interlocked.Exchange(ref _bufferCollectionRefreshQueued, 0);
+                if (System.Threading.Interlocked.Exchange(ref _bufferCollectionsDirty, 0) == 0)
+                    return;
+
+                BuffersBound = false;
+                if (!IsGenerated)
+                    return;
+
+                CollectBuffers();
             }
 
             /// <summary>

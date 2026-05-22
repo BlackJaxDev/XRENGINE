@@ -1686,6 +1686,7 @@ namespace XREngine
                 bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
                 bool importedRenderersGenerateAsync = effectiveImportOptions.GenerateMeshRenderersAsync;
                 bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents;
+                bool separateMeshIslands = effectiveImportOptions.SeparateMeshIslands;
 
                 SceneNode rootNode;
                 using (Engine.Profiler.Start($"Assemble model hierarchy"))
@@ -1700,7 +1701,8 @@ namespace XREngine
                         processMeshesAsync,
                         batchSubmeshAdds,
                         importedRenderersGenerateAsync,
-                        splitSubmeshesIntoSeparateModelComponents);
+                        splitSubmeshesIntoSeparateModelComponents,
+                        separateMeshIslands);
                 }
 
                 void meshProcessAction() => ProcessMeshesOnJobThread(onProgress, cancellationToken);
@@ -1940,7 +1942,8 @@ namespace XREngine
             bool processMeshesAsynchronously,
             bool batchSubmeshAddsDuringAsyncImport,
             bool importedRenderersGenerateAsync,
-            bool splitSubmeshesIntoSeparateModelComponents)
+            bool splitSubmeshesIntoSeparateModelComponents,
+            bool separateMeshIslands)
         {
             using var t = Engine.Profiler.Start("Normalizing node scales");
 
@@ -2000,12 +2003,13 @@ namespace XREngine
                     nodeInfo.MeshIndices,
                     scene,
                     nodeInfo.SceneNode,
-                    nodeInfo.SceneNode.Name,
+                    nodeInfo.SceneNode.Name ?? "Imported Mesh",
                     geometryTransform,
                     rootTransform,
                     cancellationToken,
                     importedRenderersGenerateAsync,
                     splitSubmeshesIntoSeparateModelComponents,
+                    separateMeshIslands,
                     publishSubMeshesOnSwapThread: processMeshesAsynchronously,
                     batchSubmeshAddsDuringAsyncImport: processMeshesAsynchronously && batchSubmeshAddsDuringAsyncImport);
             }
@@ -2153,6 +2157,7 @@ namespace XREngine
             CancellationToken cancellationToken,
             bool importedRenderersGenerateAsync,
             bool splitSubmeshesIntoSeparateModelComponents,
+            bool separateMeshIslands,
             bool publishSubMeshesOnSwapThread,
             bool batchSubmeshAddsDuringAsyncImport)
         {
@@ -2172,8 +2177,9 @@ namespace XREngine
 
             Dictionary<int, Model>? targetModelsByMeshIndex = null;
             Model? sharedModel = null;
+            bool createComponentPerFinalSubMesh = splitSubmeshesIntoSeparateModelComponents && separateMeshIslands;
 
-            if (splitSubmeshesIntoSeparateModelComponents)
+            if (splitSubmeshesIntoSeparateModelComponents && !createComponentPerFinalSubMesh)
             {
                 targetModelsByMeshIndex = new Dictionary<int, Model>(count);
                 for (int i = 0; i < count; i++)
@@ -2186,7 +2192,7 @@ namespace XREngine
                     targetModelsByMeshIndex[meshIndex] = CreateModelComponent(componentName).Model!;
                 }
             }
-            else
+            else if (!splitSubmeshesIntoSeparateModelComponents)
             {
                 sharedModel = CreateModelComponent(componentBaseName).Model;
             }
@@ -2196,12 +2202,31 @@ namespace XREngine
                     ? targetModelsByMeshIndex[meshIndex]
                     : sharedModel!;
 
+            void PublishSubMeshes(Model? model, IReadOnlyList<SubMesh> subMeshes)
+            {
+                if (createComponentPerFinalSubMesh)
+                {
+                    for (int index = 0; index < subMeshes.Count; index++)
+                    {
+                        SubMesh subMesh = subMeshes[index];
+                        string componentName = string.IsNullOrWhiteSpace(subMesh.Name)
+                            ? $"{componentBaseName} SubMesh {index}"
+                            : subMesh.Name;
+                        CreateModelComponent(componentName).Model!.Meshes.Add(subMesh);
+                    }
+
+                    return;
+                }
+
+                model!.Meshes.AddRange(subMeshes);
+            }
+
             // Async processing publishes mesh additions on the app thread so scene/render state is not
             // mutated from worker threads or delayed behind render-thread GL work. The publish policy
             // decides whether those additions are flushed once at the end or streamed as contiguous
             // source-order submeshes become ready.
-            ConcurrentDictionary<int, (Model model, SubMesh subMesh)>? pending = publishSubMeshesOnSwapThread
-                ? new ConcurrentDictionary<int, (Model model, SubMesh subMesh)>()
+            ConcurrentDictionary<int, (Model? model, IReadOnlyList<SubMesh> subMeshes)>? pending = publishSubMeshesOnSwapThread
+                ? new ConcurrentDictionary<int, (Model? model, IReadOnlyList<SubMesh> subMeshes)>()
                 : null;
 
             int[]? ordered = null;
@@ -2212,32 +2237,11 @@ namespace XREngine
                 if (pending is null || ordered is null)
                     return;
 
-                Model? currentModel = null;
-                List<SubMesh>? currentBatch = null;
-
-                void FlushCurrentBatch()
-                {
-                    if (currentModel is null || currentBatch is null || currentBatch.Count == 0)
-                        return;
-
-                    currentModel.Meshes.AddRange(currentBatch);
-                    currentBatch.Clear();
-                }
-
                 while (nextPublishOffset < ordered.Length && pending.TryRemove(ordered[nextPublishOffset], out var pendingSubMesh))
                 {
-                    if (!ReferenceEquals(currentModel, pendingSubMesh.model))
-                    {
-                        FlushCurrentBatch();
-                        currentModel = pendingSubMesh.model;
-                        currentBatch ??= [];
-                    }
-
-                    currentBatch!.Add(pendingSubMesh.subMesh);
+                    PublishSubMeshes(pendingSubMesh.model, pendingSubMesh.subMeshes);
                     nextPublishOffset++;
                 }
-
-                FlushCurrentBatch();
             }
 
             if (pending != null)
@@ -2266,7 +2270,6 @@ namespace XREngine
                     // The legacy GLSL convention outputs root-local positions (via implicit transpose),
                     // and ModelMatrix correctly transforms root-local to world. Pre-multiplying rootBind
                     // would produce world-space skinning output, causing double-transformation with ModelMatrix.
-                _meshes.Add(xrMesh);
 
                 SubMesh subMesh = new(new SubMeshLOD(xrMaterial, xrMesh, 0.0f)
                 {
@@ -2277,17 +2280,19 @@ namespace XREngine
                     RootTransform = rootTransform
                 };
 
-                Model targetModel = ResolveTargetModel(meshIndex);
+                IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(subMesh, separateMeshIslands);
+                ModelImportMeshIslandSplitter.AddMeshes(finalSubMeshes, _meshes.Add);
+                Model? targetModel = createComponentPerFinalSubMesh ? null : ResolveTargetModel(meshIndex);
 
                 if (pending != null)
                 {
-                    pending[meshIndex] = (targetModel, subMesh);
+                    pending[meshIndex] = (targetModel, finalSubMeshes);
                     if (!batchSubmeshAddsDuringAsyncImport)
                         Engine.EnqueueAppThreadTask(FlushReadySubMeshes, "ModelImporter.FlushReadySubMeshes");
                 }
                 else
                 {
-                    targetModel.Meshes.Add(subMesh);
+                    PublishSubMeshes(targetModel, finalSubMeshes);
                 }
 
                 yield break;

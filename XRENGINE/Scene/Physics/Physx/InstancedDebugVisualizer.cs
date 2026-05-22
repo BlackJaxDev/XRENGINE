@@ -164,13 +164,13 @@ namespace XREngine.Rendering.Physics.Physx
                 return;
 
             if (PointCount > 0)
-                _debugPointsRenderer?.Render(null, PointCount);
+                _debugPointsRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, PointCount, forceNoStereo: true);
 
             if (LineCount > 0)
-                _debugLinesRenderer?.Render(null, LineCount);
+                _debugLinesRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, LineCount, forceNoStereo: true);
 
             if (TriangleCount > 0)
-                _debugTrianglesRenderer?.Render(null, TriangleCount);
+                _debugTrianglesRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, TriangleCount, forceNoStereo: true);
         }
 
         /// <summary>
@@ -630,6 +630,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (count == 0)
                 return;
 
+            bool createdRenderer = _debugPointsRenderer is null;
             _debugPointsRenderer ??= MakePointsRenderer();
 
             // Expanded: 8 floats (pos3 + pad + color4). Compressed: 4 floats (pos3 + packedColor).
@@ -652,15 +653,15 @@ namespace XREngine.Rendering.Physics.Physx
                     Usage = EBufferUsage.StreamDraw,
                     DisposeOnPush = false
                 };
-                _debugPointsRenderer.Buffers.Add(_debugPointsBuffer.AttributeName, _debugPointsBuffer);
-                _debugPointsRenderer.SettingUniforms += _debugPointsRenderer_SettingUniforms;
+                _debugPointsRenderer.PreparingRenderData += PushPointsBuffer;
                 _fullPushPoints = true;
             }
-        }
 
-        private void _debugPointsRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-        {
-            PushPointsBuffer();
+            if (createdRenderer || !_debugPointsRenderer.Buffers.ContainsKey(_debugPointsBuffer!.AttributeName))
+                AddOrReplaceRendererBuffer(_debugPointsRenderer, _debugPointsBuffer);
+
+            if (createdRenderer)
+                ConfigureDebugRenderer(_debugPointsRenderer);
         }
 
         public void CreateOrResizeLines(uint count)
@@ -670,6 +671,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (count == 0)
                 return;
 
+            bool createdRenderer = _debugLinesRenderer is null;
             _debugLinesRenderer ??= MakeLineRenderer();
 
             // Expanded: 3 vec4s per line (count*3 elements, 4 components). Compressed: 7 floats (count elements, 7 components).
@@ -693,15 +695,15 @@ namespace XREngine.Rendering.Physics.Physx
                     Usage = EBufferUsage.StreamDraw,
                     DisposeOnPush = false
                 };
-                _debugLinesRenderer.Buffers?.Add(_debugLinesBuffer.AttributeName, _debugLinesBuffer);
-                _debugLinesRenderer.SettingUniforms += _debugLinesRenderer_SettingUniforms;
+                _debugLinesRenderer.PreparingRenderData += PushLinesBuffer;
                 _fullPushLines = true;
             }
-        }
 
-        private void _debugLinesRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-        {
-            PushLinesBuffer();
+            if (createdRenderer || !_debugLinesRenderer.Buffers.ContainsKey(_debugLinesBuffer!.AttributeName))
+                AddOrReplaceRendererBuffer(_debugLinesRenderer, _debugLinesBuffer);
+
+            if (createdRenderer)
+                ConfigureDebugRenderer(_debugLinesRenderer);
         }
 
         public void CreateOrResizeTriangles(uint count)
@@ -711,6 +713,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (count == 0)
                 return;
 
+            bool createdRenderer = _debugTrianglesRenderer is null;
             _debugTrianglesRenderer ??= MakeTrianglesRenderer();
 
             // Expanded: 16 floats per triangle. Compressed: 10 floats per triangle.
@@ -733,34 +736,45 @@ namespace XREngine.Rendering.Physics.Physx
                     Usage = EBufferUsage.StreamDraw,
                     DisposeOnPush = false
                 };
-                _debugTrianglesRenderer.Buffers?.Add(_debugTrianglesBuffer.AttributeName, _debugTrianglesBuffer);
-                _debugTrianglesRenderer.SettingUniforms += _debugTrianglesRenderer_SettingUniforms;
+                _debugTrianglesRenderer.PreparingRenderData += PushTrianglesBuffer;
                 _fullPushTriangles = true;
             }
-        }
 
-        private void _debugTrianglesRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-        {
-            PushTrianglesBuffer();
+            if (createdRenderer || !_debugTrianglesRenderer.Buffers.ContainsKey(_debugTrianglesBuffer!.AttributeName))
+                AddOrReplaceRendererBuffer(_debugTrianglesRenderer, _debugTrianglesBuffer);
+
+            if (createdRenderer)
+                ConfigureDebugRenderer(_debugTrianglesRenderer);
         }
 
         private XRMeshRenderer MakePointsRenderer()
         {
-            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugPointMaterial());
-            rend.GetDefaultVersion().AllowShaderPipelines = false;
-            return rend;
+            return new XRMeshRenderer(CreateDebugMesh(), CreateDebugPointMaterial());
         }
         private XRMeshRenderer MakeLineRenderer()
         {
-            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugLineMaterial());
-            rend.GetDefaultVersion().AllowShaderPipelines = false;
-            return rend;
+            return new XRMeshRenderer(CreateDebugMesh(), CreateDebugLineMaterial());
         }
         private XRMeshRenderer MakeTrianglesRenderer()
         {
-            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugTriangleMaterial());
-            rend.GetDefaultVersion().AllowShaderPipelines = false;
-            return rend;
+            return new XRMeshRenderer(CreateDebugMesh(), CreateDebugTriangleMaterial());
+        }
+
+        private static void AddOrReplaceRendererBuffer(XRMeshRenderer renderer, XRDataBuffer buffer)
+        {
+            if (renderer.Buffers.ContainsKey(buffer.AttributeName))
+                renderer.Buffers.Remove(buffer.AttributeName);
+            renderer.Buffers.Add(buffer.AttributeName, buffer);
+        }
+
+        private static void ConfigureDebugRenderer(XRMeshRenderer renderer)
+        {
+            renderer.GenerateAsync = false;
+            renderer.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
+
+            // These geometry-shader-expanded debug primitives are not compatible
+            // with generated stereo/multiview vertex variants.
+            renderer.GetDefaultVersion().AllowShaderPipelines = false;
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
