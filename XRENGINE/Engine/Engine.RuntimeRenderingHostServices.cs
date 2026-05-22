@@ -280,6 +280,16 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         Engine.Time.Timer.CollectVisible -= collectVisible;
     }
 
+    public void SubscribeViewportPostCollectVisible(Action postCollectVisible)
+    {
+        Engine.Time.Timer.PostCollectVisible += postCollectVisible;
+    }
+
+    public void UnsubscribeViewportPostCollectVisible(Action postCollectVisible)
+    {
+        Engine.Time.Timer.PostCollectVisible -= postCollectVisible;
+    }
+
     public void SubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame)
     {
         Engine.Time.Timer.SwapBuffers += swapBuffers;

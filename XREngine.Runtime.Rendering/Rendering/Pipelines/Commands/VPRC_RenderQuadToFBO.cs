@@ -1,4 +1,5 @@
 using System;
+using XREngine.Core.Attributes;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -9,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     /// <param name="source"></param>
     /// <param name="destination"></param>
+    [XRTypeRedirect("XREngine.Rendering.Pipelines.Commands.VPRC_RenderQuadFBO")]
     [RenderPipelineScriptCommand]
     public class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {

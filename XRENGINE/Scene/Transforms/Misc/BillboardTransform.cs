@@ -19,6 +19,45 @@ namespace XREngine.Scene.Transforms
         private static XRCamera? GetMainPlayerCamera()
             => (Engine.State.MainPlayer.Viewport as XRViewport)?.ActiveCamera;
 
+        private XRCamera? _referenceCamera;
+        /// <summary>
+        /// Optional camera used by this billboard instead of the global main-player viewport camera.
+        /// Editor tools should set this so viewport/camera rebinding does not leave the billboard
+        /// subscribed to a stale camera.
+        /// </summary>
+        public XRCamera? ReferenceCamera
+        {
+            get => _referenceCamera;
+            set => SetField(ref _referenceCamera, value);
+        }
+
+        private bool _autoRefreshCameraDependentMatrix = true;
+        /// <summary>
+        /// When true, the billboard refreshes itself from camera transform/parameter events.
+        /// Disable this for tool hierarchies that refresh all billboard nodes together from one
+        /// explicit camera snapshot.
+        /// </summary>
+        public bool AutoRefreshCameraDependentMatrix
+        {
+            get => _autoRefreshCameraDependentMatrix;
+            set => SetField(ref _autoRefreshCameraDependentMatrix, value);
+        }
+
+        private bool _useRenderCameraTransform = true;
+        /// <summary>
+        /// When true, camera-facing math uses the camera render matrix. When false, it uses the
+        /// update-thread world matrix so the calculated world matrix can be published alongside the
+        /// camera's next render matrix.
+        /// </summary>
+        public bool UseRenderCameraTransform
+        {
+            get => _useRenderCameraTransform;
+            set => SetField(ref _useRenderCameraTransform, value);
+        }
+
+        private XRCamera? GetReferenceCamera()
+            => ReferenceCamera ?? GetMainPlayerCamera();
+
         private bool _perspective = false;
         /// <summary>
         /// If perspective is true, the billboard will face towards the camera's position.
@@ -173,10 +212,23 @@ namespace XREngine.Scene.Transforms
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(ReferenceCamera):
+                    EnsureSubscribedCamera(GetReferenceCamera());
+                    MarkWorldModified();
+                    break;
+
+                case nameof(AutoRefreshCameraDependentMatrix):
+                    if (AutoRefreshCameraDependentMatrix)
+                        EnsureSubscribedCamera(GetReferenceCamera());
+                    else
+                        UnsubscribeFromCamera();
+                    break;
+
                 case nameof(Perspective):
                 case nameof(ScaleByDistance):
                 case nameof(ScaleByVerticalFov):
                 case nameof(DistanceScale):
+                case nameof(UseRenderCameraTransform):
                     MarkWorldModified();
                     break;
 
@@ -197,7 +249,7 @@ namespace XREngine.Scene.Transforms
         protected override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
-            EnsureSubscribedCamera(GetMainPlayerCamera());
+            EnsureSubscribedCamera(GetReferenceCamera());
         }
         protected override void OnSceneNodeDeactivated()
         {
@@ -209,7 +261,7 @@ namespace XREngine.Scene.Transforms
         {
             if (_subscribedCamera is null)
             {
-                var camera = GetMainPlayerCamera();
+                var camera = GetReferenceCamera();
                 camera?.Transform.WorldMatrixChanged -= CameraMoved;
                 camera?.Parameters.PropertyChanged -= CameraParametersChanged;
                 return;
@@ -222,6 +274,12 @@ namespace XREngine.Scene.Transforms
 
         private void EnsureSubscribedCamera(XRCamera? camera)
         {
+            if (!AutoRefreshCameraDependentMatrix)
+            {
+                UnsubscribeFromCamera();
+                return;
+            }
+
             if (_subscribedCamera == camera)
                 return;
 
@@ -248,11 +306,17 @@ namespace XREngine.Scene.Transforms
         }
 
         public void RefreshCameraDependentMatrix(bool setRenderMatrixNow = false, ELoopType childRecalcType = ELoopType.Asynchronous)
+            => RefreshCameraDependentMatrix(null, setRenderMatrixNow, childRecalcType);
+
+        public void RefreshCameraDependentMatrix(XRCamera? referenceCamera, bool setRenderMatrixNow = false, ELoopType childRecalcType = ELoopType.Asynchronous)
         {
             if (_refreshingCameraDependentMatrix)
                 return;
 
-            var camera = GetMainPlayerCamera();
+            if (referenceCamera is not null && !ReferenceEquals(ReferenceCamera, referenceCamera))
+                ReferenceCamera = referenceCamera;
+
+            var camera = referenceCamera ?? GetReferenceCamera();
             EnsureSubscribedCamera(camera);
 
             _refreshingCameraDependentMatrix = true;
@@ -261,7 +325,7 @@ namespace XREngine.Scene.Transforms
                 camera?.Transform.RecalculateMatrixHierarchy(false, false, ELoopType.Sequential).GetAwaiter().GetResult();
 
                 var recalculateTask = RecalculateMatrixHierarchy(true, setRenderMatrixNow, childRecalcType);
-                if (setRenderMatrixNow)
+                if (setRenderMatrixNow || childRecalcType == ELoopType.Sequential)
                     recalculateTask.GetAwaiter().GetResult();
             }
             finally
@@ -275,7 +339,7 @@ namespace XREngine.Scene.Transforms
 
         protected override Matrix4x4 CreateWorldMatrix()
         {
-            var camera = GetMainPlayerCamera();
+            var camera = GetReferenceCamera();
             if (camera is null)
                 return Matrix4x4.Identity;
 
@@ -283,8 +347,8 @@ namespace XREngine.Scene.Transforms
             var cameraTransform = camera.Transform;
 
             Vector3 cameraPos = Perspective
-                ? cameraTransform.RenderTranslation
-                : GeoUtil.Nearest.PointOnPlane(GetRenderNearPlane(camera), pos);
+                ? GetCameraTranslation(cameraTransform)
+                : GeoUtil.Nearest.PointOnPlane(GetCameraNearPlane(camera), pos);
 
             Matrix4x4 worldMtx;
 
@@ -310,8 +374,8 @@ namespace XREngine.Scene.Transforms
                 var up = Parent?.WorldUp ?? Vector3.UnitY;
                 var right = Parent?.WorldRight ?? Vector3.UnitX;
 
-                var cameraUp = cameraTransform.RenderUp;
-                var cameraRight = cameraTransform.RenderRight;
+                var cameraUp = GetCameraUp(cameraTransform);
+                var cameraRight = GetCameraRight(cameraTransform);
 
                 Vector3 resultForward;
                 Vector3 resultUp;
@@ -346,11 +410,23 @@ namespace XREngine.Scene.Transforms
             return worldMtx;
         }
 
-        private static Plane GetRenderNearPlane(XRCamera camera)
+        private Vector3 GetCameraTranslation(TransformBase transform)
+            => UseRenderCameraTransform ? transform.RenderTranslation : transform.WorldTranslation;
+
+        private Vector3 GetCameraForward(TransformBase transform)
+            => UseRenderCameraTransform ? transform.RenderForward : transform.WorldForward;
+
+        private Vector3 GetCameraUp(TransformBase transform)
+            => UseRenderCameraTransform ? transform.RenderUp : transform.WorldUp;
+
+        private Vector3 GetCameraRight(TransformBase transform)
+            => UseRenderCameraTransform ? transform.RenderRight : transform.WorldRight;
+
+        private Plane GetCameraNearPlane(XRCamera camera)
         {
             var transform = camera.Transform;
-            Vector3 forward = transform.RenderForward;
-            Vector3 point = transform.RenderTranslation + forward * camera.Parameters.NearZ;
+            Vector3 forward = GetCameraForward(transform);
+            Vector3 point = GetCameraTranslation(transform) + forward * camera.Parameters.NearZ;
             return XRMath.CreatePlaneFromPointAndNormal(point, forward);
         }
     }

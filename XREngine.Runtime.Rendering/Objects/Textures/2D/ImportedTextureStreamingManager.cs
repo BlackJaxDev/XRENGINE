@@ -48,6 +48,7 @@ internal sealed class ImportedTextureStreamingManager
     private int _callbacksSubscribed;
     private int _activeImportedModelImports;
     private long _collectFrameId;
+    private long _lastEvaluatedFrameId;
     private int _queuedTransitionsThisFrame;
     private int _queuedPromotionTransitionsThisFrame;
     private int _queuedDemotionTransitionsThisFrame;
@@ -392,29 +393,42 @@ internal sealed class ImportedTextureStreamingManager
 
         // NOTE: We intentionally do NOT subscribe to CollectVisible.
         // Incrementing _collectFrameId inside a CollectVisible handler races
-        // with viewport CollectVisibleAutomatic handlers (multicast delegate
-        // ordering is subscription-order-dependent).  If the viewport fires
-        // first, RecordUsage tags data with the PREVIOUS frame's ID, and
-        // Evaluate never sees the texture as "visible this frame".
-        // Instead we advance the frame counter at the end of OnSwapBuffers,
-        // after Evaluate has consumed the current frame's data.
+        // with viewport CollectVisibleAutomatic handlers (parallel multicast
+        // ordering is intentionally not deterministic).  PostCollectVisible
+        // runs after all viewport collection has completed, so residency policy
+        // can consume complete frame data before SwapBuffers publishes command
+        // buffers to the render thread.
+        RuntimeRenderingHostServices.Current.SubscribeViewportPostCollectVisible(OnPostCollectVisible);
         RuntimeRenderingHostServices.Current.SubscribeViewportSwapBuffers(OnSwapBuffers);
     }
 
-    private void OnSwapBuffers()
+    private void OnPostCollectVisible()
     {
+        using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("TextureStreaming.PostCollectVisible");
+
         long frameId = Volatile.Read(ref _collectFrameId);
         if (frameId <= 0)
             return;
 
-        FinalizePendingSparseTransitions(frameId);
         UpdatePromotionFades(frameId);
         Evaluate(frameId);
+        Volatile.Write(ref _lastEvaluatedFrameId, frameId);
 
         // Advance for the next collection phase.  Every viewport that runs
-        // during the upcoming CollectVisible tick will tag usages with the
-        // new value, and the next OnSwapBuffers will evaluate against it.
+        // during the upcoming CollectVisible tick will tag usages with the new
+        // value, and the following PostCollectVisible will evaluate against it.
         Interlocked.Increment(ref _collectFrameId);
+    }
+
+    private void OnSwapBuffers()
+    {
+        long frameId = Volatile.Read(ref _lastEvaluatedFrameId);
+        if (frameId <= 0)
+            frameId = Volatile.Read(ref _collectFrameId);
+        if (frameId <= 0)
+            return;
+
+        FinalizePendingSparseTransitions(frameId);
     }
 
     private void FinalizePendingSparseTransitions(long frameId)

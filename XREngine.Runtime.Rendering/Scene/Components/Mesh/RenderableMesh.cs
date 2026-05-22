@@ -1802,6 +1802,22 @@ namespace XREngine.Components.Scene.Mesh
             RenderInfo?.CullingOffsetMatrix = matrix;
         }
 
+        internal void QueueCurrentRenderMatrixUpdate()
+        {
+            if (RuntimeEngine.IsRenderThread)
+            {
+                ApplyImmediateRenderMatrixUpdate(
+                    Component.Transform.RenderMatrix,
+                    RootBone?.RenderMatrix);
+                return;
+            }
+
+            MarkPendingComponentRenderMatrix(Component.Transform.RenderMatrix);
+
+            if (RootBone is not null)
+                MarkPendingRootBoneRenderMatrix(RootBone.RenderMatrix);
+        }
+
         private void QueuePendingRenderMatrixUpdate()
         {
             if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
@@ -1870,6 +1886,11 @@ namespace XREngine.Components.Scene.Mesh
                     QueuePendingRenderMatrixUpdate();
                 }
             }
+
+            // Matrix changes are applied in the world's SwapBuffers phase after visible
+            // collection has already run. Publish the command snapshot here too; otherwise
+            // dirty-delta command swapping can leave the rendered matrix one frame behind.
+            _rc?.SwapBuffers();
 
             ProcessSkinnedBoundsRefresh();
         }

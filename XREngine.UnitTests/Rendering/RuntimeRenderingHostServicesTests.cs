@@ -279,6 +279,10 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public int ViewportCollectUnsubscribeCount { get; private set; }
 
+        public int ViewportPostCollectSubscribeCount { get; private set; }
+
+        public int ViewportPostCollectUnsubscribeCount { get; private set; }
+
         public IDisposable? StartProfileScope(string? scopeName)
             => null;
 
@@ -480,6 +484,12 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public void UnsubscribeViewportCollectVisible(Action collectVisible)
             => ViewportCollectUnsubscribeCount++;
+
+        public void SubscribeViewportPostCollectVisible(Action postCollectVisible)
+            => ViewportPostCollectSubscribeCount++;
+
+        public void UnsubscribeViewportPostCollectVisible(Action postCollectVisible)
+            => ViewportPostCollectUnsubscribeCount++;
 
         public void SubscribeRenderingSettingsChanged(Action callback)
         {

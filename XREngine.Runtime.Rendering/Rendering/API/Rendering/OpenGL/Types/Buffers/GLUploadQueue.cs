@@ -217,6 +217,14 @@ namespace XREngine.Rendering.OpenGL
                 var data = upload.Data;
                 var dataLength = upload.DataLength;
 
+                if (buffer.Data.IsDestroyed)
+                {
+                    buffer.FailQueuedUpload();
+                    _pendingBuffers.TryRemove(buffer, out _);
+                    ReturnUploadData(upload);
+                    return UploadExecutionResult.Failure;
+                }
+
                 // Ensure buffer is generated
                 if (!buffer.IsGenerated)
                     buffer.Generate();

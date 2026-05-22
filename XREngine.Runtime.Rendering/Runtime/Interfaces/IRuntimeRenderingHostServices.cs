@@ -608,6 +608,16 @@ public interface IRuntimeRenderingHostServices
     void UnsubscribeViewportCollectVisible(Action collectVisible);
 
     /// <summary>
+    /// Subscribes a callback to the host post-collect-visible frame event.
+    /// </summary>
+    void SubscribeViewportPostCollectVisible(Action postCollectVisible);
+
+    /// <summary>
+    /// Unsubscribes a callback from the host post-collect-visible frame event.
+    /// </summary>
+    void UnsubscribeViewportPostCollectVisible(Action postCollectVisible);
+
+    /// <summary>
     /// Subscribes paired window swap and render callbacks to the host frame timer.
     /// </summary>
     void SubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame);

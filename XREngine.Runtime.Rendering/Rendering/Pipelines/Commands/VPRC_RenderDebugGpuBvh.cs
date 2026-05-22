@@ -61,78 +61,93 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
         if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass)
             return;
 
-        if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
-            return;
-
-        // Resolve effective settings: the post-processing stage on the active
-        // scene camera takes precedence over the script-authored properties so
-        // a user can toggle the visualization from the ImGui editor at runtime.
-        bool enabled = Enabled;
-        uint maxNodes = MaxNodes;
-        float lineWidth = LineWidth;
-        Vector4 leafColor = LeafColor;
-        Vector4 internalColor = InternalColor;
-        uint showFilter = ShowFilter;
-
-        var activeInstance = ActivePipelineInstance;
-        var camera = activeInstance.RenderState.SceneCamera
-            ?? activeInstance.RenderState.RenderingCamera
-            ?? activeInstance.LastSceneCamera
-            ?? activeInstance.LastRenderingCamera;
-        if (GpuBvhDebugSettings.TryResolve(camera, out GpuBvhDebugSettings? settings) && settings is not null)
+        try
         {
-            enabled = settings.Enabled;
-            maxNodes = (uint)Math.Max(1, settings.MaxNodes);
-            lineWidth = settings.LineWidth;
-            leafColor = settings.LeafColor;
-            internalColor = settings.InternalColor;
-            showFilter = (uint)settings.Filter;
+            if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
+                return;
+
+            // Resolve effective settings: the post-processing stage on the active
+            // scene camera takes precedence over the script-authored properties so
+            // a user can toggle the visualization from the ImGui editor at runtime.
+            bool enabled = Enabled;
+            uint maxNodes = MaxNodes;
+            float lineWidth = LineWidth;
+            Vector4 leafColor = LeafColor;
+            Vector4 internalColor = InternalColor;
+            uint showFilter = ShowFilter;
+
+            var activeInstance = ActivePipelineInstance;
+            var camera = activeInstance.RenderState.SceneCamera
+                ?? activeInstance.RenderState.RenderingCamera
+                ?? activeInstance.LastSceneCamera
+                ?? activeInstance.LastRenderingCamera;
+            if (GpuBvhDebugSettings.TryResolve(camera, out GpuBvhDebugSettings? settings) && settings is not null)
+            {
+                enabled = settings.Enabled;
+                maxNodes = (uint)Math.Max(1, settings.MaxNodes);
+                lineWidth = settings.LineWidth;
+                leafColor = settings.LeafColor;
+                internalColor = settings.InternalColor;
+                showFilter = (uint)settings.Filter;
+            }
+
+            if (!enabled)
+                return;
+
+            var variables = ActivePipelineInstance.Variables;
+            if (!variables.TryGet(ReadyVariableName, out bool ready) || !ready)
+                return;
+            if (!variables.TryGet(NodeCountVariableName, out uint nodeCount) || nodeCount == 0)
+                return;
+            if (!variables.BufferVariables.TryGetValue(NodeBufferVariableName, out var nodeBuffer) || nodeBuffer is null)
+                return;
+
+            uint visualizedNodes = Math.Min(nodeCount, Math.Max(maxNodes, 1u));
+            uint visualizedLines = visualizedNodes * LinesPerBox;
+
+            if (!EnsureResources(visualizedLines))
+                return;
+
+            // Compute pass: write per-node AABB edges into the debug line SSBO.
+            _computeProgram!.BindBuffer(nodeBuffer, 0);
+            _computeProgram.BindBuffer(_linesBuffer!, 1);
+            _computeProgram.Uniform("MaxNodes", visualizedNodes);
+            _computeProgram.Uniform("LeafColor", leafColor);
+            _computeProgram.Uniform("InternalColor", internalColor);
+            _computeProgram.Uniform("ShowFilter", showFilter);
+
+            uint groups = (visualizedNodes + ComputeGroupSize - 1u) / ComputeGroupSize;
+            _computeProgram.DispatchCompute(
+                groups,
+                1u,
+                1u,
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray | EMemoryBarrierMask.Command);
+
+            // Render pass: draw `visualizedLines` instances of a single point;
+            // LineInstance.gs expands each into a screen-space line quad sourced
+            // from the SSBO populated above. No CPU readback occurred.
+            var material = _linesRenderer!.Material;
+            material?.SetFloat(0, lineWidth);
+            material?.SetInt(1, (int)visualizedLines);
+
+            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
+            using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
+            {
+                _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines, forceNoStereo: true);
+            }
         }
-
-        if (!enabled)
-            return;
-
-        var variables = ActivePipelineInstance.Variables;
-        if (!variables.TryGet(ReadyVariableName, out bool ready) || !ready)
-            return;
-        if (!variables.TryGet(NodeCountVariableName, out uint nodeCount) || nodeCount == 0)
-            return;
-        if (!variables.BufferVariables.TryGetValue(NodeBufferVariableName, out var nodeBuffer) || nodeBuffer is null)
-            return;
-
-        uint visualizedNodes = Math.Min(nodeCount, Math.Max(maxNodes, 1u));
-        uint visualizedLines = visualizedNodes * LinesPerBox;
-
-        if (!EnsureResources(visualizedLines))
-            return;
-
-        // Compute pass: write per-node AABB edges into the debug line SSBO.
-        _computeProgram!.BindBuffer(nodeBuffer, 0);
-        _computeProgram.BindBuffer(_linesBuffer!, 1);
-        _computeProgram.Uniform("MaxNodes", visualizedNodes);
-        _computeProgram.Uniform("LeafColor", leafColor);
-        _computeProgram.Uniform("InternalColor", internalColor);
-        _computeProgram.Uniform("ShowFilter", showFilter);
-
-        uint groups = (visualizedNodes + ComputeGroupSize - 1u) / ComputeGroupSize;
-        _computeProgram.DispatchCompute(
-            groups,
-            1u,
-            1u,
-            EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray | EMemoryBarrierMask.Command);
-
-        // Render pass: draw `visualizedLines` instances of a single point;
-        // LineInstance.gs expands each into a screen-space line quad sourced
-        // from the SSBO populated above. No CPU readback occurred.
-        var material = _linesRenderer!.Material;
-        material?.SetFloat(0, lineWidth);
-        material?.SetInt(1, (int)visualizedLines);
-
-        using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
-        using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
+        finally
         {
-            _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines, forceNoStereo: true);
+            ResetStencilState();
         }
+    }
+
+    private static void ResetStencilState()
+    {
+        RuntimeEngine.Rendering.State.EnableStencilTest(false);
+        RuntimeEngine.Rendering.State.StencilMask(0xFF);
+        RuntimeEngine.Rendering.State.StencilFunc(EComparison.Always, 0, 0xFF);
+        RuntimeEngine.Rendering.State.StencilOp(EStencilOp.Keep, EStencilOp.Keep, EStencilOp.Keep);
     }
 
     private bool EnsureResources(uint requiredLineCapacity)

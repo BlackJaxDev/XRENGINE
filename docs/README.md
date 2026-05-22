@@ -53,6 +53,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Bootstrap And First-Time Setup](features/bootstrap.md)
 - [Default Render Pipeline Script Export](features/default-render-pipeline.xrs)
 - [Ambient Occlusion](features/gi/ambient-occlusion.md)
+- [Gizmo Rendering](features/gizmo-rendering.md)
 - [Model Import](features/model-import.md)
 - [Native Dependencies](features/native-dependencies.md)
 - [Networking](features/networking.md)

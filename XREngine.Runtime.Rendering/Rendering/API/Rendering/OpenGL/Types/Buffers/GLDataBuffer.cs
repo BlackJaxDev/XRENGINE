@@ -298,6 +298,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void PushData()
             {
+                if (Data.IsDestroyed)
+                    return;
+
                 if (HasBlockingActiveMapping())
                     return;
 
@@ -325,6 +328,9 @@ namespace XREngine.Rendering.OpenGL
             private void PushDataQueued()
             {
                 using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLDataBuffer.PushDataQueued");
+
+                if (Data.IsDestroyed)
+                    return;
 
                 uint dataLength = Data.Length;
                 if (dataLength == 0)
@@ -386,6 +392,9 @@ namespace XREngine.Rendering.OpenGL
             private void PushDataImmediate()
             {
                 using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLDataBuffer.PushDataImmediate");
+
+                if (Data.IsDestroyed)
+                    return;
 
                 bool shouldUseImmutableStorage = ShouldUseImmutableStorage();
                 bool remapAfterUpload = Data.ActivelyMapping.Contains(this);
@@ -760,10 +769,16 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void PushSubData(int offset, uint length)
             {
+                if (Data.IsDestroyed || length == 0)
+                    return;
+
                 if (HasBlockingActiveMapping())
                     return;
 
                 if (RuntimeEngine.InvokeOnMainThread(() => PushSubData(offset, length), "GLDataBuffer.PushSubData"))
+                    return;
+
+                if (Data.IsDestroyed)
                     return;
 
                 if (_pushSubDataBreakdownEnabled)
@@ -836,7 +851,6 @@ namespace XREngine.Rendering.OpenGL
                         length = (uint)clamped;
                     }
 
-                    void* addr = (Data.Address + (uint)offset).Pointer;
                     if (_immutableStorageSet && !Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
                     {
                         if (_pushSubDataTraceEnabled)
@@ -845,12 +859,62 @@ namespace XREngine.Rendering.OpenGL
                         return;
                     }
 
+                    if (!TryGetPushSubDataSource(traceLabel, offset, ref length, dataLength, lastPushed, out void* addr))
+                        return;
+
                     if (_pushSubDataTraceEnabled)
                         TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "NamedBufferSubData");
                     Api.NamedBufferSubData(BindingId, offset, length, addr);
                     if (_pushSubDataTraceEnabled)
                         TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "NamedBufferSubData-done");
                 }
+            }
+
+            private bool TryGetPushSubDataSource(string traceLabel, int offset, ref uint length, uint dataLength, uint lastPushed, out void* addr)
+            {
+                addr = null;
+
+                DataSource? source = Data.ClientSideSource;
+                if (source is null || source.Address == VoidPtr.Zero || source.Length == 0)
+                {
+                    if (_pushSubDataTraceEnabled)
+                        TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "missing-source-IGNORED");
+                    Debug.OpenGLWarning($"PushSubData called for '{GetDescribingName()}' after its client-side source was released. Ignoring call.");
+                    return false;
+                }
+
+                if (offset < 0)
+                {
+                    if (_pushSubDataTraceEnabled)
+                        TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "negative-offset-IGNORED");
+                    Debug.OpenGLWarning($"PushSubData called for '{GetDescribingName()}' with negative offset {offset}. Ignoring call.");
+                    return false;
+                }
+
+                ulong sourceOffset = (uint)offset;
+                if (sourceOffset >= source.Length)
+                {
+                    if (_pushSubDataTraceEnabled)
+                        TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "offset-past-source-IGNORED");
+                    Debug.OpenGLWarning($"PushSubData called for '{GetDescribingName()}' with offset {offset} beyond client-side source length {source.Length}. Ignoring call.");
+                    return false;
+                }
+
+                ulong sourceEnd = sourceOffset + length;
+                if (sourceEnd > source.Length)
+                {
+                    uint clamped = (uint)(source.Length - sourceOffset);
+                    if (clamped == 0)
+                        return false;
+
+                    if (_pushSubDataTraceEnabled)
+                        TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, $"clamp-source len {length}->{clamped}");
+                    Debug.OpenGLWarning($"PushSubData called for '{GetDescribingName()}' with range {offset}+{length} beyond client-side source length {source.Length}. Clamping to {clamped} bytes.");
+                    length = clamped;
+                }
+
+                addr = (source.Address + (uint)offset).Pointer;
+                return true;
             }
 
             private static bool RequestedRangeFits(int offset, uint length, uint bufferLength)

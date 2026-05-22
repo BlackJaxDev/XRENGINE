@@ -6,6 +6,7 @@ using Shouldly;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
+using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
@@ -872,16 +873,27 @@ THIS IS NOT VALID GLSL;";
                 new(TrivialFragmentSource, ShaderType.FragmentShader),
             };
 
-            // Fill to capacity (MaxInFlight = 4).
-            uint[] programs = new uint[GLProgramCompileLinkQueue.MaxInFlight];
+            // Fill normal capacity (MaxInFlight = 4). Interactive work keeps a small reserve.
+            const int interactiveReserve = 2;
+            uint[] programs = new uint[GLProgramCompileLinkQueue.MaxInFlight + interactiveReserve];
             for (int i = 0; i < programs.Length; i++)
             {
                 programs[i] = gl.CreateProgram();
-                compileQueue.EnqueueCompileAndLink(programs[i], inputs);
+                EProgramPriority priority = i < GLProgramCompileLinkQueue.MaxInFlight
+                    ? EProgramPriority.Main
+                    : EProgramPriority.Interactive;
+                compileQueue.TryEnqueueCompileAndLink(programs[i], inputs, priority, out _).ShouldBeTrue();
+
+                if (i == GLProgramCompileLinkQueue.MaxInFlight - 1)
+                {
+                    compileQueue.CanEnqueue.ShouldBeFalse();
+                    compileQueue.CanEnqueuePriority(EProgramPriority.Interactive).ShouldBeTrue();
+                }
             }
 
-            compileQueue.InFlightCount.ShouldBe(GLProgramCompileLinkQueue.MaxInFlight);
+            compileQueue.InFlightCount.ShouldBe(programs.Length);
             compileQueue.CanEnqueue.ShouldBeFalse();
+            compileQueue.CanEnqueuePriority(EProgramPriority.Interactive).ShouldBeFalse();
 
             // Unblock and clean up.
             blocker.Set();

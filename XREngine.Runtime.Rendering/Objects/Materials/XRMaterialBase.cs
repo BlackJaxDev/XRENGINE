@@ -72,6 +72,21 @@ namespace XREngine.Rendering
             protected set => SetField(ref _shaderPipelineProgram, value);
         }
 
+        private EProgramPriority _shaderProgramPriority = EProgramPriority.Main;
+        /// <summary>
+        /// Priority assigned to shader pipeline programs created for this material.
+        /// </summary>
+        [YamlIgnore]
+        public EProgramPriority ShaderProgramPriority
+        {
+            get => _shaderProgramPriority;
+            set
+            {
+                if (SetField(ref _shaderProgramPriority, value) && _shaderPipelineProgram is not null)
+                    _shaderPipelineProgram.Priority = value;
+            }
+        }
+
         private RenderingParameters _renderOptions = new();
         /// <summary>
         /// These are special rendering options that the API can use to set its state separately from the shaders.

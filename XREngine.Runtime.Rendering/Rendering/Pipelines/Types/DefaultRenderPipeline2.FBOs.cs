@@ -1000,6 +1000,23 @@ public partial class DefaultRenderPipeline2
         };
     }
 
+    private XRFrameBuffer CreateDeferredGBufferPreForwardCopyFBO()
+    {
+        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(
+            DeferredGBufferPreForwardDepthStencilTextureName,
+            CreateDeferredGBufferPreForwardDepthStencilTexture);
+        IFrameBufferAttachement normalAttach = EnsureTextureAttachment(
+            DeferredGBufferPreForwardNormalTextureName,
+            CreateDeferredGBufferPreForwardNormalTexture);
+
+        return new XRFrameBuffer(
+            (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = DeferredGBufferPreForwardCopyFBOName
+        };
+    }
+
     private XRFrameBuffer CreateForwardContactPrePassCopyFBO()
     {
         IFrameBufferAttachement dsAttach = EnsureTextureAttachment(ForwardContactDepthStencilTextureName, CreateForwardContactDepthStencilTexture);

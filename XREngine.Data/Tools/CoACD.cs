@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -10,13 +11,44 @@ namespace XREngine.Data.Tools
     public static class CoACD
     {
         private const string NativeLibraryName = "lib_coacd";
+        private const string MaxConcurrentRunsEnvironmentVariable = "XRE_COACD_MAX_CONCURRENT_RUNS";
+        private static readonly int s_maxConcurrentRuns = ResolveMaxConcurrentRuns();
+        private static readonly SemaphoreSlim s_nativeRunGate = new(s_maxConcurrentRuns, s_maxConcurrentRuns);
 
-        public static Task<IReadOnlyList<ConvexHullMesh>?> CalculateAsync(
+        public static int MaxConcurrentRuns => s_maxConcurrentRuns;
+
+        public static async Task<IReadOnlyList<ConvexHullMesh>?> CalculateAsync(
             Vector3[] positions,
             int[] triangleIndices,
             CoACDParameters? parameters = null,
             CancellationToken cancellationToken = default)
-            => Task.Run(() => Calculate(positions, triangleIndices, parameters), cancellationToken);
+        {
+            ArgumentNullException.ThrowIfNull(positions);
+            ArgumentNullException.ThrowIfNull(triangleIndices);
+
+            await s_nativeRunGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await Task.Factory.StartNew(
+                    () => Calculate(positions, triangleIndices, parameters),
+                    cancellationToken,
+                    TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
+                    TaskScheduler.Default).ConfigureAwait(false);
+            }
+            finally
+            {
+                s_nativeRunGate.Release();
+            }
+        }
+
+        private static int ResolveMaxConcurrentRuns()
+        {
+            string? rawValue = Environment.GetEnvironmentVariable(MaxConcurrentRunsEnvironmentVariable);
+            if (!int.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int configuredValue))
+                return 1;
+
+            return Math.Clamp(configuredValue, 1, Math.Max(1, Environment.ProcessorCount));
+        }
 
         public static IReadOnlyList<ConvexHullMesh>? Calculate(
             Vector3[] positions,

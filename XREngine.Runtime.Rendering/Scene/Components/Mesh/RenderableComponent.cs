@@ -95,6 +95,17 @@ namespace XREngine.Components.Scene.Mesh
             base.OnComponentDeactivated();
         }
 
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(World):
+                    SyncRenderedObjectsWithWorld();
+                    break;
+            }
+        }
+
         #endregion
 
         #region Mesh event handlers
@@ -110,7 +121,7 @@ namespace XREngine.Components.Scene.Mesh
             
             RenderedObjects = [.. RenderedObjects.Where((_, x) => x != i)];
 
-            if (IsActive && ReferenceEquals(ri.WorldInstance, World))
+            if (ReferenceEquals(ri.WorldInstance, World))
                 ri.WorldInstance = null;
         }
 
@@ -124,6 +135,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             ApplyRenderInfoDefaults(ri);
+            item.QueueCurrentRenderMatrixUpdate();
 
             RenderedObjects = [.. RenderedObjects, ri];
 
@@ -274,8 +286,7 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void RegisterRenderInfoWithWorldIfActive(RenderInfo ri)
         {
-            if (IsActive)
-                ri.WorldInstance = World as IRuntimeRenderInfo3DRegistrationTarget;
+            ri.WorldInstance = ActiveRenderWorld;
         }
 
         /// <summary>
@@ -297,10 +308,13 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void SyncRenderedObjectsWithWorld()
         {
-            var world = World as IRuntimeRenderInfo3DRegistrationTarget;
+            var world = ActiveRenderWorld;
+            if (world is not null)
+                QueueCurrentRenderMatrixUpdates();
+
             foreach (var ri in RenderedObjects)
             {
-                if (IsActive && world is not null)
+                if (world is not null)
                 {
                     if (!ReferenceEquals(ri.WorldInstance, world))
                         ri.WorldInstance = world;
@@ -311,6 +325,15 @@ namespace XREngine.Components.Scene.Mesh
                 }
             }
         }
+
+        private void QueueCurrentRenderMatrixUpdates()
+        {
+            foreach (RenderableMesh mesh in Meshes)
+                mesh.QueueCurrentRenderMatrixUpdate();
+        }
+
+        private IRuntimeRenderInfo3DRegistrationTarget? ActiveRenderWorld
+            => IsActiveInHierarchy ? World as IRuntimeRenderInfo3DRegistrationTarget : null;
 
         #endregion
 

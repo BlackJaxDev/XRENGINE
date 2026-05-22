@@ -36,6 +36,9 @@
 - name: Uber Shader Materials
   href: uber-shader-materials.md
 
+- name: Gizmo Rendering
+  href: gizmo-rendering.md
+
 - name: Vulkan Upscale Bridge
   href: vulkan-upscale-bridge.md
 

@@ -129,9 +129,14 @@ namespace XREngine.Timers
         /// </summary>
         public XREvent? PreCollectVisible;
         /// <summary>
-        /// Subscribe to this event to execute logic on the render thread right before buffers are swapped.
+        /// Subscribe to this event to execute parallel visibility collection on the collect visible thread.
         /// </summary>
         public XREvent? CollectVisible;
+        /// <summary>
+        /// Subscribe to this event to execute logic sequentially on the collect visible thread after parallel collection.
+        /// Use this for work that consumes complete visibility data but should not sit in the SwapBuffers publish point.
+        /// </summary>
+        public XREvent? PostCollectVisible;
         /// <summary>
         /// Subscribe to this event to execute render commands that have been swapped for consumption.
         /// </summary>
@@ -562,6 +567,7 @@ namespace XREngine.Timers
                 Collect.LastTimestampTicks = timestampTicks;
                 PreCollectVisible?.Invoke();
                 CollectVisible?.InvokeParallel(minParallelListeners: 2);
+                PostCollectVisible?.Invoke();
                 timestampTicks = TimeTicks();
                 Collect.ElapsedTicks = Math.Max(0L, timestampTicks - Collect.LastTimestampTicks);
             }

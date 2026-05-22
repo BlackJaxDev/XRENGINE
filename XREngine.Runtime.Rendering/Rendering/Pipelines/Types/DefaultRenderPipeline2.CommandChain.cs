@@ -126,6 +126,7 @@ public partial class DefaultRenderPipeline2
             AppendForwardDepthPrePass(c);
             c.Add<VPRC_DepthTest>().Enable = false;
             AppendAmbientOcclusionResolve(c);
+            AppendForwardDepthPrePassGBufferRestore(c);
             AppendLightingPass(c);
             AppendForwardPass(c, enableComputePasses);
             AppendTransparencyPasses(c);
@@ -324,6 +325,25 @@ public partial class DefaultRenderPipeline2
             // When sharing GBuffer targets, skip the dedicated forward-only FBO
             // and render only into the merged GBuffer attachments.
             var shareChoice = new ViewportRenderCommandContainer(this);
+            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                CreateForwardDepthPrePassMergeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                DeferredGBufferPreForwardCopyFBOName,
+                CreateDeferredGBufferPreForwardCopyFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                DeferredGBufferPreForwardCopyFBOName,
+                EReadBufferMode.ColorAttachment0,
+                blitColor: true,
+                blitDepth: true,
+                blitStencil: false,
+                linearFilter: false);
+
             var shareIfElse = shareChoice.Add<VPRC_IfElse>();
             shareIfElse.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
             shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
@@ -345,6 +365,36 @@ public partial class DefaultRenderPipeline2
         }
 
         EndGpuScope(c, "Forward Pre-Pass");
+    }
+
+    private void AppendForwardDepthPrePassGBufferRestore(ViewportRenderCommandContainer c)
+    {
+        BeginGpuScope(c, "Forward Pre-Pass GBuffer Restore");
+        var restoreChoice = c.Add<VPRC_IfElse>();
+        restoreChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+        {
+            var restoreCommands = new ViewportRenderCommandContainer(this);
+            restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                CreateForwardDepthPrePassMergeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                DeferredGBufferPreForwardCopyFBOName,
+                CreateDeferredGBufferPreForwardCopyFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            restoreCommands.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                DeferredGBufferPreForwardCopyFBOName,
+                ForwardDepthPrePassMergeFBOName,
+                EReadBufferMode.ColorAttachment0,
+                blitColor: true,
+                blitDepth: true,
+                blitStencil: false,
+                linearFilter: false);
+            restoreChoice.TrueCommands = restoreCommands;
+        }
+        EndGpuScope(c, "Forward Pre-Pass GBuffer Restore");
     }
 
     /// <summary>Appends the AO blur/resolve switch (HBAO+, GTAO, or default).</summary>
@@ -1557,6 +1607,12 @@ public partial class DefaultRenderPipeline2
             ResizeTextureInternalSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            DeferredGBufferPreForwardDepthStencilTextureName,
+            CreateDeferredGBufferPreForwardDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardContactDepthViewTextureName,
             CreateForwardContactDepthViewTexture,
             t => NeedsRecreateTextureView(t, ForwardContactDepthStencilTextureName),
@@ -1627,6 +1683,12 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardContactNormalTextureName,
             CreateForwardContactNormalTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            DeferredGBufferPreForwardNormalTextureName,
+            CreateDeferredGBufferPreForwardNormalTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 

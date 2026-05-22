@@ -45,6 +45,18 @@ Each invocation downloads `coacd-<version>-cp39-abi3-<suffix>.whl` directly from
 
 `XRENGINE/XREngine.csproj` treats `lib_coacd.dll` as a native asset, so the engine binaries automatically include the dependency after either script runs. Repeat the step for other RIDs if you ship non-Windows builds.
 
+## Runtime concurrency
+
+Managed CoACD requests are globally throttled before entering the native library. The default is one native CoACD run at a time because the CoACD binary uses OpenMP internally, and each run may already spread work across CPU cores. This prevents bulk collider generation from starving unrelated .NET thread-pool work such as render debug-shape population.
+
+For local experiments, override the limit before launching the process:
+
+```powershell
+$env:XRE_COACD_MAX_CONCURRENT_RUNS = "2"
+```
+
+The value is clamped to `1..Environment.ProcessorCount` and is read once when the managed CoACD wrapper is first used.
+
 ## Updating versions
 
 1. Update the default `CoACDRef` property in `XRENGINE/XREngine.csproj` (or pass `/p:CoACDRef=<new-tag>` when building).
