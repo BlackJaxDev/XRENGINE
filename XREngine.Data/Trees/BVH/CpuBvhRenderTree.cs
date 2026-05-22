@@ -17,7 +17,9 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
     private readonly ConcurrentQueue<(T item, TreeCommand command)> _swapCommands = new();
     private readonly ConcurrentQueue<RaycastCommand> _raycastCommands = new();
     private readonly List<T> _items = [];
-    private readonly HashSet<T> _itemSet = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<T, int> _itemIndices = new(ReferenceEqualityComparer.Instance);
+    private readonly List<BufferedSwapCommand> _swapCommandBuffer = [];
+    private readonly Dictionary<T, int> _swapCommandIndices = new(ReferenceEqualityComparer.Instance);
     private readonly List<BvhEntry> _entries = [];
     private readonly List<T> _unboundedItems = [];
     private AABB _bounds;
@@ -356,39 +358,46 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
 
     private SwapExecutionSummary ConsumeSwapCommandsInternal()
     {
+        long drainStart = Stopwatch.GetTimestamp();
+        int drained = DrainSwapCommands();
+        long drainTicks = Stopwatch.GetTimestamp() - drainStart;
+
         int adds = 0;
         int moves = 0;
         int removes = 0;
-        int drained = 0;
         int executed = 0;
         long executeStart = Stopwatch.GetTimestamp();
         long maxCommandTicks = 0L;
         EOctreeCommandKind maxCommandKind = EOctreeCommandKind.None;
 
-        while (_swapCommands.TryDequeue(out (T item, TreeCommand command) command))
+        for (int i = 0; i < _swapCommandBuffer.Count; i++)
         {
-            drained++;
+            BufferedSwapCommand bufferedCommand = _swapCommandBuffer[i];
+            TreeCommand command = bufferedCommand.ToCommand();
+            if (command == TreeCommand.None)
+                continue;
+
             bool commandExecuted = false;
             long commandStart = Stopwatch.GetTimestamp();
 
-            switch (command.command)
+            switch (command)
             {
                 case TreeCommand.Add:
-                    if (AddImmediate(command.item))
+                    if (AddImmediate(bufferedCommand.Item))
                     {
                         adds++;
                         commandExecuted = true;
                     }
                     break;
                 case TreeCommand.Remove:
-                    if (RemoveImmediate(command.item))
+                    if (RemoveImmediate(bufferedCommand.Item))
                     {
                         removes++;
                         commandExecuted = true;
                     }
                     break;
                 case TreeCommand.Move:
-                    if (_itemSet.Contains(command.item))
+                    if (_itemIndices.ContainsKey(bufferedCommand.Item))
                     {
                         _dirty = true;
                         moves++;
@@ -405,9 +414,12 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
             if (commandTicks > maxCommandTicks)
             {
                 maxCommandTicks = commandTicks;
-                maxCommandKind = ToStatsCommandKind(command.command);
+                maxCommandKind = ToStatsCommandKind(command);
             }
         }
+
+        _swapCommandBuffer.Clear();
+        _swapCommandIndices.Clear();
 
         if (adds > 0 || moves > 0 || removes > 0)
             IRenderTree.OctreeStatsHook?.Invoke(adds, moves, removes, 0);
@@ -415,17 +427,43 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
         return new SwapExecutionSummary(
             drained,
             executed,
-            0L,
+            drainTicks,
             Stopwatch.GetTimestamp() - executeStart,
             maxCommandTicks,
             maxCommandKind);
     }
 
+    private int DrainSwapCommands()
+    {
+        _swapCommandBuffer.Clear();
+        _swapCommandIndices.Clear();
+
+        int drained = 0;
+        while (_swapCommands.TryDequeue(out (T item, TreeCommand command) command))
+        {
+            drained++;
+            T item = command.item;
+            if (!_swapCommandIndices.TryGetValue(item, out int index))
+            {
+                _swapCommandIndices[item] = _swapCommandBuffer.Count;
+                _swapCommandBuffer.Add(new BufferedSwapCommand(item, _itemIndices.ContainsKey(item), command.command));
+                continue;
+            }
+
+            BufferedSwapCommand bufferedCommand = _swapCommandBuffer[index];
+            bufferedCommand.Apply(command.command);
+            _swapCommandBuffer[index] = bufferedCommand;
+        }
+
+        return drained;
+    }
+
     private bool AddImmediate(T item)
     {
-        if (!_itemSet.Add(item))
+        if (_itemIndices.ContainsKey(item))
             return false;
 
+        _itemIndices[item] = _items.Count;
         _items.Add(item);
         item.OctreeNode = _unboundedNode;
         _dirty = true;
@@ -434,29 +472,22 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
 
     private bool RemoveImmediate(T item)
     {
-        if (!_itemSet.Remove(item))
+        if (!_itemIndices.TryGetValue(item, out int index))
             return false;
 
-        RemoveItemReference(item);
+        int lastIndex = _items.Count - 1;
+        if (index != lastIndex)
+        {
+            T lastItem = _items[lastIndex];
+            _items[index] = lastItem;
+            _itemIndices[lastItem] = index;
+        }
+
+        _items.RemoveAt(lastIndex);
+        _itemIndices.Remove(item);
         item.OctreeNode = null;
         _dirty = true;
         return true;
-    }
-
-    private void RemoveItemReference(T item)
-    {
-        for (int i = 0; i < _items.Count; i++)
-        {
-            if (!ReferenceEquals(_items[i], item))
-                continue;
-
-            int lastIndex = _items.Count - 1;
-            if (i != lastIndex)
-                _items[i] = _items[lastIndex];
-
-            _items.RemoveAt(lastIndex);
-            return;
-        }
     }
 
     private void Rebuild()
@@ -470,7 +501,7 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
             if (item.WorldCullingVolume is Box bounds)
             {
                 AABB aabb = bounds.GetAABB(true);
-                _entries.Add(new BvhEntry(item, aabb, aabb.Center));
+                _entries.Add(new BvhEntry(item, aabb, aabb.Center, i));
             }
             else
             {
@@ -713,8 +744,14 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
             return EContainment.Contains;
 
         EContainment containment = volume.ContainsAABB(bounds);
-        if (containment == EContainment.Disjoint && volume is AABB aabb && aabb.Intersects(bounds))
-            return EContainment.Intersects;
+        if (containment == EContainment.Disjoint)
+        {
+            if (volume is AABB aabb && aabb.Intersects(bounds))
+                return EContainment.Intersects;
+
+            if (volume is Frustum frustum && frustum.Intersects(bounds))
+                return EContainment.Intersects;
+        }
 
         return containment;
     }
@@ -918,7 +955,69 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
         list.Add((item, data));
     }
 
-    private readonly record struct BvhEntry(T Item, AABB Bounds, Vector3 Center);
+    private struct BufferedSwapCommand
+    {
+        public BufferedSwapCommand(T item, bool initiallyPresent, TreeCommand command)
+        {
+            Item = item;
+            InitiallyPresent = initiallyPresent;
+            Present = initiallyPresent;
+            Moved = false;
+            StructuralChange = false;
+            Apply(command);
+        }
+
+        public readonly T Item;
+        public readonly bool InitiallyPresent;
+        public bool Present;
+        public bool Moved;
+        public bool StructuralChange;
+
+        public void Apply(TreeCommand command)
+        {
+            switch (command)
+            {
+                case TreeCommand.Add:
+                    if (!Present)
+                    {
+                        Present = true;
+                        StructuralChange = true;
+                    }
+                    break;
+                case TreeCommand.Move:
+                    if (Present)
+                        Moved = true;
+                    break;
+                case TreeCommand.Remove:
+                    if (Present)
+                    {
+                        Present = false;
+                        Moved = false;
+                        StructuralChange = true;
+                    }
+                    break;
+            }
+        }
+
+        public readonly TreeCommand ToCommand()
+        {
+            if (InitiallyPresent)
+            {
+                if (!Present)
+                    return TreeCommand.Remove;
+
+                return Moved || StructuralChange
+                    ? TreeCommand.Move
+                    : TreeCommand.None;
+            }
+
+            return Present
+                ? TreeCommand.Add
+                : TreeCommand.None;
+        }
+    }
+
+    private readonly record struct BvhEntry(T Item, AABB Bounds, Vector3 Center, int ItemIndex);
     private readonly record struct SwapExecutionSummary(
         int DrainedCommandCount,
         int ExecutedCommandCount,
@@ -929,6 +1028,7 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
 
     private enum TreeCommand
     {
+        None,
         Add,
         Move,
         Remove,
@@ -1019,6 +1119,11 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
         }
 
         public int Compare(BvhEntry left, BvhEntry right)
-            => left.Center[_axis].CompareTo(right.Center[_axis]);
+        {
+            int result = left.Center[_axis].CompareTo(right.Center[_axis]);
+            return result != 0
+                ? result
+                : left.ItemIndex.CompareTo(right.ItemIndex);
+        }
     }
 }

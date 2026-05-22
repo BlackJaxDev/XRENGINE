@@ -21,7 +21,11 @@ namespace XREngine.Rendering.OpenGL
         {
             private readonly string _threadName;
             private readonly double _workerUnhealthySeconds;
-            private readonly ConcurrentQueue<SharedContextJob> _jobs = new();
+            // Per-priority FIFO buckets (lower priority value drained first). Indexed by (byte)EProgramPriority.
+            // Buckets cover the full enum range so callers can route work without bounds checks.
+            private const int PriorityBucketCount = 6;
+            private readonly ConcurrentQueue<SharedContextJob>[] _jobs;
+            private long _pendingCount;
             private readonly AutoResetEvent _signal = new(false);
             private CancellationTokenSource? _cts;
             private Thread? _thread;
@@ -58,6 +62,9 @@ namespace XREngine.Rendering.OpenGL
                 _workerUnhealthySeconds = workerUnhealthySeconds > 0.0
                     ? workerUnhealthySeconds
                     : DefaultWorkerUnhealthySeconds;
+                _jobs = new ConcurrentQueue<SharedContextJob>[PriorityBucketCount];
+                for (int i = 0; i < PriorityBucketCount; i++)
+                    _jobs[i] = new ConcurrentQueue<SharedContextJob>();
             }
 
             public bool IsRunning => _running && !IsWorkerUnhealthy;
@@ -65,7 +72,7 @@ namespace XREngine.Rendering.OpenGL
             public bool IsDisposeRequested => Volatile.Read(ref _disposeRequested) != 0;
             public bool IsWorkerUnhealthy => _workerUnhealthy || CurrentJobElapsedSeconds >= _workerUnhealthySeconds;
             public double WorkerUnhealthySeconds => _workerUnhealthySeconds;
-            public int PendingCount => _jobs.Count;
+            public int PendingCount => (int)Interlocked.Read(ref _pendingCount);
             public long CompletedCount => Interlocked.Read(ref _completedCount);
             public long FailedCount => Interlocked.Read(ref _failedCount);
             public string? CurrentJobName => _currentJobName;
@@ -188,18 +195,31 @@ namespace XREngine.Rendering.OpenGL
             /// The action receives the shared context's GL API instance.
             /// </summary>
             public void Enqueue(Action<GL> job)
-                => Enqueue(job, null);
+                => Enqueue(job, null, EProgramPriority.Main);
 
             public void Enqueue(Action<GL> job, string? name)
+                => Enqueue(job, name, EProgramPriority.Main);
+
+            /// <summary>
+            /// Queues a GL job tagged with a priority bucket. Lower-valued priorities are
+            /// drained before higher-valued ones; jobs within the same bucket are FIFO.
+            /// </summary>
+            public void Enqueue(Action<GL> job, string? name, EProgramPriority priority)
             {
                 if (Volatile.Read(ref _disposeRequested) != 0)
                     return;
 
+                int bucket = (int)priority;
+                if ((uint)bucket >= (uint)PriorityBucketCount)
+                    bucket = PriorityBucketCount - 1;
+
                 long now = Stopwatch.GetTimestamp();
-                if (_jobs.IsEmpty)
+                // If the queue is currently empty across all buckets, this job is the oldest one.
+                if (Interlocked.Read(ref _pendingCount) == 0)
                     Interlocked.Exchange(ref _oldestQueuedTimestamp, now);
 
-                _jobs.Enqueue(new SharedContextJob(job, name, now));
+                _jobs[bucket].Enqueue(new SharedContextJob(job, name, now));
+                Interlocked.Increment(ref _pendingCount);
                 try
                 {
                     _signal.Set();
@@ -276,7 +296,7 @@ namespace XREngine.Rendering.OpenGL
 
                     while (!token.IsCancellationRequested)
                     {
-                        if (!_jobs.TryDequeue(out var job))
+                        if (!TryDequeueHighestPriority(out var job))
                         {
                             Interlocked.Exchange(ref _oldestQueuedTimestamp, 0);
                             _signal.WaitOne(TimeSpan.FromMilliseconds(5));
@@ -300,10 +320,8 @@ namespace XREngine.Rendering.OpenGL
                             _currentJobName = null;
                             Interlocked.Exchange(ref _currentJobStartTimestamp, 0);
 
-                            if (_jobs.TryPeek(out var oldest))
-                                Interlocked.Exchange(ref _oldestQueuedTimestamp, oldest.EnqueuedTimestamp);
-                            else
-                                Interlocked.Exchange(ref _oldestQueuedTimestamp, 0);
+                            long oldestTs = PeekOldestPendingTimestamp();
+                            Interlocked.Exchange(ref _oldestQueuedTimestamp, oldestTs);
                         }
                     }
                 }
@@ -356,6 +374,43 @@ namespace XREngine.Rendering.OpenGL
 
             private static double StopwatchTicksToSeconds(long ticks)
                 => ticks <= 0L ? 0.0 : (double)ticks / Stopwatch.Frequency;
+
+            /// <summary>
+            /// Drains one job from the lowest-numbered (highest-priority) non-empty bucket.
+            /// Returns false when every bucket is empty.
+            /// </summary>
+            private bool TryDequeueHighestPriority(out SharedContextJob job)
+            {
+                for (int i = 0; i < PriorityBucketCount; i++)
+                {
+                    if (_jobs[i].TryDequeue(out job))
+                    {
+                        Interlocked.Decrement(ref _pendingCount);
+                        return true;
+                    }
+                }
+                job = default;
+                return false;
+            }
+
+            /// <summary>
+            /// Returns the oldest pending job's enqueue timestamp across all priority buckets,
+            /// or 0 when no jobs are pending. Used to keep <see cref="OldestPendingAgeSeconds"/>
+            /// honest in the multi-bucket layout.
+            /// </summary>
+            private long PeekOldestPendingTimestamp()
+            {
+                long oldest = 0;
+                for (int i = 0; i < PriorityBucketCount; i++)
+                {
+                    if (_jobs[i].TryPeek(out var head))
+                    {
+                        if (oldest == 0 || head.EnqueuedTimestamp < oldest)
+                            oldest = head.EnqueuedTimestamp;
+                    }
+                }
+                return oldest;
+            }
 
             private readonly record struct SharedContextJob(Action<GL> Action, string? Name, long EnqueuedTimestamp);
         }

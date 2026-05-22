@@ -1,0 +1,27 @@
+namespace XREngine.Rendering
+{
+    /// <summary>
+    /// Priority bucket for shader-program compile/link work.
+    /// Lower numeric values are served first by the shared-context worker queue
+    /// and any other priority-aware scheduler. Programs in the same bucket are FIFO.
+    /// <para/>
+    /// Default semantics:
+    /// <list type="bullet">
+    /// <item><see cref="Main"/> — main (lit/forward) pass for the active scene view.</item>
+    /// <item><see cref="Forward"/> — secondary forward pass (transparent, overlay).</item>
+    /// <item><see cref="DepthPrepass"/> — depth-only / G-buffer fill prepass.</item>
+    /// <item><see cref="Shadow"/> — shadow map / cascaded / point-light shadow programs.</item>
+    /// <item><see cref="VR"/> — VR stereo variants (OVR_multiview, NV_stereo_view_rendering).</item>
+    /// <item><see cref="Compute"/> — compute shaders (culling, simulation, post).</item>
+    /// </list>
+    /// </summary>
+    public enum EProgramPriority : byte
+    {
+        Main = 0,
+        Forward = 1,
+        DepthPrepass = 2,
+        Shadow = 3,
+        VR = 4,
+        Compute = 5,
+    }
+}

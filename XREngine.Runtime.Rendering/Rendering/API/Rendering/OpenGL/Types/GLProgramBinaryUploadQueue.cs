@@ -22,12 +22,10 @@ namespace XREngine.Rendering.OpenGL
             private readonly ConcurrentDictionary<uint, UploadResult> _completed = new();
             private readonly ConcurrentDictionary<uint, byte> _inFlightProgramIds = new();
             private readonly ConcurrentDictionary<uint, byte> _cancelledProgramIds = new();
-            // Phase 4: dedup uploads by cacheKey so 50 different program instances
-            // sharing the same shader binary do not flood the queue simultaneously.
-            // Reservations are released as soon as the worker has finished writing to
-            // _completed; a sibling caller for the same cacheKey will then be free to
-            // queue its own upload (each instance still needs its own programId loaded
-            // with glProgramBinary).
+            // Phase 4: dedup uploads by cacheKey so many program instances sharing the
+            // same shader binary do not flood the queue simultaneously. Reservations
+            // stay held until the render thread consumes the completed upload; by then
+            // the successful program can be registered for shared-program reuse.
             private readonly ConcurrentDictionary<string, byte> _inFlightCacheKeys = new();
             private long _coalescedCount;
             private int _inFlight;
@@ -88,6 +86,9 @@ namespace XREngine.Rendering.OpenGL
                 return false;
             }
 
+            public bool IsCacheKeyReserved(string cacheKey)
+                => !string.IsNullOrEmpty(cacheKey) && _inFlightCacheKeys.ContainsKey(cacheKey);
+
             /// <summary>
             /// Releases a cacheKey reservation made via <see cref="TryReserveCacheKey"/>.
             /// Safe to call with an unknown key.
@@ -117,9 +118,12 @@ namespace XREngine.Rendering.OpenGL
             /// Check <see cref="CanEnqueue"/> before calling to respect the in-flight limit.
             /// </summary>
             public void EnqueueUpload(uint programId, byte[] binary, GLEnum format, uint length, ulong hash)
-                => EnqueueUpload(programId, binary, format, length, hash, hash.ToString("X16"));
+                => EnqueueUpload(programId, binary, format, length, hash, hash.ToString("X16"), EProgramPriority.Main);
 
             public void EnqueueUpload(uint programId, byte[] binary, GLEnum format, uint length, ulong hash, string cacheKey)
+                => EnqueueUpload(programId, binary, format, length, hash, cacheKey, EProgramPriority.Main);
+
+            public void EnqueueUpload(uint programId, byte[] binary, GLEnum format, uint length, ulong hash, string cacheKey, EProgramPriority priority)
             {
                 LogRenderingUploadEvent(
                     "ENQUEUE",
@@ -244,17 +248,13 @@ namespace XREngine.Rendering.OpenGL
                         Interlocked.Increment(ref _completedCount);
                     else
                         Interlocked.Increment(ref _failedCount);
-                    // Phase 4: release the cacheKey now that the binary bytes have
-                    // landed (or failed). A sibling caller can pick up its own upload
-                    // on the next frame without deadlock.
-                    _inFlightCacheKeys.TryRemove(cacheKey, out _);
                     if (_cancelledProgramIds.TryRemove(programId, out _))
                     {
-                        CompleteCancelledUpload(programId);
+                        CompleteCancelledUpload(programId, cacheKey);
                         return;
                     }
                     _completed[programId] = result;
-                }, $"ProgramBinaryUpload:{cacheKey}");
+                }, $"ProgramBinaryUpload:{cacheKey}", priority);
             }
 
             public bool CancelUpload(uint programId)
@@ -263,12 +263,26 @@ namespace XREngine.Rendering.OpenGL
                     return false;
 
                 _cancelledProgramIds[programId] = 0;
-                if (_completed.TryRemove(programId, out _))
+                if (_completed.TryRemove(programId, out UploadResult completedResult))
                 {
                     _cancelledProgramIds.TryRemove(programId, out _);
-                    CompleteCancelledUpload(programId);
+                    CompleteCancelledUpload(programId, completedResult.CacheKey);
                 }
                 return true;
+            }
+
+            public void AbandonUpload(uint programId, string? cacheKey)
+            {
+                if (programId != 0)
+                    _cancelledProgramIds[programId] = 0;
+
+                if (programId != 0 && _completed.TryRemove(programId, out UploadResult completedResult))
+                    cacheKey ??= completedResult.CacheKey;
+
+                ReleaseCacheKey(cacheKey);
+
+                if (programId != 0 && _inFlightProgramIds.TryRemove(programId, out _))
+                    Interlocked.Decrement(ref _inFlight);
             }
 
             /// <summary>
@@ -282,6 +296,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     _cancelledProgramIds.TryRemove(programId, out _);
                     _inFlightProgramIds.TryRemove(programId, out _);
+                    ReleaseCacheKey(result.CacheKey);
                     Interlocked.Decrement(ref _inFlight);
                     return true;
                 }
@@ -296,8 +311,9 @@ namespace XREngine.Rendering.OpenGL
                     Interlocked.Decrement(ref _inFlight);
             }
 
-            private void CompleteCancelledUpload(uint programId)
+            private void CompleteCancelledUpload(uint programId, string cacheKey)
             {
+                ReleaseCacheKey(cacheKey);
                 if (_inFlightProgramIds.TryRemove(programId, out _))
                     Interlocked.Decrement(ref _inFlight);
             }

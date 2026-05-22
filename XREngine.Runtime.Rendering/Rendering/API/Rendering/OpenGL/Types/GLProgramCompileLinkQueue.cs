@@ -27,7 +27,10 @@ namespace XREngine.Rendering.OpenGL
         public sealed class GLProgramCompileLinkQueue
         {
             private readonly GLSharedContext[] _workers;
+            private readonly bool _completionStatusPollingEnabled;
             private readonly ConcurrentDictionary<uint, CompileResult> _completed = new();
+            private readonly ConcurrentDictionary<uint, byte> _inFlightProgramIds = new();
+            private readonly ConcurrentDictionary<uint, byte> _cancelledProgramIds = new();
             private int _roundRobinCursor;
             private int _inFlight;
             private long _completedCount;
@@ -37,6 +40,10 @@ namespace XREngine.Rendering.OpenGL
             private const int WorkerCompletionFastPollIterations = 64;
             private const double WorkerCompletionStuckFlushMilliseconds = 5000.0;
             private const double WorkerCompletionHardAbandonMilliseconds = 30000.0;
+            private static readonly bool DisableCompletionPollingForSharedContextWorkerPrograms = string.Equals(
+                Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_DISABLE_COMPLETION_POLLING"),
+                "1",
+                StringComparison.Ordinal);
             private static readonly bool SuppressParallelCompileForSingleStageWorkerPrograms =
                 string.Equals(
                     Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL"),
@@ -52,11 +59,16 @@ namespace XREngine.Rendering.OpenGL
             public const int MaxInFlight = 4;
 
             public GLProgramCompileLinkQueue(GLSharedContext sharedContext)
-                : this(new[] { sharedContext })
+                : this(new[] { sharedContext }, completionStatusPollingEnabled: false)
             {
             }
 
             public GLProgramCompileLinkQueue(IReadOnlyList<GLSharedContext> sharedContexts)
+                : this(sharedContexts, completionStatusPollingEnabled: false)
+            {
+            }
+
+            internal GLProgramCompileLinkQueue(IReadOnlyList<GLSharedContext> sharedContexts, bool completionStatusPollingEnabled)
             {
                 if (sharedContexts is null || sharedContexts.Count == 0)
                     throw new ArgumentException("At least one shared context is required.", nameof(sharedContexts));
@@ -64,6 +76,10 @@ namespace XREngine.Rendering.OpenGL
                 _workers = new GLSharedContext[sharedContexts.Count];
                 for (int i = 0; i < sharedContexts.Count; i++)
                     _workers[i] = sharedContexts[i] ?? throw new ArgumentNullException(nameof(sharedContexts));
+
+                _completionStatusPollingEnabled =
+                    completionStatusPollingEnabled &&
+                    !DisableCompletionPollingForSharedContextWorkerPrograms;
             }
 
             public int WorkerCount => _workers.Length;
@@ -178,11 +194,20 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void EnqueueCompileAndLink(uint programId, ShaderInput[] shaders)
             {
-                if (!TryEnqueueCompileAndLink(programId, shaders, out string? rejectReason))
+                if (!TryEnqueueCompileAndLink(programId, shaders, EProgramPriority.Main, out string? rejectReason))
                     throw new InvalidOperationException(rejectReason ?? "Unable to enqueue OpenGL compile/link job.");
             }
 
             public bool TryEnqueueCompileAndLink(uint programId, ShaderInput[] shaders, out string? rejectReason)
+                => TryEnqueueCompileAndLink(programId, shaders, EProgramPriority.Main, out rejectReason);
+
+            /// <summary>
+            /// Queues a compile/attach/link job tagged with a priority bucket. Lower-valued
+            /// priorities (<see cref="EProgramPriority.Main"/>) are linked before higher-valued
+            /// background work (<see cref="EProgramPriority.Shadow"/>, <see cref="EProgramPriority.VR"/>,
+            /// <see cref="EProgramPriority.Compute"/>) inside the shared-context worker.
+            /// </summary>
+            public bool TryEnqueueCompileAndLink(uint programId, ShaderInput[] shaders, EProgramPriority priority, out string? rejectReason)
             {
                 ShaderInputSummary summary = SummarizeShaderInputs(shaders);
                 if (ContainsKnownAsyncLinkHazard(shaders))
@@ -216,27 +241,37 @@ namespace XREngine.Rendering.OpenGL
                     programId,
                     summary,
                     $"inFlight={InFlightCount}/{MaxInFlightTotal} workers={_workers.Length} pickedPending={worker.PendingCount}");
+                _inFlightProgramIds[programId] = 0;
                 Interlocked.Increment(ref _inFlight);
                 worker.Enqueue(gl =>
                 {
                     LogRenderingQueueEvent("WORKER_BEGIN", programId, summary, null);
 
-                    // Keep worker-side parallel shader compile enabled by default.
-                    // The previous default suppressed it for single-stage programs,
-                    // but cold uber fragment compiles then sat pending for minutes
-                    // without ever publishing a WORKER_READY result. The render
-                    // thread still never links synchronously; this only changes how
-                    // the shared context worker lets the driver run its compiler.
-                    // Set XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1 to restore
-                    // the old workaround for driver builds that specifically need it.
+                    // When worker contexts run with ARB/KHR parallel shader compile
+                    // enabled, GL_COMPILE_STATUS/GL_LINK_STATUS become blocking waits.
+                    // On some drivers those waits hold a driver-wide compiler lock and
+                    // stall unrelated render-thread GL calls (for example glCreateProgram).
+                    // Poll GL_COMPLETION_STATUS first so status queries are only issued
+                    // after the driver says the compile/link is finished.
+                    bool useWorkerCompletionPolling = _completionStatusPollingEnabled;
                     bool hazardSuppressParallel = ShouldSuppressParallelCompileForWorkerProgram(shaders);
                     ArbParallelShaderCompile? hazardArbExt = null;
                     if (hazardSuppressParallel && gl.TryGetExtension(out ArbParallelShaderCompile arbForHazard))
                     {
                         hazardArbExt = arbForHazard;
-                        try { arbForHazard.MaxShaderCompilerThreads(0u); }
+                        try
+                        {
+                            MeasureRenderingWorkerGlCall(
+                                "glMaxShaderCompilerThreadsARB",
+                                programId,
+                                0,
+                                null,
+                                () => arbForHazard.MaxShaderCompilerThreads(0u),
+                                "worker=source-compile-thread-suppression threads=0");
+                        }
                         catch { hazardArbExt = null; }
                     }
+                    bool workerCompilerThreadsSuppressed = hazardArbExt is not null;
 
                     long compileStartTimestamp = Stopwatch.GetTimestamp();
                     uint[] shaderIds = new uint[shaders.Length];
@@ -279,7 +314,7 @@ namespace XREngine.Rendering.OpenGL
                         // starves the main GL context (no render-thread GL calls progress
                         // until the worker's query returns). Polling with a short sleep
                         // releases that lock between queries.
-                        if (!PollCompletionStatusBlocking(
+                        if (useWorkerCompletionPolling && !PollCompletionStatusBlocking(
                             gl,
                             worker,
                             programId,
@@ -296,16 +331,27 @@ namespace XREngine.Rendering.OpenGL
                                 programId,
                                 summary,
                                 $"compileMs={compileMilliseconds:F2} error={errorLog}");
-                            _completed[programId] = new CompileResult(
-                                CompileStatus.CompileFailed,
-                                errorLog,
-                                compileMilliseconds,
-                                0.0);
+                            PublishCompletedResult(
+                                programId,
+                                new CompileResult(
+                                    CompileStatus.CompileFailed,
+                                    errorLog,
+                                    compileMilliseconds,
+                                    0.0));
                             Interlocked.Increment(ref _failedCount);
 
                             if (hazardArbExt is not null)
                             {
-                                try { hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu); }
+                                try
+                                {
+                                    MeasureRenderingWorkerGlCall(
+                                        "glMaxShaderCompilerThreadsARB",
+                                        programId,
+                                        0,
+                                        null,
+                                        () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
+                                        "worker=source-compile-thread-restore threads=implementation-max");
+                                }
                                 catch { /* best-effort restore */ }
                             }
                             return;
@@ -356,14 +402,24 @@ namespace XREngine.Rendering.OpenGL
                             programId,
                             summary,
                             $"compileMs={compileMilliseconds:F2} error={errorLog ?? "<none>"}");
-                        _completed[programId] = new CompileResult(CompileStatus.CompileFailed, errorLog, compileMilliseconds, 0.0);
+                        PublishCompletedResult(
+                            programId,
+                            new CompileResult(CompileStatus.CompileFailed, errorLog, compileMilliseconds, 0.0));
                         Interlocked.Increment(ref _failedCount);
 
-                        // Restore parallel compile on the worker context if we
-                        // suppressed it for the hazardous single-stage shape.
+                        // Restore compiler thread count if the legacy suppression path changed it.
                         if (hazardArbExt is not null)
                         {
-                            try { hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu); }
+                            try
+                            {
+                                MeasureRenderingWorkerGlCall(
+                                    "glMaxShaderCompilerThreadsARB",
+                                    programId,
+                                    0,
+                                    null,
+                                    () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
+                                    "worker=source-compile-thread-restore threads=implementation-max");
+                            }
                             catch { /* best-effort restore */ }
                         }
                         return;
@@ -392,7 +448,11 @@ namespace XREngine.Rendering.OpenGL
                         0,
                         null,
                         () => gl.LinkProgram(programId),
-                        hazardSuppressParallel ? "worker=source-link parallel-suppressed" : "worker=source-link");
+                        workerCompilerThreadsSuppressed
+                            ? "worker=source-link compiler-threads-suppressed"
+                            : useWorkerCompletionPolling
+                                ? "worker=source-link completion-polling"
+                                : "worker=source-link completion-polling-disabled");
 
                     // Poll non-blocking GL_COMPLETION_STATUS_ARB before issuing the
                     // blocking GL_LINK_STATUS query. The blocking query holds a
@@ -400,7 +460,7 @@ namespace XREngine.Rendering.OpenGL
                     // from making any progress for the entire duration of a cold
                     // link (observed: 109+ seconds on a 387 KB single-stage
                     // separable fragment program), freezing the render thread.
-                    if (!PollCompletionStatusBlocking(
+                    if (useWorkerCompletionPolling && !PollCompletionStatusBlocking(
                         gl,
                         worker,
                         programId,
@@ -417,16 +477,27 @@ namespace XREngine.Rendering.OpenGL
                             programId,
                             summary,
                             $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMillisecondsAbandoned:F2} error={abandonedLinkError}");
-                        _completed[programId] = new CompileResult(
-                            CompileStatus.LinkFailed,
-                            abandonedLinkError,
-                            compileMillisecondsCompleted,
-                            linkMillisecondsAbandoned);
+                        PublishCompletedResult(
+                            programId,
+                            new CompileResult(
+                                CompileStatus.LinkFailed,
+                                abandonedLinkError,
+                                compileMillisecondsCompleted,
+                                linkMillisecondsAbandoned));
                         Interlocked.Increment(ref _failedCount);
 
                         if (hazardArbExt is not null)
                         {
-                            try { hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu); }
+                            try
+                            {
+                                MeasureRenderingWorkerGlCall(
+                                    "glMaxShaderCompilerThreadsARB",
+                                    programId,
+                                    0,
+                                    null,
+                                    () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
+                                    "worker=source-compile-thread-restore threads=implementation-max");
+                            }
                             catch { /* best-effort restore */ }
                         }
                         return;
@@ -453,11 +524,19 @@ namespace XREngine.Rendering.OpenGL
                             "worker=source-link-log");
                     }
 
-                    // Restore parallel compile on the worker context if we
-                    // suppressed it for the hazardous single-stage compile/link.
+                    // Restore compiler thread count if the legacy suppression path changed it.
                     if (hazardArbExt is not null)
                     {
-                        try { hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu); }
+                        try
+                        {
+                            MeasureRenderingWorkerGlCall(
+                                "glMaxShaderCompilerThreadsARB",
+                                programId,
+                                0,
+                                null,
+                                () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
+                                "worker=source-compile-thread-restore threads=implementation-max");
+                        }
                         catch { /* best-effort restore */ }
                     }
 
@@ -498,16 +577,18 @@ namespace XREngine.Rendering.OpenGL
                         summary,
                         $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMilliseconds:F2} error={linkError ?? "<none>"}");
 
-                    _completed[programId] = new CompileResult(
-                        linkStatus != 0 ? CompileStatus.Success : CompileStatus.LinkFailed,
-                        linkError,
-                        compileMillisecondsCompleted,
-                        linkMilliseconds);
+                    PublishCompletedResult(
+                        programId,
+                        new CompileResult(
+                            linkStatus != 0 ? CompileStatus.Success : CompileStatus.LinkFailed,
+                            linkError,
+                            compileMillisecondsCompleted,
+                            linkMilliseconds));
                     if (linkStatus != 0)
                         Interlocked.Increment(ref _completedCount);
                     else
                         Interlocked.Increment(ref _failedCount);
-                }, $"ProgramSourceCompile:{programId}");
+                }, $"ProgramSourceCompile:{programId}", priority);
                 return true;
             }
 
@@ -613,6 +694,42 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
+            /// Cancels ownership of a queued source compile/link result. If the worker
+            /// already completed, the result is consumed immediately; otherwise the worker
+            /// drops the result when it finishes so the in-flight slot is released.
+            /// </summary>
+            public bool CancelCompileAndLink(uint programId)
+            {
+                if (programId == 0 || !_inFlightProgramIds.ContainsKey(programId))
+                    return false;
+
+                _cancelledProgramIds[programId] = 0;
+                if (_completed.TryRemove(programId, out _))
+                {
+                    _cancelledProgramIds.TryRemove(programId, out _);
+                    CompleteCancelledCompile(programId);
+                }
+                return true;
+            }
+
+            /// <summary>
+            /// Returns true once a worker has published a source compile/link result for
+            /// <paramref name="programId"/> but before the owning program consumes it.
+            /// </summary>
+            public bool HasResult(uint programId)
+                => programId != 0 && _completed.ContainsKey(programId);
+
+            private void PublishCompletedResult(uint programId, CompileResult result)
+            {
+                _completed[programId] = result;
+                if (_cancelledProgramIds.TryRemove(programId, out _))
+                {
+                    _completed.TryRemove(programId, out _);
+                    CompleteCancelledCompile(programId);
+                }
+            }
+
+            /// <summary>
             /// Checks whether an async compile+link has completed for the given program.
             /// The result is consumed (removed) on retrieval, freeing an in-flight slot.
             /// </summary>
@@ -620,10 +737,18 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (_completed.TryRemove(programId, out result))
                 {
+                    _cancelledProgramIds.TryRemove(programId, out _);
+                    _inFlightProgramIds.TryRemove(programId, out _);
                     Interlocked.Decrement(ref _inFlight);
                     return true;
                 }
                 return false;
+            }
+
+            private void CompleteCancelledCompile(uint programId)
+            {
+                if (_inFlightProgramIds.TryRemove(programId, out _))
+                    Interlocked.Decrement(ref _inFlight);
             }
 
             public static bool ContainsKnownAsyncLinkHazard(ReadOnlySpan<ShaderInput> shaders)
@@ -657,13 +782,10 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
-            /// True when the opt-in single-stage worker workaround is enabled
-            /// for shapes that have historically been sensitive to threaded
-            /// driver compilation.
+            /// True when the legacy worker-side parallel compile suppression path is explicitly requested.
             /// </summary>
             private static bool ShouldSuppressParallelCompileForWorkerProgram(ReadOnlySpan<ShaderInput> shaders)
-                => SuppressParallelCompileForSingleStageWorkerPrograms &&
-                   IsSingleStageSeparableGraphicsHazard(shaders);
+                => SuppressParallelCompileForSingleStageWorkerPrograms && IsSingleStageSeparableGraphicsHazard(shaders);
 
             private static bool IsSingleStageSeparableGraphicsHazard(ReadOnlySpan<ShaderInput> shaders)
             {

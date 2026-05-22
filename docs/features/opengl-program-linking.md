@@ -40,9 +40,9 @@ Source compile/link selection is controlled by
 
 | Strategy | Behavior |
 | --- | --- |
-| `Auto` | Prefer driver-parallel compile/link when the startup probe passes; otherwise use the shared-context source queue when available. Known async-link hazards always bypass driver-parallel; graphics hazards still use the shared-context lane when available. |
+| `Auto` | Prefer the shared-context source queue when available. Render-thread driver-parallel source linking is disabled by default even when the startup probe passes, because driver-parallel `glLinkProgram` and completion queries can still wedge the render context. |
 | `SharedContext` | Compile and link source programs on the shared-context source worker, including compute programs. |
-| `DriverParallel` | Use `GL_ARB_parallel_shader_compile` or `GL_KHR_parallel_shader_compile` after the extension/probe gate. Hazards skip this lane and try shared-context; if no async source lane is available, they stay pending. |
+| `DriverParallel` | Requests `GL_ARB_parallel_shader_compile` or `GL_KHR_parallel_shader_compile`, but runtime render-thread source builds still route through the shared-context queue unless `XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1` is set. Hazards skip this lane and try shared-context; if no async source lane is available, they stay pending. |
 | `Synchronous` | Compile and link source programs on the render thread. This does not disable async binary uploads; `AsyncProgramBinaryUpload` controls that lane. |
 
 Related settings:
@@ -57,10 +57,16 @@ Related settings:
   worker count. The runtime uses one worker by default for OpenGL driver
   startup stability; values above one require
   `XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1`.
-- `XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1` restores the older worker
-  workaround that sets shader compiler thread count to zero around single-stage
-  source jobs. Leave it unset by default; cold uber fragment programs have been
-  observed to remain pending for minutes when that workaround is active.
+- `XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1` opts back into the older
+  render-thread driver-parallel source lane for local driver experiments. Leave
+  it unset for editor/runtime work.
+- `XRE_SHARED_CONTEXT_ENABLE_PARALLEL_COMPILE=1` opts the shared-context source
+  worker back into worker-side ARB/KHR parallel compile/link polling. Leave it
+  unset by default; the worker otherwise avoids `GL_COMPLETION_STATUS_ARB`
+  polling and does not change the driver's compiler-thread setting per job.
+- `XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1` remains as a legacy narrower
+  single-stage suppression flag when worker-side parallel compile has been
+  explicitly re-enabled.
 - `MaxAsyncShaderProgramsPerFrame` caps how many pending program builds are
   advanced per frame.
 
@@ -84,10 +90,10 @@ else if program is a known driver-parallel hazard:
         enqueue source compile/link on the shared-context worker
     else:
         leave source build pending
-else if strategy is Auto and driver-parallel probe passed:
-    use driver-parallel source compile/link
 else if selected/fallback shared-context source queue is available:
-    enqueue source compile/link unless the queue is at capacity
+  enqueue source compile/link unless the queue is at capacity
+else if render-thread driver-parallel source linking is explicitly opted in and the probe passed:
+    use driver-parallel source compile/link
 else:
     leave source build pending
 ```
@@ -132,14 +138,16 @@ on the main render context for as long as the worker is waiting. Cold links
 of large imported-model fragment shaders have been observed to take more than
 a hundred seconds, completely freezing the engine.
 
-Instead, `GLProgramCompileLinkQueue.PollCompletionStatusBlocking` polls
-`GL_COMPLETION_STATUS_ARB` (a non-blocking query exposed by
-`GL_ARB_parallel_shader_compile`) on the worker context. The first ~64 polls
-spin with `Thread.Yield()` so warm/cached cases resolve in microseconds; after
-that the worker sleeps 1 ms between polls so the driver can release its
-compiler lock and let the render context make progress. Once the driver
-reports completion, the regular status query runs immediately because the
-work is already done.
+By default, the worker skips `GL_COMPLETION_STATUS_ARB` polling and leaves the
+driver's compiler-thread setting alone. This keeps the potentially long
+compile/link wait on the shared context while avoiding both the completion-query
+path and the per-job `glMaxShaderCompilerThreadsARB` toggle, which can block
+behind in-flight driver compiler work before the worker even starts compiling a
+new program. `GLProgramCompileLinkQueue.PollCompletionStatusBlocking` is
+retained for local experiments when `XRE_SHARED_CONTEXT_ENABLE_PARALLEL_COMPILE=1`
+is set; in that opt-in mode it polls `GL_COMPLETION_STATUS_ARB`, yields for the
+first warm-cache burst, then sleeps 1 ms between polls before issuing the final
+regular status query.
 
 ### Worker unhealthy-job threshold
 
@@ -155,10 +163,8 @@ Cold links of large imported-model uber shaders are legitimately slow on
 first run (60-120 s before the per-program binary cache is populated), so the
 shared context backing the compile/link queue is constructed with a much
 longer threshold (600 s). That keeps the queue available for the entire
-duration of the cold link, prevents hazardous fragment programs from being
-forced onto the synchronous render-thread path mid-link, and avoids the
-driver-lock-induced render-thread stalls on `glMaxShaderCompilerThreadsARB`
-and `glCreateShader`. Other shared contexts (binary upload, sparse texture
+duration of the cold link and prevents hazardous fragment programs from being
+forced onto the synchronous render-thread path mid-link. Other shared contexts (binary upload, sparse texture
 uploads) keep the default threshold so genuine hangs are still detected.
 
 ## Binary Cache
@@ -225,10 +231,10 @@ GLRenderProgram.PollPendingAsyncPrograms(
 ```
 
 The pump advances async binary uploads, shared-context source results,
-driver-parallel `GL_COMPLETION_STATUS` polling, queue-backpressure retries,
-and deferred old-program deletes. Synchronous fallback work is budgeted so a
-cold-start or import burst does not drain an unbounded shader backlog in one
-frame.
+queue-backpressure retries, deferred old-program deletes, and any opt-in
+driver-parallel `GL_COMPLETION_STATUS` polling. Synchronous fallback work is
+budgeted so a cold-start or import burst does not drain an unbounded shader
+backlog in one frame.
 
 ## Rendering Log Diagnostics
 

@@ -174,26 +174,22 @@ namespace XREngine.Scene.Components.Editing
 
             ModelComponent translationModelComp = skelRoot.AddComponent<ModelComponent>("Translation Model")!;
             translationModelComp.Model = new Model(translationMeshes);
-            translationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
-            translationModelComp.MeshCastsShadows = false;
+            ConfigureGizmoModel(translationModelComp);
             _translationModel = translationModelComp;
 
             ModelComponent nonRotationModelComp = skelRoot.AddComponent<ModelComponent>("Non-Rotation Model")!;
             nonRotationModelComp.Model = new Model(nonRotationMeshes);
-            nonRotationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
-            nonRotationModelComp.MeshCastsShadows = false;
+            ConfigureGizmoModel(nonRotationModelComp);
             _nonRotationModel = nonRotationModelComp;
 
             ModelComponent scaleModelComp = skelRoot.AddComponent<ModelComponent>("Scale Model")!;
             scaleModelComp.Model = new Model(scaleMeshes);
-            scaleModelComp.MeshLayer = DefaultLayers.GizmosIndex;
-            scaleModelComp.MeshCastsShadows = false;
+            ConfigureGizmoModel(scaleModelComp);
             _scaleModel = scaleModelComp;
 
             ModelComponent rotationModelComp = skelRoot.AddComponent<ModelComponent>("Rotation Model")!;
             rotationModelComp.Model = new Model(rotationMeshes);
-            rotationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
-            rotationModelComp.MeshCastsShadows = false;
+            ConfigureGizmoModel(rotationModelComp);
             _rotationModel = rotationModelComp;
 
             SceneNode screenNode = skelRoot.NewChild();
@@ -203,17 +199,30 @@ namespace XREngine.Scene.Components.Editing
 
             ModelComponent screenRotationModelComp = screenNode.AddComponent<ModelComponent>("Screen Rotation Model")!;
             screenRotationModelComp.Model = new Model(screenRotationMeshes);
-            screenRotationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
-            screenRotationModelComp.MeshCastsShadows = false;
+            ConfigureGizmoModel(screenRotationModelComp);
             _screenRotationModel = screenRotationModelComp;
 
             ModelComponent screenTranslationModelComp = screenNode.AddComponent<ModelComponent>("Screen Translation Model")!;
             screenTranslationModelComp.Model = new Model(screenTranslationMeshes);
-            screenTranslationModelComp.MeshLayer = DefaultLayers.GizmosIndex;
-            screenTranslationModelComp.MeshCastsShadows = false;
+            ConfigureGizmoModel(screenTranslationModelComp);
             _screenTranslationModel = screenTranslationModelComp;
 
             ModeChanged();
+        }
+
+        private static void ConfigureGizmoModel(ModelComponent component)
+        {
+            component.MeshLayer = DefaultLayers.GizmosIndex;
+            component.MeshCastsShadows = false;
+
+            foreach (RenderableMesh mesh in component.Meshes)
+            {
+                foreach (RenderableMesh.RenderableLOD lod in mesh.LODs)
+                {
+                    lod.Renderer.GenerationPriority = EMeshGenerationPriority.Interactive;
+                    lod.Renderer.GenerateAsync = true;
+                }
+            }
         }
 
         private void GenerateMeshes(

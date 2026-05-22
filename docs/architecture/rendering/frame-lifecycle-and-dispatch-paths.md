@@ -48,7 +48,7 @@ The important design rule is that gameplay mutation and render submission do not
 | `XRViewport` | Per-camera entry point for `CollectVisible`, `SwapBuffers`, and `Render`. Owns a render pipeline instance. |
 | `VisualScene` | Scene-level bridge between world content and renderable proxies. Owns `GPUScene` plus the scene tree. |
 | `VisualScene2D` | 2D scene collection using a quadtree. |
-| `VisualScene3D` | 3D scene collection using a CPU octree or a GPU command mirror, depending on dispatch mode. |
+| `VisualScene3D` | 3D scene collection using a CPU BVH/octree or a GPU command mirror, depending on dispatch mode. |
 | `RenderCommandCollection` | Per-viewport command buckets for render passes. Double-buffered between collect and render. |
 | `GPUScene` | GPU-resident scene command storage, mesh atlas, material/mesh ID tables, and optional internal command BVH. |
 | `GPURenderPassCollection` | GPU culling, optional BVH traversal, SoA extraction, batching, indirect buffer generation, and per-pass diagnostics. |
@@ -286,7 +286,7 @@ So there are two distinct collection layers in GPU mode:
 What it is:
 
 - A scene-level GPU BVH built from command AABBs/bounds.
-- Used by GPU culling passes, not by the CPU octree collection path.
+- Used by GPU culling passes, not by the CPU scene collection path.
 
 What it is not:
 
@@ -430,7 +430,7 @@ This is the effective strategy for mesh pass submission. It is resolved by `Engi
 
 Effects:
 
-- changes `VisualScene3D` behavior between CPU octree collection and GPU-scene-oriented collection
+- changes `VisualScene3D` behavior between CPU scene collection and GPU-scene-oriented collection
 - changes mesh pass execution between CPU traditional, instrumented GPU indirect, zero-readback GPU indirect, and meshlet submission
 - is propagated into render pipelines by rendering settings helpers
 - suppresses silent per-submesh CPU draw fallback in GPU mesh passes; skipped opt-out meshes are warned instead
@@ -534,9 +534,9 @@ Viewport responsibilities:
 If you need the practical, non-aspirational summary of the engine as it exists today:
 
 - 2D scene visibility uses a quadtree.
-- 3D CPU scene visibility uses an octree by default, with an opt-in CPU BVH via engine setting, project override, or `XRE_CPU_SCENE_CULLING_STRUCTURE=Bvh`.
+- 3D CPU scene visibility uses a CPU BVH by default, with an opt-in octree via engine setting, project override, or `XRE_CPU_SCENE_CULLING_STRUCTURE=Octree`.
 - GPU-driven rendering uses `GPUScene` plus `GPURenderPassCollection` for later GPU culling and indirect generation.
-- GPU BVH exists and is wired for GPU command culling, but it is optional and not the same thing as replacing the CPU octree scene tree.
+- GPU BVH exists and is wired for GPU command culling, but it is optional and not the same thing as choosing the CPU BVH/octree scene tree.
 - Per-mesh CPU BVHs exist for picking/raycast/skinned-mesh work.
 - Meshlet infrastructure exists, with `GpuMeshletZeroReadback` as the production zero-readback strategy and `GpuMeshletInstrumented` as the diagnostics strategy. Both require production indirect-count mesh task dispatch; unsupported requests fall back visibly through the mesh submission strategy resolver.
 

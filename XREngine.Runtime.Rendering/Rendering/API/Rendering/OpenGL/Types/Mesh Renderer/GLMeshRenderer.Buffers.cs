@@ -447,7 +447,7 @@ namespace XREngine.Rendering.OpenGL
                 var mesh = Mesh;
                 if (BuffersBound)
                 {
-                    if (!VertexArrayBindingsStale())
+                    if (ReferenceEquals(_boundVertexProgram, program) && !VertexArrayBindingsStale())
                     {
                         Dbg("BindBuffers early-out: already bound", "Buffers");
                         return;
@@ -513,6 +513,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 BuffersBound = true;
+                _boundVertexProgram = program;
                 Dbg("BindBuffers: complete", "Buffers");
             }
 

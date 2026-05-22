@@ -346,7 +346,7 @@ namespace XREngine.Scene
             }
             else
             {
-                Debug.LogWarning("[VisualScene3D] GPU BVH disabled; falling back to CPU octree traversal.");
+                Debug.LogWarning("[VisualScene3D] GPU BVH disabled; falling back to configured CPU scene traversal.");
                 BvhRaycasts.SetEnabled(false, "disabled by settings");
             }
         }

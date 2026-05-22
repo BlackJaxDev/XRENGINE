@@ -25,8 +25,16 @@ namespace XREngine.Rendering.OpenGL
                 if (!_shaderCache.TryRemove(item, out var shader) || shader is null)
                     return;
 
-                shader.Destroy();
+                // Decouple this program from the shared GLShader first. ShaderUncached removes
+                // `this` from shader.ActivePrograms, which is the per-GLShader refcount.
                 ShaderUncached(shader);
+
+                // The same GLShader instance is shared across every GLRenderProgram that uses the
+                // underlying XRShader (resolved via Renderer.GenericToAPI<GLShader>). Only destroy
+                // the shared GL shader object once the last program drops it; otherwise siblings
+                // would lose their compiled shader and incur a forced recompile on next link.
+                if (shader.ActivePrograms.Count == 0)
+                    shader.Destroy();
             }
 
             private void ShaderAdded(XRShader item)
@@ -519,6 +527,10 @@ namespace XREngine.Rendering.OpenGL
             private const double AsyncShaderHardAbandonSeconds = 30.0;
             private const double SlowLinkPreparationWarningMilliseconds = 25.0;
             private const double SlowShaderLinkSourceDumpMilliseconds = 500.0;
+            private static readonly bool AllowRenderThreadDriverParallelSourceLinks = string.Equals(
+                Environment.GetEnvironmentVariable("XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE"),
+                "1",
+                StringComparison.Ordinal);
             private static readonly ProgramBinaryRetrievableHintMode BinaryRetrievableHintMode = ResolveBinaryRetrievableHintMode();
 
             private enum ProgramBinaryRetrievableHintMode : byte
@@ -575,8 +587,11 @@ namespace XREngine.Rendering.OpenGL
                     if (!bypassBinaryCache && RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching)
                     {
                         cacheKey = BuildBinaryCacheKey(hash);
-                        using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup", ProfilerScopeKind.OneOffInvoke))
-                            isCached = BinaryCache?.TryGetValue(cacheKey, out binProg) ?? false;
+                        if (!IsAsyncBinaryUploadTimedOutCacheKey(cacheKey))
+                        {
+                            using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup", ProfilerScopeKind.OneOffInvoke))
+                                isCached = BinaryCache?.TryGetValue(cacheKey, out binProg) ?? false;
+                        }
                     }
                 }
 
@@ -607,10 +622,17 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            public void BeginPrepareLinkData()
+            public void BeginPrepareLinkData(bool registerPendingProgram = false)
             {
                 if (_linkDataPrepared || IsLinked || _shaderCache.IsEmpty)
+                {
+                    if (registerPendingProgram && _linkDataPrepared && !IsLinked)
+                        RegisterPendingAsyncProgram();
                     return;
+                }
+
+                if (registerPendingProgram)
+                    RegisterPendingAsyncProgram();
 
                 int generation = Volatile.Read(ref _linkPreparationGeneration);
                 if (Volatile.Read(ref _linkPreparationPendingGeneration) == generation)
@@ -700,8 +722,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private static bool ShouldPreferSharedContextForLargeSource(ulong hash, GLProgramCompileLinkQueue.ShaderInput[]? inputs)
-                => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect &&
-                   (hash == 0 || !SharedContextLargeSourceTimeouts.ContainsKey(hash)) &&
+                => (hash == 0 || !SharedContextLargeSourceTimeouts.ContainsKey(hash)) &&
                    ShouldPreferSharedContextForLargeSource(inputs);
 
             private static bool IsSharedContextAbandonedLink(string? errorLog)
@@ -743,7 +764,11 @@ namespace XREngine.Rendering.OpenGL
             private static readonly ConcurrentDictionary<ulong, byte> Failed = new();
             private static readonly ConcurrentDictionary<ulong, byte> SharedContextLargeSourceTimeouts = new();
             private static readonly ConcurrentDictionary<ulong, byte> DriverParallelLinkTimeouts = new();
+            private static readonly ConcurrentDictionary<string, byte> AsyncBinaryUploadTimeoutCacheKeys = new(StringComparer.Ordinal);
             private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
+
+            private static bool IsAsyncBinaryUploadTimedOutCacheKey(string? cacheKey)
+                => !string.IsNullOrWhiteSpace(cacheKey) && AsyncBinaryUploadTimeoutCacheKeys.ContainsKey(cacheKey);
 
             // Phase 3: per-hash diagnostic record captured the first time a hash fails,
             // and used to rate-limit follow-up SOURCE_FAILED_SKIPPED logs and supply
@@ -832,6 +857,14 @@ namespace XREngine.Rendering.OpenGL
                 => HasQueuedOrRunningAsyncWork ||
                    (_linkDataPrepared && IsRegisteredPendingAsyncProgram);
 
+            private bool HasCompletedBuildPendingState
+                => _asyncBinaryUploadQueueWaitPending ||
+                   _asyncBinaryUploadPending ||
+                   _asyncCompileLinkPending ||
+                   _asyncCompileLinkQueueWaitPending ||
+                   _asyncCompileDuplicateHashWaitPending ||
+                   _asyncPendingStartTimestamp != 0;
+
             /// <summary>
             /// True while this program has no usable linked build and is still being built asynchronously.
             /// Linked programs may keep drawing their current build while a replacement build is in flight.
@@ -850,6 +883,16 @@ namespace XREngine.Rendering.OpenGL
             {
                 PendingAsyncPrograms.TryRemove(this, out _);
                 ResetAsyncPendingDiagnostics();
+            }
+
+            private void ClearCompletedBuildPendingState()
+            {
+                _asyncBinaryUploadQueueWaitPending = false;
+                _asyncBinaryUploadPending = false;
+                _asyncCompileLinkPending = false;
+                _asyncCompileLinkQueueWaitPending = false;
+                _asyncCompileDuplicateHashWaitPending = false;
+                UnregisterPendingAsyncProgram();
             }
 
             private void RestartAsyncPendingDiagnostics()
@@ -895,16 +938,49 @@ namespace XREngine.Rendering.OpenGL
             // chewing through that backlog per frame so any single frame stall stays
             // bounded; remaining programs are picked up next frame.
             private const double PollPendingAsyncProgramsSyncBudgetMilliseconds = 4.0;
+            private const int PollPendingAsyncProgramsReadyResultBudget = 2048;
 
             internal static void PollPendingAsyncPrograms(int maxPrograms)
             {
                 int remaining = Math.Max(1, maxPrograms);
+                int readyResultResolveRemaining = Math.Max(remaining, PollPendingAsyncProgramsReadyResultBudget);
                 long frameStartTicks = Stopwatch.GetTimestamp();
                 double budgetMs = PollPendingAsyncProgramsSyncBudgetMilliseconds;
-                foreach (GLRenderProgram program in PendingAsyncPrograms.Keys)
+                // Snapshot + sort by priority so main-pass programs are polled (and any
+                // outstanding sync hazard work runs) before shadow / VR / compute work
+                // when the per-frame sync budget is tight. The dictionary's natural
+                // iteration order is arbitrary, so without this reorder a backlog of
+                // shadow links could starve the user-visible main-pass programs.
+                GLRenderProgram[] snapshot = [.. PendingAsyncPrograms.Keys];
+                if (snapshot.Length > 1)
+                    Array.Sort(snapshot, _pendingAsyncPriorityComparer);
+                foreach (GLRenderProgram program in snapshot)
                 {
-                    if (remaining-- <= 0)
-                        break;
+                    bool fastResultResolve = program.CanCompleteFromSharedBinaryCache() ||
+                        program.CanCompleteFromSharedContextCompileQueue();
+                    if (fastResultResolve)
+                    {
+                        if (readyResultResolveRemaining <= 0)
+                        {
+                            if (remaining <= 0)
+                                break;
+
+                            continue;
+                        }
+
+                        readyResultResolveRemaining--;
+                    }
+                    else if (remaining <= 0)
+                    {
+                        if (readyResultResolveRemaining <= 0)
+                            break;
+
+                        continue;
+                    }
+                    else
+                    {
+                        remaining--;
+                    }
 
                     if (!program.HasPendingAsyncWork)
                     {
@@ -921,8 +997,8 @@ namespace XREngine.Rendering.OpenGL
                     // wall time, honor a per-frame budget so we don't drain a large
                     // backlog inline. Programs still in async phases don't count
                     // against the budget because their poll cost is negligible.
-                    bool ranSyncWork = !program.HasPendingAsyncWork
-                        || program._asyncLinkPhase == EAsyncLinkPhase.Idle;
+                    bool ranSyncWork = !fastResultResolve &&
+                        (!program.HasPendingAsyncWork || program._asyncLinkPhase == EAsyncLinkPhase.Idle);
                     if (ranSyncWork)
                     {
                         double frameElapsedMs = StopwatchTicksToSeconds(now - frameStartTicks) * 1000.0;
@@ -934,6 +1010,18 @@ namespace XREngine.Rendering.OpenGL
                 ProcessDeferredAsyncLinkCleanups(maxPrograms);
                 ProcessDeferredProgramHandleDeletes(maxPrograms);
             }
+
+            private sealed class PendingAsyncPriorityComparer : IComparer<GLRenderProgram>
+            {
+                public int Compare(GLRenderProgram? x, GLRenderProgram? y)
+                {
+                    byte xp = (byte)(x?.Data?.Priority ?? EProgramPriority.Main);
+                    byte yp = (byte)(y?.Data?.Priority ?? EProgramPriority.Main);
+                    return xp.CompareTo(yp);
+                }
+            }
+
+            private static readonly PendingAsyncPriorityComparer _pendingAsyncPriorityComparer = new();
 
             private static void ProcessDeferredProgramHandleDeletes(int maxPrograms)
             {
@@ -1464,6 +1552,8 @@ namespace XREngine.Rendering.OpenGL
                 DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, programId, []));
                 if (_asyncBinaryUploadPending)
                     Renderer.ProgramBinaryUploadQueue?.CancelUpload(programId);
+                if (_asyncCompileLinkPending)
+                    Renderer.ProgramCompileLinkQueue?.CancelCompileAndLink(programId);
                 foreach (GLShader shader in _shaderCache.Values)
                     shader.Destroy();
                 return true;
@@ -1478,6 +1568,9 @@ namespace XREngine.Rendering.OpenGL
 
                 if (_asyncBinaryUploadPending && TryGetBindingId(out uint pendingBinaryProgramId))
                     Renderer.ProgramBinaryUploadQueue?.CancelUpload(pendingBinaryProgramId);
+
+                if (_asyncCompileLinkPending && TryGetBindingId(out uint pendingSourceProgramId))
+                    Renderer.ProgramCompileLinkQueue?.CancelCompileAndLink(pendingSourceProgramId);
 
                 if (TryGetBindingId(out _))
                     OrphanForDeferredDelete();
@@ -2257,8 +2350,25 @@ namespace XREngine.Rendering.OpenGL
                     binaryBytes: binProg.Length,
                     binaryFormat: binProg.Format.ToString());
                 CompleteBuildTelemetry(true, binaryLoadMilliseconds: 0.0, reflectionMilliseconds: reflectionMilliseconds);
+                ClearCompletedBuildPendingState();
                 return true;
             }
+
+            private bool CanCompleteFromSharedBinaryCache()
+            {
+                if (!_asyncBinaryUploadQueueWaitPending || _replacementProgramPending || _cachedProgram is not { } cachedProgram)
+                    return false;
+
+                if (string.IsNullOrWhiteSpace(cachedProgram.CacheKey))
+                    return false;
+
+                return SharedLinkedPrograms.ContainsKey(BuildSharedLinkedProgramKey(cachedProgram.CacheKey));
+            }
+
+            private bool CanCompleteFromSharedContextCompileQueue()
+                => _asyncCompileLinkPending &&
+                   TryGetBuildBindingId(out uint programId) &&
+                   Renderer.ProgramCompileLinkQueue?.HasResult(programId) == true;
 
             private void ReleaseSharedLinkedProgramReference()
             {
@@ -2470,15 +2580,83 @@ namespace XREngine.Rendering.OpenGL
                 RegisterPendingAsyncProgram();
             }
 
+            private void AbandonAsyncBinaryUpload(GLProgramBinaryUploadQueue? queue, uint programId, string reason)
+            {
+                BinaryProgram? cachedProgram = _cachedProgram;
+                string? cacheKey = cachedProgram?.CacheKey ?? _activeBuildFingerprint;
+                if (!string.IsNullOrWhiteSpace(cacheKey))
+                    AsyncBinaryUploadTimeoutCacheKeys.TryAdd(cacheKey, 0);
+
+                queue?.AbandonUpload(programId, cacheKey);
+                _asyncBinaryUploadPending = false;
+                _asyncBinaryUploadQueueWaitPending = false;
+
+                if (cachedProgram is { } cachedBinaryProgram)
+                    DeleteFromBinaryShaderCache(cachedBinaryProgram.CacheKey, cachedBinaryProgram.Format);
+
+                if (programId != 0 && TryGetBindingId(out uint currentProgramId) && currentProgramId == programId)
+                    OrphanForDeferredDelete();
+
+                _cachedProgram = null;
+                PublishBackendStatus(
+                    EShaderProgramBackendStage.BinaryUploadFailed,
+                    "BinaryUploadAsync",
+                    reason,
+                    reason,
+                    fingerprint: cacheKey);
+                LogRenderingProgramBuildEvent(
+                    "BINARY_UPLOAD_ASYNC_ABANDONED",
+                    "BinaryUploadAsync",
+                    reason,
+                    cacheKey,
+                    programId,
+                    binaryBytes: cachedProgram?.Length ?? 0,
+                    binaryFormat: cachedProgram?.Format.ToString());
+                CompleteBuildTelemetry(false, failureReason: reason);
+            }
+
             public bool Link(bool force = false, bool nonBlocking = false)
             {
                 using var prof = RuntimeEngine.Profiler.Start("GLRenderProgram.Link", ProfilerScopeKind.ConditionalLoop);
 
                 if (IsLinked && !_replacementProgramPending)
+                {
+                    if (HasCompletedBuildPendingState)
+                        ClearCompletedBuildPendingState();
                     return true;
+                }
 
                 if (IsLinkPreparationPending)
                     return ReturnPendingBuildResult();
+
+                if (_asyncBinaryUploadQueueWaitPending && _cachedProgram is { } sharedCandidate)
+                {
+                    if (TryUseSharedLinkedProgram(sharedCandidate))
+                    {
+                        _asyncBinaryUploadQueueWaitPending = false;
+                        return true;
+                    }
+
+                    GLProgramBinaryUploadQueue? uploadQueue = Renderer.ProgramBinaryUploadQueue;
+                    bool binaryUploadQueueUnavailable = uploadQueue is not { IsAvailable: true };
+                    if (!binaryUploadQueueUnavailable && uploadQueue is not null)
+                    {
+                        if (!uploadQueue.CanEnqueue || uploadQueue.IsCacheKeyReserved(sharedCandidate.CacheKey))
+                        {
+                            ReportSlowAsyncPending("binary-upload queue wait");
+                            return ReturnPendingBuildResult();
+                        }
+                    }
+
+                    if (binaryUploadQueueUnavailable &&
+                        !string.IsNullOrWhiteSpace(sharedCandidate.CacheKey) &&
+                        AsyncBinaryUploadTimeoutCacheKeys.TryAdd(sharedCandidate.CacheKey, 0))
+                    {
+                        DeleteFromBinaryShaderCache(sharedCandidate.CacheKey, sharedCandidate.Format);
+                    }
+
+                    _asyncBinaryUploadQueueWaitPending = false;
+                }
 
                 Exception? linkPreparationException = _linkPreparationFailure;
                 bool linkPreparationFailed = linkPreparationException is not null;
@@ -2492,7 +2670,14 @@ namespace XREngine.Rendering.OpenGL
                 if (_asyncBinaryUploadPending)
                 {
                     var queue = Renderer.ProgramBinaryUploadQueue;
-                    if (queue is not null && TryGetBuildBindingId(out uint pendingId) && queue.TryGetResult(pendingId, out var asyncResult))
+                    if (TryGetBuildBindingId(out uint pendingId) && (queue is null || queue.IsWorkerUnhealthy || !queue.IsAvailable))
+                    {
+                        string reason = queue is null
+                            ? "binary upload queue unavailable"
+                            : "binary upload worker unhealthy";
+                        AbandonAsyncBinaryUpload(queue, pendingId, reason);
+                    }
+                    else if (queue is not null && TryGetBuildBindingId(out pendingId) && queue.TryGetResult(pendingId, out var asyncResult))
                     {
                         _asyncBinaryUploadPending = false;
                         _asyncBinaryUploadQueueWaitPending = false;
@@ -2518,6 +2703,7 @@ namespace XREngine.Rendering.OpenGL
                                 binaryBytes: _cachedProgram?.Length ?? 0,
                                 binaryFormat: asyncResult.Format.ToString());
                             CompleteBuildTelemetry(true, binaryLoadMilliseconds: asyncResult.LoadMilliseconds, reflectionMilliseconds: reflectionMilliseconds);
+                            ClearCompletedBuildPendingState();
                             return true;
                         }
                         else
@@ -2587,7 +2773,7 @@ namespace XREngine.Rendering.OpenGL
                                 compileResult.LinkMilliseconds,
                                 reflectionMilliseconds: reflectionMilliseconds);
                             InFlightCompilations.TryRemove(Hash, out _);
-                            _asyncCompileDuplicateHashWaitPending = false;
+                            ClearCompletedBuildPendingState();
                             return true;
                         }
                         else
@@ -2676,7 +2862,9 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Hash = _preparedHash;
                     cacheKey = _preparedCacheKey;
-                    isCached = _preparedIsCached && !ShouldBypassBinaryCacheForLiveUberVariant();
+                    isCached = _preparedIsCached &&
+                        !ShouldBypassBinaryCacheForLiveUberVariant() &&
+                        !IsAsyncBinaryUploadTimedOutCacheKey(cacheKey);
                     binProg = _preparedBinProg;
                     _linkDataPrepared = false;
                     _hashComputed = true;
@@ -2700,8 +2888,11 @@ namespace XREngine.Rendering.OpenGL
                     if (!bypassBinaryCache && RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching)
                     {
                         cacheKey = BuildBinaryCacheKey(Hash);
-                        using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup", ProfilerScopeKind.OneOffInvoke))
-                            isCached = BinaryCache?.TryGetValue(cacheKey, out binProg) ?? false;
+                        if (!IsAsyncBinaryUploadTimedOutCacheKey(cacheKey))
+                        {
+                            using (RuntimeEngine.Profiler.Start("GLRenderProgram.Link.BinaryCacheLookup", ProfilerScopeKind.OneOffInvoke))
+                                isCached = BinaryCache?.TryGetValue(cacheKey, out binProg) ?? false;
+                        }
                     }
                 }
 
@@ -2809,7 +3000,8 @@ namespace XREngine.Rendering.OpenGL
 
                             _asyncBinaryUploadQueueWaitPending = false;
                             BeginBuildTelemetry("BinaryUploadAsync", binProg.CacheKey);
-                            uploadQueue.EnqueueUpload(bindingId, binProg.Binary, format, binProg.Length, Hash, binProg.CacheKey);
+                            EProgramPriority priority = Data?.Priority ?? EProgramPriority.Main;
+                            uploadQueue.EnqueueUpload(bindingId, binProg.Binary, format, binProg.Length, Hash, binProg.CacheKey, priority);
                             _asyncBinaryUploadPending = true;
                             PublishBackendStatus(
                                 EShaderProgramBackendStage.BinaryUploadPending,
@@ -2923,6 +3115,7 @@ namespace XREngine.Rendering.OpenGL
                                 binaryBytes: binProg.Length,
                                 binaryFormat: format.ToString());
                             CompleteBuildTelemetry(true, binaryLoadMilliseconds: binaryLoadMilliseconds, reflectionMilliseconds: reflectionMilliseconds);
+                            ClearCompletedBuildPendingState();
                             return true;
                         }
                     }
@@ -3047,7 +3240,7 @@ namespace XREngine.Rendering.OpenGL
                         HasBinaryCacheHit: false,
                         BinaryUploadAvailable: Renderer.ProgramBinaryUploadQueue is { IsAvailable: true },
                         BinaryUploadCanEnqueue: Renderer.ProgramBinaryUploadQueue is { CanEnqueue: true },
-                        DriverParallelAvailable: Renderer.UseDriverParallelShaderCompile,
+                        DriverParallelAvailable: Renderer.UseDriverParallelShaderCompile && AllowRenderThreadDriverParallelSourceLinks,
                         SharedContextCompileAvailable: compileQueue is { IsAvailable: true },
                         SharedContextCompileCanEnqueue: compileQueue is { CanEnqueue: true },
                         CompileInputsReady: inputs is { Length: > 0 },
@@ -3091,7 +3284,8 @@ namespace XREngine.Rendering.OpenGL
                             BeginUberBackendCompileTracking(queuedVariantHash);
 
                         EnsureProgramBinaryRetrievableHintForSourceBuild(bindingId, "SharedContextSource");
-                        if (!compileQueue.TryEnqueueCompileAndLink(bindingId, inputs, out string? rejectReason))
+                        EProgramPriority priority = Data?.Priority ?? EProgramPriority.Main;
+                        if (!compileQueue.TryEnqueueCompileAndLink(bindingId, inputs, priority, out string? rejectReason))
                         {
                             _asyncCompileLinkQueueWaitPending = true;
                             PublishBackendStatus(
@@ -3425,6 +3619,7 @@ namespace XREngine.Rendering.OpenGL
                                 compileMilliseconds: compileMilliseconds,
                                 linkMilliseconds: linkMilliseconds);
                             CompleteBuildTelemetry(true, compileMilliseconds, linkMilliseconds, reflectionMilliseconds: reflectionMilliseconds);
+                            ClearCompletedBuildPendingState();
                         }
                         InFlightCompilations.TryRemove(Hash, out _);
                     }

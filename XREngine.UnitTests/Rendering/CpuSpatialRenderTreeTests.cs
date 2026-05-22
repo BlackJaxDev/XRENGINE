@@ -52,6 +52,61 @@ public sealed class CpuSpatialRenderTreeTests
     }
 
     [Test]
+    public void CpuBvhFrustumCullMatchesOctreeForEdgeIntersectingItems()
+    {
+        var bounds = AABB.FromCenterSize(new Vector3(0.0f, 0.0f, -40.0f), new Vector3(180.0f, 120.0f, 120.0f));
+        var octree = new Octree<TestRenderItem>(bounds);
+        var bvh = new CpuBvhRenderTree<TestRenderItem>(bounds);
+        List<TestRenderItem> items = CreateFrustumParityItems();
+        var frustum = new Frustum(
+            55.0f,
+            16.0f / 9.0f,
+            0.5f,
+            80.0f,
+            new Vector3(0.0f, 0.0f, -1.0f),
+            Vector3.UnitY,
+            Vector3.Zero);
+
+        octree.AddRange(items);
+        bvh.AddRange(items);
+        SwapSeveral(octree);
+        SwapSeveral(bvh);
+
+        int[] octreeVisible = CollectVisibleIds(octree, frustum);
+        int[] bvhVisible = CollectVisibleIds(bvh, frustum);
+
+        bvhVisible.ShouldBe(octreeVisible);
+    }
+
+    [Test]
+    public void CpuBvhFrustumCullMatchesOctreeWhenLookingStraightDown()
+    {
+        var bounds = AABB.FromCenterSize(new Vector3(0.0f, 40.0f, 0.0f), new Vector3(180.0f, 120.0f, 180.0f));
+        var octree = new Octree<TestRenderItem>(bounds);
+        var bvh = new CpuBvhRenderTree<TestRenderItem>(bounds);
+        List<TestRenderItem> items = CreateTopDownFrustumParityItems();
+        var frustum = new Frustum(
+                55.0f,
+                16.0f / 9.0f,
+                0.5f,
+                80.0f,
+                new Vector3(0.0f, 0.0f, -1.0f),
+                Vector3.UnitY,
+                Vector3.Zero)
+            .TransformedBy(Matrix4x4.CreateRotationX(-MathF.PI * 0.5f) * Matrix4x4.CreateTranslation(0.0f, 80.0f, 0.0f));
+
+        octree.AddRange(items);
+        bvh.AddRange(items);
+        SwapSeveral(octree);
+        SwapSeveral(bvh);
+
+        int[] octreeVisible = CollectVisibleIds(octree, frustum);
+        int[] bvhVisible = CollectVisibleIds(bvh, frustum);
+
+        bvhVisible.ShouldBe(octreeVisible);
+    }
+
+    [Test]
     public void CpuBvhMoveRebuildsVisibility()
     {
         var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
@@ -92,6 +147,62 @@ public sealed class CpuSpatialRenderTreeTests
         collected.Count.ShouldBe(2);
         collected.ShouldNotContain(items[1]);
         items[1].OctreeNode.ShouldBeNull();
+    }
+
+    [Test]
+    public void CpuBvhCoalescesExistingAddThenRemoveAsRemove()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        var item = new TestRenderItem
+        {
+            LocalCullingVolume = AABB.FromCenterSize(Vector3.Zero, new Vector3(2.0f)),
+        };
+
+        tree.Add(item);
+        tree.Swap();
+
+        tree.Add(item);
+        tree.Remove(item);
+        tree.Swap();
+
+        List<TestRenderItem> collected = [];
+        tree.CollectAll(collected.Add);
+
+        collected.Count.ShouldBe(0);
+        item.OctreeNode.ShouldBeNull();
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void CpuBvhCoalescesTransientAddRemoveBeforeSwap()
+    {
+        var previousSwapHook = IRenderTree.OctreeSwapTimingHook;
+
+        try
+        {
+            OctreeSwapTimingStats? swapStats = null;
+            IRenderTree.OctreeSwapTimingHook = stats => swapStats = stats;
+
+            var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+            var item = new TestRenderItem
+            {
+                LocalCullingVolume = AABB.FromCenterSize(Vector3.Zero, new Vector3(2.0f)),
+            };
+
+            tree.Add(item);
+            tree.Remove(item);
+            tree.Swap();
+
+            swapStats.ShouldNotBeNull();
+            swapStats.Value.DrainedCommandCount.ShouldBe(2);
+            swapStats.Value.ExecutedCommandCount.ShouldBe(0);
+            tree.GetOccupancyStats().ItemCount.ShouldBe(0);
+            item.OctreeNode.ShouldBeNull();
+        }
+        finally
+        {
+            IRenderTree.OctreeSwapTimingHook = previousSwapHook;
+        }
     }
 
     [Test]
@@ -190,12 +301,93 @@ public sealed class CpuSpatialRenderTreeTests
             float x = -16.0f + i;
             items.Add(new TestRenderItem
             {
+                Id = i,
                 LocalCullingVolume = AABB.FromCenterSize(new Vector3(x, 0.0f, 0.0f), new Vector3(2.0f, 2.0f, 2.0f)),
             });
         }
 
         return items;
     }
+
+    private static List<TestRenderItem> CreateFrustumParityItems()
+    {
+        const float fovY = 55.0f;
+        const float aspect = 16.0f / 9.0f;
+        float tanY = MathF.Tan(fovY * MathF.PI / 360.0f);
+        var items = new List<TestRenderItem>(192);
+        int id = 0;
+
+        for (float depth = 4.0f; depth <= 76.0f; depth += 8.0f)
+        {
+            float halfY = tanY * depth;
+            float halfX = halfY * aspect;
+            float z = -depth;
+
+            items.Add(CreateItem(id++, new Vector3(-halfX - 1.0f, 0.0f, z), new Vector3(4.0f)));
+            items.Add(CreateItem(id++, new Vector3(halfX + 1.0f, 0.0f, z), new Vector3(4.0f)));
+            items.Add(CreateItem(id++, new Vector3(0.0f, -halfY - 1.0f, z), new Vector3(4.0f)));
+            items.Add(CreateItem(id++, new Vector3(0.0f, halfY + 1.0f, z), new Vector3(4.0f)));
+            items.Add(CreateItem(id++, new Vector3(-halfX - 6.0f, 0.0f, z), new Vector3(2.0f)));
+            items.Add(CreateItem(id++, new Vector3(halfX + 6.0f, 0.0f, z), new Vector3(2.0f)));
+            items.Add(CreateItem(id++, new Vector3(0.0f, -halfY - 6.0f, z), new Vector3(2.0f)));
+            items.Add(CreateItem(id++, new Vector3(0.0f, halfY + 6.0f, z), new Vector3(2.0f)));
+
+            for (int y = -1; y <= 1; y++)
+            {
+                for (int x = -2; x <= 2; x++)
+                {
+                    Vector3 center = new(halfX * x * 0.35f, halfY * y * 0.45f, z);
+                    items.Add(CreateItem(id++, center, new Vector3(1.5f)));
+                }
+            }
+        }
+
+        return items;
+    }
+
+    private static List<TestRenderItem> CreateTopDownFrustumParityItems()
+    {
+        const float fovY = 55.0f;
+        const float aspect = 16.0f / 9.0f;
+        const float cameraY = 80.0f;
+        float tanY = MathF.Tan(fovY * MathF.PI / 360.0f);
+        var items = new List<TestRenderItem>(192);
+        int id = 0;
+
+        for (float depth = 4.0f; depth <= 76.0f; depth += 8.0f)
+        {
+            float halfZ = tanY * depth;
+            float halfX = halfZ * aspect;
+            float y = cameraY - depth;
+
+            items.Add(CreateItem(id++, new Vector3(-halfX - 1.0f, y, 0.0f), new Vector3(4.0f, 10.0f, 2.0f)));
+            items.Add(CreateItem(id++, new Vector3(halfX + 1.0f, y, 0.0f), new Vector3(4.0f, 10.0f, 2.0f)));
+            items.Add(CreateItem(id++, new Vector3(0.0f, y, -halfZ - 1.0f), new Vector3(2.0f, 10.0f, 4.0f)));
+            items.Add(CreateItem(id++, new Vector3(0.0f, y, halfZ + 1.0f), new Vector3(2.0f, 10.0f, 4.0f)));
+            items.Add(CreateItem(id++, new Vector3(-halfX - 6.0f, y, 0.0f), new Vector3(2.0f)));
+            items.Add(CreateItem(id++, new Vector3(halfX + 6.0f, y, 0.0f), new Vector3(2.0f)));
+            items.Add(CreateItem(id++, new Vector3(0.0f, y, -halfZ - 6.0f), new Vector3(2.0f)));
+            items.Add(CreateItem(id++, new Vector3(0.0f, y, halfZ + 6.0f), new Vector3(2.0f)));
+
+            for (int z = -1; z <= 1; z++)
+            {
+                for (int x = -2; x <= 2; x++)
+                {
+                    Vector3 center = new(halfX * x * 0.35f, y, halfZ * z * 0.45f);
+                    items.Add(CreateItem(id++, center, new Vector3(1.5f, 8.0f, 1.5f)));
+                }
+            }
+        }
+
+        return items;
+    }
+
+    private static TestRenderItem CreateItem(int id, Vector3 center, Vector3 size)
+        => new()
+        {
+            Id = id,
+            LocalCullingVolume = AABB.FromCenterSize(center, size),
+        };
 
     private static void SwapSeveral(IRenderTree tree)
     {
@@ -208,6 +400,14 @@ public sealed class CpuSpatialRenderTreeTests
         int count = 0;
         tree.CollectVisible(volume, false, _ => count++, Intersects);
         return count;
+    }
+
+    private static int[] CollectVisibleIds(I3DRenderTree<TestRenderItem> tree, IVolume volume)
+    {
+        List<int> ids = [];
+        tree.CollectVisible(volume, false, item => ids.Add(item.Id), IntersectsBox);
+        ids.Sort();
+        return [.. ids];
     }
 
     private static bool Intersects(TestRenderItem item, IVolume? cullingVolume, bool containsOnly)
@@ -233,11 +433,27 @@ public sealed class CpuSpatialRenderTreeTests
             : containment != EContainment.Disjoint;
     }
 
+    private static bool IntersectsBox(TestRenderItem item, IVolume? cullingVolume, bool containsOnly)
+    {
+        if (cullingVolume is null)
+            return true;
+
+        Box? worldCullingVolume = ((IOctreeItem)item).WorldCullingVolume;
+        if (worldCullingVolume is null)
+            return true;
+
+        EContainment containment = cullingVolume.ContainsBox(worldCullingVolume.Value);
+        return containsOnly
+            ? containment == EContainment.Contains
+            : containment != EContainment.Disjoint;
+    }
+
     private static (float? distance, object? data) DirectHit(TestRenderItem item, Segment segment)
         => (0.0f, item);
 
     private sealed class TestRenderItem : IOctreeItem
     {
+        public int Id { get; init; }
         public bool ShouldRender => true;
         public IRenderableBase? Owner => null;
         public AABB? LocalCullingVolume { get; set; }

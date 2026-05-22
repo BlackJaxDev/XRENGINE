@@ -190,39 +190,110 @@ namespace XREngine.Data.Geometry
             public static EContainment FrustumWithinAABB(Vector3 boxMin, Vector3 boxMax, Frustum frustum)
             {
                 int numIn = 0, numOut = 0;
-                foreach (Vector3 v in frustum.Corners)
+                IReadOnlyList<Vector3> corners = frustum.Corners;
+                for (int i = 0; i < corners.Count; i++)
+                {
+                    Vector3 v = corners[i];
                     if (Contains.PointWithinAABB(boxMin, boxMax, v))
                         ++numIn;
                     else
                         ++numOut;
+                }
+
                 return numOut == 0 ? EContainment.Contains : numIn == 0 ? EContainment.Disjoint : EContainment.Intersects;
             }
 
-            public static EContainment AABBWithinFrustum(Frustum frustum, Vector3 boxMin, Vector3 boxMax)
+            public static EContainment AABBWithinFrustum(Frustum frustum, Vector3 boxMin, Vector3 boxMax, float tolerance = 1e-5f)
             {
                 EContainment c = FrustumWithinAABB(boxMin, boxMax, frustum);
                 if (c != EContainment.Disjoint)
                     return EContainment.Intersects;
 
                 EContainment result = EContainment.Contains;
-                int numOut, numIn;
-                Vector3[] corners = AABB.GetCorners(boxMin, boxMax);
-                foreach (Plane p in frustum)
+                Span<Vector3> corners = stackalloc Vector3[8];
+                FillAabbCorners(boxMin, boxMax, corners);
+                float planeTolerance = MathF.Max(tolerance, 1e-5f);
+
+                if (!AccumulateAabbPlaneContainment(frustum.Left, corners, planeTolerance, ref result) ||
+                    !AccumulateAabbPlaneContainment(frustum.Right, corners, planeTolerance, ref result) ||
+                    !AccumulateAabbPlaneContainment(frustum.Bottom, corners, planeTolerance, ref result) ||
+                    !AccumulateAabbPlaneContainment(frustum.Top, corners, planeTolerance, ref result) ||
+                    !AccumulateAabbPlaneContainment(frustum.Near, corners, planeTolerance, ref result) ||
+                    !AccumulateAabbPlaneContainment(frustum.Far, corners, planeTolerance, ref result))
                 {
-                    numOut = 0;
-                    numIn = 0;
-                    for (int i = 0; i < 8 && (numIn == 0 || numOut == 0); i++)
-                        if (DistanceFrom.PlaneToPoint(p, corners[i]) < 0)
-                            numOut++;
-                        else
-                            numIn++;
-                    if (numIn == 0)
-                        return EContainment.Disjoint;
-                    else if (numOut != 0)
-                        result = EContainment.Intersects;
+                    return FrustumEdgesIntersectAabb(frustum, boxMin, boxMax) ||
+                        AabbEdgesIntersectFrustum(frustum, corners)
+                            ? EContainment.Intersects
+                            : EContainment.Disjoint;
                 }
+
                 return result;
             }
+
+            private static void FillAabbCorners(Vector3 min, Vector3 max, Span<Vector3> corners)
+            {
+                corners[0] = new Vector3(min.X, max.Y, min.Z);
+                corners[1] = new Vector3(max.X, max.Y, min.Z);
+                corners[2] = new Vector3(min.X, max.Y, max.Z);
+                corners[3] = new Vector3(max.X, max.Y, max.Z);
+                corners[4] = new Vector3(min.X, min.Y, min.Z);
+                corners[5] = new Vector3(max.X, min.Y, min.Z);
+                corners[6] = new Vector3(min.X, min.Y, max.Z);
+                corners[7] = new Vector3(max.X, min.Y, max.Z);
+            }
+
+            private static bool AccumulateAabbPlaneContainment(
+                Plane plane,
+                ReadOnlySpan<Vector3> corners,
+                float tolerance,
+                ref EContainment result)
+            {
+                int numOut = 0;
+                int numIn = 0;
+                for (int i = 0; i < corners.Length && (numIn == 0 || numOut == 0); i++)
+                {
+                    if (DistanceFrom.PlaneToPoint(plane, corners[i]) < -tolerance)
+                        numOut++;
+                    else
+                        numIn++;
+                }
+
+                if (numIn == 0)
+                    return false;
+
+                if (numOut != 0)
+                    result = EContainment.Intersects;
+
+                return true;
+            }
+
+            private static bool FrustumEdgesIntersectAabb(Frustum frustum, Vector3 boxMin, Vector3 boxMax)
+                => Intersect.SegmentWithAABB(frustum.LeftBottomNear, frustum.LeftTopNear, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.LeftTopNear, frustum.RightTopNear, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.RightTopNear, frustum.RightBottomNear, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.RightBottomNear, frustum.LeftBottomNear, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.LeftBottomFar, frustum.LeftTopFar, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.LeftTopFar, frustum.RightTopFar, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.RightTopFar, frustum.RightBottomFar, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.RightBottomFar, frustum.LeftBottomFar, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.LeftBottomNear, frustum.LeftBottomFar, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.LeftTopNear, frustum.LeftTopFar, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.RightTopNear, frustum.RightTopFar, boxMin, boxMax, out _, out _) ||
+                   Intersect.SegmentWithAABB(frustum.RightBottomNear, frustum.RightBottomFar, boxMin, boxMax, out _, out _);
+
+            private static bool AabbEdgesIntersectFrustum(Frustum frustum, ReadOnlySpan<Vector3> corners)
+                => frustum.IntersectsSegment(new Segment(corners[0], corners[1])) ||
+                   frustum.IntersectsSegment(new Segment(corners[1], corners[3])) ||
+                   frustum.IntersectsSegment(new Segment(corners[3], corners[2])) ||
+                   frustum.IntersectsSegment(new Segment(corners[2], corners[0])) ||
+                   frustum.IntersectsSegment(new Segment(corners[4], corners[5])) ||
+                   frustum.IntersectsSegment(new Segment(corners[5], corners[7])) ||
+                   frustum.IntersectsSegment(new Segment(corners[7], corners[6])) ||
+                   frustum.IntersectsSegment(new Segment(corners[6], corners[4])) ||
+                   frustum.IntersectsSegment(new Segment(corners[0], corners[4])) ||
+                   frustum.IntersectsSegment(new Segment(corners[1], corners[5])) ||
+                   frustum.IntersectsSegment(new Segment(corners[2], corners[6])) ||
+                   frustum.IntersectsSegment(new Segment(corners[3], corners[7]));
 
             public static EContainment ConeWithinFrustum(Frustum frustum, Vector3 center, Vector3 up, float height, float radius)
             {

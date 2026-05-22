@@ -443,6 +443,36 @@ namespace XREngine.Rendering
             set => SetField(ref _separable, value);
         }
 
+        private string? _usageTag;
+        /// <summary>
+        /// Optional human-readable tag describing what this program is for (e.g. which mesh-renderer
+        /// vertex variant + pass it was built for). Set by the creator (GLMeshRenderer, material pipeline,
+        /// etc.) and surfaced by diagnostic UI like the shader-program-links panel. Has no effect on
+        /// linking or telemetry.
+        /// </summary>
+        [YamlIgnore]
+        public string? UsageTag
+        {
+            get => _usageTag;
+            set => SetField(ref _usageTag, value);
+        }
+
+        private EProgramPriority _priority = EProgramPriority.Main;
+        /// <summary>
+        /// Priority bucket used by the shared-context shader-link worker queue and any other
+        /// priority-aware scheduler. Lower values are linked first. Programs in the same bucket
+        /// are processed FIFO. Defaults to <see cref="EProgramPriority.Main"/>. Creators should
+        /// override (e.g. <see cref="EProgramPriority.Shadow"/> for shadow-pass variants,
+        /// <see cref="EProgramPriority.VR"/> for stereo variants, <see cref="EProgramPriority.Compute"/>
+        /// for compute programs) so user-visible main-pass programs link before background work.
+        /// </summary>
+        [YamlIgnore]
+        public EProgramPriority Priority
+        {
+            get => _priority;
+            set => SetField(ref _priority, value);
+        }
+
         public void Use()
             => UseRequested?.Invoke(this);
 
@@ -576,6 +606,23 @@ namespace XREngine.Rendering
         {
             Separable = separable;
             Shaders.AddRange(shaders);
+            // Auto-default: compute-only programs go to the Compute priority bucket so they
+            // don't preempt main-pass / forward graphics programs in the shared-context queue.
+            // Callers can still explicitly override Priority after construction.
+            if (Shaders.Count > 0)
+            {
+                bool allCompute = true;
+                for (int i = 0; i < Shaders.Count; i++)
+                {
+                    if (Shaders[i].Type != EShaderType.Compute)
+                    {
+                        allCompute = false;
+                        break;
+                    }
+                }
+                if (allCompute)
+                    _priority = EProgramPriority.Compute;
+            }
             if (linkNow)
                 Link();
         }

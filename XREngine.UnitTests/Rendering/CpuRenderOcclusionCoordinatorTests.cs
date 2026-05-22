@@ -12,12 +12,12 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class CpuRenderOcclusionCoordinatorTests
 {
     [Test]
-    public void BeginPass_CameraTranslationInvalidatesOccludedStateAsVisible()
+    public void BeginPass_SmallCameraTranslationPreservesOccludedState()
     {
         CpuRenderOcclusionCoordinator coordinator = new();
         XRCamera camera = new();
         const int renderPass = 0;
-        const uint queryKey = 42u;
+        const uint queryKey = 43u;
 
         coordinator.BeginPass(renderPass, camera, sceneCommandCount: 1u);
         SeedOccludedQuery(coordinator, renderPass, queryKey);
@@ -27,23 +27,43 @@ public sealed class CpuRenderOcclusionCoordinatorTests
 
         ECpuOcclusionDecision decision = coordinator.ShouldRender(renderPass, queryKey, out bool needsHardwareQuery);
 
-        decision.ShouldBe(ECpuOcclusionDecision.Visible);
-        needsHardwareQuery.ShouldBeTrue();
+        decision.ShouldNotBe(ECpuOcclusionDecision.Visible);
+        needsHardwareQuery.ShouldBe(decision == ECpuOcclusionDecision.ProbeOnly);
     }
 
     [Test]
-    public void BeginPass_CameraRotationInvalidatesOccludedStateAsVisible()
+    public void BeginPass_SmallCameraRotationPreservesOccludedState()
     {
         CpuRenderOcclusionCoordinator coordinator = new();
         XRCamera camera = new();
         const int renderPass = 0;
-        const uint queryKey = 42u;
+        const uint queryKey = 43u;
 
         coordinator.BeginPass(renderPass, camera, sceneCommandCount: 1u);
         SeedOccludedQuery(coordinator, renderPass, queryKey);
 
         camera.Transform.SetRenderMatrix(Matrix4x4.CreateRotationY(0.01f)).GetAwaiter().GetResult();
         coordinator.BeginPass(renderPass, camera, sceneCommandCount: 1u);
+
+        ECpuOcclusionDecision decision = coordinator.ShouldRender(renderPass, queryKey, out bool needsHardwareQuery);
+
+        decision.ShouldNotBe(ECpuOcclusionDecision.Visible);
+        needsHardwareQuery.ShouldBe(decision == ECpuOcclusionDecision.ProbeOnly);
+    }
+
+    [Test]
+    public void BeginPass_LargeCameraTranslationInvalidatesOccludedStateAsVisible()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const int renderPass = 0;
+        const uint queryKey = 43u;
+
+        coordinator.BeginPass(renderPass, camera, sceneCommandCount: 1u);
+        SeedOccludedQuery(coordinator, renderPass, queryKey);
+
+        camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(3.0f, 0.0f, 0.0f)).GetAwaiter().GetResult();
+        coordinator.BeginPass(renderPass, camera, sceneCommandCount: 1u).ShouldBeTrue();
 
         ECpuOcclusionDecision decision = coordinator.ShouldRender(renderPass, queryKey, out bool needsHardwareQuery);
 
@@ -72,7 +92,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     }
 
     [Test]
-    public void BeginPass_CameraTranslationKeepsPendingInvalidationVisible()
+    public void BeginPass_LargeCameraTranslationKeepsPendingInvalidationVisible()
     {
         CpuRenderOcclusionCoordinator coordinator = new();
         XRCamera camera = new();
@@ -83,13 +103,44 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         object queryState = SeedOccludedQuery(coordinator, renderPass, queryKey);
         SetNonPublicField(queryState, "QueryPending", true);
 
-        camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(0.01f, 0.0f, 0.0f)).GetAwaiter().GetResult();
+        camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(3.0f, 0.0f, 0.0f)).GetAwaiter().GetResult();
         coordinator.BeginPass(renderPass, camera, sceneCommandCount: 1u);
 
         ECpuOcclusionDecision decision = coordinator.ShouldRender(renderPass, queryKey, out bool needsHardwareQuery);
 
         decision.ShouldBe(ECpuOcclusionDecision.Visible);
         needsHardwareQuery.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ShouldRender_SmallCameraMotionRetestsOccludedItemsMoreOften()
+    {
+        int stablePeriod = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRetestPeriodFrames, 1, 64);
+        int movingPeriod = Math.Max(1, (stablePeriod + 1) / 2);
+        if (movingPeriod == stablePeriod)
+            return;
+
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const int renderPass = 0;
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        uint queryKey = FindRetestKey(frameId, stablePeriod, movingPeriod);
+
+        coordinator.BeginPass(renderPass, camera, sceneCommandCount: 1u);
+        object queryState = SeedOccludedQuery(coordinator, renderPass, queryKey);
+
+        ECpuOcclusionDecision stableDecision = coordinator.ShouldRender(renderPass, queryKey, out bool stableNeedsQuery);
+        stableDecision.ShouldBe(ECpuOcclusionDecision.Skip);
+        stableNeedsQuery.ShouldBeFalse();
+
+        SetNonPublicField(queryState, "LastDecidedFrameId", ulong.MaxValue);
+        camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(0.01f, 0.0f, 0.0f)).GetAwaiter().GetResult();
+        coordinator.BeginPass(renderPass, camera, sceneCommandCount: 1u);
+
+        ECpuOcclusionDecision movingDecision = coordinator.ShouldRender(renderPass, queryKey, out bool movingNeedsQuery);
+
+        movingDecision.ShouldBe(ECpuOcclusionDecision.ProbeOnly);
+        movingNeedsQuery.ShouldBeTrue();
     }
 
     private static object SeedOccludedQuery(CpuRenderOcclusionCoordinator coordinator, int renderPass, uint queryKey)
@@ -100,7 +151,7 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         SetNonPublicField(queryState, "LastAnySamplesPassed", false);
         SetNonPublicField(queryState, "ConsecutiveOccludedFrames", 8);
         SetNonPublicField(queryState, "LastDecision", ECpuOcclusionDecision.Skip);
-        SetNonPublicField(queryState, "LastDecidedFrameId", 0UL);
+        SetNonPublicField(queryState, "LastDecidedFrameId", ulong.MaxValue);
         SetNonPublicField(queryState, "QueryIssuedFrameId", 0UL);
 
         IDictionary queries = (IDictionary)GetNonPublicField(passState, "Queries");
@@ -138,5 +189,21 @@ public sealed class CpuRenderOcclusionCoordinatorTests
         FieldInfo? field = target.GetType().GetField(fieldName, flags);
         field.ShouldNotBeNull();
         field.SetValue(target, value);
+    }
+
+    private static uint FindRetestKey(ulong frameId, int stablePeriod, int movingPeriod)
+    {
+        for (uint key = 1u; key < 1024u; key++)
+        {
+            ulong frameAndKey = frameId + key;
+            if (frameAndKey % (ulong)movingPeriod == 0UL &&
+                frameAndKey % (ulong)stablePeriod != 0UL)
+            {
+                return key;
+            }
+        }
+
+        Assert.Fail($"Could not find a query key for stablePeriod={stablePeriod}, movingPeriod={movingPeriod}, frameId={frameId}.");
+        return 0u;
     }
 }

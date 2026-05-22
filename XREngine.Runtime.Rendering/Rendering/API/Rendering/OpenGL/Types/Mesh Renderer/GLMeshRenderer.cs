@@ -37,6 +37,8 @@ namespace XREngine.Rendering.OpenGL
             /// Flat list of all buffer values for fast iteration in CheckBuffersReady.
             /// </summary>
             private List<GLDataBuffer> _allBuffersList = [];
+            private readonly record struct CombinedProgramCacheEntry(GLRenderProgram Program, long ShaderStateRevision);
+            private readonly Dictionary<XRMaterial, CombinedProgramCacheEntry> _combinedProgramCache = new(ReferenceEqualityComparer.Instance);
             private GLRenderProgramPipeline? _pipeline;
             private GLRenderProgram? _combinedProgram;
             private XRMaterial? _combinedProgramMaterialKey;
@@ -113,6 +115,7 @@ namespace XREngine.Rendering.OpenGL
             private int _patchVertexCount = 3;
 
             private bool _buffersBound;
+            private GLRenderProgram? _boundVertexProgram;
 
             public GLDataBuffer? TriangleIndicesBuffer
             {
@@ -180,7 +183,11 @@ namespace XREngine.Rendering.OpenGL
                 private set
                 {
                     if (SetField(ref _buffersBound, value))
+                    {
                         _buffersReadyCacheFrame = -1;
+                        if (!value)
+                            _boundVertexProgram = null;
+                    }
                 }
             }
 

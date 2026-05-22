@@ -327,7 +327,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool CpuSocUseAvx2 { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocUseAvx2;
         public bool CpuSocDebugVisualization { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocDebugVisualization;
         public bool CpuSocDebugForceVisible { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocDebugForceVisible;
-        public ECpuSceneCullingStructure CpuSceneCullingStructure { get; set; } = ECpuSceneCullingStructure.Octree;
+        public ECpuSceneCullingStructure CpuSceneCullingStructure { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSceneCullingStructure;
         public TextureRuntimeLogMode TextureLogMode => TextureRuntimeLogMode.Disabled;
         public double TextureSlowCpuDecodeResizeMilliseconds => 5.0;
         public double TextureSlowMipBuildMilliseconds => 5.0;

@@ -635,8 +635,10 @@ public sealed class MeshOptimizerInteropTests
         hybridSource.ShouldContain("materialTextureHandleBuffer?.BindTo(program, MaterialTextureHandleTableSsboBinding);");
         hybridSource.ShouldContain("WarnMeshletMaterialFallback(");
         hybridSource.ShouldContain("routing through traditional zero-readback indirect rendering");
-        hybridSource.ShouldContain("program.Uniform(\"EnableStereoHiZ\", 0u);");
-        hybridSource.ShouldContain("program.Uniform(\"HiZValid\", 0u);");
+        hybridSource.ShouldContain("renderPasses.TryGetHiZDepthPyramidForMeshlets(");
+        hybridSource.ShouldContain("program.Uniform(\"HiZViewProjectionMatrix\"");
+        hybridSource.ShouldContain("program.Uniform(\"HiZValid\", hiZAvailable ? 1u : 0u);");
+        hybridSource.ShouldContain("program.Sampler(\"HiZDepth\", hiZDepthPyramid");
         hybridSource.ShouldContain("scene.SkinnedCommandCount != 0u");
         hybridSource.ShouldContain("Scene-owned skinned meshlet vertex-weight buffers are not wired yet");
         hybridSource.ShouldNotContain("MeshletCollection");
@@ -728,11 +730,23 @@ public sealed class MeshOptimizerInteropTests
         {
             shader.ShouldContain("layout(std430, binding = 21) buffer MeshletStatsBuffer");
             shader.ShouldContain("uniform uint StatsEnabled;");
+            shader.ShouldContain("uniform mat4 HiZViewProjectionMatrix;");
+            shader.ShouldContain("HiZViewProjectionMatrix * vec4(sphere.xyz, 1.0)");
             shader.ShouldContain("atomicAdd(MeshletTaskRecordsEmitted, 1u);");
             shader.ShouldContain("atomicAdd(MeshletTaskRecordsFrustumCulled, 1u);");
             shader.ShouldContain("atomicAdd(MeshletTaskRecordsConeCulled, 1u);");
             shader.ShouldContain("atomicAdd(MeshletTaskRecordsHiZCulled, 1u);");
         }
+    }
+
+    [Test]
+    public void DefaultPipelines_WireMeshletDebugDisplayCommand()
+    {
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+
+        pipelineSource.ShouldContain("c.Add<VPRC_RenderMeshletDebugDisplay>();");
+        pipeline2Source.ShouldContain("c.Add<VPRC_RenderMeshletDebugDisplay>();");
     }
 
     [Test]

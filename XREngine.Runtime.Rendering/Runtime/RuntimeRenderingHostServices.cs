@@ -119,7 +119,7 @@ public static class RuntimeRenderingHostServices
         public bool CpuSocUseAvx2 => RuntimeRenderingHostServiceDefaults.CpuSocUseAvx2;
         public bool CpuSocDebugVisualization => RuntimeRenderingHostServiceDefaults.CpuSocDebugVisualization;
         public bool CpuSocDebugForceVisible => RuntimeRenderingHostServiceDefaults.CpuSocDebugForceVisible;
-        public ECpuSceneCullingStructure CpuSceneCullingStructure => ECpuSceneCullingStructure.Octree;
+        public ECpuSceneCullingStructure CpuSceneCullingStructure => RuntimeRenderingHostServiceDefaults.CpuSceneCullingStructure;
         public ETwoPlayerPreference TwoPlayerViewportPreference => RuntimeRenderingHostServiceDefaults.TwoPlayerViewportPreference;
         public EThreePlayerPreference ThreePlayerViewportPreference => RuntimeRenderingHostServiceDefaults.ThreePlayerViewportPreference;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeRenderingHostServiceDefaults.CurrentRenderBackend;

@@ -140,6 +140,10 @@ namespace XREngine.Rendering.Commands
         private const float TemporalProjectionDeltaThreshold = 0.125f;
         private const int CpuOcclusionMaxQueriesPerFrame = 64;
 
+        private bool _hiZDepthPyramidReadyForMeshlets;
+        private bool _hiZDepthPyramidUsesReversedZ;
+        private Matrix4x4 _hiZDepthPyramidViewProjection = Matrix4x4.Identity;
+
         private uint _occlusionCandidatesTested;
         private uint _occlusionAccepted;
         private uint _occlusionFalsePositiveRecoveries;
@@ -162,6 +166,31 @@ namespace XREngine.Rendering.Commands
             _occlusionAccepted = 0u;
             _occlusionFalsePositiveRecoveries = 0u;
             _occlusionTemporalOverrides = 0u;
+            _hiZDepthPyramidReadyForMeshlets = false;
+        }
+
+        public bool TryGetHiZDepthPyramidForMeshlets(
+            out XRTexture2D pyramid,
+            out int maxMip,
+            out Matrix4x4 viewProjection,
+            out bool usesReversedZ)
+        {
+            if (_hiZDepthPyramidReadyForMeshlets &&
+                _hiZDepthPyramid is not null &&
+                _hiZDepthPyramid.Mipmaps.Length != 0)
+            {
+                pyramid = _hiZDepthPyramid;
+                maxMip = _hiZMaxMip;
+                viewProjection = _hiZDepthPyramidViewProjection;
+                usesReversedZ = _hiZDepthPyramidUsesReversedZ;
+                return true;
+            }
+
+            pyramid = null!;
+            maxMip = 0;
+            viewProjection = Matrix4x4.Identity;
+            usesReversedZ = false;
+            return false;
         }
 
         private void RecordOcclusionFrameStats(
@@ -494,6 +523,10 @@ namespace XREngine.Rendering.Commands
                 BuildHiZPyramid(depthSampler, isReverseZ);
                 HiZStageStats.Record("BuildPyramid.PerPass", (Stopwatch.GetTimestamp() - _bpStart2) * 1000.0 / Stopwatch.Frequency);
             }
+
+            _hiZDepthPyramidReadyForMeshlets = _hiZDepthPyramid is not null;
+            _hiZDepthPyramidViewProjection = depthInput.ViewProjection;
+            _hiZDepthPyramidUsesReversedZ = isReverseZ;
 
             // C-GPU-3: when temporal state is dirty (scene mutated or camera jumped this
             // frame), the depth feeding the pyramid we just built does not contain newly

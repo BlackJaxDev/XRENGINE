@@ -26,6 +26,7 @@ namespace XREngine.Rendering
     {
         Normal = 0,
         RenderPipeline = 1,
+        Interactive = 2,
     }
 
     /// <summary>
@@ -107,6 +108,39 @@ namespace XREngine.Rendering
             {
                 get => allowShaderPipelines;
                 set => SetField(ref allowShaderPipelines, value);
+            }
+
+            /// <summary>
+            /// Priority bucket assigned to programs built for this version. Set by
+            /// <see cref="GetOrCreateVersion"/> based on the version key (main passes get
+            /// <see cref="EProgramPriority.Main"/>, shadow variants get <see cref="EProgramPriority.Shadow"/>,
+            /// VR stereo variants get <see cref="EProgramPriority.VR"/>) and propagated onto every
+            /// <see cref="XRRenderProgram"/> the GL mesh renderer creates from this version.
+            /// </summary>
+            public EProgramPriority ProgramPriority { get; internal set; } = EProgramPriority.Main;
+
+            /// <summary>
+            /// Short, human-readable label that identifies which vertex-shader variant this version
+            /// represents (e.g. "Default", "OVRMultiView", "NVStereo", "DirectionalCascadeInstanced").
+            /// Surfaced by the shader-program-links panel so each program tells the engineer what pass
+            /// and stereo strategy it is for.
+            /// </summary>
+            public virtual string VersionKindLabel
+            {
+                get
+                {
+                    Type t = GetType();
+                    if (t.IsGenericType)
+                    {
+                        Type genericArg = t.GetGenericArguments()[0];
+                        string raw = genericArg.Name;
+                        const string suffix = "VertexShaderGenerator";
+                        return raw.EndsWith(suffix, StringComparison.Ordinal)
+                            ? raw[..^suffix.Length]
+                            : raw;
+                    }
+                    return t.Name;
+                }
             }
 
             public void ResetVertexShaderSource()
@@ -232,6 +266,15 @@ namespace XREngine.Rendering
         public void EnsureRenderPipelineVersionsCreated()
         {
             _ = GetDefaultVersion();
+
+            // Only pre-create VR stereo variants when the engine is actually in VR.
+            // Otherwise we'd allocate two extra XRRenderProgram graphs per mesh renderer
+            // (one for OVR_multiview2, one for NV_stereo_view_rendering) that will never be used.
+            // GetVersion() already gates VR variant selection on RuntimeEngine.VRState.IsInVR via
+            // CanUseVrSpecificVersions(), so on-demand creation will pick these up if VR turns on later.
+            if (!CanUseVrSpecificVersions())
+                return;
+
             _ = GetOVRMultiViewVersion();
             _ = GetNVStereoVersion();
         }
@@ -301,6 +344,16 @@ namespace XREngine.Rendering
                 _ => throw new ArgumentOutOfRangeException(nameof(versionKey), versionKey, "Unknown mesh renderer shader version."),
             };
 
+            // Assign a priority bucket so the shared-context shader-link worker queue can serve
+            // user-visible main-pass programs before shadow / VR variants.
+            created.ProgramPriority = versionKey switch
+            {
+                0 or 3 => EProgramPriority.Main,
+                1 or 2 or 4 or 5 => EProgramPriority.VR,
+                6 or 7 or 8 or 9 => EProgramPriority.Shadow,
+                _ => EProgramPriority.Main,
+            };
+
             GeneratedVertexShaderVersions.Add(versionKey, created);
             return created;
         }
@@ -308,13 +361,20 @@ namespace XREngine.Rendering
         /// <summary>
         /// Specialized version for mesh deformation that passes deform parameters to the generator.
         /// </summary>
-        public class MeshDeformVersion : BaseVersion
+        public class MeshDeformVersion(XRMeshRenderer parent, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) : BaseVersion(parent, vertexShaderSelector, allowShaderPipelines)
         {
             public bool UseOVRMultiView { get; set; }
             public bool UseNVStereo { get; set; }
 
-            public MeshDeformVersion(XRMeshRenderer parent, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines)
-                : base(parent, vertexShaderSelector, allowShaderPipelines) { }
+            public override string VersionKindLabel
+            {
+                get
+                {
+                    if (UseOVRMultiView) return "MeshDeformOVRMultiView";
+                    if (UseNVStereo) return "MeshDeformNVStereo";
+                    return "MeshDeformDefault";
+                }
+            }
 
             protected override string? GenerateVertexShaderSource()
             {

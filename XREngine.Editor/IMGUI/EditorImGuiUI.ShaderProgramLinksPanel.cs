@@ -25,12 +25,14 @@ public static partial class EditorImGuiUI
     private static string _shaderProgramLinksSearch = string.Empty;
     private static ShaderProgramLinksSortMode _shaderProgramLinksSortMode = ShaderProgramLinksSortMode.State;
     private static OpenGLRenderer.GLRenderProgram? _selectedShaderProgramLinkProgram;
-    private const int ShaderProgramLinksDefaultSampleIntervalIndex = 2;
+    private const int ShaderProgramLinksDefaultSampleIntervalIndex = 4;
+    private const int ShaderProgramLinksMaxRowsPerPassiveCapture = 2048;
     private static readonly double[] _shaderProgramLinksSampleIntervalsSeconds = [0.10, 0.25, 0.50, 1.00, 2.00];
     private static readonly string[] _shaderProgramLinksSampleIntervalLabels = ["100 ms", "250 ms", "500 ms", "1 s", "2 s"];
     private static int _shaderProgramLinksSampleIntervalIndex = ShaderProgramLinksDefaultSampleIntervalIndex;
     private static long _shaderProgramLinksLastCaptureTimestamp;
     private static double _shaderProgramLinksLastCaptureMilliseconds;
+    private static int _shaderProgramLinksLastCaptureSkippedRows;
     private static bool _shaderProgramLinksSortDirty;
     private static bool _shaderProgramLinksViewDirty = true;
     private static IReadOnlyList<ShaderProgramLinkRow>? _shaderProgramLinksViewSource;
@@ -198,6 +200,19 @@ public static partial class EditorImGuiUI
         long startTimestamp = Stopwatch.GetTimestamp();
         rows.Clear();
 
+        int programCount = 0;
+        int pending = 0;
+        int prepared = 0;
+        int linked = 0;
+        int failed = 0;
+        int queued = 0;
+        int driverParallel = 0;
+        int sharedContext = 0;
+        int binary = 0;
+        int synchronous = 0;
+        int skippedRows = 0;
+        bool materializeAllRows = ShouldMaterializeAllShaderProgramLinkRows();
+
         foreach (XRWindow? window in Engine.Windows)
         {
             if (window?.Renderer is not OpenGLRenderer renderer)
@@ -212,21 +227,79 @@ public static partial class EditorImGuiUI
                     continue;
                 }
 
-                rows.Add(CreateShaderProgramLinkRow(
-                    windowTitle,
-                    "OpenGL",
-                    xrProgram,
-                    renderer,
-                    glProgram,
-                    glProgram.GetLinkDiagnosticsSnapshot()));
+                LinkSnapshot snapshot = glProgram.GetLinkDiagnosticsSnapshot();
+                programCount++;
+                if (IsShaderProgramPending(snapshot))
+                    pending++;
+                if (IsShaderProgramPreparedOnly(snapshot))
+                    prepared++;
+                if (snapshot.IsLinked)
+                    linked++;
+                if (IsShaderProgramFailed(snapshot))
+                    failed++;
+                if (IsShaderProgramQueued(snapshot))
+                    queued++;
+                if (UsesDriverParallel(snapshot))
+                    driverParallel++;
+                if (UsesSharedContext(snapshot))
+                    sharedContext++;
+                if (UsesBinaryCache(snapshot))
+                    binary++;
+                if (UsesSynchronousRenderThread(snapshot))
+                    synchronous++;
+
+                if (materializeAllRows || ShouldMaterializeShaderProgramLinkRow(snapshot, rows.Count))
+                {
+                    rows.Add(CreateShaderProgramLinkRow(
+                        windowTitle,
+                        "OpenGL",
+                        xrProgram,
+                        renderer,
+                        glProgram,
+                        snapshot));
+                }
+                else
+                {
+                    skippedRows++;
+                }
             }
         }
 
         SortShaderProgramLinkRows(rows);
+        _shaderProgramLinksSummary = new ShaderProgramLinksSummary(
+            programCount,
+            rows.Count,
+            pending,
+            prepared,
+            queued,
+            linked,
+            failed,
+            driverParallel,
+            sharedContext,
+            binary,
+            synchronous);
+        _shaderProgramLinksLastCaptureSkippedRows = skippedRows;
         MarkShaderProgramLinksViewDirty();
         long endTimestamp = Stopwatch.GetTimestamp();
         _shaderProgramLinksLastCaptureTimestamp = endTimestamp;
         _shaderProgramLinksLastCaptureMilliseconds = StopwatchTicksToMilliseconds(endTimestamp - startTimestamp);
+    }
+
+    private static bool ShouldMaterializeAllShaderProgramLinkRows()
+        => _shaderProgramLinksFilterPendingOnly ||
+           _shaderProgramLinksFilterLinkedOnly ||
+           _shaderProgramLinksFilterFailedOnly ||
+           !string.IsNullOrWhiteSpace(_shaderProgramLinksSearch);
+
+    private static bool ShouldMaterializeShaderProgramLinkRow(LinkSnapshot snapshot, int materializedCount)
+    {
+        if (materializedCount >= ShaderProgramLinksMaxRowsPerPassiveCapture)
+            return false;
+
+        if (IsShaderProgramFailed(snapshot) || HasLiveShaderProgramWork(snapshot) || IsShaderProgramPreparedOnly(snapshot))
+            return true;
+
+        return materializedCount < 256;
     }
 
     private static void CopyShaderProgramLinkRows(List<ShaderProgramLinkRow> source, List<ShaderProgramLinkRow> destination)
@@ -337,6 +410,12 @@ public static partial class EditorImGuiUI
 
     private static string ResolveShaderProgramUse(string programName, XRRenderProgram program, LinkSnapshot snapshot)
     {
+        // Prefer the rich UsageTag set by the program's creator (mesh renderer / material) when available.
+        // It encodes which mesh variant + pass the program is for, which is what engineers want to see
+        // when scanning hundreds of thousands of programs in the panel.
+        if (!string.IsNullOrWhiteSpace(program.UsageTag))
+            return program.UsageTag!;
+
         if (programName.StartsWith("MaterialPipelineVariant:", StringComparison.Ordinal))
             return "Material fragment variant";
         if (programName.StartsWith("MaterialPipeline:", StringComparison.Ordinal))
@@ -453,6 +532,8 @@ public static partial class EditorImGuiUI
 
         ImGui.TextUnformatted(
             $"Lifecycle: binary hits {ShaderProgramLifecycleDiagnostics.BinaryCacheHits:N0} | misses {ShaderProgramLifecycleDiagnostics.BinaryCacheMisses:N0} | source builds {ShaderProgramLifecycleDiagnostics.SourceBuilds:N0} | source failures {ShaderProgramLifecycleDiagnostics.SourceFailures:N0} | shared source queued {ShaderProgramLifecycleDiagnostics.SharedContextSourceQueued:N0}");
+        if (_shaderProgramLinksLastCaptureSkippedRows > 0)
+            ImGui.TextDisabled($"Rows capped: showing {summary.VisibleCount:N0}, skipped {_shaderProgramLinksLastCaptureSkippedRows:N0} low-activity rows");
         ImGui.TextDisabled(
             $"Sampling: {GetShaderProgramLinksSampleIntervalLabel()} | Last capture: {GetShaderProgramLinksLastCaptureAgeText()} ({_shaderProgramLinksLastCaptureMilliseconds:F2} ms)");
     }
@@ -707,43 +788,15 @@ public static partial class EditorImGuiUI
         if (!_shaderProgramLinksViewDirty && ReferenceEquals(_shaderProgramLinksViewSource, rows))
             return;
 
-        int pending = 0;
-        int prepared = 0;
-        int linked = 0;
-        int failed = 0;
-        int queued = 0;
-        int driverParallel = 0;
-        int sharedContext = 0;
-        int binary = 0;
-        int synchronous = 0;
-
         OpenGLRenderer.GLRenderProgram? selectedProgram = _selectedShaderProgramLinkProgram;
         ShaderProgramLinkRow? selectedRow = null;
         List<ShaderProgramLinkRow> visibleRows = _shaderProgramLinkVisibleRows;
         visibleRows.Clear();
+        ShaderProgramLinksSummary capturedSummary = _shaderProgramLinksSummary;
 
         for (int i = 0; i < rows.Count; i++)
         {
             ShaderProgramLinkRow row = rows[i];
-            if (row.IsPending)
-                pending++;
-            if (row.IsPreparedOnly)
-                prepared++;
-            if (row.Snapshot.IsLinked)
-                linked++;
-            if (row.IsFailed)
-                failed++;
-            if (row.IsQueued)
-                queued++;
-            if (row.UsesDriverParallel)
-                driverParallel++;
-            if (row.UsesSharedContext)
-                sharedContext++;
-            if (row.UsesBinaryCache)
-                binary++;
-            if (row.UsesSynchronousRenderThread)
-                synchronous++;
-
             if (selectedProgram is not null && ReferenceEquals(row.Program, selectedProgram))
                 selectedRow = row;
 
@@ -752,18 +805,7 @@ public static partial class EditorImGuiUI
         }
 
         _shaderProgramLinksSelectedRow = selectedRow;
-        _shaderProgramLinksSummary = new ShaderProgramLinksSummary(
-            rows.Count,
-            visibleRows.Count,
-            pending,
-            prepared,
-            queued,
-            linked,
-            failed,
-            driverParallel,
-            sharedContext,
-            binary,
-            synchronous);
+        _shaderProgramLinksSummary = capturedSummary with { VisibleCount = visibleRows.Count };
         _shaderProgramLinksViewSource = rows;
         _shaderProgramLinksViewDirty = false;
     }

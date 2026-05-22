@@ -334,20 +334,20 @@ namespace XREngine.Rendering.OpenGL
                 if (!IsGenerated)
                 {
                     bool shadowPass = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false;
-                    bool isRenderPipelinePriority = MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline;
-                    bool throttleRenderPipelineGeneration = isRenderPipelinePriority && Renderer.MeshGenerationQueue.ThrottlePriorityGeneration;
+                    bool usesInlineGeneration = MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline;
+                    bool throttleInlineGeneration = usesInlineGeneration && Renderer.MeshGenerationQueue.ThrottlePriorityGeneration;
 
                     // Shadow passes never cold-start GL resources to avoid amplifying startup cost.
                     // Normal scene meshes defer to the frame-budgeted queue when enabled.
                     // Render-pipeline meshes normally generate inline because their output is consumed
                     // the same frame, but during startup budget boosts they also defer so cold-start
                     // warmup is spread across frames instead of stalling the render thread.
-                    if (shadowPass || (Renderer.MeshGenerationQueue.Enabled && (!isRenderPipelinePriority || throttleRenderPipelineGeneration)))
+                    if (shadowPass || (Renderer.MeshGenerationQueue.Enabled && (!usesInlineGeneration || throttleInlineGeneration)))
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                         Dbg(shadowPass
                             ? "Not generated yet during shadow pass - queued for deferred generation"
-                            : throttleRenderPipelineGeneration
+                            : throttleInlineGeneration
                                 ? "Not generated yet - startup throttling queued render-pipeline generation"
                                 : "Not generated yet - queued for deferred generation", "Render");
                         LogBatchedTextDraw("Render queued-generation", instances, $"shadow={shadowPass}, priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
@@ -377,9 +377,9 @@ namespace XREngine.Rendering.OpenGL
 
                 if (!IsPreparedForRendering)
                 {
-                    bool isRenderPipelinePriority = MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline;
-                    bool throttleRenderPipelineGeneration = isRenderPipelinePriority && Renderer.MeshGenerationQueue.ThrottlePriorityGeneration;
-                    if (Renderer.MeshGenerationQueue.Enabled && (!isRenderPipelinePriority || throttleRenderPipelineGeneration))
+                    bool usesInlineGeneration = MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline;
+                    bool throttleInlineGeneration = usesInlineGeneration && Renderer.MeshGenerationQueue.ThrottlePriorityGeneration;
+                    if (Renderer.MeshGenerationQueue.Enabled && (!usesInlineGeneration || throttleInlineGeneration))
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                         Dbg("Generated but not render-ready - queued for deferred preparation while continuing direct draw attempt", "Render");
