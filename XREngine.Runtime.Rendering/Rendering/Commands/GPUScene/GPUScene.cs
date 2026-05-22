@@ -21,7 +21,7 @@
 //      - These are stable snapshots that don't change during rendering
 //
 // BUFFER SWAP SEQUENCE:
-//   PreCollectVisible (sequential) -> CollectVisible (parallel) -> SwapBuffers -> Render
+//   PreCollectVisible (sequential) -> CollectVisible (parallel) -> PostCollectVisible -> SwapBuffers -> Render
 //
 //   During SwapBuffers(), the updating buffer contents are copied to the render buffer,
 //   making the latest scene state visible to the render thread safely.

@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -11,18 +12,33 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass)
                 return;
 
-            XRRenderPipelineInstance instance = ActivePipelineInstance;
-            XRCamera? camera = instance.RenderState.SceneCamera
-                ?? instance.RenderState.RenderingCamera
-                ?? instance.LastSceneCamera
-                ?? instance.LastRenderingCamera;
-
-            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
-            using (instance.RenderState.PushRenderingCamera(camera))
+            try
             {
-                RenderEnabledSpatialTreeDebug(instance, camera);
-                RuntimeEngine.Rendering.Debug.RenderShapes();
+                XRRenderPipelineInstance instance = ActivePipelineInstance;
+                XRCamera? camera = instance.RenderState.SceneCamera
+                    ?? instance.RenderState.RenderingCamera
+                    ?? instance.LastSceneCamera
+                    ?? instance.LastRenderingCamera;
+
+                using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
+                using (instance.RenderState.PushRenderingCamera(camera))
+                {
+                    RenderEnabledSpatialTreeDebug(instance, camera);
+                    RuntimeEngine.Rendering.Debug.RenderShapes();
+                }
             }
+            finally
+            {
+                ResetStencilState();
+            }
+        }
+
+        private static void ResetStencilState()
+        {
+            RuntimeEngine.Rendering.State.EnableStencilTest(false);
+            RuntimeEngine.Rendering.State.StencilMask(0xFF);
+            RuntimeEngine.Rendering.State.StencilFunc(EComparison.Always, 0, 0xFF);
+            RuntimeEngine.Rendering.State.StencilOp(EStencilOp.Keep, EStencilOp.Keep, EStencilOp.Keep);
         }
 
         private static void RenderEnabledSpatialTreeDebug(XRRenderPipelineInstance instance, XRCamera? camera)

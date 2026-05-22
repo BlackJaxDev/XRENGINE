@@ -1157,6 +1157,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
 
         var p = GetNormalizedCursorPosition(vp);
+        ApplyTransformations(vp);
+
         _lastRaycastSegment = vp.GetWorldSegment(p, useUnjitteredProjection: true);
 
         SceneNode? tfmTool = TransformTool3D.InstanceNode;
@@ -1167,8 +1169,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         if (AllowWorldPicking)
             DispatchWorldPickIfNeeded(vp, p);
-
-        ApplyTransformations(vp);
     }
 
     /// <summary>
@@ -1736,13 +1736,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             }
         }
 
+        bool transformChanged = false;
+
         // Cancel scroll smooth when any non-scroll movement input arrives
         if (hasNonScrollInput)
             _scrollSmoothTarget = null;
 
         while (_pendingScrollDeltas.Count > 0)
-            ApplyScrollTransformation(vp, tfm, _pendingScrollDeltas.Dequeue());
-        UpdateScrollSmooth(tfm);
+            transformChanged |= ApplyScrollTransformation(vp, tfm, _pendingScrollDeltas.Dequeue());
+        transformChanged |= UpdateScrollSmooth(tfm);
         if (trans.HasValue && WorldDragPoint.HasValue && DepthHitNormalizedViewportPoint.HasValue)
         {
             Vector3 normCoord = DepthHitNormalizedViewportPoint.Value;
@@ -1752,6 +1754,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             Vector3 newNormCoord = new(vp.NormalizeViewportCoordinate(newScreenCoord), normCoord.Z);
             Vector3 worldDelta = vp.NormalizedViewportToWorldCoordinate(newNormCoord) - worldCoord;
             tfm.ApplyTranslation(worldDelta);
+            transformChanged = true;
         }
         if (rot.HasValue)
         {
@@ -1760,11 +1763,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             {
                 float x = rot.Value.X; float y = rot.Value.Y;
                 ArcBallRotate(y, x, pos.Value);
+                transformChanged = true;
             }
         }
+
+        if (transformChanged)
+            RecalculateCameraWorldMatrix(tfm);
     }
 
-    private void ApplyScrollTransformation(XRViewport vp, Transform tfm, float scrollDelta)
+    private bool ApplyScrollTransformation(XRViewport vp, Transform tfm, float scrollDelta)
     {
         if (DepthHitNormalizedViewportPoint.HasValue)
         {
@@ -1776,19 +1783,21 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             if (ShiftPressed)
                 moveAmount *= ShiftSpeedModifier;
             _scrollSmoothTarget = Segment.PointAtLineDistance(origin, worldCoord, moveAmount);
+            return false;
         }
         else
         {
             if (ShiftPressed)
                 scrollDelta *= ShiftSpeedModifier;
             base.OnScrolled(scrollDelta);
+            return CameraComponent?.Camera?.Parameters is not XROrthographicCameraParameters;
         }
     }
 
-    private void UpdateScrollSmooth(Transform tfm)
+    private bool UpdateScrollSmooth(Transform tfm)
     {
         if (!_scrollSmoothTarget.HasValue)
-            return;
+            return false;
 
         Vector3 current = tfm.WorldTranslation;
         Vector3 target = _scrollSmoothTarget.Value;
@@ -1803,7 +1812,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
         else
             tfm.SetWorldTranslation(newPos);
+
+        return true;
     }
+
+    private static void RecalculateCameraWorldMatrix(Transform tfm)
+        => tfm.RecalculateMatrices(forceWorldRecalc: true);
 
     protected override void OnRightClick(bool pressed)
     {
@@ -2039,6 +2053,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         Vector3 position = Vector3.Lerp(lerp.StartPosition, lerp.TargetPosition, eased);
         Quaternion rotation = Quaternion.Normalize(Quaternion.Slerp(lerp.StartRotation, lerp.TargetRotation, eased));
         tfm.SetWorldTranslationRotation(position, rotation);
+        RecalculateCameraWorldMatrix(tfm);
         if (t >= FocusCompletionThreshold)
         {
             _cameraFocusLerp = null; SyncYawPitchWithRotation(rotation);

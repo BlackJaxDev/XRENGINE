@@ -104,6 +104,7 @@ public partial class DefaultRenderPipeline
             AppendForwardDepthPrePass(c);
             c.Add<VPRC_DepthTest>().Enable = false;
             AppendAmbientOcclusionResolve(c);
+            AppendForwardDepthPrePassGBufferRestore(c);
             AppendLightingPass(c);
             AppendForwardPass(c, enableComputePasses);
             AppendTransparencyPasses(c);
@@ -241,6 +242,25 @@ public partial class DefaultRenderPipeline
         prePassChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
         {
             var shareChoice = new ViewportRenderCommandContainer(this);
+            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                CreateForwardDepthPrePassMergeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                DeferredGBufferPreForwardCopyFBOName,
+                CreateDeferredGBufferPreForwardCopyFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                DeferredGBufferPreForwardCopyFBOName,
+                EReadBufferMode.ColorAttachment0,
+                blitColor: true,
+                blitDepth: true,
+                blitStencil: false,
+                linearFilter: false);
+
             var shareIfElse = shareChoice.Add<VPRC_IfElse>();
             shareIfElse.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
             shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
@@ -259,6 +279,34 @@ public partial class DefaultRenderPipeline
                 blitStencil: false,
                 linearFilter: false);
             prePassChoice.TrueCommands = shareChoice;
+        }
+    }
+
+    private void AppendForwardDepthPrePassGBufferRestore(ViewportRenderCommandContainer c)
+    {
+        var restoreChoice = c.Add<VPRC_IfElse>();
+        restoreChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+        {
+            var restoreCommands = new ViewportRenderCommandContainer(this);
+            restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                CreateForwardDepthPrePassMergeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                DeferredGBufferPreForwardCopyFBOName,
+                CreateDeferredGBufferPreForwardCopyFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+            restoreCommands.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                DeferredGBufferPreForwardCopyFBOName,
+                ForwardDepthPrePassMergeFBOName,
+                EReadBufferMode.ColorAttachment0,
+                blitColor: true,
+                blitDepth: true,
+                blitStencil: false,
+                linearFilter: false);
+            restoreChoice.TrueCommands = restoreCommands;
         }
     }
 

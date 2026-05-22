@@ -113,8 +113,9 @@ namespace XREngine.Rendering
             /// <summary>
             /// Priority bucket assigned to programs built for this version. Set by
             /// <see cref="GetOrCreateVersion"/> based on the version key (main passes get
-            /// <see cref="EProgramPriority.Main"/>, shadow variants get <see cref="EProgramPriority.Shadow"/>,
-            /// VR stereo variants get <see cref="EProgramPriority.VR"/>) and propagated onto every
+            /// <see cref="EProgramPriority.Main"/>, interactive meshes get <see cref="EProgramPriority.Interactive"/>,
+            /// shadow variants get <see cref="EProgramPriority.Shadow"/>, VR stereo variants get <see cref="EProgramPriority.VR"/>)
+            /// and propagated onto every
             /// <see cref="XRRenderProgram"/> the GL mesh renderer creates from this version.
             /// </summary>
             public EProgramPriority ProgramPriority { get; internal set; } = EProgramPriority.Main;
@@ -327,7 +328,10 @@ namespace XREngine.Rendering
         private BaseVersion GetOrCreateVersion(int versionKey)
         {
             if (GeneratedVertexShaderVersions.TryGetValue(versionKey, out var existing))
+            {
+                existing.ProgramPriority = ResolveProgramPriority(versionKey);
                 return existing;
+            }
 
             BaseVersion created = versionKey switch
             {
@@ -346,16 +350,24 @@ namespace XREngine.Rendering
 
             // Assign a priority bucket so the shared-context shader-link worker queue can serve
             // user-visible main-pass programs before shadow / VR variants.
-            created.ProgramPriority = versionKey switch
+            created.ProgramPriority = ResolveProgramPriority(versionKey);
+
+            GeneratedVertexShaderVersions.Add(versionKey, created);
+            return created;
+        }
+
+        private EProgramPriority ResolveProgramPriority(int versionKey)
+        {
+            if (GenerationPriority == EMeshGenerationPriority.Interactive)
+                return EProgramPriority.Interactive;
+
+            return versionKey switch
             {
                 0 or 3 => EProgramPriority.Main,
                 1 or 2 or 4 or 5 => EProgramPriority.VR,
                 6 or 7 or 8 or 9 => EProgramPriority.Shadow,
                 _ => EProgramPriority.Main,
             };
-
-            GeneratedVertexShaderVersions.Add(versionKey, created);
-            return created;
         }
 
         /// <summary>

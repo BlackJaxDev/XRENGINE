@@ -274,6 +274,14 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void SubscribeViewportPostCollectVisible(Action postCollectVisible)
+        {
+        }
+
+        public void UnsubscribeViewportPostCollectVisible(Action postCollectVisible)
+        {
+        }
+
         public void SubscribeWindowTickCallbacks(Action swapBuffers, Action renderFrame)
         {
         }

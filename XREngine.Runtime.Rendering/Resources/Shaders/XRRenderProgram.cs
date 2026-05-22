@@ -462,7 +462,8 @@ namespace XREngine.Rendering
         /// Priority bucket used by the shared-context shader-link worker queue and any other
         /// priority-aware scheduler. Lower values are linked first. Programs in the same bucket
         /// are processed FIFO. Defaults to <see cref="EProgramPriority.Main"/>. Creators should
-        /// override (e.g. <see cref="EProgramPriority.Shadow"/> for shadow-pass variants,
+        /// override (e.g. <see cref="EProgramPriority.Interactive"/> for editor/user-interaction overlays,
+        /// <see cref="EProgramPriority.Shadow"/> for shadow-pass variants,
         /// <see cref="EProgramPriority.VR"/> for stereo variants, <see cref="EProgramPriority.Compute"/>
         /// for compute programs) so user-visible main-pass programs link before background work.
         /// </summary>

@@ -34,6 +34,30 @@ public sealed class ImportedTextureStreamingContractTests
     }
 
     [Test]
+    public void ImportedTextureStreaming_EvaluatesResidencyAfterCollectBeforeSwapBuffers()
+    {
+        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string timerSource = ReadWorkspaceFile("XREngine/Core/Time/EngineTimer.cs");
+        string interfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string hostSource = ReadWorkspaceFile("XREngine/Engine/Engine.RuntimeRenderingHostServices.cs");
+
+        timerSource.ShouldContain("PostCollectVisible?.Invoke();");
+        interfaceSource.ShouldContain("void SubscribeViewportPostCollectVisible(Action postCollectVisible);");
+        hostSource.ShouldContain("Engine.Time.Timer.PostCollectVisible += postCollectVisible;");
+        managerSource.ShouldContain("SubscribeViewportPostCollectVisible(OnPostCollectVisible)");
+        managerSource.ShouldContain("private void OnPostCollectVisible()");
+        managerSource.ShouldContain("TextureStreaming.PostCollectVisible");
+
+        int swapStart = managerSource.IndexOf("private void OnSwapBuffers()", StringComparison.Ordinal);
+        swapStart.ShouldBeGreaterThanOrEqualTo(0);
+        int swapEnd = managerSource.IndexOf("private void FinalizePendingSparseTransitions", swapStart, StringComparison.Ordinal);
+        swapEnd.ShouldBeGreaterThan(swapStart);
+        string swapBody = managerSource.Substring(swapStart, swapEnd - swapStart);
+        swapBody.ShouldNotContain("Evaluate(frameId);");
+        swapBody.ShouldNotContain("UpdatePromotionFades(frameId);");
+    }
+
+    [Test]
     public void ImportedTextureStreaming_UsesFullSparsePageCoverageUntilPageTrackingIsMaterialAware()
     {
         string source = ReadTextureStreamingSources();

@@ -1270,6 +1270,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
     public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
     public const string ForwardContactPrePassCopyFBOName = "ForwardContactPrePassCopyFBO";
+    public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
@@ -1287,6 +1288,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string NormalTextureName = "Normal";
     public const string ForwardPrePassNormalTextureName = "ForwardPrePassNormal";
     public const string ForwardContactNormalTextureName = "ForwardContactNormal";
+    public const string DeferredGBufferPreForwardNormalTextureName = "DeferredGBufferPreForwardNormal";
     public const string DepthViewTextureName = "DepthView";
     public const string ForwardContactDepthViewTextureName = "ForwardContactDepthView";
     public const string StencilViewTextureName = "StencilView";
@@ -1296,6 +1298,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string DepthStencilTextureName = "DepthStencil";
     public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
     public const string ForwardContactDepthStencilTextureName = "ForwardContactDepthStencil";
+    public const string DeferredGBufferPreForwardDepthStencilTextureName = "DeferredGBufferPreForwardDepthStencil";
     public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
     public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
     public const string DiffuseTextureName = "LightingTexture";
@@ -2534,6 +2537,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
             ResizeTextureInternalSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            DeferredGBufferPreForwardDepthStencilTextureName,
+            CreateDeferredGBufferPreForwardDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardContactDepthViewTextureName,
             CreateForwardContactDepthViewTexture,
             t => NeedsRecreateTextureView(t, ForwardContactDepthStencilTextureName),
@@ -2604,6 +2613,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardContactNormalTextureName,
             CreateForwardContactNormalTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            DeferredGBufferPreForwardNormalTextureName,
+            CreateDeferredGBufferPreForwardNormalTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
@@ -3654,10 +3669,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void BuildProbeGrid(IReadOnlyList<ProbePositionData> positions, IReadOnlyList<ProbeParamData> parameters, IReadOnlyList<ProbeTetraData>? tetraData = null)
     {
-        _probeGridCellBuffer?.Dispose();
-        _probeGridCellBuffer = null;
-        _probeGridIndexBuffer?.Dispose();
-        _probeGridIndexBuffer = null;
+        DestroyProbeBuffer(ref _probeGridCellBuffer);
+        DestroyProbeBuffer(ref _probeGridIndexBuffer);
         _probeGridOrigin = Vector3.Zero;
         _probeGridCellSize = 0f;
         _probeGridDims = IVector3.Zero;
@@ -4001,16 +4014,11 @@ public partial class DefaultRenderPipeline : RenderPipeline
         _probeIrradianceArray = null;
         _probePrefilterArray?.Destroy();
         _probePrefilterArray = null;
-        _probePositionBuffer?.Dispose();
-        _probePositionBuffer = null;
-        _probeParamBuffer?.Dispose();
-        _probeParamBuffer = null;
-        _probeTetraBuffer?.Dispose();
-        _probeTetraBuffer = null;
-        _probeGridCellBuffer?.Dispose();
-        _probeGridCellBuffer = null;
-        _probeGridIndexBuffer?.Dispose();
-        _probeGridIndexBuffer = null;
+        DestroyProbeBuffer(ref _probePositionBuffer);
+        DestroyProbeBuffer(ref _probeParamBuffer);
+        DestroyProbeBuffer(ref _probeTetraBuffer);
+        DestroyProbeBuffer(ref _probeGridCellBuffer);
+        DestroyProbeBuffer(ref _probeGridIndexBuffer);
         _probeGridOrigin = Vector3.Zero;
         _probeGridCellSize = 0f;
         _probeGridDims = IVector3.Zero;
@@ -4033,6 +4041,18 @@ public partial class DefaultRenderPipeline : RenderPipeline
         _probeBindingUseGrid = false;
         _probeBindingProbeCount = 0;
         _probeBindingTetraCount = 0;
+    }
+
+    private static void DestroyProbeBuffer(ref XRDataBuffer? buffer)
+    {
+        XRDataBuffer? oldBuffer = buffer;
+        buffer = null;
+
+        if (oldBuffer is null)
+            return;
+
+        oldBuffer.Destroy(true);
+        oldBuffer.Dispose();
     }
 
     private void BuildProbeResources(IList<LightProbeComponent> readyProbes, bool deferredByBatchCapture = false)
@@ -4285,10 +4305,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
         if (generation != _probeTessellationGeneration)
             return;
 
-        _probeTetraBuffer?.Dispose();
+        DestroyProbeBuffer(ref _probeTetraBuffer);
         if (tetraData.Count == 0)
         {
-            _probeTetraBuffer = null;
             _probeTetraProbeCount = 0;
             if (_useProbeGridAcceleration && _cachedProbePositionData.Length == probeCount && _cachedProbeParamData.Length == probeCount)
                 BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);

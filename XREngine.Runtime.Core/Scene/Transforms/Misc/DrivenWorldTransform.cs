@@ -22,7 +22,7 @@ namespace XREngine.Scene.Transforms
             _worldMatrix = matrix;
             //MarkWorldModified();
             Task recalculateTask = RecalculateMatrixHierarchy(true, setRenderMatrixNow, childRecalcType);
-            if (setRenderMatrixNow)
+            if (setRenderMatrixNow || childRecalcType == ELoopType.Sequential)
                 recalculateTask.GetAwaiter().GetResult();
         }
 

@@ -6,6 +6,7 @@ using Shouldly;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Rendering;
+using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -145,5 +146,36 @@ public sealed class ModelComponentTests
         component.Meshes.Count.ShouldBe(subMeshes.Length);
         component.RenderedObjects.Length.ShouldBe(subMeshes.Length);
         modelChangedCount.ShouldBe(1);
+    }
+
+    [Test]
+    public void RenderableMeshes_RegisterWhenWorldArrivesAfterActivation()
+    {
+        IRuntimeWorldObjectServices? previousServices = RuntimeWorldObjectServices.Current;
+        RuntimeWorldObjectServices.Current = null;
+
+        try
+        {
+            var node = new SceneNode("ModelComponentLateWorldNode");
+            Transform bone = node.SetTransform<Transform>();
+            var component = node.AddComponent<ModelComponent>()!;
+            component.Model = CreateSkinnedModel(bone, "LateWorldMesh");
+            component.NotifyComponentActivated();
+
+            component.RenderedObjects.Single().WorldInstance.ShouldBeNull();
+
+            XRWorldInstance world = new(new VisualScene3D(), new JitterScene());
+            node.World = world;
+
+            component.RenderedObjects.Single().WorldInstance.ShouldBeSameAs(world);
+
+            node.World = null;
+
+            component.RenderedObjects.Single().WorldInstance.ShouldBeNull();
+        }
+        finally
+        {
+            RuntimeWorldObjectServices.Current = previousServices;
+        }
     }
 }

@@ -1269,6 +1269,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
     public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
     public const string ForwardContactPrePassCopyFBOName = "ForwardContactPrePassCopyFBO";
+    public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
@@ -1286,6 +1287,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string NormalTextureName = "Normal";
     public const string ForwardPrePassNormalTextureName = "ForwardPrePassNormal";
     public const string ForwardContactNormalTextureName = "ForwardContactNormal";
+    public const string DeferredGBufferPreForwardNormalTextureName = "DeferredGBufferPreForwardNormal";
     public const string DepthViewTextureName = "DepthView";
     public const string ForwardContactDepthViewTextureName = "ForwardContactDepthView";
     public const string StencilViewTextureName = "StencilView";
@@ -1295,6 +1297,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string DepthStencilTextureName = "DepthStencil";
     public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
     public const string ForwardContactDepthStencilTextureName = "ForwardContactDepthStencil";
+    public const string DeferredGBufferPreForwardDepthStencilTextureName = "DeferredGBufferPreForwardDepthStencil";
     public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
     public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
     public const string DiffuseTextureName = "LightingTexture";
@@ -1955,14 +1958,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private void BuildProbeGrid(IReadOnlyList<ProbePositionData> positions, IReadOnlyList<ProbeParamData> parameters, IReadOnlyList<ProbeTetraData>? tetraData = null)
     {
-        bool removedGridCells = RemoveProbeBufferResource(LightProbeGridCellBufferName);
-        bool removedGridIndices = RemoveProbeBufferResource(LightProbeGridIndexBufferName);
-        if (!removedGridCells)
-            _probeGridCellBuffer?.Dispose();
-        _probeGridCellBuffer = null;
-        if (!removedGridIndices)
-            _probeGridIndexBuffer?.Dispose();
-        _probeGridIndexBuffer = null;
+        RemoveProbeBufferResource(LightProbeGridCellBufferName);
+        RemoveProbeBufferResource(LightProbeGridIndexBufferName);
+        DestroyProbeBuffer(ref _probeGridCellBuffer);
+        DestroyProbeBuffer(ref _probeGridIndexBuffer);
         _probeGridOrigin = Vector3.Zero;
         _probeGridCellSize = 0f;
         _probeGridDims = IVector3.Zero;
@@ -2310,11 +2309,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     {
         bool removedIrradiance = RemoveProbeTextureResource(LightProbeIrradianceArrayName);
         bool removedPrefilter = RemoveProbeTextureResource(LightProbePrefilterArrayName);
-        bool removedPosition = RemoveProbeBufferResource(LightProbePositionBufferName);
-        bool removedParam = RemoveProbeBufferResource(LightProbeParamBufferName);
-        bool removedTetra = RemoveProbeBufferResource(LightProbeTetraBufferName);
-        bool removedGridCells = RemoveProbeBufferResource(LightProbeGridCellBufferName);
-        bool removedGridIndices = RemoveProbeBufferResource(LightProbeGridIndexBufferName);
+        RemoveProbeBufferResource(LightProbePositionBufferName);
+        RemoveProbeBufferResource(LightProbeParamBufferName);
+        RemoveProbeBufferResource(LightProbeTetraBufferName);
+        RemoveProbeBufferResource(LightProbeGridCellBufferName);
+        RemoveProbeBufferResource(LightProbeGridIndexBufferName);
 
         if (!removedIrradiance)
             _probeIrradianceArray?.Destroy();
@@ -2322,21 +2321,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (!removedPrefilter)
             _probePrefilterArray?.Destroy();
         _probePrefilterArray = null;
-        if (!removedPosition)
-            _probePositionBuffer?.Dispose();
-        _probePositionBuffer = null;
-        if (!removedParam)
-            _probeParamBuffer?.Dispose();
-        _probeParamBuffer = null;
-        if (!removedTetra)
-            _probeTetraBuffer?.Dispose();
-        _probeTetraBuffer = null;
-        if (!removedGridCells)
-            _probeGridCellBuffer?.Dispose();
-        _probeGridCellBuffer = null;
-        if (!removedGridIndices)
-            _probeGridIndexBuffer?.Dispose();
-        _probeGridIndexBuffer = null;
+        DestroyProbeBuffer(ref _probePositionBuffer);
+        DestroyProbeBuffer(ref _probeParamBuffer);
+        DestroyProbeBuffer(ref _probeTetraBuffer);
+        DestroyProbeBuffer(ref _probeGridCellBuffer);
+        DestroyProbeBuffer(ref _probeGridIndexBuffer);
         _probeGridOrigin = Vector3.Zero;
         _probeGridCellSize = 0f;
         _probeGridDims = IVector3.Zero;
@@ -2515,6 +2504,18 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         return true;
     }
 
+    private static void DestroyProbeBuffer(ref XRDataBuffer? buffer)
+    {
+        XRDataBuffer? oldBuffer = buffer;
+        buffer = null;
+
+        if (oldBuffer is null)
+            return;
+
+        oldBuffer.Destroy(true);
+        oldBuffer.Dispose();
+    }
+
     private void ReportProbeResourceRefresh(bool structuralRefresh, int readyProbeCount, TimeSpan elapsed, bool deferredByBatchCapture)
     {
         IRuntimeRenderWorld? world = RenderingWorld;
@@ -2654,12 +2655,10 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (generation != _probeTessellationGeneration)
             return;
 
-        bool removedTetra = RemoveProbeBufferResource(LightProbeTetraBufferName);
-        if (!removedTetra)
-            _probeTetraBuffer?.Dispose();
+        RemoveProbeBufferResource(LightProbeTetraBufferName);
+        DestroyProbeBuffer(ref _probeTetraBuffer);
         if (tetraData.Count == 0)
         {
-            _probeTetraBuffer = null;
             _probeTetraProbeCount = 0;
             if (_useProbeGridAcceleration && _cachedProbePositionData.Length == probeCount && _cachedProbeParamData.Length == probeCount)
                 BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);

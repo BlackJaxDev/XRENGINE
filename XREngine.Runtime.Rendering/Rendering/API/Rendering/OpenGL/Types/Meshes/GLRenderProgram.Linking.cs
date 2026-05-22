@@ -3237,6 +3237,7 @@ namespace XREngine.Rendering.OpenGL
                     bool preferSharedContextForLargeSource = Renderer.UseDriverParallelShaderCompile &&
                         compileQueue is { IsAvailable: true } &&
                         ShouldPreferSharedContextForLargeSource(Hash, inputs);
+                    EProgramPriority priority = Data?.Priority ?? EProgramPriority.Main;
 
                     OpenGLShaderLinkBackendSelection sourceSelection = OpenGLShaderLinkBackendSelector.Select(new OpenGLShaderLinkBackendContext(
                         RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy,
@@ -3248,7 +3249,7 @@ namespace XREngine.Rendering.OpenGL
                         BinaryUploadCanEnqueue: Renderer.ProgramBinaryUploadQueue is { CanEnqueue: true },
                         DriverParallelAvailable: Renderer.UseDriverParallelShaderCompile && AllowRenderThreadDriverParallelSourceLinks,
                         SharedContextCompileAvailable: compileQueue is { IsAvailable: true },
-                        SharedContextCompileCanEnqueue: compileQueue is { CanEnqueue: true },
+                        SharedContextCompileCanEnqueue: compileQueue?.CanEnqueuePriority(priority) == true,
                         CompileInputsReady: inputs is { Length: > 0 },
                         IsKnownAsyncLinkHazard: isKnownAsyncLinkHazard,
                         PreferSharedContextForLargeSource: preferSharedContextForLargeSource,
@@ -3290,7 +3291,6 @@ namespace XREngine.Rendering.OpenGL
                             BeginUberBackendCompileTracking(queuedVariantHash);
 
                         EnsureProgramBinaryRetrievableHintForSourceBuild(bindingId, "SharedContextSource");
-                        EProgramPriority priority = Data?.Priority ?? EProgramPriority.Main;
                         if (!compileQueue.TryEnqueueCompileAndLink(bindingId, inputs, priority, out string? rejectReason))
                         {
                             _asyncCompileLinkQueueWaitPending = true;

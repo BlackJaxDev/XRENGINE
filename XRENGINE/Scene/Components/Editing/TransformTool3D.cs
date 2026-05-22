@@ -78,11 +78,8 @@ namespace XREngine.Scene.Components.Editing
 
                 if (!GetActiveInstance(out var instance) || instance is null)
                     return;
-                
-                if (_transformSpace == ETransformSpace.Screen)
-                    instance.RegisterTick(ETickGroup.Late, ETickOrder.Logic, instance.UpdateScreenSpace);
-                else
-                    instance.UnregisterTick(ETickGroup.Late, ETickOrder.Logic, instance.UpdateScreenSpace);
+
+                instance.UpdateDisplayTransform();
             }
         }
 
@@ -120,10 +117,8 @@ namespace XREngine.Scene.Components.Editing
             }
 
             TransformTool3D instance = _instanceNode.GetOrAddComponent<TransformTool3D>(out _)!;
+            instance.RegisterDisplayTransformTick();
             instance.TargetSocket = comp;
-
-            if (_transformSpace == ETransformSpace.Screen)
-                instance.RegisterTick(ETickGroup.Late, ETickOrder.Logic, instance.UpdateScreenSpace);
 
             return instance;
         }
@@ -166,6 +161,7 @@ namespace XREngine.Scene.Components.Editing
             SceneNode skelRoot = SceneNode.NewChild();
 
             BillboardTransform rootBillboardTfm = skelRoot.GetTransformAs<BillboardTransform>(true)!;
+            ConfigureToolBillboard(rootBillboardTfm, _referenceCamera);
             rootBillboardTfm.BillboardActive = false;
             rootBillboardTfm.Perspective = true;
             rootBillboardTfm.ScaleByDistance = true;
@@ -194,6 +190,7 @@ namespace XREngine.Scene.Components.Editing
 
             SceneNode screenNode = skelRoot.NewChild();
             BillboardTransform screenBillboard = screenNode.GetTransformAs<BillboardTransform>(true)!;
+            ConfigureToolBillboard(screenBillboard, _referenceCamera);
             screenBillboard.Perspective = false;
             screenBillboard.BillboardActive = true;
 
@@ -507,8 +504,25 @@ namespace XREngine.Scene.Components.Editing
 
         private TransformBase? _targetSocket = null;
         private bool _updatingDisplayTransform;
+        private XRCamera? _referenceCamera;
+        private bool _displayTransformTickRegistered;
 
-        private void UpdateScreenSpace()
+        private void RegisterDisplayTransformTick()
+        {
+            if (_displayTransformTickRegistered)
+                return;
+
+            RegisterTick(ETickGroup.Late, ETickOrder.Logic, UpdateDisplayTransformTick);
+            _displayTransformTickRegistered = true;
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            _displayTransformTickRegistered = false;
+        }
+
+        private void UpdateDisplayTransformTick()
         {
             if (_targetSocket != null)
                 UpdateDisplayTransform();
@@ -785,7 +799,7 @@ namespace XREngine.Scene.Components.Editing
         /// Returns the transform of the target socket in the specified transform space.
         /// </summary>
         /// <returns></returns>
-        private Matrix4x4 GetSocketSpacialTransform()
+        private Matrix4x4 GetSocketSpacialTransform(XRCamera? referenceCamera = null)
         {
             if (_targetSocket is null)
                 return Matrix4x4.Identity;
@@ -794,14 +808,14 @@ namespace XREngine.Scene.Components.Editing
             {
                 ETransformSpace.Local => WithoutScale(_targetSocket.WorldMatrix),
                 ETransformSpace.Parent => _targetSocket.Parent is null ? Matrix4x4.Identity : WithoutScale(_targetSocket.ParentWorldMatrix),
-                ETransformSpace.Screen => GetScreenSpaceTransform(),
+                ETransformSpace.Screen => GetScreenSpaceTransform(referenceCamera),
                 _ => Matrix4x4.CreateTranslation(_targetSocket.WorldMatrix.Translation),
             };
         }
 
         private Matrix4x4 GetScreenSpaceTransform(XRCamera? referenceCamera = null)
         {
-            referenceCamera ??= (Engine.State.MainPlayer.Viewport as XRViewport)?.ActiveCamera;
+            referenceCamera = ResolveReferenceCamera(referenceCamera);
             if (referenceCamera is null)
                 return Matrix4x4.Identity;
             
@@ -834,7 +848,7 @@ namespace XREngine.Scene.Components.Editing
         /// The drag matrix should only be set at the start of a drag, on mouse down.
         /// </summary>
         /// <param name="updateDragMatrix"></param>
-        private void UpdateDisplayTransform()
+        private void UpdateDisplayTransform(XRCamera? referenceCamera = null)
         {
             if (_updatingDisplayTransform)
                 return;
@@ -842,10 +856,11 @@ namespace XREngine.Scene.Components.Editing
             if (_targetSocket is null || IsTransformInToolHierarchy(_targetSocket))
                 return;
 
+            referenceCamera = ResolveReferenceCamera(referenceCamera);
             _updatingDisplayTransform = true;
             try
             {
-                SetRootTransform(GetSocketSpacialTransform());
+                SetRootTransform(GetSocketSpacialTransform(referenceCamera), referenceCamera);
             }
             finally
             {
@@ -1403,6 +1418,9 @@ namespace XREngine.Scene.Components.Editing
         /// </summary>
         public bool MouseMove(Segment cursor, XRCamera camera, bool pressed)
         {
+            SetReferenceCamera(camera);
+            UpdateDisplayTransform(camera);
+
             bool snapFound = true;
             if (pressed)
             {
@@ -1508,11 +1526,46 @@ namespace XREngine.Scene.Components.Editing
             MouseDown?.Invoke();
         }
 
-        private void SetRootTransform(Matrix4x4 transform)
+        private void SetRootTransform(Matrix4x4 transform, XRCamera? referenceCamera)
         {
-            RootTransform.SetWorldMatrix(transform, setRenderMatrixNow: true, childRecalcType: ELoopType.Sequential);
+            ConfigureToolBillboards(referenceCamera);
+            RootTransform.SetWorldMatrix(transform, setRenderMatrixNow: false, childRecalcType: ELoopType.Sequential);
             if (Transform.GetChild(0) is BillboardTransform billboard)
-                billboard.RefreshCameraDependentMatrix(setRenderMatrixNow: true, childRecalcType: ELoopType.Sequential);
+                billboard.RefreshCameraDependentMatrix(referenceCamera, setRenderMatrixNow: false, childRecalcType: ELoopType.Sequential);
+        }
+
+        private XRCamera? ResolveReferenceCamera(XRCamera? referenceCamera = null)
+        {
+            if (referenceCamera is not null)
+                return _referenceCamera = referenceCamera;
+
+            return _referenceCamera ?? (Engine.State.MainPlayer.Viewport as XRViewport)?.ActiveCamera;
+        }
+
+        private void SetReferenceCamera(XRCamera referenceCamera)
+        {
+            if (ReferenceEquals(_referenceCamera, referenceCamera))
+                return;
+
+            _referenceCamera = referenceCamera;
+            ConfigureToolBillboards(referenceCamera);
+        }
+
+        private void ConfigureToolBillboards(XRCamera? referenceCamera)
+        {
+            if (Transform.GetChild(0) is not BillboardTransform billboard)
+                return;
+
+            ConfigureToolBillboard(billboard, referenceCamera);
+            if (billboard.GetChild(0) is BillboardTransform screenBillboard)
+                ConfigureToolBillboard(screenBillboard, referenceCamera);
+        }
+
+        private static void ConfigureToolBillboard(BillboardTransform billboard, XRCamera? referenceCamera)
+        {
+            billboard.ReferenceCamera = referenceCamera;
+            billboard.AutoRefreshCameraDependentMatrix = false;
+            billboard.UseRenderCameraTransform = false;
         }
 
         private void OnReleased()

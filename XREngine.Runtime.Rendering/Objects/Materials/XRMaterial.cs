@@ -883,6 +883,7 @@ namespace XREngine.Rendering
             {
                 Name = $"MaterialPipeline:{Name ?? "unknown"}",
                 UsageTag = $"MaterialFragmentPipeline | material={Name ?? "<unnamed>"}",
+                Priority = ShaderProgramPriority,
             };
             ApplyShaderProgramMetadata(ShaderPipelineProgram);
         }
@@ -938,6 +939,7 @@ namespace XREngine.Rendering
             {
                 Name = $"MaterialPipeline:{Name ?? "unknown"}",
                 UsageTag = $"MaterialFragmentPipeline | material={Name ?? "<unnamed>"}",
+                Priority = ShaderProgramPriority,
             };
             ApplyShaderProgramMetadata(ShaderPipelineProgram);
         }
@@ -1559,6 +1561,7 @@ namespace XREngine.Rendering
                 return;
 
             material.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+            material.ShaderProgramPriority = EProgramPriority.Interactive;
 
             var ro = material.RenderOptions;
             var stencil = ro.StencilTest ?? new StencilTest();

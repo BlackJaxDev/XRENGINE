@@ -126,6 +126,14 @@ public partial class DefaultRenderPipeline2
         }
     }
 
+    private XRTexture CreateDeferredGBufferPreForwardDepthStencilTexture()
+    {
+        XRTexture texture = CreateDepthStencilTexture();
+        texture.Name = DeferredGBufferPreForwardDepthStencilTextureName;
+        texture.SamplerName = DeferredGBufferPreForwardDepthStencilTextureName;
+        return texture;
+    }
+
     private XRTexture CreateDepthViewTexture()
     {
         if (Stereo)
@@ -461,6 +469,14 @@ public partial class DefaultRenderPipeline2
             t.SamplerName = ForwardContactNormalTextureName;
             return t;
         }
+    }
+
+    private XRTexture CreateDeferredGBufferPreForwardNormalTexture()
+    {
+        XRTexture texture = CreateNormalTexture();
+        texture.Name = DeferredGBufferPreForwardNormalTextureName;
+        texture.SamplerName = DeferredGBufferPreForwardNormalTextureName;
+        return texture;
     }
 
     private XRTexture CreateRMSETexture()

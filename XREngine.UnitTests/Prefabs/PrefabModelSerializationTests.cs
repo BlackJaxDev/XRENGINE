@@ -13,6 +13,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -554,6 +555,26 @@ CommandChain: []
 
         pipeline.ShouldBeOfType<DefaultRenderPipeline>();
         ((DefaultRenderPipeline)pipeline).EnableDeferredMsaa.ShouldBeTrue();
+    }
+
+    [Test]
+    public void RenderCommandYaml_LegacyRenderQuadFboType_DeserializesAsRenderQuadToFbo()
+    {
+        string yaml = """
+__type: XREngine.Rendering.Pipelines.Commands.VPRC_RenderQuadFBO
+SourceQuadFBOName: SourceFBO
+DestinationFBOName: DestinationFBO
+RenderToSourceFrameBuffer: true
+MatchDestinationRenderArea: true
+""";
+
+        ViewportRenderCommand command = AssetManager.Deserializer.Deserialize<ViewportRenderCommand>(yaml).ShouldNotBeNull();
+
+        VPRC_RenderQuadToFBO quadCommand = command.ShouldBeOfType<VPRC_RenderQuadToFBO>();
+        quadCommand.SourceQuadFBOName.ShouldBe("SourceFBO");
+        quadCommand.DestinationFBOName.ShouldBe("DestinationFBO");
+        quadCommand.RenderToSourceFrameBuffer.ShouldBeTrue();
+        quadCommand.MatchDestinationRenderArea.ShouldBeTrue();
     }
 
     [Test]
