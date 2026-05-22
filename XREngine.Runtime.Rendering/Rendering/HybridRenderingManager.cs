@@ -2584,16 +2584,30 @@ namespace XREngine.Rendering
         {
             Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
             Matrix4x4 viewProjectionMatrix = viewMatrix * camera.ProjectionMatrix;
+            XRTexture2D? hiZDepthPyramid = null;
+            int hiZMaxMip = 0;
+            Matrix4x4 hiZViewProjectionMatrix = viewProjectionMatrix;
+            bool hiZUsesReversedZ = false;
+            bool hiZAvailable = renderPasses.ActiveViewCount <= 1u &&
+                renderPasses.ActiveOcclusionMode == EOcclusionCullingMode.GpuHiZ &&
+                renderPasses.TryGetHiZDepthPyramidForMeshlets(
+                    out hiZDepthPyramid,
+                    out hiZMaxMip,
+                    out hiZViewProjectionMatrix,
+                    out hiZUsesReversedZ);
 
             program.Uniform("ViewProjectionMatrix", viewProjectionMatrix);
             program.Uniform("PreviousViewProjectionMatrix", viewProjectionMatrix);
             program.Uniform("CameraPosition", camera.Transform.RenderTranslation);
-            program.Uniform("HiZSize", Vector2.Zero);
-            program.Uniform("HiZMipCount", 0.0f);
+            program.Uniform("HiZViewProjectionMatrix", hiZAvailable ? hiZViewProjectionMatrix : viewProjectionMatrix);
+            program.Uniform("HiZSize", hiZAvailable
+                ? new Vector2((float)hiZDepthPyramid!.Mipmaps[0].Width, (float)hiZDepthPyramid.Mipmaps[0].Height)
+                : Vector2.Zero);
+            program.Uniform("HiZMipCount", hiZAvailable ? hiZMaxMip + 1.0f : 0.0f);
             program.Uniform("HiZDepthBias", 0.0f);
-            program.Uniform("HiZUsesReversedZ", 0u);
-            program.Uniform("HiZValid", 0u);
-            program.Uniform("EnableHiZOcclusion", 0u);
+            program.Uniform("HiZUsesReversedZ", hiZAvailable && hiZUsesReversedZ ? 1u : 0u);
+            program.Uniform("HiZValid", hiZAvailable ? 1u : 0u);
+            program.Uniform("EnableHiZOcclusion", hiZAvailable ? 1u : 0u);
             program.Uniform("EnableFrustumCulling", 1u);
             program.Uniform("EnableConeCulling", 1u);
             program.Uniform("EnableMaskedConeCulling", 0u);
@@ -2610,6 +2624,8 @@ namespace XREngine.Rendering
             program.Uniform("MeshletAlphaCutoff", 0.5f);
             program.Uniform("EnableSkinning", 0u);
             program.Uniform(MeshletDebugDisplayUniformName, GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera) ? 1u : 0u);
+            if (hiZAvailable)
+                program.Sampler("HiZDepth", hiZDepthPyramid!, 0);
 
             IReadOnlyList<Plane> planes = camera.WorldFrustum().Planes;
             int planeCount = Math.Min(planes.Count, MeshletFrustumPlaneUniformNames.Length);

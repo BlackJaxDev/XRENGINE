@@ -104,6 +104,7 @@ layout(binding = 0) uniform sampler2D HiZDepth;
 
 uniform vec4 FrustumPlanes[6];
 uniform mat4 ViewProjectionMatrix;
+uniform mat4 HiZViewProjectionMatrix;
 uniform vec3 CameraPosition;
 uniform vec2 HiZSize;
 uniform float HiZMipCount;
@@ -225,7 +226,7 @@ bool HiZOccluded(vec4 sphere)
     if (stereoActive && EnableStereoHiZ == 0u)
         return false;
 
-    vec4 clip = ViewProjectionMatrix * vec4(sphere.xyz, 1.0);
+    vec4 clip = HiZViewProjectionMatrix * vec4(sphere.xyz, 1.0);
     if (clip.w <= 0.0)
         return false;
 

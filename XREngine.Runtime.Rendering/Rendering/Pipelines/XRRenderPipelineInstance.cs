@@ -57,6 +57,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public RenderCommandCollection MeshRenderCommands { get; } = new();
 
     public RenderResourceRegistry Resources { get; } = new();
+    private int _destroyCacheQueued;
 
     /// <summary>
     /// Monotonically increasing counter incremented each time physical GPU resources
@@ -448,9 +449,35 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     public void DestroyCache()
     {
-        if (EnqueueResourceMutationIfOffRenderThread(DestroyCache, "XRRenderPipelineInstance.DestroyCache"))
+        if (!RuntimeEngine.IsRenderThread)
+        {
+            EnqueueDestroyCache();
+            return;
+        }
+
+        DestroyCacheOnRenderThread();
+    }
+
+    private void EnqueueDestroyCache()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _destroyCacheQueued, 1) != 0)
             return;
 
+        RuntimeEngine.EnqueueRenderThreadTask(() =>
+        {
+            try
+            {
+                DestroyCacheOnRenderThread();
+            }
+            finally
+            {
+                System.Threading.Volatile.Write(ref _destroyCacheQueued, 0);
+            }
+        }, "XRRenderPipelineInstance.DestroyCache");
+    }
+
+    private void DestroyCacheOnRenderThread()
+    {
         LogDefaultRenderPipelineResourceDestruction("DestroyCache");
         Resources.DestroyAllPhysicalResources();
     }

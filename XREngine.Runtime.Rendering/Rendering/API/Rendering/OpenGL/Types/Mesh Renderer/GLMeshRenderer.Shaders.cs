@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Core;
@@ -26,11 +27,8 @@ namespace XREngine.Rendering.OpenGL
                 var material = Material;
                 if (material is null)
                 {
-                    _combinedProgram?.Destroy();
-                    _combinedProgram = null;
-
-                    _separatedVertexProgram?.Destroy();
-                    _separatedVertexProgram = null;
+                    DestroyCombinedProgram();
+                    DestroySeparablePrograms();
                     CaptureMaterialShaderState();
                     return;
                 }
@@ -63,15 +61,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     DestroySeparablePrograms();
                     material.Data.DestroyShaderPipelineProgram();
-
-                    IEnumerable<XRShader> shaders = material.Data.Shaders;
-                    CreateCombinedProgram(
-                        ref _combinedProgram,
-                        material.Data,
-                        hasNoVertexShaders,
-                        shaders,
-                        Data.VertexShaderSelector,
-                        () => Data.VertexShaderSource ?? string.Empty);
+                    EnsureCombinedProgramForMaterial(material);
 
                     Dbg("GenProgramsAndBuffers: combined program initiated", "Programs");
                 }
@@ -82,7 +72,13 @@ namespace XREngine.Rendering.OpenGL
 
             private void DestroyCombinedProgram()
             {
-                _combinedProgram?.Destroy();
+                foreach (CombinedProgramCacheEntry entry in _combinedProgramCache.Values)
+                {
+                    GLRenderProgram? cachedProgram = entry.Program;
+                    DestroyOwnedProgram(ref cachedProgram);
+                }
+
+                _combinedProgramCache.Clear();
                 _combinedProgram = null;
                 _combinedProgramMaterialKey = null;
                 _combinedProgramMaterialShaderStateRevision = 0;
@@ -90,14 +86,35 @@ namespace XREngine.Rendering.OpenGL
 
             private void DestroySeparablePrograms()
             {
-                _pipeline?.Destroy();
+                DestroyOwnedPipeline(ref _pipeline);
                 _pipeline = null;
 
-                _separatedVertexProgram?.Destroy();
+                DestroyOwnedProgram(ref _separatedVertexProgram);
                 _separatedVertexProgram = null;
 
-                _forcedGeneratedVertexProgram?.Destroy();
+                DestroyOwnedProgram(ref _forcedGeneratedVertexProgram);
                 _forcedGeneratedVertexProgram = null;
+            }
+
+            private void DestroyOwnedProgram(ref GLRenderProgram? program)
+            {
+                GLRenderProgram? ownedProgram = program;
+                if (ownedProgram is null)
+                    return;
+
+                ownedProgram.PropertyChanged -= CheckProgramLinked;
+                program = null;
+                ownedProgram.Data.Destroy();
+            }
+
+            private static void DestroyOwnedPipeline(ref GLRenderProgramPipeline? pipeline)
+            {
+                GLRenderProgramPipeline? ownedPipeline = pipeline;
+                if (ownedPipeline is null)
+                    return;
+
+                pipeline = null;
+                ownedPipeline.Data.Destroy();
             }
 
             private void EnsureRuntimeDeformationBuffers()
@@ -477,7 +494,12 @@ namespace XREngine.Rendering.OpenGL
                 bool usePipelines = UseShaderPipelinesForThisRenderer();
 
                 if (!usePipelines)
-                    return _combinedProgram?.IsAsyncBuildPending ?? false;
+                {
+                    XRMaterial xrMaterial = material.Data;
+                    return _combinedProgramCache.TryGetValue(xrMaterial, out CombinedProgramCacheEntry cachedEntry) &&
+                        cachedEntry.ShaderStateRevision == xrMaterial.ShaderStateRevision &&
+                        cachedEntry.Program.IsAsyncBuildPending;
+                }
 
                 material.Data.EnsureShaderPipelineProgram();
                 GLRenderProgram? materialProgram = material.SeparableProgram;
@@ -531,14 +553,22 @@ namespace XREngine.Rendering.OpenGL
             {
                 XRMaterial xrMaterial = material.Data;
                 long shaderStateRevision = xrMaterial.ShaderStateRevision;
-                if (_combinedProgram is not null &&
-                    ReferenceEquals(_combinedProgramMaterialKey, xrMaterial) &&
-                    _combinedProgramMaterialShaderStateRevision == shaderStateRevision)
+                if (_combinedProgramCache.TryGetValue(xrMaterial, out CombinedProgramCacheEntry cachedEntry) &&
+                    cachedEntry.ShaderStateRevision == shaderStateRevision)
                 {
+                    _combinedProgram = cachedEntry.Program;
+                    _combinedProgramMaterialKey = xrMaterial;
+                    _combinedProgramMaterialShaderStateRevision = shaderStateRevision;
                     return;
                 }
 
-                DestroyCombinedProgram();
+                if (cachedEntry.Program is not null)
+                {
+                    GLRenderProgram? staleProgram = cachedEntry.Program;
+                    DestroyOwnedProgram(ref staleProgram);
+                    _combinedProgramCache.Remove(xrMaterial);
+                }
+
                 xrMaterial.DestroyShaderPipelineProgram();
 
                 bool hasNoVertexShaders = xrMaterial.VertexShaders.Count == 0;
@@ -549,6 +579,8 @@ namespace XREngine.Rendering.OpenGL
                     xrMaterial.Shaders,
                     Data.VertexShaderSelector,
                     () => Data.VertexShaderSource ?? string.Empty);
+                if (_combinedProgram is not null)
+                    _combinedProgramCache[xrMaterial] = new CombinedProgramCacheEntry(_combinedProgram, shaderStateRevision);
 
                 BuffersBound = false;
             }
@@ -698,6 +730,8 @@ namespace XREngine.Rendering.OpenGL
                 var combinedData = new XRRenderProgram(false, false, shaders)
                 {
                     Name = $"Combined:{material.Name ?? "unknown"}",
+                    UsageTag = $"CombinedMeshProgram | variant={Data.VersionKindLabel} | material={material.Name ?? "<unnamed>"} | mesh={MeshRenderer.Name ?? "<unnamed>"}",
+                    Priority = Data.ProgramPriority,
                 };
                 material.ApplyShaderProgramMetadata(combinedData);
                 _combinedProgramMaterialKey = material;
@@ -731,6 +765,8 @@ namespace XREngine.Rendering.OpenGL
                 var separatedData = new XRRenderProgram(false, true, vertexShader)
                 {
                     Name = $"SeparatedVertex:{MeshRenderer.Material?.Name ?? "unknown"}",
+                    UsageTag = $"SeparableVertexProgram | variant={Data.VersionKindLabel} | material={MeshRenderer.Material?.Name ?? "<unnamed>"} | mesh={MeshRenderer.Name ?? "<unnamed>"}",
+                    Priority = Data.ProgramPriority,
                 };
                 vertexProgram = Renderer.GenericToAPI<GLRenderProgram>(separatedData)!;
                 vertexProgram.PropertyChanged += CheckProgramLinked;
@@ -738,10 +774,23 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
-            /// Generate a simple default vertex shader.
+            /// Process-wide dedup cache for engine-generated vertex shaders, keyed by source text.
+            /// Two BaseVersion instances that produce identical GLSL (same generator, mesh layout, and
+            /// deform settings) share a single XRShader, which lets the shared GLShader/binary-cache
+            /// path short-circuit redundant compiles. Lifetime equals the process; matches the existing
+            /// UberShaderVariantBuilder.GeneratedShaderCache policy.
+            /// </summary>
+            private static readonly ConcurrentDictionary<string, XRShader> _generatedVertexShaderCache
+                = new(StringComparer.Ordinal);
+
+            /// <summary>
+            /// Generate a simple default vertex shader, dedup'd by source text.
             /// </summary>
             private static XRShader GenerateVertexShader(Func<string> vertexSourceGenerator)
-                => new(EShaderType.Vertex, vertexSourceGenerator());
+            {
+                string source = vertexSourceGenerator() ?? string.Empty;
+                return _generatedVertexShaderCache.GetOrAdd(source, static src => new XRShader(EShaderType.Vertex, src));
+            }
 
             /// <summary>
             /// Start linking the provided program, either synchronously or asynchronously.
@@ -751,7 +800,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.InitiateLink", ProfilerScopeKind.OneOffInvoke);
                 vertexProgram.Data.AllowLink();
-                vertexProgram.BeginPrepareLinkData();
+                vertexProgram.BeginPrepareLinkData(registerPendingProgram: Data.Parent.GenerateAsync);
                 if (!Data.Parent.GenerateAsync)
                     vertexProgram.Link();
             }

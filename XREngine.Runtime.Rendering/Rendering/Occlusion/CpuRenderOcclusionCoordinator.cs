@@ -49,8 +49,17 @@ namespace XREngine.Rendering.Occlusion
             public Vector3 LastCameraUp;
             public Matrix4x4 LastProjection;
             public bool HasCameraState;
+            public bool CameraMovedThisFrame;
+            public bool VisibilityInvalidatedThisFrame;
             public ulong LastResolvedFrameId;
             public uint LastSceneCommandCount;
+        }
+
+        private enum ECameraVisibilityChange
+        {
+            None,
+            SmallMotion,
+            LargeInvalidation,
         }
 
         private readonly object _lock = new();
@@ -72,7 +81,10 @@ namespace XREngine.Rendering.Occlusion
         private const int DefaultOccludedRetestPeriodFrames = 6;
         private const float CameraMotionEpsilon = 0.0001f;
         private const float CameraOrientationDotThreshold = 0.999999f;
+        private const float CameraLargeMotionDistance = 2.0f;
+        private const float CameraLargeOrientationDotThreshold = 0.9659258f; // cos(15 degrees)
         private const float ProjectionDeltaThreshold = 0.001f;
+        private const float ProjectionInvalidationDeltaThreshold = 0.125f;
         private const int StaleEvictionFrames = 120;
 
         private static int GetOccludedRetestPeriodFrames()
@@ -81,7 +93,7 @@ namespace XREngine.Rendering.Occlusion
             return period > 0 ? period : DefaultOccludedRetestPeriodFrames;
         }
 
-        public void BeginPass(int renderPass, XRCamera camera, uint sceneCommandCount)
+        public bool BeginPass(int renderPass, XRCamera camera, uint sceneCommandCount)
         {
             lock (_lock)
             {
@@ -94,10 +106,15 @@ namespace XREngine.Rendering.Occlusion
                 // reclaims it.
                 state.LastSceneCommandCount = sceneCommandCount;
 
-                if (HasCameraVisibilityStateChanged(state, camera))
+                ECameraVisibilityChange cameraChange = UpdateCameraVisibilityState(state, camera);
+                state.CameraMovedThisFrame = cameraChange != ECameraVisibilityChange.None;
+                state.VisibilityInvalidatedThisFrame = cameraChange == ECameraVisibilityChange.LargeInvalidation;
+
+                if (state.VisibilityInvalidatedThisFrame)
                     ResetTemporalState(state);
 
                 ResolveAvailableResults(state);
+                return state.VisibilityInvalidatedThisFrame;
             }
         }
 
@@ -191,7 +208,9 @@ namespace XREngine.Rendering.Occlusion
                 // retestPeriod frames so its visibility state can update when the
                 // occluder moves. Stagger by sourceCommandIndex so not every culled
                 // object retests the same frame (bounded per-frame retest cost).
-                int retestPeriod = GetOccludedRetestPeriodFrames();
+                int retestPeriod = state.CameraMovedThisFrame
+                    ? Math.Max(1, (GetOccludedRetestPeriodFrames() + 1) / 2)
+                    : GetOccludedRetestPeriodFrames();
                 if (((frameId + sourceCommandIndex) % (ulong)retestPeriod) == 0UL)
                 {
                     queryState.LastDecision = ECpuOcclusionDecision.ProbeOnly;
@@ -366,7 +385,7 @@ namespace XREngine.Rendering.Occlusion
             }
         }
 
-        private static bool HasCameraVisibilityStateChanged(PassState state, XRCamera camera)
+        private static ECameraVisibilityChange UpdateCameraVisibilityState(PassState state, XRCamera camera)
         {
             Vector3 position = camera.Transform.RenderTranslation;
             Vector3 forward = camera.Transform.RenderForward;
@@ -380,13 +399,14 @@ namespace XREngine.Rendering.Occlusion
                 state.LastCameraForward = forward;
                 state.LastCameraUp = up;
                 state.LastProjection = projection;
-                return false;
+                return ECameraVisibilityChange.None;
             }
 
-            bool moved = Vector3.DistanceSquared(state.LastCameraPosition, position) > (CameraMotionEpsilon * CameraMotionEpsilon);
-            bool rotated =
-                Vector3.Dot(state.LastCameraForward, forward) < CameraOrientationDotThreshold ||
-                Vector3.Dot(state.LastCameraUp, up) < CameraOrientationDotThreshold;
+            float motionDistanceSq = Vector3.DistanceSquared(state.LastCameraPosition, position);
+            float forwardDot = Vector3.Dot(state.LastCameraForward, forward);
+            float upDot = Vector3.Dot(state.LastCameraUp, up);
+            bool moved = motionDistanceSq > (CameraMotionEpsilon * CameraMotionEpsilon);
+            bool rotated = forwardDot < CameraOrientationDotThreshold || upDot < CameraOrientationDotThreshold;
             float projectionDelta =
                 MathF.Abs(state.LastProjection.M11 - projection.M11) +
                 MathF.Abs(state.LastProjection.M22 - projection.M22) +
@@ -395,12 +415,23 @@ namespace XREngine.Rendering.Occlusion
                 MathF.Abs(state.LastProjection.M33 - projection.M33) +
                 MathF.Abs(state.LastProjection.M43 - projection.M43);
             bool projectionChanged = projectionDelta > ProjectionDeltaThreshold;
+            bool invalidated =
+                motionDistanceSq > (CameraLargeMotionDistance * CameraLargeMotionDistance) ||
+                forwardDot < CameraLargeOrientationDotThreshold ||
+                upDot < CameraLargeOrientationDotThreshold ||
+                projectionDelta > ProjectionInvalidationDeltaThreshold;
 
             state.LastCameraPosition = position;
             state.LastCameraForward = forward;
             state.LastCameraUp = up;
             state.LastProjection = projection;
-            return moved || rotated || projectionChanged;
+
+            if (invalidated)
+                return ECameraVisibilityChange.LargeInvalidation;
+
+            return moved || rotated || projectionChanged
+                ? ECameraVisibilityChange.SmallMotion
+                : ECameraVisibilityChange.None;
         }
 
         private static void ResetTemporalState(PassState state)

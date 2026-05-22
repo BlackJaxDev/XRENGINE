@@ -391,10 +391,10 @@ namespace XREngine.Data.Geometry
             {
                 Plane plane = _planes[i];
                 Vector3 point = new(
-                    plane.Normal.X > 0 ? boundingBox.Min.X : boundingBox.Max.X,
-                    plane.Normal.Y > 0 ? boundingBox.Min.Y : boundingBox.Max.Y,
-                    plane.Normal.Z > 0 ? boundingBox.Min.Z : boundingBox.Max.Z);
-                if (DistanceFromPointToPlane(point, plane) < 0)
+                    plane.Normal.X >= 0.0f ? boundingBox.Max.X : boundingBox.Min.X,
+                    plane.Normal.Y >= 0.0f ? boundingBox.Max.Y : boundingBox.Min.Y,
+                    plane.Normal.Z >= 0.0f ? boundingBox.Max.Z : boundingBox.Min.Z);
+                if (DistanceFromPointToPlane(point, plane) < -1e-5f)
                     return false;
             }
 
@@ -481,10 +481,10 @@ namespace XREngine.Data.Geometry
         IEnumerator IEnumerable.GetEnumerator() => _planes?.GetEnumerator() ?? Enumerable.Empty<Plane>().GetEnumerator();
 
         public EContainment Contains(Box box)
-            => GeoUtil.ContainmentOf.BoxWithinFrustum(this, box.LocalHalfExtents, box.Transform);
+            => ContainsBox(box);
 
         public EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)
-            => GeoUtil.ContainmentOf.AABBWithinFrustum(this, box.Min, box.Max);
+            => GeoUtil.ContainmentOf.AABBWithinFrustum(this, box.Min, box.Max, tolerance);
 
         public EContainment ContainsSphere(Sphere sphere)
             => GeoUtil.ContainmentOf.SphereWithinFrustum(this, sphere.Center, sphere.Radius);
@@ -493,6 +493,7 @@ namespace XREngine.Data.Geometry
             => shape switch
             {
                 AABB box => ContainsAABB(box),
+                Box box => ContainsBox(box),
                 Sphere sphere => ContainsSphere(sphere),
                 Cone cone => ContainsCone(cone),
                 Capsule capsule => ContainsCapsule(capsule),
@@ -658,76 +659,19 @@ namespace XREngine.Data.Geometry
         }
 
         public bool IntersectsSegment(Segment segment)
-        {
-            Plane far = Far;
-            Plane near = Near;
-            Plane left = Left;
-            Plane right = Right;
-            Plane top = Top;
-            Plane bottom = Bottom;
-
-            bool nearHit = GeoUtil.Intersect.SegmentWithPlane(segment.Start, segment.End, near.D, near.Normal, out Vector3 nearPoint);
-            bool farHit = GeoUtil.Intersect.SegmentWithPlane(segment.Start, segment.End, far.D, far.Normal, out Vector3 farPoint);
-            bool leftHit = GeoUtil.Intersect.SegmentWithPlane(segment.Start, segment.End, left.D, left.Normal, out Vector3 leftPoint);
-            bool rightHit = GeoUtil.Intersect.SegmentWithPlane(segment.Start, segment.End, right.D, right.Normal, out Vector3 rightPoint);
-            bool topHit = GeoUtil.Intersect.SegmentWithPlane(segment.Start, segment.End, top.D, top.Normal, out Vector3 topPoint);
-            bool bottomHit = GeoUtil.Intersect.SegmentWithPlane(segment.Start, segment.End, bottom.D, bottom.Normal, out Vector3 bottomPoint);
-
-            //Each plane hit must be between the 4 planes perpendicular to it
-            if (nearHit)
-            {
-                if (GeoUtil.Intersect.PointBetweenPlanes(nearPoint, top, bottom, EBetweenPlanes.DontCare) &&
-                    GeoUtil.Intersect.PointBetweenPlanes(nearPoint, left, right, EBetweenPlanes.DontCare))
-                    return true;
-            }
-
-            if (farHit)
-            {
-                if (GeoUtil.Intersect.PointBetweenPlanes(farPoint, top, bottom, EBetweenPlanes.DontCare) &&
-                    GeoUtil.Intersect.PointBetweenPlanes(farPoint, left, right, EBetweenPlanes.DontCare))
-                    return true;
-            }
-
-            if (leftHit)
-            {
-                if (GeoUtil.Intersect.PointBetweenPlanes(leftPoint, top, bottom, EBetweenPlanes.DontCare) &&
-                    GeoUtil.Intersect.PointBetweenPlanes(leftPoint, near, far, EBetweenPlanes.DontCare))
-                    return true;
-            }
-
-            if (rightHit)
-            {
-                if (GeoUtil.Intersect.PointBetweenPlanes(rightPoint, top, bottom, EBetweenPlanes.DontCare) &&
-                    GeoUtil.Intersect.PointBetweenPlanes(rightPoint, near, far, EBetweenPlanes.DontCare))
-                    return true;
-            }
-
-            if (topHit)
-            {
-                if (GeoUtil.Intersect.PointBetweenPlanes(topPoint, left, right, EBetweenPlanes.DontCare) &&
-                    GeoUtil.Intersect.PointBetweenPlanes(topPoint, near, far, EBetweenPlanes.DontCare))
-                    return true;
-            }
-
-            if (bottomHit)
-            {
-                if (GeoUtil.Intersect.PointBetweenPlanes(bottomPoint, left, right, EBetweenPlanes.DontCare) &&
-                    GeoUtil.Intersect.PointBetweenPlanes(bottomPoint, near, far, EBetweenPlanes.DontCare))
-                    return true;
-            }
-
-            return false;
-        }
+            => IntersectsSegmentByPlanes(segment.Start, segment.End);
 
         public EContainment ContainsBox(Box box)
         {
-            // First check if all corners of the box are inside the frustum
-            var corners = box.WorldCorners;
+            Span<Vector3> corners = stackalloc Vector3[8];
+            GetBoxWorldCorners(box, corners);
             int numInside = 0;
 
-            foreach (var corner in corners)
-                if (ContainsPoint(corner))
+            for (int i = 0; i < corners.Length; i++)
+            {
+                if (ContainsPoint(corners[i], 1e-5f))
                     numInside++;
+            }
 
             if (numInside == 8)
                 return EContainment.Contains;
@@ -735,82 +679,119 @@ namespace XREngine.Data.Geometry
             if (numInside > 0)
                 return EContainment.Intersects;
 
-            // If no corners are inside, we need additional checks:
-
-            // Check if any of the frustum edges intersect the box
-            // Create segments for the 12 edges of the frustum
-            var frustumEdges = new Segment[]
-            {
-                // Near face edges
-                new(LeftBottomNear, LeftTopNear),
-                new(LeftTopNear, RightTopNear),
-                new(RightTopNear, RightBottomNear),
-                new(RightBottomNear, LeftBottomNear),
-                
-                // Far face edges
-                new(LeftBottomFar, LeftTopFar),
-                new(LeftTopFar, RightTopFar),
-                new(RightTopFar, RightBottomFar),
-                new(RightBottomFar, LeftBottomFar),
-                
-                // Connecting edges
-                new(LeftBottomNear, LeftBottomFar),
-                new(LeftTopNear, LeftTopFar),
-                new(RightTopNear, RightTopFar),
-                new(RightBottomNear, RightBottomFar)
-            };
-
-            // If any frustum edge intersects the box, the shapes intersect
-            foreach (var edge in frustumEdges)
-                if (box.Intersects(edge))
-                    return EContainment.Intersects;
-            
-            // Check if the frustum is completely inside the box
-            if (box.Contains(this))
+            if (FrustumEdgesIntersectBox(box) ||
+                BoxContainsFrustum(box) ||
+                BoxEdgesIntersectFrustum(corners))
                 return EContainment.Intersects;
 
-            // Check if any box edge intersects a frustum face
-            Vector3[] boxCorners = [.. corners];
+            return EContainment.Disjoint;
+        }
 
-            // Create segments for the 12 edges of the box
-            var boxEdges = new Segment[]
-            {
-                // Bottom face
-                new(boxCorners[0], boxCorners[1]),
-                new(boxCorners[1], boxCorners[2]),
-                new(boxCorners[2], boxCorners[3]),
-                new(boxCorners[3], boxCorners[0]),
-                
-                // Top face
-                new(boxCorners[4], boxCorners[5]),
-                new(boxCorners[5], boxCorners[6]),
-                new(boxCorners[6], boxCorners[7]),
-                new(boxCorners[7], boxCorners[4]),
-                
-                // Connecting edges
-                new(boxCorners[0], boxCorners[4]),
-                new(boxCorners[1], boxCorners[5]),
-                new(boxCorners[2], boxCorners[6]),
-                new(boxCorners[3], boxCorners[7])
-            };
+        private static void GetBoxWorldCorners(Box box, Span<Vector3> corners)
+        {
+            Vector3 min = box.LocalMinimum;
+            Vector3 max = box.LocalMaximum;
+            Matrix4x4 transform = box.Transform;
 
-            // If any box edge intersects the frustum, the shapes intersect
-            foreach (var edge in boxEdges)
-                if (IntersectsSegment(edge))
-                    return EContainment.Intersects;
-            
-            // Test if the frustum is completely inside the box
-            bool frustumInsideBox = true;
-            foreach (var corner in Corners)
+            corners[0] = Vector3.Transform(new Vector3(min.X, min.Y, min.Z), transform);
+            corners[1] = Vector3.Transform(new Vector3(max.X, min.Y, min.Z), transform);
+            corners[2] = Vector3.Transform(new Vector3(min.X, max.Y, min.Z), transform);
+            corners[3] = Vector3.Transform(new Vector3(max.X, max.Y, min.Z), transform);
+            corners[4] = Vector3.Transform(new Vector3(min.X, min.Y, max.Z), transform);
+            corners[5] = Vector3.Transform(new Vector3(max.X, min.Y, max.Z), transform);
+            corners[6] = Vector3.Transform(new Vector3(min.X, max.Y, max.Z), transform);
+            corners[7] = Vector3.Transform(new Vector3(max.X, max.Y, max.Z), transform);
+        }
+
+        private bool FrustumEdgesIntersectBox(Box box)
+            => box.Intersects(new Segment(LeftBottomNear, LeftTopNear)) ||
+               box.Intersects(new Segment(LeftTopNear, RightTopNear)) ||
+               box.Intersects(new Segment(RightTopNear, RightBottomNear)) ||
+               box.Intersects(new Segment(RightBottomNear, LeftBottomNear)) ||
+               box.Intersects(new Segment(LeftBottomFar, LeftTopFar)) ||
+               box.Intersects(new Segment(LeftTopFar, RightTopFar)) ||
+               box.Intersects(new Segment(RightTopFar, RightBottomFar)) ||
+               box.Intersects(new Segment(RightBottomFar, LeftBottomFar)) ||
+               box.Intersects(new Segment(LeftBottomNear, LeftBottomFar)) ||
+               box.Intersects(new Segment(LeftTopNear, LeftTopFar)) ||
+               box.Intersects(new Segment(RightTopNear, RightTopFar)) ||
+               box.Intersects(new Segment(RightBottomNear, RightBottomFar));
+
+        private bool BoxContainsFrustum(Box box)
+        {
+            if (!Matrix4x4.Invert(box.Transform, out Matrix4x4 worldToBox))
+                return false;
+
+            Vector3 min = box.LocalMinimum;
+            Vector3 max = box.LocalMaximum;
+            IReadOnlyList<Vector3> corners = Corners;
+            for (int i = 0; i < corners.Count; i++)
             {
-                if (!box.ContainsPoint(corner))
+                Vector3 local = Vector3.Transform(corners[i], worldToBox);
+                if (local.X < min.X || local.X > max.X ||
+                    local.Y < min.Y || local.Y > max.Y ||
+                    local.Z < min.Z || local.Z > max.Z)
                 {
-                    frustumInsideBox = false;
-                    break;
+                    return false;
                 }
             }
 
-            return frustumInsideBox ? EContainment.Intersects : EContainment.Disjoint;
+            return true;
+        }
+
+        private bool BoxEdgesIntersectFrustum(ReadOnlySpan<Vector3> corners)
+            => IntersectsSegment(new Segment(corners[0], corners[1])) ||
+               IntersectsSegment(new Segment(corners[0], corners[2])) ||
+               IntersectsSegment(new Segment(corners[1], corners[3])) ||
+               IntersectsSegment(new Segment(corners[2], corners[3])) ||
+               IntersectsSegment(new Segment(corners[4], corners[5])) ||
+               IntersectsSegment(new Segment(corners[4], corners[6])) ||
+               IntersectsSegment(new Segment(corners[5], corners[7])) ||
+               IntersectsSegment(new Segment(corners[6], corners[7])) ||
+               IntersectsSegment(new Segment(corners[0], corners[4])) ||
+               IntersectsSegment(new Segment(corners[1], corners[5])) ||
+               IntersectsSegment(new Segment(corners[2], corners[6])) ||
+               IntersectsSegment(new Segment(corners[3], corners[7]));
+
+        private bool IntersectsSegmentByPlanes(Vector3 start, Vector3 end)
+        {
+            if (_planes is null)
+                return false;
+
+            Vector3 direction = end - start;
+            float enter = 0.0f;
+            float exit = 1.0f;
+
+            for (int i = 0; i < 6; i++)
+            {
+                Plane plane = _planes[i];
+                float tolerance = 1e-5f * plane.Normal.Length();
+                float startDistance = Vector3.Dot(plane.Normal, start) + plane.D;
+                float endDistance = Vector3.Dot(plane.Normal, end) + plane.D;
+                bool startInside = startDistance >= -tolerance;
+                bool endInside = endDistance >= -tolerance;
+
+                if (!startInside && !endInside)
+                    return false;
+
+                if (startInside == endInside)
+                    continue;
+
+                float denominator = startDistance - endDistance;
+                if (MathF.Abs(denominator) <= float.Epsilon)
+                    continue;
+
+                float t = startDistance / denominator;
+                if (!startInside)
+                    enter = MathF.Max(enter, t);
+                else
+                    exit = MathF.Min(exit, t);
+
+                if (enter - exit > 1e-5f)
+                    return false;
+            }
+
+            return true;
         }
     }
 }

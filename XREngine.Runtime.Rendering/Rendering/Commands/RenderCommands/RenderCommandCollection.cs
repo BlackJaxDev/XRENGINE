@@ -460,14 +460,6 @@ namespace XREngine.Rendering.Commands
                         continue;
                     }
 
-                    if (useCpuSocOcclusion && cmd.CullingVolume is AABB cpuSocBounds &&
-                        !s_cpuSoftwareOcclusionCuller.TestVisible(cmd.StableQueryKey, cpuSocBounds))
-                    {
-                        XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
-                        cpuCmdIndex++;
-                        continue;
-                    }
-
                     // C-CPU-4: key by stable per-command identity, not foreach position.
                     // cpuCmdIndex shifts on every list mutation; StableQueryKey is assigned
                     // at command construction and never changes.
@@ -481,14 +473,22 @@ namespace XREngine.Rendering.Commands
                         continue;
                     }
 
-                    if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.ProbeOnly)
+                    bool cpuSocCull = decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Visible &&
+                        needsHardwareQuery &&
+                        useCpuSocOcclusion &&
+                        cmd.CullingVolume is AABB cpuSocBounds &&
+                        !s_cpuSoftwareOcclusionCuller.TestVisible(queryKey, cpuSocBounds);
+
+                    if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.ProbeOnly || cpuSocCull)
                     {
                         // Cull telemetry: visually the mesh contributes no color this frame.
                         XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
 
                         // Only the first pass to see this command in the frame actually
                         // emits the probe AABB; later passes (e.g. color pass after a
-                        // depth-normal prepass) reuse the same query result.
+                        // depth-normal prepass) reuse the same query result. CPU SOC
+                        // culls use the same deferred query path so the async query cache
+                        // still gets a hardware-visible/not-visible answer.
                         if (!needsHardwareQuery)
                         {
                             cpuCmdIndex++;

@@ -5,6 +5,13 @@ namespace XREngine;
 /// </summary>
 public enum ECpuSceneCullingStructure
 {
+    /// <summary>
+    /// Use the legacy octree.
+    /// </summary>
     Octree = 0,
+
+    /// <summary>
+    /// Use a CPU bounding-volume hierarchy.
+    /// </summary>
     Bvh = 1,
 }

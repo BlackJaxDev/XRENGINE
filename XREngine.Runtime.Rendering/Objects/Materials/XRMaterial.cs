@@ -879,7 +879,11 @@ namespace XREngine.Rendering
             if (!nonVertexShaders.Any())
                 return;
 
-            ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders);
+            ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders)
+            {
+                Name = $"MaterialPipeline:{Name ?? "unknown"}",
+                UsageTag = $"MaterialFragmentPipeline | material={Name ?? "<unnamed>"}",
+            };
             ApplyShaderProgramMetadata(ShaderPipelineProgram);
         }
 
@@ -930,7 +934,11 @@ namespace XREngine.Rendering
             if (!nonVertexShaders.Any())
                 return;
 
-            ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders);
+            ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders)
+            {
+                Name = $"MaterialPipeline:{Name ?? "unknown"}",
+                UsageTag = $"MaterialFragmentPipeline | material={Name ?? "<unnamed>"}",
+            };
             ApplyShaderProgramMetadata(ShaderPipelineProgram);
         }
 

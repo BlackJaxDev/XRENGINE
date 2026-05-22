@@ -7,8 +7,8 @@ namespace XREngine.Rendering.OpenGL
     /// <summary>
     /// Manages frame-budgeted mesh generation to prevent FPS stalls when many meshes load at once.
     /// Spreads mesh initialization (VAO/VBO setup, shader compilation) across multiple frames.
-    /// Render-pipeline meshes (FBO quads, cube maps) are processed first without a budget cap
-    /// so that post-process / lighting passes warm instantly.
+    /// High-priority meshes (render-pipeline resources and editor-interactive overlays) are
+    /// processed first so visible tools are not hidden behind large scene warmup backlogs.
     /// </summary>
     public unsafe partial class OpenGLRenderer
     {
@@ -16,7 +16,7 @@ namespace XREngine.Rendering.OpenGL
         {
             private readonly OpenGLRenderer _renderer;
 
-            /// <summary>Render-pipeline meshes: drained every frame with no budget limit.</summary>
+            /// <summary>High-priority meshes: drained before normal scene meshes.</summary>
             private readonly ConcurrentQueue<GLMeshRenderer> _priorityQueue = new();
 
             /// <summary>Normal scene meshes: drained within the per-frame budget.</summary>
@@ -81,7 +81,7 @@ namespace XREngine.Rendering.OpenGL
             /// <summary>
             /// Maximum milliseconds to spend on mesh generation per frame.
             /// </summary>
-            public double FrameBudgetMs { get; set; } = 10.0;
+            public double FrameBudgetMs { get; set; } = 3.0;
 
             /// <summary>
             /// Hard cap for normal scene renderer preparation in one render frame.
@@ -179,7 +179,7 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Enqueues a mesh renderer for deferred generation.
-            /// Pipeline-priority meshes go into a fast lane that is drained every frame without a budget cap.
+            /// Pipeline/editor-priority meshes go into a fast lane that is drained before normal scene meshes.
             /// Returns true if the mesh was newly enqueued.
             /// </summary>
             public bool EnqueueGeneration(GLMeshRenderer renderer)
@@ -194,7 +194,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!_pendingSet.TryAdd(renderer, 0))
                     return false;
 
-                if (renderer.MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline)
+                if (UsesPriorityGenerationQueue(renderer))
                     _priorityQueue.Enqueue(renderer);
                 else
                     _normalQueue.Enqueue(renderer);
@@ -213,7 +213,7 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Processes pending mesh generations within the frame budget.
-            /// Render-pipeline meshes are drained first without any budget limit.
+            /// High-priority meshes are drained first within the priority lane cap.
             /// Normal scene meshes are then processed within the remaining frame budget.
             /// Call this once per frame from the render thread.
             /// </summary>
@@ -427,12 +427,15 @@ namespace XREngine.Rendering.OpenGL
                     if (!_pendingSet.TryAdd(renderer, 0))
                         continue;
 
-                    if (renderer.MeshRenderer.GenerationPriority == EMeshGenerationPriority.RenderPipeline)
+                    if (UsesPriorityGenerationQueue(renderer))
                         _priorityQueue.Enqueue(renderer);
                     else
                         _normalQueue.Enqueue(renderer);
                 }
             }
+
+            private static bool UsesPriorityGenerationQueue(GLMeshRenderer renderer)
+                => renderer.MeshRenderer.GenerationPriority != EMeshGenerationPriority.Normal;
 
             private QueueProcessResult ProcessRenderer(GLMeshRenderer renderer)
             {

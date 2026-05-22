@@ -114,10 +114,22 @@ public abstract partial class GenericRenderObject : XRAsset
     {
         base.OnDestroying();
 
+        AbstractRenderAPIObject[] wrappersSnapshot;
         lock (_apiWrappers)
+            wrappersSnapshot = [.. _apiWrappers];
+
+        foreach (var wrapper in wrappersSnapshot)
         {
-            foreach (var wrapper in _apiWrappers)
-                wrapper.Destroy();
+            try { wrapper.Owner.RemoveAPIRenderObject(this); } catch { }
+            try { wrapper.Destroy(); } catch { }
+        }
+
+        // Drop ourselves from the global render-object cache so diagnostics and panels stop
+        // reporting this object the instant it is destroyed, instead of waiting for finalization.
+        lock (RenderObjectCache)
+        {
+            if (_roCache.TryGetValue(GetType(), out var list))
+                list.Remove(this);
         }
     }
 

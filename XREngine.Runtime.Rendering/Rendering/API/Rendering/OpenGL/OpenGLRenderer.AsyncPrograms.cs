@@ -252,8 +252,12 @@ public partial class OpenGLRenderer
             if (compileContexts.Count > 0)
             {
                 _programCompileLinkSharedContexts = compileContexts.ToArray();
-                _programCompileLinkQueue = new GLProgramCompileLinkQueue(_programCompileLinkSharedContexts);
-                Debug.OpenGL($"[ShaderCache] Async program compile+link enabled via {_programCompileLinkSharedContexts.Length} shared GL context worker(s).");
+                _programCompileLinkQueue = new GLProgramCompileLinkQueue(
+                    _programCompileLinkSharedContexts,
+                    completionStatusPollingEnabled: _parallelShaderCompileSupported);
+                Debug.OpenGL(
+                    $"[ShaderCache] Async program compile+link enabled via {_programCompileLinkSharedContexts.Length} shared GL context worker(s); " +
+                    $"completionPolling={_parallelShaderCompileSupported}.");
             }
             else
             {

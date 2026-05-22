@@ -489,7 +489,7 @@ namespace XREngine
                 private bool _allowInitialSkinnedBoundsBuildWhenNever = true;
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = true;
-                private ECpuSceneCullingStructure _cpuSceneCullingStructure = ECpuSceneCullingStructure.Octree;
+                private ECpuSceneCullingStructure _cpuSceneCullingStructure = ECpuSceneCullingStructure.Bvh;
                 private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Diagnostics;
                 private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
                 private bool _enableVulkanDescriptorIndexing = true;

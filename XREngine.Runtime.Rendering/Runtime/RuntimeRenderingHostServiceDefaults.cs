@@ -48,6 +48,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool CpuSocUseAvx2 = true;
     public const bool CpuSocDebugVisualization = false;
     public const bool CpuSocDebugForceVisible = false;
+    public const ECpuSceneCullingStructure CpuSceneCullingStructure = ECpuSceneCullingStructure.Bvh;
     public const bool IsPlayModeTransitioning = false;
     public const string PlayModeStateName = "Stopped";
     public const uint DefaultMsaaSampleCount = 1u;

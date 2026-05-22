@@ -336,6 +336,20 @@ namespace XREngine.Rendering
                 return _renderObjectCache.TryGetValue(renderObject, out apiObject);
         }
 
+        /// <summary>
+        /// Drops a single render-object entry from this renderer's API cache. Used by
+        /// <see cref="GenericRenderObject.OnDestroying"/> so destroyed programs/textures/meshes do not
+        /// linger in the cache after their GL/Vulkan handles are released.
+        /// </summary>
+        public void RemoveAPIRenderObject(GenericRenderObject renderObject)
+        {
+            if (renderObject is null)
+                return;
+
+            using (_roCacheLock.EnterScope())
+                _renderObjectCache.TryRemove(renderObject, out _);
+        }
+
         public void DestroyCachedAPIRenderObjects()
         {
             KeyValuePair<GenericRenderObject, AbstractRenderAPIObject>[] cachedObjects;
