@@ -68,6 +68,21 @@ namespace XREngine.Scene
         private void RenderAABB(Vector3 extents, Vector3 center, Color color)
             => RuntimeEngine.Rendering.Debug.RenderAABB(extents, center, false, color);
 
+        private static readonly Action<(OctreeNodeBase node, bool intersects)> RenderSpatialTreeNodeAction = RenderSpatialTreeNode;
+
+        public void DebugRenderSpatialTreeNodes(IRuntimeCullingCamera? camera, bool onlyContainingItems = false)
+            => ActiveCpuRenderTree.CollectVisibleNodes(camera?.WorldFrustum(), onlyContainingItems, RenderSpatialTreeNodeAction);
+
+        private static void RenderSpatialTreeNode((OctreeNodeBase node, bool intersects) data)
+        {
+            var host = RuntimeRenderingHostServices.Current;
+            var color = data.intersects
+                ? host.OctreeIntersectedBoundsColor
+                : host.OctreeContainedBoundsColor;
+
+            RuntimeEngine.Rendering.Debug.RenderAABB(data.node.Bounds.HalfExtents, data.node.Center, false, color);
+        }
+
         public void RaycastAsync(
             Segment worldSegment,
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> items,

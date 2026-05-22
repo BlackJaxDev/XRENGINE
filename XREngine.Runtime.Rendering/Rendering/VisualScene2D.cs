@@ -39,6 +39,28 @@ namespace XREngine.Scene
         private void RenderAABB(Vector2 extents, Vector2 center, ColorF4 color)
             => RuntimeEngine.Rendering.Debug.RenderQuad(new Vector3(center, 0.0f) + AbstractRenderer.UIPositionBias, AbstractRenderer.UIRotation, extents, false, color);
 
+        private static readonly Action<(QuadtreeNodeBase node, bool intersects)> RenderSpatialTreeNodeAction = RenderSpatialTreeNode;
+
+        public void DebugRenderSpatialTreeNodes(IRuntimeCullingCamera? camera, bool onlyContainingItems = false)
+        {
+            lock (_renderablesLock)
+            {
+                ProcessPendingRenderableOperations();
+                RenderTree.Swap();
+                RenderTree.CollectVisibleNodes(camera?.GetOrthoCameraBounds(), onlyContainingItems, RenderSpatialTreeNodeAction);
+            }
+        }
+
+        private static void RenderSpatialTreeNode((QuadtreeNodeBase node, bool intersects) data)
+        {
+            var host = RuntimeRenderingHostServices.Current;
+            var color = data.intersects
+                ? host.QuadtreeIntersectedBoundsColor
+                : host.QuadtreeContainedBoundsColor;
+
+            RuntimeEngine.Rendering.Debug.RenderRect2D(data.node.Bounds, false, color);
+        }
+
         public override IRenderTree GenericRenderTree => RenderTree;
 
         public void Raycast(

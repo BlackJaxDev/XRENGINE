@@ -428,8 +428,6 @@ internal static class NativeGltfSceneImporter
                     xrMesh.RebuildBlendshapeBuffersFromVertices();
                 }
 
-                createdMeshes.Add(xrMesh);
-
                 SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
                 {
                     GenerateAsync = importOptions?.GenerateMeshRenderersAsync ?? true,
@@ -440,7 +438,12 @@ internal static class NativeGltfSceneImporter
                         : $"{ResolvePrimitiveName(gltfMesh, primitiveIndex)} {chunkIndex}",
                     RootTransform = importRootTransform,
                 };
-                subMeshes.Add(subMesh);
+
+                IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(
+                    subMesh,
+                    importOptions?.SeparateMeshIslands ?? false);
+                subMeshes.AddRange(finalSubMeshes);
+                ModelImportMeshIslandSplitter.AddMeshes(finalSubMeshes, createdMeshes.Add);
             }
         }
 

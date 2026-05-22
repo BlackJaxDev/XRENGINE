@@ -26,6 +26,8 @@ public static partial class EditorUnitTests
     private static XRWorld CreateTrackedWorld(string name, XRScene scene)
     {
         var world = new XRWorld(name, CreatePreplacedPawnGameMode(), scene);
+        world.Settings.PreviewOctrees = Toggles.VisualizeOctree;
+        world.Settings.PreviewQuadtrees = Toggles.VisualizeQuadtree;
         Undo.TrackWorld(world);
         return world;
     }
@@ -66,6 +68,8 @@ public static partial class EditorUnitTests
         debug.RenderTransformLines = Toggles.RenderTransformLines;
         debug.RenderTransformCapsules = Toggles.RenderTransformCapsules;
         debug.RenderTransformPoints = Toggles.RenderTransformPoints;
+        debug.Preview3DWorldOctree = Toggles.VisualizeOctree;
+        debug.Preview2DWorldQuadtree = Toggles.VisualizeQuadtree;
         debug.RenderCullingVolumes = false;
         s.RecalcChildMatricesLoopType = Toggles.RecalcChildMatricesType;
         s.TickGroupedItemsInParallel = Toggles.TickGroupedItemsInParallel;

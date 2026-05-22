@@ -133,6 +133,22 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
+    public void CreateImportOptions_SeparateMeshIslands_PassesThroughForAnimatedImports()
+    {
+        var model = new EditorUnitTests.Settings.ModelImportSettings
+        {
+            Kind = EditorUnitTests.UnitTestModelImportKind.Animated,
+            SeparateMeshIslands = true,
+        };
+
+        ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model, []);
+
+        options.ShouldNotBeNull();
+        options!.SeparateMeshIslands.ShouldBeTrue();
+        options.SplitSubmeshesIntoSeparateModelComponents.ShouldBeFalse();
+    }
+
+    [Test]
     [NonParallelizable]
     public void ResolveModelPath_ResolvesPathsRelativeToCurrentWorkingDirectory()
     {

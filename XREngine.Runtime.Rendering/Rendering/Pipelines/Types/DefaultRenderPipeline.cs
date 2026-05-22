@@ -2140,7 +2140,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
 
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
-            c.Add<VPRC_RenderQuadFBO>().FrameBufferName = DeferredTransparencyBlurFBOName;
+            c.Add<VPRC_RenderQuadToFBO>().FrameBufferName = DeferredTransparencyBlurFBOName;
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
             c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
             c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
@@ -2150,7 +2150,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
             }
-            c.Add<VPRC_RenderQuadFBO>().FrameBufferName = TransparentResolveFBOName;
+            c.Add<VPRC_RenderQuadToFBO>().FrameBufferName = TransparentResolveFBOName;
 
             AppendExactTransparencyCommands(c);
 

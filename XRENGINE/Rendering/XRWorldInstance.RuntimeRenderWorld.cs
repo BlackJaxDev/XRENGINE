@@ -8,6 +8,8 @@ public partial class XRWorldInstance : IRuntimeRenderWorld
     public string? TargetWorldName => TargetWorld?.Name;
     public object? GameModeObject => GameMode;
     public IRuntimeAmbientSettings? AmbientSettings => TargetWorld?.Settings as IRuntimeAmbientSettings;
+    public bool PreviewOctrees => TargetWorld?.Settings?.PreviewOctrees ?? false;
+    public bool PreviewQuadtrees => TargetWorld?.Settings?.PreviewQuadtrees ?? false;
     IReadOnlyList<XREngine.Scene.SceneNode> IRuntimeRenderWorld.RootNodes => RootNodes;
     public void DebugRenderPhysics()
         => PhysicsScene.DebugRender();

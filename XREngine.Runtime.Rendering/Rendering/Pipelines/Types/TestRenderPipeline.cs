@@ -69,7 +69,7 @@ public class TestRenderPipeline : RenderPipeline
                     ClearDepth(RuntimeEngine.Rendering.State.GetDefaultDepthClearValue());
                     AllowDepthWrite(true);
                 };
-                c.Add<VPRC_RenderQuadFBO>().FrameBufferName = InternalResFBOName;
+                c.Add<VPRC_RenderQuadToFBO>().FrameBufferName = InternalResFBOName;
             }
         }
         return c;

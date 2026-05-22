@@ -60,13 +60,15 @@ Related settings:
 - `XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1` opts back into the older
   render-thread driver-parallel source lane for local driver experiments. Leave
   it unset for editor/runtime work.
-- `XRE_SHARED_CONTEXT_ENABLE_PARALLEL_COMPILE=1` opts the shared-context source
-  worker back into worker-side ARB/KHR parallel compile/link polling. Leave it
-  unset by default; the worker otherwise avoids `GL_COMPLETION_STATUS_ARB`
-  polling and does not change the driver's compiler-thread setting per job.
+- `XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS=<milliseconds>` overrides the
+  shared-context source worker hard-abandon window. The default is 180000 ms so
+  legitimate large imported-model shader links can finish before recovery.
+- `XRE_SHARED_CONTEXT_DISABLE_COMPLETION_POLLING=1` disables worker-side
+  `GL_COMPLETION_STATUS_ARB` polling. Leave it unset for editor/runtime work;
+  polling keeps the worker from issuing the blocking final link-status query
+  until the driver reports completion.
 - `XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1` remains as a legacy narrower
-  single-stage suppression flag when worker-side parallel compile has been
-  explicitly re-enabled.
+  single-stage suppression flag for local driver experiments.
 - `MaxAsyncShaderProgramsPerFrame` caps how many pending program builds are
   advanced per frame.
 
@@ -83,6 +85,8 @@ if binary cache hit:
     otherwise load binary synchronously
 else if hash was marked failed:
     fail before source compile/link
+else if a previous async source link for this hash timed out:
+    retry source compile/link synchronously
 else if async source compilation is disabled or strategy is Synchronous:
     leave source build pending unless synchronous source linking was explicitly allowed
 else if program is a known driver-parallel hazard:
@@ -138,16 +142,19 @@ on the main render context for as long as the worker is waiting. Cold links
 of large imported-model fragment shaders have been observed to take more than
 a hundred seconds, completely freezing the engine.
 
-By default, the worker skips `GL_COMPLETION_STATUS_ARB` polling and leaves the
-driver's compiler-thread setting alone. This keeps the potentially long
-compile/link wait on the shared context while avoiding both the completion-query
-path and the per-job `glMaxShaderCompilerThreadsARB` toggle, which can block
-behind in-flight driver compiler work before the worker even starts compiling a
-new program. `GLProgramCompileLinkQueue.PollCompletionStatusBlocking` is
-retained for local experiments when `XRE_SHARED_CONTEXT_ENABLE_PARALLEL_COMPILE=1`
-is set; in that opt-in mode it polls `GL_COMPLETION_STATUS_ARB`, yields for the
-first warm-cache burst, then sleeps 1 ms between polls before issuing the final
-regular status query.
+By default, the shared-context source worker enables ARB/KHR parallel compile on
+the worker context and polls `GL_COMPLETION_STATUS_ARB` before issuing the final
+regular status query. It yields for the first warm-cache burst, then sleeps 1 ms
+between polls. This keeps the potentially long compile/link wait on the shared
+context while avoiding the blocking final `GL_LINK_STATUS` query until the
+driver reports completion.
+
+If completion polling never reports done, the worker publishes a failed async
+result after the hard-abandon window (180 s by default, configurable with
+`XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS`). The owning program records that source
+hash as requiring synchronous source retry so duplicate programs stop waiting
+for a binary cache entry that will never be produced by the abandoned async
+job.
 
 ### Worker unhealthy-job threshold
 

@@ -15,6 +15,8 @@ public interface IRuntimeRenderWorld : IRuntimeWorldContext
     string? TargetWorldName { get; }
     object? GameModeObject { get; }
     IRuntimeAmbientSettings? AmbientSettings { get; }
+    bool PreviewOctrees { get; }
+    bool PreviewQuadtrees { get; }
     IReadOnlyList<SceneNode> RootNodes { get; }
     VisualScene3D VisualScene { get; }
     Lights3DCollection Lights { get; }

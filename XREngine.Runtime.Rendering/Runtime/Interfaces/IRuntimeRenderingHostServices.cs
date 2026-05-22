@@ -668,6 +668,36 @@ public interface IRuntimeRenderingHostServices
     #region Debug drawing and scene maintenance
 
     /// <summary>
+    /// Gets whether the 3D CPU spatial tree debug visualization is enabled by host editor preferences.
+    /// </summary>
+    bool Preview3DWorldOctree { get; }
+
+    /// <summary>
+    /// Gets whether the 2D quadtree debug visualization is enabled by host editor preferences.
+    /// </summary>
+    bool Preview2DWorldQuadtree { get; }
+
+    /// <summary>
+    /// Gets the host theme color for octree or BVH nodes intersecting the active culling volume.
+    /// </summary>
+    ColorF4 OctreeIntersectedBoundsColor { get; }
+
+    /// <summary>
+    /// Gets the host theme color for octree or BVH nodes contained by the active culling volume.
+    /// </summary>
+    ColorF4 OctreeContainedBoundsColor { get; }
+
+    /// <summary>
+    /// Gets the host theme color for quadtree nodes intersecting the active culling volume.
+    /// </summary>
+    ColorF4 QuadtreeIntersectedBoundsColor { get; }
+
+    /// <summary>
+    /// Gets the host theme color for quadtree nodes contained by the active culling volume.
+    /// </summary>
+    ColorF4 QuadtreeContainedBoundsColor { get; }
+
+    /// <summary>
     /// Pushes the currently rendered transform identifier for diagnostics and debug visualization.
     /// </summary>
     IDisposable? PushTransformId(uint transformId);

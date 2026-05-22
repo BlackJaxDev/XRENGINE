@@ -535,6 +535,13 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public bool Preview3DWorldOctree => false;
+        public bool Preview2DWorldQuadtree => false;
+        public ColorF4 OctreeIntersectedBoundsColor => ColorF4.LightGray;
+        public ColorF4 OctreeContainedBoundsColor => ColorF4.Yellow;
+        public ColorF4 QuadtreeIntersectedBoundsColor => ColorF4.LightGray;
+        public ColorF4 QuadtreeContainedBoundsColor => ColorF4.Yellow;
+
         public IDisposable? PushTransformId(uint transformId)
             => null;
 

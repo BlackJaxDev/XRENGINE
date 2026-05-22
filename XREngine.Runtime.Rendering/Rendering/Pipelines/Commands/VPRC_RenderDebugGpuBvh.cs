@@ -131,7 +131,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
         using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
         using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
         {
-            _linesRenderer.Render(null, visualizedLines);
+            _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines, forceNoStereo: true);
         }
     }
 
@@ -150,6 +150,8 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
 
         if (_linesBuffer is null || _allocatedLineCapacity < requiredLineCapacity)
         {
+            if (_linesBuffer is not null && _linesRenderer?.Buffers.ContainsKey(_linesBuffer.AttributeName) == true)
+                _linesRenderer.Buffers.Remove(_linesBuffer.AttributeName);
             _linesBuffer?.Dispose();
             _linesBuffer = new XRDataBuffer(
                 "BvhDebugLines",
@@ -174,8 +176,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             _allocatedLineCapacity = requiredLineCapacity;
 
             // Re-link the buffer to an existing renderer when we resize.
-            if (_linesRenderer?.Buffers is not null && !_linesRenderer.Buffers.ContainsKey(_linesBuffer.AttributeName))
-                _linesRenderer.Buffers.Add(_linesBuffer.AttributeName, _linesBuffer);
+            AddOrReplaceLineBuffer();
         }
 
         if (_linesRenderer is null)
@@ -185,13 +186,26 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
                 return false;
 
             _linesRenderer = new XRMeshRenderer(new XRMesh([new Vertex(Vector3.Zero)]), material);
-            _linesRenderer.GetDefaultVersion().AllowShaderPipelines = false;
+            _linesRenderer.GenerateAsync = false;
+            _linesRenderer.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
+            AddOrReplaceLineBuffer();
 
-            if (_linesRenderer.Buffers is not null && !_linesRenderer.Buffers.ContainsKey(_linesBuffer!.AttributeName))
-                _linesRenderer.Buffers.Add(_linesBuffer.AttributeName, _linesBuffer);
+            // The debug line material expands points in a geometry shader, so it
+            // must stay on the default vertex variant instead of generated stereo variants.
+            _linesRenderer.GetDefaultVersion().AllowShaderPipelines = false;
         }
 
         return _computeProgram is not null && _linesBuffer is not null && _linesRenderer is not null;
+    }
+
+    private void AddOrReplaceLineBuffer()
+    {
+        if (_linesRenderer is null || _linesBuffer is null)
+            return;
+
+        if (_linesRenderer.Buffers.ContainsKey(_linesBuffer.AttributeName))
+            _linesRenderer.Buffers.Remove(_linesBuffer.AttributeName);
+        _linesRenderer.Buffers.Add(_linesBuffer.AttributeName, _linesBuffer);
     }
 
     private XRMaterial? CreateLineMaterial()

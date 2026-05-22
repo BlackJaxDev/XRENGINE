@@ -316,6 +316,13 @@ public static class RuntimeRenderingHostServices
 
         #region Debug drawing and scene maintenance
 
+        public bool Preview3DWorldOctree => RuntimeEngine.EditorPreferences.Debug.Preview3DWorldOctree;
+        public bool Preview2DWorldQuadtree => RuntimeEngine.EditorPreferences.Debug.Preview2DWorldQuadtree;
+        public ColorF4 OctreeIntersectedBoundsColor => RuntimeEngine.EditorPreferences.Theme.OctreeIntersectedBoundsColor;
+        public ColorF4 OctreeContainedBoundsColor => RuntimeEngine.EditorPreferences.Theme.OctreeContainedBoundsColor;
+        public ColorF4 QuadtreeIntersectedBoundsColor => RuntimeEngine.EditorPreferences.Theme.QuadtreeIntersectedBoundsColor;
+        public ColorF4 QuadtreeContainedBoundsColor => RuntimeEngine.EditorPreferences.Theme.QuadtreeContainedBoundsColor;
+
         public IDisposable? PushTransformId(uint transformId)
             => null;
 

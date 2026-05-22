@@ -223,22 +223,6 @@ namespace XREngine.Rendering.OpenGL
                     _ssboBufferCache.Remove(glBuffer);
             }
 
-            private void Buffers_Removed(string key, XRDataBuffer value)
-            {
-                if (_bufferCache.TryGetValue(key, out var glBuffer))
-                {
-                    _bufferCache.Remove(key);
-                    RemoveCollectedBufferValue(glBuffer);
-                    BuffersBound = false;
-                }
-            }
-
-            private void Buffers_Added(string key, XRDataBuffer value)
-            {
-                AddCollectedBuffer(key, value);
-                BuffersBound = false;
-            }
-
             /// <summary>
             /// Rebind SSBOs for the current program; important when GL state is reused across draws.
             /// </summary>

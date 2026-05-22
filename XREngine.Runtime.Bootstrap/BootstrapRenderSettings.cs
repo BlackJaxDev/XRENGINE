@@ -43,6 +43,8 @@ public static class BootstrapRenderSettings
         debug.RenderTransformLines = settings.RenderTransformLines;
         debug.RenderTransformCapsules = settings.RenderTransformCapsules;
         debug.RenderTransformPoints = settings.RenderTransformPoints;
+        debug.Preview3DWorldOctree = settings.VisualizeOctree;
+        debug.Preview2DWorldQuadtree = settings.VisualizeQuadtree;
         debug.RenderCullingVolumes = false;
 
         renderSettings.RecalcChildMatricesLoopType = settings.RecalcChildMatricesType;

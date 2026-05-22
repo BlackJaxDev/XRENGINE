@@ -316,7 +316,7 @@ private void AppendExactTransparencyCommands(ViewportRenderCommandContainer c)
     using (c.AddUsing<VPRC_BindBuffer>(x => { x.BufferName = PpllNodeBufferName; x.BindingLocation = 24; }))
     using (c.AddUsing<VPRC_BindBuffer>(x => { x.BufferName = PpllCounterBufferName; x.BindingLocation = 25; }))
     {
-        c.Add<VPRC_RenderQuadFBO>().FrameBufferName = PpllResolveFBOName;
+        c.Add<VPRC_RenderQuadToFBO>().FrameBufferName = PpllResolveFBOName;
     }
 
     // Depth peeling: replace VPRC_Manual with VPRC_SetVariable

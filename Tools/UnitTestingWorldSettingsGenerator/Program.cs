@@ -579,6 +579,7 @@ static class SchemaGenerator
                 "  \"ZUp\": false,\n" +
                 "  \"GenerateCoacdCollidersPerSubmesh\": false,\n" +
                 "  \"SplitSubmeshesIntoSeparateModelComponents\": false,\n" +
+                "  \"SeparateMeshIslands\": false,\n" +
                 "  \"YawPitchRoll\": null,\n" +
                 "  \"Translation\": null\n" +
                 "}\n" +
@@ -628,6 +629,7 @@ static class SchemaGenerator
                 "  \"ZUp\": false,",
                 "  \"GenerateCoacdCollidersPerSubmesh\": false,",
                 "  \"SplitSubmeshesIntoSeparateModelComponents\": false,",
+                "  \"SeparateMeshIslands\": false,",
                 "  \"YawPitchRoll\": null,",
                 "  \"Translation\": null",
                 "}",
@@ -651,6 +653,7 @@ static class SchemaGenerator
             ["ZUp"] = false,
             ["GenerateCoacdCollidersPerSubmesh"] = false,
             ["SplitSubmeshesIntoSeparateModelComponents"] = false,
+            ["SeparateMeshIslands"] = false,
             ["YawPitchRoll"] = null,
             ["Translation"] = null
         };

@@ -328,7 +328,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateForwardPassOutputCommands()
     {
         var c = new ViewportRenderCommandContainer(this);
-        c.Add<VPRC_RenderQuadFBO>().FrameBufferName = ForwardPassFBOName;
+        c.Add<VPRC_RenderQuadToFBO>().FrameBufferName = ForwardPassFBOName;
         return c;
     }
 

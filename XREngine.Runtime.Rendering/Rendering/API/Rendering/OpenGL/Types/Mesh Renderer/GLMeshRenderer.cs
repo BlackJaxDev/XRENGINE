@@ -37,6 +37,10 @@ namespace XREngine.Rendering.OpenGL
             /// Flat list of all buffer values for fast iteration in CheckBuffersReady.
             /// </summary>
             private List<GLDataBuffer> _allBuffersList = [];
+            private XRMesh.BufferCollection? _subscribedMeshBuffers;
+            private XRMesh.BufferCollection? _subscribedRendererBuffers;
+            private int _bufferCollectionsDirty;
+            private int _bufferCollectionRefreshQueued;
             private readonly record struct CombinedProgramCacheEntry(GLRenderProgram Program, long ShaderStateRevision);
             private readonly Dictionary<XRMaterial, CombinedProgramCacheEntry> _combinedProgramCache = new(ReferenceEqualityComparer.Instance);
             private GLRenderProgramPipeline? _pipeline;
@@ -339,12 +343,11 @@ namespace XREngine.Rendering.OpenGL
                         return GetBufferDiagnosticSummary(buffer);
                 }
 
-                if (_triangleIndicesBuffer is not null && !_triangleIndicesBuffer.IsReadyForRendering)
-                    return GetBufferDiagnosticSummary(_triangleIndicesBuffer);
-                if (_lineIndicesBuffer is not null && !_lineIndicesBuffer.IsReadyForRendering)
-                    return GetBufferDiagnosticSummary(_lineIndicesBuffer);
-                if (_pointIndicesBuffer is not null && !_pointIndicesBuffer.IsReadyForRendering)
-                    return GetBufferDiagnosticSummary(_pointIndicesBuffer);
+                GLDataBuffer? elementBuffer = GetActiveElementBuffer();
+                if (elementBuffer is null)
+                    return "ElementBuffer=<null>";
+                if (!elementBuffer.IsReadyForRendering)
+                    return GetBufferDiagnosticSummary(elementBuffer);
 
                 return "<none>";
             }
@@ -495,14 +498,8 @@ namespace XREngine.Rendering.OpenGL
                         return false;
                 }
 
-                if (_triangleIndicesBuffer is not null && !_triangleIndicesBuffer.IsReadyForRendering)
-                    return false;
-                if (_lineIndicesBuffer is not null && !_lineIndicesBuffer.IsReadyForRendering)
-                    return false;
-                if (_pointIndicesBuffer is not null && !_pointIndicesBuffer.IsReadyForRendering)
-                    return false;
-
-                return true;
+                GLDataBuffer? elementBuffer = GetActiveElementBuffer();
+                return elementBuffer is not null && elementBuffer.IsReadyForRendering;
             }
 
             private void PrepareDynamicRenderData()
@@ -531,10 +528,37 @@ namespace XREngine.Rendering.OpenGL
             internal GLDataBuffer? GetActiveElementBuffer()
             {
                 if (UsesPatchTopology)
-                    return TriangleIndicesBuffer;
+                    return HasDrawableElements(TriangleIndicesBuffer) ? TriangleIndicesBuffer : null;
 
-                return TriangleIndicesBuffer ?? LineIndicesBuffer ?? PointIndicesBuffer;
+                GLDataBuffer? preferred = Mesh?.Type switch
+                {
+                    EPrimitiveType.Points => PointIndicesBuffer,
+                    EPrimitiveType.Lines or EPrimitiveType.LineLoop or EPrimitiveType.LineStrip => LineIndicesBuffer,
+                    EPrimitiveType.Triangles or EPrimitiveType.TriangleStrip or EPrimitiveType.TriangleFan => TriangleIndicesBuffer,
+                    EPrimitiveType.Patches => PatchVertexCount switch
+                    {
+                        1 => PointIndicesBuffer,
+                        2 => LineIndicesBuffer,
+                        _ => TriangleIndicesBuffer,
+                    },
+                    _ => TriangleIndicesBuffer,
+                };
+
+                if (HasDrawableElements(preferred))
+                    return preferred;
+
+                if (HasDrawableElements(TriangleIndicesBuffer))
+                    return TriangleIndicesBuffer;
+                if (HasDrawableElements(LineIndicesBuffer))
+                    return LineIndicesBuffer;
+                if (HasDrawableElements(PointIndicesBuffer))
+                    return PointIndicesBuffer;
+
+                return null;
             }
+
+            private static bool HasDrawableElements(GLDataBuffer? buffer)
+                => (buffer?.Data?.ElementCount ?? 0u) > 0u;
         }
 
         /// <summary>

@@ -763,7 +763,7 @@ namespace XREngine.Rendering.OpenGL
             //private static object HashLock = new();
             private static readonly ConcurrentDictionary<ulong, byte> Failed = new();
             private static readonly ConcurrentDictionary<ulong, byte> SharedContextLargeSourceTimeouts = new();
-            private static readonly ConcurrentDictionary<ulong, byte> DriverParallelLinkTimeouts = new();
+            private static readonly ConcurrentDictionary<ulong, byte> SynchronousSourceRetryHashes = new();
             private static readonly ConcurrentDictionary<string, byte> AsyncBinaryUploadTimeoutCacheKeys = new(StringComparer.Ordinal);
             private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
 
@@ -1350,7 +1350,7 @@ namespace XREngine.Rendering.OpenGL
                     $"and {(_asyncAttachedShaderIds?.Length ?? 0)} shader(s) leaked to avoid blocking GL calls.");
 
                 if (Hash != 0)
-                    DriverParallelLinkTimeouts.TryAdd(Hash, 0);
+                    SynchronousSourceRetryHashes.TryAdd(Hash, 0);
                 CompleteUberBackendTracking(false, "Async link timed out (driver never reported completion).");
                 PublishBackendStatus(
                     EShaderProgramBackendStage.SynchronousFallback,
@@ -2549,6 +2549,7 @@ namespace XREngine.Rendering.OpenGL
                 if (Hash != 0)
                 {
                     SharedContextLargeSourceTimeouts.TryAdd(Hash, 0);
+                    SynchronousSourceRetryHashes.TryAdd(Hash, 0);
                     InFlightCompilations.TryRemove(Hash, out _);
                 }
 
@@ -2576,6 +2577,11 @@ namespace XREngine.Rendering.OpenGL
 
                 _hashComputed = false;
                 InvalidatePreparedLinkData();
+                PublishBackendStatus(
+                    EShaderProgramBackendStage.SynchronousFallback,
+                    "SharedContextSource",
+                    "shared-context source link timed out; retrying with synchronous source link",
+                    "Shared-context source link timed out.");
                 BeginPrepareLinkData();
                 RegisterPendingAsyncProgram();
             }
@@ -3199,7 +3205,7 @@ namespace XREngine.Rendering.OpenGL
 
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
                     bool isKnownAsyncLinkHazard = IsKnownAsyncLinkHazard;
-                    bool forceSynchronousSourceRetry = Hash != 0 && DriverParallelLinkTimeouts.ContainsKey(Hash);
+                    bool forceSynchronousSourceRetry = Hash != 0 && SynchronousSourceRetryHashes.ContainsKey(Hash);
                     GLProgramCompileLinkQueue.ShaderInput[]? inputs = _preparedCompileInputs;
                     // Hazardous graphics programs (single-stage separable), and
                     // oversized generated graphics programs, are routed to the
@@ -3604,7 +3610,7 @@ namespace XREngine.Rendering.OpenGL
                         {
                             AdoptLinkedBuildProgram(bindingId);
                             IsLinked = true;
-                            DriverParallelLinkTimeouts.TryRemove(Hash, out _);
+                            SynchronousSourceRetryHashes.TryRemove(Hash, out _);
                             long reflectionStart = Stopwatch.GetTimestamp();
                             using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
                             CacheActiveUniforms();

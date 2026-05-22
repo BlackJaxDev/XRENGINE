@@ -516,6 +516,16 @@ namespace XREngine.Scene
 
         internal void SetForwardLightingUniforms(XRRenderProgram program)
         {
+            static void DisablePbrResources(XRRenderProgram program)
+            {
+                program.SuppressFallbackSamplerWarning("IrradianceArray");
+                program.SuppressFallbackSamplerWarning("PrefilterArray");
+                program.Uniform("ForwardPbrResourcesEnabled", false);
+                program.Uniform("ProbeCount", 0);
+                program.Uniform("TetraCount", 0);
+                program.Uniform("UseProbeGrid", false);
+            }
+
             const int maxForwardShadowedPointLights = 4;
             const int maxForwardShadowedSpotLights = 4;
             const int directionalShadowMapStartUnit = 15;
@@ -656,10 +666,7 @@ namespace XREngine.Scene
                     defaultPipeline2.BindPbrLightingResources(program);
                     break;
                 default:
-                    program.Uniform("ForwardPbrResourcesEnabled", false);
-                    program.Uniform("ProbeCount", 0);
-                    program.Uniform("TetraCount", 0);
-                    program.Uniform("UseProbeGrid", false);
+                    DisablePbrResources(program);
                     break;
             }
 

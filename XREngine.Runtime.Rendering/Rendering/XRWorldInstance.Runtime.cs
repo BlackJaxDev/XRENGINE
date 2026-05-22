@@ -41,6 +41,8 @@ public sealed class RuntimeRenderWorldInstance : XRObjectBase, IRuntimeRenderWor
     public object? GameModeObject => GameMode;
     public IRuntimeAmbientSettings? AmbientSettings => Settings;
     public RuntimeWorldSettings Settings => TargetWorld?.Settings ?? _settings;
+    public bool PreviewOctrees => Settings.PreviewOctrees;
+    public bool PreviewQuadtrees => Settings.PreviewQuadtrees;
     public EWorldPlayState PlayState { get; set; } = EWorldPlayState.Stopped;
     public bool IsPlaySessionActive => PlayState is EWorldPlayState.Playing or EWorldPlayState.Paused;
     public RootNodeCollection RootNodes { get; }

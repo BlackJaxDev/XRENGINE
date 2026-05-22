@@ -426,6 +426,9 @@ internal static partial class RuntimeEngine
             public static void RenderAABB(Vector3 halfExtents, Vector3 center, bool solid, ColorF4 color)
                 => RuntimeRenderingHostServices.Current.RenderDebugAABB(halfExtents, center, solid, color);
 
+            public static void RenderRect2D(BoundingRectangleF rectangle, bool solid, ColorF4 color)
+                => RuntimeRenderingHostServices.Current.RenderDebugRect2D(rectangle, solid, color);
+
             public static void RenderBox(Vector3 halfExtents, Vector3 center, Matrix4x4 transform, bool solid, ColorF4 color)
                 => RuntimeRenderingHostServices.Current.RenderDebugBox(halfExtents, center, transform, solid, color);
 
@@ -2542,6 +2545,8 @@ internal sealed class RuntimeDebugPreferences
     public bool RenderLightProbeTetrahedra { get; set; }
     public bool VisualizeDirectionalLightVolumes { get; set; }
     public bool RenderMesh3DBounds { get; set; }
+    public bool Preview3DWorldOctree { get; set; }
+    public bool Preview2DWorldQuadtree { get; set; }
     public bool AllowGpuCpuFallback { get; set; } = true;
     public bool VisualizeTransparencyModeOverlay { get; set; }
     public bool VisualizeTransparencyClassificationOverlay { get; set; }
@@ -2558,6 +2563,10 @@ internal sealed class RuntimeThemePreferences
     public ColorF4 Bounds3DColor { get; set; } = ColorF4.Cyan;
     public ColorF4 HoverOutlineColor { get; set; } = ColorF4.Yellow;
     public ColorF4 SelectionOutlineColor { get; set; } = ColorF4.White;
+    public ColorF4 OctreeIntersectedBoundsColor { get; set; } = ColorF4.LightGray;
+    public ColorF4 OctreeContainedBoundsColor { get; set; } = ColorF4.Yellow;
+    public ColorF4 QuadtreeIntersectedBoundsColor { get; set; } = ColorF4.LightGray;
+    public ColorF4 QuadtreeContainedBoundsColor { get; set; } = ColorF4.Yellow;
 }
 
 internal sealed class RuntimeAssetFacade

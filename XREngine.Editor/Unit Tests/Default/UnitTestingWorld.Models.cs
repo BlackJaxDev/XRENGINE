@@ -109,6 +109,7 @@ public static partial class EditorUnitTests
 
             bool needsImportOptions = alwaysCreateImportOptions
                 || splitSubmeshes
+                || model.SeparateMeshIslands
                 || model.ImporterBackend is ModelImportBackendPreference.AssimpOnly
                 || textureLoadDirSearchPaths.Length > 0;
 
@@ -124,6 +125,7 @@ public static partial class EditorUnitTests
                 GltfBackend = ResolveGltfBackend(model),
                 GenerateMeshRenderersAsync = true,
                 SplitSubmeshesIntoSeparateModelComponents = splitSubmeshes,
+                SeparateMeshIslands = model.SeparateMeshIslands,
                 // Keep static models hidden until every submesh has finished CPU-side processing.
                 // Dependent systems such as light-probe model bounds should only see complete geometry.
                 BatchSubmeshAddsDuringAsyncImport = true,

@@ -81,6 +81,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                c.Add<VPRC_RenderDebugShapes>();
             }
         }
         c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PostRender;
@@ -112,6 +113,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                c.Add<VPRC_RenderDebugShapes>();
             }
         }
         c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PostRender;

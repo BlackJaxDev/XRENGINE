@@ -152,7 +152,7 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, MeshSubmissionStrategy);
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
         }
-        c.Add<VPRC_RenderQuadFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
+        c.Add<VPRC_RenderQuadToFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
 
         c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
         for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
@@ -166,7 +166,7 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
             }
         }
-        c.Add<VPRC_RenderQuadFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
+        c.Add<VPRC_RenderQuadToFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
         c.Add<VPRC_Manual>().ManualAction = () => _activeDepthPeelLayerIndex = -1;
     }
 

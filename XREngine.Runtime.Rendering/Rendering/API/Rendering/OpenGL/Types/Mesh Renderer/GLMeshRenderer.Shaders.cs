@@ -265,6 +265,8 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
+                RefreshCollectedBuffersFromCollections();
+
                 long stageStart = Stopwatch.GetTimestamp();
                 EnsureProgramsMatchRenderSettings();
                 ensureRenderSettingsMs = ElapsedMilliseconds(stageStart);
@@ -371,12 +373,13 @@ namespace XREngine.Rendering.OpenGL
                 bool buffersBound = BuffersBound;
                 bool buffersReady = buffersBound && AreBuffersReadyForRendering();
                 bool ready = buffersReady;
-                _lastPrepareResult = ready
+                string prepareResult = ready
                     ? "Ready"
                     : (buffersBound ? "BuffersNotReady" : "BuffersPending");
+                _lastPrepareResult = prepareResult;
                 _lastPrepareDetail = string.Empty;
                 LogSlowTryPrepare(
-                    ready ? "Ready" : "BuffersPending",
+                    prepareResult,
                     ElapsedMilliseconds(methodStart),
                     generateMs,
                     ensureRenderSettingsMs,

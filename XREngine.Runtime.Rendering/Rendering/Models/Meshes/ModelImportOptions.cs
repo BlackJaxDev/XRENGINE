@@ -207,6 +207,12 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool SplitSubmeshesIntoSeparateModelComponents { get; set; } = false;
 
     /// <summary>
+    /// When true, imported triangle submeshes are analyzed for disconnected geometric islands
+    /// and each island is emitted as a separate submesh with the original material.
+    /// </summary>
+    public bool SeparateMeshIslands { get; set; } = false;
+
+    /// <summary>
     /// When async mesh import is enabled, controls whether imported submeshes are published
     /// to the scene in one batch at the end or streamed in as they become ready.
     /// </summary>

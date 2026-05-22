@@ -71,6 +71,12 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool IsStereoPass => Engine.Rendering.State.IsStereoPass;
     public bool IsSceneCapturePass => Engine.Rendering.State.IsSceneCapturePass;
     public bool RenderCullingVolumesEnabled => Engine.EditorPreferences.Debug.RenderCullingVolumes;
+    public bool Preview3DWorldOctree => Engine.EditorPreferences.Debug.Preview3DWorldOctree;
+    public bool Preview2DWorldQuadtree => Engine.EditorPreferences.Debug.Preview2DWorldQuadtree;
+    public ColorF4 OctreeIntersectedBoundsColor => Engine.EditorPreferences.Theme.OctreeIntersectedBoundsColor;
+    public ColorF4 OctreeContainedBoundsColor => Engine.EditorPreferences.Theme.OctreeContainedBoundsColor;
+    public ColorF4 QuadtreeIntersectedBoundsColor => Engine.EditorPreferences.Theme.QuadtreeIntersectedBoundsColor;
+    public ColorF4 QuadtreeContainedBoundsColor => Engine.EditorPreferences.Theme.QuadtreeContainedBoundsColor;
     public bool IsNvidia => Engine.Rendering.State.IsNVIDIA;
     public string AssetFileExtension => AssetManager.AssetExtension;
     public string? TextureFallbackPath => Path.Combine(Engine.GameSettings.TexturesFolder, "Filler.png");

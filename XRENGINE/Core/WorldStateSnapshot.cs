@@ -67,6 +67,7 @@ namespace XREngine
             if (world is null)
                 return null;
 
+            using var diagnosticScope = SnapshotDiagnostics.BeginScope("Capture", world);
             var serializedScenes = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             byte[]? settingsData = null;
             byte[]? gameModeData = null;
@@ -75,6 +76,7 @@ namespace XREngine
             try
             {
                 LogWorldSceneTree(world, "BeforeSerialize");
+                SnapshotDiagnostics.LogWorldAssetSummary(world, "BeforeSerialize");
 
                 // Serialize each scene
                 foreach (var scene in world.Scenes)
@@ -86,11 +88,17 @@ namespace XREngine
                         {
                             var key = GetSceneKey(scene);
                             serializedScenes[key] = sceneData;
+                            SnapshotDiagnostics.LogScenePayload("Serialized", scene, sceneData.Length);
+                        }
+                        else
+                        {
+                            SnapshotDiagnostics.Warning($"Scene '{scene.Name ?? "<unnamed>"}' serialized to a null payload.");
                         }
                     }
                     catch (Exception ex)
                     {
                         Debug.LogWarning($"Failed to serialize scene '{scene.Name}': {ex.Message}");
+                        SnapshotDiagnostics.Warning($"Failed to serialize scene '{scene.Name ?? "<unnamed>"}': {ex}");
                         isValid = false;
                     }
                 }
@@ -99,10 +107,12 @@ namespace XREngine
                 try
                 {
                     settingsData = SerializeObject(world.Settings);
+                    SnapshotDiagnostics.Log($"Serialized world settings payloadBytes={settingsData?.Length ?? 0}");
                 }
                 catch (Exception ex)
                 {
                     Debug.LogWarning($"Failed to serialize world settings: {ex.Message}");
+                    SnapshotDiagnostics.Warning($"Failed to serialize world settings: {ex}");
                     isValid = false;
                 }
 
@@ -112,10 +122,12 @@ namespace XREngine
                     try
                     {
                         gameModeData = SerializeObject(world.DefaultGameMode);
+                        SnapshotDiagnostics.Log($"Serialized default game mode type={world.DefaultGameMode.GetType().FullName} payloadBytes={gameModeData?.Length ?? 0}");
                     }
                     catch (Exception ex)
                     {
                         Debug.LogWarning($"Failed to serialize game mode: {ex.Message}");
+                        SnapshotDiagnostics.Warning($"Failed to serialize game mode '{world.DefaultGameMode.GetType().FullName}': {ex}");
                         // Game mode serialization failure is not critical
                     }
                 }
@@ -160,18 +172,24 @@ namespace XREngine
             if (SourceWorld is null)
                 return false;
 
+            using var diagnosticScope = SnapshotDiagnostics.BeginScope("Restore", SourceWorld);
             if (!IsValid)
             {
                 Debug.LogWarning("Attempting to restore from invalid snapshot - some state may not be restored");
+                SnapshotDiagnostics.Warning("Attempting to restore from invalid snapshot - some state may not be restored.");
             }
 
             try
             {
+                SnapshotDiagnostics.LogWorldAssetSummary(SourceWorld, "BeforeRestore");
+
                 // End play on any active world instances first
                 XRWorldInstance? runtimeInstance = null;
                 if (XRWorldInstance.WorldInstances.TryGetValue(SourceWorld, out var instance))
                 {
                     runtimeInstance = instance;
+                    SnapshotDiagnostics.Log(
+                        $"Runtime instance before restore: hash={instance.GetHashCode()} playState={instance.PlayState} roots={instance.RootNodes.Count} physics={instance.PhysicsEnabled}");
                     if (instance.PlayState == XRWorldInstance.EPlayState.Playing)
                         instance.EndPlay();
                 }
@@ -185,11 +203,13 @@ namespace XREngine
                         if (settings is not null)
                         {
                             SourceWorld.Settings = settings;
+                            SnapshotDiagnostics.Log($"Restored world settings payloadBytes={SerializedSettings.Length}");
                         }
                     }
                     catch (Exception ex)
                     {
                         Debug.LogWarning($"Failed to restore world settings: {ex.Message}");
+                        SnapshotDiagnostics.Warning($"Failed to restore world settings: {ex}");
                     }
                 }
 
@@ -202,11 +222,13 @@ namespace XREngine
                         if (gameMode is not null)
                         {
                             SourceWorld.DefaultGameMode = gameMode;
+                            SnapshotDiagnostics.Log($"Restored default game mode type={gameMode.GetType().FullName} payloadBytes={SerializedGameMode.Length}");
                         }
                     }
                     catch (Exception ex)
                     {
                         Debug.LogWarning($"Failed to restore game mode: {ex.Message}");
+                        SnapshotDiagnostics.Warning($"Failed to restore game mode: {ex}");
                     }
                 }
 
@@ -223,25 +245,30 @@ namespace XREngine
                     {
                         try
                         {
+                            SnapshotDiagnostics.Log($"Restoring existing scene key='{kvp.Key}' payloadBytes={kvp.Value.Length} currentRoots={scene.RootNodes?.Count ?? 0}");
                             RestoreScene(scene, kvp.Value, runtimeInstance);
                         }
                         catch (Exception ex)
                         {
                             Debug.LogWarning($"Failed to restore scene '{kvp.Key}': {ex.Message}");
+                            SnapshotDiagnostics.Warning($"Failed to restore existing scene '{kvp.Key}': {ex}");
                         }
                         continue;
                     }
 
                     // Scene existed during capture but no longer present; recreate it
+                    SnapshotDiagnostics.Log($"Recreating missing scene key='{kvp.Key}' payloadBytes={kvp.Value.Length}");
                     var recreatedScene = DeserializeObject<XRScene>(kvp.Value);
                     if (recreatedScene is null)
                     {
                         Debug.LogWarning($"Failed to deserialize scene '{kvp.Key}' while recreating snapshot state");
+                        SnapshotDiagnostics.Warning($"Failed to deserialize scene '{kvp.Key}' while recreating snapshot state.");
                         continue;
                     }
 
                     SourceWorld.Scenes.Add(recreatedScene);
                     runtimeInstance?.LoadScene(recreatedScene);
+                    SnapshotDiagnostics.Log($"Recreated scene '{recreatedScene.Name ?? "<unnamed>"}' roots={recreatedScene.RootNodes?.Count ?? 0}");
                 }
 
                 // Remove any scenes that were introduced after the snapshot
@@ -251,6 +278,7 @@ namespace XREngine
 
                 foreach (var removedScene in scenesToRemove)
                 {
+                    SnapshotDiagnostics.Log($"Removing scene introduced after snapshot: '{removedScene.Name ?? "<unnamed>"}' roots={removedScene.RootNodes?.Count ?? 0}");
                     runtimeInstance?.UnloadScene(removedScene);
                     SourceWorld.Scenes.Remove(removedScene);
                 }
@@ -299,6 +327,9 @@ namespace XREngine
                 }
 
                 LogWorldSceneTree(SourceWorld, "AfterDeserialize");
+                SnapshotDiagnostics.LogWorldAssetSummary(SourceWorld, "AfterDeserialize");
+                if (runtimeInstance is not null)
+                    SnapshotDiagnostics.LogWorldInstanceAssetSummary(runtimeInstance, "AfterDeserialize");
 
                 Debug.Out($"World state restored from snapshot taken at {CaptureTime}");
                 return true;
@@ -306,6 +337,7 @@ namespace XREngine
             catch (Exception ex)
             {
                 Debug.LogException(ex, "Failed to restore world state from snapshot");
+                SnapshotDiagnostics.Warning($"Failed to restore world state from snapshot: {ex}");
                 return false;
             }
         }
@@ -347,10 +379,12 @@ namespace XREngine
             byte[] data,
             XRWorldInstance? runtimeInstance)
         {
+            SnapshotDiagnostics.Log($"RestoreScene begin: target='{scene.Name ?? "<unnamed>"}' payloadBytes={data.Length} runtimeInstance={(runtimeInstance is null ? "<null>" : runtimeInstance.GetHashCode().ToString())}");
             var restoredScene = DeserializeObject<XRScene>(data);
             if (restoredScene is null)
             {
                 Debug.LogWarning($"Scene restoration skipped because scene data could not be deserialized.");
+                SnapshotDiagnostics.Warning($"Scene restoration skipped for '{scene.Name ?? "<unnamed>"}' because scene data could not be deserialized.");
                 return;
             }
 
@@ -361,6 +395,7 @@ namespace XREngine
             scene.RootNodes = restoredScene.RootNodes ?? new List<SceneNode>();
 
             runtimeInstance?.LoadScene(scene);
+            SnapshotDiagnostics.Log($"RestoreScene end: target='{scene.Name ?? "<unnamed>"}' visible={scene.IsVisible} roots={scene.RootNodes.Count}");
         }
 
         private static string GetSceneKey(XRScene scene)
