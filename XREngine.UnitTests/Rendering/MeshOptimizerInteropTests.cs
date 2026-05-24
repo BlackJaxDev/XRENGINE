@@ -264,6 +264,40 @@ public sealed class MeshOptimizerInteropTests
     }
 
     [Test]
+    public void GPUScene_RuntimeMeshletRepairBuildsMissingResidentPayloadForMeshletDispatch()
+    {
+        XRMesh mesh = CreateManyTinyTriangleMesh("RuntimeMeshletRepair", 240);
+
+        GPUScene scene = new();
+        try
+        {
+            scene.RegisterLogicalMeshLODs([(mesh, 0.0f)], out uint logicalMeshId, out string? failureReason)
+                .ShouldBeTrue(failureReason);
+            scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry lodEntry).ShouldBeTrue();
+            scene.TryGetMeshletRange(lodEntry.LOD0_MeshDataID, out GPUScene.GpuMeshletRange initialRange).ShouldBeTrue();
+            initialRange.MeshletCount.ShouldBe(0u);
+            mesh.MeshletPayload.ShouldBeNull();
+
+            MeshOptimizerIntegration.ResetMeshletBuildDiagnosticsForTests();
+            scene.EnsureRuntimeMeshletPayloadsForMeshletDispatch().ShouldBe(1u);
+
+            MeshletPayload payload = mesh.MeshletPayload.ShouldNotBeNull();
+            payload.HasMeshlets.ShouldBeTrue();
+            MeshOptimizerIntegration.MeshletBuildInvocationCount.ShouldBe(1L);
+            scene.TryGetMeshletRange(lodEntry.LOD0_MeshDataID, out GPUScene.GpuMeshletRange repairedRange).ShouldBeTrue();
+            repairedRange.MeshletCount.ShouldBe((uint)payload.Meshlets.Length);
+            scene.HasRenderableMeshlets(lodEntry.LOD0_MeshDataID).ShouldBeTrue();
+
+            scene.EnsureRuntimeMeshletPayloadsForMeshletDispatch().ShouldBe(0u);
+            MeshOptimizerIntegration.MeshletBuildInvocationCount.ShouldBe(1L);
+        }
+        finally
+        {
+            scene.Destroy();
+        }
+    }
+
+    [Test]
     public void GPUScene_TracksMeshletRangesPerLodMeshDataId()
     {
         MeshletGenerationSettings settings = CreateEnabledDenseSettings();
@@ -634,7 +668,7 @@ public sealed class MeshOptimizerInteropTests
         hybridSource.ShouldContain("materialTableBuffer.BindTo(program, MaterialTableSsboBinding);");
         hybridSource.ShouldContain("materialTextureHandleBuffer?.BindTo(program, MaterialTextureHandleTableSsboBinding);");
         hybridSource.ShouldContain("WarnMeshletMaterialFallback(");
-        hybridSource.ShouldContain("routing through traditional zero-readback indirect rendering");
+        hybridSource.ShouldContain("skipping traditional mesh fallback");
         hybridSource.ShouldContain("renderPasses.TryGetHiZDepthPyramidForMeshlets(");
         hybridSource.ShouldContain("program.Uniform(\"HiZViewProjectionMatrix\"");
         hybridSource.ShouldContain("program.Uniform(\"HiZValid\", hiZAvailable ? 1u : 0u);");
@@ -718,6 +752,8 @@ public sealed class MeshOptimizerInteropTests
         gpuSceneSource.ShouldContain("Meshlet.SceneBufferUpload");
         gpuSceneSource.ShouldContain("Meshlet.CacheMissing");
         gpuSceneSource.ShouldContain("Meshlet.CacheStale");
+        gpuSceneSource.ShouldContain("EnsureRuntimeMeshletPayloadsForMeshletDispatch");
+        gpuSceneSource.ShouldContain("Meshlet.RuntimePayloadBuilt");
 
         statsSource.ShouldContain("GpuMeshletRequestedFrames");
         statsSource.ShouldContain("GpuMeshletProductionFrames");
@@ -766,6 +802,32 @@ public sealed class MeshOptimizerInteropTests
         directBody.ShouldNotContain("ReadActiveMaterialTierBuckets");
         directBody.ShouldNotContain("BuildIndirectCommandsCpu");
         directBody.ShouldNotContain("RenderTraditional(");
+    }
+
+    [Test]
+    public void GpuMeshletSelectedPath_DoesNotFallThroughToTraditionalIndirectRendering()
+    {
+        string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs").Replace("\r\n", "\n");
+        string renderBody = ExtractSourceBetween(
+            hybridSource,
+            "public void Render(\n            GPURenderPassCollection renderPasses,",
+            "private static void LogIndirectPath(");
+        string meshletGuard = ExtractSourceBetween(
+            renderBody,
+            "bool meshletStrategy = renderPasses.MeshSubmissionStrategy.IsAnyMeshletStrategy();",
+            "if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback");
+
+        meshletGuard.ShouldContain("TryRenderMeshletMaterialTable(");
+        meshletGuard.ShouldContain("WarnMeshletMaterialFallback(");
+        meshletGuard.ShouldContain("return;");
+        meshletGuard.ShouldNotContain("RenderZeroReadback");
+        meshletGuard.ShouldNotContain("RenderTraditional");
+
+        string zeroReadbackScatterGuard = ExtractSourceBetween(
+            renderBody,
+            "if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback",
+            "// Material map from scene (ID -> XRMaterial)");
+        zeroReadbackScatterGuard.ShouldNotContain("IsAnyMeshletStrategy");
     }
 
     [Test]

@@ -48,10 +48,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var camera = rs.SceneCamera;
             // Resolve the active mesh submission strategy once per execution so the prepass
-            // uses the same culling/draw path the lit pass will use later this frame. Otherwise
-            // RenderGPU(pass) would default to GpuIndirectInstrumented while the lit pass runs
-            // ZeroReadback (or vice versa), producing different cull results and AO inputs that
-            // do not match the shaded geometry.
+            // uses the same culling/draw path the lit pass will use later this frame. The
+            // legacy _gpuDispatch flag is only the user's requested dispatch preference; a
+            // forced CpuDirect strategy or backend/profile downgrade must keep this prepass on
+            // CPU too, otherwise AO/depth can be produced by GPU draws while color is CPU.
             //
             // CRITICAL: When the main mesh pass runs on GPU indirect, the prepass MUST also run
             // on GPU indirect. The GPU indirect path generates its own vertex shader that fetches
@@ -67,32 +67,37 @@ namespace XREngine.Rendering.Pipelines.Commands
             // dynamically-created materials without bindless registration) MUST set
             // RenderOptions.ExcludeFromGpuIndirect = true so RenderCPUNonMeshAndExcluded picks
             // them up; otherwise they will fault the GPU side of this dispatch.
-            var strategy = _gpuDispatch
+            EMeshSubmissionStrategy strategy = _gpuDispatch
                 ? RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)
                 : EMeshSubmissionStrategy.CpuDirect;
+            EMeshSubmissionStrategy prepassStrategy = ResolveDepthNormalSubmissionStrategy(strategy);
+            bool useGpuRenderPath = prepassStrategy != EMeshSubmissionStrategy.CpuDirect;
             foreach (int pass in _renderPasses)
             {
-                if (_gpuDispatch)
+                if (useGpuRenderPath)
                 {
-                    // Mirror VPRC_RenderMeshesPassTraditional.RenderGPU exactly: CPU first
-                    // with skipGpuCommands=true and allowExcludedGpuFallbackMeshes=false so the
-                    // prepass walks the same set of commands the lit pass will (non-mesh CPU
-                    // commands + nothing for GPU-eligible/excluded meshes — those are owned by
-                    // the GPU indirect draw). This guarantees prepass coverage matches lit
-                    // coverage, which is what AO/depth sampling relies on.
-                    commands.RenderCPU(
-                        pass,
-                        skipGpuCommands: true,
-                        camera,
-                        allowExcludedGpuFallbackMeshes: false);
-
-                    commands.RenderGPU(pass, strategy);
+                    // Mirror VPRC_RenderMeshesPassTraditional.RenderGPU exactly: CPU first for
+                    // commands the GPU path cannot own, then GPU dispatch for mesh commands.
+                    // The override/variant material tickets above keep those CPU fallback draws
+                    // in the depth-normal material path as well.
+                    commands.RenderCPUNonMeshAndExcluded(pass);
+                    commands.RenderGPU(pass, prepassStrategy);
                 }
                 else
                 {
                     commands.RenderCPU(pass, false, camera);
                 }
             }
+        }
+
+        private static EMeshSubmissionStrategy ResolveDepthNormalSubmissionStrategy(EMeshSubmissionStrategy strategy)
+        {
+            if (!strategy.IsAnyMeshletStrategy())
+                return strategy;
+
+            return strategy == EMeshSubmissionStrategy.GpuMeshletInstrumented
+                ? EMeshSubmissionStrategy.GpuIndirectInstrumented
+                : EMeshSubmissionStrategy.GpuIndirectZeroReadback;
         }
     }
 }

@@ -59,16 +59,17 @@ struct GpuMeshletDescriptor
     uint Reserved2;
 };
 
-struct TaskPayload
+// Interface block form is required when the task/mesh program is linked as a
+// combined (non-separable) program. Field layout must match the producing
+// MeshletCulling.task shader.
+taskNV in TaskPayload
 {
     GpuMeshletTaskRecord Record;
     uint MeshletIndex;
     uint IsPreviousLod;
     uint PassFlags;
     uint Reserved;
-};
-
-taskNV in TaskPayload IN;
+} IN;
 
 layout(std430, binding = 3) readonly buffer MeshDataBuffer { MeshDataEntry MeshData[]; };
 layout(std430, binding = 5) readonly buffer MeshletDescriptorBuffer { GpuMeshletDescriptor Meshlets[]; };

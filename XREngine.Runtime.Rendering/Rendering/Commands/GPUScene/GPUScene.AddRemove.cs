@@ -695,6 +695,12 @@ namespace XREngine.Rendering.Commands
 
             MeshletPayload? payload = mesh.MeshletPayload;
             bool fresh = payload?.IsFreshForSourceMesh(mesh) == true;
+            if (IsMeshletRangeCurrent(meshID, payload, fresh))
+            {
+                RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
+                return;
+            }
+
             if (!fresh || payload is not { HasMeshlets: true })
             {
                 if (payload is null)
@@ -769,6 +775,129 @@ namespace XREngine.Rendering.Commands
             Debug.Meshes(
                 $"Meshlet.SceneBufferUpload meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' cachePath='<runtime-meshlet-payload>' meshletCount={meshletCount} vertexIndexCount={vertexIndexCount} triangleByteCount={triangleByteCount} capacity={MeshletDescriptorBuffer.ElementCount} residentBytes={MeshletBufferBytesResident}");
         }
+
+        private bool IsMeshletRangeCurrent(uint meshID, MeshletPayload? payload, bool fresh)
+        {
+            if (!_meshletFreshnessByMeshId.TryGetValue(meshID, out ulong existingFreshness) ||
+                !_meshletRangesByMeshId.TryGetValue(meshID, out GpuMeshletRange existingRange))
+            {
+                return false;
+            }
+
+            if (payload is null)
+                return existingFreshness == 0UL && !existingRange.HasMeshlets;
+
+            if (!fresh || existingFreshness != payload.FreshnessHash)
+                return false;
+
+            return payload.HasMeshlets
+                ? existingRange.MeshletCount == (uint)payload.Meshlets.Length
+                : !existingRange.HasMeshlets;
+        }
+
+        public uint EnsureRuntimeMeshletPayloadsForMeshletDispatch()
+        {
+            uint repaired = 0u;
+            MeshletGenerationSettings? repairSettings = null;
+
+            using (_lock.EnterScope())
+            {
+                foreach ((uint meshID, XRMesh? mesh) in _idToMesh)
+                {
+                    if (meshID == 0u || mesh is null)
+                        continue;
+
+                    if (_activeAtlasTiers.TryGetValue(mesh, out EAtlasTier tier) && tier == EAtlasTier.Streaming)
+                    {
+                        SetEmptyMeshletRange(meshID, 0UL);
+                        continue;
+                    }
+
+                    MeshletPayload? payload = mesh.MeshletPayload;
+                    bool fresh = payload?.IsFreshForSourceMesh(mesh) == true;
+                    if (payload is not null && IsMeshletRangeCurrent(meshID, payload, fresh))
+                        continue;
+
+                    if (payload is null || !fresh)
+                    {
+                        if (_runtimeMeshletRepairFailedMeshIds.ContainsKey(meshID))
+                        {
+                            SetEmptyMeshletRange(meshID, 0UL);
+                            continue;
+                        }
+
+                        repairSettings ??= CreateRuntimeMeshletRepairSettings();
+
+                        // Disk cache: try to load a previously persisted payload
+                        // matching the same identity + settings + meshoptimizer
+                        // version. This avoids the multi-second per-submesh
+                        // meshlet rebuild on shader-pipeline toggle / restart.
+                        if (MeshletPayloadDiskCache.TryLoad(mesh, repairSettings, null, out MeshletPayload? cached) && cached is not null)
+                        {
+                            mesh.MeshletPayload = cached;
+                            payload = cached;
+                            fresh = true;
+                            repaired++;
+                            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheHit(1);
+
+                            if (_runtimeMeshletRepairLogBudget > 0 &&
+                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
+                            {
+                                Debug.Meshes(
+                                    $"Meshlet.RuntimePayloadCacheHit meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' meshletCount={payload.Meshlets.Length}");
+                            }
+
+                            EnsureMeshletRangeForMesh(meshID, mesh);
+                            continue;
+                        }
+
+                        try
+                        {
+                            payload = mesh.GetOrCreateMeshletPayload(repairSettings);
+                            fresh = payload.IsFreshForSourceMesh(mesh);
+                            repaired++;
+
+                            // Persist freshly built payload for the next run.
+                            MeshletPayloadDiskCache.TryStore(mesh, repairSettings, null, payload);
+
+                            if (_runtimeMeshletRepairLogBudget > 0 &&
+                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
+                            {
+                                Debug.Meshes(
+                                    $"Meshlet.RuntimePayloadBuilt meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' meshletCount={payload.Meshlets.Length} vertexIndexCount={payload.VertexIndices.Length} triangleByteCount={payload.TriangleIndices.Length}");
+                            }
+                        }
+                        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or InvalidOperationException or ArgumentException or OverflowException)
+                        {
+                            _runtimeMeshletRepairFailedMeshIds.TryAdd(meshID, 0);
+                            RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordGpuMeshletCacheMiss(1);
+                            if (_runtimeMeshletRepairLogBudget > 0 &&
+                                Interlocked.Decrement(ref _runtimeMeshletRepairLogBudget) >= 0)
+                            {
+                                Debug.MeshesWarning(
+                                    $"Meshlet.RuntimePayloadBuildFailed meshDataId={meshID} source='{mesh.Name ?? "<unnamed>"}' reason='{ex.GetType().Name}: {ex.Message}'");
+                            }
+
+                            SetEmptyMeshletRange(meshID, 0UL);
+                            continue;
+                        }
+                    }
+
+                    EnsureMeshletRangeForMesh(meshID, mesh);
+                }
+
+                FlushMeshletRangeDirtyRange();
+            }
+
+            return repaired;
+        }
+
+        private static MeshletGenerationSettings CreateRuntimeMeshletRepairSettings()
+            => new()
+            {
+                Enabled = true,
+                BuildMode = MeshletBuildMode.Dense,
+            };
 
         /// <summary>
         /// Attempts to get the mesh data entry for a given mesh ID.

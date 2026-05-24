@@ -255,6 +255,12 @@ namespace XREngine.Rendering.Commands
             _passDebugLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
             _passValidationLoggingEnabled = instrumented && RuntimeEngine.EffectiveSettings.EnableGpuIndirectValidationLogging;
             _passZeroReadbackMaterialDrawPath = RuntimeEngine.EffectiveSettings.ZeroReadbackMaterialDrawPath;
+            if (meshlet &&
+                _passZeroReadbackMaterialDrawPath is not EZeroReadbackMaterialDrawPath.MaterialTable and
+                    not EZeroReadbackMaterialDrawPath.BindlessMaterialTable)
+            {
+                _passZeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.MaterialTable;
+            }
 
             // Instrumented GPU indirect needs the same material-tier dispatch as zero-readback
             // so visual diagnostics bind the correct shader/textures per material. CPU readback

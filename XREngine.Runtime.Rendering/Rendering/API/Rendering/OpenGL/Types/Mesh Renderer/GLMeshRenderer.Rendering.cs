@@ -426,6 +426,8 @@ namespace XREngine.Rendering.OpenGL
                         return;
                     }
 
+                    PrepareDynamicRenderData();
+
                     BindSSBOs(mat!);
                     BindSSBOs(vtx!);
 

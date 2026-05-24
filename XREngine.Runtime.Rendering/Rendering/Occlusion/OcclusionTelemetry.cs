@@ -47,6 +47,12 @@ namespace XREngine.Rendering.Occlusion
         private static int _gpuPassesPassthroughDirty;
         private static int _gpuDepthSourceHistory;
         private static int _gpuDepthSourceCurrent;
+        // GPU Hi-Z passes that bailed out before producing a cull decision. Indexed by
+        // EGpuHiZSkipReason ordinal; addressed via Interlocked for thread safety. When
+        // this bucket is non-zero, HiZ is configured but not running, and the user has
+        // no other way to tell from telemetry. The OcclusionPanel surfaces the breakdown.
+        private static readonly int[] _gpuHiZSkipReasons = new int[(int)EGpuHiZSkipReason.Count];
+        private static readonly int[] _lastFrameGpuHiZSkipReasons = new int[(int)EGpuHiZSkipReason.Count];
         private static int _lastFrameGpuCandidates;
         private static int _lastFrameGpuOccluded;
         private static int _lastFrameGpuPassesActive;
@@ -94,6 +100,18 @@ namespace XREngine.Rendering.Occlusion
         private static int _cpuDecisionVisibleHyst;     // Query reported zero, hysteresis still visible
         private static int _cpuDecisionProbe;            // ProbeOnly (periodic depth-proxy retest)
         private static int _cpuDecisionSkip;             // Skip (fully occluded)
+
+        // CpuQueryAsync (GPU dispatch path) — counts proxy-AABB hardware queries submitted
+        // and resolved per frame. These are the canonical "is CpuQueryAsync actually doing
+        // anything?" signals on the GPU dispatch path, where the temporal filter alone
+        // doesn't tell you whether queries were ever submitted.
+        private static int _cpuQueryAsyncSubmitted;
+        private static int _cpuQueryAsyncResolved;
+        private static int _cpuQueryAsyncOccluded;
+        private static int _lastFrameCpuQueryAsyncSubmitted;
+        private static int _lastFrameCpuQueryAsyncResolved;
+        private static int _lastFrameCpuQueryAsyncOccluded;
+
         private static int _lastFrameCpuDecisionSeed;
         private static int _lastFrameCpuDecisionCached;
         private static int _lastFrameCpuDecisionVisibleQuery;
@@ -132,6 +150,20 @@ namespace XREngine.Rendering.Occlusion
         public static int GpuDepthSourceCurrent => _lastFrameGpuDepthSourceCurrent;
         /// <summary>True when at least one GPU Hi-Z pass produced an accurate count this frame.</summary>
         public static bool LastFrameGpuOcclusionAvailable => _lastFrameGpuPassesWithReadback > 0;
+        /// <summary>Last completed frame: GPU Hi-Z passes that exited before producing a cull decision, by reason.</summary>
+        public static int GetGpuHiZSkippedCount(EGpuHiZSkipReason reason)
+            => _lastFrameGpuHiZSkipReasons[(int)reason];
+        /// <summary>Total GPU Hi-Z bail-outs this completed frame across all reasons.</summary>
+        public static int GpuHiZSkippedTotal
+        {
+            get
+            {
+                int total = 0;
+                for (int i = 0; i < _lastFrameGpuHiZSkipReasons.Length; ++i)
+                    total += _lastFrameGpuHiZSkipReasons[i];
+                return total;
+            }
+        }
 
         public static EOcclusionCullingMode LastEffectiveMode => _lastEffectiveMode;
         public static EMeshSubmissionStrategy LastSubmissionStrategy => _lastSubmissionStrategy;
@@ -168,6 +200,13 @@ namespace XREngine.Rendering.Occlusion
         /// <summary>Last completed frame: Skip decisions (fully occluded, no draw, no probe).</summary>
         public static int CpuDecisionSkip => _lastFrameCpuDecisionSkip;
 
+        /// <summary>Last completed frame: CpuQueryAsync GPU-dispatch proxy-AABB queries submitted.</summary>
+        public static int CpuQueryAsyncSubmitted => _lastFrameCpuQueryAsyncSubmitted;
+        /// <summary>Last completed frame: CpuQueryAsync GPU-dispatch queries whose results were resolved.</summary>
+        public static int CpuQueryAsyncResolved => _lastFrameCpuQueryAsyncResolved;
+        /// <summary>Last completed frame: CpuQueryAsync GPU-dispatch candidates the temporal filter removed.</summary>
+        public static int CpuQueryAsyncOccluded => _lastFrameCpuQueryAsyncOccluded;
+
         /// <summary>Called by RuntimeEngine.Rendering.Stats.BeginFrame to snapshot and reset counters.</summary>
         public static void BeginFrame()
         {
@@ -184,6 +223,11 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameGpuPassesPassthroughDirty = _gpuPassesPassthroughDirty;
             _lastFrameGpuDepthSourceHistory = _gpuDepthSourceHistory;
             _lastFrameGpuDepthSourceCurrent = _gpuDepthSourceCurrent;
+            for (int i = 0; i < _gpuHiZSkipReasons.Length; ++i)
+            {
+                _lastFrameGpuHiZSkipReasons[i] = _gpuHiZSkipReasons[i];
+                _gpuHiZSkipReasons[i] = 0;
+            }
             lock (ActiveModeLock)
             {
                 _lastEffectiveMode = _currentEffectiveMode;
@@ -208,6 +252,10 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameCpuDecisionVisibleHyst = _cpuDecisionVisibleHyst;
             _lastFrameCpuDecisionProbe = _cpuDecisionProbe;
             _lastFrameCpuDecisionSkip = _cpuDecisionSkip;
+
+            _lastFrameCpuQueryAsyncSubmitted = _cpuQueryAsyncSubmitted;
+            _lastFrameCpuQueryAsyncResolved = _cpuQueryAsyncResolved;
+            _lastFrameCpuQueryAsyncOccluded = _cpuQueryAsyncOccluded;
 
             _cpuTested = 0;
             _cpuCulled = 0;
@@ -237,6 +285,31 @@ namespace XREngine.Rendering.Occlusion
             _cpuDecisionVisibleHyst = 0;
             _cpuDecisionProbe = 0;
             _cpuDecisionSkip = 0;
+
+            _cpuQueryAsyncSubmitted = 0;
+            _cpuQueryAsyncResolved = 0;
+            _cpuQueryAsyncOccluded = 0;
+        }
+
+        /// <summary>Records a CpuQueryAsync GPU-dispatch proxy-AABB query submission (one per candidate).</summary>
+        public static void RecordCpuQueryAsyncSubmitted(int count = 1)
+        {
+            if (count > 0)
+                Interlocked.Add(ref _cpuQueryAsyncSubmitted, count);
+        }
+
+        /// <summary>Records a CpuQueryAsync GPU-dispatch query result resolution.</summary>
+        public static void RecordCpuQueryAsyncResolved(int count = 1)
+        {
+            if (count > 0)
+                Interlocked.Add(ref _cpuQueryAsyncResolved, count);
+        }
+
+        /// <summary>Records candidates the CpuQueryAsync temporal filter removed this frame.</summary>
+        public static void RecordCpuQueryAsyncOccluded(int count = 1)
+        {
+            if (count > 0)
+                Interlocked.Add(ref _cpuQueryAsyncOccluded, count);
         }
 
         /// <summary>Records one CPU-query pass with its candidate count.</summary>
@@ -298,6 +371,20 @@ namespace XREngine.Rendering.Occlusion
         /// </summary>
         public static void RecordGpuPassthroughDirty() =>
             Interlocked.Increment(ref _gpuPassesPassthroughDirty);
+
+        /// <summary>
+        /// Records a GPU Hi-Z pass that exited before producing a cull decision (missing
+        /// shaders, missing depth texture, unsupported depth view, etc.). Surfaces in the
+        /// occlusion panel as a "skipped" bucket so users can tell HiZ is configured but
+        /// not running this frame.
+        /// </summary>
+        public static void RecordGpuHiZSkipped(EGpuHiZSkipReason reason)
+        {
+            int idx = (int)reason;
+            if ((uint)idx >= (uint)_gpuHiZSkipReasons.Length)
+                return;
+            Interlocked.Increment(ref _gpuHiZSkipReasons[idx]);
+        }
 
         /// <summary>Records the active occlusion mode and submission strategy this frame.</summary>
         public static void RecordActiveMode(EOcclusionCullingMode mode, EMeshSubmissionStrategy strategy)
@@ -386,5 +473,20 @@ namespace XREngine.Rendering.Occlusion
         VisibleHysteresis,
         Probe,
         Skip,
+    }
+
+    /// <summary>
+    /// Reasons a GPU Hi-Z pass bailed before producing a cull decision. Kept compact and
+    /// dense so it can index a per-frame counter array atomically. New reasons append.
+    /// </summary>
+    public enum EGpuHiZSkipReason
+    {
+        MissingShaders,
+        MissingPipeline,
+        NoCamera,
+        NoDepthTexture,
+        UnsupportedDepthView,
+        MissingBuffers,
+        Count,
     }
 }

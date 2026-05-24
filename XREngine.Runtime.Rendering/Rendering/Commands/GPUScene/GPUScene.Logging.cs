@@ -49,6 +49,9 @@ namespace XREngine.Rendering.Commands
         /// <summary>Remaining log entries for command update warnings/errors.</summary>
         private int _commandUpdateErrorLogBudget = 24;
 
+        /// <summary>Remaining log entries for runtime meshlet payload repair.</summary>
+        private int _runtimeMeshletRepairLogBudget = 16;
+
         /// <summary>Checks if GPU scene logging is enabled in settings.</summary>
         private static bool IsGpuSceneLoggingEnabled()
             => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;

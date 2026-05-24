@@ -260,6 +260,23 @@ internal static partial class RuntimeEngine
         public static bool IsVulkanRendererActive()
             => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
 
+        /// <summary>
+        /// Strategy the user requested in <c>ForceMeshSubmissionStrategy</c> when the
+        /// resolver had to downgrade it (typically a meshlet strategy on a backend that
+        /// can't dispatch mesh tasks). Null when no downgrade is active.
+        /// </summary>
+        public static EMeshSubmissionStrategy? LastMeshletDowngradeRequested { get; private set; }
+        /// <summary>Strategy the resolver substituted for the requested meshlet strategy.</summary>
+        public static EMeshSubmissionStrategy? LastMeshletDowngradeResolved { get; private set; }
+        /// <summary>Human-readable reason for the meshlet downgrade.</summary>
+        public static string? LastMeshletDowngradeReason { get; private set; }
+        /// <summary>Active render backend snapshotted by the last meshlet/strategy resolve.</summary>
+        public static RuntimeGraphicsApiKind LastResolvedRendererBackend { get; private set; }
+        /// <summary>Mesh-shader dialect (none/KHR/NV/Vulkan EXT) the active renderer reported.</summary>
+        public static EMeshShaderDialect LastResolvedMeshShaderDialect { get; private set; }
+        /// <summary>True when the active renderer reported a production meshlet dispatch path.</summary>
+        public static bool LastResolvedSupportsMeshletDispatch { get; private set; }
+
         public static void ApplyGpuRenderDispatchToPipeline(object? pipeline, bool enabled)
         {
         }
@@ -281,6 +298,11 @@ internal static partial class RuntimeEngine
             bool supportsIndirectCountMeshTaskDispatch = renderer?.SupportsIndirectCountMeshTaskDispatch() ?? false;
             bool supportsMeshletDispatch = renderer?.SupportsMeshletDispatch() ?? false;
 
+            // Snapshot inputs the UI uses to explain meshlet availability without re-deriving them.
+            LastResolvedRendererBackend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+            LastResolvedMeshShaderDialect = meshShaderDialect;
+            LastResolvedSupportsMeshletDispatch = supportsMeshletDispatch;
+
             EMeshSubmissionStrategy? forced = RuntimeEngine.EffectiveSettings.ForceMeshSubmissionStrategy;
             if (forced.HasValue)
             {
@@ -301,6 +323,10 @@ internal static partial class RuntimeEngine
                             supportsDirectMeshTaskDispatch,
                             supportsIndirectCountMeshTaskDispatch);
 
+                        LastMeshletDowngradeRequested = forced.Value;
+                        LastMeshletDowngradeResolved = resolved;
+                        LastMeshletDowngradeReason = reason;
+
                         XREngine.Debug.RenderingWarningEvery(
                             "RenderDispatch.MeshSubmissionStrategy.UnsupportedGpuMeshlet",
                             TimeSpan.FromSeconds(2),
@@ -311,6 +337,12 @@ internal static partial class RuntimeEngine
                             supportsDirectMeshTaskDispatch,
                             supportsIndirectCountMeshTaskDispatch,
                             reason);
+                    }
+                    else
+                    {
+                        LastMeshletDowngradeRequested = null;
+                        LastMeshletDowngradeResolved = null;
+                        LastMeshletDowngradeReason = null;
                     }
 
                     return resolved;

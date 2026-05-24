@@ -363,7 +363,7 @@ namespace XREngine
                 /// Leave null for profile and capability based resolution.
                 /// </summary>
                 [Category("GPU Rendering")]
-                [Description("Optional diagnostic override for the resolved mesh submission strategy. Leave null for profile and capability based resolution.")]
+                [Description("Optional diagnostic override for the resolved mesh submission strategy. Leave null for profile and capability based resolution. Note: GpuMeshlet* strategies require a backend that supports mesh shaders (Vulkan with VK_EXT_mesh_shader, or OpenGL with the rare GL_EXT_mesh_shader). When mesh shaders aren't available the resolver downgrades to GpuIndirectZeroReadback (or CpuDirect under strict no-fallback profiles); the Occlusion panel surfaces the active downgrade reason.")]
                 public EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
                 {
                     get => _forceMeshSubmissionStrategy;

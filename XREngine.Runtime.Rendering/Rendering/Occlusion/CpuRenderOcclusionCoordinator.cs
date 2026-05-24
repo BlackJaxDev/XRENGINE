@@ -311,6 +311,27 @@ namespace XREngine.Rendering.Occlusion
             }
         }
 
+        public void ForceVisible(int renderPass, uint sourceCommandIndex)
+        {
+            lock (_lock)
+            {
+                PassState state = GetPassState(renderPass);
+                QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
+                ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+
+                queryState.ConsecutiveOccludedFrames = 0;
+                queryState.LastTouchedFrame = frameId;
+                queryState.LastAnySamplesPassed = true;
+                queryState.LastDecision = ECpuOcclusionDecision.Visible;
+                queryState.LastDecidedFrameId = frameId;
+                queryState.QueryIssuedFrameId = frameId;
+                queryState.PendingQueryWasVisibleDraw = false;
+
+                if (queryState.QueryPending)
+                    queryState.DiscardPendingResult = true;
+            }
+        }
+
         private PassState GetPassState(int renderPass)
         {
             if (!_passStates.TryGetValue(renderPass, out PassState? state))

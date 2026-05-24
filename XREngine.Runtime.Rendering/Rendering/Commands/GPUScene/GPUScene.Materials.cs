@@ -47,6 +47,8 @@ namespace XREngine.Rendering.Commands
         /// <summary>Reverse mapping from mesh ID to XRMesh instance.</summary>
         private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
 
+        private readonly ConcurrentDictionary<uint, byte> _runtimeMeshletRepairFailedMeshIds = new();
+
         private readonly Dictionary<RenderableMesh, Dictionary<uint, uint>> _renderableLogicalMeshIdMap = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly Dictionary<XRMesh, uint> _standaloneLogicalMeshIdMap = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly Dictionary<uint, LogicalMeshState> _logicalMeshStates = [];

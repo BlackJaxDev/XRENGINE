@@ -318,6 +318,9 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         monoSource.ShouldContain("uniform float cameraFar;");
         monoSource.ShouldContain("frustumPlanes[4] = vec4( 0.0, 0.0,-1.0, -cameraNear);");
         monoSource.ShouldContain("frustumPlanes[5] = vec4( 0.0, 0.0, 1.0,  cameraFar);");
+        monoSource.ShouldContain("bool SpotConeIntersectsTileFrustum(LocalLight light)");
+        monoSource.ShouldContain("float support = max(dot(apexVS, plane), dot(baseCenterVS, plane) + radialSupport);");
+        monoSource.ShouldContain("? SpotConeIntersectsTileFrustum(light)");
 
         string stereoSource = LoadShaderSource("Scene3D/ForwardPlus/LightCullingStereo.comp");
         stereoSource.ShouldContain("frustumPlanes[i] *= projection;");
@@ -328,6 +331,18 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         stereoSource.ShouldContain("uniform float cameraFar;");
         stereoSource.ShouldContain("frustumPlanes[4] = vec4( 0.0, 0.0,-1.0, -cameraNear);");
         stereoSource.ShouldContain("frustumPlanes[5] = vec4( 0.0, 0.0, 1.0,  cameraFar);");
+        stereoSource.ShouldContain("bool SpotConeIntersectsTileFrustum(LocalLight light)");
+        stereoSource.ShouldContain("float support = max(dot(apexVS, plane), dot(baseCenterVS, plane) + radialSupport);");
+        stereoSource.ShouldContain("? SpotConeIntersectsTileFrustum(light)");
+    }
+
+    [Test]
+    public void SpotLightOuterCone_UsesGeometryConeBaseCenterConvention()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "SpotLightComponent.cs"));
+
+        source.ShouldContain("Vector3 coneBaseCenter = renderMatrix.Translation + dir * d;");
+        source.ShouldContain("new(coneBaseCenter, -dir, d, CalculateOuterConeRadius");
     }
 
     [Test]

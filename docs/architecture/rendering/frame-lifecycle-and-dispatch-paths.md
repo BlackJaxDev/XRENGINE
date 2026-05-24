@@ -396,7 +396,8 @@ The dedicated meshlet render command path is still experimental:
 - `VPRC_RenderMeshesPassShared` can route to `Traditional` or `Meshlet` intent.
 - `GpuMeshletZeroReadback` requires production `SupportsMeshletDispatch()` from the active renderer, not just visible mesh shader extensions. `GpuMeshletInstrumented` uses the same capability gate and is selected only for explicit diagnostics.
 - `MeshShaderDialect`, `SupportsDirectMeshTaskDispatch()`, and `SupportsIndirectCountMeshTaskDispatch()` expose partial backend support for diagnostics.
-- unsupported production meshlet dispatch logs a warning and falls back to `GpuIndirectZeroReadback` when available, or to the profile-approved non-meshlet fallback.
+- `RenderGPU(pass, strategy)` sets `UseMeshletPipeline` for the duration of the call whenever `strategy` is `GpuMeshlet*`, so direct side-pass callers cannot request meshlets while silently entering the traditional indirect path.
+- unsupported production meshlet dispatch falls back at resolver/pass-router level to `GpuIndirectZeroReadback` when available, or to the profile-approved non-meshlet fallback. Once a selected meshlet strategy enters the render manager, any meshlet dispatch failure is logged and skipped rather than drawing traditional meshes.
 
 There is real meshlet infrastructure in the repository:
 

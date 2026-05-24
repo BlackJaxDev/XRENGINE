@@ -412,7 +412,10 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 var bulkPt = _useCompressedBuffers ? BulkPopulatePointsCompressed : BulkPopulatePoints;
                 if (bulkPt is not null && _debugPointsBuffer is not null)
+                {
                     bulkPt(_debugPointsBuffer.Address, ptCount);
+                    MarkPointsDirty();
+                }
                 else
                     for (int i = 0; i < ptCount; i++)
                         SetPointAt(i);
@@ -422,7 +425,10 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 var bulkLn = _useCompressedBuffers ? BulkPopulateLinesCompressed : BulkPopulateLines;
                 if (bulkLn is not null && _debugLinesBuffer is not null)
+                {
                     bulkLn(_debugLinesBuffer.Address, lnCount);
+                    MarkLinesDirty();
+                }
                 else
                     for (int i = 0; i < lnCount; i++)
                         SetLineAt(i);
@@ -432,7 +438,10 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 var bulkTri = _useCompressedBuffers ? BulkPopulateTrianglesCompressed : BulkPopulateTriangles;
                 if (bulkTri is not null && _debugTrianglesBuffer is not null)
+                {
                     bulkTri(_debugTrianglesBuffer.Address, triCount);
+                    MarkTrianglesDirty();
+                }
                 else
                     for (int i = 0; i < triCount; i++)
                         SetTriangleAt(i);
@@ -453,6 +462,9 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
         private bool _fullPushTriangles = true;
+        private void MarkTrianglesDirty()
+            => _fullPushTriangles = true;
+
         public void PushTrianglesBuffer()
         {
             if (TriangleCount == 0 || _debugTrianglesBuffer is null)
@@ -468,6 +480,9 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
         private bool _fullPushLines = true;
+        private void MarkLinesDirty()
+            => _fullPushLines = true;
+
         public void PushLinesBuffer()
         {
             if (LineCount == 0 || _debugLinesBuffer is null)
@@ -483,6 +498,9 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
         private bool _fullPushPoints = true;
+        private void MarkPointsDirty()
+            => _fullPushPoints = true;
+
         public void PushPointsBuffer()
         {
             if (PointCount == 0 || _debugPointsBuffer is null)
@@ -529,6 +547,8 @@ namespace XREngine.Rendering.Physics.Physx
                 destPoints[x + 6] = color.B;
                 destPoints[x + 7] = color.A;
             }
+
+            MarkPointsDirty();
         }
 
         private void SetLineAt(int i)
@@ -571,6 +591,8 @@ namespace XREngine.Rendering.Physics.Physx
                 destLines[x + 10] = color.B;
                 destLines[x + 11] = color.A;
             }
+
+            MarkLinesDirty();
         }
 
         private void SetTriangleAt(int i)
@@ -621,6 +643,8 @@ namespace XREngine.Rendering.Physics.Physx
                 destTriangles[x + 14] = color.B;
                 destTriangles[x + 15] = color.A;
             }
+
+            MarkTrianglesDirty();
         }
 
         public void CreateOrResizePoints(uint count)

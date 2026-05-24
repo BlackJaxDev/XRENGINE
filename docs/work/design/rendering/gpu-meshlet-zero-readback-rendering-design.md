@@ -142,6 +142,8 @@ Current meshlet shading uses a simple meshlet material buffer. Production must c
 - state class and render pass semantics
 - generated shader variants for static/skinned, opaque/masked, shadow/depth/velocity/stereo
 
+The implemented direct meshlet pass requires a material-table draw path. If a meshlet strategy is active while the global zero-readback draw path is `FullBucketScan` or `ActiveBucketList`, the pass snapshots `MaterialTable` automatically; explicit `BindlessMaterialTable` remains honored when the backend can provide bindless handles. Override-driven support passes, including the forward depth-normal prepass and full-overdraw debug pass, route through the matching traditional GPU indirect strategy until meshlet override/depth-normal variants exist.
+
 ## 5. Target Scene Data
 
 ### 5.1 Mesh Data Entry Extension
@@ -250,6 +252,8 @@ The meshlet path reuses existing GPU stages:
 2. Hi-Z culling filters commands where enabled.
 3. `GPURenderLODSelect.comp` updates selected `MeshID` and `LODLevel`.
 4. Sort/build-key stages may still run if material/state ordering is needed.
+
+BVH/frustum/Hi-Z run at command granularity before meshlet expansion. A false rejection there removes the whole mesh command, so whole-wall disappearance indicates the pre-meshlet command cull path rather than task-shader meshlet section culling. Hi-Z should use current-frame depth where available; previous-frame history depth is only a fallback when the current depth view cannot be resolved. The exception is a forward/masked color pass following the forward depth-normal prepass: current depth can already contain the same pass' candidates, so command-level Hi-Z is skipped there to avoid self-occluding the mesh before task-shader meshlet frustum/cone culling can run.
 
 The meshlet path must not rebuild visibility on CPU and must not use CPU count readbacks.
 

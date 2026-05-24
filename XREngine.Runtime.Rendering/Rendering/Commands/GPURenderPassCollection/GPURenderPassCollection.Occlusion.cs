@@ -51,16 +51,17 @@ namespace XREngine.Rendering.Commands
             {
                 if (!IsEnabled())
                     return;
+                
                 lock (_lock)
                 {
-                    if (_stats.TryGetValue(stage, out var s))
-                        _stats[stage] = (s.Calls + 1, s.TotalMs + ms, ms > s.MaxMs ? ms : s.MaxMs);
-                    else
-                        _stats[stage] = (1, ms, ms);
+                    _stats[stage] = _stats.TryGetValue(stage, out var s) 
+                        ? (s.Calls + 1, s.TotalMs + ms, ms > s.MaxMs ? ms : s.MaxMs) 
+                        : (1, ms, ms);
 
                     long now = Stopwatch.GetTimestamp();
                     if (_lastFlushTicks == 0)
                         _lastFlushTicks = now;
+                    
                     double sinceFlushSec = (now - _lastFlushTicks) / (double)Stopwatch.Frequency;
                     if (sinceFlushSec >= 1.0)
                         FlushLocked(sinceFlushSec, now);
@@ -72,23 +73,51 @@ namespace XREngine.Rendering.Commands
                 _lastFlushTicks = nowTicks;
                 if (_stats.Count == 0)
                     return;
+                
                 _logPath ??= System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs", "hiz-stage-stats.log");
-                try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_logPath)!); } catch { }
+                try
+                { 
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_logPath)!);
+                }
+                catch
+                {
+                    
+                }
+
                 var sb = new System.Text.StringBuilder(256);
-                sb.Append('[').Append(DateTime.Now.ToString("HH:mm:ss.fff")).Append("] window=")
-                    .Append(windowSec.ToString("F2")).Append("s");
+                sb
+                    .Append('[')
+                    .Append(DateTime.Now.ToString("HH:mm:ss.fff"))
+                    .Append("] window=")
+                    .Append(windowSec.ToString("F2"))
+                    .Append('s');
+                
                 foreach (var kv in _stats)
                 {
                     double avg = kv.Value.TotalMs / Math.Max(1, kv.Value.Calls);
-                    double perFrameMs = kv.Value.TotalMs / windowSec / 60.0 * 60.0; // = TotalMs/windowSec (per second). Expose as ms/s.
-                    sb.Append(' ').Append(kv.Key).Append('=')
-                      .Append(kv.Value.Calls).Append("c,")
-                      .Append(kv.Value.TotalMs.ToString("F2")).Append("ms,avg=")
-                      .Append(avg.ToString("F3")).Append(",max=")
-                      .Append(kv.Value.MaxMs.ToString("F3"));
+                    //double perFrameMs = kv.Value.TotalMs / windowSec / 60.0 * 60.0; // = TotalMs/windowSec (per second). Expose as ms/s.
+                    sb
+                        .Append(' ')
+                        .Append(kv.Key)
+                        .Append('=')
+                        .Append(kv.Value.Calls)
+                        .Append("c,")
+                        .Append(kv.Value.TotalMs.ToString("F2"))
+                        .Append("ms,avg=")
+                        .Append(avg.ToString("F3"))
+                        .Append(",max=")
+                        .Append(kv.Value.MaxMs.ToString("F3"));
                 }
                 sb.AppendLine();
-                try { System.IO.File.AppendAllText(_logPath, sb.ToString()); } catch { }
+                try 
+                {
+                    System.IO.File.AppendAllText(_logPath, sb.ToString());
+                }
+                catch
+                {
+                    
+                }
+
                 _stats.Clear();
             }
         }
@@ -101,6 +130,8 @@ namespace XREngine.Rendering.Commands
         private static readonly AsyncOcclusionQueryManager s_cpuOcclusionQueryManager = new();
         private readonly List<(uint SourceCommandIndex, XRRenderQuery Query)> _cpuOcclusionPending = [];
         private readonly Dictionary<uint, bool> _cpuOcclusionLastResolved = new();
+        // Pooled across submissions to avoid per-frame allocation in the hot occlusion path.
+        private readonly HashSet<uint> _cpuOcclusionPendingScratch = new();
         private ulong _cpuOcclusionLastResolveFrameId;
         private uint _cpuOcclusionLastSceneCommandCount;
         private Vector3 _cpuOcclusionLastCameraPosition;
@@ -205,24 +236,42 @@ namespace XREngine.Rendering.Commands
             _occlusionTemporalOverrides = temporalOverrides;
         }
 
-        // C-GPU-3 dirty-bypass kill switch. Default OFF: when the temporal Hi-Z state
-        // is dirty we still run the refine compute (legacy behavior, may over-cull for
-        // one frame after a scene mutation or large camera jump). Set
-        // XRE_GPU_HIZ_DIRTY_BYPASS=1 to skip refine on dirty frames (passes through
-        // every frustum/BVH candidate). The bypass leaves _culledCountBuffer /
-        // _culledSceneToRenderBuffer holding the cull-pass output; this has been
-        // observed to crash nvoglv64 (STATUS_STACK_BUFFER_OVERRUN) under the
-        // GpuIndirectZeroReadback path because the downstream
-        // MultiDrawElementsIndirectCount pipeline expects post-refine state. Until
-        // the bypass is rewritten as an explicit GPU passthrough copy + swap, leave
-        // it opt-in.
+        // C-GPU-3 dirty-bypass kill switch. Default ON: when the temporal Hi-Z state
+        // is dirty (scene mutated, camera jumped) we skip the refine compute for this
+        // frame and let every frustum/BVH-passing candidate through unchanged, while
+        // still building the pyramid so the next frame can refine normally.
+        //
+        // Phase 4 contract (docs/work/todo/rendering/occlusion-and-meshlet-execution-todo.md):
+        // the bypass branch now issues an explicit
+        // EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command before
+        // returning, which serializes the upstream cull-pass writes against the
+        // downstream MultiDrawElementsIndirectCount read. That was the missing
+        // handoff that previously crashed nvoglv64 (STATUS_STACK_BUFFER_OVERRUN)
+        // under sustained dirty conditions on the GpuIndirectZeroReadback path: the
+        // refine compute had been the implicit barrier, and skipping it left the
+        // indirect-count read racing the cull-pass writes. The cull pass already
+        // writes the final count into _culledCountBuffer and the commands into
+        // _culledSceneToRenderBuffer (same buffer downstream consumers read on the
+        // refine path post-swap), so no buffer-pointer swap is required in bypass —
+        // only the explicit memory barrier.
+        //
+        // Set XRE_GPU_HIZ_DIRTY_BYPASS=0 to force refine-always (legacy behavior,
+        // may over-cull for one frame after a dirty event because the pyramid still
+        // reflects pre-mutation depth).
         private static bool? _gpuHiZDirtyBypassCached;
         private static bool IsGpuHiZDirtyBypassEnabled()
         {
             if (_gpuHiZDirtyBypassCached.HasValue)
                 return _gpuHiZDirtyBypassCached.Value;
             string? raw = Environment.GetEnvironmentVariable("XRE_GPU_HIZ_DIRTY_BYPASS");
-            bool enabled = !string.IsNullOrEmpty(raw) && (raw == "1" || raw.Equals("true", StringComparison.OrdinalIgnoreCase));
+            // Default ON when unset; explicit "0"/"false" disables.
+            bool enabled;
+            if (string.IsNullOrEmpty(raw))
+                enabled = true;
+            else if (raw == "0" || raw.Equals("false", StringComparison.OrdinalIgnoreCase))
+                enabled = false;
+            else
+                enabled = true;
             _gpuHiZDirtyBypassCached = enabled;
             return enabled;
         }
@@ -393,6 +442,8 @@ namespace XREngine.Rendering.Commands
             if (camera is null)
             {
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuHiZSkipped(
+                    XREngine.Rendering.Occlusion.EGpuHiZSkipReason.NoCamera);
                 return;
             }
 
@@ -401,6 +452,8 @@ namespace XREngine.Rendering.Commands
             {
                 HiZStageStats.Record("GpuHiZ.Exit.MissingShaders", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuHiZSkipped(
+                    XREngine.Rendering.Occlusion.EGpuHiZSkipReason.MissingShaders);
                 if (!_loggedGpuHiZOcclusionScaffold)
                 {
                     _loggedGpuHiZOcclusionScaffold = true;
@@ -417,6 +470,8 @@ namespace XREngine.Rendering.Commands
             if (pipeline is null)
             {
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuHiZSkipped(
+                    XREngine.Rendering.Occlusion.EGpuHiZSkipReason.MissingPipeline);
                 return;
             }
 
@@ -424,6 +479,8 @@ namespace XREngine.Rendering.Commands
             {
                 HiZStageStats.Record("GpuHiZ.Exit.NoDepthTexture", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuHiZSkipped(
+                    XREngine.Rendering.Occlusion.EGpuHiZSkipReason.NoDepthTexture);
                 if (!_loggedGpuHiZOcclusionScaffold)
                 {
                     _loggedGpuHiZOcclusionScaffold = true;
@@ -447,10 +504,32 @@ namespace XREngine.Rendering.Commands
                 HiZStageStats.Record("GpuHiZ.DepthSource.Current", 0.0);
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuDepthSource(depthInput.History);
 
+            // Forward depth-normal prepass depth already contains these same forward
+            // candidates. Command-level current-depth Hi-Z can therefore self-cull an
+            // entire mesh command before color or meshlet expansion gets a chance to run.
+            if (ShouldBypassCurrentDepthGpuHiZRefine(depthInput))
+            {
+                AbstractRenderer.Current?.MemoryBarrier(
+                    EMemoryBarrierMask.ShaderStorage |
+                    EMemoryBarrierMask.Command |
+                    EMemoryBarrierMask.ClientMappedBuffer);
+
+                bool readbackAvailableSelfRisk = !IsCpuReadbackCountDisabledForPass();
+                RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPass(
+                    (int)candidates, 0, readbackAvailableSelfRisk);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
+                    EOcclusionCullingMode.GpuHiZ,
+                    MeshSubmissionStrategy);
+                return;
+            }
+
             if (depthWidth == 0u || depthHeight == 0u)
             {
                 HiZStageStats.Record("GpuHiZ.Exit.DepthUnsupportedView", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuHiZSkipped(
+                    XREngine.Rendering.Occlusion.EGpuHiZSkipReason.UnsupportedDepthView);
                 if (!_loggedGpuHiZOcclusionScaffold)
                 {
                     _loggedGpuHiZOcclusionScaffold = true;
@@ -469,12 +548,16 @@ namespace XREngine.Rendering.Commands
             {
                 HiZStageStats.Record("GpuHiZ.Exit.MissingBuffers", 0.0);
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuHiZSkipped(
+                    XREngine.Rendering.Occlusion.EGpuHiZSkipReason.MissingBuffers);
                 return;
             }
 
             if (CulledSceneToRenderBuffer is null)
             {
                 RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuHiZSkipped(
+                    XREngine.Rendering.Occlusion.EGpuHiZSkipReason.MissingBuffers);
                 return;
             }
 
@@ -536,15 +619,25 @@ namespace XREngine.Rendering.Commands
             // anyway (so the *next* frame can cull normally) and skips refine for this
             // pass: every frustum/BVH candidate passes through unchanged.
             //
-            // OPT-IN ONLY (default off). Skipping refine leaves _culledCountBuffer /
-            // _culledSceneToRenderBuffer holding the cull-pass output; downstream
-            // GpuIndirectZeroReadback (MultiDrawElementsIndirectCount) interactions
-            // were observed to crash nvoglv64 (STATUS_STACK_BUFFER_OVERRUN) when the
-            // bypass fires under sustained dirty conditions. Until the state-handoff
-            // is rewritten as an explicit GPU passthrough copy, retain the original
-            // refine-always behavior. Set XRE_GPU_HIZ_DIRTY_BYPASS=1 to opt in.
+            // Phase 4 (Build/.../occlusion-and-meshlet-execution-todo.md): default ON.
+            // The cull pass writes _culledSceneToRenderBuffer + _culledCountBuffer
+            // directly. The refine pass would normally read those, write the refined
+            // commands into _occlusionCulledBuffer, and SwapCulledBufferAfterOcclusion()
+            // — leaving _culledSceneToRenderBuffer pointing at the refined output.
+            // On bypass the cull pass output already lives in _culledSceneToRenderBuffer
+            // (same name and shape downstream consumers expect post-swap on the refine
+            // path), so we deliberately do NOT swap. The only invariant the refine pass
+            // would have provided implicitly is a memory-ordering barrier between the
+            // cull SSBO writes and the downstream MultiDrawElementsIndirectCount read;
+            // missing that handoff is what crashed nvoglv64 (STATUS_STACK_BUFFER_OVERRUN)
+            // under GpuIndirectZeroReadback. We issue it explicitly here.
             if (invalidateTemporalHiZ && IsGpuHiZDirtyBypassEnabled())
             {
+                AbstractRenderer.Current?.MemoryBarrier(
+                    EMemoryBarrierMask.ShaderStorage |
+                    EMemoryBarrierMask.Command |
+                    EMemoryBarrierMask.ClientMappedBuffer);
+
                 bool readbackAvailableDirty = !IsCpuReadbackCountDisabledForPass();
                 RecordOcclusionFrameStats(candidates, 0u, 0u, temporalInvalidations);
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPass(
@@ -586,6 +679,18 @@ namespace XREngine.Rendering.Commands
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordActiveMode(
                 EOcclusionCullingMode.GpuHiZ,
                 MeshSubmissionStrategy);
+        }
+
+        private bool ShouldBypassCurrentDepthGpuHiZRefine(in GpuHiZDepthInput depthInput)
+        {
+            if (depthInput.History)
+                return false;
+
+            if (!RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled)
+                return false;
+
+            return RenderPass == (int)EDefaultRenderPass.OpaqueForward ||
+                   RenderPass == (int)EDefaultRenderPass.MaskedForward;
         }
 
         private void ApplyCpuSoftwareOcclusionToGpuCulledCommands(GPUScene scene, uint candidates)
@@ -690,30 +795,35 @@ namespace XREngine.Rendering.Commands
             out GpuHiZDepthInput input,
             out string missingTextureName)
         {
+            const string currentDepthName = DefaultRenderPipeline.DepthViewTextureName;
+            if (pipeline.TryGetTexture(currentDepthName, out XRTexture? depthTex) && depthTex is not null)
+            {
+                if (!TryResolveHiZDepthSource(depthTex, out XRTexture sampler, out uint width, out uint height))
+                {
+                    input = new GpuHiZDepthInput(depthTex, 0u, 0u, camera.ViewProjectionMatrix, currentDepthName, history: false);
+                    missingTextureName = string.Empty;
+                    return true;
+                }
+
+                input = new GpuHiZDepthInput(sampler, width, height, camera.ViewProjectionMatrix, currentDepthName, history: false);
+                missingTextureName = string.Empty;
+                return true;
+            }
+
+            // Fall back to temporal history only when no current-frame depth view is available.
+            // History depth can be valid for temporal post effects, but it is too aggressive as
+            // the default occlusion source for command-level culling: a small camera move can
+            // turn previous-frame occluders into false negatives that remove whole mesh commands
+            // before meshlet expansion has a chance to refine them.
             if (TryResolveGpuHiZHistoryDepthInput(pipeline, out input))
             {
                 missingTextureName = string.Empty;
                 return true;
             }
 
-            const string currentDepthName = DefaultRenderPipeline.DepthViewTextureName;
-            if (!pipeline.TryGetTexture(currentDepthName, out XRTexture? depthTex) || depthTex is null)
-            {
-                input = default;
-                missingTextureName = currentDepthName;
-                return false;
-            }
-
-            if (!TryResolveHiZDepthSource(depthTex, out XRTexture sampler, out uint width, out uint height))
-            {
-                input = new GpuHiZDepthInput(depthTex, 0u, 0u, camera.ViewProjectionMatrix, currentDepthName, history: false);
-                missingTextureName = string.Empty;
-                return true;
-            }
-
-            input = new GpuHiZDepthInput(sampler, width, height, camera.ViewProjectionMatrix, currentDepthName, history: false);
-            missingTextureName = string.Empty;
-            return true;
+            input = default;
+            missingTextureName = currentDepthName;
+            return false;
         }
 
         private static bool TryResolveGpuHiZHistoryDepthInput(
@@ -971,8 +1081,23 @@ namespace XREngine.Rendering.Commands
             if (_statsBuffer is not null)
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
 
+            // Dispatch sizing.
+            //
+            // The shader (Compute/Occlusion/GPURenderOcclusionHiZ.comp) reads the actual
+            // input count from binding 2 (InCount in _culledCountBuffer) on the GPU and
+            // bounds-checks `idx >= inputCount` per thread, so the dispatch count only
+            // has to be an upper bound on threads, not exact.
+            //
+            // When CPU readback is available, VisibleCommandCount is a fresh mirror of
+            // the cull-pass count and gives a tight dispatch. When CPU readback is
+            // DISABLED (GpuIndirectZeroReadback), VisibleCommandCount is stale —
+            // possibly zero (never updated this run) or possibly larger than the actual
+            // candidates this frame. The previous floor `Math.Max(VisibleCommandCount, 1u)`
+            // could collapse to one workgroup (256 threads), false-occluding everything
+            // past index 256. Dispatch the full buffer ElementCount in zero-readback;
+            // the shader's `idx >= InCount` early-return makes excess threads near-free.
             uint dispatchCount = IsCpuReadbackCountDisabledForPass()
-                ? Math.Min(Math.Max(VisibleCommandCount, 1u), CulledSceneToRenderBuffer!.ElementCount)
+                ? CulledSceneToRenderBuffer!.ElementCount
                 : VisibleCommandCount;
 
             uint groups = Math.Max(1u, (dispatchCount + 255u) / 256u);
@@ -1034,21 +1159,25 @@ namespace XREngine.Rendering.Commands
             }
 
             ResolveCpuOcclusionQueryResults();
-            SubmitCpuOcclusionQueryBatch(candidates);
+            SubmitCpuOcclusionQueryBatch(scene, camera, candidates);
 
             uint falsePositiveRecoveries = 0u;
             uint occluded = ApplyTemporalCpuOcclusionFilter(candidates, ref temporalOverrides, ref falsePositiveRecoveries);
             RecordOcclusionFrameStats(candidates, occluded, falsePositiveRecoveries, temporalOverrides);
 
+            if (occluded > 0u)
+                OcclusionTelemetry.RecordCpuQueryAsyncOccluded((int)occluded);
+
             if (!_loggedCpuQueryAsyncScaffold)
             {
                 _loggedCpuQueryAsyncScaffold = true;
-                Log(LogCategory.Culling, LogLevel.Warning,
-                    "Occlusion mode {0} on GPU dispatch path is scaffolded but NOT functional for pass {1}: " +
-                    "proxy-AABB query submission is not implemented, so no occluders are tested and every candidate passes through. " +
-                    "Use GpuHiZ for GPU dispatch occlusion or CpuDirect submission for the CpuQueryAsync path.",
+                Log(LogCategory.Culling, LogLevel.Info,
+                    "Occlusion mode {0} active on GPU dispatch path for pass {1}: proxy-AABB queries are " +
+                    "submitted at up to {2}/frame, resolved next frame, and fed through a {3}-frame hysteresis filter.",
                     EOcclusionCullingMode.CpuQueryAsync,
-                    RenderPass);
+                    RenderPass,
+                    CpuOcclusionMaxQueriesPerFrame,
+                    TemporalOcclusionHysteresisFrames);
             }
         }
 
@@ -1087,24 +1216,101 @@ namespace XREngine.Rendering.Commands
             _cpuOcclusionLastResolved.Clear();
         }
 
-        private void SubmitCpuOcclusionQueryBatch(uint candidates)
+        private void SubmitCpuOcclusionQueryBatch(GPUScene scene, XRCamera camera, uint candidates)
         {
-            // SCAFFOLD ONLY — not functional.
-            //
-            // A proper implementation would, for each candidate:
-            //   1. glBeginQuery(GL_ANY_SAMPLES_PASSED_CONSERVATIVE, queryId)
-            //   2. draw a proxy AABB for the candidate (depth-test enabled, color/depth writes off)
-            //   3. glEndQuery(...)
-            // and the next-frame resolve would consume the result. The current code path acquired
-            // a query object and recorded it as "pending" without ever bracketing a draw, which
-            // produced meaningless results and could leak query objects when paired with the
-            // zero-readback early return below.
-            //
-            // Until the proxy-AABB submission is implemented, leave the per-frame state untouched
-            // so the temporal filter passes every candidate through (no false occlusion). Skip the
-            // readback guard entirely so we don't hide the skip in any code path.
             _ = candidates;
-            return;
+
+            // Proxy-AABB submission requires synchronous draws bracketed by hardware queries.
+            // The pool path is implemented for OpenGL; the Vulkan backend has its own query
+            // lifecycle and would need an equivalent renderer wired before submitting here.
+            if (AbstractRenderer.Current is not OpenGLRenderer)
+                return;
+
+            if (CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
+                return;
+
+            // The temporal filter below requires the visible count readback to know how many
+            // candidates to iterate. When readback is disabled, we cannot enumerate the
+            // CulledSceneToRenderBuffer safely — fall through and let the filter pass
+            // everything through. (Matches ApplyTemporalCpuOcclusionFilter's own bail.)
+            if (IsCpuReadbackCountDisabledForPass())
+                return;
+
+            uint inputCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
+            if (inputCount == 0u)
+                return;
+
+            // Track which sourceIndexes already have an in-flight query so we don't queue
+            // duplicates from the same frame (cheap O(N) for small N — we cap at
+            // CpuOcclusionMaxQueriesPerFrame total queries in flight). Pool the set
+            // across frames; this is a per-frame hot path on the GPU-dispatch occlusion
+            // stage.
+            HashSet<uint>? pendingSet = null;
+            if (_cpuOcclusionPending.Count > 0)
+            {
+                _cpuOcclusionPendingScratch.Clear();
+                for (int i = 0; i < _cpuOcclusionPending.Count; ++i)
+                    _cpuOcclusionPendingScratch.Add(_cpuOcclusionPending[i].SourceCommandIndex);
+                pendingSet = _cpuOcclusionPendingScratch;
+            }
+
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            int retestPeriod = Math.Max(1, TemporalOcclusionHysteresisFrames * 3);
+            int submissionBudget = Math.Max(0, CpuOcclusionMaxQueriesPerFrame - _cpuOcclusionPending.Count);
+            if (submissionBudget == 0)
+                return;
+
+            int submitted = 0;
+            for (uint i = 0; i < inputCount && submitted < submissionBudget; ++i)
+            {
+                GPUIndirectRenderCommand cmd = CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                uint sourceIndex = cmd.Reserved1;
+
+                // Skip if already in flight this frame.
+                if (pendingSet is not null && pendingSet.Contains(sourceIndex))
+                    continue;
+
+                // LRU-stagger: a sourceIndex with a recent result only requeries every
+                // retestPeriod frames so the per-frame submission cost stays bounded.
+                if (_cpuOcclusionLastResolved.ContainsKey(sourceIndex))
+                {
+                    if (((frameId + sourceIndex) % (ulong)retestPeriod) != 0UL)
+                        continue;
+                }
+
+                if (!scene.TryGetSourceCommand(sourceIndex, out IRenderCommandMesh? sourceCommand) ||
+                    sourceCommand is not RenderCommand renderCommand ||
+                    renderCommand.CullingVolume is not AABB bounds)
+                    continue;
+
+                if (CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(sourceCommand))
+                    continue;
+
+                Vector3 size = bounds.Max - bounds.Min;
+                if (size.X <= 0f || size.Y <= 0f || size.Z <= 0f)
+                    continue;
+
+                XRRenderQuery query = s_cpuOcclusionQueryManager.Acquire(EQueryTarget.AnySamplesPassedConservative);
+                OpenGLRenderer? gl = AbstractRenderer.Current as OpenGLRenderer;
+                GLRenderQuery? glQuery = gl?.GenericToAPI<GLRenderQuery>(query);
+                if (glQuery is null)
+                {
+                    s_cpuOcclusionQueryManager.Release(query);
+                    continue;
+                }
+
+                glQuery.BeginQuery(EQueryTarget.AnySamplesPassedConservative);
+                CpuOcclusionProxyRenderer.Draw(bounds);
+                glQuery.EndQuery();
+
+                _cpuOcclusionPending.Add((sourceIndex, query));
+                submitted++;
+            }
+
+            if (submitted > 0)
+                OcclusionTelemetry.RecordCpuQueryAsyncSubmitted(submitted);
+
+            _ = camera; // Camera state is observed via the caller's HasSignificantCameraChange bookkeeping.
         }
 
         private uint ApplyTemporalCpuOcclusionFilter(uint candidates, ref uint temporalOverrides, ref uint falsePositiveRecoveries)
@@ -1193,6 +1399,7 @@ namespace XREngine.Rendering.Commands
 
             _cpuOcclusionLastResolveFrameId = frameId;
 
+            int resolved = 0;
             for (int i = _cpuOcclusionPending.Count - 1; i >= 0; --i)
             {
                 (uint sourceIndex, XRRenderQuery query) = _cpuOcclusionPending[i];
@@ -1202,7 +1409,11 @@ namespace XREngine.Rendering.Commands
                 _cpuOcclusionLastResolved[sourceIndex] = anySamplesPassed;
                 s_cpuOcclusionQueryManager.Release(query);
                 _cpuOcclusionPending.RemoveAt(i);
+                resolved++;
             }
+
+            if (resolved > 0)
+                OcclusionTelemetry.RecordCpuQueryAsyncResolved(resolved);
         }
     }
 }

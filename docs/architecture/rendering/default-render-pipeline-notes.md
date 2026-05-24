@@ -411,6 +411,10 @@ The prepass uses a compact local color layout: `Normal` writes to color attachme
 
 Keep `ForwardDepthPrePassMergeFBO` bound with color/depth/stencil clears disabled so deferred IDs survive where forward geometry does not draw. The dedicated `ForwardDepthPrePassFBO` must use its own `ForwardPrePassTransformId` texture when debug-only ID output is needed, because that FBO is allowed to clear before rendering.
 
+The prepass follows the resolved mesh submission strategy, not merely the requested GPU-dispatch boolean. If the effective lit path is `CpuDirect`, the depth-normal prepass is also CPU, which keeps AO/depth and color coverage from diverging when a forced strategy or backend profile downgrades GPU dispatch. If the effective lit path is `GpuMeshlet*`, the prepass uses the corresponding traditional GPU indirect strategy for now because the direct meshlet material-table shader cannot consume override/depth-normal material variants.
+
+The lit `OpaqueForward` and `MaskedForward` GPU passes must not use the current `DepthView` as a command-level Hi-Z occlusion source while this prepass is enabled. That depth can already contain the same forward candidates; using it for occlusion can reject whole commands before meshlet expansion, leaving AO/depth silhouettes without matching color. Those passes keep frustum/BVH results and allow meshlet task-shader frustum/cone culling, but current-depth Hi-Z refine is skipped for color parity.
+
 Generated vertex shaders are allowed to trim `FragTransformId` for ordinary passes, but the forward depth-normal prepass must push `RequireGeneratedVertexTransformId`. Without that render-state requirement, a generated vertex program cached for a normal forward material can be reused with a depth-normal fragment variant that consumes `FragTransformId`, causing pipeline interface mismatches.
 
 ---

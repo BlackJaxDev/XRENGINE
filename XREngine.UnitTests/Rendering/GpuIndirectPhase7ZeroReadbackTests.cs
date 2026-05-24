@@ -71,6 +71,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             StringComparison.Ordinal);
 
         policySnapshot.ShouldContain("bool meshlet = strategy.IsAnyMeshletStrategy();");
+        policySnapshot.ShouldContain("_passZeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.MaterialTable;");
         policySnapshot.ShouldContain("_passEnableZeroReadbackMaterialScatter = zeroReadback || instrumented || meshlet;");
         policySnapshot.ShouldContain("_passDisableCpuReadbackCount = !instrumented;");
 
@@ -121,7 +122,45 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
 
         source.ShouldContain("gpuPass.UseMeshletPipeline = true;");
         source.ShouldContain("activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);");
+        source.ShouldContain("ShouldUseOpenGLMeshletProgramWarmupFallback");
+        source.ShouldContain("RenderCPUMeshOnly(command.RenderPass);");
         source.ShouldNotContain("RenderCPU(");
+    }
+
+    [Test]
+    public void RenderGPU_MeshletStrategy_SetsMeshletPipelineIntentForDirectCallers()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
+        string renderGpu = Slice(
+            source,
+            "public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)",
+            "public bool HasRenderingCommands",
+            StringComparison.Ordinal);
+
+        renderGpu.ShouldContain("bool meshletStrategy = meshSubmissionStrategy.IsAnyMeshletStrategy();");
+        renderGpu.ShouldContain("bool previousUseMeshletPipeline = gpuPass.UseMeshletPipeline;");
+        renderGpu.ShouldContain("gpuPass.UseMeshletPipeline = true;");
+        renderGpu.ShouldContain("scene is GPUScene gpuScene");
+        renderGpu.ShouldContain("gpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();");
+        renderGpu.ShouldContain("finally");
+        renderGpu.ShouldContain("gpuPass.UseMeshletPipeline = previousUseMeshletPipeline;");
+    }
+
+    [Test]
+    public void ForwardDepthNormalPrepass_UsesResolvedStrategyAndMirrorsGpuPrefilter()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardDepthNormalPrePass.cs");
+
+        source.ShouldContain("EMeshSubmissionStrategy strategy = _gpuDispatch");
+        source.ShouldContain("EMeshSubmissionStrategy prepassStrategy = ResolveDepthNormalSubmissionStrategy(strategy);");
+        source.ShouldContain("private static EMeshSubmissionStrategy ResolveDepthNormalSubmissionStrategy");
+        source.ShouldContain("strategy == EMeshSubmissionStrategy.GpuMeshletInstrumented");
+        source.ShouldContain("bool useGpuRenderPath = prepassStrategy != EMeshSubmissionStrategy.CpuDirect;");
+        source.ShouldContain("if (useGpuRenderPath)");
+        source.ShouldContain("commands.RenderCPUNonMeshAndExcluded(pass);");
+        source.ShouldContain("commands.RenderGPU(pass, prepassStrategy);");
+        source.ShouldContain("commands.RenderCPU(pass, false, camera);");
+        source.ShouldNotContain("allowExcludedGpuFallbackMeshes: false");
     }
 
     [Test]
@@ -129,7 +168,8 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_RenderFullOverdrawPass.cs");
 
-        source.ShouldContain("EMeshSubmissionStrategy overdrawStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();");
+        source.ShouldContain("EMeshSubmissionStrategy overdrawStrategy = ResolveOverrideSubmissionStrategy(");
+        source.ShouldContain("private static EMeshSubmissionStrategy ResolveOverrideSubmissionStrategy");
         source.ShouldContain("bool useGpuRenderPath = overdrawStrategy != EMeshSubmissionStrategy.CpuDirect;");
         source.ShouldContain("IsGpuPathCpuFallbackMesh(mesh)");
         source.ShouldContain("commands.RenderGPU(pass, overdrawStrategy);");

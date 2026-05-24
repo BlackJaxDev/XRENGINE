@@ -79,7 +79,8 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
         using var pipelineTicket = renderState.PushForceShaderPipelines();
         using var generatedVertexTicket = renderState.PushForceGeneratedVertexProgram();
 
-        EMeshSubmissionStrategy overdrawStrategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+        EMeshSubmissionStrategy overdrawStrategy = ResolveOverrideSubmissionStrategy(
+            RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
         bool useGpuRenderPath = overdrawStrategy != EMeshSubmissionStrategy.CpuDirect;
 
         for (int i = 0; i < RenderPasses.Length; i++)
@@ -111,6 +112,16 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
     {
         XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
         return meshCommand.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;
+    }
+
+    private static EMeshSubmissionStrategy ResolveOverrideSubmissionStrategy(EMeshSubmissionStrategy strategy)
+    {
+        if (!strategy.IsAnyMeshletStrategy())
+            return strategy;
+
+        return strategy == EMeshSubmissionStrategy.GpuMeshletInstrumented
+            ? EMeshSubmissionStrategy.GpuIndirectInstrumented
+            : EMeshSubmissionStrategy.GpuIndirectZeroReadback;
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

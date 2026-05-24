@@ -411,15 +411,27 @@ namespace XREngine.Rendering
             if (camera is null || scene is null)
                 return;
 
-            if (_useMeshletPipeline &&
-                renderPasses.MeshSubmissionStrategy.IsAnyMeshletStrategy() &&
-                TryRenderMeshletMaterialTable(renderPasses, camera, scene, currentRenderPass))
+            bool meshletStrategy = renderPasses.MeshSubmissionStrategy.IsAnyMeshletStrategy();
+            if (meshletStrategy)
             {
+                if (_useMeshletPipeline &&
+                    TryRenderMeshletMaterialTable(renderPasses, camera, scene, currentRenderPass))
+                {
+                    return;
+                }
+
+                if (!_useMeshletPipeline)
+                {
+                    WarnMeshletMaterialFallback(
+                        currentRenderPass,
+                        renderPasses.MeshSubmissionStrategy,
+                        "Meshlet strategy reached the render manager without meshlet pipeline intent.");
+                }
+
                 return;
             }
 
-            if ((renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback ||
-                 renderPasses.MeshSubmissionStrategy.IsAnyMeshletStrategy()) &&
+            if (renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
                 !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(1);
@@ -2364,7 +2376,7 @@ namespace XREngine.Rendering
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
                     requestedStrategy,
-                    "One or more meshlet material-table buffers are missing; routing through traditional zero-readback indirect rendering.");
+                    "One or more meshlet material-table buffers are missing.");
                 return false;
             }
 
@@ -2384,7 +2396,13 @@ namespace XREngine.Rendering
 
             XRRenderProgram? program = EnsureMeshletMaterialTableProgram(useBindless, layout, renderer.MeshShaderDialect, skinned: false);
             if (program is null)
+            {
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    requestedStrategy,
+                    "Meshlet material-table program could not be created.");
                 return false;
+            }
 
             if (!IsProgramReadyForCurrentRenderer(program))
             {
@@ -2397,7 +2415,13 @@ namespace XREngine.Rendering
             }
 
             if (!TryUseIndirectGraphicsProgram(program, useBindless ? "GpuMeshletBindlessMaterialTable" : "GpuMeshletMaterialTable"))
+            {
+                WarnMeshletMaterialFallback(
+                    currentRenderPass,
+                    requestedStrategy,
+                    "Meshlet material-table program is not usable by the active renderer.");
                 return false;
+            }
 
             inputs.MeshDataBuffer.BindTo(program, MeshletMeshDataSsboBinding);
             inputs.MeshletDescriptorBuffer.BindTo(program, MeshletDescriptorSsboBinding);
@@ -2643,11 +2667,11 @@ namespace XREngine.Rendering
             XREngine.Debug.RenderingWarningEvery(
                 $"RenderDispatch.GpuMeshletMaterialFallback.{currentRenderPass}.{reason.GetHashCode()}",
                 TimeSpan.FromSeconds(2),
-                "[RenderDispatch] Meshlet.BackendUnsupported pass={0} requested={2} selected={3} reason='{1}' routing through traditional zero-readback indirect rendering",
+                "[RenderDispatch] Meshlet.BackendUnsupported pass={0} requested={2} selected={3} reason='{1}' skipping traditional mesh fallback",
                 currentRenderPass,
                 reason,
                 requestedStrategy,
-                EMeshSubmissionStrategy.GpuIndirectZeroReadback);
+                requestedStrategy);
         }
 
         private XRRenderProgram? EnsureMaterialTableDrawProgram(XRMeshRenderer? vaoRenderer, bool bindless, MaterialBindingLayout layout)

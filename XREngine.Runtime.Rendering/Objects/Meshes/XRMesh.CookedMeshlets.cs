@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using System.Text;
 using XREngine.Core.Files;
@@ -7,7 +8,48 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
-    private static long CalculateMeshletPayloadSize(MeshletPayload? payload)
+    /// <summary>
+    /// Serializes a meshlet payload to a freshly allocated byte buffer using the
+    /// same on-disk layout as the cooked-mesh writer. Intended for runtime disk
+    /// caches that mirror the cooking format.
+    /// </summary>
+    internal static unsafe byte[] SerializeMeshletPayloadToBytes(MeshletPayload payload)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+
+        long size = CalculateMeshletPayloadSize(payload);
+        if (size <= 0 || size > int.MaxValue)
+            throw new InvalidOperationException($"MeshletPayload size out of range: {size}.");
+
+        byte[] buffer = new byte[size];
+        fixed (byte* ptr = buffer)
+        {
+            var writer = new RuntimeCookedBinaryWriter(ptr, buffer.Length);
+            WriteMeshletPayload(writer, payload);
+        }
+        return buffer;
+    }
+
+    /// <summary>
+    /// Deserializes a meshlet payload previously produced by
+    /// <see cref="SerializeMeshletPayloadToBytes"/>. Returns <c>null</c> when
+    /// the input represents an absent payload.
+    /// </summary>
+    internal static unsafe MeshletPayload? DeserializeMeshletPayloadFromBytes(byte[] buffer)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+
+        if (buffer.Length == 0)
+            return null;
+
+        fixed (byte* ptr = buffer)
+        {
+            var reader = new RuntimeCookedBinaryReader(ptr, buffer.Length);
+            return ReadMeshletPayload(reader);
+        }
+    }
+
+    internal static long CalculateMeshletPayloadSize(MeshletPayload? payload)
     {
         long size = sizeof(byte);
         if (payload is null)
@@ -29,7 +71,7 @@ public partial class XRMesh
         return size;
     }
 
-    private static void WriteMeshletPayload(RuntimeCookedBinaryWriter writer, MeshletPayload? payload)
+    internal static void WriteMeshletPayload(RuntimeCookedBinaryWriter writer, MeshletPayload? payload)
     {
         if (payload is null)
         {
@@ -60,7 +102,7 @@ public partial class XRMesh
         writer.Write(payload.Stats.EncodedByteCount);
     }
 
-    private static MeshletPayload? ReadMeshletPayload(RuntimeCookedBinaryReader reader)
+    internal static MeshletPayload? ReadMeshletPayload(RuntimeCookedBinaryReader reader)
     {
         bool hasPayload = reader.ReadByte() != 0;
         if (!hasPayload)
