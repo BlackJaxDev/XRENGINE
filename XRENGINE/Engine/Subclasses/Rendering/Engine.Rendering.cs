@@ -231,12 +231,59 @@ namespace XREngine
                 bool SupportsIndirectCountMeshTaskDispatch,
                 bool SupportsMeshletDispatch);
 
+            /// <summary>
+            /// Strategy the user requested via <c>ForceMeshSubmissionStrategy</c> when the
+            /// resolver had to downgrade it (typically a meshlet strategy on a backend that
+            /// can't dispatch mesh tasks). Null when no downgrade is active.
+            /// </summary>
+            public static EMeshSubmissionStrategy? LastMeshletDowngradeRequested { get; private set; }
+            /// <summary>Strategy the resolver substituted for the requested meshlet strategy.</summary>
+            public static EMeshSubmissionStrategy? LastMeshletDowngradeResolved { get; private set; }
+            /// <summary>Human-readable reason for the last meshlet downgrade.</summary>
+            public static string? LastMeshletDowngradeReason { get; private set; }
+            /// <summary>Active render backend snapshotted by the last mesh-submission resolve.</summary>
+            public static RuntimeGraphicsApiKind LastResolvedRendererBackend { get; private set; }
+            /// <summary>Mesh-shader dialect (None / OpenGLKHR / OpenGLNV / Vulkan) the active renderer reported.</summary>
+            public static EMeshShaderDialect LastResolvedMeshShaderDialect { get; private set; }
+            /// <summary>True when the active renderer reported a production meshlet dispatch path.</summary>
+            public static bool LastResolvedSupportsMeshletDispatch { get; private set; }
+
             public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(bool? requestedGpuDispatch = null)
             {
                 MeshSubmissionStrategyResolverInputs inputs = CreateMeshSubmissionStrategyResolverInputs(requestedGpuDispatch);
                 EMeshSubmissionStrategy strategy = ResolveMeshSubmissionStrategy(inputs);
+                SnapshotMeshSubmissionResolverState(inputs, strategy);
                 WarnIfMeshSubmissionStrategyDowngraded(inputs, strategy);
                 return strategy;
+            }
+
+            private static void SnapshotMeshSubmissionResolverState(
+                MeshSubmissionStrategyResolverInputs inputs,
+                EMeshSubmissionStrategy strategy)
+            {
+                LastResolvedRendererBackend = GetActiveRenderer() switch
+                {
+                    null => RuntimeGraphicsApiKind.Unknown,
+                    var r when IsVulkanRendererActive() => RuntimeGraphicsApiKind.Vulkan,
+                    _ => RuntimeGraphicsApiKind.OpenGL,
+                };
+                LastResolvedMeshShaderDialect = inputs.MeshShaderDialect;
+                LastResolvedSupportsMeshletDispatch = inputs.SupportsMeshletDispatch;
+
+                if (inputs.ForcedStrategy is { } forced &&
+                    forced.IsAnyMeshletStrategy() &&
+                    strategy != forced)
+                {
+                    LastMeshletDowngradeRequested = forced;
+                    LastMeshletDowngradeResolved = strategy;
+                    LastMeshletDowngradeReason = GetMeshletFallbackReason(inputs);
+                }
+                else
+                {
+                    LastMeshletDowngradeRequested = null;
+                    LastMeshletDowngradeResolved = null;
+                    LastMeshletDowngradeReason = null;
+                }
             }
 
             public static EMeshSubmissionStrategy ResolveMeshSubmissionStrategy(MeshSubmissionStrategyResolverInputs inputs)

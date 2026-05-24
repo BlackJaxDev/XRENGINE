@@ -210,6 +210,7 @@ namespace XREngine.Rendering.Commands
             _stateClassRepresentativeMaterials.Clear();
             _materialStateByClass.Clear();
             _idToMesh.Clear();
+            _runtimeMeshletRepairFailedMeshIds.Clear();
             _renderableLogicalMeshIdMap.Clear();
             _standaloneLogicalMeshIdMap.Clear();
             _logicalMeshStates.Clear();

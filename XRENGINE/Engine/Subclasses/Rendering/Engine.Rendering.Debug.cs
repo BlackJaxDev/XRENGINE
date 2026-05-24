@@ -32,8 +32,6 @@ namespace XREngine
 
                 private static void PreUpdate()
                 {
-                    //using (_debugShapeQueueLock.EnterScope())
-                    //ClearQueues();
                 }
 
                 private static void ClearQueues()
@@ -64,20 +62,24 @@ namespace XREngine
                     if (Engine.ShuttingDown)
                     {
                         ClearQueues();
+                        ClearDebugShapeBags();
+                        _instancedDebugVisualizer.Clear();
                         return;
                     }
 
                     if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                     {
-                        _debugPoints.Clear();
-                        _debugLines.Clear();
-                        _debugTriangles.Clear();
+                        ClearDebugShapeQueues();
+                        ClearDebugShapeBags();
+                        _instancedDebugVisualizer.Clear();
                         return;
                     }
 
+                    DequeueDebugShapeItems();
+                    ApplyDebugPrimitivePreferences();
+
                     var mode = Engine.EditorPreferences?.Debug?.DebugShapePopulationMode
                         ?? EDebugShapePopulationMode.Tasks;
-                    ApplyDebugPrimitivePreferences();
 
                     try
                     {
@@ -94,19 +96,6 @@ namespace XREngine
                             case EDebugShapePopulationMode.ParallelInvoke:
                                 Parallel.Invoke(PopulatePoints, PopulateLines, PopulateTriangles);
                                 break;
-                            // JobSystem is intentionally unavailable here. If the engine job workers
-                            // starve, these waits starve SwapBuffers on the main thread, which is not
-                            // acceptable for debug rendering.
-                            // case EDebugShapePopulationMode.JobSystem:
-                            // {
-                            //     var hp = Engine.Jobs.Schedule(new ActionJob(PopulatePoints), JobPriority.High);
-                            //     var hl = Engine.Jobs.Schedule(new ActionJob(PopulateLines), JobPriority.High);
-                            //     var ht = Engine.Jobs.Schedule(new ActionJob(PopulateTriangles), JobPriority.High);
-                            //     hp.Wait();
-                            //     hl.Wait();
-                            //     ht.Wait();
-                            //     break;
-                            // }
                             case EDebugShapePopulationMode.Sequential:
                             default:
                                 PopulatePoints();
@@ -123,6 +112,20 @@ namespace XREngine
                     {
                         ClearQueues();
                     }
+                }
+
+                private static void ClearDebugShapeQueues()
+                {
+                    DebugPointsQueue.Clear();
+                    DebugLinesQueue.Clear();
+                    DebugTrianglesQueue.Clear();
+                }
+
+                private static void ClearDebugShapeBags()
+                {
+                    _debugPoints.Clear();
+                    _debugLines.Clear();
+                    _debugTriangles.Clear();
                 }
 
                 private static bool IsCancellationOnly(AggregateException exception)
@@ -218,11 +221,7 @@ namespace XREngine
                         !camera.CullingMask.Contains(XREngine.Components.Scene.Transforms.DefaultLayers.GizmosIndex))
                         return;
 
-                    //using (_debugShapeQueueLock.EnterScope())
-                    //{
-                    DequeueDebugItems();
-                        //ClearQueues();
-                    //}
+                    DequeueDebugTextItems();
 
                     var hashes = DebugTexts.Keys.ToArray();
                     for (int i = 0; i < hashes.Length; i++)
@@ -246,52 +245,18 @@ namespace XREngine
                     //while (_debugTrianglesQueue.TryDequeue(out var triangle))
                     //    _debugTriangles.Add(triangle);
 
-                    if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
-                    {
-                        //var camera = Engine.Rendering.State.RenderingCamera;
-                        //var fwd = camera!.Transform.RenderForward;
-                        //var up = camera!.Transform.RenderUp;
-                        //var right = camera!.Transform.RenderRight;
-                        //var pointSize = 0.04f;
-                        //Matrix4x4 pointScale = Matrix4x4.CreateScale(pointSize);
-                        //foreach (var (pos, color) in _debugPoints)
-                        //{
-                        //    var rend = GetPointRenderer();
-                        //    rend.Material!.SetVector4(0, color);
-                        //    rend.Render(pointScale * Matrix4x4.CreateWorld(pos, fwd, up));
-                        //}
-                        //var lineWidth = 0.02f;
-                        //foreach (var (pos0, pos1, color) in _debugLines)
-                        //{
-                        //    var rend = GetLineRenderer();
-                        //    rend.Material!.SetVector4(0, color);
-                        //    Matrix4x4 matrix = CalculateLineMatrix(pos0, pos1, lineWidth, fwd, up, right);
-                        //    rend.Render(matrix);
-                        //}
-                        //foreach (var (pos0, pos1, pos2, color) in _debugTriangles)
-                        //{
-
-                        //}
-                    }
-                    else
-                    {
+                    if (Engine.Rendering.State.DebugInstanceRenderingAvailable)
                         _instancedDebugVisualizer.Render();
-                    }
                 }
 
-                private static void DequeueDebugItems()
+                private static void DequeueDebugTextItems()
                 {
-                    //foreach ((Vector3 pos, string text, ColorF4 color, float scale) in DebugTextUpdateQueue)
-                    //    UpdateDebugText(pos, text, color, scale);
-                    //foreach (var updatePoint in DebugPointsQueue)
-                    //    _debugPoints.Add(updatePoint);
-                    //foreach (var updateLine in DebugLinesQueue)
-                    //    _debugLines.Add(updateLine);
-                    //foreach (var updateTriangle in DebugTrianglesQueue)
-                    //    _debugTriangles.Add(updateTriangle);
-
                     while (DebugTextUpdateQueue.TryDequeue(out (Vector3 pos, string text, ColorF4 color, float scale) item))
                         UpdateDebugText(item.pos, item.text, item.color, item.scale);
+                }
+
+                private static void DequeueDebugShapeItems()
+                {
                     while (DebugPointsQueue.TryDequeue(out var point))
                         _debugPoints.Add(point);
                     while (DebugLinesQueue.TryDequeue(out var line))
@@ -852,7 +817,7 @@ namespace XREngine
                 }
 
                 public static void RenderCone(
-                    Vector3 center,
+                    Vector3 baseCenter,
                     Vector3 localUpAxis,
                     float radius,
                     float height,
@@ -861,24 +826,31 @@ namespace XREngine
                 {
                     const int segments = 20;
 
-                    localUpAxis = localUpAxis.Normalized();
+                    localUpAxis = localUpAxis.LengthSquared() > 1e-12f
+                        ? Vector3.Normalize(localUpAxis)
+                        : Vector3.UnitY;
+
+                    Vector3 tangentSeed = MathF.Abs(localUpAxis.Y) < 0.99f
+                        ? Vector3.UnitY
+                        : Vector3.UnitX;
+                    Vector3 tangent = Vector3.Normalize(Vector3.Cross(localUpAxis, tangentSeed));
+                    Vector3 bitangent = Vector3.Cross(tangent, localUpAxis);
+                    Vector3 tip = baseCenter + localUpAxis * height;
 
                     Vector3[] conePoints = new Vector3[segments + 1];
                     for (int i = 0; i <= segments; i++)
                     {
                         float angle = 2 * MathF.PI * i / segments;
-                        float x = MathF.Cos(angle) * radius;
-                        float z = MathF.Sin(angle) * radius;
-                        Vector3 localPoint = new(x, 0, z);
-                        conePoints[i] = localPoint + center + localUpAxis * height;
+                        Vector3 radial = tangent * (MathF.Cos(angle) * radius) +
+                            bitangent * (MathF.Sin(angle) * radius);
+                        conePoints[i] = baseCenter + radial;
                     }
 
                     if (solid)
                     {
-                        // Build triangle fan: center + each adjacent edge.
                         for (int i = 0; i < segments; i++)
                         {
-                            Vector3 pos0 = center;
+                            Vector3 pos0 = tip;
                             Vector3 pos1 = conePoints[i];
                             Vector3 pos2 = conePoints[i + 1];
                             RenderTriangle(pos0, pos1, pos2, color, true);
@@ -890,9 +862,9 @@ namespace XREngine
                         {
                             Vector3 pos0 = conePoints[i];
                             Vector3 pos1 = conePoints[i + 1];
-                            RenderLine(center, pos0, color);
+                            RenderLine(tip, pos0, color);
                             RenderLine(pos0, pos1, color);
-                            RenderLine(pos1, center, color);
+                            RenderLine(pos1, tip, color);
                         }
                     }
                 }

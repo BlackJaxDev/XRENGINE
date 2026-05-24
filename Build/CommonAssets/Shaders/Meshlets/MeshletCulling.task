@@ -89,16 +89,17 @@ layout(std430, binding = 21) buffer MeshletStatsBuffer
     uint MeshletTaskRecordsHiZCulled;
 };
 
-struct TaskPayload
+// Interface block form is required when the task/mesh program is linked as a
+// combined (non-separable) program. Field layout must stay in lock-step with
+// the matching MeshletRender.mesh / MeshletRenderSkinned.mesh shaders.
+taskNV out TaskPayload
 {
     GpuMeshletTaskRecord Record;
     uint MeshletIndex;
     uint IsPreviousLod;
     uint PassFlags;
     uint Reserved;
-};
-
-taskNV out TaskPayload OUT;
+} OUT;
 
 layout(binding = 0) uniform sampler2D HiZDepth;
 

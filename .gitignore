@@ -465,3 +465,4 @@ XREngine.Profiler.UI/Build/Validation/
 yt-dlp.exe
 XREngine.Server/Assets/UnitTestingWorldSettings.jsonc
 XREngine.UnitTests/Build/Validation/
+*/Build/TempValidation/*

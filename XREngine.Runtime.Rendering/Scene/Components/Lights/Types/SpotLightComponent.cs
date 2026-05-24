@@ -527,10 +527,14 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             float d = Distance;
             Vector3 dir = Vector3.TransformNormal(Globals.Forward, renderMatrix);
-            Vector3 coneOrigin = renderMatrix.Translation + dir * (d * 0.5f);
+            if (dir.LengthSquared() > 1e-12f)
+                dir = Vector3.Normalize(dir);
+            else
+                dir = Globals.Forward;
 
-            SetField(ref _outerCone, new(coneOrigin, -dir, d, CalculateOuterConeRadius(d, OuterCutoffAngleDegrees)));
-            SetField(ref _innerCone, new(coneOrigin, -dir, d, CalculateOuterConeRadius(d, InnerCutoffAngleDegrees)));
+            Vector3 coneBaseCenter = renderMatrix.Translation + dir * d;
+            SetField(ref _outerCone, new(coneBaseCenter, -dir, d, CalculateOuterConeRadius(d, OuterCutoffAngleDegrees)));
+            SetField(ref _innerCone, new(coneBaseCenter, -dir, d, CalculateOuterConeRadius(d, InnerCutoffAngleDegrees)));
 
             UpdateShadowCameraClipPlanes();
 

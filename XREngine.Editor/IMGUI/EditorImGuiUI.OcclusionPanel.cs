@@ -1,7 +1,10 @@
 using System.Numerics;
 using ImGuiNET;
+using XREngine;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
+using XREngine.Runtime;
 
 namespace XREngine.Editor;
 
@@ -40,6 +43,23 @@ public static partial class EditorImGuiUI
         ImGui.SameLine();
         ImGui.Text($"  Strategy: {strategy}");
         ImGui.Text($"Configured Mode (settings): {configuredMode}");
+
+        // Meshlet downgrade banner: when the user asked for a meshlet strategy that the
+        // active backend can't dispatch, the resolver swaps it; surface that here so the
+        // dropdown choice doesn't appear silently ignored.
+        var meshletRequested = Engine.Rendering.LastMeshletDowngradeRequested;
+        var meshletResolved = Engine.Rendering.LastMeshletDowngradeResolved;
+        var meshletReason = Engine.Rendering.LastMeshletDowngradeReason;
+        if (meshletRequested.HasValue && meshletResolved.HasValue && meshletRequested.Value != meshletResolved.Value)
+        {
+            ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f),
+                $"Meshlet downgrade: {meshletRequested.Value} -> {meshletResolved.Value}");
+            ImGui.TextWrapped($"  Backend={Engine.Rendering.LastResolvedRendererBackend}, dialect={Engine.Rendering.LastResolvedMeshShaderDialect}.");
+            if (!string.IsNullOrEmpty(meshletReason))
+                ImGui.TextWrapped($"  Reason: {meshletReason}");
+            ImGui.TextDisabled("  Mesh shaders require Vulkan with VK_EXT_mesh_shader, or OpenGL with GL_EXT_mesh_shader (rare on current drivers).");
+        }
+
         if (legacyCpuSocEnabled && configuredMode != EOcclusionCullingMode.CpuSoftwareOcclusion)
             ImGui.Text("Legacy CPU SOC toggle: enabled");
         if (mode == EOcclusionCullingMode.Disabled && configuredMode != EOcclusionCullingMode.Disabled)
@@ -212,6 +232,47 @@ public static partial class EditorImGuiUI
             if (gpuRbAvail && gpuCands > 0 && gpuOccl == 0 && depthHistory == 0 && depthCurrent == 0)
                 ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f),
                     "  Nothing occluded — depth pyramid may be empty, or no occluders in view.");
+        }
+
+        // Per-reason HiZ skip breakdown — when GpuHiZ is configured but counts read zero,
+        // these tell you whether the pass bailed (missing shaders, no depth view, etc.)
+        // rather than ran and culled nothing.
+        int hizSkipTotal = OcclusionTelemetry.GpuHiZSkippedTotal;
+        if (hizSkipTotal > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f), "  GPU Hi-Z Skip Reasons:");
+            for (int i = 0; i < (int)EGpuHiZSkipReason.Count; ++i)
+            {
+                int count = OcclusionTelemetry.GetGpuHiZSkippedCount((EGpuHiZSkipReason)i);
+                if (count > 0)
+                    ImGui.Text($"    {(EGpuHiZSkipReason)i,-22}: {count}");
+            }
+        }
+
+        // CpuQueryAsync GPU-dispatch path (proxy-AABB hardware queries on the GPU dispatch path).
+        // The earlier CPU-Query block reports CPU-direct submission counters; this block reports
+        // the GPU-dispatch flavor where the cull decision is made via async hardware queries.
+        ImGui.Separator();
+        ImGui.TextColored(new Vector4(0.6f, 0.9f, 1.0f, 1.0f),
+            "CPU-Query Path on GPU Dispatch (async hardware queries):");
+        int cqaSubmitted = OcclusionTelemetry.CpuQueryAsyncSubmitted;
+        int cqaResolved = OcclusionTelemetry.CpuQueryAsyncResolved;
+        int cqaOccluded = OcclusionTelemetry.CpuQueryAsyncOccluded;
+        if (cqaSubmitted + cqaResolved + cqaOccluded == 0)
+        {
+            ImGui.TextDisabled("  Not active this frame (effective mode != CpuQueryAsync on GPU dispatch, or no candidates).");
+        }
+        else
+        {
+            ImGui.Text($"  Submitted (this frame) : {cqaSubmitted:N0}");
+            ImGui.Text($"  Resolved (prev frames) : {cqaResolved:N0}");
+            Vector4 cqaCullColor = cqaOccluded > 0
+                ? new Vector4(0.4f, 1.0f, 0.6f, 1.0f)
+                : new Vector4(1.0f, 0.7f, 0.3f, 1.0f);
+            ImGui.TextColored(cqaCullColor, $"  Occluded (temporal)    : {cqaOccluded:N0}");
+            ImGui.TextDisabled(
+                "  Submissions are capped per frame; results land next frame and pass through a hysteresis filter.");
         }
 
         ImGui.End();

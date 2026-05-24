@@ -481,9 +481,6 @@ namespace XREngine.Rendering.Commands
 
                     if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.ProbeOnly || cpuSocCull)
                     {
-                        // Cull telemetry: visually the mesh contributes no color this frame.
-                        XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
-
                         // Only the first pass to see this command in the frame actually
                         // emits the probe AABB; later passes (e.g. color pass after a
                         // depth-normal prepass) reuse the same query result. CPU SOC
@@ -491,6 +488,8 @@ namespace XREngine.Rendering.Commands
                         // still gets a hardware-visible/not-visible answer.
                         if (!needsHardwareQuery)
                         {
+                            // Cull telemetry: visually the mesh contributes no color this frame.
+                            XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
                             cpuCmdIndex++;
                             continue;
                         }
@@ -498,10 +497,19 @@ namespace XREngine.Rendering.Commands
                         var probeBounds = cmd.CullingVolume;
                         if (probeBounds.HasValue && deferredProbes is not null)
                         {
+                            if (CpuQueryProxyIsNearPlaneUnsafe(camera!, probeBounds.Value))
+                            {
+                                s_cpuOcclusionCoordinator.ForceVisible(renderPass, queryKey);
+                                cmd.Render();
+                                cpuCmdIndex++;
+                                continue;
+                            }
+
                             // DEFERRED: probe is queued and issued after the visible-mesh
                             // loop completes so it tests against complete-depth, not the
                             // partial depth that would exist at this command's iteration
                             // point. This eliminates render-order false positives.
+                            XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
                             deferredProbes.Add(new DeferredProbe(queryKey, probeBounds.Value));
                             cpuCmdIndex++;
                             continue;
@@ -510,18 +518,45 @@ namespace XREngine.Rendering.Commands
                         // query can still refresh (correctness fallback; will flicker).
                     }
 
-                    // Visible (or ProbeOnly fallback without bounds): draw inline so the
-                    // depth buffer reflects this mesh before any deferred probes run.
-                    if (needsHardwareQuery)
-                        s_cpuOcclusionCoordinator.BeginQuery(renderPass, queryKey);
-                    try
+                    // Visible draw path. We deliberately do NOT bracket the mesh's own
+                    // Render() call with the occlusion query: AnySamplesPassedConservative
+                    // around a self-draw reports "did this draw contribute samples", which
+                    // is a self-visibility test rather than an occlusion test. The mesh's
+                    // first-drawn-before-occluder case (common across material buckets)
+                    // would then permanently latch LastAnySamplesPassed=true and the mesh
+                    // would never demote to Skip. Instead, always route the hardware query
+                    // through the deferred-probe queue so it tests a proxy AABB against
+                    // the pass's complete depth — matching the GPU-dispatch occlusion path.
+                    if (needsHardwareQuery &&
+                        deferredProbes is not null &&
+                        cmd.CullingVolume is AABB visibleProbeBounds)
                     {
+                        if (CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds))
+                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, queryKey);
+                        else
+                            deferredProbes!.Add(new DeferredProbe(queryKey, visibleProbeBounds));
+
                         cmd?.Render();
                     }
-                    finally
+                    else
                     {
+                        // Fallback: command has no AABB, so we can't issue a proxy probe.
+                        // Bracket the mesh draw directly. This retains the self-visibility
+                        // limitation for the no-bounds case (acceptable: such commands are
+                        // typically full-screen overlays, skybox, debug lines, where
+                        // occlusion culling isn't meaningful anyway and they're usually
+                        // excluded via CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded).
                         if (needsHardwareQuery)
-                            s_cpuOcclusionCoordinator.EndQuery(renderPass, queryKey);
+                            s_cpuOcclusionCoordinator.BeginQuery(renderPass, queryKey);
+                        try
+                        {
+                            cmd?.Render();
+                        }
+                        finally
+                        {
+                            if (needsHardwareQuery)
+                                s_cpuOcclusionCoordinator.EndQuery(renderPass, queryKey);
+                        }
                     }
 
                     cpuCmdIndex++;
@@ -561,6 +596,41 @@ namespace XREngine.Rendering.Commands
                 }
                 deferredProbes.Clear();
             }
+        }
+
+        private static bool CpuQueryProxyIsNearPlaneUnsafe(XRCamera camera, AABB bounds)
+        {
+            float tolerance = MathF.Max(0.001f, camera.NearZ * 0.05f);
+
+            if (bounds.ContainsPoint(camera.Transform.RenderTranslation, tolerance))
+                return true;
+
+            Vector3 min = bounds.Min;
+            Vector3 max = bounds.Max;
+            float minDistance = float.PositiveInfinity;
+            float maxDistance = float.NegativeInfinity;
+
+            AccumulateRenderNearPlaneDistance(camera, new Vector3(min.X, min.Y, min.Z), ref minDistance, ref maxDistance);
+            AccumulateRenderNearPlaneDistance(camera, new Vector3(max.X, min.Y, min.Z), ref minDistance, ref maxDistance);
+            AccumulateRenderNearPlaneDistance(camera, new Vector3(min.X, max.Y, min.Z), ref minDistance, ref maxDistance);
+            AccumulateRenderNearPlaneDistance(camera, new Vector3(max.X, max.Y, min.Z), ref minDistance, ref maxDistance);
+            AccumulateRenderNearPlaneDistance(camera, new Vector3(min.X, min.Y, max.Z), ref minDistance, ref maxDistance);
+            AccumulateRenderNearPlaneDistance(camera, new Vector3(max.X, min.Y, max.Z), ref minDistance, ref maxDistance);
+            AccumulateRenderNearPlaneDistance(camera, new Vector3(min.X, max.Y, max.Z), ref minDistance, ref maxDistance);
+            AccumulateRenderNearPlaneDistance(camera, new Vector3(max.X, max.Y, max.Z), ref minDistance, ref maxDistance);
+
+            return minDistance <= tolerance && maxDistance >= -tolerance;
+        }
+
+        private static void AccumulateRenderNearPlaneDistance(
+            XRCamera camera,
+            Vector3 corner,
+            ref float minDistance,
+            ref float maxDistance)
+        {
+            float distance = camera.DistanceFromRenderNearPlane(corner);
+            minDistance = MathF.Min(minDistance, distance);
+            maxDistance = MathF.Max(maxDistance, distance);
         }
 
         public void RenderCPUMeshOnly(int renderPass)
@@ -684,23 +754,39 @@ namespace XREngine.Rendering.Commands
                 PrepareCpuSoftwareOcclusion(renderPass, xrCamera);
             }
 
-            gpuPass.MeshSubmissionStrategy = meshSubmissionStrategy;
-            ConfigureGpuViewSet(gpuPass, renderState, camera);
+            bool meshletStrategy = meshSubmissionStrategy.IsAnyMeshletStrategy();
+            bool previousUseMeshletPipeline = gpuPass.UseMeshletPipeline;
+            if (meshletStrategy)
+                gpuPass.UseMeshletPipeline = true;
 
-            scene.RenderGpuPass(gpuPass);
-
-            gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
-            scene.RecordGpuVisibility(draws, instances);
-
-            bool allowPerViewReadback = meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
-                RuntimeRenderingHostServices.Current.EnableGpuIndirectDebugLogging;
-            if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
+            try
             {
-                uint leftDraws = gpuPass.ReadPerViewDrawCount(0u);
-                uint rightDraws = gpuPass.ActiveViewCount > 1u
-                    ? gpuPass.ReadPerViewDrawCount(1u)
-                    : 0u;
-                RuntimeRenderingHostServices.Current.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
+                gpuPass.MeshSubmissionStrategy = meshSubmissionStrategy;
+                ConfigureGpuViewSet(gpuPass, renderState, camera);
+
+                if (meshletStrategy && scene is GPUScene gpuScene)
+                    gpuScene.EnsureRuntimeMeshletPayloadsForMeshletDispatch();
+
+                scene.RenderGpuPass(gpuPass);
+
+                gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
+                scene.RecordGpuVisibility(draws, instances);
+
+                bool allowPerViewReadback = meshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectInstrumented &&
+                    RuntimeRenderingHostServices.Current.EnableGpuIndirectDebugLogging;
+                if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
+                {
+                    uint leftDraws = gpuPass.ReadPerViewDrawCount(0u);
+                    uint rightDraws = gpuPass.ActiveViewCount > 1u
+                        ? gpuPass.ReadPerViewDrawCount(1u)
+                        : 0u;
+                    RuntimeRenderingHostServices.Current.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
+                }
+            }
+            finally
+            {
+                if (meshletStrategy)
+                    gpuPass.UseMeshletPipeline = previousUseMeshletPipeline;
             }
         }
 

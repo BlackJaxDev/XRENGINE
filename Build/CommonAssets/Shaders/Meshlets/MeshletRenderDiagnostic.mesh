@@ -28,9 +28,14 @@ layout(std430, binding = 3) buffer IndexBuffer { uint vertexIndices[]; };
 layout(std430, binding = 4) buffer TriangleBuffer { uint triangleIndexData[]; };
 layout(std430, binding = 5) buffer TransformBuffer { mat4 worldMatrices[]; };
 
-struct TaskPayload { uint meshletIndices[GROUP_SIZE]; uint count; };
-
-taskNV in TaskPayload IN;
+// Interface block form is required when the task/mesh program is linked as a
+// combined (non-separable) program. Field layout must match the producing
+// MeshletCullingDiagnostic.task shader.
+taskNV in TaskPayload
+{
+    uint meshletIndices[GROUP_SIZE];
+    uint count;
+} IN;
 
 layout(location = 0) out vec3 out_worldPos[];
 layout(location = 1) out vec3 out_normal[];

@@ -55,6 +55,8 @@ When either meshlet strategy is forced on unsupported hardware, the resolver cho
 | `MaterialTable` | Readback-assisted diagnostic path. Uses active material buckets with a shared deferred material-table shader instead of per-material shader programs. The OpenGL path reads material constants from `MaterialTable`; unsupported/non-deferred passes fall back to the per-material tier path. |
 | `BindlessMaterialTable` | Readback-assisted diagnostic path. Same as `MaterialTable`, but requires `GL_ARB_bindless_texture` and `GL_ARB_gpu_shader_int64`; falls back to `MaterialTable` when unavailable. Resident bindless albedo handles are applied through the two-level texture handle table. |
 
+Meshlet strategies always promote the per-pass draw path to `MaterialTable` unless `BindlessMaterialTable` was explicitly selected. Direct meshlet shading does not have a per-material bucket shader path, so `FullBucketScan` and `ActiveBucketList` remain traditional-indirect options only.
+
 ## State Class IDs
 
 Phase C separates material identity from pipeline state. `DrawMetadata.MaterialID` still identifies the material data, but `DrawMetadata.StateClassID` is the batching key consumed by sort/scatter shaders.
@@ -77,10 +79,14 @@ Dynamic material-table layouts for additional deferred, forward+, Uber, and anno
 `GPURenderPassCollection` snapshots the strategy at pass execution:
 
 - `CpuDirect` does not consume GPU Hi-Z visibility snapshots. Hardware CPU queries remain the default occlusion path, and optional CPU masked software occlusion can pre-cull traditional CPU mesh draws before hardware-query submission when explicitly enabled.
+- The forward depth-normal prepass must resolve the same effective mesh submission strategy as the later lit pass. A forced `CpuDirect` strategy keeps the prepass on CPU even if the legacy GPU-dispatch preference is true; otherwise AO/depth can be populated by GPU draws while the color pass renders CPU. When the lit path is meshlet, the prepass uses the matching traditional GPU indirect strategy because the direct meshlet material-table shader does not support override/depth-normal material variants yet.
+- GPU Hi-Z culling prefers the current-frame depth view. Temporal history depth is only a fallback when the current depth view is unavailable, because history-depth false occlusion rejects whole command records before meshlet expansion can refine visibility. Current-frame depth is explicitly disabled as a Hi-Z occlusion source for `OpaqueForward` and `MaskedForward` while the forward depth-normal prepass is enabled: that prepass can already contain the same candidates, so using it would self-occlude whole commands before per-meshlet culling runs.
 - `GpuIndirectZeroReadback` enables state-class/tier scatter, consumes GPU-written draw counts directly, and does not call CPU readback helpers such as `ReadGpuBatchRanges()` or `ReadUIntAt(...)` for counts. Use `FullBucketScan` when validating the strict no-readback material path; the active-bucket and material-table variants intentionally read back the compact active bucket list for diagnostics.
 - `GpuIndirectInstrumented` is the only strategy allowed to read back batch ranges, count buffers, per-view draw counts, or indirect command dumps. It still uses the material-tier scatter draw path by default so diagnostics render with the same per-material shaders and textures as the production GPU path. CPU masked software occlusion can also run here by preparing CPU occluders, reading the GPU-cull count, and compacting the culled indirect command buffer for validation.
-- `GpuMeshletZeroReadback` uses the same GPU-resident scene database and material-table policy as the zero-readback indirect path, then dispatches mesh tasks from GPU-written task records and counts. It must not read count/visibility buffers back in steady state.
+- `GpuMeshletZeroReadback` uses the same GPU-resident scene database and material-table policy as the zero-readback indirect path, then dispatches mesh tasks from GPU-written task records and counts. It must not read count/visibility buffers back in steady state. The meshlet pass snapshots `MaterialTable` automatically if the global zero-readback draw path is `FullBucketScan` or `ActiveBucketList`.
 - `GpuMeshletInstrumented` uses the meshlet path with diagnostic readbacks and timing stats enabled only under explicit diagnostics. Current readbacks include visible meshlet count, dispatched meshlet count, expansion overflow, dispatch duration, and readback-byte accounting.
+- Any direct `RenderGPU(pass, strategy)` caller that supplies a meshlet strategy sets meshlet pipeline intent on that pass for the duration of the dispatch, so side passes cannot accidentally request `GpuMeshlet*` and then arrive at the render manager as traditional indirect intent.
+- Once a meshlet strategy reaches the render manager, a meshlet dispatch failure skips that meshlet pass and logs `Meshlet.BackendUnsupported`; it must not fall through into traditional indirect mesh rendering. Non-meshlet fallback is selected earlier by the resolver when production meshlet dispatch is unavailable.
 - CPU safety-net mesh fallback is only available for `GpuIndirectInstrumented` and only when fallback diagnostics are explicitly enabled.
 
 ## Kill Switch
@@ -88,3 +94,21 @@ Dynamic material-table layouts for additional deferred, forward+, Uber, and anno
 Use `Engine.Rendering.Settings.ForceMeshSubmissionStrategy` for local triage. The environment variable `XRE_FORCE_MESH_SUBMISSION_STRATEGY` accepts any `EMeshSubmissionStrategy` name and takes precedence over the setting for the current process.
 
 Forced non-meshlet strategies bypass the resolver. Forced meshlet strategies are capability-gated so they cannot silently select the experimental CPU-count mesh shader path. For one migration window, serialized or environment values that use the legacy token `GpuMeshlet` are accepted and remapped to `GpuMeshletZeroReadback` with a deprecation warning.
+
+## Resolver Downgrade Surface
+
+When the resolver downgrades a forced meshlet strategy, it snapshots state for the editor UI on `Engine.Rendering`:
+
+- `LastMeshletDowngradeRequested` — the meshlet strategy the user asked for.
+- `LastMeshletDowngradeResolved` — what the resolver substituted (typically `GpuIndirectZeroReadback`, or `CpuDirect` under strict no-fallback profiles).
+- `LastMeshletDowngradeReason` — human-readable reason string (matches the `RenderDispatch.MeshSubmissionStrategy.UnsupportedGpuMeshlet` warning).
+- `LastResolvedRendererBackend` / `LastResolvedMeshShaderDialect` / `LastResolvedSupportsMeshletDispatch` — capability snapshot used to render the dropdown tooltip and Occlusion panel banner.
+
+All four are `null`/default when no downgrade is active. They update every time `ResolveMeshSubmissionStrategy()` is called. The `ForceMeshSubmissionStrategy` setting's `[Description]` attribute (rendered as the property-editor tooltip) calls out the mesh-shader dialect requirement.
+
+Mesh-shader dialect availability today:
+
+- `VulkanEXT` (`VK_EXT_mesh_shader`): production. `vkCmdDrawMeshTasksIndirectCountEXT` is wired; `SupportsMeshletDispatch()` returns true.
+- `OpenGLEXT` (`GL_EXT_mesh_shader`): production shader variants exist (`MeshletCullingExt.task`, `MeshletRenderExt.mesh`, `MeshletRenderSkinnedExt.mesh`), but the `glMultiDrawMeshTasksIndirectCountEXT` C# delegate isn't wired and current driver coverage is thin. `SupportsMeshletDispatch()` returns false.
+- `OpenGLNV` (`GL_NV_mesh_shader`): NVIDIA-only, no indirect-count entrypoint exists in the spec; diagnostic / bring-up only.
+- `None`: resolver downgrades any forced meshlet strategy.

@@ -16,9 +16,14 @@ layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
 layout(std430, binding = 5) buffer TransformBuffer { mat4 worldMatrices[]; };
 layout(std430, binding = 7) buffer CommandVisibilityBuffer { uint commandVisibility[]; };
 
-struct TaskPayload { uint meshletIndices[GROUP_SIZE]; uint count; };
-
-taskNV out TaskPayload OUT;
+// Interface block form is required when the task/mesh program is linked as a
+// combined (non-separable) program. Keep the field layout identical in the
+// matching MeshletRenderDiagnostic.mesh shader.
+taskNV out TaskPayload
+{
+    uint meshletIndices[GROUP_SIZE];
+    uint count;
+} OUT;
 
 shared uint sVisibleCount;
 shared uint sIndices[GROUP_SIZE];
