@@ -148,9 +148,10 @@ namespace XREngine.Rendering.OpenGL
                     // Predictive skip: if recent chunks have been expensive and starting another
                     // would push us past the hard budget, stop now rather than overrun on a chunk
                     // boundary. This is what bounds the 53–114 ms single-chunk spikes the perf
-                    // doc captured.
+                    // doc captured. Still process one chunk per non-empty frame so a slow
+                    // previous sample cannot pin the queue forever.
                     double elapsedMs = sw.Elapsed.TotalMilliseconds;
-                    if (_recentMaxChunkMs > 0.0 && elapsedMs + _recentMaxChunkMs > budgetMs)
+                    if (LastDequeuedItems > 0 && _recentMaxChunkMs > 0.0 && elapsedMs + _recentMaxChunkMs > budgetMs)
                     {
                         LastPredictiveSkipCount++;
                         break;

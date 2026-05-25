@@ -585,6 +585,9 @@ namespace XREngine.Rendering.UI
 
         protected override void RenderDebug()
         {
+            if (!ShouldRenderDebugInCurrentScene())
+                return;
+
             base.RenderDebug();
 
             if (!Engine.EditorPreferences.Debug.RenderMesh2DBounds || Engine.Rendering.State.IsShadowPass)

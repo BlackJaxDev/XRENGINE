@@ -34,7 +34,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     }
 
     [Test]
-    public void GLMeshRenderer_UsesExclusiveProgramModeForShaderPipelineSetting()
+    public void GLMeshRenderer_UsesCombinedProgramsWithUberPipelineFallbackWhenPipelinesAreDisabled()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
 
@@ -44,7 +44,10 @@ public sealed class GLMeshRendererLifecycleContractTests
         source.ShouldContain("DestroySeparablePrograms();");
         source.ShouldContain("material.Data.EnsureShaderPipelineProgram();");
         source.ShouldContain("material.Data.DestroyShaderPipelineProgram();");
-        source.ShouldContain(": GetCombinedProgram(material, out vertexProgram, out materialProgram);");
+        source.ShouldContain("if (GetCombinedProgram(material, out vertexProgram, out materialProgram))");
+        source.ShouldContain("ShouldUsePipelineFallbackForPendingCombinedProgram(material)");
+        source.ShouldContain("allowWhenShaderPipelinesDisabled: true");
+        source.ShouldContain("material.Data.TryGetUberMaterialState(out _, out _)");
         source.ShouldContain("private void EnsureCombinedProgramForMaterial(GLMaterial material)");
         source.ShouldNotContain("ShouldForceSeparableUberProgram");
         source.ShouldNotContain("|| forceShaderPipelines");
@@ -62,6 +65,8 @@ public sealed class GLMeshRendererLifecycleContractTests
         materialSource.ShouldContain("public void DestroyShaderPipelineProgram()");
         materialSource.ShouldContain("public void SyncShaderPipelineProgramForCurrentSettings()");
         materialSource.ShouldContain("public static void DisposeShaderPipelineProgramsWhenDisabled()");
+        materialSource.ShouldContain("EnsureShaderPipelineProgram(bool allowWhenShaderPipelinesDisabled = false)");
+        materialSource.ShouldContain("if (!allowWhenShaderPipelinesDisabled && !RuntimeRenderingHostServices.Current.AllowShaderPipelines)");
         materialSource.ShouldContain("if (!RuntimeRenderingHostServices.Current.AllowShaderPipelines)");
         materialSource.ShouldContain("ShaderPipelineProgram.Destroy();");
         materialSource.ShouldContain("ShaderPipelineProgram = null;");

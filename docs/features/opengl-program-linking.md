@@ -116,6 +116,14 @@ previous linked program remains active and the pending build is retried in
 later frames. Render-thread source linking is disabled in the runtime path
 because cold links of large uber shaders can stall the editor for minutes.
 
+When shader pipelines are disabled, `GLMeshRenderer` still builds a combined
+program for the material. If that combined program is an Uber material cold
+miss and is still pending on the shared-context source queue, the renderer may
+temporarily draw the mesh through the separable shader-pipeline path. The
+combined program continues linking in the background and replaces the fallback
+as soon as it is ready; this prevents imported avatar meshes from disappearing
+behind minutes-long monolithic Uber links.
+
 ## Known Hazards
 
 `GLRenderProgram.IsKnownAsyncLinkHazard` is the canonical hazard predicate.

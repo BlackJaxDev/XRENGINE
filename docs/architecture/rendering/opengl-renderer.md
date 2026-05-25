@@ -340,6 +340,8 @@ public override void ProcessPendingUploads()
 
 This runs at the start of each frame (before any rendering) with a time budget to prevent frame drops. Uploads that exceed the budget are deferred to subsequent frames.
 
+`GLUploadQueue` may predictively stop after a slow chunk to avoid cascading upload stalls, but a non-empty queue must still process at least one chunk per frame. Otherwise a single slow sample can keep the predictor above budget forever and leave large mesh buffers permanently pending.
+
 The upload queue handles:
 - Texture data uploads (`glTexSubImage2D`, etc.)
 - Buffer data uploads (`glBufferSubData`, `glMapBuffer`)
