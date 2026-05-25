@@ -49,6 +49,7 @@ namespace XREngine.Rendering.OpenGL
             private long _combinedProgramMaterialShaderStateRevision;
             private GLRenderProgram? _separatedVertexProgram;
             private GLRenderProgram? _forcedGeneratedVertexProgram;
+            private bool _combinedProgramPipelineFallbackLogged;
             private int _shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
             private XRMaterial? _programMaterialStateKey;
             private long _programMaterialShaderStateRevision;

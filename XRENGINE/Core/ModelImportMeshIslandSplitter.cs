@@ -25,13 +25,15 @@ internal static class ModelImportMeshIslandSplitter
         List<SubMesh> islandSubMeshes = new(islandMeshes.Count);
         for (int islandIndex = 0; islandIndex < islandMeshes.Count; islandIndex++)
         {
+            // Each island gets a freshly-defaulted MeshOptimizer (avoid sharing a single
+            // settings instance across islands so later edits don't bleed between siblings)
+            // and a null CullingBounds (the auto-computed SubMesh.Bounds derived from the
+            // island's own geometry is a tighter fit than the source submesh's override).
             SubMesh islandSubMesh = new(CopyLod(sourceLod, islandMeshes[islandIndex]))
             {
                 Name = FormatIslandName(subMesh.Name, islandIndex),
                 RootTransform = subMesh.RootTransform,
                 RootBone = subMesh.RootBone,
-                CullingBounds = subMesh.CullingBounds,
-                MeshOptimizer = subMesh.MeshOptimizer,
             };
 
             islandSubMeshes.Add(islandSubMesh);

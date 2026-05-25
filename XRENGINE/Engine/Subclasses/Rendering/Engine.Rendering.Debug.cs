@@ -10,6 +10,7 @@ using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.UI;
+using XREngine.Scene;
 using Triangle = XREngine.Data.Geometry.Triangle;
 
 namespace XREngine
@@ -36,24 +37,55 @@ namespace XREngine
 
                 private static void ClearQueues()
                 {
-                    DebugTextUpdateQueue.Clear();
-                    DebugPointsQueue.Clear();
-                    DebugLinesQueue.Clear();
-                    DebugTrianglesQueue.Clear();
+                    _debug3D.ClearQueues();
+                    _debug2D.ClearQueues();
                 }
 
                 public static readonly Vector3 UIPositionBias = new(0.0f, 0.0f, 0.1f);
                 public static readonly Rotator UIRotation = new(90.0f, 0.0f, 0.0f, ERotationOrder.YPR);
 
-                private static readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> _debugPoints = [];
-                private static readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> _debugLines = [];
-                private static readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> _debugTriangles = [];
+                private enum EDebugPrimitiveSceneKind
+                {
+                    Scene3D,
+                    Scene2D,
+                }
 
-                private static readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> DebugPointsQueue = [];
-                private static readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> DebugLinesQueue = [];
-                private static readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> DebugTrianglesQueue = [];
+                private sealed class DebugPrimitiveSceneState
+                {
+                    public readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> Points = [];
+                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> Lines = [];
+                    public readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> Triangles = [];
 
-                private static readonly InstancedDebugVisualizer _instancedDebugVisualizer = new();
+                    public readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> PointQueue = [];
+                    public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> LineQueue = [];
+                    public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> TriangleQueue = [];
+
+                    public readonly ConcurrentDictionary<int, (UIText text, float lastUpdatedTime)> Texts = new();
+                    public readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> TextUpdateQueue = [];
+
+                    public readonly InstancedDebugVisualizer Visualizer = new();
+
+                    public void ClearQueues()
+                    {
+                        TextUpdateQueue.Clear();
+                        PointQueue.Clear();
+                        LineQueue.Clear();
+                        TriangleQueue.Clear();
+                    }
+
+                    public void ClearBags()
+                    {
+                        Points.Clear();
+                        Lines.Clear();
+                        Triangles.Clear();
+                    }
+
+                    public void ClearVisuals()
+                        => Visualizer.Clear();
+                }
+
+                private static readonly DebugPrimitiveSceneState _debug3D = new();
+                private static readonly DebugPrimitiveSceneState _debug2D = new();
 
                 public static void SwapBuffers()
                 {
@@ -63,7 +95,7 @@ namespace XREngine
                     {
                         ClearQueues();
                         ClearDebugShapeBags();
-                        _instancedDebugVisualizer.Clear();
+                        ClearDebugVisualizers();
                         return;
                     }
 
@@ -71,7 +103,7 @@ namespace XREngine
                     {
                         ClearDebugShapeQueues();
                         ClearDebugShapeBags();
-                        _instancedDebugVisualizer.Clear();
+                        ClearDebugVisualizers();
                         return;
                     }
 
@@ -86,21 +118,18 @@ namespace XREngine
                         switch (mode)
                         {
                             case EDebugShapePopulationMode.Tasks:
-                            {
-                                Task tp = Task.Run(PopulatePoints);
-                                Task tl = Task.Run(PopulateLines);
-                                Task tt = Task.Run(PopulateTriangles);
-                                Task.WaitAll(tp, tl, tt);
+                                PopulateSceneTasks(_debug3D);
+                                PopulateSceneTasks(_debug2D);
                                 break;
-                            }
                             case EDebugShapePopulationMode.ParallelInvoke:
-                                Parallel.Invoke(PopulatePoints, PopulateLines, PopulateTriangles);
+                                Parallel.Invoke(
+                                    () => PopulateDebugScene(_debug3D),
+                                    () => PopulateDebugScene(_debug2D));
                                 break;
                             case EDebugShapePopulationMode.Sequential:
                             default:
-                                PopulatePoints();
-                                PopulateLines();
-                                PopulateTriangles();
+                                PopulateDebugScene(_debug3D);
+                                PopulateDebugScene(_debug2D);
                                 break;
                         }
                     }
@@ -116,16 +145,20 @@ namespace XREngine
 
                 private static void ClearDebugShapeQueues()
                 {
-                    DebugPointsQueue.Clear();
-                    DebugLinesQueue.Clear();
-                    DebugTrianglesQueue.Clear();
+                    _debug3D.ClearQueues();
+                    _debug2D.ClearQueues();
                 }
 
                 private static void ClearDebugShapeBags()
                 {
-                    _debugPoints.Clear();
-                    _debugLines.Clear();
-                    _debugTriangles.Clear();
+                    _debug3D.ClearBags();
+                    _debug2D.ClearBags();
+                }
+
+                private static void ClearDebugVisualizers()
+                {
+                    _debug3D.ClearVisuals();
+                    _debug2D.ClearVisuals();
                 }
 
                 private static bool IsCancellationOnly(AggregateException exception)
@@ -145,41 +178,58 @@ namespace XREngine
                     if (debug is null)
                         return;
 
-                    _instancedDebugVisualizer.PointSize = debug.DebugPointSize;
-                    _instancedDebugVisualizer.LineWidth = debug.DebugLineWidth;
+                    _debug3D.Visualizer.PointSize = debug.DebugPointSize;
+                    _debug3D.Visualizer.LineWidth = debug.DebugLineWidth;
+                    _debug2D.Visualizer.PointSize = debug.DebugPointSize;
+                    _debug2D.Visualizer.LineWidth = debug.DebugLineWidth;
                 }
 
-                private static void PopulateTriangles()
+                private static void PopulateSceneTasks(DebugPrimitiveSceneState scene)
                 {
-                    _instancedDebugVisualizer.TriangleCount = (uint)_debugTriangles.Count;
-
-                    int i = 0;
-                    foreach (var (pos0, pos1, pos2, color) in _debugTriangles)
-                        _instancedDebugVisualizer.SetTriangleAt(i++, pos0, pos1, pos2, color);
-
-                    _debugTriangles.Clear();
+                    Task tp = Task.Run(() => PopulatePoints(scene));
+                    Task tl = Task.Run(() => PopulateLines(scene));
+                    Task tt = Task.Run(() => PopulateTriangles(scene));
+                    Task.WaitAll(tp, tl, tt);
                 }
 
-                private static void PopulateLines()
+                private static void PopulateDebugScene(DebugPrimitiveSceneState scene)
                 {
-                    _instancedDebugVisualizer.LineCount = (uint)_debugLines.Count;
-
-                    int i = 0;
-                    foreach (var (pos0, pos1, color) in _debugLines)
-                        _instancedDebugVisualizer.SetLineAt(i++, pos0, pos1, color);
-
-                    _debugLines.Clear();
+                    PopulatePoints(scene);
+                    PopulateLines(scene);
+                    PopulateTriangles(scene);
                 }
 
-                private static void PopulatePoints()
+                private static void PopulateTriangles(DebugPrimitiveSceneState scene)
                 {
-                    _instancedDebugVisualizer.PointCount = (uint)_debugPoints.Count;
+                    scene.Visualizer.TriangleCount = (uint)scene.Triangles.Count;
 
                     int i = 0;
-                    foreach (var (pos, color) in _debugPoints)
-                        _instancedDebugVisualizer.SetPointAt(i++, pos, color);
+                    foreach (var (pos0, pos1, pos2, color) in scene.Triangles)
+                        scene.Visualizer.SetTriangleAt(i++, pos0, pos1, pos2, color);
 
-                    _debugPoints.Clear();
+                    scene.Triangles.Clear();
+                }
+
+                private static void PopulateLines(DebugPrimitiveSceneState scene)
+                {
+                    scene.Visualizer.LineCount = (uint)scene.Lines.Count;
+
+                    int i = 0;
+                    foreach (var (pos0, pos1, color) in scene.Lines)
+                        scene.Visualizer.SetLineAt(i++, pos0, pos1, color);
+
+                    scene.Lines.Clear();
+                }
+
+                private static void PopulatePoints(DebugPrimitiveSceneState scene)
+                {
+                    scene.Visualizer.PointCount = (uint)scene.Points.Count;
+
+                    int i = 0;
+                    foreach (var (pos, color) in scene.Points)
+                        scene.Visualizer.SetPointAt(i++, pos, color);
+
+                    scene.Points.Clear();
                 }
 
                 private static XRMeshRenderer? _lineRenderer = null;
@@ -221,48 +271,59 @@ namespace XREngine
                         !camera.CullingMask.Contains(XREngine.Components.Scene.Transforms.DefaultLayers.GizmosIndex))
                         return;
 
-                    DequeueDebugTextItems();
+                    DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
+                    DequeueDebugTextItems(scene);
 
-                    var hashes = DebugTexts.Keys.ToArray();
+                    var hashes = scene.Texts.Keys.ToArray();
                     for (int i = 0; i < hashes.Length; i++)
                     {
                         var hash = hashes[i];
-                        if (!DebugTexts.TryGetValue(hash, out var text))
+                        if (!scene.Texts.TryGetValue(hash, out var text))
                             continue;
 
                         text.text.Render();
 
                         float nowTime = Engine.Time.Timer.Time();
                         float lastTime = text.lastUpdatedTime;
-                        if (nowTime - lastTime > Engine.EditorPreferences.Debug.DebugTextMaxLifespan && DebugTexts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
+                        if (nowTime - lastTime > Engine.EditorPreferences.Debug.DebugTextMaxLifespan && scene.Texts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
                             TextPool.Release(item.text);
                     }
 
-                    //while (_debugPointsQueue.TryDequeue(out var point))
-                    //    _debugPoints.Add(point);
-                    //while (_debugLinesQueue.TryDequeue(out var line))
-                    //    _debugLines.Add(line);
-                    //while (_debugTrianglesQueue.TryDequeue(out var triangle))
-                    //    _debugTriangles.Add(triangle);
-
                     if (Engine.Rendering.State.DebugInstanceRenderingAvailable)
-                        _instancedDebugVisualizer.Render();
+                        scene.Visualizer.Render();
                 }
 
-                private static void DequeueDebugTextItems()
+                private static DebugPrimitiveSceneState ResolveDebugPrimitiveSceneState()
+                    => ResolveDebugPrimitiveSceneKind() == EDebugPrimitiveSceneKind.Scene2D
+                        ? _debug2D
+                        : _debug3D;
+
+                private static EDebugPrimitiveSceneKind ResolveDebugPrimitiveSceneKind()
+                    => Engine.IsRenderThread &&
+                        Engine.Rendering.State.RenderingScene is VisualScene2D
+                        ? EDebugPrimitiveSceneKind.Scene2D
+                        : EDebugPrimitiveSceneKind.Scene3D;
+
+                private static void DequeueDebugTextItems(DebugPrimitiveSceneState scene)
                 {
-                    while (DebugTextUpdateQueue.TryDequeue(out (Vector3 pos, string text, ColorF4 color, float scale) item))
-                        UpdateDebugText(item.pos, item.text, item.color, item.scale);
+                    while (scene.TextUpdateQueue.TryDequeue(out (Vector3 pos, string text, ColorF4 color, float scale) item))
+                        UpdateDebugText(scene, item.pos, item.text, item.color, item.scale);
                 }
 
                 private static void DequeueDebugShapeItems()
                 {
-                    while (DebugPointsQueue.TryDequeue(out var point))
-                        _debugPoints.Add(point);
-                    while (DebugLinesQueue.TryDequeue(out var line))
-                        _debugLines.Add(line);
-                    while (DebugTrianglesQueue.TryDequeue(out var triangle))
-                        _debugTriangles.Add(triangle);
+                    DequeueDebugShapeItems(_debug3D);
+                    DequeueDebugShapeItems(_debug2D);
+                }
+
+                private static void DequeueDebugShapeItems(DebugPrimitiveSceneState scene)
+                {
+                    while (scene.PointQueue.TryDequeue(out var point))
+                        scene.Points.Add(point);
+                    while (scene.LineQueue.TryDequeue(out var line))
+                        scene.Lines.Add(line);
+                    while (scene.TriangleQueue.TryDequeue(out var triangle))
+                        scene.Triangles.Add(triangle);
                 }
 
                 private static Matrix4x4 CalculateLineMatrix(Vector3 pos0, Vector3 pos1, float lineWidth, Vector3 camForward, Vector3 camUp, Vector3 camRight)
@@ -303,12 +364,13 @@ namespace XREngine
                     if (!InCamera(position))
                         return;
 
+                    DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
                     if (IsRenderThread)
-                        _debugPoints.Add((position, color));
+                        scene.Points.Add((position, color));
                     else
                     {
                         using (_debugShapeQueueLock.EnterScope())
-                            DebugPointsQueue.Enqueue((position, color));
+                            scene.PointQueue.Enqueue((position, color));
                     }
                 }
 
@@ -320,12 +382,13 @@ namespace XREngine
                     if (!InCamera(start) && !InCamera(end))
                         return;
 
+                    DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
                     if (IsRenderThread)
-                        _debugLines.Add((start, end, color));
+                        scene.Lines.Add((start, end, color));
                     else
                     {
                         using (_debugShapeQueueLock.EnterScope())
-                            DebugLinesQueue.Enqueue((start, end, color));
+                            scene.LineQueue.Enqueue((start, end, color));
                     }
                 }
 
@@ -343,12 +406,13 @@ namespace XREngine
 
                     if (solid)
                     {
+                        DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
                         if (IsRenderThread)
-                            _debugTriangles.Add((A, B, C, color));
+                            scene.Triangles.Add((A, B, C, color));
                         else
                         {
                             using (_debugShapeQueueLock.EnterScope())
-                                DebugTrianglesQueue.Enqueue((A, B, C, color));
+                                scene.TriangleQueue.Enqueue((A, B, C, color));
                         }
                     }
                     else
@@ -870,25 +934,24 @@ namespace XREngine
                 }
 
                 private const float DefaultDebugTextScale = 0.0012f;
-                private static readonly ConcurrentDictionary<int, (UIText text, float lastUpdatedTime)> DebugTexts = new();
                 private static readonly ResourcePool<UIText> TextPool = new(() => new());
-                private static readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> DebugTextUpdateQueue = new();
 
                 public static void RenderText(Vector3 worldPosition, string text, ColorF4 color, float scale = DefaultDebugTextScale)
                 {
+                    DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();
                     if (Engine.IsRenderThread)
-                        UpdateDebugText(worldPosition, text, color, scale);
+                        UpdateDebugText(scene, worldPosition, text, color, scale);
                     else
                     {
                         using (_debugShapeQueueLock.EnterScope())
-                            DebugTextUpdateQueue.Enqueue((worldPosition, text, color, scale));
+                            scene.TextUpdateQueue.Enqueue((worldPosition, text, color, scale));
                     }
                 }
 
-                private static void UpdateDebugText(Vector3 worldPosition, string text, ColorF4 color, float scale = DefaultDebugTextScale)
+                private static void UpdateDebugText(DebugPrimitiveSceneState scene, Vector3 worldPosition, string text, ColorF4 color, float scale = DefaultDebugTextScale)
                 {
                     int hash = HashCode.Combine(text.GetHashCode(), worldPosition.GetHashCode());
-                    DebugTexts.AddOrUpdate(hash, _ =>
+                    scene.Texts.AddOrUpdate(hash, _ =>
                     {
                         UIText t = TextPool.Take();
                         t.Text = text;

@@ -9,6 +9,7 @@ using XREngine.Data.Rendering;
 using XREngine.Input.Devices;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
@@ -213,6 +214,7 @@ namespace XREngine.Rendering.UI
             [
                 DebugRenderInfo2D = RenderInfo2D.New(this, _debugRC = new RenderCommandMethod2D((int)EDefaultRenderPass.OnTopForward, RenderDebug))
             ];
+            DebugRenderInfo2D.PreCollectCommandsCallback = ShouldRenderDebug2D;
             Children.PostAnythingAdded += OnChildAdded;
             Children.PostAnythingRemoved += OnChildRemoved;
         }
@@ -224,6 +226,15 @@ namespace XREngine.Rendering.UI
 
         private RenderCommandMethod2D _debugRC;
         public RenderCommandMethod2D DebugRenderCommand => _debugRC;
+
+        private bool ShouldRenderDebug2D(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
+            => IsScreenSpaceCanvas();
+
+        protected bool ShouldRenderDebugInCurrentScene()
+            => !IsScreenSpaceCanvas() || Engine.Rendering.State.RenderingScene is VisualScene2D;
+
+        protected bool IsScreenSpaceCanvas()
+            => GetCanvasTransform()?.DrawSpace == ECanvasDrawSpace.Screen;
 
         protected override Matrix4x4 CreateLocalMatrix() => 
             Matrix4x4.CreateScale(Scale) * 
@@ -562,6 +573,9 @@ namespace XREngine.Rendering.UI
 
         protected override void RenderDebug()
         {
+            if (!ShouldRenderDebugInCurrentScene())
+                return;
+
             base.RenderDebug();
 
             if (!Engine.EditorPreferences.Debug.RenderUITransformCoordinate || Engine.Rendering.State.IsShadowPass)

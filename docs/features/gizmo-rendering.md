@@ -84,6 +84,10 @@ Current cleanup points include:
 
 `VPRC_RenderDebugShapes` intentionally runs after `OnTopForward` in the default pipelines, so it also protects transform tool and light probe gizmo draws that happened earlier in the same post-temporal block.
 
+Debug primitives are bucketed by active visual scene before they reach the instanced visualizer. Calls made while rendering a `VisualScene3D` draw only in the 3D scene pipeline, and calls made while rendering a `VisualScene2D` draw only in the UI pipeline. Keep that separation intact so screen-space UI debug lines/points cannot leak into the world view and world gizmos cannot leak into screen-space UI.
+
+Screen-space `UITransform` debug is also guarded at collection time. UI transforms still inherit the normal 3D transform debug handle, but screen-space canvases only allow that callback to submit primitives while the active visual scene is `VisualScene2D`; the explicit `RenderInfo2D` debug object likewise collects only for screen-space canvases.
+
 ## Adding A New Gizmo Path
 
 Use this checklist when adding a new editor overlay:

@@ -862,11 +862,12 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Lazily creates the <see cref="XRMaterialBase.ShaderPipelineProgram"/> when shader
-        /// pipeline mode is active.
+        /// pipeline mode is active, or when a renderer explicitly needs a temporary
+        /// separable fallback while a combined program is still building.
         /// </summary>
-        public void EnsureShaderPipelineProgram()
+        public void EnsureShaderPipelineProgram(bool allowWhenShaderPipelinesDisabled = false)
         {
-            if (!RuntimeRenderingHostServices.Current.AllowShaderPipelines)
+            if (!allowWhenShaderPipelinesDisabled && !RuntimeRenderingHostServices.Current.AllowShaderPipelines)
             {
                 DestroyShaderPipelineProgram();
                 return;

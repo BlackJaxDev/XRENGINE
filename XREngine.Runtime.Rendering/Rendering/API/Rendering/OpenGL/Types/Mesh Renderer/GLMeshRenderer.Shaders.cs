@@ -82,6 +82,7 @@ namespace XREngine.Rendering.OpenGL
                 _combinedProgram = null;
                 _combinedProgramMaterialKey = null;
                 _combinedProgramMaterialShaderStateRevision = 0;
+                _combinedProgramPipelineFallbackLogged = false;
             }
 
             private void DestroySeparablePrograms()
@@ -482,10 +483,42 @@ namespace XREngine.Rendering.OpenGL
                 [MaybeNullWhen(false)] out GLRenderProgram? materialProgram)
             {
                 bool usePipelines = UseShaderPipelinesForThisRenderer();
-                
-                return usePipelines
-                    ? GetPipelinePrograms(material, out vertexProgram, out materialProgram)
-                    : GetCombinedProgram(material, out vertexProgram, out materialProgram);
+
+                if (usePipelines)
+                    return GetPipelinePrograms(material, out vertexProgram, out materialProgram);
+
+                if (GetCombinedProgram(material, out vertexProgram, out materialProgram))
+                    return true;
+
+                if (ShouldUsePipelineFallbackForPendingCombinedProgram(material) &&
+                    GetPipelinePrograms(
+                        material,
+                        out vertexProgram,
+                        out materialProgram,
+                        allowWhenShaderPipelinesDisabled: true))
+                {
+                    if (!_combinedProgramPipelineFallbackLogged)
+                    {
+                        _combinedProgramPipelineFallbackLogged = true;
+                        Debug.OpenGL(
+                            $"[GLMeshRenderer] Using temporary shader-pipeline fallback for '{GetDescribingName()}' " +
+                            $"while combined Uber program for material '{material.Data.Name ?? "<unnamed>"}' is still building.");
+                    }
+                    return true;
+                }
+
+                return false;
+            }
+
+            private bool ShouldUsePipelineFallbackForPendingCombinedProgram(GLMaterial material)
+            {
+                if (RuntimeEngine.Rendering.State.IsShadowPass || !Data.AllowShaderPipelines)
+                    return false;
+
+                if (_combinedProgram is not { IsAsyncBuildPending: true })
+                    return false;
+
+                return material.Data.TryGetUberMaterialState(out _, out _);
             }
 
             private bool ShouldSkipShadowDrawForProgramBuild(GLMaterial material)
@@ -591,7 +624,11 @@ namespace XREngine.Rendering.OpenGL
             /// <summary>
             /// Get the separable vertex/material programs when pipeline mode is enabled.
             /// </summary>
-            private bool GetPipelinePrograms(GLMaterial material, out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
+            private bool GetPipelinePrograms(
+                GLMaterial material,
+                out GLRenderProgram? vertexProgram,
+                out GLRenderProgram? materialProgram,
+                bool allowWhenShaderPipelinesDisabled = false)
             {
                 // OpenGL spec requires glUseProgram(0) before a program pipeline can take effect.
                 // Without this, any previously active combined program overrides the pipeline.
@@ -601,8 +638,9 @@ namespace XREngine.Rendering.OpenGL
                 _pipeline.Bind();
                 _pipeline.Clear(EProgramStageMask.AllShaderBits);
 
-                // Materials only own a separable program while shader pipeline mode is active.
-                material.Data.EnsureShaderPipelineProgram();
+                // Pipeline mode owns this normally; combined mode can request it as a
+                // temporary fallback while a cold Uber combined program is still linking.
+                material.Data.EnsureShaderPipelineProgram(allowWhenShaderPipelinesDisabled);
 
                 materialProgram = material.SeparableProgram;
                 var mask = materialProgram?.Data?.GetShaderTypeMask() ?? EProgramStageMask.None;
