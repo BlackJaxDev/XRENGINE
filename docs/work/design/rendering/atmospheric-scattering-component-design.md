@@ -563,4 +563,4 @@ Acceptance criteria:
 - Sean O'Neil, [GPU Gems 2 Chapter 16: Accurate Atmospheric Scattering](https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-16-accurate-atmospheric-scattering).
 - XRENGINE, [Procedural Skybox Ambient Lighting](../../features/components/procedural-skybox-ambient.md).
 - XRENGINE, [Default Render Pipeline Known Issues And Lessons Learned](../../architecture/rendering/default-render-pipeline-notes.md).
-- XRENGINE, [Volumetric Fog Refactor TODO](../todo/volumetric-fog-refactor-todo.md).
+- XRENGINE, [Volumetric Fog Production Design](volumetric-fog-production-design.md).

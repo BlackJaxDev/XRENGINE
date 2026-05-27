@@ -76,7 +76,16 @@ public partial class XRMaterial
         if (program is null)
             return;
 
-        program.Name = BuildShaderPipelineProgramName();
+        if (string.IsNullOrWhiteSpace(program.Name) && program.Separable)
+            program.Name = BuildShaderPipelineProgramName();
+
+        program.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
+            Name,
+            null,
+            null,
+            program.Separable ? "MaterialPipeline" : "CombinedMaterial",
+            program.ProgramDescriptor.StableKey,
+            ActiveUberVariant.IsEmpty ? null : "Uber material variant"));
 
         if (ActiveUberVariant.IsEmpty || ActiveUberVariant.VariantHash == 0)
         {
@@ -205,8 +214,8 @@ public partial class XRMaterial
 
     private bool EnsureUberDefaultParameter(ShaderUiProperty property)
     {
-        if (Parameter<ShaderVar>(property.Name) is not null)
-            return false;
+        if (Parameter<ShaderVar>(property.Name) is ShaderVar existingParameter)
+            return TryApplyUberDefaultLiteral(existingParameter, property);
 
         if (!ShaderVar.GlslTypeMap.TryGetValue(property.GlslType, out EShaderVarType shaderVarType))
             return false;
@@ -224,9 +233,42 @@ public partial class XRMaterial
         return true;
     }
 
+    private bool TryApplyUberDefaultLiteral(ShaderVar parameter, ShaderUiProperty property)
+    {
+        if (string.IsNullOrWhiteSpace(property.DefaultLiteral))
+            return false;
+
+        UberMaterialPropertyState? authoredProperty = UberAuthoredState.GetProperty(property.Name);
+        if (!string.IsNullOrWhiteSpace(authoredProperty?.StaticLiteral))
+            return false;
+
+        if (!IsShaderParameterAtLanguageDefault(parameter))
+            return false;
+
+        object previousValue = parameter.GenericValue;
+        ApplyUberDefaultLiteral(parameter, property.DefaultLiteral);
+        return !Equals(previousValue, parameter.GenericValue);
+    }
+
+    private static bool IsShaderParameterAtLanguageDefault(ShaderVar parameter)
+    {
+        return parameter switch
+        {
+            ShaderBool shaderBool => !shaderBool.Value,
+            ShaderInt shaderInt => shaderInt.Value == 0,
+            ShaderUInt shaderUInt => shaderUInt.Value == 0u,
+            ShaderFloat shaderFloat => shaderFloat.Value == 0.0f,
+            ShaderVector2 shaderVector2 => shaderVector2.Value == Vector2.Zero,
+            ShaderVector3 shaderVector3 => shaderVector3.Value == Vector3.Zero,
+            ShaderVector4 shaderVector4 => shaderVector4.Value == Vector4.Zero,
+            _ => false,
+        };
+    }
+
     private bool EnsureStylizedLightingModeDefault()
     {
-        if (UberAuthoredState.GetProperty("_LightingMode") is not null)
+        UberMaterialPropertyState? authoredProperty = UberAuthoredState.GetProperty("_LightingMode");
+        if (!string.IsNullOrWhiteSpace(authoredProperty?.StaticLiteral))
             return false;
 
         if (Parameter<ShaderInt>("_LightingMode") is not ShaderInt lightingMode)
@@ -438,8 +480,8 @@ public partial class XRMaterial
             });
 
             Stopwatch adoptionStopwatch = Stopwatch.StartNew();
-            SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
             SetActiveUberVariant(prepared.BindingState);
+            SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
             adoptionStopwatch.Stop();
 
             UberMaterialVariantStatus activeStatus = new()
@@ -612,7 +654,8 @@ public partial class XRMaterial
             GeneratedSourceLength = prepared.GeneratedSourceLength,
         });
 
-        if (ActiveUberVariant.Equals(prepared.BindingState))
+        if (ActiveUberVariant.Equals(prepared.BindingState) &&
+            UberShaderVariantBuilder.IsGeneratedVariant(GetShader(EShaderType.Fragment)))
         {
             UberMaterialVariantStatus status = new()
             {
@@ -644,8 +687,8 @@ public partial class XRMaterial
         });
 
         Stopwatch adoptionStopwatch = Stopwatch.StartNew();
-        SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
         SetActiveUberVariant(prepared.BindingState);
+        SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
         adoptionStopwatch.Stop();
 
         UberMaterialVariantStatus activeStatus = new()
@@ -698,8 +741,11 @@ public partial class XRMaterial
 
     private XRShader ResolveCanonicalUberFragmentShader(XRShader fragmentShader)
     {
-        if (_uberCanonicalFragmentShader is not null)
+        if (_uberCanonicalFragmentShader is not null &&
+            !UberShaderVariantBuilder.IsGeneratedVariant(_uberCanonicalFragmentShader))
+        {
             return _uberCanonicalFragmentShader;
+        }
 
         if (!UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader))
         {
@@ -721,7 +767,6 @@ public partial class XRMaterial
             return _uberCanonicalFragmentShader;
         }
 
-        _uberCanonicalFragmentShader = fragmentShader;
         return fragmentShader;
     }
 

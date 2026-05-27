@@ -1685,7 +1685,9 @@ namespace XREngine
                 bool processMeshesAsync = effectiveImportOptions.ProcessMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
                 bool batchSubmeshAdds = effectiveImportOptions.BatchSubmeshAddsDuringAsyncImport;
                 bool importedRenderersGenerateAsync = effectiveImportOptions.GenerateMeshRenderersAsync;
-                bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents;
+                bool generateSceneNodesPerSubmesh = effectiveImportOptions.GenerateSceneNodesPerSubmesh;
+                bool splitSubmeshesIntoSeparateModelComponents = effectiveImportOptions.SplitSubmeshesIntoSeparateModelComponents
+                    || generateSceneNodesPerSubmesh;
                 bool separateMeshIslands = effectiveImportOptions.SeparateMeshIslands;
 
                 SceneNode rootNode;
@@ -1702,6 +1704,7 @@ namespace XREngine
                         batchSubmeshAdds,
                         importedRenderersGenerateAsync,
                         splitSubmeshesIntoSeparateModelComponents,
+                        generateSceneNodesPerSubmesh,
                         separateMeshIslands);
                 }
 
@@ -1943,6 +1946,7 @@ namespace XREngine
             bool batchSubmeshAddsDuringAsyncImport,
             bool importedRenderersGenerateAsync,
             bool splitSubmeshesIntoSeparateModelComponents,
+            bool generateSceneNodesPerSubmesh,
             bool separateMeshIslands)
         {
             using var t = Engine.Profiler.Start("Normalizing node scales");
@@ -2009,6 +2013,7 @@ namespace XREngine
                     cancellationToken,
                     importedRenderersGenerateAsync,
                     splitSubmeshesIntoSeparateModelComponents,
+                    generateSceneNodesPerSubmesh,
                     separateMeshIslands,
                     publishSubMeshesOnSwapThread: processMeshesAsynchronously,
                     batchSubmeshAddsDuringAsyncImport: processMeshesAsynchronously && batchSubmeshAddsDuringAsyncImport);
@@ -2157,6 +2162,7 @@ namespace XREngine
             CancellationToken cancellationToken,
             bool importedRenderersGenerateAsync,
             bool splitSubmeshesIntoSeparateModelComponents,
+            bool generateSceneNodesPerSubmesh,
             bool separateMeshIslands,
             bool publishSubMeshesOnSwapThread,
             bool batchSubmeshAddsDuringAsyncImport)
@@ -2167,7 +2173,10 @@ namespace XREngine
 
             ModelComponent CreateModelComponent(string componentName)
             {
-                ModelComponent component = sceneNode.AddComponent<ModelComponent>()!;
+                SceneNode componentNode = generateSceneNodesPerSubmesh
+                    ? new SceneNode(sceneNode, componentName) { Layer = _importLayer }
+                    : sceneNode;
+                ModelComponent component = componentNode.AddComponent<ModelComponent>()!;
                 Model componentModel = new();
                 componentModel.Meshes.ThreadSafe = true;
                 component.Name = componentName;

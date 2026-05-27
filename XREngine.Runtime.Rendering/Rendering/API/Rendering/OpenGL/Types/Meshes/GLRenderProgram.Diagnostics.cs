@@ -9,12 +9,27 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLRenderProgram
         {
+            public enum ELinkedProgramHandleSource
+            {
+                None,
+                OwnedSource,
+                OwnedBinary,
+                SharedLinkedProgram,
+            }
+
             public readonly record struct LinkDiagnosticsSnapshot(
                 string ProgramName,
                 ulong Hash,
                 ulong PreparedHash,
+                ulong EffectiveSourceHash,
                 uint ProgramId,
                 uint ReplacementProgramId,
+                uint SharedLinkedProgramId,
+                int SharedLinkedProgramReferenceCount,
+                bool OwnsCurrentProgramHandle,
+                ELinkedProgramHandleSource HandleSource,
+                string? ProgramDescriptorKey,
+                string? BinaryCacheKey,
                 bool IsGenerated,
                 bool IsLinked,
                 bool LinkReady,
@@ -88,6 +103,9 @@ namespace XREngine.Rendering.OpenGL
                 GLProgramCompileLinkQueue? sourceQueue = Renderer.ProgramCompileLinkQueue;
                 GLProgramBinaryUploadQueue? binaryQueue = Renderer.ProgramBinaryUploadQueue;
                 var settings = RuntimeEngine.Rendering.Settings;
+                SharedLinkedProgram? sharedProgram = _sharedLinkedProgram;
+                string? binaryCacheKey = _cachedProgram?.CacheKey ?? _preparedCacheKey;
+                ulong effectiveSourceHash = Hash != 0 ? Hash : _preparedHash;
 
                 double activeBuildElapsedMilliseconds = _activeBuildQueueTimestamp == 0
                     ? 0.0
@@ -97,8 +115,17 @@ namespace XREngine.Rendering.OpenGL
                     ProgramName: GetProgramDebugName(),
                     Hash: Hash,
                     PreparedHash: _preparedHash,
+                    EffectiveSourceHash: effectiveSourceHash,
                     ProgramId: programId,
                     ReplacementProgramId: _replacementProgramId,
+                    SharedLinkedProgramId: sharedProgram?.ProgramId ?? 0,
+                    SharedLinkedProgramReferenceCount: sharedProgram?.ReferenceCount ?? 0,
+                    OwnsCurrentProgramHandle: sharedProgram is null
+                        ? programId != 0
+                        : ReferenceEquals(sharedProgram.OwnerProgram, this),
+                    HandleSource: ResolveLinkedProgramHandleSource(sharedProgram),
+                    ProgramDescriptorKey: Data.ProgramDescriptor.StableKey,
+                    BinaryCacheKey: binaryCacheKey,
                     IsGenerated: IsGenerated,
                     IsLinked: IsLinked,
                     LinkReady: LinkReady,
@@ -164,6 +191,15 @@ namespace XREngine.Rendering.OpenGL
                     AsyncCompileLinkPending: _asyncCompileLinkPending,
                     AsyncCompileLinkQueueWaitPending: _asyncCompileLinkQueueWaitPending,
                     AsyncCompileDuplicateHashWaitPending: _asyncCompileDuplicateHashWaitPending);
+            }
+
+            private ELinkedProgramHandleSource ResolveLinkedProgramHandleSource(SharedLinkedProgram? sharedProgram)
+            {
+                if (sharedProgram is not null)
+                    return ELinkedProgramHandleSource.SharedLinkedProgram;
+                if (_cachedProgram is not null || _preparedIsCached)
+                    return ELinkedProgramHandleSource.OwnedBinary;
+                return IsLinked ? ELinkedProgramHandleSource.OwnedSource : ELinkedProgramHandleSource.None;
             }
         }
     }

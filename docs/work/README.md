@@ -19,7 +19,8 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
 | Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
-| Atmospheric scattering | Implemented + validation | [../features/components/atmospheric-scattering.md](../features/components/atmospheric-scattering.md), [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md), [design/atmospheric-scattering-component-design.md](design/atmospheric-scattering-component-design.md) | OpenGL mono implementation is in place; visual screenshot/profiler validation and stereo/platform parity remain follow-up validation work. |
+| Atmospheric scattering | Implemented + validation | [../features/components/atmospheric-scattering.md](../features/components/atmospheric-scattering.md), [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md), [design/rendering/atmospheric-scattering-component-design.md](design/rendering/atmospheric-scattering-component-design.md) | OpenGL mono implementation is in place; visual screenshot/profiler validation and stereo/platform parity remain follow-up validation work. |
+| Local volumetric fog | Implemented + validation | [design/rendering/volumetric-fog-production-design.md](design/rendering/volumetric-fog-production-design.md) | Half-resolution scatter, temporal reprojection, bilateral upscale, and composite are in place. Production polish, XR parity, dual-lobe HG, optional powder brightening, and future froxel work are consolidated in the design. |
 | Forward depth-normal TransformId | Active | [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md) | Shared forward prepass follow-up so depth, normal, and transform ID describe the same surface. |
 | Dynamic indirect material bindings | Active | [todo/rendering/dynamic-indirect-material-bindings-todo.md](todo/rendering/dynamic-indirect-material-bindings-todo.md), [design/rendering/dynamic-indirect-material-bindings.md](design/rendering/dynamic-indirect-material-bindings.md) | Layout-driven material table roadmap for zero-readback indirect rendering, replacing hardcoded opaque-deferred rows with generated shader and packer layouts. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
@@ -43,6 +44,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Animated Gaussian capture and streaming | Active | [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md) | Offline bake plus one-draw animated Gaussian clip playback roadmap. |
 | Octahedral billboard capture | Active | [todo/octahedral-billboard-capture-todo.md](todo/octahedral-billboard-capture-todo.md) | Phased repair plan for model/submesh impostor capture, runtime billboards, HLOD integration, and asset persistence. |
 | Shader and snippet optimization | Active | [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md) | Active shader performance and preprocessing tracker. |
+| OpenGL shader program deduplication | Active | [todo/rendering/opengl-shader-program-deduplication-todo.md](todo/rendering/opengl-shader-program-deduplication-todo.md) | Tracker for reducing duplicate logical shader-program wrappers and adding grouped Shader Program Links diagnostics. |
 | GPU softbody rigging | Active | [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
 | Voxel cone tracing / VXAO | Active | [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md) | Shared-voxel roadmap item. |
 | DDGI integration | Active | [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md) | Execution tracker derived from the [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md) roadmap. |
@@ -72,6 +74,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/rendering/shadows/local-shadow-frustum-culling-todo.md](todo/rendering/shadows/local-shadow-frustum-culling-todo.md)
 - [todo/octahedral-billboard-capture-todo.md](todo/octahedral-billboard-capture-todo.md)
 - [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md)
+- [todo/rendering/opengl-shader-program-deduplication-todo.md](todo/rendering/opengl-shader-program-deduplication-todo.md)
 - [todo/physics-finalization.md](todo/physics-finalization.md)
 - [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md)
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
@@ -87,12 +90,13 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 
 - [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
 - [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md)
-- [design/atmospheric-scattering-component-design.md](design/atmospheric-scattering-component-design.md)
+- [design/rendering/atmospheric-scattering-component-design.md](design/rendering/atmospheric-scattering-component-design.md)
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
 - [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)
 - [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
 - [design/rendering/dynamic-indirect-material-bindings.md](design/rendering/dynamic-indirect-material-bindings.md)
 - [design/rendering/gpu-meshlet-zero-readback-rendering-design.md](design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
+- [design/rendering/volumetric-fog-production-design.md](design/rendering/volumetric-fog-production-design.md)
 - [design/assets/model-import-binary-cache-design.md](design/assets/model-import-binary-cache-design.md)
 - [design/dynamic-shadow-atlas-lod-plan.md](design/dynamic-shadow-atlas-lod-plan.md)
 - [design/gpu-skinning-buffer-compression-plan.md](design/gpu-skinning-buffer-compression-plan.md)

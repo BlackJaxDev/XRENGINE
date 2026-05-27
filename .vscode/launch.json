@@ -10,7 +10,10 @@
             "args": [],
             "cwd": "${workspaceFolder}",
             "console": "internalConsole",
-            "stopAtEntry": false
+            "stopAtEntry": false,
+            "env": {
+                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1"
+            }
         },
         {
             "name": "Editor (Unit Testing World)",
@@ -23,7 +26,8 @@
             "console": "internalConsole",
             "stopAtEntry": false,
             "env": {
-                "XRE_WORLD_MODE": "UnitTesting"
+                "XRE_WORLD_MODE": "UnitTesting",
+                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1"
             }
         },
         {

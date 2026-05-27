@@ -25,10 +25,10 @@ namespace XREngine.Rendering;
 /// </summary>
 internal static partial class GlslSnippetDeadCodeEliminator
 {
-    [GeneratedRegex(@"^[ \t]*//[ \t]*=====[ \t]*BEGIN[ \t]+(?:SNIPPET|INCLUDE):[ \t]*(?<name>[^=\r\n]+?)[ \t]*=+[ \t]*$", RegexOptions.Multiline)]
+    [GeneratedRegex(@"^[ \t]*//[ \t]*=====[ \t]*BEGIN[ \t]+(?:SNIPPET|INCLUDE):[ \t]*(?<name>[^=\r\n]+?)[ \t]*=+[ \t]*\r?$", RegexOptions.Multiline)]
     private static partial Regex BeginSnippetRegex();
 
-    [GeneratedRegex(@"^[ \t]*//[ \t]*=====[ \t]*END[ \t]+(?:SNIPPET|INCLUDE):[ \t]*(?<name>[^=\r\n]+?)[ \t]*=+[ \t]*$", RegexOptions.Multiline)]
+    [GeneratedRegex(@"^[ \t]*//[ \t]*=====[ \t]*END[ \t]+(?:SNIPPET|INCLUDE):[ \t]*(?<name>[^=\r\n]+?)[ \t]*=+[ \t]*\r?$", RegexOptions.Multiline)]
     private static partial Regex EndSnippetRegex();
 
     [GeneratedRegex(@"\b[A-Za-z_][A-Za-z0-9_]*\b", RegexOptions.Compiled)]
@@ -106,6 +106,22 @@ internal static partial class GlslSnippetDeadCodeEliminator
         catch
         {
             // Conservative: never break shader compilation by aborting.
+            return source;
+        }
+    }
+
+    public static string StripRegionMarkers(string source)
+    {
+        if (string.IsNullOrEmpty(source))
+            return source;
+
+        try
+        {
+            string stripped = BeginSnippetRegex().Replace(source, string.Empty);
+            return EndSnippetRegex().Replace(stripped, string.Empty);
+        }
+        catch
+        {
             return source;
         }
     }
@@ -565,6 +581,7 @@ internal static partial class GlslSnippetDeadCodeEliminator
     private static readonly Regex StructHeaderRegex = new(@"\bstruct\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{", RegexOptions.Compiled);
     private static readonly Regex BlockHeaderRegex = new(@"\b(?:uniform|buffer)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{", RegexOptions.Compiled);
     private static readonly Regex FunctionHeaderRegex = new(@"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.Compiled);
+    private static readonly Regex LeadingLayoutQualifierRegex = new(@"^\s*layout\s*\([^)]*\)\s*", RegexOptions.Compiled);
 
     private static void ClassifyChunk(string masked, int start, int end, Chunk chunk)
     {
@@ -610,6 +627,16 @@ internal static partial class GlslSnippetDeadCodeEliminator
             return;
         }
 
+        // Plain variable / uniform / in / out / const declaration. This runs before
+        // function classification because GLSL declarations commonly contain
+        // constructor calls in initializers, e.g. `mat4 Value = mat4(1.0);`.
+        if (TryExtractPlainDeclarationName(text, out string declarationName))
+        {
+            chunk.DeclaredNames.Add(declarationName);
+            FinalizeReferences(chunk, referenced);
+            return;
+        }
+
         // Function (definition or prototype): contains '(' at top level and a name immediately preceding it.
         // Skip if this is just an expression (rare at top level). We require pattern: ...IDENT(...)...
         Match funcMatch = FunctionHeaderRegex.Match(text);
@@ -620,23 +647,112 @@ internal static partial class GlslSnippetDeadCodeEliminator
             return;
         }
 
-        // Plain variable / uniform / in / out / const declaration. Last identifier before '=' or ';' or '['.
+        chunk.Unparseable = true;
+        FinalizeReferences(chunk, referenced);
+    }
+
+    private static bool TryExtractPlainDeclarationName(string text, out string name)
+    {
+        name = string.Empty;
         string flat = text.TrimEnd(';', '\r', '\n', ' ', '\t');
-        int eq = flat.IndexOf('=');
-        if (eq > 0)
+        if (flat.Length == 0)
+            return false;
+
+        int eq = FindTopLevelChar(flat, '=');
+        if (eq >= 0)
             flat = flat[..eq];
-        // Strip trailing array brackets group.
+
+        flat = StripLeadingLayoutQualifiers(flat);
+
+        // Function prototypes have a signature on the left side; variable
+        // declarations only have layout qualifiers, type/qualifier tokens, an
+        // identifier, and optional array suffixes.
+        if (FindTopLevelChar(flat, '(') >= 0)
+            return false;
+
+        int comma = FindLastTopLevelChar(flat, ',');
+        if (comma >= 0)
+            flat = flat[(comma + 1)..];
+
         flat = StripTrailingArray(flat);
         Match lastIdent = Regex.Match(flat, @"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*$");
-        if (lastIdent.Success)
+        if (!lastIdent.Success)
+            return false;
+
+        string candidate = lastIdent.Groups["name"].Value;
+        if (GlslReserved.Contains(candidate))
+            return false;
+
+        name = candidate;
+        return true;
+    }
+
+    private static string StripLeadingLayoutQualifiers(string text)
+    {
+        string previous;
+        string current = text;
+        do
         {
-            chunk.DeclaredNames.Add(lastIdent.Groups["name"].Value);
+            previous = current;
+            current = LeadingLayoutQualifierRegex.Replace(current, string.Empty, 1);
         }
-        else
+        while (!ReferenceEquals(previous, current) && previous.Length != current.Length);
+
+        return current;
+    }
+
+    private static int FindTopLevelChar(string text, char target)
+    {
+        int parenDepth = 0;
+        int bracketDepth = 0;
+        int braceDepth = 0;
+        for (int i = 0; i < text.Length; i++)
         {
-            chunk.Unparseable = true;
+            char c = text[i];
+            if (c == '(')
+                parenDepth++;
+            else if (c == ')')
+                parenDepth = Math.Max(0, parenDepth - 1);
+            else if (c == '[')
+                bracketDepth++;
+            else if (c == ']')
+                bracketDepth = Math.Max(0, bracketDepth - 1);
+            else if (c == '{')
+                braceDepth++;
+            else if (c == '}')
+                braceDepth = Math.Max(0, braceDepth - 1);
+            else if (c == target && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0)
+                return i;
         }
-        FinalizeReferences(chunk, referenced);
+
+        return -1;
+    }
+
+    private static int FindLastTopLevelChar(string text, char target)
+    {
+        int parenDepth = 0;
+        int bracketDepth = 0;
+        int braceDepth = 0;
+        for (int i = text.Length - 1; i >= 0; i--)
+        {
+            char c = text[i];
+            if (c == ')')
+                parenDepth++;
+            else if (c == '(')
+                parenDepth = Math.Max(0, parenDepth - 1);
+            else if (c == ']')
+                bracketDepth++;
+            else if (c == '[')
+                bracketDepth = Math.Max(0, bracketDepth - 1);
+            else if (c == '}')
+                braceDepth++;
+            else if (c == '{')
+                braceDepth = Math.Max(0, braceDepth - 1);
+            else if (c == target && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0)
+                return i;
+        }
+
+        return -1;
     }
 
     private static void FinalizeReferences(Chunk chunk, HashSet<string> referenced)

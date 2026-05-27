@@ -41,7 +41,10 @@ namespace XREngine.Rendering.OpenGL
             private XRMesh.BufferCollection? _subscribedRendererBuffers;
             private int _bufferCollectionsDirty;
             private int _bufferCollectionRefreshQueued;
-            private readonly record struct CombinedProgramCacheEntry(GLRenderProgram Program, long ShaderStateRevision);
+            private readonly record struct CombinedProgramCacheEntry(
+                GLRenderProgram Program,
+                long ShaderStateRevision,
+                OpenGLRenderer.CombinedProgramPoolLease? Lease);
             private readonly Dictionary<XRMaterial, CombinedProgramCacheEntry> _combinedProgramCache = new(ReferenceEqualityComparer.Instance);
             private GLRenderProgramPipeline? _pipeline;
             private GLRenderProgram? _combinedProgram;
@@ -50,6 +53,9 @@ namespace XREngine.Rendering.OpenGL
             private GLRenderProgram? _separatedVertexProgram;
             private GLRenderProgram? _forcedGeneratedVertexProgram;
             private bool _combinedProgramPipelineFallbackLogged;
+            private bool _pendingUberFallbackLogged;
+            private static readonly object s_pendingUberFallbackMaterialLock = new();
+            private static XRMaterial? s_pendingUberFallbackMaterial;
             private int _shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
             private XRMaterial? _programMaterialStateKey;
             private long _programMaterialShaderStateRevision;

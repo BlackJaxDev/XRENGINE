@@ -119,6 +119,17 @@ namespace XREngine.Rendering
             public bool HasVariant => Variant.HasVariant;
         }
 
+        public sealed record ShaderProgramDiagnosticMetadata(
+            string? MaterialName,
+            string? MeshRendererName,
+            string? VersionKind,
+            string? TopologyKind,
+            string? PoolKey,
+            string? Detail)
+        {
+            public static ShaderProgramDiagnosticMetadata Empty { get; } = new(null, null, null, null, null, null);
+        }
+
         private static readonly StringComparer UniformComparer = StringComparer.Ordinal;
 
         private static readonly Regex UniformStatementRegex = new(
@@ -202,6 +213,8 @@ namespace XREngine.Rendering
         private bool _shaderInterfaceDirty = true;
 
         private ShaderProgramMetadata _shaderMetadata = ShaderProgramMetadata.Empty;
+        private ShaderProgramDiagnosticMetadata _diagnosticMetadata = ShaderProgramDiagnosticMetadata.Empty;
+        private XRRenderProgramDescriptor _programDescriptor = XRRenderProgramDescriptor.Empty;
 
         [YamlIgnore]
         private readonly Dictionary<XRShader, ShaderSubscription> _shaderSourceSubscriptions = new();
@@ -214,6 +227,22 @@ namespace XREngine.Rendering
         {
             get => _shaderMetadata;
             set => SetField(ref _shaderMetadata, value ?? ShaderProgramMetadata.Empty);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public ShaderProgramDiagnosticMetadata DiagnosticMetadata
+        {
+            get => _diagnosticMetadata;
+            set => SetField(ref _diagnosticMetadata, value ?? ShaderProgramDiagnosticMetadata.Empty);
+        }
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public XRRenderProgramDescriptor ProgramDescriptor
+        {
+            get => _programDescriptor;
+            set => SetField(ref _programDescriptor, value);
         }
 
         /// <summary>
@@ -383,6 +412,9 @@ namespace XREngine.Rendering
                 Variant = variant ?? ShaderProgramVariantMetadata.Empty,
                 Backend = ShaderProgramBackendStatus.Empty,
             };
+
+        public void SetShaderProgramDiagnosticMetadata(ShaderProgramDiagnosticMetadata? metadata)
+            => DiagnosticMetadata = metadata ?? ShaderProgramDiagnosticMetadata.Empty;
 
         public void SetShaderBackendStatus(ShaderProgramBackendStatus status)
             => ShaderMetadata = ShaderMetadata with { Backend = status };

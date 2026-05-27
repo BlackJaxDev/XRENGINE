@@ -32,7 +32,6 @@ public partial class XRMesh
 
         int maxColorCount = 0, maxTexCoordCount = 0;
 
-        _bounds = new(Vector3.Zero, Vector3.Zero);
         var vertexCache = new ConcurrentDictionary<int, Vertex>();
 
         PopulateVerticesAssimpParallelPrecomputed(
@@ -73,11 +72,12 @@ public partial class XRMesh
         }
 
         VertexCount = count;
+        _bounds = CalculateBounds(sourceList);
 
         InitializeSkinning(mesh, nodeCache, faceRemap, sourceList);
 
         InitMeshBuffers(vertexActions.ContainsKey(1), vertexActions.ContainsKey(2), maxColorCount, maxTexCoordCount);
-        AddPositionsAction(vertexActions);
+        AddPositionsAction(vertexActions, updateBounds: false);
 
         PopulateVertexData(
             vertexActions.Values,

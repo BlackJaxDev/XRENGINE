@@ -111,8 +111,9 @@ namespace XREngine.Rendering
             public readonly XRShader FragmentShader = fragmentShader;
         }
 
-        private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
-        private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _pendingMaterialPrograms = [];
+        private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _materialPrograms = [];
+        private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
+        private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
         private readonly Dictionary<(bool bindless, int rendererKey, string layoutHash), MaterialTableProgramCache> _materialTablePrograms = [];
         private readonly Dictionary<(bool bindless, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
@@ -1891,57 +1892,7 @@ namespace XREngine.Rendering
             
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             long shaderStateRevision = material.ShaderStateRevision;
-            (uint materialId, int rendererKey) cacheKey = (materialID, rendererKey);
-
-            if (_materialPrograms.TryGetValue(cacheKey, out var existing))
-            {
-                if (existing.ShaderStateRevision == shaderStateRevision)
-                {
-                    existing.Program.Link();
-                    return existing.Program;
-                }
-
-                if (_pendingMaterialPrograms.TryGetValue(cacheKey, out var pending) &&
-                    pending.ShaderStateRevision == shaderStateRevision)
-                {
-                    pending.Program.Link();
-                    if (IsProgramReadyForCurrentRenderer(pending.Program))
-                    {
-                        _pendingMaterialPrograms.Remove(cacheKey);
-                        _materialPrograms[cacheKey] = pending;
-                        DestroyMaterialProgramCache(existing);
-                        return pending.Program;
-                    }
-
-                    return existing.Program;
-                }
-
-                if (_pendingMaterialPrograms.Remove(cacheKey, out var stalePending))
-                    DestroyMaterialProgramCache(stalePending);
-
-                GpuDebug(
-                    "Program cache stale for material '{0}': cached shader revision {1}, current {2}.",
-                    material.Name ?? "<unnamed>",
-                    existing.ShaderStateRevision,
-                    shaderStateRevision);
-            }
-            else if (_pendingMaterialPrograms.TryGetValue(cacheKey, out var pendingOnly))
-            {
-                if (pendingOnly.ShaderStateRevision == shaderStateRevision)
-                {
-                    pendingOnly.Program.Link();
-                    if (IsProgramReadyForCurrentRenderer(pendingOnly.Program))
-                    {
-                        _pendingMaterialPrograms.Remove(cacheKey);
-                        _materialPrograms[cacheKey] = pendingOnly;
-                    }
-
-                    return pendingOnly.Program;
-                }
-
-                _pendingMaterialPrograms.Remove(cacheKey);
-                DestroyMaterialProgramCache(pendingOnly);
-            }
+            (uint materialId, int rendererKey) useKey = (materialID, rendererKey);
 
             GpuDebug($"Creating new program for material: {material.Name ?? "<unnamed>"}");
             GpuDebug($"Material has {material.Shaders.Count} shaders");
@@ -1984,38 +1935,120 @@ namespace XREngine.Rendering
                 shaderList.Add(generatedVertexShader);
 
             GpuDebug($"Final shader list count: {shaderList.Count}");
-            //Debug.Meshes("Creating and linking program...");
-            
-            var program = new XRRenderProgram(linkNow: false, separable: false, shaderList);
-            program.AllowLink();
-            program.Link();
-            
-            if (program is null)
+
+            XRRenderProgramDescriptor descriptor = BuildGpuDrivenCombinedProgramDescriptor(
+                material,
+                shaderList,
+                generatedVertexShader,
+                useTextVertexPath,
+                fragmentConsumesTransformId,
+                emitLodTransitionRole);
+
+            XRRenderProgram? fallbackProgram = null;
+            if (_materialProgramUseDescriptors.TryGetValue(useKey, out XRRenderProgramDescriptor previousDescriptor) &&
+                !previousDescriptor.Equals(descriptor) &&
+                _materialPrograms.TryGetValue(previousDescriptor, out MaterialProgramCache previousCache))
             {
-                Debug.MeshesWarning("Failed to create render program for material; skipping cache.");
-                return null;
+                fallbackProgram = previousCache.Program;
             }
 
-            MaterialProgramCache cacheEntry = new(program, generatedVertexShader, shaderStateRevision);
-            if (IsProgramReadyForCurrentRenderer(program) || !_materialPrograms.TryGetValue(cacheKey, out existing))
+            if (_materialPrograms.TryGetValue(descriptor, out MaterialProgramCache existing))
             {
-                if (_pendingMaterialPrograms.Remove(cacheKey, out var stalePending))
-                    DestroyMaterialProgramCache(stalePending);
+                ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
+                existing.Program.Link();
+                _materialProgramUseDescriptors[useKey] = descriptor;
+                return existing.Program;
+            }
 
-                if (existing.Program is not null && existing.ShaderStateRevision != shaderStateRevision)
-                    DestroyMaterialProgramCache(existing);
+            if (_pendingMaterialPrograms.TryGetValue(descriptor, out MaterialProgramCache pending))
+            {
+                pending.Program.Link();
+                if (IsProgramReadyForCurrentRenderer(pending.Program))
+                {
+                    _pendingMaterialPrograms.Remove(descriptor);
+                    _materialPrograms[descriptor] = pending;
+                    _materialProgramUseDescriptors[useKey] = descriptor;
+                    ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
+                    return pending.Program;
+                }
 
-                _materialPrograms[cacheKey] = cacheEntry;
+                ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
+                return fallbackProgram ?? pending.Program;
+            }
+
+            ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolMiss();
+            //Debug.Meshes("Creating and linking program...");
+            
+            var program = new XRRenderProgram(linkNow: false, separable: false, shaderList)
+            {
+                Name = $"GpuIndirectCombined:{material.Name ?? "unknown"}",
+                UsageTag = $"GpuIndirectCombinedProgram | material={material.Name ?? "<unnamed>"} | rendererKey={rendererKey}",
+                ProgramDescriptor = descriptor,
+                Priority = material.ShaderProgramPriority,
+            };
+            material.ApplyShaderProgramMetadata(program);
+            program.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
+                material.Name,
+                vaoRenderer?.Name,
+                useTextVertexPath ? "GpuIndirectText" : "GpuIndirect",
+                "GpuDrivenCombinedMesh",
+                descriptor.StableKey,
+                descriptor.VertexLayoutIdentity));
+            program.AllowLink();
+            program.Link();
+
+            MaterialProgramCache cacheEntry = new(program, generatedVertexShader, shaderStateRevision);
+            if (IsProgramReadyForCurrentRenderer(program) || fallbackProgram is null)
+            {
+                _materialPrograms[descriptor] = cacheEntry;
+                _materialProgramUseDescriptors[useKey] = descriptor;
                 return program;
             }
 
-            if (_pendingMaterialPrograms.Remove(cacheKey, out var previousPending))
-                DestroyMaterialProgramCache(previousPending);
-
-            _pendingMaterialPrograms[cacheKey] = cacheEntry;
+            _pendingMaterialPrograms[descriptor] = cacheEntry;
             //Debug.Meshes("Program cached");
             
-            return existing.Program;
+            return fallbackProgram;
+        }
+
+        private static XRRenderProgramDescriptor BuildGpuDrivenCombinedProgramDescriptor(
+            XRMaterial material,
+            IReadOnlyList<XRShader> shaderList,
+            XRShader? generatedVertexShader,
+            bool useTextVertexPath,
+            bool fragmentConsumesTransformId,
+            bool emitLodTransitionRole)
+        {
+            string generatedVertexIdentity = BuildGpuGeneratedVertexIdentity(generatedVertexShader);
+            string vertexLayoutIdentity = string.Concat(
+                useTextVertexPath ? "text" : "mesh",
+                "|transformId=",
+                fragmentConsumesTransformId ? "1" : "0",
+                "|lodRole=",
+                emitLodTransitionRole ? "1" : "0",
+                "|generated=",
+                generatedVertexIdentity);
+
+            return XRRenderProgramDescriptor.FromShaders(
+                shaderList,
+                separable: false,
+                renderSettingsVersion: RuntimeEngine.Rendering.Settings.ShaderConfigVersion,
+                generatedVertexIdentity: generatedVertexIdentity,
+                materialVariantKind: material.ActiveUberVariant.IsEmpty ? null : "MaterialVariant",
+                materialVariantHash: material.ActiveUberVariant.VariantHash,
+                vertexLayoutIdentity: vertexLayoutIdentity,
+                topologyKind: useTextVertexPath ? "GpuDrivenText" : "GpuDrivenMesh");
+        }
+
+        private static string BuildGpuGeneratedVertexIdentity(XRShader? generatedVertexShader)
+        {
+            if (generatedVertexShader is null)
+                return string.Empty;
+
+            if (generatedVertexShader.TryGetResolvedSource(out string resolvedSource, logFailures: false))
+                return XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(resolvedSource);
+
+            return XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(generatedVertexShader.Source?.Text);
         }
 
         private static bool IsProgramReadyForCurrentRenderer(XRRenderProgram program)
@@ -5146,6 +5179,7 @@ namespace XREngine.Rendering
             foreach (var cache in _pendingMaterialPrograms.Values)
                 DestroyMaterialProgramCache(cache);
             _pendingMaterialPrograms.Clear();
+            _materialProgramUseDescriptors.Clear();
             foreach (var cache in _materialTablePrograms.Values)
                 DestroyMaterialTableProgramCache(cache);
             _materialTablePrograms.Clear();

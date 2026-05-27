@@ -52,6 +52,15 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool CalculateSkinningInComputeShader => Engine.Rendering.Settings.CalculateSkinningInComputeShader;
     public bool CalculateBlendshapesInComputeShader => Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
     public int ShaderConfigVersion => Engine.Rendering.Settings.ShaderConfigVersion;
+    public bool AllowBinaryProgramCaching => Engine.Rendering.Settings.AllowBinaryProgramCaching;
+    public bool AsyncProgramBinaryUpload => Engine.Rendering.Settings.AsyncProgramBinaryUpload;
+    public bool AsyncProgramCompilation => Engine.Rendering.Settings.AsyncProgramCompilation;
+    public int OpenGLProgramCompileLinkWorkerCount => Engine.Rendering.Settings.OpenGLProgramCompileLinkWorkerCount;
+    public int MaxAsyncShaderProgramsPerFrame => Engine.Rendering.Settings.MaxAsyncShaderProgramsPerFrame;
+    public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy => Engine.Rendering.Settings.OpenGLShaderLinkStrategy;
+    public int OpenGLShaderCompilerThreadCount => Engine.Rendering.Settings.OpenGLShaderCompilerThreadCount;
+    public bool OpenGLParallelShaderCompileProbeEnabled => Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled;
+    public int OpenGLParallelShaderCompileProbeTimeoutMs => Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeTimeoutMs;
 
     public void SubscribeRenderingSettingsChanged(Action callback)
         => Engine.Rendering.SettingsChanged += callback;

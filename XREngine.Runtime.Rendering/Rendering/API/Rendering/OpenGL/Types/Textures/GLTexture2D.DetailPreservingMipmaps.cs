@@ -34,7 +34,10 @@ public partial class GLTexture2D
 
         try
         {
-            program.Use();
+            OpenGLRenderer.GLRenderProgram? glProgram = Renderer.GenericToAPI<OpenGLRenderer.GLRenderProgram>(program);
+            if (glProgram is null || !glProgram.Use())
+                return false;
+
             program.Sampler("sourceTexture", Data, 0);
             program.Uniform("DetailPreserveStrength", DetailPreservingMipmapStrength);
 

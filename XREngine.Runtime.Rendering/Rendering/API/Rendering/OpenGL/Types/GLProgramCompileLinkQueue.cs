@@ -29,6 +29,8 @@ namespace XREngine.Rendering.OpenGL
         {
             private readonly GLSharedContext[] _workers;
             private readonly bool _completionStatusPollingEnabled;
+            private readonly SemaphoreSlim _programLinkGate;
+            private readonly bool _serializeProgramLinkDriverCalls;
             private readonly ConcurrentDictionary<uint, CompileResult> _completed = new();
             private readonly ConcurrentDictionary<uint, byte> _inFlightProgramIds = new();
             private readonly ConcurrentDictionary<uint, byte> _cancelledProgramIds = new();
@@ -41,6 +43,7 @@ namespace XREngine.Rendering.OpenGL
             private const int WorkerCompletionFastPollIterations = 64;
             private const double WorkerCompletionStuckFlushMilliseconds = 5000.0;
             private const double DefaultWorkerCompletionHardAbandonMilliseconds = 180000.0;
+            private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
             private static readonly double WorkerCompletionHardAbandonMilliseconds = ResolveWorkerCompletionHardAbandonMilliseconds();
             private static readonly bool DisableCompletionPollingForSharedContextWorkerPrograms = string.Equals(
                 Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_DISABLE_COMPLETION_POLLING"),
@@ -49,6 +52,11 @@ namespace XREngine.Rendering.OpenGL
             private static readonly bool SuppressParallelCompileForSingleStageWorkerPrograms =
                 string.Equals(
                     Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL"),
+                    "1",
+                    StringComparison.Ordinal);
+            private static readonly bool DisableProgramLinkSerialization =
+                string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION"),
                     "1",
                     StringComparison.Ordinal);
 
@@ -83,6 +91,8 @@ namespace XREngine.Rendering.OpenGL
                 _completionStatusPollingEnabled =
                     completionStatusPollingEnabled &&
                     !DisableCompletionPollingForSharedContextWorkerPrograms;
+                _serializeProgramLinkDriverCalls = _workers.Length > 1 && !DisableProgramLinkSerialization;
+                _programLinkGate = new SemaphoreSlim(_serializeProgramLinkDriverCalls ? 1 : Math.Max(1, _workers.Length));
             }
 
             public int WorkerCount => _workers.Length;
@@ -217,7 +227,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void EnqueueCompileAndLink(uint programId, ShaderInput[] shaders)
             {
-                if (!TryEnqueueCompileAndLink(programId, shaders, EProgramPriority.Main, out string? rejectReason))
+                if (!TryEnqueueCompileAndLink(programId, shaders, EProgramPriority.Main, setBinaryRetrievableHint: false, out string? rejectReason))
                     throw new InvalidOperationException(rejectReason ?? "Unable to enqueue OpenGL compile/link job.");
             }
 
@@ -231,6 +241,14 @@ namespace XREngine.Rendering.OpenGL
             /// <see cref="EProgramPriority.Compute"/>) inside the shared-context worker.
             /// </summary>
             public bool TryEnqueueCompileAndLink(uint programId, ShaderInput[] shaders, EProgramPriority priority, out string? rejectReason)
+                => TryEnqueueCompileAndLink(programId, shaders, priority, setBinaryRetrievableHint: false, out rejectReason);
+
+            public bool TryEnqueueCompileAndLink(
+                uint programId,
+                ShaderInput[] shaders,
+                EProgramPriority priority,
+                bool setBinaryRetrievableHint,
+                out string? rejectReason)
             {
                 ShaderInputSummary summary = SummarizeShaderInputs(shaders);
                 if (ContainsKnownAsyncLinkHazard(shaders))
@@ -466,51 +484,112 @@ namespace XREngine.Rendering.OpenGL
                                 "worker=source-link-attach");
                         }
 
-                        long linkStartTimestamp = Stopwatch.GetTimestamp();
-                        MeasureRenderingWorkerGlCall(
-                            "glLinkProgram",
-                            programId,
-                            0,
-                            null,
-                            () => gl.LinkProgram(programId),
-                            workerCompilerThreadsSuppressed
-                                ? "worker=source-link compiler-threads-suppressed"
-                                : useWorkerCompletionPolling
-                                    ? "worker=source-link completion-polling"
-                                    : "worker=source-link completion-polling-disabled");
-
-                        // Poll non-blocking GL_COMPLETION_STATUS_ARB before issuing the
-                        // blocking GL_LINK_STATUS query. The blocking query holds a
-                        // driver-wide lock on NVIDIA that prevents the main GL context
-                        // from making any progress for the entire duration of a cold
-                        // link (observed: 109+ seconds on a 387 KB single-stage
-                        // separable fragment program), freezing the render thread.
-                        if (useWorkerCompletionPolling && !PollCompletionStatusBlocking(
-                            gl,
-                            worker,
-                            programId,
-                            0,
-                            null,
-                            isShader: false,
-                            phase: "worker=source-link-completion-poll",
-                            out string? linkPollFailure))
+                        bool programLinkGateHeld = false;
+                        if (_serializeProgramLinkDriverCalls)
                         {
-                            double linkMillisecondsAbandoned = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp);
-                            string abandonedLinkError = linkPollFailure ?? "Shared-context program link completion poll aborted.";
-                            LogRenderingQueueEvent(
-                                "WORKER_LINK_ABANDONED",
-                                programId,
-                                summary,
-                                $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMillisecondsAbandoned:F2} error={abandonedLinkError}");
-                            PublishCompletedResult(
-                                programId,
-                                new CompileResult(
-                                    CompileStatus.LinkFailed,
-                                    abandonedLinkError,
-                                    compileMillisecondsCompleted,
-                                    linkMillisecondsAbandoned));
-                            Interlocked.Increment(ref _failedCount);
+                            LogRenderingQueueEvent("WORKER_LINK_GATE_WAIT", programId, summary, "serialized shared-context program link/status");
+                            _programLinkGate.Wait();
+                            programLinkGateHeld = true;
+                            LogRenderingQueueEvent("WORKER_LINK_GATE_ENTER", programId, summary, "serialized shared-context program link/status");
+                        }
 
+                        try
+                        {
+                            if (setBinaryRetrievableHint)
+                            {
+                                MeasureRenderingWorkerGlCall(
+                                    "glProgramParameteri(GL_PROGRAM_BINARY_RETRIEVABLE_HINT)",
+                                    programId,
+                                    0,
+                                    null,
+                                    () => gl.ProgramParameter(programId, GLEnum.ProgramBinaryRetrievableHint, 1),
+                                    "worker=source-link-binary-retrievable-hint value=1");
+                            }
+
+                            long linkStartTimestamp = Stopwatch.GetTimestamp();
+                            MeasureRenderingWorkerGlCall(
+                                "glLinkProgram",
+                                programId,
+                                0,
+                                null,
+                                () => gl.LinkProgram(programId),
+                                workerCompilerThreadsSuppressed
+                                    ? "worker=source-link compiler-threads-suppressed"
+                                    : useWorkerCompletionPolling
+                                        ? "worker=source-link completion-polling"
+                                        : "worker=source-link completion-polling-disabled");
+
+                            // Poll non-blocking GL_COMPLETION_STATUS_ARB before issuing the
+                            // blocking GL_LINK_STATUS query. The blocking query holds a
+                            // driver-wide lock on NVIDIA that prevents the main GL context
+                            // from making any progress for the entire duration of a cold
+                            // link (observed: 109+ seconds on a 387 KB single-stage
+                            // separable fragment program), freezing the render thread.
+                            if (useWorkerCompletionPolling && !PollCompletionStatusBlocking(
+                                gl,
+                                worker,
+                                programId,
+                                0,
+                                null,
+                                isShader: false,
+                                phase: "worker=source-link-completion-poll",
+                                out string? linkPollFailure))
+                            {
+                                double linkMillisecondsAbandoned = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp);
+                                string abandonedLinkError = linkPollFailure ?? $"Shared-context program link completion poll aborted; {SharedContextAbandonedLinkMarker}.";
+                                LogRenderingQueueEvent(
+                                    "WORKER_LINK_ABANDONED",
+                                    programId,
+                                    summary,
+                                    $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMillisecondsAbandoned:F2} error={abandonedLinkError}");
+                                PublishCompletedResult(
+                                    programId,
+                                    new CompileResult(
+                                        CompileStatus.LinkFailed,
+                                        abandonedLinkError,
+                                        compileMillisecondsCompleted,
+                                        linkMillisecondsAbandoned));
+                                Interlocked.Increment(ref _failedCount);
+
+                                if (hazardArbExt is not null)
+                                {
+                                    try
+                                    {
+                                        MeasureRenderingWorkerGlCall(
+                                            "glMaxShaderCompilerThreadsARB",
+                                            programId,
+                                            0,
+                                            null,
+                                            () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
+                                            "worker=source-compile-thread-restore threads=implementation-max");
+                                    }
+                                    catch { /* best-effort restore */ }
+                                }
+                                return;
+                            }
+
+                            int linkStatus = 0;
+                            MeasureRenderingWorkerGlCall(
+                                "glGetProgramiv(GL_LINK_STATUS)",
+                                programId,
+                                0,
+                                null,
+                                () => gl.GetProgram(programId, ProgramPropertyARB.LinkStatus, out linkStatus),
+                                "worker=source-link-status");
+
+                            string? linkError = null;
+                            if (linkStatus == 0)
+                            {
+                                MeasureRenderingWorkerGlCall(
+                                    "glGetProgramInfoLog",
+                                    programId,
+                                    0,
+                                    null,
+                                    () => gl.GetProgramInfoLog(programId, out linkError),
+                                    "worker=source-link-log");
+                            }
+
+                            // Restore compiler thread count if the legacy suppression path changed it.
                             if (hazardArbExt is not null)
                             {
                                 try
@@ -525,94 +604,64 @@ namespace XREngine.Rendering.OpenGL
                                 }
                                 catch { /* best-effort restore */ }
                             }
-                            return;
-                        }
 
-                        int linkStatus = 0;
-                        MeasureRenderingWorkerGlCall(
-                            "glGetProgramiv(GL_LINK_STATUS)",
-                            programId,
-                            0,
-                            null,
-                            () => gl.GetProgram(programId, ProgramPropertyARB.LinkStatus, out linkStatus),
-                            "worker=source-link-status");
+                            // Detach and delete shader objects — no longer needed after linking.
+                            for (int i = 0; i < shaderIds.Length; i++)
+                            {
+                                uint shaderId = shaderIds[i];
+                                ShaderType shaderType = shaders[i].Type;
+                                MeasureRenderingWorkerGlCall(
+                                    "glDetachShader",
+                                    programId,
+                                    shaderId,
+                                    shaderType,
+                                    () => gl.DetachShader(programId, shaderId),
+                                    "worker=source-link-detach");
+                                MeasureRenderingWorkerGlCall(
+                                    "glDeleteShader",
+                                    programId,
+                                    shaderId,
+                                    shaderType,
+                                    () => gl.DeleteShader(shaderId),
+                                    "worker=source-link-delete-shader");
+                            }
 
-                        string? linkError = null;
-                        if (linkStatus == 0)
-                        {
+                            // Synchronize so the linked program is usable on the main context.
                             MeasureRenderingWorkerGlCall(
-                                "glGetProgramInfoLog",
+                                "glFinish",
                                 programId,
                                 0,
                                 null,
-                                () => gl.GetProgramInfoLog(programId, out linkError),
-                                "worker=source-link-log");
-                        }
+                                () => gl.Finish(),
+                                "worker=source-link-handoff");
 
-                        // Restore compiler thread count if the legacy suppression path changed it.
-                        if (hazardArbExt is not null)
+                            double linkMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp);
+                            LogRenderingQueueEvent(
+                                linkStatus != 0 ? "WORKER_READY" : "WORKER_LINK_FAILED",
+                                programId,
+                                summary,
+                                $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMilliseconds:F2} error={linkError ?? "<none>"}");
+
+                            PublishCompletedResult(
+                                programId,
+                                new CompileResult(
+                                    linkStatus != 0 ? CompileStatus.Success : CompileStatus.LinkFailed,
+                                    linkError,
+                                    compileMillisecondsCompleted,
+                                    linkMilliseconds));
+                            if (linkStatus != 0)
+                                Interlocked.Increment(ref _completedCount);
+                            else
+                                Interlocked.Increment(ref _failedCount);
+                        }
+                        finally
                         {
-                            try
+                            if (programLinkGateHeld)
                             {
-                                MeasureRenderingWorkerGlCall(
-                                    "glMaxShaderCompilerThreadsARB",
-                                    programId,
-                                    0,
-                                    null,
-                                    () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
-                                    "worker=source-compile-thread-restore threads=implementation-max");
+                                _programLinkGate.Release();
+                                LogRenderingQueueEvent("WORKER_LINK_GATE_EXIT", programId, summary, "serialized shared-context program link/status");
                             }
-                            catch { /* best-effort restore */ }
                         }
-
-                        // Detach and delete shader objects — no longer needed after linking.
-                        for (int i = 0; i < shaderIds.Length; i++)
-                        {
-                            uint shaderId = shaderIds[i];
-                            ShaderType shaderType = shaders[i].Type;
-                            MeasureRenderingWorkerGlCall(
-                                "glDetachShader",
-                                programId,
-                                shaderId,
-                                shaderType,
-                                () => gl.DetachShader(programId, shaderId),
-                                "worker=source-link-detach");
-                            MeasureRenderingWorkerGlCall(
-                                "glDeleteShader",
-                                programId,
-                                shaderId,
-                                shaderType,
-                                () => gl.DeleteShader(shaderId),
-                                "worker=source-link-delete-shader");
-                        }
-
-                        // Synchronize so the linked program is usable on the main context.
-                        MeasureRenderingWorkerGlCall(
-                            "glFinish",
-                            programId,
-                            0,
-                            null,
-                            () => gl.Finish(),
-                            "worker=source-link-handoff");
-
-                        double linkMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp);
-                        LogRenderingQueueEvent(
-                            linkStatus != 0 ? "WORKER_READY" : "WORKER_LINK_FAILED",
-                            programId,
-                            summary,
-                            $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMilliseconds:F2} error={linkError ?? "<none>"}");
-
-                        PublishCompletedResult(
-                            programId,
-                            new CompileResult(
-                                linkStatus != 0 ? CompileStatus.Success : CompileStatus.LinkFailed,
-                                linkError,
-                                compileMillisecondsCompleted,
-                                linkMilliseconds));
-                        if (linkStatus != 0)
-                            Interlocked.Increment(ref _completedCount);
-                        else
-                            Interlocked.Increment(ref _failedCount);
                     }
                     catch (Exception ex)
                     {
@@ -642,7 +691,7 @@ namespace XREngine.Rendering.OpenGL
             /// render-thread GL call for the full duration of a cold compile/link
             /// (observed: 100+ seconds for large imported-model fragment shaders).
             /// </summary>
-            private static bool PollCompletionStatusBlocking(
+            private bool PollCompletionStatusBlocking(
                 GL gl,
                 GLSharedContext worker,
                 uint programId,
@@ -700,6 +749,17 @@ namespace XREngine.Rendering.OpenGL
                     }
 
                     double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
+                    if (!isShader && elapsedMilliseconds >= WorkerCompletionStuckFlushMilliseconds)
+                    {
+                        failureReason =
+                            $"Shared-context {operation} did not report completion after {elapsedMilliseconds / 1000.0:F2}s; {SharedContextAbandonedLinkMarker}.";
+                        Debug.OpenGLWarning(
+                            $"[ShaderLinkQueue] Worker {operation} programId={programId} still reports COMPLETION_STATUS=false " +
+                            $"after {elapsedMilliseconds / 1000.0:F2}s; publishing a failed async result without another completion query. " +
+                            "The shared-context source lane remains enabled for later programs.");
+                        return false;
+                    }
+
                     if (!flushIssued && elapsedMilliseconds >= WorkerCompletionStuckFlushMilliseconds)
                     {
                         flushIssued = true;
@@ -718,7 +778,7 @@ namespace XREngine.Rendering.OpenGL
                     if (elapsedMilliseconds >= WorkerCompletionHardAbandonMilliseconds)
                     {
                         failureReason =
-                            $"Shared-context {operation} did not report completion after {elapsedMilliseconds / 1000.0:F2}s; abandoned to keep the async link queue moving.";
+                            $"Shared-context {operation} did not report completion after {elapsedMilliseconds / 1000.0:F2}s; {SharedContextAbandonedLinkMarker}.";
                         Debug.OpenGLWarning(
                             $"[ShaderLinkQueue] Worker {operation} programId={programId} stuck with COMPLETION_STATUS=false " +
                             $"after {elapsedMilliseconds / 1000.0:F2}s; publishing a failed async result without querying final status.");

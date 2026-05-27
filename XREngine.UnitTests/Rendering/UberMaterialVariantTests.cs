@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
@@ -14,6 +15,14 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class UberMaterialVariantTests
 {
+    [SetUp]
+    public void SetUp()
+        => UberShaderVariantBuilder.ClearCachesForTests();
+
+    [TearDown]
+    public void TearDown()
+        => UberShaderVariantBuilder.ClearCachesForTests();
+
     [Test]
     public void EnsureUberStateInitialized_UsesManifestFeatureDefaultAndPropertyModes()
     {
@@ -60,12 +69,13 @@ public sealed class UberMaterialVariantTests
         string generatedSource = GetFragmentSource(material);
         generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
         generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
-        generatedSource.ShouldContain("#define _EmissionColor vec4(0.2, 0.1, 0.4, 1.0)");
+        generatedSource.ShouldNotContain("#define _EmissionColor ");
+        generatedSource.ShouldNotContain("uniform vec4 _EmissionColor;");
         material.ActiveUberVariant.EnabledFeatures.ShouldContain("emission");
     }
 
     [Test]
-    public void RequestUberVariantRebuild_StaticPropertyAndDisabledFeatureBecomeDefines()
+    public void RequestUberVariantRebuild_StaticPropertyAndDisabledFeatureArePrunedWhenUnreferenced()
     {
         XRMaterial material = CreateUberMaterial(
             """
@@ -91,14 +101,82 @@ public sealed class UberMaterialVariantTests
         string generatedSource = fragmentShader.Source?.Text ?? string.Empty;
 
         generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
-        generatedSource.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
-        generatedSource.ShouldContain("#define _Color vec4(1.0, 0.5, 0.25, 1.0)");
+        generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
+        generatedSource.ShouldNotContain("#define _Color ");
         generatedSource.ShouldNotContain("uniform vec4 _Color;");
         generatedSource.ShouldNotContain("uniform vec4 _EmissionColor;");
 
         material.ActiveUberVariant.StaticProperties.ShouldContain("_Color=vec4(1.0, 0.5, 0.25, 1.0)");
         material.ActiveUberVariant.StaticProperties.ShouldNotContain("_EmissionColor=vec4(0.2, 0.1, 0.4, 1.0)");
         material.ActiveUberVariant.EnabledFeatures.ShouldNotContain("emission");
+    }
+
+    [Test]
+    public void RequestUberVariantRebuild_EmitsGeneratedMetadataAndParseableVariantHash()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_Color", display="Color", mode=static)
+            uniform vec4 _Color;
+            vec4 ResolveColor() { return _Color; }
+            """,
+            new ShaderVector4(new Vector4(0.3f, 0.4f, 0.5f, 1.0f), "_Color"));
+
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        XRShader fragmentShader = material.GetShader(EShaderType.Fragment).ShouldNotBeNull();
+        string generatedSource = fragmentShader.Source?.Text ?? string.Empty;
+        ulong variantHash = material.ActiveUberVariant.VariantHash;
+
+        fragmentShader.IsGeneratedUberVariant.ShouldBeTrue();
+        fragmentShader.GeneratedUberVariantHash.ShouldBe(variantHash);
+        UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader).ShouldBeTrue();
+        generatedSource.ShouldContain($"// variant-hash: 0x{variantHash:x16}");
+        UberShaderVariantTelemetry.TryParseVariantHash(generatedSource, out ulong parsedHash).ShouldBeTrue();
+        parsedHash.ShouldBe(variantHash);
+    }
+
+    [Test]
+    public void RequestUberVariantRebuild_InlinesStaticLiteralWithoutRewritingProtectedTokens()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            #define COLOR_NAME _Color
+            // _Color should stay in line comments.
+            /* _Color should stay in block comments. */
+            //@property(name="_Color", display="Color", mode=static)
+            uniform vec4 _Color;
+            vec4 _ColorTint;
+            struct Payload { vec4 _Color; };
+            void main()
+            {
+                vec4 baseColor = _Color;
+                vec4 tint = _ColorTint;
+                Payload payload;
+                vec4 field = payload._Color;
+                vec3 rgb = _Color.rgb;
+            }
+            """,
+            new ShaderVector4(new Vector4(0.3f, 0.4f, 0.5f, 1.0f), "_Color"));
+
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldNotContain("uniform vec4 _Color;");
+        generatedSource.ShouldNotContain("#define _Color ");
+        generatedSource.ShouldContain("#define COLOR_NAME _Color");
+        generatedSource.ShouldContain("// _Color should stay in line comments.");
+        generatedSource.ShouldContain("/* _Color should stay in block comments. */");
+        generatedSource.ShouldContain("vec4 _ColorTint;");
+        generatedSource.ShouldContain("struct Payload { vec4 _Color; };");
+        generatedSource.ShouldContain("vec4 baseColor = vec4(0.3, 0.4, 0.5, 1.0);");
+        generatedSource.ShouldContain("vec4 tint = _ColorTint;");
+        generatedSource.ShouldContain("vec4 field = payload._Color;");
+        generatedSource.ShouldContain("vec3 rgb = (vec4(0.3, 0.4, 0.5, 1.0)).rgb;");
     }
 
     [Test]
@@ -118,7 +196,8 @@ public sealed class UberMaterialVariantTests
         WaitForActiveUberVariant(material);
 
         string generatedSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
-        generatedSource.ShouldContain("#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1");
+        generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1");
+        generatedSource.ShouldNotContain("uniform int _LightingMode;");
         material.ActiveUberVariant.EnabledFeatures.ShouldNotContain("stylized-shading");
     }
 
@@ -133,6 +212,7 @@ public sealed class UberMaterialVariantTests
             #ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
             //@property(name="_LightingMode", display="Lighting Mode", mode=static)
             uniform int _LightingMode;
+            int ResolveLightingMode() { return _LightingMode; }
             #endif
             """,
             new ShaderInt(5, "_LightingMode"));
@@ -145,7 +225,8 @@ public sealed class UberMaterialVariantTests
         string generatedSource = GetFragmentSource(material);
         generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
         generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_STYLIZED_SHADING 1");
-        generatedSource.ShouldContain("#define _LightingMode 5");
+        generatedSource.ShouldNotContain("#define _LightingMode ");
+        generatedSource.ShouldContain("int ResolveLightingMode() { return 5; }");
         material.ActiveUberVariant.EnabledFeatures.ShouldContain("stylized-shading");
     }
 
@@ -157,6 +238,7 @@ public sealed class UberMaterialVariantTests
             #version 450 core
             //@property(name="_Color", display="Color", mode=static)
             uniform vec4 _Color;
+            vec4 ResolveColor() { return _Color; }
             """,
             new ShaderVector4(new Vector4(0.8f, 0.7f, 0.6f, 1.0f), "_Color"));
 
@@ -216,6 +298,7 @@ public sealed class UberMaterialVariantTests
             #version 450 core
             //@property(name="_Color", display="Color", mode=static)
             uniform vec4 _Color;
+            vec4 ResolveColor() { return _Color; }
             """,
             new ShaderVector4(new Vector4(0.8f, 0.7f, 0.6f, 1.0f), "_Color"));
 
@@ -239,6 +322,7 @@ public sealed class UberMaterialVariantTests
             #version 450 core
             //@property(name="_Color", display="Color", mode=static)
             uniform vec4 _Color;
+            vec4 ResolveColor() { return _Color; }
             """,
             new ShaderVector4(new Vector4(0.8f, 0.7f, 0.6f, 1.0f), "_Color"));
 
@@ -255,7 +339,8 @@ public sealed class UberMaterialVariantTests
         WaitForActiveUberVariant(material);
 
         string generatedSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
-        generatedSource.ShouldContain("#define _Color vec4(0.2, 0.4, 0.6, 1.0)");
+        generatedSource.ShouldNotContain("#define _Color ");
+        generatedSource.ShouldContain("vec4 ResolveColor() { return vec4(0.2, 0.4, 0.6, 1.0); }");
     }
 
     [Test]
@@ -415,7 +500,7 @@ public sealed class UberMaterialVariantTests
         material.ActiveUberVariant.EnabledFeatures.ShouldContain("matcap");
 
         string generatedSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
-        generatedSource.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
+        generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
         generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_MATCAP 1");
         generatedSource.ShouldNotContain("uniform sampler2D _EmissionMap;");
         generatedSource.ShouldContain("uniform sampler2D _MatcapMap;");
@@ -452,12 +537,201 @@ public sealed class UberMaterialVariantTests
         WaitForActiveUberVariant(material);
 
         string generatedSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
-        generatedSource.ShouldContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
+        generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_EMISSION 1");
         generatedSource.ShouldNotContain("uniform sampler2D _EmissionMap;");
         generatedSource.ShouldNotContain("SampleEmission");
         generatedSource.ShouldContain("vec3 EmissionValue() { return vec3(0.0); }");
         generatedSource.ShouldContain("layout(location = 0) out vec4 FragColor;");
         generatedSource.ShouldNotContain("layout(location = 0) out vec2 Normal;");
+    }
+
+    [Test]
+    public void RequestUberVariantRebuild_PrunesDisabledFeatureIncludesAndUnusedIncludeDeclarations()
+    {
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"xrengine-uber-includes-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            string shaderPath = Path.Combine(tempDirectory, "UberShader.frag");
+            File.WriteAllText(Path.Combine(tempDirectory, "common.glsl"),
+                """
+                const float KEEP_SCALE = 1.0;
+                vec3 UsedHelper(vec3 value) { return value * KEEP_SCALE; }
+                vec3 UnusedHelper(vec3 value) { return UnusedLeaf(value); }
+                vec3 UnusedLeaf(vec3 value) { return value * 9.0; }
+                uniform sampler2D _UnusedIncludeSampler;
+                """);
+            File.WriteAllText(Path.Combine(tempDirectory, "dissolve.glsl"),
+                """
+                vec3 ApplyDissolve(vec3 value) { return value * 0.5; }
+                """);
+            File.WriteAllText(shaderPath,
+                """
+                #version 450 core
+                #include "common.glsl"
+                //@property(name="_Color", display="Color", mode=static)
+                uniform vec4 _Color;
+                //@feature(id="dissolve", name="Dissolve", default=off)
+                #ifndef XRENGINE_UBER_DISABLE_DISSOLVE
+                #include "dissolve.glsl"
+                #endif
+                void main()
+                {
+                    vec3 color = UsedHelper(_Color.rgb);
+                }
+                """);
+
+            XRMaterial material = CreateUberMaterialFromFile(
+                shaderPath,
+                new ShaderVector4(new Vector4(0.8f, 0.7f, 0.6f, 1.0f), "_Color"));
+
+            material.EnsureUberStateInitialized();
+            material.RequestUberVariantRebuild();
+            WaitForActiveUberVariant(material);
+
+            string generatedSource = GetFragmentSource(material);
+            generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
+            generatedSource.ShouldContain("UsedHelper");
+            generatedSource.ShouldContain("KEEP_SCALE");
+            generatedSource.ShouldNotContain("#define XRENGINE_UBER_DISABLE_DISSOLVE 1");
+            generatedSource.ShouldNotContain("#define _Color ");
+            generatedSource.ShouldContain("(vec4(0.8, 0.7, 0.6, 1.0)).rgb");
+            generatedSource.ShouldNotContain("UnusedHelper");
+            generatedSource.ShouldNotContain("UnusedLeaf");
+            generatedSource.ShouldNotContain("_UnusedIncludeSampler");
+            generatedSource.ShouldNotContain("ApplyDissolve");
+            generatedSource.ShouldNotContain("BEGIN INCLUDE");
+            generatedSource.ShouldNotContain("END INCLUDE");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+                Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void PrepareVariant_RealUberForwardSnippetRetainsReferencedRuntimeGlobals()
+    {
+        string shaderPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", "Uber", "UberShader.frag"));
+        XRMaterial material = CreateUberMaterialFromFile(shaderPath);
+
+        material.EnsureUberStateInitialized();
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
+        generatedSource.ShouldContain("const vec2 XRENGINE_ShadowPoissonDisk[16]");
+        generatedSource.ShouldContain("const vec3 XRENGINE_ShadowCubeKernel[20]");
+        generatedSource.ShouldContain("layout(location = 22) in float FragViewIndex;");
+        generatedSource.ShouldContain("mat4 XRENGINE_ResolvedForwardViewMatrix");
+        generatedSource.ShouldContain("vec3 XRENGINE_ForwardShadowDebugColor");
+        generatedSource.ShouldContain("layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
+        generatedSource.ShouldContain("layout(binding = 6) uniform sampler2D BRDF;");
+        generatedSource.ShouldNotContain("BEGIN SNIPPET");
+        generatedSource.ShouldNotContain("BEGIN INCLUDE");
+    }
+
+    [Test]
+    public void PrepareVariant_UsesDependencyAwareResolvedSourceCache()
+    {
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"xrengine-uber-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            string shaderPath = WriteIncludeBackedUberShader(tempDirectory, "1.0");
+            XRMaterial material = CreateUberMaterialFromFile(shaderPath, new ShaderFloat(2.0f, "_Scale"));
+
+            UberShaderVariantBuilder.PreparedUberVariant first = PrepareVariantForTests(material);
+            UberShaderVariantBuilder.CacheStats afterFirst = UberShaderVariantBuilder.GetCacheStatsForTests();
+
+            UberShaderVariantBuilder.PreparedUberVariant second = PrepareVariantForTests(material);
+            UberShaderVariantBuilder.CacheStats afterSecond = UberShaderVariantBuilder.GetCacheStatsForTests();
+
+            first.CacheHit.ShouldBeFalse();
+            second.CacheHit.ShouldBeTrue();
+            second.FragmentShader.ShouldBeSameAs(first.FragmentShader);
+            afterFirst.ResolvedSourceMisses.ShouldBe(1);
+            afterSecond.ResolvedSourceMisses.ShouldBe(afterFirst.ResolvedSourceMisses);
+            afterSecond.ResolvedSourceHits.ShouldBeGreaterThan(afterFirst.ResolvedSourceHits);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+                Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void PrepareVariant_ResolvedSourceCacheInvalidatesWhenIncludeChanges()
+    {
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"xrengine-uber-cache-invalidate-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            string shaderPath = WriteIncludeBackedUberShader(tempDirectory, "1.0");
+            XRMaterial material = CreateUberMaterialFromFile(shaderPath, new ShaderFloat(2.0f, "_Scale"));
+
+            UberShaderVariantBuilder.PreparedUberVariant first = PrepareVariantForTests(material);
+            (first.FragmentShader.Source.Text ?? string.Empty).ShouldContain("const float KEEP_SCALE = 1.0;");
+
+            Thread.Sleep(20);
+            File.WriteAllText(Path.Combine(tempDirectory, "common.glsl"),
+                """
+                const float KEEP_SCALE = 22.0;
+                """);
+
+            UberShaderVariantBuilder.PreparedUberVariant second = PrepareVariantForTests(material);
+            UberShaderVariantBuilder.CacheStats stats = UberShaderVariantBuilder.GetCacheStatsForTests();
+
+            second.FragmentShader.ShouldNotBeSameAs(first.FragmentShader);
+            (second.FragmentShader.Source.Text ?? string.Empty).ShouldContain("const float KEEP_SCALE = 22.0;");
+            stats.ResolvedSourceMisses.ShouldBe(2);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+                Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void PrepareVariant_ConcurrentMissesShareOneSourceResolve()
+    {
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"xrengine-uber-cache-concurrent-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            string shaderPath = WriteIncludeBackedUberShader(tempDirectory, "1.0");
+            XRMaterial material = CreateUberMaterialFromFile(shaderPath, new ShaderFloat(2.0f, "_Scale"));
+            material.EnsureUberStateInitialized();
+            material.TryGetUberMaterialState(out XRShader? shader, out ShaderUiManifest manifest).ShouldBeTrue();
+            shader.ShouldNotBeNull();
+
+            const int taskCount = 8;
+            Task[] tasks = new Task[taskCount];
+            for (int i = 0; i < taskCount; i++)
+            {
+                tasks[i] = Task.Run(() =>
+                    UberShaderVariantBuilder.PrepareVariant(material, shader!, manifest));
+            }
+
+            Task.WaitAll(tasks);
+
+            UberShaderVariantBuilder.CacheStats stats = UberShaderVariantBuilder.GetCacheStatsForTests();
+            stats.ResolvedSourceMisses.ShouldBe(1);
+            stats.ResolvedSourceHits.ShouldBeGreaterThanOrEqualTo(taskCount - 1);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+                Directory.Delete(tempDirectory, recursive: true);
+        }
     }
 
     [Test]
@@ -507,6 +781,7 @@ public sealed class UberMaterialVariantTests
             #version 450 core
             //@property(name="_Color", display="Color", mode=static)
             uniform vec4 _Color;
+            vec4 ResolveColor() { return _Color; }
             """,
             new ShaderVector4(new Vector4(0.8f, 0.7f, 0.6f, 1.0f), "_Color"));
 
@@ -525,7 +800,9 @@ public sealed class UberMaterialVariantTests
 
         material.RequestUberVariantRebuild();
         WaitForActiveUberVariant(material);
-        GetFragmentSource(material).ShouldContain("#define _Color vec4(0.1, 0.2, 0.3, 0.4)");
+        string staticSource = GetFragmentSource(material);
+        staticSource.ShouldNotContain("#define _Color ");
+        staticSource.ShouldContain("vec4 ResolveColor() { return vec4(0.1, 0.2, 0.3, 0.4); }");
 
         material.SetUberPropertyMode("_Color", EShaderUiPropertyMode.Animated).ShouldBeTrue();
         material.RequestUberVariantRebuild();
@@ -534,6 +811,7 @@ public sealed class UberMaterialVariantTests
         string finalSource = GetFragmentSource(material);
         finalSource.ShouldContain("uniform vec4 _Color;");
         finalSource.ShouldNotContain("#define _Color ");
+        finalSource.ShouldContain("vec4 ResolveColor() { return _Color; }");
         material.Parameter<ShaderVector4>("_Color")!.Value.ShouldBe(new Vector4(0.1f, 0.2f, 0.3f, 0.4f));
     }
 
@@ -607,6 +885,38 @@ public sealed class UberMaterialVariantTests
         literalToggled.RequestUberVariantRebuild();
         WaitForActiveUberVariant(literalToggled);
         literalToggled.ActiveUberVariant.VariantHash.ShouldNotBe(baselineHash);
+    }
+
+    [Test]
+    public void RequestedUberVariantHash_IsDeterministicForEquivalentInputs()
+    {
+        const string source =
+            """
+            #version 450 core
+            //@feature(id="emission", name="Emission", default=on)
+            #ifndef XRENGINE_UBER_DISABLE_EMISSION
+            //@property(name="_EmissionColor", display="Emission Color", mode=static)
+            uniform vec4 _EmissionColor;
+            vec4 ResolveEmission() { return _EmissionColor; }
+            #endif
+            //@property(name="_Color", display="Color", mode=static)
+            uniform vec4 _Color;
+            vec4 ResolveColor() { return _Color; }
+            """;
+
+        XRMaterial first = CreateUberMaterial(source,
+            new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_Color"),
+            new ShaderVector4(new Vector4(0.0f, 0.0f, 0.0f, 1.0f), "_EmissionColor"));
+        XRMaterial second = CreateUberMaterial(source,
+            new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_Color"),
+            new ShaderVector4(new Vector4(0.0f, 0.0f, 0.0f, 1.0f), "_EmissionColor"));
+
+        first.PrepareUberVariantImmediately().ShouldBeTrue(first.UberVariantStatus.FailureReason);
+        second.PrepareUberVariantImmediately().ShouldBeTrue(second.UberVariantStatus.FailureReason);
+
+        first.ActiveUberVariant.VariantHash.ShouldBe(second.ActiveUberVariant.VariantHash);
+        first.ActiveUberVariant.SourceVersion.ShouldBe(second.ActiveUberVariant.SourceVersion);
+        GetFragmentSource(first).ShouldBe(GetFragmentSource(second));
     }
 
     [Test, Explicit("Baseline harness: runs locally to capture CPU-side preparation timings for minimal/common/maximal Uber variants.")]
@@ -720,6 +1030,18 @@ public sealed class UberMaterialVariantTests
         source.FilePath = "UberShader.frag";
         source.Name = "UberShader.frag";
 
+        return CreateUberMaterial(source, parameters);
+    }
+
+    private static XRMaterial CreateUberMaterialFromFile(string shaderPath, params ShaderVar[] parameters)
+    {
+        TextFile source = new(shaderPath);
+        source.LoadText(shaderPath);
+        return CreateUberMaterial(source, parameters);
+    }
+
+    private static XRMaterial CreateUberMaterial(TextFile source, params ShaderVar[] parameters)
+    {
         XRMaterial material = new()
         {
             Parameters = parameters.Length == 0 ? [] : parameters,
@@ -727,6 +1049,47 @@ public sealed class UberMaterialVariantTests
 
         material.SetShader(EShaderType.Fragment, new XRShader(EShaderType.Fragment, source), coerceShaderType: true);
         return material;
+    }
+
+    private static UberShaderVariantBuilder.PreparedUberVariant PrepareVariantForTests(XRMaterial material)
+    {
+        material.EnsureUberStateInitialized();
+        material.TryGetUberMaterialState(out XRShader? shader, out ShaderUiManifest manifest).ShouldBeTrue();
+        shader.ShouldNotBeNull();
+        return UberShaderVariantBuilder.PrepareVariant(material, shader!, manifest);
+    }
+
+    private static string WriteIncludeBackedUberShader(string directory, string keepScaleLiteral)
+    {
+        string shaderPath = Path.Combine(directory, "UberShader.frag");
+        File.WriteAllText(Path.Combine(directory, "common.glsl"),
+            $$"""
+            const float KEEP_SCALE = {{keepScaleLiteral}};
+            """);
+        File.WriteAllText(shaderPath,
+            """
+            #version 450 core
+            #include "common.glsl"
+            //@property(name="_Scale", display="Scale", mode=static)
+            uniform float _Scale;
+            float ResolveScale() { return KEEP_SCALE * _Scale; }
+            """);
+        return shaderPath;
+    }
+
+    private static string ResolveWorkspacePath(string relativePath)
+    {
+        DirectoryInfo? dir = new(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            string candidate = Path.Combine(dir.FullName, relativePath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
     }
 
     private static void WaitForActiveUberVariant(XRMaterial material)

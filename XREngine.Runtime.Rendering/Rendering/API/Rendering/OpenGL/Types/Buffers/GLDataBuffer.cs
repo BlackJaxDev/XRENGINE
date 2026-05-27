@@ -965,9 +965,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 // If any API wrapper has already mapped this XRDataBuffer, skip remapping
                 if (Data.ActivelyMapping.Count > 0)
-                {
                     return;
-                }
 
                 if (RuntimeEngine.InvokeOnMainThread(MapBufferData, "GLDataBuffer.MapBufferData"))
                     return;

@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -138,6 +139,9 @@ namespace XREngine.Rendering.OpenGL
                 if (instancedLayeredOverride && CanUseDirectionalCascadeInstancedMaterial(shadowSourceMaterial, instances))
                     return globalMaterialOverride;
 
+                if (CanUseSharedUberShadowFallback(globalMaterialOverride, shadowSourceMaterial))
+                    return globalMaterialOverride;
+
                 if (IsDirectionalCascadeGeometryMaterialKind(overrideKind) &&
                     shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true)
                 {
@@ -170,6 +174,9 @@ namespace XREngine.Rendering.OpenGL
                     if (shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false)
                         return globalMaterialOverride;
 
+                    if (CanUseSharedUberShadowFallback(globalMaterialOverride, shadowSourceMaterial))
+                        return globalMaterialOverride;
+
                     XRMaterial? instancedVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(overrideKind);
                     if (instancedVariant is not null)
                     {
@@ -183,6 +190,9 @@ namespace XREngine.Rendering.OpenGL
                 {
                     return globalMaterialOverride;
                 }
+
+                if (CanUseSharedUberShadowFallback(globalMaterialOverride, shadowSourceMaterial))
+                    return globalMaterialOverride;
 
                 XRMaterial? geometryVariant = shadowSourceMaterial?.GetPointShadowCasterVariant(GetPointLightGeometryFallbackKind(overrideKind));
                 if (geometryVariant is not null)
@@ -226,6 +236,21 @@ namespace XREngine.Rendering.OpenGL
                     return false;
 
                 return shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() != false;
+            }
+
+            private static bool CanUseSharedUberShadowFallback(XRMaterial globalMaterialOverride, XRMaterial? shadowSourceMaterial)
+            {
+                if (shadowSourceMaterial is null || ReferenceEquals(shadowSourceMaterial, globalMaterialOverride))
+                    return false;
+
+                if (!shadowSourceMaterial.TryGetUberMaterialState(out _, out _))
+                    return false;
+
+                // Exact alpha-tested Uber shadow variants are still useful, but they are
+                // currently large enough to monopolize a single shared GL linker during
+                // scene load. Prefer visible material/link progress over first-frame exact
+                // shadows; the shared opaque shadow material keeps the atlas populated.
+                return true;
             }
 
             private static bool IsPointLightInstancedMaterialKind(EPointShadowMaterialKind kind)
@@ -395,7 +420,6 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 GLMaterial material = GetRenderMaterial(materialOverride, instances);
-                uint drawInstances = ResolveLayeredShadowInstanceCount(material.Data, instances);
 
                 if (ShouldSkipShadowDrawForProgramBuild(material))
                 {
@@ -403,80 +427,183 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                if (GetPrograms(material, out var vtx, out var mat))
+                if (TryRenderWithMaterialPrograms(
+                    material,
+                    modelMatrix,
+                    prevModelMatrix,
+                    materialOverride,
+                    renderOptionsOverride,
+                    instances,
+                    billboardMode))
                 {
-                    Dbg("Programs ready - binding SSBOs and uniforms", "Render");
-                    ConfigureDrawTopology(vtx!, mat);
-
-                    if (BuffersBound && VertexArrayBindingsStale())
-                    {
-                        BuffersBound = false;
-                        LogBatchedTextDraw("Render vao-stale-rebind", instances);
-                        LogModelDrawDiagnostic("Render vao-stale-rebind", instances);
-                    }
-
-                    if (!BuffersBound)
-                        BindBuffers(vtx!);
-
-                    if (!BuffersBound)
-                    {
-                        Renderer.MeshGenerationQueue.EnqueueGeneration(this);
-                        LogBatchedTextDraw("Render buffers-not-bound", instances);
-                        LogModelDrawDiagnostic("Render buffers-not-bound", instances);
-                        return;
-                    }
-
-                    PrepareDynamicRenderData();
-
-                    BindSSBOs(mat!);
-                    BindSSBOs(vtx!);
-
-                    BindSkinnedVertexBuffers(vtx!);
-
-                    MeshRenderer.PushBoneMatricesToGPU();
-                    MeshRenderer.PushBlendshapeWeightsToGPU();
-
-                    SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
-
-                    using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                    {
-                        material.SetUniforms(mat);
-                        if (renderOptionsOverride is not null)
-                            Renderer.ApplyRenderParameters(renderOptionsOverride);
-                    }
-
-                    OnSettingUniforms(vtx!, mat!);
-                    SetDirectionalCascadeLayeredVertexUniforms(vtx!, material.Data);
-                    SetPointLightLayeredVertexUniforms(vtx!, material.Data);
-                    material.FinalizeUniformBindings(mat);
-                    GLRenderProgram materialProgram = mat!;
-                    Renderer.SetDrawDebugContext(
-                        materialProgram.Data.Name,
-                        material.Data.Name,
-                        Mesh?.Name,
-                        materialProgram.GetBoundSamplerUnitsView());
-
-                    try
-                    {
-                        using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.Draw", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                        {
-                            LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
-                            LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
-                            Renderer.RenderMesh(this, false, drawInstances);
-                        }
-                    }
-                    finally
-                    {
-                        Renderer.ClearDrawDebugContext();
-                    }
-                    Dbg("Render mesh submitted", "Render");
+                    return;
                 }
-                else
+
+                if (TryResolvePendingUberFallbackMaterial(material, out GLMaterial? fallbackMaterial) &&
+                    fallbackMaterial is not null &&
+                    TryRenderWithMaterialPrograms(
+                        fallbackMaterial,
+                        modelMatrix,
+                        prevModelMatrix,
+                        materialOverride,
+                        renderOptionsOverride,
+                        instances,
+                        billboardMode))
+                {
+                    LogBatchedTextDraw("Render pending-uber-fallback", instances);
+                    LogModelDrawDiagnostic("Render pending-uber-fallback", instances);
+                    return;
+                }
+
+                Renderer.MeshGenerationQueue.EnqueueGeneration(this);
+                Dbg("GetPrograms failed - render skipped", "Render");
+                LogBatchedTextDraw("Render programs-missing", instances);
+                LogModelDrawDiagnostic("Render programs-missing", instances);
+            }
+
+            private bool TryRenderWithMaterialPrograms(
+                GLMaterial material,
+                Matrix4x4 modelMatrix,
+                Matrix4x4 prevModelMatrix,
+                XRMaterial? materialOverride,
+                RenderingParameters? renderOptionsOverride,
+                uint instances,
+                EMeshBillboardMode billboardMode)
+            {
+                if (!GetPrograms(material, out var vtx, out var mat))
+                    return false;
+
+                Dbg("Programs ready - binding SSBOs and uniforms", "Render");
+                ConfigureDrawTopology(vtx!, mat);
+
+                if (BuffersBound && VertexArrayBindingsStale())
+                {
+                    BuffersBound = false;
+                    LogBatchedTextDraw("Render vao-stale-rebind", instances);
+                    LogModelDrawDiagnostic("Render vao-stale-rebind", instances);
+                }
+
+                if (!BuffersBound)
+                    BindBuffers(vtx!);
+
+                if (!BuffersBound)
                 {
                     Renderer.MeshGenerationQueue.EnqueueGeneration(this);
-                    Dbg("GetPrograms failed - render skipped", "Render");
-                    LogBatchedTextDraw("Render programs-missing", instances);
-                    LogModelDrawDiagnostic("Render programs-missing", instances);
+                    LogBatchedTextDraw("Render buffers-not-bound", instances);
+                    LogModelDrawDiagnostic("Render buffers-not-bound", instances);
+                    return true;
+                }
+
+                PrepareDynamicRenderData();
+
+                BindSSBOs(mat!);
+                BindSSBOs(vtx!);
+
+                BindSkinnedVertexBuffers(vtx!);
+
+                MeshRenderer.PushBoneMatricesToGPU();
+                MeshRenderer.PushBlendshapeWeightsToGPU();
+
+                SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
+
+                using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                {
+                    material.SetUniforms(mat);
+                    if (renderOptionsOverride is not null)
+                        Renderer.ApplyRenderParameters(renderOptionsOverride);
+                }
+
+                OnSettingUniforms(vtx!, mat!);
+                SetDirectionalCascadeLayeredVertexUniforms(vtx!, material.Data);
+                SetPointLightLayeredVertexUniforms(vtx!, material.Data);
+                material.FinalizeUniformBindings(mat);
+                GLRenderProgram materialProgram = mat!;
+                Renderer.SetDrawDebugContext(
+                    materialProgram.Data.Name,
+                    material.Data.Name,
+                    Mesh?.Name,
+                    materialProgram.GetBoundSamplerUnitsView());
+
+                uint drawInstances = ResolveLayeredShadowInstanceCount(material.Data, instances);
+                try
+                {
+                    using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.Draw", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                    {
+                        LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
+                        LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
+                        Renderer.RenderMesh(this, false, drawInstances);
+                    }
+                }
+                finally
+                {
+                    Renderer.ClearDrawDebugContext();
+                }
+
+                Dbg("Render mesh submitted", "Render");
+                return true;
+            }
+
+            private bool TryResolvePendingUberFallbackMaterial(GLMaterial blockedMaterial, out GLMaterial? fallbackMaterial)
+            {
+                fallbackMaterial = null;
+
+                if (!ShouldUsePendingUberFallback(blockedMaterial))
+                    return false;
+
+                XRMaterial fallbackData = GetPendingUberFallbackMaterial();
+                fallbackMaterial = Renderer.GenericToAPI<GLMaterial>(fallbackData);
+                if (fallbackMaterial is null)
+                    return false;
+
+                if (!_pendingUberFallbackLogged)
+                {
+                    _pendingUberFallbackLogged = true;
+                    Debug.OpenGL(
+                        $"[GLMeshRenderer] Drawing pending Uber fallback for '{GetDescribingName()}' " +
+                        $"while material '{blockedMaterial.Data.Name ?? "<unnamed>"}' finishes async program linking.");
+                }
+
+                return true;
+            }
+
+            private bool ShouldUsePendingUberFallback(GLMaterial blockedMaterial)
+            {
+                if (RuntimeEngine.Rendering.State.IsShadowPass)
+                    return false;
+
+                var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
+                if (renderState?.UseDepthNormalMaterialVariants ?? false)
+                    return false;
+
+                if (!blockedMaterial.Data.TryGetUberMaterialState(out _, out _))
+                    return false;
+
+                bool combinedPending = ReferenceEquals(_combinedProgramMaterialKey, blockedMaterial.Data) &&
+                    (_combinedProgram?.IsAsyncBuildPending ?? false);
+                if (combinedPending)
+                    return true;
+
+                return blockedMaterial.SeparableProgram?.IsAsyncBuildPending ?? false;
+            }
+
+            private static XRMaterial GetPendingUberFallbackMaterial()
+            {
+                XRMaterial? material = s_pendingUberFallbackMaterial;
+                if (material is not null)
+                    return material;
+
+                lock (s_pendingUberFallbackMaterialLock)
+                {
+                    material = s_pendingUberFallbackMaterial;
+                    if (material is not null)
+                        return material;
+
+                    material = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(0.82f, 0.72f, 0.38f, 1.0f));
+                    material.Name = "PendingUberFallbackMaterial";
+                    material.ShaderProgramPriority = EProgramPriority.Interactive;
+                    material.EnsureShaderPipelineProgram(allowWhenShaderPipelinesDisabled: true);
+                    s_pendingUberFallbackMaterial = material;
+                    return material;
                 }
             }
 

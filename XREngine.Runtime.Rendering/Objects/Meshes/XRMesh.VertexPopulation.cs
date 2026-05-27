@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Numerics;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
@@ -116,6 +117,24 @@ public partial class XRMesh
 
     private static bool AddPositionsAction(ConcurrentDictionary<int, DelVertexAction> vertexActions, bool updateBounds = true)
         => vertexActions.TryAdd(6, updateBounds ? PositionAndBoundsAction : PositionOnlyAction);
+
+    private static AABB CalculateBounds(ReadOnlySpan<Vertex> vertices)
+    {
+        if (vertices.Length == 0)
+            return new AABB(Vector3.Zero, Vector3.Zero);
+
+        Vector3 min = vertices[0].Position;
+        Vector3 max = min;
+
+        for (int i = 1; i < vertices.Length; i++)
+        {
+            Vector3 position = vertices[i].Position;
+            min = Vector3.Min(min, position);
+            max = Vector3.Max(max, position);
+        }
+
+        return new AABB(min, max);
+    }
 
     private static void WritePosition(XRMesh @this, int i, int _, Vertex vtx, Matrix4x4? dataTransform)
     {

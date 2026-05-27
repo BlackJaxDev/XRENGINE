@@ -73,16 +73,26 @@ namespace XREngine.Rendering.OpenGL
             private void DestroyCombinedProgram()
             {
                 foreach (CombinedProgramCacheEntry entry in _combinedProgramCache.Values)
-                {
-                    GLRenderProgram? cachedProgram = entry.Program;
-                    DestroyOwnedProgram(ref cachedProgram);
-                }
+                    ReleaseCombinedProgramEntry(entry);
 
                 _combinedProgramCache.Clear();
                 _combinedProgram = null;
                 _combinedProgramMaterialKey = null;
                 _combinedProgramMaterialShaderStateRevision = 0;
                 _combinedProgramPipelineFallbackLogged = false;
+            }
+
+            private void ReleaseCombinedProgramEntry(CombinedProgramCacheEntry entry)
+            {
+                GLRenderProgram? cachedProgram = entry.Program;
+                if (cachedProgram is null)
+                    return;
+
+                cachedProgram.PropertyChanged -= CheckProgramLinked;
+                if (entry.Lease is not null)
+                    entry.Lease.Dispose();
+                else
+                    DestroyOwnedProgram(ref cachedProgram);
             }
 
             private void DestroySeparablePrograms()
@@ -484,6 +494,13 @@ namespace XREngine.Rendering.OpenGL
             {
                 bool usePipelines = UseShaderPipelinesForThisRenderer();
 
+                if (ShouldUsePipelineForPendingUberFallbackMaterial(material))
+                    return GetPipelinePrograms(
+                        material,
+                        out vertexProgram,
+                        out materialProgram,
+                        allowWhenShaderPipelinesDisabled: true);
+
                 if (usePipelines)
                     return GetPipelinePrograms(material, out vertexProgram, out materialProgram);
 
@@ -509,6 +526,10 @@ namespace XREngine.Rendering.OpenGL
 
                 return false;
             }
+
+            private static bool ShouldUsePipelineForPendingUberFallbackMaterial(GLMaterial material)
+                => s_pendingUberFallbackMaterial is not null &&
+                   ReferenceEquals(material.Data, s_pendingUberFallbackMaterial);
 
             private bool ShouldUsePipelineFallbackForPendingCombinedProgram(GLMaterial material)
             {
@@ -600,8 +621,7 @@ namespace XREngine.Rendering.OpenGL
 
                 if (cachedEntry.Program is not null)
                 {
-                    GLRenderProgram? staleProgram = cachedEntry.Program;
-                    DestroyOwnedProgram(ref staleProgram);
+                    ReleaseCombinedProgramEntry(cachedEntry);
                     _combinedProgramCache.Remove(xrMaterial);
                 }
 
@@ -614,9 +634,12 @@ namespace XREngine.Rendering.OpenGL
                     hasNoVertexShaders,
                     xrMaterial.Shaders,
                     Data.VertexShaderSelector,
-                    () => Data.VertexShaderSource ?? string.Empty);
+                    () => Data.VertexShaderSource ?? string.Empty,
+                    out OpenGLRenderer.CombinedProgramPoolLease? poolLease);
                 if (_combinedProgram is not null)
-                    _combinedProgramCache[xrMaterial] = new CombinedProgramCacheEntry(_combinedProgram, shaderStateRevision);
+                    _combinedProgramCache[xrMaterial] = new CombinedProgramCacheEntry(_combinedProgram, shaderStateRevision, poolLease);
+                else
+                    poolLease?.Dispose();
 
                 BuffersBound = false;
             }
@@ -756,31 +779,90 @@ namespace XREngine.Rendering.OpenGL
                 bool hasNoVertexShaders,
                 IEnumerable<XRShader> shaders,
                 Func<XRShader, bool> vertexShaderSelector,
-                Func<string> vertexSourceGenerator)
+                Func<string> vertexSourceGenerator,
+                out OpenGLRenderer.CombinedProgramPoolLease? poolLease)
             {
                 using var prof = RuntimeEngine.Profiler.Start("GLMeshRenderer.CreateCombinedProgram", ProfilerScopeKind.OneOffInvoke);
-                XRShader vertexShader = hasNoVertexShaders
-                    ? GenerateVertexShader(vertexSourceGenerator)
-                    : FindVertexShader(shaders, vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
+                poolLease = null;
 
-                if (!hasNoVertexShaders)
-                    shaders = shaders.Where(x => x.Type != EShaderType.Vertex);
-
-                shaders = shaders.Append(vertexShader);
-
-                var combinedData = new XRRenderProgram(false, false, shaders)
+                List<XRShader> sourceShaders = [];
+                foreach (XRShader? shader in shaders)
                 {
-                    Name = $"Combined:{material.Name ?? "unknown"}",
-                    UsageTag = $"CombinedMeshProgram | variant={Data.VersionKindLabel} | material={material.Name ?? "<unnamed>"} | mesh={MeshRenderer.Name ?? "<unnamed>"}",
-                    Priority = Data.ProgramPriority,
-                };
-                material.ApplyShaderProgramMetadata(combinedData);
+                    if (shader is not null)
+                        sourceShaders.Add(shader);
+                }
+
+                string? generatedVertexSource = null;
+                XRShader? suppliedVertexShader = hasNoVertexShaders
+                    ? null
+                    : FindVertexShader(sourceShaders, vertexShaderSelector);
+                XRShader vertexShader;
+                if (suppliedVertexShader is not null)
+                {
+                    vertexShader = suppliedVertexShader;
+                }
+                else
+                {
+                    generatedVertexSource = vertexSourceGenerator() ?? string.Empty;
+                    vertexShader = GenerateVertexShader(generatedVertexSource);
+                }
+
+                List<XRShader> combinedShaders = new(sourceShaders.Count + 1);
+                foreach (XRShader shader in sourceShaders)
+                {
+                    if (shader.Type != EShaderType.Vertex)
+                        combinedShaders.Add(shader);
+                }
+                combinedShaders.Add(vertexShader);
+
+                string generatedVertexIdentity = generatedVertexSource is null
+                    ? string.Empty
+                    : XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(generatedVertexSource);
+                XRRenderProgramDescriptor descriptor = XRRenderProgramDescriptor.FromShaders(
+                    combinedShaders,
+                    separable: false,
+                    renderSettingsVersion: RuntimeEngine.Rendering.Settings.ShaderConfigVersion,
+                    generatedVertexIdentity: generatedVertexIdentity,
+                    materialVariantKind: material.ActiveUberVariant.IsEmpty ? null : "MaterialVariant",
+                    materialVariantHash: material.ActiveUberVariant.VariantHash,
+                    vertexLayoutIdentity: BuildCombinedProgramVertexLayoutIdentity(generatedVertexIdentity),
+                    topologyKind: "CombinedMesh");
+
+                poolLease = Renderer.AcquireCombinedProgram(descriptor, () =>
+                {
+                    var combinedData = new XRRenderProgram(false, false, combinedShaders)
+                    {
+                        Name = $"Combined:{material.Name ?? "unknown"}",
+                        UsageTag = $"CombinedMeshProgram | variant={Data.VersionKindLabel} | material={material.Name ?? "<unnamed>"} | mesh={MeshRenderer.Name ?? "<unnamed>"}",
+                        Priority = Data.ProgramPriority,
+                        ProgramDescriptor = descriptor,
+                    };
+                    material.ApplyShaderProgramMetadata(combinedData);
+                    combinedData.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
+                        material.Name,
+                        MeshRenderer.Name,
+                        Data.VersionKindLabel,
+                        "CombinedMesh",
+                        descriptor.StableKey,
+                        descriptor.VertexLayoutIdentity));
+                    return combinedData;
+                });
+
                 _combinedProgramMaterialKey = material;
                 _combinedProgramMaterialShaderStateRevision = material.ShaderStateRevision;
-                program = Renderer.GenericToAPI<GLRenderProgram>(combinedData)!;
+                program = poolLease.Program;
                 program.PropertyChanged += CheckProgramLinked;
-                InitiateLink(program);
+                if (poolLease.IsNew)
+                    InitiateLink(program);
             }
+
+            private string BuildCombinedProgramVertexLayoutIdentity(string generatedVertexIdentity)
+                => string.Concat(
+                    Data.GetType().Name,
+                    "|",
+                    Data.VersionKindLabel,
+                    "|generated=",
+                    generatedVertexIdentity);
 
             /// <summary>
             /// Find a vertex shader in the provided collection using the given selector.
@@ -830,8 +912,11 @@ namespace XREngine.Rendering.OpenGL
             private static XRShader GenerateVertexShader(Func<string> vertexSourceGenerator)
             {
                 string source = vertexSourceGenerator() ?? string.Empty;
-                return _generatedVertexShaderCache.GetOrAdd(source, static src => new XRShader(EShaderType.Vertex, src));
+                return GenerateVertexShader(source);
             }
+
+            private static XRShader GenerateVertexShader(string source)
+                => _generatedVertexShaderCache.GetOrAdd(source ?? string.Empty, static src => new XRShader(EShaderType.Vertex, src));
 
             /// <summary>
             /// Start linking the provided program, either synchronously or asynchronously.

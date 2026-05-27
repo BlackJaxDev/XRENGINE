@@ -8,7 +8,7 @@ namespace XREngine.Rendering;
 public static class UberShaderVariantTelemetry
 {
     private static readonly Regex VariantHashRegex = new(
-        @"^[ \t]*//[ \t]*variant-hash:[ \t]*0x(?<hash>[0-9A-Fa-f]{1,16})[ \t]*$",
+        @"^[ \t]*//[ \t]*variant-hash:[ \t]*0x(?<hash>[0-9A-Fa-f]{1,16})[ \t]*\r?$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
     private static readonly ConcurrentDictionary<ulong, BackendSnapshot> _backendSnapshots = new();

@@ -1,6 +1,7 @@
 ﻿using MemoryPack;
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Threading;
 using XREngine.Core;
 using YamlDotNet.Serialization;
 
@@ -52,6 +53,7 @@ namespace XREngine.Data.Core
         {
             ID = Guid.NewGuid();
             IsDestroyed = false;
+            ClearDestroyQueuedFlag();
 
             if (_suppressObjectCacheRegistrationDepth > 0)
             {
@@ -100,7 +102,32 @@ namespace XREngine.Data.Core
         [MemoryPackIgnore]
         public bool IsDestroyed { get; private set; } = false;
 
+        private int _destroyQueued;
         private static readonly ConcurrentQueue<XRObjectBase> _objectsToDestroy = new();
+        private static long s_pendingDestructionCount;
+
+        /// <summary>
+        /// True after this object has been queued for deferred destruction.
+        /// </summary>
+        [YamlIgnore]
+        [Browsable(false)]
+        [MemoryPackIgnore]
+        public bool IsDestroyQueued => Volatile.Read(ref _destroyQueued) != 0;
+
+        /// <summary>
+        /// Number of objects waiting in the global deferred-destruction queue.
+        /// </summary>
+        [YamlIgnore]
+        [Browsable(false)]
+        [MemoryPackIgnore]
+        public static long PendingDestructionCount
+        {
+            get
+            {
+                long count = Interlocked.Read(ref s_pendingDestructionCount);
+                return count < 0 ? 0 : count;
+            }
+        }
 
         /// <summary>
         /// Processes all objects that have been requested to be destroyed.
@@ -119,10 +146,15 @@ namespace XREngine.Data.Core
 
             if (!now)
             {
-                _objectsToDestroy.Enqueue(this);
+                if (Interlocked.Exchange(ref _destroyQueued, 1) == 0)
+                {
+                    Interlocked.Increment(ref s_pendingDestructionCount);
+                    _objectsToDestroy.Enqueue(this);
+                }
                 return;
             }
 
+            ClearDestroyQueuedFlag();
             if (!(Destroying?.InvokeAllMatch(this) ?? true))
                 return;
 
@@ -135,6 +167,12 @@ namespace XREngine.Data.Core
             IsDestroyed = true;
 
             Destroyed?.Invoke(this);
+        }
+
+        private void ClearDestroyQueuedFlag()
+        {
+            if (Interlocked.Exchange(ref _destroyQueued, 0) == 1)
+                Interlocked.Decrement(ref s_pendingDestructionCount);
         }
 
         /// <summary>

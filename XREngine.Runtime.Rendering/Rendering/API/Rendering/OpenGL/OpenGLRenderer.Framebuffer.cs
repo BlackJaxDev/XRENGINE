@@ -36,7 +36,9 @@ public partial class OpenGLRenderer
         if (glProgram is null)
             return;
 
-        Api.UseProgram(glProgram.BindingId);
+        if (!glProgram.Use())
+            return;
+
         Api.DispatchCompute((uint)numGroupsX, (uint)numGroupsY, (uint)numGroupsZ);
     }
 

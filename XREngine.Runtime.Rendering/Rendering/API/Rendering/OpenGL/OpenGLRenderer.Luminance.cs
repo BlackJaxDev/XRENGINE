@@ -884,7 +884,7 @@ void main()
         // The compute program may not be linked yet because linkNow fires before
         // the GL wrapper exists (the event has no subscribers during the constructor).
         // Attempt a deferred link here, mirroring what UseRequested does.
-        if (!glProgram.IsLinked && !glProgram.Link())
+        if (!glProgram.Use())
         {
             Debug.OpenGLWarningEvery(
                 $"AutoExposure.ProgramNotReady.{glProgram.Hash}",
@@ -895,8 +895,6 @@ void main()
                 glProgram.IsLinked);
             return false;
         }
-
-        Api.UseProgram(glProgram.BindingId);
 
         int meteringMip = smallestMip;
         if (settings.AutoExposureMetering != ColorGradingSettings.AutoExposureMeteringMode.Average)
@@ -1348,7 +1346,7 @@ void main()
 
         // Bind resources and dispatch compute
         var glProgram = GenericToAPI<GLRenderProgram>(_luminanceComputeProgram);
-        if (glProgram is null || !glProgram.IsLinked)
+        if (glProgram is null || !glProgram.Use())
         {
             callback(false, 0.0f);
             return;
@@ -1356,7 +1354,6 @@ void main()
 
         try
         {
-            Api.UseProgram(glProgram.BindingId);
             glProgram.Uniform("textureSize", new Data.Vectors.IVector2((int)w, (int)h));
             glProgram.Uniform("luminanceWeights", luminance);
 
