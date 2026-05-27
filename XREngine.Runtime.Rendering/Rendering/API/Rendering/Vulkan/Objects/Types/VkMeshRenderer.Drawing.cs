@@ -53,16 +53,10 @@ public unsafe partial class VulkanRenderer
 
 			// Trace swapchain (dynamic rendering) draws only.
 			bool traceSwapchain = useDynamicRendering && renderPass.Handle == 0;
-			bool verboseSwapchainTrace = traceSwapchain && string.Equals(
-				Environment.GetEnvironmentVariable("XRE_VK_TRACE_SWAPDRAW"),
-				"1",
-				StringComparison.Ordinal);
+			bool verboseSwapchainTrace = traceSwapchain && XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
 			// Trace ALL draws (including FBO-targeted UI batched draws) for debugging.
-			bool verboseAllDrawTrace = string.Equals(
-				Environment.GetEnvironmentVariable("XRE_VK_TRACE_DRAW"),
-				"1",
-				StringComparison.Ordinal);
+			bool verboseAllDrawTrace = XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw;
 			bool verboseTrace = verboseSwapchainTrace || verboseAllDrawTrace;
 
 			// Skinning and blendshape weights must be pushed to GPU before any draw

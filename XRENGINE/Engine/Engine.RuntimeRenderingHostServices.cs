@@ -775,11 +775,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public int ScenePanelResizeDebounceMs
         => Engine.EditorPreferences.ScenePanelResizeDebounceMs;
 
-    public bool ForceFullViewport
-        => string.Equals(
-            Environment.GetEnvironmentVariable("XRE_FORCE_FULL_VIEWPORT"),
-            "1",
-            StringComparison.Ordinal);
+    public bool ForceFullViewport => XREngine.Rendering.RenderDiagnosticsFlags.ForceFullViewport;
 
     public bool RenderWindowsWhileInVR => Engine.Rendering.Settings.RenderWindowsWhileInVR;
     public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;
@@ -822,11 +818,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         => viewport is XRViewport xrViewport &&
            (Engine.Rendering.State.RenderingPipelineState?.ViewportStack.Contains(xrViewport) ?? false);
 
-    public bool ShouldForceDebugOpaquePipeline
-        => string.Equals(
-            Environment.GetEnvironmentVariable("XRE_FORCE_DEBUG_OPAQUE_PIPELINE"),
-            "1",
-            StringComparison.Ordinal);
+    public bool ShouldForceDebugOpaquePipeline => XREngine.Rendering.RenderDiagnosticsFlags.ForceDebugOpaquePipeline;
 
     public IRuntimeRenderPipelineHost? CreateDebugOpaquePipelineOverride()
         => new DebugOpaqueRenderPipeline();

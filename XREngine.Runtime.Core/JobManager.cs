@@ -37,6 +37,9 @@ namespace XREngine
         private static readonly TimeSpan SlowRenderThreadJobLogInterval = TimeSpan.FromSeconds(1);
         private static readonly long StarvationWarningTicks = (long)(StarvationWarningThreshold.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
         private static readonly long SlowRenderThreadJobTicks = (long)(System.Diagnostics.Stopwatch.Frequency / 1000.0);
+        // Render-thread jobs that exceed this duration always log (bypass per-label dedup) and emit a memory snapshot.
+        // Tuned to catch the ~hundreds-of-ms freezes that precede OS-level memory-pressure kills without spamming on normal slow frames.
+        private static readonly long StallRenderThreadJobTicks = (long)(System.Diagnostics.Stopwatch.Frequency * 0.250);
         private static readonly TimeSpan RemoteWorkerIdleTimeout = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan ShutdownWorkerJoinTimeout = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan ShutdownTaskWaitTimeout = TimeSpan.FromSeconds(2);
@@ -618,8 +621,10 @@ namespace XREngine
             if (elapsedTicks < SlowRenderThreadJobTicks)
                 return;
 
+            bool isStall = elapsedTicks >= StallRenderThreadJobTicks;
             long now = Stopwatch.GetTimestamp();
-            if (!ShouldLogSlowRenderThreadJob(label, job.Priority, now))
+            // Stall-level jobs always log (bypass dedup) so we never miss the actual freeze culprit.
+            if (!isStall && !ShouldLogSlowRenderThreadJob(label, job.Priority, now))
                 return;
 
             double elapsedMilliseconds = elapsedTicks * 1000.0 / Stopwatch.Frequency;
@@ -627,9 +632,25 @@ namespace XREngine
             string budgetText = budgetMilliseconds > 0.0
                 ? $", budget={budgetMilliseconds:F1} ms"
                 : string.Empty;
+            string memoryText = string.Empty;
+            if (isStall)
+            {
+                try
+                {
+                    long managedMB = GC.GetTotalMemory(forceFullCollection: false) >> 20;
+                    long workingSetMB;
+                    using (System.Diagnostics.Process proc = System.Diagnostics.Process.GetCurrentProcess())
+                        workingSetMB = proc.WorkingSet64 >> 20;
+                    memoryText = $", managedHeapMB={managedMB}, workingSetMB={workingSetMB}";
+                }
+                catch
+                {
+                    // Process memory snapshot is best-effort; never let a memory probe failure block diagnostics output.
+                }
+            }
             Log(
-                $"[RenderThreadJobs] Slow render-thread job '{label}' [{job.Priority}] took {elapsedMilliseconds:F2} ms in ProcessMainThreadJobs "
-                + $"(queuedRender={queuedRenderJobs}{budgetText}).");
+                $"[RenderThreadJobs] {(isStall ? "STALL" : "Slow")} render-thread job '{label}' [{job.Priority}] took {elapsedMilliseconds:F2} ms in ProcessMainThreadJobs "
+                + $"(queuedRender={queuedRenderJobs}{budgetText}{memoryText}).");
         }
 
         private static TimeSpan TicksToTimeSpan(long ticks)

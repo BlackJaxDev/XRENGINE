@@ -55,10 +55,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 // cause the final blit to render offscreen (black window).
                 RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
 
-                // Debug aid: set `XRE_DEBUG_PRESENT_CLEAR=1` to clear the default framebuffer to a vivid color.
+                // Debug aid: enable `XRE_DEBUG_PRESENT_CLEAR=1` or the editor preference
+                // Debug → Debug Present Clear to clear the default framebuffer to a vivid color.
                 // If the window stays black, we're likely not binding/presenting the default framebuffer.
                 // If it turns magenta but the scene never appears, the final blit/composite isn't drawing.
-                bool debugPresentClear = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DEBUG_PRESENT_CLEAR"));
+                bool debugPresentClear = RenderDiagnosticsFlags.DebugPresentClear;
                 if (debugPresentClear)
                 {
                     RuntimeEngine.Rendering.State.ClearColor(ColorF4.Magenta);

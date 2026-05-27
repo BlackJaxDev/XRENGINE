@@ -620,22 +620,23 @@ namespace XREngine.Rendering.OpenGL
                 _ => throw new ArgumentOutOfRangeException(nameof(usage), usage, null),
             };
 
-            // ----- PushSubData breakdown (env-gated 1 Hz dump) -----
-            // Enable with `XRE_PUSHSUBDATA_BREAKDOWN=1`. When enabled, aggregates per-buffer
-            // (call count, bytes requested) and dumps a sorted snapshot to log_rendering.txt
-            // approximately once per second. Used to attribute render-thread PushSubData
-            // queue floods (see docs/work/design/rendering/render-submission-perf-debug-plan.md §5.4).
-            private static readonly bool _pushSubDataBreakdownEnabled =
-                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_PUSHSUBDATA_BREAKDOWN"));
+            // ----- PushSubData breakdown (1 Hz dump) -----
+            // Toggled via `XRE_PUSHSUBDATA_BREAKDOWN=1` or editor preference
+            // Debug → PushSubData Breakdown. Aggregates per-buffer (call count,
+            // bytes requested) and dumps a sorted snapshot to log_rendering.txt
+            // approximately once per second. Used to attribute render-thread
+            // PushSubData queue floods (see
+            // docs/work/design/rendering/render-submission-perf-debug-plan.md §5.4).
+            private static bool _pushSubDataBreakdownEnabled => RenderDiagnosticsFlags.PushSubDataBreakdown;
 
-            // ----- PushSubData per-call trace (env-gated, AutoFlush) -----
-            // Enable with `XRE_PUSHSUBDATA_TRACE=1`. Writes every PushSubData call and the
-            // post-decision branch (PushData / NamedBufferSubData / clamp / immutable-fallback)
-            // to Build/Logs/pushsubdata-trace.log with AutoFlush so entries survive a process
-            // fail-fast such as the NVIDIA driver `0xc0000409` crash being investigated.
-            // Diagnostic only - do not leave enabled in benchmark runs.
-            private static readonly bool _pushSubDataTraceEnabled =
-                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_PUSHSUBDATA_TRACE"));
+            // ----- PushSubData per-call trace (AutoFlush) -----
+            // Toggled via `XRE_PUSHSUBDATA_TRACE=1` or editor preference
+            // Debug → PushSubData Trace. Writes every PushSubData call and the
+            // post-decision branch (PushData / NamedBufferSubData / clamp /
+            // immutable-fallback) to Build/Logs/pushsubdata-trace.log with AutoFlush
+            // so entries survive a process fail-fast such as the NVIDIA driver
+            // `0xc0000409` crash being investigated. Diagnostic only.
+            private static bool _pushSubDataTraceEnabled => RenderDiagnosticsFlags.PushSubDataTrace;
             private static readonly object _pushSubDataTraceLock = new();
             private static System.IO.StreamWriter? _pushSubDataTraceWriter;
 

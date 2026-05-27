@@ -1456,6 +1456,34 @@ namespace XREngine
         private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
         private bool _forwardDepthPrePassEnabled = true;
         private bool _forwardPrePassSharesGBufferTargets = true;
+        private int _glSubmitTraceLevel = 0;
+        private bool _hiZCullTrace = XREngine.Rendering.RenderDiagnosticsFlags.HiZCullTrace;
+        private bool _diagVendorUpscale = XREngine.Rendering.RenderDiagnosticsFlags.DiagVendorUpscale;
+        private bool _diagQuadBlit = XREngine.Rendering.RenderDiagnosticsFlags.DiagQuadBlit;
+        private bool _debugPresentClear = XREngine.Rendering.RenderDiagnosticsFlags.DebugPresentClear;
+        private bool _pushSubDataBreakdown = XREngine.Rendering.RenderDiagnosticsFlags.PushSubDataBreakdown;
+        private bool _pushSubDataTrace = XREngine.Rendering.RenderDiagnosticsFlags.PushSubDataTrace;
+        private bool _dispatchTrace = XREngine.Rendering.RenderDiagnosticsFlags.DispatchTrace;
+        private bool _dispatchFinish = XREngine.Rendering.RenderDiagnosticsFlags.DispatchFinish;
+        private bool _uploadStageLogging = XREngine.Rendering.RenderDiagnosticsFlags.UploadStageLogging;
+        private bool _crashBreadcrumbs = XREngine.Rendering.RenderDiagnosticsFlags.CrashBreadcrumbs;
+        private int _deferredDebugView = XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView;
+        private bool _modelRenderDiagEnabled = XREngine.Rendering.RenderDiagnosticsFlags.ModelRenderDiagEnabled;
+        private string? _firstChanceExceptionFilter = XREngine.Debug.FirstChanceExceptionFilter;
+        private bool _bypassVendorUpscale = XREngine.Rendering.RenderDiagnosticsFlags.BypassVendorUpscale;
+        private bool _glDebug = XREngine.Rendering.RenderDiagnosticsFlags.GLDebug;
+        private bool _forceFullViewport = XREngine.Rendering.RenderDiagnosticsFlags.ForceFullViewport;
+        private bool _forceDebugOpaquePipeline = XREngine.Rendering.RenderDiagnosticsFlags.ForceDebugOpaquePipeline;
+        private bool _gpuHiZDirtyBypass = XREngine.Rendering.RenderDiagnosticsFlags.GpuHiZDirtyBypass;
+        private string? _outputSourceFboOverride = XREngine.Rendering.RenderDiagnosticsFlags.OutputSourceFboOverride;
+        private bool _vkEnableAutoUniformRewrite = XREngine.Rendering.RenderDiagnosticsFlags.VkEnableAutoUniformRewrite;
+        private bool _vkDumpShaderOnError = XREngine.Rendering.RenderDiagnosticsFlags.VkDumpShaderOnError;
+        private bool _vkTracePipeCreate = XREngine.Rendering.RenderDiagnosticsFlags.VkTracePipeCreate;
+        private bool _vkTraceSwapDraw = XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
+        private bool _vkTraceDraw = XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw;
+        private bool _vkSkipUiPipeline = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiPipeline;
+        private bool _vkForceSwapchainMagenta = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
+        private bool _vkSkipImGui = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipImGui;
 
         private static int NormalizeProfilerProducerBufferCapacity(int value)
         {
@@ -1775,6 +1803,400 @@ namespace XREngine
 #else
                 SetField(ref _enableThreadAllocationTracking, value);
 #endif
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("GL Submit Trace Level")]
+        [Description("Diagnostic-only WriteThrough log of every OpenGL texture submit (storage, upload, sparse, destroy). 0=off, 1=basic, 2=verbose (per-row chunks). Output: Build/Logs/gl-submit-trace.log. Use to identify the last GL call before a driver fastfail/crash. High overhead at level 2.")]
+        [DefaultValue(0)]
+        public int GLSubmitTraceLevel
+        {
+            get => _glSubmitTraceLevel;
+            set
+            {
+                int clamped = value < 0 ? 0 : (value > 2 ? 2 : value);
+                if (SetField(ref _glSubmitTraceLevel, clamped))
+                    XREngine.Rendering.GLSubmitTracer.SetLevel(clamped);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("HiZ Cull Trace")]
+        [Description("Dump every GPU BVH/HiZ overflow with full capacity context (primitive/node counts, computed capacities, build mode). Use to distinguish real capacity exhaustion from stage-3 malformed-tree detection in bvh_build.comp. Seed env: XRE_HIZ_CULL_TRACE.")]
+        [DefaultValue(false)]
+        public bool HiZCullTrace
+        {
+            get => _hiZCullTrace;
+            set
+            {
+                if (SetField(ref _hiZCullTrace, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetHiZCullTrace(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Vendor Upscale Diag")]
+        [Description("Log every vendor upscale resolve/blit decision (source/destination FBO, fallback path, motion/depth wiring). Seed env: XRE_DIAG_VENDOR_UPSCALE.")]
+        [DefaultValue(false)]
+        public bool DiagVendorUpscale
+        {
+            get => _diagVendorUpscale;
+            set
+            {
+                if (SetField(ref _diagVendorUpscale, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDiagVendorUpscale(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Quad Blit Diag")]
+        [Description("Log every quad-blit pass (source/destination FBOs, viewport, material). Useful when the present chain renders black or to the wrong target. Seed env: XRE_DIAG_QUAD_BLIT.")]
+        [DefaultValue(false)]
+        public bool DiagQuadBlit
+        {
+            get => _diagQuadBlit;
+            set
+            {
+                if (SetField(ref _diagQuadBlit, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDiagQuadBlit(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Debug Present Clear")]
+        [Description("Clear the default framebuffer to magenta and skip the final blit. If the window stays black, present-path FBO binding is broken; if it turns magenta but the scene never appears, the composite isn't drawing. Seed env: XRE_DEBUG_PRESENT_CLEAR.")]
+        [DefaultValue(false)]
+        public bool DebugPresentClear
+        {
+            get => _debugPresentClear;
+            set
+            {
+                if (SetField(ref _debugPresentClear, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDebugPresentClear(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("PushSubData Breakdown")]
+        [Description("~1Hz per-buffer aggregate dump of PushSubData call count and bytes to log_rendering.txt. Use to attribute render-thread PushSubData queue floods. Seed env: XRE_PUSHSUBDATA_BREAKDOWN.")]
+        [DefaultValue(false)]
+        public bool PushSubDataBreakdown
+        {
+            get => _pushSubDataBreakdown;
+            set
+            {
+                if (SetField(ref _pushSubDataBreakdown, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataBreakdown(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("PushSubData Trace")]
+        [Description("Per-call AutoFlush trace of every PushSubData submission to Build/Logs/pushsubdata-trace.log. Entries survive a process fail-fast (e.g. NVIDIA driver 0xc0000409). Heavy overhead \u2014 diagnostic only. Seed env: XRE_PUSHSUBDATA_TRACE.")]
+        [DefaultValue(false)]
+        public bool PushSubDataTrace
+        {
+            get => _pushSubDataTrace;
+            set
+            {
+                if (SetField(ref _pushSubDataTrace, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataTrace(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Dispatch Trace")]
+        [Description("Per-dispatch compute shader trace to Build/Logs/dispatch-trace.log (program, workgroup, GL error). Seed env: XRE_DISPATCH_TRACE.")]
+        [DefaultValue(false)]
+        public bool DispatchTrace
+        {
+            get => _dispatchTrace;
+            set
+            {
+                if (SetField(ref _dispatchTrace, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchTrace(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Dispatch Finish")]
+        [Description("Issue glFinish after every compute dispatch to pinpoint TDRs / hangs to the exact shader. Severe performance cost. Seed env: XRE_DISPATCH_FINISH.")]
+        [DefaultValue(false)]
+        public bool DispatchFinish
+        {
+            get => _dispatchFinish;
+            set
+            {
+                if (SetField(ref _dispatchFinish, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchFinish(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Upload Stage Logging")]
+        [Description("1Hz upload-pipeline per-stage timing summary to Build/Logs/upload-stage-stats.log. Bypasses the engine profiler so nested BeginTiming scopes don't hide cumulative cost. Auto-enabled when a debugger is attached. Seed env: XRE_UPLOAD_STAGE_LOGGING.")]
+        [DefaultValue(false)]
+        public bool UploadStageLogging
+        {
+            get => _uploadStageLogging;
+            set
+            {
+                if (SetField(ref _uploadStageLogging, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetUploadStageLogging(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Crash Breadcrumbs")]
+        [Description("Synchronous Console.Error / Trace [CRUMB] writes plus glFinish around suspect GL calls. The last [CRUMB] line on stderr before a fastfail identifies which GL call killed the driver. Heavy \u2014 diagnostic only. Seed env: XRE_CRASH_BREADCRUMBS.")]
+        [DefaultValue(false)]
+        public bool CrashBreadcrumbs
+        {
+            get => _crashBreadcrumbs;
+            set
+            {
+                if (SetField(ref _crashBreadcrumbs, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetCrashBreadcrumbs(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Deferred Debug View")]
+        [Description("Deferred-lighting debug visualization for newly-created DefaultRenderPipeline instances. 0=Disabled, 1=RawAlbedo, 2=DirectLighting, 3=Rmse (vs reference), 4=Normal, 5=Depth. Existing pipelines keep their per-instance value; change takes effect on the next pipeline construction. Seed env: XRE_DEFERRED_DEBUG.")]
+        [DefaultValue(0)]
+        public int DeferredDebugView
+        {
+            get => _deferredDebugView;
+            set
+            {
+                int clamped = value < 0 ? 0 : (value > 5 ? 5 : value);
+                if (SetField(ref _deferredDebugView, clamped))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(clamped);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Model Render Diagnostics")]
+        [Description("Master switch for ModelRenderDiagnostics tracing (component publish, registration, visibility, command-list, and rejection logs). Defaults on in DEBUG/EDITOR builds; disable to silence the trace. Seed env: XRE_DEBUG_MODEL_RENDER=0 or XRE_MODEL_RENDER_DIAG=0.")]
+        [DefaultValue(true)]
+        public bool ModelRenderDiagEnabled
+        {
+            get => _modelRenderDiagEnabled;
+            set
+            {
+                if (SetField(ref _modelRenderDiagEnabled, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("First-Chance Exception Filter")]
+        [Description("Substring (case-insensitive) matched against first-chance exception type names. Matching exceptions are rate-limited and traced. Use '*' to match all. Empty disables filter-based tracing (InvalidOperationException and ArgumentException are always traced). Seed env: XRE_FIRST_CHANCE_EXCEPTIONS.")]
+        [DefaultValue(null)]
+        public string? FirstChanceExceptionFilter
+        {
+            get => _firstChanceExceptionFilter;
+            set
+            {
+                if (SetField(ref _firstChanceExceptionFilter, value))
+                    XREngine.Debug.FirstChanceExceptionFilter = value;
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Bypass Vendor Upscale")]
+        [Description("Skip vendor upscaler resolve/blit and route final present from the raw scene FBO. Takes effect on the next pipeline (re)build. Seed env: XRE_BYPASS_VENDOR_UPSCALE.")]
+        [DefaultValue(false)]
+        public bool BypassVendorUpscale
+        {
+            get => _bypassVendorUpscale;
+            set
+            {
+                if (SetField(ref _bypassVendorUpscale, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetBypassVendorUpscale(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("GL Debug")]
+        [Description("Master GL debug toggle: requests a debug GL context at startup, enables indirect-draw parameter dumps, and FBO attach/detach trace logs. Context-flag change only takes effect on engine restart; indirect-draw/attach logs respond immediately. Heavy \u2014 diagnostic only. Seed env: XRE_GL_DEBUG.")]
+        [DefaultValue(false)]
+        public bool GLDebug
+        {
+            get => _glDebug;
+            set
+            {
+                if (SetField(ref _glDebug, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetGLDebug(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Force Full Viewport")]
+        [Description("Force viewport rendering to cover the entire window, ignoring scene-panel sub-rects. Useful when isolating rendering issues from editor panel layout. Seed env: XRE_FORCE_FULL_VIEWPORT.")]
+        [DefaultValue(false)]
+        public bool ForceFullViewport
+        {
+            get => _forceFullViewport;
+            set
+            {
+                if (SetField(ref _forceFullViewport, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetForceFullViewport(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Force Debug Opaque Pipeline")]
+        [Description("Substitute a minimal forward-opaque debug pipeline for the default render pipeline. Useful for isolating which pipeline stage is faulting. Takes effect when the viewport's pipeline is (re)created. Seed env: XRE_FORCE_DEBUG_OPAQUE_PIPELINE.")]
+        [DefaultValue(false)]
+        public bool ForceDebugOpaquePipeline
+        {
+            get => _forceDebugOpaquePipeline;
+            set
+            {
+                if (SetField(ref _forceDebugOpaquePipeline, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetForceDebugOpaquePipeline(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("GPU HiZ Dirty Bypass")]
+        [Description("GPU culling HiZ dirty-rect bypass path. On by default; turn off to route GPU culling through the legacy dirty-range path (slower, but useful when diagnosing HiZ regressions). Seed env: XRE_GPU_HIZ_DIRTY_BYPASS (0/false disables).")]
+        [DefaultValue(true)]
+        public bool GpuHiZDirtyBypass
+        {
+            get => _gpuHiZDirtyBypass;
+            set
+            {
+                if (SetField(ref _gpuHiZDirtyBypass, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetGpuHiZDirtyBypass(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Output Source FBO Override")]
+        [Description("Optional internal FBO name to use as the final present source (debug only). Empty/null lets the pipeline pick by its normal rules. Seed env: XRE_OUTPUT_SOURCE_FBO.")]
+        [DefaultValue(null)]
+        public string? OutputSourceFboOverride
+        {
+            get => _outputSourceFboOverride;
+            set
+            {
+                if (SetField(ref _outputSourceFboOverride, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetOutputSourceFboOverride(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Auto-Uniform Rewrite")]
+        [Description("Vulkan SPIR-V auto-uniform-rewrite pass. On by default; disable to fall back to the legacy opaque-uniform path. Seed env: XRE_VK_ENABLE_AUTO_UNIFORM_REWRITE=0 disables.")]
+        [DefaultValue(true)]
+        public bool VkEnableAutoUniformRewrite
+        {
+            get => _vkEnableAutoUniformRewrite;
+            set
+            {
+                if (SetField(ref _vkEnableAutoUniformRewrite, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkEnableAutoUniformRewrite(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Dump Shader On Error")]
+        [Description("On Vulkan shader compile failure, append a source preview to the exception message. Helpful when the shader cannot be located on disk. Seed env: XRE_VK_DUMP_SHADER_ON_ERROR.")]
+        [DefaultValue(false)]
+        public bool VkDumpShaderOnError
+        {
+            get => _vkDumpShaderOnError;
+            set
+            {
+                if (SetField(ref _vkDumpShaderOnError, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkDumpShaderOnError(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Trace Pipeline Creation")]
+        [Description("Log full stage/format details for every Vulkan graphics pipeline created via dynamic rendering. Heavy. Seed env: XRE_VK_TRACE_PIPECREATE.")]
+        [DefaultValue(false)]
+        public bool VkTracePipeCreate
+        {
+            get => _vkTracePipeCreate;
+            set
+            {
+                if (SetField(ref _vkTracePipeCreate, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTracePipeCreate(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Trace Swapchain Draws")]
+        [Description("Verbose per-draw trace for swapchain (dynamic-rendering) draw calls only. Seed env: XRE_VK_TRACE_SWAPDRAW.")]
+        [DefaultValue(false)]
+        public bool VkTraceSwapDraw
+        {
+            get => _vkTraceSwapDraw;
+            set
+            {
+                if (SetField(ref _vkTraceSwapDraw, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceSwapDraw(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Trace All Draws")]
+        [Description("Verbose per-draw trace for every Vulkan draw, including FBO-targeted UI batches. Very heavy. Seed env: XRE_VK_TRACE_DRAW.")]
+        [DefaultValue(false)]
+        public bool VkTraceDraw
+        {
+            get => _vkTraceDraw;
+            set
+            {
+                if (SetField(ref _vkTraceDraw, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceDraw(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Skip UI Pipeline")]
+        [Description("Skip Vulkan UI-pipeline command-buffer ops to isolate UI from scene faults. Seed env: XRE_SKIP_UI_PIPELINE.")]
+        [DefaultValue(false)]
+        public bool VkSkipUiPipeline
+        {
+            get => _vkSkipUiPipeline;
+            set
+            {
+                if (SetField(ref _vkSkipUiPipeline, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiPipeline(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Force Swapchain Magenta")]
+        [Description("Force-clear the Vulkan swapchain to magenta after main composition. Confirms the present path is reaching the swapchain. Seed env: XRE_FORCE_SWAPCHAIN_MAGENTA.")]
+        [DefaultValue(false)]
+        public bool VkForceSwapchainMagenta
+        {
+            get => _vkForceSwapchainMagenta;
+            set
+            {
+                if (SetField(ref _vkForceSwapchainMagenta, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkForceSwapchainMagenta(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Skip ImGui")]
+        [Description("Skip the Vulkan ImGui overlay draw entirely. Seed env: XRE_SKIP_IMGUI.")]
+        [DefaultValue(false)]
+        public bool VkSkipImGui
+        {
+            get => _vkSkipImGui;
+            set
+            {
+                if (SetField(ref _vkSkipImGui, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipImGui(value);
             }
         }
 
@@ -2431,6 +2853,35 @@ namespace XREngine
             Engine.Profiler.FpsDropMinPreviousFps = CodeProfilerFpsDropMinPreviousFps;
             Engine.Profiler.FpsDropMinDeltaMs = CodeProfilerFpsDropMinDeltaMs;
             Engine.Profiler.RenderStallThresholdMs = CodeProfilerRenderStallThresholdMs;
+
+            XREngine.Rendering.GLSubmitTracer.SetLevel(_glSubmitTraceLevel);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetHiZCullTrace(_hiZCullTrace);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDiagVendorUpscale(_diagVendorUpscale);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDiagQuadBlit(_diagQuadBlit);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDebugPresentClear(_debugPresentClear);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataBreakdown(_pushSubDataBreakdown);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetPushSubDataTrace(_pushSubDataTrace);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchTrace(_dispatchTrace);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDispatchFinish(_dispatchFinish);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetUploadStageLogging(_uploadStageLogging);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetCrashBreadcrumbs(_crashBreadcrumbs);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(_deferredDebugView);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(_modelRenderDiagEnabled);
+            XREngine.Debug.FirstChanceExceptionFilter = _firstChanceExceptionFilter;
+            XREngine.Rendering.RenderDiagnosticsFlags.SetBypassVendorUpscale(_bypassVendorUpscale);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetGLDebug(_glDebug);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetForceFullViewport(_forceFullViewport);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetForceDebugOpaquePipeline(_forceDebugOpaquePipeline);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetGpuHiZDirtyBypass(_gpuHiZDirtyBypass);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetOutputSourceFboOverride(_outputSourceFboOverride);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkEnableAutoUniformRewrite(_vkEnableAutoUniformRewrite);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkDumpShaderOnError(_vkDumpShaderOnError);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTracePipeCreate(_vkTracePipeCreate);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceSwapDraw(_vkTraceSwapDraw);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceDraw(_vkTraceDraw);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiPipeline(_vkSkipUiPipeline);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkForceSwapchainMagenta(_vkForceSwapchainMagenta);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipImGui(_vkSkipImGui);
         }
 
         public void CopyFrom(EditorDebugOptions source)
@@ -2461,6 +2912,34 @@ namespace XREngine
             DebugPointSize = source.DebugPointSize;
             DebugLineWidth = source.DebugLineWidth;
             EnableThreadAllocationTracking = source.EnableThreadAllocationTracking;
+            GLSubmitTraceLevel = source.GLSubmitTraceLevel;
+            HiZCullTrace = source.HiZCullTrace;
+            DiagVendorUpscale = source.DiagVendorUpscale;
+            DiagQuadBlit = source.DiagQuadBlit;
+            DebugPresentClear = source.DebugPresentClear;
+            PushSubDataBreakdown = source.PushSubDataBreakdown;
+            PushSubDataTrace = source.PushSubDataTrace;
+            DispatchTrace = source.DispatchTrace;
+            DispatchFinish = source.DispatchFinish;
+            UploadStageLogging = source.UploadStageLogging;
+            CrashBreadcrumbs = source.CrashBreadcrumbs;
+            DeferredDebugView = source.DeferredDebugView;
+            ModelRenderDiagEnabled = source.ModelRenderDiagEnabled;
+            FirstChanceExceptionFilter = source.FirstChanceExceptionFilter;
+            BypassVendorUpscale = source.BypassVendorUpscale;
+            GLDebug = source.GLDebug;
+            ForceFullViewport = source.ForceFullViewport;
+            ForceDebugOpaquePipeline = source.ForceDebugOpaquePipeline;
+            GpuHiZDirtyBypass = source.GpuHiZDirtyBypass;
+            OutputSourceFboOverride = source.OutputSourceFboOverride;
+            VkEnableAutoUniformRewrite = source.VkEnableAutoUniformRewrite;
+            VkDumpShaderOnError = source.VkDumpShaderOnError;
+            VkTracePipeCreate = source.VkTracePipeCreate;
+            VkTraceSwapDraw = source.VkTraceSwapDraw;
+            VkTraceDraw = source.VkTraceDraw;
+            VkSkipUiPipeline = source.VkSkipUiPipeline;
+            VkForceSwapchainMagenta = source.VkForceSwapchainMagenta;
+            VkSkipImGui = source.VkSkipImGui;
             UseDebugOpaquePipeline = source.UseDebugOpaquePipeline;
             ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;

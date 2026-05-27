@@ -742,9 +742,17 @@ public partial class GLTexture2D
         height = Math.Max(1u, height);
 
         if (Data.MultiSample)
+        {
+            if (GLSubmitTracer.Enabled)
+                TracePreSubmit("TexImage2DMultisample.NoData", levels: 0, width, height, mipLevel, fullPush: fullPush);
             Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, width, height, Data.FixedSampleLocations);
+        }
         else
+        {
+            if (GLSubmitTracer.Enabled)
+                TracePreSubmit("TexImage2D.NoData", levels: 0, width, height, mipLevel, fullPush: fullPush);
             Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, IntPtr.Zero.ToPointer());
+        }
     }
 
     /// <summary>
@@ -800,11 +808,15 @@ public partial class GLTexture2D
             if (data is null)
             {
                 pbo?.Bind();
+                if (GLSubmitTracer.Enabled)
+                    TracePreSubmit("TexSubImage2D.PBO", levels: 0, width, height, mipLevel, fullPush: fullPush);
                 Api.TexSubImage2D(glTarget, mipLevel, 0, 0, width, height, pixelFormat, pixelType, null);
                 pbo?.Unbind();
             }
             else
             {
+                if (GLSubmitTracer.Enabled)
+                    TracePreSubmit("TexSubImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
                 Api.TexSubImage2D(glTarget, mipLevel, 0, 0, width, height, pixelFormat, pixelType, data.Address.Pointer);
             }
         }
@@ -813,15 +825,21 @@ public partial class GLTexture2D
             if (data is not null)
                 Debug.OpenGLWarning("Multisample textures do not support initial data, ignoring all mipmaps.");
 
+            if (GLSubmitTracer.Enabled)
+                TracePreSubmit("TexImage2DMultisample", levels: 0, width, height, mipLevel, fullPush: fullPush);
             Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, width, height, Data.FixedSampleLocations);
         }
         else if (data is not null)
         {
+            if (GLSubmitTracer.Enabled)
+                TracePreSubmit("TexImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
             Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, data.Address.Pointer);
         }
         else
         {
             pbo?.Bind();
+            if (GLSubmitTracer.Enabled)
+                TracePreSubmit("TexImage2D.PBO", levels: 0, width, height, mipLevel, fullPush: fullPush);
             Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, null);
             pbo?.Unbind();
         }
@@ -863,6 +881,8 @@ public partial class GLTexture2D
         if (fullPush && !StorageSet)
         {
             ResetUnpackStateForTextureUpload();
+            if (GLSubmitTracer.Enabled)
+                TracePreSubmit("TexImage2D.RowsFallback", levels: 0, width, height, mipLevel, fullPush: fullPush);
             Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, data.Address.Pointer);
             return;
         }
@@ -883,11 +903,8 @@ public partial class GLTexture2D
         long rowBytes = data.Length / (long)Math.Max(1u, height);
         byte* rowPointer = (byte*)data.Address.Pointer + (startRow * rowBytes);
         ResetUnpackStateForTextureUpload();
-        /*
-        Debug.OpenGLWarning(
-            $"[GLTexture2D] TexSubImage2D PRE '{GetDescribingName()}' mip={mipLevel} size={width}x{height} rows={startRow}+{rowCount} " +
-            $"format={pixelFormat} type={pixelType} internal={internalPixelFormat} sized={Data.SizedInternalFormat} storage={StorageSet}");
-        */
+        if (GLSubmitTracer.VerboseEnabled)
+            TracePreSubmit("TexSubImage2D.Rows", levels: 0, width, (uint)rowCount, mipLevel, xOffset: 0, yOffset: (uint)startRow, fullPush: fullPush);
         Api.TexSubImage2D(glTarget, mipLevel, 0, startRow, width, (uint)rowCount, pixelFormat, pixelType, rowPointer);
     }
 

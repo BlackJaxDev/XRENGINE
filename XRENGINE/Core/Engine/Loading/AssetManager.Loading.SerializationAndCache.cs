@@ -728,6 +728,16 @@ namespace XREngine
             if (!File.Exists(cachePath))
                 return false;
 
+            if (typeof(T) == typeof(XRTexture2D))
+            {
+                XRTexture2D? binaryTexture = TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
+                if (binaryTexture is not null)
+                {
+                    asset = (T)(object)binaryTexture;
+                    return true;
+                }
+            }
+
             try
             {
                 var cachedAsset = DeserializeAssetFile<T>(cachePath);
@@ -771,6 +781,16 @@ namespace XREngine
             if (!File.Exists(cachePath))
                 return false;
 
+            if (type == typeof(XRTexture2D))
+            {
+                XRTexture2D? binaryTexture = TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
+                if (binaryTexture is not null)
+                {
+                    asset = binaryTexture;
+                    return true;
+                }
+            }
+
             try
             {
                 var cachedAsset = DeserializeAssetFile(cachePath, type);
@@ -805,6 +825,13 @@ namespace XREngine
         {
             if (!File.Exists(cachePath))
                 return null;
+
+            if (typeof(T) == typeof(XRTexture2D))
+            {
+                XRTexture2D? binaryTexture = await Task.Run(() => TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc)).ConfigureAwait(false);
+                if (binaryTexture is not null)
+                    return (T)(object)binaryTexture;
+            }
 
             try
             {
@@ -846,9 +873,16 @@ namespace XREngine
                     Directory.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
-                cacheAsset.SerializeTo(cachePath, Serializer);
-                if (asset is XRTexture2D)
-                    LogTextureCacheEvent("Texture.CacheWrite", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, "asset serialized to third-party cache");
+                if (TryWriteTextureBinaryStreamingCache(cachePath, cacheAsset, asset))
+                {
+                    // binary streaming cache written; legacy YAML path skipped.
+                }
+                else
+                {
+                    cacheAsset.SerializeTo(cachePath, Serializer);
+                    if (asset is XRTexture2D)
+                        LogTextureCacheEvent("Texture.CacheWrite", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, "asset serialized to third-party cache");
+                }
             }
             catch (Exception ex)
             {
@@ -877,9 +911,16 @@ namespace XREngine
                     Directory.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
-                await cacheAsset.SerializeToAsync(cachePath, Serializer).ConfigureAwait(false);
-                if (asset is XRTexture2D)
-                    LogTextureCacheEvent("Texture.CacheWrite", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, "asset serialized to third-party cache");
+                if (TryWriteTextureBinaryStreamingCache(cachePath, cacheAsset, asset))
+                {
+                    // binary streaming cache written; legacy YAML path skipped.
+                }
+                else
+                {
+                    await cacheAsset.SerializeToAsync(cachePath, Serializer).ConfigureAwait(false);
+                    if (asset is XRTexture2D)
+                        LogTextureCacheEvent("Texture.CacheWrite", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, "asset serialized to third-party cache");
+                }
             }
             catch (Exception ex)
             {
@@ -887,6 +928,91 @@ namespace XREngine
                     LogTextureCacheEvent("Texture.CacheFallbackToSource", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, ex.Message);
 
                 Debug.LogWarning($"Failed to write cached asset '{cachePath}'. {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// If the prepared cache asset is an <see cref="XRTexture2D"/> in streaming-cache shape, writes it as a pure
+        /// binary XRTS payload (no YAML wrapper, no hex/base64). Returns <c>true</c> if the binary writer ran.
+        /// </summary>
+        /// <remarks>
+        /// Replaces the legacy YAML+ZstdHex cache layout for textures, which inflated 5-6 MB binary payloads to
+        /// 50-99 MB on disk and required UTF-8 decoding + YAML parsing of the entire file at load time. Old YAML
+        /// cache files remain readable via the fallback path; they will be transparently replaced on next write.
+        /// </remarks>
+        private static bool TryWriteTextureBinaryStreamingCache(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
+        {
+            if (cacheAsset is not XRTexture2D texture)
+                return false;
+            if (!HasStreamableTextureCacheShape(texture))
+                return false;
+
+            DateTime sourceTimestampUtc = texture.OriginalLastWriteTimeUtc ?? DateTime.MinValue;
+            if (sourceTimestampUtc == DateTime.MinValue && TryResolveTextureCacheSourcePath(texture, out string sourcePath))
+                sourceTimestampUtc = File.GetLastWriteTimeUtc(sourcePath);
+            if (sourceTimestampUtc == DateTime.MinValue)
+                return false;
+
+            if (!XRTexture2D.WriteBinaryStreamingCacheFile(texture, cachePath, sourceTimestampUtc))
+                return false;
+
+            LogTextureCacheEvent(
+                "Texture.CacheWrite",
+                originalAsset.OriginalPath ?? originalAsset.FilePath ?? string.Empty,
+                cachePath,
+                "binary streaming payload (no YAML envelope)");
+            return true;
+        }
+
+        /// <summary>
+        /// Peeks the first byte of <paramref name="cachePath"/> to detect whether it is a raw binary
+        /// XRTS payload (any byte &lt;= <see cref="RuntimeCookedBinaryTypeMarker.CustomObject"/>) versus a
+        /// legacy YAML-wrapped file (UTF-8 BOM 0xEF or printable ASCII '_', 'I', etc., all &gt; 25).
+        /// </summary>
+        private static bool LooksLikeBinaryTextureCache(string cachePath)
+        {
+            try
+            {
+                using FileStream fs = new(cachePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                int first = fs.ReadByte();
+                if (first < 0)
+                    return false;
+                return first <= (byte)RuntimeCookedBinaryTypeMarker.CustomObject;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Attempts to load a binary XRTS texture cache file directly via the cooked-binary
+        /// deserializer, bypassing the expensive UTF-8 decode + YAML parse path. Returns
+        /// <c>null</c> if the file is not a binary cache, is stale, or fails to deserialize.
+        /// </summary>
+        private static XRTexture2D? TryReadTextureBinaryCacheFile(string cachePath, string originalPath, DateTime sourceTimestampUtc)
+        {
+            if (!LooksLikeBinaryTextureCache(cachePath))
+                return null;
+
+            DateTime cacheMtimeUtc = File.GetLastWriteTimeUtc(cachePath);
+            if (cacheMtimeUtc < sourceTimestampUtc)
+                return null;
+
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(cachePath);
+                if (RuntimeCookedBinarySerializer.Deserialize(typeof(XRTexture2D), bytes) is not XRTexture2D deserialized)
+                    return null;
+
+                deserialized.OriginalPath = originalPath;
+                deserialized.OriginalLastWriteTimeUtc = cacheMtimeUtc;
+                return deserialized;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to deserialize binary texture cache '{cachePath}'. {ex.Message}");
+                return null;
             }
         }
 

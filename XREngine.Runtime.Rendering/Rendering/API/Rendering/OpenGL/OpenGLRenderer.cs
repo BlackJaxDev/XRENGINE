@@ -324,21 +324,15 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
     /// </summary>
     private static class UploadStageStats
     {
-        private static readonly bool Enabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_UPLOAD_STAGE_LOGGING"), "1", StringComparison.OrdinalIgnoreCase)
-            || Debugger.IsAttached;
+        private static bool Enabled => RenderDiagnosticsFlags.UploadStageLogging;
 
-        private readonly struct Entry
+        private readonly struct Entry(long calls, double totalMs, double maxMs, long processed, long pendingMax)
         {
-            public Entry(long calls, double totalMs, double maxMs, long processed, long pendingMax)
-            {
-                Calls = calls; TotalMs = totalMs; MaxMs = maxMs; Processed = processed; PendingMax = pendingMax;
-            }
-            public long Calls { get; }
-            public double TotalMs { get; }
-            public double MaxMs { get; }
-            public long Processed { get; }
-            public long PendingMax { get; }
+            public long Calls { get; } = calls;
+            public double TotalMs { get; } = totalMs;
+            public double MaxMs { get; } = maxMs;
+            public long Processed { get; } = processed;
+            public long PendingMax { get; } = pendingMax;
         }
 
         private static readonly object _lock = new();
@@ -381,26 +375,58 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
         private static void FlushLocked(double windowSec, long nowTicks)
         {
             _lastFlushTicks = nowTicks;
+
             if (_stats.Count == 0)
                 return;
-            _logPath ??= System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs", "upload-stage-stats.log");
-            try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_logPath)!); } catch { }
+            
+            _logPath ??= System.IO.Path.Combine(
+                System.IO.Directory.GetCurrentDirectory(), 
+                "Build", 
+                "Logs", 
+                "upload-stage-stats.log");
+            
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_logPath)!);
+            }
+            catch { }
+
             var sb = new StringBuilder(256);
-            sb.Append('[').Append(DateTime.Now.ToString("HH:mm:ss.fff")).Append("] window=")
-              .Append(windowSec.ToString("F2")).Append('s');
+            sb
+                .Append('[')
+                .Append(DateTime.Now.ToString("HH:mm:ss.fff"))
+                .Append("] window=")
+                .Append(windowSec.ToString("F2"))
+                .Append('s');
+            
             foreach (var kv in _stats)
             {
                 double avg = kv.Value.TotalMs / Math.Max(1, kv.Value.Calls);
-                sb.Append(' ').Append(kv.Key).Append('=')
-                  .Append(kv.Value.Calls).Append("c,")
-                  .Append(kv.Value.TotalMs.ToString("F2")).Append("ms,avg=")
-                  .Append(avg.ToString("F3")).Append(",max=")
-                  .Append(kv.Value.MaxMs.ToString("F3"))
-                  .Append(",done=").Append(kv.Value.Processed)
-                  .Append(",pendMax=").Append(kv.Value.PendingMax);
+                sb
+                    .Append(' ')
+                    .Append(kv.Key)
+                    .Append('=')
+                    .Append(kv.Value.Calls)
+                    .Append("c,")
+                    .Append(kv.Value.TotalMs.ToString("F2"))
+                    .Append("ms,avg=")
+                    .Append(avg.ToString("F3"))
+                    .Append(",max=")
+                    .Append(kv.Value.MaxMs.ToString("F3"))
+                    .Append(",done=")
+                    .Append(kv.Value.Processed)
+                    .Append(",pendMax=")
+                    .Append(kv.Value.PendingMax);
             }
+
             sb.AppendLine();
-            try { System.IO.File.AppendAllText(_logPath, sb.ToString()); } catch { }
+
+            try
+            {
+                System.IO.File.AppendAllText(_logPath, sb.ToString());
+            }
+            catch { }
+
             _stats.Clear();
         }
     }

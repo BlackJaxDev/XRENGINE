@@ -532,8 +532,7 @@ namespace XREngine.Rendering
         // immediately before each glMultiDrawElementsIndirect[Count] call. The dump
         // is the only way to localize an offending pass when the NVIDIA driver
         // FAST_FAIL_CORRUPT_LIST_ENTRYs without a debug callback message.
-        private static readonly bool s_glDebugTraceEnabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_GL_DEBUG"), "1", StringComparison.Ordinal);
+        private static bool s_glDebugTraceEnabled => RenderDiagnosticsFlags.GLDebug;
 
         private static void LogIndirectDrawSizes(
             string callsite,

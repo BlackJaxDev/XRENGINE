@@ -258,39 +258,15 @@ namespace XREngine.Rendering.Commands
         // Set XRE_GPU_HIZ_DIRTY_BYPASS=0 to force refine-always (legacy behavior,
         // may over-cull for one frame after a dirty event because the pyramid still
         // reflects pre-mutation depth).
-        private static bool? _gpuHiZDirtyBypassCached;
-        private static bool IsGpuHiZDirtyBypassEnabled()
-        {
-            if (_gpuHiZDirtyBypassCached.HasValue)
-                return _gpuHiZDirtyBypassCached.Value;
-            string? raw = Environment.GetEnvironmentVariable("XRE_GPU_HIZ_DIRTY_BYPASS");
-            // Default ON when unset; explicit "0"/"false" disables.
-            bool enabled;
-            if (string.IsNullOrEmpty(raw))
-                enabled = true;
-            else if (raw == "0" || raw.Equals("false", StringComparison.OrdinalIgnoreCase))
-                enabled = false;
-            else
-                enabled = true;
-            _gpuHiZDirtyBypassCached = enabled;
-            return enabled;
-        }
+        private static bool IsGpuHiZDirtyBypassEnabled() => RenderDiagnosticsFlags.GpuHiZDirtyBypass;
 
         // Crash breadcrumbs: synchronous Console.Error/Trace writes around suspect GL calls.
-        // Set XRE_CRASH_BREADCRUMBS=1 to enable. Each call also issues glFinish so the GPU
-        // catches up before the next breadcrumb prints; the last [CRUMB] line on stderr
-        // before a fastfail identifies which GL call killed the driver. Heavy — diagnostic
-        // only, leave off for measurement runs.
-        private static bool? _crashBreadcrumbsCached;
+        // Toggled via XRE_CRASH_BREADCRUMBS=1 or the editor preference Debug → Crash
+        // Breadcrumbs. Each call also issues glFinish so the GPU catches up before the
+        // next breadcrumb prints; the last [CRUMB] line on stderr before a fastfail
+        // identifies which GL call killed the driver. Heavy — diagnostic only.
         internal static bool AreCrashBreadcrumbsEnabled()
-        {
-            if (_crashBreadcrumbsCached.HasValue)
-                return _crashBreadcrumbsCached.Value;
-            string? raw = Environment.GetEnvironmentVariable("XRE_CRASH_BREADCRUMBS");
-            bool enabled = !string.IsNullOrEmpty(raw) && (raw == "1" || raw.Equals("true", StringComparison.OrdinalIgnoreCase));
-            _crashBreadcrumbsCached = enabled;
-            return enabled;
-        }
+            => RenderDiagnosticsFlags.CrashBreadcrumbs;
 
         // Direct file-append transport. Console.Error and Trace listeners are unreliable
         // for WinExe processes (no console attached) and may be torn down before a fastfail

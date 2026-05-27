@@ -1084,51 +1084,74 @@ namespace XREngine.Components.Capture.Lights.Types
         protected override void SetShadowMapUniforms(XRMaterialBase material, XRRenderProgram program)
         {
             ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
-            program.Uniform("FarPlaneDist", _influenceVolume.Radius);
-            program.Uniform("LightPos", Transform.RenderTranslation);
-            program.Uniform("ShadowMapEncoding", (int)selection.Encoding);
-            program.Uniform("ShadowMomentMinVariance", ShadowMomentMinVariance);
-            program.Uniform("ShadowMomentLightBleedReduction", ShadowMomentLightBleedReduction);
-            program.Uniform("ShadowMomentPositiveExponent", selection.PositiveExponent);
-            program.Uniform("ShadowMomentNegativeExponent", selection.NegativeExponent);
-            program.Uniform("ShadowMomentMipBias", ShadowMomentMipBias);
+
+            // The shadow pass binds whatever program the mesh's material owns. Most material
+            // programs do not declare these names (or declare them with different types), so
+            // pushing them unconditionally produced a GL_INVALID_OPERATION storm. Gate every
+            // upload on whether the program actually has a matching uniform.
+            if (program.HasUniform("FarPlaneDist"))
+                program.Uniform("FarPlaneDist", _influenceVolume.Radius);
+            if (program.HasUniform("LightPos"))
+                program.Uniform("LightPos", Transform.RenderTranslation);
+            if (program.HasUniform("ShadowMapEncoding"))
+                program.Uniform("ShadowMapEncoding", (int)selection.Encoding);
+            if (program.HasUniform("ShadowMomentMinVariance"))
+                program.Uniform("ShadowMomentMinVariance", ShadowMomentMinVariance);
+            if (program.HasUniform("ShadowMomentLightBleedReduction"))
+                program.Uniform("ShadowMomentLightBleedReduction", ShadowMomentLightBleedReduction);
+            if (program.HasUniform("ShadowMomentPositiveExponent"))
+                program.Uniform("ShadowMomentPositiveExponent", selection.PositiveExponent);
+            if (program.HasUniform("ShadowMomentNegativeExponent"))
+                program.Uniform("ShadowMomentNegativeExponent", selection.NegativeExponent);
+            if (program.HasUniform("ShadowMomentMipBias"))
+                program.Uniform("ShadowMomentMipBias", ShadowMomentMipBias);
             var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
             if (state?.PointLightLayeredShadowPass == true && state.PointLightShadowFaceCount > 0)
             {
                 int layeredFaceCount = Math.Min(ShadowFaceCount, state.PointLightShadowFaceCount);
-                program.Uniform("PointShadowFaceCount", layeredFaceCount);
+                if (program.HasUniform("PointShadowFaceCount"))
+                    program.Uniform("PointShadowFaceCount", layeredFaceCount);
                 int faceMask = 0;
                 for (int i = 0; i < layeredFaceCount; ++i)
                 {
                     if (state.TryGetPointLightShadowFaceMatrix(i, out Matrix4x4 vp))
                     {
-                        program.Uniform(ViewProjectionMatrixUniformNames[i], vp);
-                        program.Uniform(PointShadowViewProjectionMatrixUniformNames[i], vp);
+                        if (program.HasUniform(ViewProjectionMatrixUniformNames[i]))
+                            program.Uniform(ViewProjectionMatrixUniformNames[i], vp);
+                        if (program.HasUniform(PointShadowViewProjectionMatrixUniformNames[i]))
+                            program.Uniform(PointShadowViewProjectionMatrixUniformNames[i], vp);
                     }
 
                     if (state.TryGetPointLightShadowFaceIndex(i, out int faceIndex))
                     {
-                        program.Uniform(PointShadowFaceIndexUniformNames[i], faceIndex);
+                        if (program.HasUniform(PointShadowFaceIndexUniformNames[i]))
+                            program.Uniform(PointShadowFaceIndexUniformNames[i], faceIndex);
                         if ((uint)faceIndex < ShadowFaceCount)
                             faceMask |= 1 << faceIndex;
                     }
                 }
 
-                program.Uniform("PointShadowFaceMask", faceMask);
+                if (program.HasUniform("PointShadowFaceMask"))
+                    program.Uniform("PointShadowFaceMask", faceMask);
                 return;
             }
 
             int faceCount = Math.Min(ShadowFaceCount, _shadowCameras.Length);
-            program.Uniform("PointShadowFaceCount", faceCount);
-            program.Uniform("PointShadowFaceMask", CurrentShadowFaceRelevanceMask);
+            if (program.HasUniform("PointShadowFaceCount"))
+                program.Uniform("PointShadowFaceCount", faceCount);
+            if (program.HasUniform("PointShadowFaceMask"))
+                program.Uniform("PointShadowFaceMask", CurrentShadowFaceRelevanceMask);
             for (int i = 0; i < faceCount; ++i)
             {
                 XRCamera cam = _shadowCameras[i];
                 Matrix4x4.Invert(cam.Transform.RenderMatrix, out Matrix4x4 viewMatrix);
                 Matrix4x4 vp = viewMatrix * cam.ProjectionMatrix;
-                program.Uniform(ViewProjectionMatrixUniformNames[i], vp);
-                program.Uniform(PointShadowViewProjectionMatrixUniformNames[i], vp);
-                program.Uniform(PointShadowFaceIndexUniformNames[i], i);
+                if (program.HasUniform(ViewProjectionMatrixUniformNames[i]))
+                    program.Uniform(ViewProjectionMatrixUniformNames[i], vp);
+                if (program.HasUniform(PointShadowViewProjectionMatrixUniformNames[i]))
+                    program.Uniform(PointShadowViewProjectionMatrixUniformNames[i], vp);
+                if (program.HasUniform(PointShadowFaceIndexUniformNames[i]))
+                    program.Uniform(PointShadowFaceIndexUniformNames[i], i);
             }
         }
 

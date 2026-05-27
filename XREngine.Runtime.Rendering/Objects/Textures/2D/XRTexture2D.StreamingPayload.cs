@@ -43,7 +43,19 @@ public partial class XRTexture2D
     internal static byte[] CreateTextureStreamingPayload(string sourceFilePath, MagickImage image)
     {
         XRTexture2D texture = CreateTextureStreamingCacheTexture(sourceFilePath, image);
+        return CreateTextureStreamingPayloadFromTexture(texture);
+    }
 
+    /// <summary>
+    /// Serializes the given texture directly to a raw streaming-payload (XRTS) byte array.
+    /// </summary>
+    /// <remarks>
+    /// Caller is responsible for ensuring <paramref name="texture"/> is shaped for streaming
+    /// (full mip chain, expected format), typically by routing it through
+    /// <see cref="TryCreateTextureStreamingCacheAsset"/> first.
+    /// </remarks>
+    internal static byte[] CreateTextureStreamingPayloadFromTexture(XRTexture2D texture)
+    {
         long size = ((ICookedBinarySerializable)texture).CalculateCookedBinarySize();
         if (size > int.MaxValue)
             throw new InvalidOperationException($"Texture streaming payload exceeds maximum supported size ({size} bytes).");
@@ -59,6 +71,39 @@ public partial class XRTexture2D
         }
 
         return payload;
+    }
+
+    /// <summary>
+    /// Writes the given texture to disk as a pure binary streaming-payload cache file
+    /// (no YAML wrapper, no hex/base64 encoding). Sets the file's LastWriteTimeUtc to
+    /// <paramref name="sourceLastWriteTimeUtc"/> so the asset-manager freshness check
+    /// continues to work without relying on <see cref="OriginalLastWriteTimeUtc"/>.
+    /// </summary>
+    /// <returns><c>true</c> if the file was written successfully.</returns>
+    internal static bool WriteBinaryStreamingCacheFile(XRTexture2D texture, string cachePath, DateTime sourceLastWriteTimeUtc)
+    {
+        try
+        {
+            string? dir = Path.GetDirectoryName(cachePath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            byte[] payload = CreateTextureStreamingPayloadFromTexture(texture);
+
+            // Atomic-ish write: stage to .tmp then rename so a crash mid-write can't leave a torn cache file.
+            string tempPath = cachePath + ".tmp";
+            File.WriteAllBytes(tempPath, payload);
+            if (File.Exists(cachePath))
+                File.Delete(cachePath);
+            File.Move(tempPath, cachePath);
+            try { File.SetLastWriteTimeUtc(cachePath, sourceLastWriteTimeUtc); } catch { /* mtime stamp is best-effort */ }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, $"Failed to write binary texture streaming cache file '{cachePath}'.");
+            return false;
+        }
     }
 
     internal static bool TryCreateTextureStreamingCacheAsset(

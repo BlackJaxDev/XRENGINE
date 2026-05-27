@@ -17,6 +17,11 @@ namespace XREngine.Rendering.OpenGL
         public XREvent<GLTexture<T>>? PostPushData;
 
         private bool _isPushing = false;
+        // PushData() toggles this true/false on every upload. Without [TransientGLState],
+        // each toggle marks the GL object invalidated, so the next Bind/Generate destroys
+        // and recreates the handle, wiping immutable storage. Observed in gl-submit-trace as
+        // a TextureStorage2D + TexSubImage2D + Destroy cycle once per mip during progressive uploads.
+        [TransientGLState]
         public bool IsPushing
         {
             get => _isPushing;
@@ -509,8 +514,7 @@ namespace XREngine.Rendering.OpenGL
             return true;
         }
 
-        private static readonly bool s_attachTraceEnabled =
-            string.Equals(System.Environment.GetEnvironmentVariable("XRE_GL_DEBUG"), "1", System.StringComparison.Ordinal);
+        private static bool s_attachTraceEnabled => XREngine.Rendering.RenderDiagnosticsFlags.GLDebug;
 
         private static long s_attachCounter;
 

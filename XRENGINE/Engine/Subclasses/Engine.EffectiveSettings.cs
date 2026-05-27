@@ -154,9 +154,9 @@ namespace XREngine
 
             private static ECpuSceneCullingStructure ResolveCpuSceneCullingStructure()
             {
-                string? raw = Environment.GetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE");
+                string? raw = XREngine.Rendering.EffectiveSettingsEnvOverrides.CpuSceneCullingStructure;
                 if (!string.IsNullOrWhiteSpace(raw) &&
-                    Enum.TryParse(raw.Trim(), ignoreCase: true, out ECpuSceneCullingStructure parsed))
+                    Enum.TryParse(raw, ignoreCase: true, out ECpuSceneCullingStructure parsed))
                 {
                     return parsed;
                 }
@@ -307,9 +307,9 @@ namespace XREngine
 
             private static EZeroReadbackMaterialDrawPath ResolveZeroReadbackMaterialDrawPath()
             {
-                string? raw = Environment.GetEnvironmentVariable("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH");
+                string? raw = XREngine.Rendering.EffectiveSettingsEnvOverrides.ZeroReadbackMaterialDrawPath;
                 if (!string.IsNullOrWhiteSpace(raw) &&
-                    Enum.TryParse(raw.Trim(), ignoreCase: true, out EZeroReadbackMaterialDrawPath parsed))
+                    Enum.TryParse(raw, ignoreCase: true, out EZeroReadbackMaterialDrawPath parsed))
                 {
                     return parsed;
                 }
@@ -340,7 +340,7 @@ namespace XREngine
 
             private static EMeshSubmissionStrategy? ResolveForcedMeshSubmissionStrategy()
             {
-                string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
+                string? raw = XREngine.Rendering.EffectiveSettingsEnvOverrides.ForceMeshSubmissionStrategy;
                 if (EMeshSubmissionStrategyExtensions.TryParseMeshSubmissionStrategy(
                         raw,
                         out EMeshSubmissionStrategy parsed,

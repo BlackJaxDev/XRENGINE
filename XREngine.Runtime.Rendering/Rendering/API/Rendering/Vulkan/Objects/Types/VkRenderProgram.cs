@@ -651,10 +651,7 @@ public unsafe partial class VulkanRenderer
                 throw new InvalidOperationException("Graphics pipeline creation requires at least one graphics shader stage.");
 
             // ── DIAGNOSTIC: optionally log stages when creating pipeline for dynamic rendering ──
-            bool tracePipeCreate = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_VK_TRACE_PIPECREATE"),
-                "1",
-                StringComparison.Ordinal);
+            bool tracePipeCreate = XREngine.Rendering.RenderDiagnosticsFlags.VkTracePipeCreate;
             if (tracePipeCreate)
             {
                 var stageNames = string.Join(", ", stages.Select(s => s.Stage.ToString()));

@@ -91,6 +91,17 @@ namespace XREngine
         public static bool AllowOutput { get; set; } = true;
 
         /// <summary>
+        /// Substring (case-insensitive) or <c>*</c> filter applied to first-chance exception type
+        /// names. When non-empty, matching exceptions are rate-limited and traced via
+        /// <see cref="LogException"/> from the <c>FirstChanceException</c> handler. Seeded from
+        /// <c>XRE_FIRST_CHANCE_EXCEPTIONS</c> at startup; also settable from editor preferences
+        /// (Diagnostics \u2192 First-Chance Exception Filter). <see cref="InvalidOperationException"/>
+        /// and <see cref="ArgumentException"/> are always traced regardless of this filter.
+        /// </summary>
+        public static string? FirstChanceExceptionFilter { get; set; } =
+            Environment.GetEnvironmentVariable("XRE_FIRST_CHANCE_EXCEPTIONS");
+
+        /// <summary>
         /// Raised when a new log entry is added to the in-engine console buffer.
         /// This fires regardless of whether output is also written to file/console.
         /// </summary>
@@ -286,7 +297,7 @@ namespace XREngine
             if (ex is InvalidOperationException or ArgumentException)
                 return true;
 
-            string? filter = Environment.GetEnvironmentVariable("XRE_FIRST_CHANCE_EXCEPTIONS");
+            string? filter = FirstChanceExceptionFilter;
             if (string.IsNullOrWhiteSpace(filter))
                 return false;
 

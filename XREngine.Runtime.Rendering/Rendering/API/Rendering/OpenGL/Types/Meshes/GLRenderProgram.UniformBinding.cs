@@ -452,23 +452,18 @@ namespace XREngine.Rendering.OpenGL
 
             private bool ValidateUniformType(int location, params GLEnum[] expectedTypes)
             {
-                /*
-                using var sample = RuntimeEngine.Profiler.Start("GLRenderProgram.ValidateUniformType (by location)", ProfilerScopeKind.ConditionalLoop);
-
                 if (location < 0)
                     return false;
 
                 if (_locationNameCache.TryGetValue(location, out string? name))
                     return ValidateUniformType(name, location, expectedTypes);
-                */
+
+                // No cached name (e.g. binding-only sampler arrays): trust the caller.
                 return true;
             }
 
             private bool ValidateUniformType(string name, int? location, params GLEnum[] expectedTypes)
             {
-                /*
-                using var sample = RuntimeEngine.Profiler.Start("GLRenderProgram.ValidateUniformType (by name)", ProfilerScopeKind.ConditionalLoop);
-
                 if (!_uniformMetadata.TryGetValue(name, out var meta))
                     return true;
 
@@ -480,11 +475,10 @@ namespace XREngine.Rendering.OpenGL
                 {
                     string expectedDesc = string.Join(", ", expectedTypes);
                     string locDesc = location.HasValue ? location.Value.ToString() : "unknown";
-                    Debug.LogWarning($"Uniform '{name}' (location {locDesc}) expects GL type {meta.Type} (size {meta.Size}) but received upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
+                    string programName = Data?.Name ?? BindingId.ToString();
+                    Debug.LogWarning($"Uniform '{name}' (location {locDesc}) in program '{programName}' is declared as GL type {meta.Type} (size {meta.Size}) but received upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
                 }
-                */
-                //return false;
-                return true;
+                return false;
             }
         }
     }

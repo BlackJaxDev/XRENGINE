@@ -1380,6 +1380,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public DefaultRenderPipeline(bool stereo = false) : base(true)
     {
         Stereo = stereo;
+        // Honor the deferred-debug pref (seeded from XRE_DEFERRED_DEBUG, also settable from the
+        // editor Diagnostics preferences). 0..5: Disabled/RawAlbedo/DirectLighting/Rmse/Normal/Depth.
+        // See the shader comment in DeferredLightCombine.fs.
+        int debugMode = RenderDiagnosticsFlags.DeferredDebugView;
+        if (debugMode >= 0 && debugMode <= 5)
+            _deferredDebugView = (DeferredDebugViewMode)debugMode;
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
         WarmDeferredLightingShaders();
         WarmFirstRenderShaders();
@@ -1704,10 +1710,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(this);
         bool enableComputePasses = EnableComputeDependentPasses;
-        bool bypassVendorUpscale = string.Equals(
-            Environment.GetEnvironmentVariable("XRE_BYPASS_VENDOR_UPSCALE"),
-            "1",
-            StringComparison.Ordinal);
+        bool bypassVendorUpscale = RenderDiagnosticsFlags.BypassVendorUpscale;
 
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
 

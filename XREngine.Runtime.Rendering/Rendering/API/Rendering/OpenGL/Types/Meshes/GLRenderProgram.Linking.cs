@@ -281,10 +281,8 @@ namespace XREngine.Rendering.OpenGL
                 return $"<prog#{BindingId}>";
             }
 
-            private static readonly bool _dispatchTraceEnabled =
-                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DISPATCH_TRACE"));
-            private static readonly bool _dispatchFinishEnabled =
-                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DISPATCH_FINISH"));
+            private static bool _dispatchTraceEnabled => RenderDiagnosticsFlags.DispatchTrace;
+            private static bool _dispatchFinishEnabled => RenderDiagnosticsFlags.DispatchFinish;
             private static readonly object _dispatchTraceLock = new();
             private static System.IO.StreamWriter? _dispatchTraceWriter;
 
