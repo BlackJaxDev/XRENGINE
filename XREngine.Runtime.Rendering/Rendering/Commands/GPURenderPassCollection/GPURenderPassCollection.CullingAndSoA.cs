@@ -354,11 +354,31 @@ namespace XREngine.Rendering.Commands
                 uint statsCulled = ReadUIntAt(_statsBuffer, GpuStatsLayout.StatsCulledCount);
                 if (statsCulled > 0)
                 {
-                    draws = statsCulled;
+                    uint recoveredDraws = Math.Min(statsCulled, CommandCapacity);
+                    if (_visibleCommandUpperBoundValid)
+                        recoveredDraws = Math.Min(recoveredDraws, _visibleCommandUpperBound);
+
+                    if (recoveredDraws > 0)
+                    {
+                        uint recoveredInstances = instances > 0 ? instances : recoveredDraws;
+
+                        draws = recoveredDraws;
+                        instances = recoveredInstances;
+
+                        // The culled command buffer was populated, but the count buffer read as stale zero.
+                        // Restore the recovered counts so downstream GPU scatter/draw stages do not consume zero.
+                        ReadOnlySpan<uint> recoveredCounts = stackalloc uint[]
+                        {
+                            recoveredDraws,
+                            recoveredInstances,
+                            0u
+                        };
+                        WriteUints(countBuffer, recoveredCounts);
+                    }
 
                     if (_filteredCountLogBudget > 0)
                     {
-                        Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Visible-count readback returned 0, but stats buffer reported {statsCulled} visible commands. Using stats fallback for this frame.");
+                        Debug.MeshesWarning($"{FormatDebugPrefix("Culling")} Visible-count readback returned 0, but stats buffer reported {statsCulled} visible commands. Restored {draws} visible commands into the count buffer for this frame.");
                         _filteredCountLogBudget--;
                     }
                 }

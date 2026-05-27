@@ -21,6 +21,15 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool CalculateSkinningInComputeShader = false;
     public const bool CalculateBlendshapesInComputeShader = false;
     public const int ShaderConfigVersion = 0;
+    public const bool AllowBinaryProgramCaching = true;
+    public const bool AsyncProgramBinaryUpload = true;
+    public const bool AsyncProgramCompilation = true;
+    public const int OpenGLProgramCompileLinkWorkerCount = 1;
+    public const int MaxAsyncShaderProgramsPerFrame = 16;
+    public const EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy = EOpenGLShaderLinkStrategy.Auto;
+    public const int OpenGLShaderCompilerThreadCount = -1;
+    public const bool OpenGLParallelShaderCompileProbeEnabled = true;
+    public const int OpenGLParallelShaderCompileProbeTimeoutMs = 25;
 
     public const bool IsRenderThread = true;
     public const bool IsRendererActive = false;

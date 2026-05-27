@@ -117,4 +117,4 @@ powershell -ExecutionPolicy Bypass -File Tools\Generate-UnitTestingWorldSettings
 
 - [Default Render Pipeline Notes](../../architecture/rendering/default-render-pipeline-notes.md)
 - [Unit Testing World](../unit-testing-world.md)
-- [Atmospheric Scattering Component Design](../../work/design/atmospheric-scattering-component-design.md)
+- [Atmospheric Scattering Component Design](../../work/design/rendering/atmospheric-scattering-component-design.md)

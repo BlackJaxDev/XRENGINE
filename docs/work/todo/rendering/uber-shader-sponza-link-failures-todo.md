@@ -13,38 +13,31 @@ Known symptom from logs:
 ## Current Patch State
 
 - Added physical pruning for known uber feature guards and pass-axis conditionals in `UberShaderVariantBuilder`.
+- Embedded `TextFile` shader sources now retain a direct/local `FilePath`, so generated uber variants can recover the canonical `UberShader.frag` instead of treating generated source as the authority.
+- Variant cache keys include source identity plus source text version, stale pruning skips pathless/in-memory display names, and the focused fixture has an explicit cache reset hook.
 - Disabled feature properties are excluded from static/animated property lists and sampler counts.
+- Explicit `//@feature` metadata now wins over later inferred `#ifdef/#ifndef XRENGINE_UBER_DISABLE_*` fallback branches.
+- Enabling an uber feature primes default manifest parameter values/textures when the existing shader parameter is still at its language default.
 - Failed variant hashes now publish the original failure reason when available.
 - Static literals now prefer authored/live material values and can fall back to already baked active/requested literals.
-- In-memory/generated shader canonical handling still needs cleanup before the full uber material fixture is reliable.
+- `UberMaterialVariantTests` passes reliably in the focused run after covering generated-fragment adoption, canonical recovery, pruning, and cache isolation.
 
 ## Remaining Todos
 
-1. Fix shader source identity for embedded/generated shaders.
-   - `TextFile.FilePath` delegates to the containing `SourceAsset` for embedded assets, which hides the direct shader path in some material-embedded cases.
-   - Add a clean way to read the shader source's direct/local path, or store an explicit shader source authority path on generated variants.
-   - Use that identity consistently in `TryGetUberMaterialState`, canonical generated-fragment recovery, and variant cache keys.
-
-2. Stabilize the uber variant cache for tests and runtime reloads.
-   - Avoid pruning or reusing cached variants across unrelated in-memory sources that share the display path `UberShader.frag`.
-   - Consider a test-only cache reset hook or a cache key that includes direct source identity plus source version.
-   - Recheck async rebuild/adoption paths where status can become active while the material still exposes canonical source.
-
-3. Finish and verify conditional pruning.
+1. Verify conditional pruning against the production uber shader.
    - Validate `#if/#ifdef/#ifndef/#elif/#else/#endif` pruning against the real `Build/CommonAssets/Shaders/Uber/UberShader.frag`.
    - Confirm disabled feature branches are physically removed and unknown preprocessor logic is preserved.
    - Measure generated source size before/after pruning for Sponza materials.
 
-4. Validate Sponza runtime behavior.
+2. Validate Sponza runtime behavior.
    - Clear failed variant hashes/cache, load Sponza, and confirm variants no longer hit the 30 second GL link timeout.
    - Confirm linked meshes render through the lit forward pass, not only prepass/depth/fallback output.
    - Check that albedo/normal sampler uniforms are present for active lit variants and no active material reports `sampler-uniform-missing`.
 
-5. Harden tests.
-   - Repair `UberMaterialVariantTests` failures around embedded canonical shader recovery and cache isolation.
-   - Add focused tests for explicit `//@feature(default=...)` overriding raw `XRENGINE_UBER_DISABLE_*` guards.
-   - Add tests that prove disabled-feature samplers and static uniforms are removed from generated source.
+3. Add the remaining status/UI regression coverage.
    - Add a regression test that failed-hash UI/status reports the original link timeout reason.
+   - Keep focused tests for explicit `//@feature(default=...)` overriding raw `XRENGINE_UBER_DISABLE_*` guards.
+   - Keep tests that prove disabled-feature samplers and static uniforms are removed from generated source.
 
 ## Acceptance Criteria
 

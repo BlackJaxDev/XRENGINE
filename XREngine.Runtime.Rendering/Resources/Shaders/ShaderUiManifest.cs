@@ -1082,24 +1082,35 @@ namespace XREngine.Rendering
                 IReadOnlyList<string>? conflicts,
                 int sortOrder)
             {
-                DisplayName = displayName;
-                Category ??= category;
-                Subcategory ??= subcategory;
-                Tooltip = AppendTooltip(Tooltip, tooltip);
-                GuardMacro ??= guardMacro;
-                GuardDefinedEnablesFeature = guardDefinedEnablesFeature;
-                DefaultEnabled = defaultEnabled;
-                Required |= required;
-                if (cost != EShaderUiFeatureCost.Unspecified)
-                    Cost = cost;
-                HasExplicitMetadata |= hasExplicitMetadata;
-                if (sortOrder != int.MaxValue)
-                    SortOrder = Math.Min(SortOrder, sortOrder);
+                bool explicitMetadataAlreadyApplied = HasExplicitMetadata;
+                bool canReplaceMetadata = hasExplicitMetadata || !explicitMetadataAlreadyApplied;
 
-                if (dependencies is not null)
-                    AddUnique(Dependencies, dependencies);
-                if (conflicts is not null)
-                    AddUnique(Conflicts, conflicts);
+                if (canReplaceMetadata)
+                {
+                    DisplayName = displayName;
+                    Category ??= category;
+                    Subcategory ??= subcategory;
+                    Tooltip = AppendTooltip(Tooltip, tooltip);
+                    GuardMacro = guardMacro ?? GuardMacro;
+                    GuardDefinedEnablesFeature = guardDefinedEnablesFeature;
+                    DefaultEnabled = defaultEnabled;
+                    Required |= required;
+                    if (cost != EShaderUiFeatureCost.Unspecified)
+                        Cost = cost;
+                    if (sortOrder != int.MaxValue)
+                        SortOrder = Math.Min(SortOrder, sortOrder);
+
+                    if (dependencies is not null)
+                        AddUnique(Dependencies, dependencies);
+                    if (conflicts is not null)
+                        AddUnique(Conflicts, conflicts);
+                }
+                else if (string.IsNullOrWhiteSpace(GuardMacro) && !string.IsNullOrWhiteSpace(guardMacro))
+                {
+                    GuardMacro = guardMacro;
+                }
+
+                HasExplicitMetadata |= hasExplicitMetadata;
             }
 
             public ShaderUiFeature Build()

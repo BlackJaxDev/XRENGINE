@@ -230,6 +230,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 IsLinked = false;
                 _sharedLinkedProgram = null;
+                _lastMaterialUniformSource = null;
+                _lastMaterialUniformSourceLayoutVersion = 0;
                 _replacementProgramId = 0;
                 _replacementProgramPending = false;
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
@@ -356,8 +358,20 @@ namespace XREngine.Rendering.OpenGL
                 return handle;
             }
 
-            public void Use()
-                => Api.UseProgram(BindingId);
+            public bool Use()
+            {
+                if (!IsLinked)
+                {
+                    if (!Data.LinkReady || !Link(nonBlocking: true))
+                        return false;
+                }
+
+                if (!IsLinked || IsAsyncBuildPending)
+                    return false;
+
+                Api.UseProgram(BindingId);
+                return true;
+            }
 
             public IEnumerator<GLShader> GetEnumerator()
                 => _shaderCache.Values.GetEnumerator();

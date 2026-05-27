@@ -287,6 +287,15 @@ public sealed class RuntimeRenderingHostServicesTests
             => null;
 
         public bool AllowShaderPipelines => false;
+        public bool AllowBinaryProgramCaching => RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
+        public bool AsyncProgramBinaryUpload => RuntimeRenderingHostServiceDefaults.AsyncProgramBinaryUpload;
+        public bool AsyncProgramCompilation => RuntimeRenderingHostServiceDefaults.AsyncProgramCompilation;
+        public int OpenGLProgramCompileLinkWorkerCount => RuntimeRenderingHostServiceDefaults.OpenGLProgramCompileLinkWorkerCount;
+        public int MaxAsyncShaderProgramsPerFrame => RuntimeRenderingHostServiceDefaults.MaxAsyncShaderProgramsPerFrame;
+        public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy => RuntimeRenderingHostServiceDefaults.OpenGLShaderLinkStrategy;
+        public int OpenGLShaderCompilerThreadCount => RuntimeRenderingHostServiceDefaults.OpenGLShaderCompilerThreadCount;
+        public bool OpenGLParallelShaderCompileProbeEnabled => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeEnabled;
+        public int OpenGLParallelShaderCompileProbeTimeoutMs => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeTimeoutMs;
         public bool EnableExactTransparencyTechniques => false;
         public bool UseInterleavedMeshBuffer => false;
         public bool UseIntegerUniformsInShaders => false;

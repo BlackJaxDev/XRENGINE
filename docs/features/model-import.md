@@ -81,10 +81,19 @@ The remaining import settings apply across native and compatibility paths unless
 - `ProcessMeshesAsynchronously`: runs mesh conversion work on background jobs instead of finishing the whole import inline.
 - `GenerateMeshRenderersAsync`: leaves `XRMeshRenderer.GenerateAsync` off by default globally, but allows imported model renderers to opt into async renderer generation.
 - `SplitSubmeshesIntoSeparateModelComponents`: creates one `ModelComponent` per imported submesh instead of grouping a source node's submeshes into one model component.
+- `GenerateSceneNodesPerSubmesh`: creates individual child scene nodes for split submesh model components. This implies split submesh components.
 - `SeparateMeshIslands`: analyzes imported triangle submeshes for disconnected geometric islands and emits each island as its own submesh while preserving the source material.
 - `BatchSubmeshAddsDuringAsyncImport`: controls how finished submeshes are published when async import is enabled.
 
-The unit-testing world also exposes a per-model JSON toggle, `GenerateCoacdCollidersPerSubmesh`. When enabled for a static model import, the importer forces `SplitSubmeshesIntoSeparateModelComponents = true` for that import and adds a `StaticRigidBodyComponent` sibling to each imported submesh component. After the submesh data is ready, the rigid body runs CoACD and attaches one PhysX convex shape per generated hull.
+The unit-testing world exposes per-model `PostImportFlags` alongside Assimp `ImportFlags`. It accepts comma-separated `ModelPostImportFlags` names:
+
+- `GenerateCoacdCollidersPerSubmesh`: for static imports, forces split submesh components and adds auto-generated CoACD colliders.
+- `SplitSubmeshesIntoSeparateModelComponents`: forwards to `ModelImportOptions.SplitSubmeshesIntoSeparateModelComponents`.
+- `SeparateMeshIslands`: forwards to `ModelImportOptions.SeparateMeshIslands`.
+- `GenerateIndividualSceneNodesPerSubmesh`: forwards to `ModelImportOptions.GenerateSceneNodesPerSubmesh` and implies split submesh components.
+- `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`: when CoACD generation is enabled, attaches all generated collider shapes to one static rigid body on the imported model root instead of creating one static rigid body per model component.
+
+Without `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`, `GenerateCoacdCollidersPerSubmesh` adds a `StaticRigidBodyComponent` sibling to each imported model component. After the submesh data is ready, each rigid body runs CoACD and attaches one PhysX convex shape per generated hull.
 
 `BatchSubmeshAddsDuringAsyncImport = true` preserves the old behavior. Imported nodes appear in the scene quickly, but each node's submeshes are withheld until that node's async mesh work is complete, then published together.
 
@@ -95,6 +104,8 @@ The unit-testing world also exposes a per-model JSON toggle, `GenerateCoacdColli
 `GenerateMeshRenderersAsync` is a per-import setting on `ModelImportOptions`. Its current default is `true`.
 
 `SplitSubmeshesIntoSeparateModelComponents` is a per-import setting on `ModelImportOptions`. Its default is `false`, preserving the current "one imported model component per source node" layout.
+
+`GenerateSceneNodesPerSubmesh` is a per-import setting on `ModelImportOptions`. Its default is `false`; when enabled, split submesh components are placed under generated child scene nodes instead of being attached directly to the source scene node.
 
 `SeparateMeshIslands` is a per-import setting on `ModelImportOptions`. Its default is `false`; when enabled, the importer splits disconnected triangle islands inside each material/grouped submesh before publishing model components. Island connectivity is based on exact vertex positions, so FBX/Assimp meshes with per-face duplicated vertices still group connected surfaces together.
 

@@ -45,6 +45,20 @@ namespace XREngine.Rendering
             set => SetField(ref _generateAsync, value);
         }
 
+        private bool _isGeneratedUberVariant = false;
+        public bool IsGeneratedUberVariant
+        {
+            get => _isGeneratedUberVariant;
+            set => SetField(ref _isGeneratedUberVariant, value);
+        }
+
+        private ulong _generatedUberVariantHash = 0;
+        public ulong GeneratedUberVariantHash
+        {
+            get => _generatedUberVariantHash;
+            set => SetField(ref _generatedUberVariantHash, value);
+        }
+
         public XRShader() { }
         public XRShader(EShaderType type) => Type = type;
         public XRShader(EShaderType type, TextFile source)
@@ -105,6 +119,8 @@ namespace XREngine.Rendering
             Type = loaded.Type;
             Source = loaded.Source;
             GenerateAsync = loaded.GenerateAsync;
+            IsGeneratedUberVariant = loaded.IsGeneratedUberVariant;
+            GeneratedUberVariantHash = loaded.GeneratedUberVariantHash;
         }
         public override bool Load3rdParty(string filePath)
         {
@@ -112,6 +128,8 @@ namespace XREngine.Rendering
             TextFile file = new(filePath);
             file.LoadText(filePath);
             Source = file;
+            IsGeneratedUberVariant = false;
+            GeneratedUberVariantHash = 0;
             return true;
         }
 
@@ -132,6 +150,8 @@ namespace XREngine.Rendering
             TextFile file = new(filePath);
             await file.LoadTextAsync(filePath);
             Source = file;
+            IsGeneratedUberVariant = false;
+            GeneratedUberVariantHash = 0;
             return true;
         }
 

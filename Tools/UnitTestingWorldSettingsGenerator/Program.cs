@@ -549,6 +549,21 @@ static class SchemaGenerator
         if (generated["description"] is null)
             generated["description"] = GetFallbackDescription(member);
 
+        if (string.Equals(member.Name, "PostImportFlags", StringComparison.Ordinal) &&
+            string.Equals(member.NonNullableType.Name, "ModelPostImportFlags", StringComparison.Ordinal))
+        {
+            generated["markdownDescription"] =
+                "Comma-separated model post-import flags. Supported values: " +
+                "`None`, `GenerateCoacdCollidersPerSubmesh`, `SplitSubmeshesIntoSeparateModelComponents`, " +
+                "`SeparateMeshIslands`, `GenerateIndividualSceneNodesPerSubmesh`, " +
+                "`PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`.";
+            generated["examples"] = new JArray
+            {
+                "GenerateCoacdCollidersPerSubmesh, SplitSubmeshesIntoSeparateModelComponents",
+                "GenerateIndividualSceneNodesPerSubmesh, PutAllCoacdCollidersIntoOneStaticRigidBodyComponent"
+            };
+        }
+
         ApplyMemberSchemaAugmentations(member, generated);
 
         return MergeNode(generated, existingNode);
@@ -577,9 +592,7 @@ static class SchemaGenerator
                 "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n" +
                 "  \"Scale\": 1.0,\n" +
                 "  \"ZUp\": false,\n" +
-                "  \"GenerateCoacdCollidersPerSubmesh\": false,\n" +
-                "  \"SplitSubmeshesIntoSeparateModelComponents\": false,\n" +
-                "  \"SeparateMeshIslands\": false,\n" +
+                "  \"PostImportFlags\": \"None\",\n" +
                 "  \"YawPitchRoll\": null,\n" +
                 "  \"Translation\": null\n" +
                 "}\n" +
@@ -587,6 +600,7 @@ static class SchemaGenerator
                 "`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; " +
                 "`ImporterBackend` is `PreferNativeThenAssimp` or `AssimpOnly`. " +
                 "`ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. " +
+                "`PostImportFlags` is a comma-separated list of model post-import flag names. " +
                 "`YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; " +
                 "`Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.";
         }
@@ -627,13 +641,12 @@ static class SchemaGenerator
                 "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",",
                 "  \"Scale\": 1.0,",
                 "  \"ZUp\": false,",
-                "  \"GenerateCoacdCollidersPerSubmesh\": false,",
-                "  \"SplitSubmeshesIntoSeparateModelComponents\": false,",
-                "  \"SeparateMeshIslands\": false,",
+                "  \"PostImportFlags\": \"None\",",
                 "  \"YawPitchRoll\": null,",
                 "  \"Translation\": null",
                 "}",
                 "Use comma-separated Assimp PostProcessSteps names for ImportFlags.",
+                "Use comma-separated ModelPostImportFlags names for PostImportFlags.",
                 "YawPitchRoll is { \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }; Translation is { \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }."
             };
         }
@@ -651,9 +664,7 @@ static class SchemaGenerator
             ["ImportFlags"] = "Triangulate, FlipUVs, GenerateNormals",
             ["Scale"] = 1.0,
             ["ZUp"] = false,
-            ["GenerateCoacdCollidersPerSubmesh"] = false,
-            ["SplitSubmeshesIntoSeparateModelComponents"] = false,
-            ["SeparateMeshIslands"] = false,
+            ["PostImportFlags"] = "None",
             ["YawPitchRoll"] = null,
             ["Translation"] = null
         };
@@ -861,6 +872,15 @@ static class SettingsDocumentGenerator
 
         foreach (MemberMetadata member in metadata.Members)
         {
+            if (string.Equals(metadata.Name, "ModelImportSettings", StringComparison.Ordinal) &&
+                string.Equals(member.Name, "PostImportFlags", StringComparison.Ordinal) &&
+                !existing.ContainsKey(member.Name) &&
+                TryMigrateLegacyModelPostImportFlags(existing) is string migratedPostImportFlags)
+            {
+                generated[member.Name] = migratedPostImportFlags;
+                continue;
+            }
+
             if (existing.TryGetValue(member.Name, StringComparison.Ordinal, out JToken? existingValue))
             {
                 generated[member.Name] = MergeValue(member, generated[member.Name], existingValue);
@@ -869,6 +889,25 @@ static class SettingsDocumentGenerator
 
         return generated;
     }
+
+    private static string? TryMigrateLegacyModelPostImportFlags(JObject existing)
+    {
+        List<string> flags = [];
+
+        if (ReadLegacyBoolean(existing, "GenerateCoacdCollidersPerSubmesh"))
+            flags.Add(nameof(EditorUnitTests.ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh));
+        if (ReadLegacyBoolean(existing, "SplitSubmeshesIntoSeparateModelComponents"))
+            flags.Add(nameof(EditorUnitTests.ModelPostImportFlags.SplitSubmeshesIntoSeparateModelComponents));
+        if (ReadLegacyBoolean(existing, "SeparateMeshIslands"))
+            flags.Add(nameof(EditorUnitTests.ModelPostImportFlags.SeparateMeshIslands));
+
+        return flags.Count > 0 ? string.Join(", ", flags) : null;
+    }
+
+    private static bool ReadLegacyBoolean(JObject existing, string propertyName)
+        => existing.TryGetValue(propertyName, StringComparison.Ordinal, out JToken? value)
+        && value.Type == JTokenType.Boolean
+        && value.Value<bool>();
 
     private static JToken MergeValue(MemberMetadata member, JToken? generatedValue, JToken existingValue)
     {

@@ -6,6 +6,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Physics;
 
@@ -65,6 +66,36 @@ internal static class ConvexHullUtility
             new ConvexHullInputBatch(ConvexHullInputSource.AssetMeshes, assetInputs, assetMeshCount));
     }
 
+    public static ConvexHullInputCollection CollectCollisionInputCollection(IReadOnlyList<ModelComponent> components, TransformBase targetTransform)
+    {
+        List<ConvexHullInput> runtimeInputs = [];
+        List<ConvexHullInput> assetInputs = [];
+        int runtimeMeshCount = 0;
+        int assetMeshCount = 0;
+
+        for (int i = 0; i < components.Count; i++)
+        {
+            ModelComponent component = components[i];
+            Matrix4x4 localToTarget = component.Transform.WorldMatrix * targetTransform.InverseWorldMatrix;
+            Matrix4x4? transform = localToTarget.IsIdentity ? null : localToTarget;
+
+            RenderableMesh[] runtimeMeshes = [.. component.Meshes.ToArray()];
+            runtimeMeshCount += runtimeMeshes.Length;
+            runtimeInputs.AddRange(EnumerateRuntimeMeshes(runtimeMeshes, transform));
+
+            Model? model = component.Model;
+            if (model is null)
+                continue;
+
+            assetMeshCount += model.Meshes.Count;
+            assetInputs.AddRange(EnumerateModelMeshes(model, transform));
+        }
+
+        return new ConvexHullInputCollection(
+            new ConvexHullInputBatch(ConvexHullInputSource.RuntimeMeshes, runtimeInputs, runtimeMeshCount),
+            new ConvexHullInputBatch(ConvexHullInputSource.AssetMeshes, assetInputs, assetMeshCount));
+    }
+
     public static List<ConvexHullInput> CollectCollisionInputs(ModelComponent component)
     {
         ConvexHullInputCollection inputs = CollectCollisionInputCollection(component);
@@ -77,20 +108,20 @@ internal static class ConvexHullUtility
     public static IEnumerable<ConvexHullInput> EnumerateRuntimeMeshes(ModelComponent component)
         => EnumerateRuntimeMeshes([.. component.Meshes.ToArray()]);
 
-    public static IEnumerable<ConvexHullInput> EnumerateRuntimeMeshes(IReadOnlyList<RenderableMesh> renderables)
+    public static IEnumerable<ConvexHullInput> EnumerateRuntimeMeshes(IReadOnlyList<RenderableMesh> renderables, Matrix4x4? transform = null)
     {
         for (int i = 0; i < renderables.Count; i++)
         {
             RenderableMesh renderable = renderables[i];
-            if (TryGetRenderableMesh(renderable, out var mesh) && TryExtractMesh(mesh, out var input))
+            if (TryGetRenderableMesh(renderable, out var mesh) && TryExtractMesh(mesh, transform, out var input))
                 yield return input;
         }
     }
 
-    public static IEnumerable<ConvexHullInput> EnumerateModelMeshes(Model model)
+    public static IEnumerable<ConvexHullInput> EnumerateModelMeshes(Model model, Matrix4x4? transform = null)
     {
         foreach (var subMesh in model.Meshes)
-            if (TryGetAssetMesh(subMesh, out var mesh) && TryExtractMesh(mesh, out var input))
+            if (TryGetAssetMesh(subMesh, out var mesh) && TryExtractMesh(mesh, transform, out var input))
                 yield return input;
     }
 
@@ -129,6 +160,9 @@ internal static class ConvexHullUtility
     }
 
     private static bool TryExtractMesh(XRMesh? mesh, out ConvexHullInput input)
+        => TryExtractMesh(mesh, null, out input);
+
+    private static bool TryExtractMesh(XRMesh? mesh, Matrix4x4? transform, out ConvexHullInput input)
     {
         input = default;
         if (mesh?.Vertices is not { Length: > 0 } vertices)
@@ -139,8 +173,16 @@ internal static class ConvexHullUtility
             return false;
 
         Vector3[] sourcePositions = new Vector3[vertices.Length];
-        for (int i = 0; i < vertices.Length; i++)
-            sourcePositions[i] = vertices[i].Position;
+        if (transform is Matrix4x4 localToTarget)
+        {
+            for (int i = 0; i < vertices.Length; i++)
+                sourcePositions[i] = Vector3.Transform(vertices[i].Position, localToTarget);
+        }
+        else
+        {
+            for (int i = 0; i < vertices.Length; i++)
+                sourcePositions[i] = vertices[i].Position;
+        }
 
         int[] remap = new int[sourcePositions.Length];
         Array.Fill(remap, -1);

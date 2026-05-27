@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Numerics;
 using System.Text;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
@@ -21,6 +22,7 @@ public static partial class EditorImGuiUI
     private static bool _shaderProgramLinksFilterPendingOnly;
     private static bool _shaderProgramLinksFilterLinkedOnly;
     private static bool _shaderProgramLinksFilterFailedOnly;
+    private static bool _shaderProgramLinksGrouped = true;
     private static bool _shaderProgramLinksSortDescending = true;
     private static string _shaderProgramLinksSearch = string.Empty;
     private static ShaderProgramLinksSortMode _shaderProgramLinksSortMode = ShaderProgramLinksSortMode.State;
@@ -38,13 +40,17 @@ public static partial class EditorImGuiUI
     private static IReadOnlyList<ShaderProgramLinkRow>? _shaderProgramLinksViewSource;
     private static ShaderProgramLinksSummary _shaderProgramLinksSummary;
     private static ShaderProgramLinkRow? _shaderProgramLinksSelectedRow;
+    private static ShaderProgramLinkGroup? _shaderProgramLinksSelectedGroup;
+    private static string? _selectedShaderProgramLinkGroupKey;
     private static readonly List<ShaderProgramLinkRow> _shaderProgramLinkRows = [];
     private static readonly List<ShaderProgramLinkRow> _frozenShaderProgramLinkRows = [];
     private static readonly List<ShaderProgramLinkRow> _shaderProgramLinkVisibleRows = [];
+    private static readonly List<ShaderProgramLinkGroup> _shaderProgramLinkVisibleGroups = [];
 
     private enum ShaderProgramLinksSortMode
     {
         State,
+        Refs,
         Program,
         Backend,
         QueueLatency,
@@ -88,9 +94,48 @@ public static partial class EditorImGuiUI
         string TimingText,
         string DetailText);
 
+    private sealed class ShaderProgramLinkGroup(string key, ShaderProgramLinkRow representative)
+    {
+        public string Key { get; } = key;
+        public ShaderProgramLinkRow Representative { get; private set; } = representative;
+        public List<ShaderProgramLinkRow> Rows { get; } = [];
+        public int Pending { get; private set; }
+        public int Linked { get; private set; }
+        public int Failed { get; private set; }
+        public int Prepared { get; private set; }
+        public int SharedHandleReferences { get; private set; }
+        public uint SharedProgramId { get; private set; }
+
+        public int LogicalReferences => Rows.Count;
+
+        public void Add(ShaderProgramLinkRow row)
+        {
+            Rows.Add(row);
+            if (row.StateSortRank > Representative.StateSortRank)
+                Representative = row;
+            if (row.IsPending)
+                Pending++;
+            if (row.Snapshot.IsLinked)
+                Linked++;
+            if (row.IsFailed)
+                Failed++;
+            if (row.IsPreparedOnly)
+                Prepared++;
+            if (row.Snapshot.SharedLinkedProgramReferenceCount > SharedHandleReferences)
+                SharedHandleReferences = row.Snapshot.SharedLinkedProgramReferenceCount;
+            if (SharedProgramId == 0 && row.Snapshot.SharedLinkedProgramId != 0)
+                SharedProgramId = row.Snapshot.SharedLinkedProgramId;
+        }
+    }
+
     private readonly record struct ShaderProgramLinksSummary(
         int ProgramCount,
         int VisibleCount,
+        int GroupCount,
+        int UniqueEffectiveHashes,
+        int UniqueBinaryKeys,
+        int SharedHandleReferences,
+        long PendingDestructions,
         int Pending,
         int Prepared,
         int Queued,
@@ -170,14 +215,22 @@ public static partial class EditorImGuiUI
         ImGui.Separator();
         DrawShaderProgramLinksSummary(_shaderProgramLinksSummary, compactLayout);
 
-        if (_shaderProgramLinksSelectedRow is { } selectedRow)
+        if (_shaderProgramLinksGrouped && _shaderProgramLinksSelectedGroup is { } selectedGroup)
+        {
+            ImGui.Separator();
+            DrawShaderProgramLinkGroupDetails(selectedGroup);
+        }
+        else if (_shaderProgramLinksSelectedRow is { } selectedRow)
         {
             ImGui.Separator();
             DrawShaderProgramLinkDetails(selectedRow);
         }
 
         ImGui.Separator();
-        DrawShaderProgramLinksTable(_shaderProgramLinkVisibleRows, rows.Count, compactLayout);
+        if (_shaderProgramLinksGrouped)
+            DrawShaderProgramLinkGroupsTable(_shaderProgramLinkVisibleGroups, rows.Count, compactLayout);
+        else
+            DrawShaderProgramLinksTable(_shaderProgramLinkVisibleRows, rows.Count, compactLayout);
 
         ImGui.End();
     }
@@ -211,6 +264,10 @@ public static partial class EditorImGuiUI
         int binary = 0;
         int synchronous = 0;
         int skippedRows = 0;
+        int sharedHandleReferences = 0;
+        HashSet<string> groupKeys = new(StringComparer.Ordinal);
+        HashSet<ulong> effectiveHashes = [];
+        HashSet<string> binaryKeys = new(StringComparer.Ordinal);
         bool materializeAllRows = ShouldMaterializeAllShaderProgramLinkRows();
 
         foreach (XRWindow? window in Engine.Windows)
@@ -247,6 +304,16 @@ public static partial class EditorImGuiUI
                     binary++;
                 if (UsesSynchronousRenderThread(snapshot))
                     synchronous++;
+                string groupKey = BuildShaderProgramGroupKey(snapshot);
+                if (!string.IsNullOrWhiteSpace(groupKey))
+                    groupKeys.Add(groupKey);
+                if (snapshot.EffectiveSourceHash != 0)
+                    effectiveHashes.Add(snapshot.EffectiveSourceHash);
+                string? binaryKey = snapshot.BinaryCacheKey ?? snapshot.PreparedCacheKey ?? snapshot.ActiveBuildFingerprint ?? snapshot.LastBuildFingerprint;
+                if (!string.IsNullOrWhiteSpace(binaryKey))
+                    binaryKeys.Add(binaryKey);
+                if (snapshot.SharedLinkedProgramReferenceCount > sharedHandleReferences)
+                    sharedHandleReferences = snapshot.SharedLinkedProgramReferenceCount;
 
                 if (materializeAllRows || ShouldMaterializeShaderProgramLinkRow(snapshot, rows.Count))
                 {
@@ -269,6 +336,11 @@ public static partial class EditorImGuiUI
         _shaderProgramLinksSummary = new ShaderProgramLinksSummary(
             programCount,
             rows.Count,
+            groupKeys.Count,
+            effectiveHashes.Count,
+            binaryKeys.Count,
+            sharedHandleReferences,
+            XRObjectBase.PendingDestructionCount,
             pending,
             prepared,
             queued,
@@ -286,7 +358,8 @@ public static partial class EditorImGuiUI
     }
 
     private static bool ShouldMaterializeAllShaderProgramLinkRows()
-        => _shaderProgramLinksFilterPendingOnly ||
+        => _shaderProgramLinksGrouped ||
+           _shaderProgramLinksFilterPendingOnly ||
            _shaderProgramLinksFilterLinkedOnly ||
            _shaderProgramLinksFilterFailedOnly ||
            !string.IsNullOrWhiteSpace(_shaderProgramLinksSearch);
@@ -437,6 +510,34 @@ public static partial class EditorImGuiUI
         return "Shader program";
     }
 
+    private static string BuildShaderProgramGroupKey(LinkSnapshot snapshot)
+    {
+        if (!string.IsNullOrWhiteSpace(snapshot.ProgramDescriptorKey))
+            return "descriptor:" + snapshot.ProgramDescriptorKey;
+        if (!string.IsNullOrWhiteSpace(snapshot.BinaryCacheKey))
+            return "binary:" + snapshot.BinaryCacheKey;
+        if (!string.IsNullOrWhiteSpace(snapshot.PreparedCacheKey))
+            return "prepared:" + snapshot.PreparedCacheKey;
+        if (!string.IsNullOrWhiteSpace(snapshot.ActiveBuildFingerprint))
+            return "active:" + snapshot.ActiveBuildFingerprint;
+        if (!string.IsNullOrWhiteSpace(snapshot.LastBuildFingerprint))
+            return "last:" + snapshot.LastBuildFingerprint;
+        if (snapshot.EffectiveSourceHash != 0)
+            return "source:" + snapshot.EffectiveSourceHash.ToString("X16", CultureInfo.InvariantCulture);
+        if (snapshot.Hash != 0)
+            return "hash:" + snapshot.Hash.ToString("X16", CultureInfo.InvariantCulture);
+        if (snapshot.PreparedHash != 0)
+            return "preparedHash:" + snapshot.PreparedHash.ToString("X16", CultureInfo.InvariantCulture);
+
+        return string.Concat(
+            "program:",
+            snapshot.ProgramId.ToString(CultureInfo.InvariantCulture),
+            ":",
+            snapshot.ShaderStages,
+            ":",
+            snapshot.Separable ? "sep" : "mono");
+    }
+
     private static string BuildShaderProgramSourceSummary(XRRenderProgram program)
     {
         var builder = new StringBuilder(96);
@@ -518,20 +619,22 @@ public static partial class EditorImGuiUI
         if (compactLayout)
         {
             ImGui.TextUnformatted(
-                $"Programs {summary.ProgramCount:N0} ({summary.VisibleCount:N0} visible) | Pending {summary.Pending:N0} | Prepared {summary.Prepared:N0} | Queued {summary.Queued:N0} | Linked {summary.Linked:N0} | Failed {summary.Failed:N0}");
+                $"Programs {summary.ProgramCount:N0} ({summary.VisibleCount:N0} visible) | Groups {summary.GroupCount:N0} | Pending {summary.Pending:N0} | Prepared {summary.Prepared:N0} | Queued {summary.Queued:N0} | Linked {summary.Linked:N0} | Failed {summary.Failed:N0}");
             ImGui.TextUnformatted(
-                $"Link paths: driver-src {summary.DriverParallel:N0} | shared-src {summary.SharedContext:N0} | binary-cache {summary.BinaryCache:N0} | sync-src {summary.Synchronous:N0}");
+                $"Identity: hashes {summary.UniqueEffectiveHashes:N0} | binary keys {summary.UniqueBinaryKeys:N0} | shared refs {summary.SharedHandleReferences:N0} | destroy queue {summary.PendingDestructions:N0}");
         }
         else
         {
             ImGui.TextUnformatted(
-                $"Programs: {summary.ProgramCount:N0} | Visible: {summary.VisibleCount:N0} | Pending: {summary.Pending:N0} | Prepared: {summary.Prepared:N0} | Queued: {summary.Queued:N0} | Linked: {summary.Linked:N0} | Failed: {summary.Failed:N0}");
+                $"Programs: {summary.ProgramCount:N0} | Visible: {summary.VisibleCount:N0} | Groups: {summary.GroupCount:N0} | Pending: {summary.Pending:N0} | Prepared: {summary.Prepared:N0} | Queued: {summary.Queued:N0} | Linked: {summary.Linked:N0} | Failed: {summary.Failed:N0}");
+            ImGui.TextUnformatted(
+                $"Identity: Effective hashes {summary.UniqueEffectiveHashes:N0} | Binary keys {summary.UniqueBinaryKeys:N0} | Peak shared handle refs {summary.SharedHandleReferences:N0} | Pending destruction queue {summary.PendingDestructions:N0}");
             ImGui.TextUnformatted(
                 $"Current/last link paths: Driver source {summary.DriverParallel:N0} | Shared-context source {summary.SharedContext:N0} | Binary cache {summary.BinaryCache:N0} | Sync source {summary.Synchronous:N0}");
         }
 
         ImGui.TextUnformatted(
-            $"Lifecycle: binary hits {ShaderProgramLifecycleDiagnostics.BinaryCacheHits:N0} | misses {ShaderProgramLifecycleDiagnostics.BinaryCacheMisses:N0} | source builds {ShaderProgramLifecycleDiagnostics.SourceBuilds:N0} | source failures {ShaderProgramLifecycleDiagnostics.SourceFailures:N0} | shared source queued {ShaderProgramLifecycleDiagnostics.SharedContextSourceQueued:N0}");
+            $"Lifecycle: binary hits {ShaderProgramLifecycleDiagnostics.BinaryCacheHits:N0} | misses {ShaderProgramLifecycleDiagnostics.BinaryCacheMisses:N0} | source builds {ShaderProgramLifecycleDiagnostics.SourceBuilds:N0} | source failures {ShaderProgramLifecycleDiagnostics.SourceFailures:N0} | combined pool hit/miss {ShaderProgramLifecycleDiagnostics.CombinedProgramPoolHits:N0}/{ShaderProgramLifecycleDiagnostics.CombinedProgramPoolMisses:N0} | gpu pool hit/miss {ShaderProgramLifecycleDiagnostics.GpuDrivenProgramPoolHits:N0}/{ShaderProgramLifecycleDiagnostics.GpuDrivenProgramPoolMisses:N0}");
         if (_shaderProgramLinksLastCaptureSkippedRows > 0)
             ImGui.TextDisabled($"Rows capped: showing {summary.VisibleCount:N0}, skipped {_shaderProgramLinksLastCaptureSkippedRows:N0} low-activity rows");
         ImGui.TextDisabled(
@@ -557,6 +660,10 @@ public static partial class EditorImGuiUI
             MarkShaderProgramLinksViewDirty();
         SameLineForShaderProgramLinks(72.0f);
         if (ImGui.Checkbox("Failed", ref _shaderProgramLinksFilterFailedOnly))
+            MarkShaderProgramLinksViewDirty();
+
+        SameLineForShaderProgramLinks(82.0f);
+        if (ImGui.Checkbox("Grouped", ref _shaderProgramLinksGrouped))
             MarkShaderProgramLinksViewDirty();
 
         string sortLabel = GetShaderProgramLinksSortLabel();
@@ -594,6 +701,10 @@ public static partial class EditorImGuiUI
         if (ImGui.Checkbox("Failed", ref _shaderProgramLinksFilterFailedOnly))
             MarkShaderProgramLinksViewDirty();
 
+        SameLineForShaderProgramLinks(86.0f);
+        if (ImGui.Checkbox("Grouped", ref _shaderProgramLinksGrouped))
+            MarkShaderProgramLinksViewDirty();
+
         SameLineForShaderProgramLinks(132.0f);
         ImGui.SetNextItemWidth(128.0f);
         if (ImGui.BeginCombo("##ShaderProgramLinksSort", $"Sort: {GetShaderProgramLinksSortLabel()}"))
@@ -615,6 +726,7 @@ public static partial class EditorImGuiUI
     private static string GetShaderProgramLinksSortLabel()
         => _shaderProgramLinksSortMode switch
         {
+            ShaderProgramLinksSortMode.Refs => "Refs",
             ShaderProgramLinksSortMode.Program => "Program",
             ShaderProgramLinksSortMode.Backend => "Backend",
             ShaderProgramLinksSortMode.QueueLatency => "Queue latency",
@@ -627,6 +739,7 @@ public static partial class EditorImGuiUI
     private static void DrawShaderProgramLinksSortOptions()
     {
         DrawShaderProgramLinksSortOption(ShaderProgramLinksSortMode.State, "State");
+        DrawShaderProgramLinksSortOption(ShaderProgramLinksSortMode.Refs, "Refs");
         DrawShaderProgramLinksSortOption(ShaderProgramLinksSortMode.Program, "Program");
         DrawShaderProgramLinksSortOption(ShaderProgramLinksSortMode.Backend, "Backend");
         DrawShaderProgramLinksSortOption(ShaderProgramLinksSortMode.QueueLatency, "Queue latency");
@@ -662,6 +775,123 @@ public static partial class EditorImGuiUI
             _shaderProgramLinksSortMode = mode;
             _shaderProgramLinksSortDirty = true;
         }
+    }
+
+    private static unsafe void DrawShaderProgramLinkGroupsTable(IReadOnlyList<ShaderProgramLinkGroup> visibleGroups, int totalRowCount, bool compactLayout)
+    {
+        ImGuiTableFlags flags =
+            ImGuiTableFlags.Resizable |
+            ImGuiTableFlags.Reorderable |
+            ImGuiTableFlags.Hideable |
+            ImGuiTableFlags.ScrollY |
+            ImGuiTableFlags.RowBg |
+            ImGuiTableFlags.BordersOuter |
+            ImGuiTableFlags.BordersV |
+            ImGuiTableFlags.SizingStretchProp;
+
+        float tableHeight = MathF.Max(220.0f, ImGui.GetContentRegionAvail().Y);
+        int columnCount = compactLayout ? 6 : 11;
+        if (!ImGui.BeginTable("ShaderProgramLinkGroupsTable", columnCount, flags, new Vector2(0.0f, tableHeight)))
+            return;
+
+        ImGui.TableSetupScrollFreeze(0, 1);
+        ImGui.TableSetupColumn("Group", ImGuiTableColumnFlags.None, 230.0f);
+        ImGui.TableSetupColumn("Refs", ImGuiTableColumnFlags.None, 58.0f);
+        ImGui.TableSetupColumn("Program", ImGuiTableColumnFlags.None, 190.0f);
+        ImGui.TableSetupColumn("State", ImGuiTableColumnFlags.None, 76.0f);
+        ImGui.TableSetupColumn("Link", ImGuiTableColumnFlags.None, 145.0f);
+        ImGui.TableSetupColumn("Handle", ImGuiTableColumnFlags.None, 120.0f);
+        if (!compactLayout)
+        {
+            ImGui.TableSetupColumn("Backend", ImGuiTableColumnFlags.None, 110.0f);
+            ImGui.TableSetupColumn("Hash", ImGuiTableColumnFlags.None, 120.0f);
+            ImGui.TableSetupColumn("Shaders", ImGuiTableColumnFlags.None, 150.0f);
+            ImGui.TableSetupColumn("Timing", ImGuiTableColumnFlags.None, 170.0f);
+            ImGui.TableSetupColumn("Example Use", ImGuiTableColumnFlags.None, 240.0f);
+        }
+        ImGui.TableHeadersRow();
+
+        var clipper = new ImGuiListClipper();
+        ImGuiNative.ImGuiListClipper_Begin(&clipper, visibleGroups.Count, ImGui.GetTextLineHeightWithSpacing());
+        while (ImGuiNative.ImGuiListClipper_Step(&clipper) != 0)
+        {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
+            {
+                ShaderProgramLinkGroup group = visibleGroups[i];
+                ShaderProgramLinkRow row = group.Representative;
+                bool selected = string.Equals(_selectedShaderProgramLinkGroupKey, group.Key, StringComparison.Ordinal);
+                ImGui.TableNextRow();
+
+                ImGui.TableSetColumnIndex(0);
+                ImGui.PushID(i);
+                if (ImGui.Selectable(TrimForTable(group.Key, 74), selected, ImGuiSelectableFlags.SpanAllColumns))
+                {
+                    _selectedShaderProgramLinkGroupKey = group.Key;
+                    _shaderProgramLinksSelectedGroup = group;
+                    _selectedShaderProgramLinkProgram = row.Program;
+                    _shaderProgramLinksSelectedRow = row;
+                }
+                ImGui.PopID();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(BuildShaderProgramGroupClipboard(group));
+
+                ImGui.TableSetColumnIndex(1);
+                ImGui.TextUnformatted(group.LogicalReferences.ToString("N0", CultureInfo.InvariantCulture));
+
+                ImGui.TableSetColumnIndex(2);
+                ImGui.TextUnformatted(row.ProgramNameCell);
+
+                ImGui.TableSetColumnIndex(3);
+                ImGui.TextColored(row.StatusColor, row.StatusText);
+
+                ImGui.TableSetColumnIndex(4);
+                ImGui.TextUnformatted(row.LinkType);
+
+                ImGui.TableSetColumnIndex(5);
+                ImGui.TextUnformatted(BuildShaderProgramHandleText(row.Snapshot, group));
+                if (compactLayout)
+                    continue;
+
+                ImGui.TableSetColumnIndex(6);
+                ImGui.TextUnformatted(row.BackendText);
+
+                ImGui.TableSetColumnIndex(7);
+                ImGui.TextUnformatted(row.HashText);
+
+                ImGui.TableSetColumnIndex(8);
+                ImGui.TextUnformatted(row.ShaderSourceCell);
+
+                ImGui.TableSetColumnIndex(9);
+                ImGui.TextUnformatted(row.TimingText);
+
+                ImGui.TableSetColumnIndex(10);
+                ImGui.TextUnformatted(row.ProgramUseCell);
+            }
+        }
+        ImGuiNative.ImGuiListClipper_End(&clipper);
+
+        ImGui.EndTable();
+
+        if (visibleGroups.Count == 0)
+            ImGui.TextDisabled(totalRowCount == 0 ? "No OpenGL shader programs are currently tracked." : "No shader program groups match the current filters.");
+    }
+
+    private static string BuildShaderProgramHandleText(LinkSnapshot snapshot, ShaderProgramLinkGroup group)
+    {
+        string source = snapshot.HandleSource switch
+        {
+            OpenGLRenderer.GLRenderProgram.ELinkedProgramHandleSource.SharedLinkedProgram => "shared",
+            OpenGLRenderer.GLRenderProgram.ELinkedProgramHandleSource.OwnedBinary => "binary",
+            OpenGLRenderer.GLRenderProgram.ELinkedProgramHandleSource.OwnedSource => "source",
+            _ => "none",
+        };
+
+        if (group.SharedProgramId != 0)
+            return $"{source} #{group.SharedProgramId} refs={group.SharedHandleReferences}";
+
+        return snapshot.ProgramId == 0
+            ? source
+            : $"{source} #{snapshot.ProgramId}";
     }
 
     private static unsafe void DrawShaderProgramLinksTable(IReadOnlyList<ShaderProgramLinkRow> visibleRows, int totalRowCount, bool compactLayout)
@@ -790,8 +1020,12 @@ public static partial class EditorImGuiUI
 
         OpenGLRenderer.GLRenderProgram? selectedProgram = _selectedShaderProgramLinkProgram;
         ShaderProgramLinkRow? selectedRow = null;
+        ShaderProgramLinkGroup? selectedGroup = null;
         List<ShaderProgramLinkRow> visibleRows = _shaderProgramLinkVisibleRows;
+        List<ShaderProgramLinkGroup> visibleGroups = _shaderProgramLinkVisibleGroups;
         visibleRows.Clear();
+        visibleGroups.Clear();
+        Dictionary<string, ShaderProgramLinkGroup> groups = new(StringComparer.Ordinal);
         ShaderProgramLinksSummary capturedSummary = _shaderProgramLinksSummary;
 
         for (int i = 0; i < rows.Count; i++)
@@ -801,11 +1035,40 @@ public static partial class EditorImGuiUI
                 selectedRow = row;
 
             if (PassesShaderProgramLinksFilters(row))
+            {
                 visibleRows.Add(row);
+                string groupKey = BuildShaderProgramGroupKey(row.Snapshot);
+                if (!groups.TryGetValue(groupKey, out ShaderProgramLinkGroup? group))
+                {
+                    group = new ShaderProgramLinkGroup(groupKey, row);
+                    groups.Add(groupKey, group);
+                    visibleGroups.Add(group);
+                }
+
+                group.Add(row);
+            }
+        }
+
+        SortShaderProgramLinkGroups(visibleGroups);
+        if (!string.IsNullOrWhiteSpace(_selectedShaderProgramLinkGroupKey))
+        {
+            for (int i = 0; i < visibleGroups.Count; i++)
+            {
+                if (string.Equals(visibleGroups[i].Key, _selectedShaderProgramLinkGroupKey, StringComparison.Ordinal))
+                {
+                    selectedGroup = visibleGroups[i];
+                    break;
+                }
+            }
         }
 
         _shaderProgramLinksSelectedRow = selectedRow;
-        _shaderProgramLinksSummary = capturedSummary with { VisibleCount = visibleRows.Count };
+        _shaderProgramLinksSelectedGroup = selectedGroup;
+        _shaderProgramLinksSummary = capturedSummary with
+        {
+            VisibleCount = visibleRows.Count,
+            GroupCount = visibleGroups.Count,
+        };
         _shaderProgramLinksViewSource = rows;
         _shaderProgramLinksViewDirty = false;
     }
@@ -840,7 +1103,10 @@ public static partial class EditorImGuiUI
                ContainsSearch(row.BackendText, search) ||
                ContainsSearch(row.DetailText, search) ||
                ContainsSearch(row.ShaderStagesCell, search) ||
-               ContainsSearch(row.HashText, search);
+               ContainsSearch(row.HashText, search) ||
+               ContainsSearch(BuildShaderProgramGroupKey(row.Snapshot), search) ||
+               ContainsSearch(row.Snapshot.ProgramDescriptorKey, search) ||
+               ContainsSearch(row.Snapshot.BinaryCacheKey, search);
     }
 
     private static bool ContainsSearch(string? value, string search)
@@ -850,6 +1116,7 @@ public static partial class EditorImGuiUI
     {
         int result = _shaderProgramLinksSortMode switch
         {
+            ShaderProgramLinksSortMode.Refs => 0,
             ShaderProgramLinksSortMode.Program => string.Compare(left.ProgramName, right.ProgramName, StringComparison.OrdinalIgnoreCase),
             ShaderProgramLinksSortMode.Backend => string.Compare(left.BackendText, right.BackendText, StringComparison.OrdinalIgnoreCase),
             ShaderProgramLinksSortMode.QueueLatency => left.Snapshot.LastBuildQueueLatencyMilliseconds.CompareTo(right.Snapshot.LastBuildQueueLatencyMilliseconds),
@@ -868,6 +1135,37 @@ public static partial class EditorImGuiUI
         return string.Compare(left.ProgramName, right.ProgramName, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static void SortShaderProgramLinkGroups(List<ShaderProgramLinkGroup> groups)
+        => groups.Sort(CompareShaderProgramLinkGroups);
+
+    private static int CompareShaderProgramLinkGroups(ShaderProgramLinkGroup left, ShaderProgramLinkGroup right)
+    {
+        ShaderProgramLinkRow leftRow = left.Representative;
+        ShaderProgramLinkRow rightRow = right.Representative;
+        int result = _shaderProgramLinksSortMode switch
+        {
+            ShaderProgramLinksSortMode.Refs => left.LogicalReferences.CompareTo(right.LogicalReferences),
+            ShaderProgramLinksSortMode.Program => string.Compare(leftRow.ProgramName, rightRow.ProgramName, StringComparison.OrdinalIgnoreCase),
+            ShaderProgramLinksSortMode.Backend => string.Compare(leftRow.BackendText, rightRow.BackendText, StringComparison.OrdinalIgnoreCase),
+            ShaderProgramLinksSortMode.QueueLatency => leftRow.Snapshot.LastBuildQueueLatencyMilliseconds.CompareTo(rightRow.Snapshot.LastBuildQueueLatencyMilliseconds),
+            ShaderProgramLinksSortMode.LinkTime => leftRow.Snapshot.LastBuildLinkMilliseconds.CompareTo(rightRow.Snapshot.LastBuildLinkMilliseconds),
+            ShaderProgramLinksSortMode.BinaryTime => leftRow.Snapshot.LastBuildBinaryLoadMilliseconds.CompareTo(rightRow.Snapshot.LastBuildBinaryLoadMilliseconds),
+            ShaderProgramLinksSortMode.Hash => leftRow.DisplayHash.CompareTo(rightRow.DisplayHash),
+            _ => leftRow.StateSortRank.CompareTo(rightRow.StateSortRank),
+        };
+
+        if (_shaderProgramLinksSortDescending)
+            result = -result;
+
+        if (result != 0)
+            return result;
+
+        result = right.LogicalReferences.CompareTo(left.LogicalReferences);
+        return result != 0
+            ? result
+            : string.Compare(left.Key, right.Key, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static int GetShaderProgramStateSortRank(LinkSnapshot snapshot)
     {
         if (IsShaderProgramFailed(snapshot))
@@ -884,6 +1182,71 @@ public static partial class EditorImGuiUI
         if (snapshot.IsLinked)
             return 0;
         return -1;
+    }
+
+    private static void DrawShaderProgramLinkGroupDetails(ShaderProgramLinkGroup group)
+    {
+        if (!ImGui.CollapsingHeader("Selected Program Group", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ShaderProgramLinkRow row = group.Representative;
+        LinkSnapshot snapshot = row.Snapshot;
+        if (ImGui.SmallButton("Copy Group Summary"))
+            ImGui.SetClipboardText(BuildShaderProgramGroupClipboard(group));
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Log Group Summary"))
+            XREngine.Debug.OpenGL(BuildShaderProgramGroupLogLine(group));
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Clear Selection"))
+        {
+            _selectedShaderProgramLinkGroupKey = null;
+            _shaderProgramLinksSelectedGroup = null;
+            _selectedShaderProgramLinkProgram = null;
+            _shaderProgramLinksSelectedRow = null;
+        }
+
+        if (!ImGui.BeginTable("ShaderProgramLinkGroupDetails", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+            return;
+
+        DrawShaderProgramDetailRow("Group Key", group.Key);
+        DrawShaderProgramDetailRow("Logical Refs", group.LogicalReferences.ToString("N0", CultureInfo.InvariantCulture));
+        DrawShaderProgramDetailRow("States", $"linked={group.Linked:N0}, pending={group.Pending:N0}, prepared={group.Prepared:N0}, failed={group.Failed:N0}");
+        DrawShaderProgramDetailRow("Handle", BuildShaderProgramHandleText(snapshot, group));
+        DrawShaderProgramDetailRow("Program", row.ProgramName);
+        DrawShaderProgramDetailRow("Use", row.ProgramUse);
+        DrawShaderProgramDetailRow("Descriptor", snapshot.ProgramDescriptorKey ?? "-");
+        DrawShaderProgramDetailRow("Binary Key", snapshot.BinaryCacheKey ?? snapshot.PreparedCacheKey ?? "-");
+        DrawShaderProgramDetailRow("Hash", row.HashText);
+        DrawShaderProgramDetailRow("Backend", $"{row.BackendText} detail={snapshot.BackendDetail ?? "-"}");
+        DrawShaderProgramDetailRow("Timings", row.TimingText);
+
+        int listed = 0;
+        var contributors = new StringBuilder(512);
+        foreach (ShaderProgramLinkRow contributor in group.Rows)
+        {
+            if (listed >= 12)
+                break;
+
+            if (contributors.Length > 0)
+                contributors.AppendLine();
+
+            contributors
+                .Append(contributor.ProgramName)
+                .Append(" | ")
+                .Append(contributor.ProgramUse)
+                .Append(" | ")
+                .Append(contributor.WindowTitle);
+            listed++;
+        }
+
+        if (group.Rows.Count > listed)
+            contributors.AppendLine().Append("... ").Append((group.Rows.Count - listed).ToString("N0", CultureInfo.InvariantCulture)).Append(" more");
+
+        DrawShaderProgramDetailRow("Contributors", contributors.Length == 0 ? "-" : contributors.ToString());
+
+        ImGui.EndTable();
     }
 
     private static void DrawShaderProgramLinkDetails(ShaderProgramLinkRow row)
@@ -910,7 +1273,9 @@ public static partial class EditorImGuiUI
         DrawShaderProgramDetailRow("Status", $"{row.StatusText} / {row.StageText}");
         DrawShaderProgramDetailRow("Link Type", row.LinkType);
         DrawShaderProgramDetailRow("Hash", row.HashText);
-        DrawShaderProgramDetailRow("Program Id", $"{snapshot.ProgramId} (replacement {snapshot.ReplacementProgramId})");
+        DrawShaderProgramDetailRow("Descriptor", snapshot.ProgramDescriptorKey ?? "-");
+        DrawShaderProgramDetailRow("Binary Key", snapshot.BinaryCacheKey ?? snapshot.PreparedCacheKey ?? "-");
+        DrawShaderProgramDetailRow("Program Id", $"{snapshot.ProgramId} (replacement {snapshot.ReplacementProgramId}, shared {snapshot.SharedLinkedProgramId}, refs {snapshot.SharedLinkedProgramReferenceCount}, owns={snapshot.OwnsCurrentProgramHandle}, source={snapshot.HandleSource})");
         DrawShaderProgramDetailRow("Shaders", $"{snapshot.ShaderCount} [{snapshot.ShaderStages}] separable={snapshot.Separable} sources={row.ShaderSourceCell}");
         DrawShaderProgramDetailRow("Backend", $"{row.BackendText} detail={snapshot.BackendDetail ?? "-"}");
         DrawShaderProgramDetailRow("Fingerprint", snapshot.ActiveBuildFingerprint ?? snapshot.BackendFingerprint ?? snapshot.LastBuildFingerprint ?? "-");
@@ -938,6 +1303,37 @@ public static partial class EditorImGuiUI
            $"{Environment.NewLine}Queues: {row.QueueText}" +
            $"{Environment.NewLine}Pending: {row.PendingText}";
 
+    private static string BuildShaderProgramGroupClipboard(ShaderProgramLinkGroup group)
+    {
+        ShaderProgramLinkRow row = group.Representative;
+        LinkSnapshot s = row.Snapshot;
+        return
+            $"Group: {group.Key}{Environment.NewLine}" +
+            $"LogicalRefs: {group.LogicalReferences}{Environment.NewLine}" +
+            $"States: linked={group.Linked}, pending={group.Pending}, prepared={group.Prepared}, failed={group.Failed}{Environment.NewLine}" +
+            $"Handle: {BuildShaderProgramHandleText(s, group)} ownsCurrent={s.OwnsCurrentProgramHandle}{Environment.NewLine}" +
+            $"Program: {row.ProgramName}{Environment.NewLine}" +
+            $"Use: {row.ProgramUse}{Environment.NewLine}" +
+            $"Descriptor: {s.ProgramDescriptorKey ?? "-"}{Environment.NewLine}" +
+            $"BinaryKey: {s.BinaryCacheKey ?? s.PreparedCacheKey ?? "-"}{Environment.NewLine}" +
+            $"Hash: {row.HashText}{Environment.NewLine}" +
+            $"Backend: {row.BackendText}{Environment.NewLine}" +
+            $"Timings: {row.TimingText}";
+    }
+
+    private static string BuildShaderProgramGroupLogLine(ShaderProgramLinkGroup group)
+    {
+        ShaderProgramLinkRow row = group.Representative;
+        LinkSnapshot s = row.Snapshot;
+        return
+            $"[ShaderProgramDedupSummary] group='{group.Key}' logicalRefs={group.LogicalReferences} " +
+            $"linked={group.Linked} pending={group.Pending} prepared={group.Prepared} failed={group.Failed} " +
+            $"program='{row.ProgramName}' use='{row.ProgramUse}' descriptor={s.ProgramDescriptorKey ?? "<none>"} " +
+            $"binaryKey={s.BinaryCacheKey ?? s.PreparedCacheKey ?? "<none>"} hash={row.HashText} " +
+            $"handleSource={s.HandleSource} programId={s.ProgramId} sharedProgramId={s.SharedLinkedProgramId} sharedRefs={s.SharedLinkedProgramReferenceCount} " +
+            $"ownsHandle={s.OwnsCurrentProgramHandle} backend={row.BackendText} timing='{row.TimingText}'.";
+    }
+
     private static string BuildShaderProgramLinkClipboard(ShaderProgramLinkRow row)
     {
         LinkSnapshot s = row.Snapshot;
@@ -949,7 +1345,9 @@ public static partial class EditorImGuiUI
             $"Link Type: {row.LinkType}{Environment.NewLine}" +
             $"Backend: {row.BackendText}{Environment.NewLine}" +
             $"Hash: {row.HashText}{Environment.NewLine}" +
-            $"ProgramId: {s.ProgramId}, ReplacementId: {s.ReplacementProgramId}{Environment.NewLine}" +
+            $"Descriptor: {s.ProgramDescriptorKey ?? "-"}{Environment.NewLine}" +
+            $"BinaryKey: {s.BinaryCacheKey ?? s.PreparedCacheKey ?? "-"}{Environment.NewLine}" +
+            $"Handle: source={s.HandleSource}, ProgramId={s.ProgramId}, ReplacementId={s.ReplacementProgramId}, SharedId={s.SharedLinkedProgramId}, SharedRefs={s.SharedLinkedProgramReferenceCount}, Owns={s.OwnsCurrentProgramHandle}{Environment.NewLine}" +
             $"Shaders: {s.ShaderCount} [{s.ShaderStages}], separable={s.Separable}, sources={row.ShaderSourceCell}{Environment.NewLine}" +
             $"Flags: {row.FlagsText}{Environment.NewLine}" +
             $"Pending: {row.PendingText}{Environment.NewLine}" +
@@ -1032,8 +1430,9 @@ public static partial class EditorImGuiUI
         builder.Append(" | driverThreads=").Append(snapshot.OpenGLShaderCompilerThreadCount);
         builder.Append(" | hazard=").Append(snapshot.IsKnownAsyncLinkHazard ? "yes" : "no");
         builder.Append(" | sep=").Append(snapshot.Separable ? "yes" : "no");
+        builder.Append(" | handle=").Append(snapshot.HandleSource);
         if (snapshot.HasSharedLinkedProgram)
-            builder.Append(" | sharedProgram");
+            builder.Append(" | sharedProgram refs=").Append(snapshot.SharedLinkedProgramReferenceCount);
         if (snapshot.PreparedBinaryCacheHit || snapshot.HasCachedProgram)
             builder.Append(" | cached");
         return builder.ToString();

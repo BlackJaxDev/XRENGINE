@@ -24,6 +24,17 @@ public enum ModelImportBackendPreference
     AssimpOnly,
 }
 
+[Flags]
+public enum ModelPostImportFlags
+{
+    None = 0,
+    GenerateCoacdCollidersPerSubmesh = 1 << 0,
+    SplitSubmeshesIntoSeparateModelComponents = 1 << 1,
+    SeparateMeshIslands = 1 << 2,
+    GenerateIndividualSceneNodesPerSubmesh = 1 << 3,
+    PutAllCoacdCollidersIntoOneStaticRigidBodyComponent = 1 << 4,
+}
+
 public enum UnitTestFbxLogVerbosity
 {
     UseEnvironment,
@@ -164,18 +175,35 @@ public class UnitTestingWorldSettings
         public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
         public float Scale { get; set; } = 1.0f;
         public bool ZUp { get; set; } = false;
-        public bool GenerateCoacdCollidersPerSubmesh { get; set; } = false;
         /// <summary>
-        /// When true, each imported submesh gets its own ModelComponent instead of
-        /// grouping all submeshes from the same source node into one ModelComponent.
-        /// Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
+        /// Additional post-import actions to apply after the source model has been loaded.
         /// </summary>
-        public bool SplitSubmeshesIntoSeparateModelComponents { get; set; } = false;
-        /// <summary>
-        /// When true, imported submeshes are analyzed for disconnected triangle islands
-        /// and each island is emitted as its own submesh.
-        /// </summary>
-        public bool SeparateMeshIslands { get; set; } = false;
+        public ModelPostImportFlags PostImportFlags { get; set; } = ModelPostImportFlags.None;
+
+        [JsonProperty("GenerateCoacdCollidersPerSubmesh")]
+        private bool LegacyGenerateCoacdCollidersPerSubmesh
+        {
+            set => SetLegacyPostImportFlag(ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh, value);
+        }
+
+        [JsonProperty("SplitSubmeshesIntoSeparateModelComponents")]
+        private bool LegacySplitSubmeshesIntoSeparateModelComponents
+        {
+            set => SetLegacyPostImportFlag(ModelPostImportFlags.SplitSubmeshesIntoSeparateModelComponents, value);
+        }
+
+        [JsonProperty("SeparateMeshIslands")]
+        private bool LegacySeparateMeshIslands
+        {
+            set => SetLegacyPostImportFlag(ModelPostImportFlags.SeparateMeshIslands, value);
+        }
+
+        private void SetLegacyPostImportFlag(ModelPostImportFlags flag, bool enabled)
+        {
+            if (enabled)
+                PostImportFlags |= flag;
+        }
+
         public YawPitchRollDegrees? YawPitchRoll { get; set; }
         public TranslationXYZ? Translation { get; set; }
     }
@@ -211,7 +239,7 @@ public class UnitTestingWorldSettings
     /// <summary>
     /// Startup model imports processed when the Unit Testing World boots. Each array item
     /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
-    /// Path, ImportFlags, Scale, ZUp, SeparateMeshIslands, and optional YawPitchRoll/Translation objects.
+    /// Path, ImportFlags, Scale, ZUp, PostImportFlags, and optional YawPitchRoll/Translation objects.
     /// Paths are relative to the process working directory unless absolute.
     /// </summary>
     public List<ModelImportSettings> ModelsToImport { get; set; } = [];

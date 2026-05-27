@@ -258,8 +258,8 @@
       "items": {
         "$ref": "#/definitions/ModelImportSettings"
       },
-      "description": "Startup model imports processed when the Unit Testing World boots. Each array item is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend, Path, ImportFlags, Scale, ZUp, SeparateMeshIslands, and optional YawPitchRoll/Translation objects. Paths are relative to the process working directory unless absolute.",
-      "markdownDescription": "Startup model imports are an array of objects. Each item uses this shape:\n\n```json\n{\n  \"Enabled\": true,\n  \"Kind\": \"Static\",\n  \"MaterialMode\": \"Deferred\",\n  \"UseForwardForTransparent\": false,\n  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n  \"Scale\": 1.0,\n  \"ZUp\": false,\n  \"GenerateCoacdCollidersPerSubmesh\": false,\n  \"SplitSubmeshesIntoSeparateModelComponents\": false,\n  \"SeparateMeshIslands\": false,\n  \"YawPitchRoll\": null,\n  \"Translation\": null\n}\n```\n\n`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; `ImporterBackend` is `PreferNativeThenAssimp` or `AssimpOnly`. `ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. `YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; `Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.",
+      "description": "Startup model imports processed when the Unit Testing World boots. Each array item is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend, Path, ImportFlags, Scale, ZUp, PostImportFlags, and optional YawPitchRoll/Translation objects. Paths are relative to the process working directory unless absolute.",
+      "markdownDescription": "Startup model imports are an array of objects. Each item uses this shape:\n\n```json\n{\n  \"Enabled\": true,\n  \"Kind\": \"Static\",\n  \"MaterialMode\": \"Deferred\",\n  \"UseForwardForTransparent\": false,\n  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n  \"Scale\": 1.0,\n  \"ZUp\": false,\n  \"PostImportFlags\": \"None\",\n  \"YawPitchRoll\": null,\n  \"Translation\": null\n}\n```\n\n`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; `ImporterBackend` is `PreferNativeThenAssimp` or `AssimpOnly`. `ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. `PostImportFlags` is a comma-separated list of model post-import flag names. `YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; `Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.",
       "examples": [
         [
           {
@@ -272,9 +272,7 @@
             "ImportFlags": "Triangulate, FlipUVs, GenerateNormals",
             "Scale": 1.0,
             "ZUp": false,
-            "GenerateCoacdCollidersPerSubmesh": false,
-            "SplitSubmeshesIntoSeparateModelComponents": false,
-            "SeparateMeshIslands": false,
+            "PostImportFlags": "None",
             "YawPitchRoll": null,
             "Translation": null
           }
@@ -295,9 +293,7 @@
               "ImportFlags": "Triangulate, FlipUVs, GenerateNormals",
               "Scale": 1.0,
               "ZUp": false,
-              "GenerateCoacdCollidersPerSubmesh": false,
-              "SplitSubmeshesIntoSeparateModelComponents": false,
-              "SeparateMeshIslands": false,
+              "PostImportFlags": "None",
               "YawPitchRoll": null,
               "Translation": null
             }
@@ -316,13 +312,12 @@
         "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",",
         "  \"Scale\": 1.0,",
         "  \"ZUp\": false,",
-        "  \"GenerateCoacdCollidersPerSubmesh\": false,",
-        "  \"SplitSubmeshesIntoSeparateModelComponents\": false,",
-        "  \"SeparateMeshIslands\": false,",
+        "  \"PostImportFlags\": \"None\",",
         "  \"YawPitchRoll\": null,",
         "  \"Translation\": null",
         "}",
         "Use comma-separated Assimp PostProcessSteps names for ImportFlags.",
+        "Use comma-separated ModelPostImportFlags names for PostImportFlags.",
         "YawPitchRoll is { \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }; Translation is { \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }."
       ]
     },
@@ -741,17 +736,14 @@
           "type": "boolean",
           "description": "Enables or disables ZUp."
         },
-        "GenerateCoacdCollidersPerSubmesh": {
-          "type": "boolean",
-          "description": "Enables or disables GenerateCoacdCollidersPerSubmesh."
-        },
-        "SplitSubmeshesIntoSeparateModelComponents": {
-          "type": "boolean",
-          "description": "When true, each imported submesh gets its own ModelComponent instead of grouping all submeshes from the same source node into one ModelComponent. Increases GPU resource usage; leave false unless per-submesh scene nodes are needed."
-        },
-        "SeparateMeshIslands": {
-          "type": "boolean",
-          "description": "When true, imported submeshes are analyzed for disconnected triangle islands and each island is emitted as its own submesh."
+        "PostImportFlags": {
+          "type": "string",
+          "description": "Additional post-import actions to apply after the source model has been loaded.",
+          "markdownDescription": "Comma-separated model post-import flags. Supported values: `None`, `GenerateCoacdCollidersPerSubmesh`, `SplitSubmeshesIntoSeparateModelComponents`, `SeparateMeshIslands`, `GenerateIndividualSceneNodesPerSubmesh`, `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`.",
+          "examples": [
+            "GenerateCoacdCollidersPerSubmesh, SplitSubmeshesIntoSeparateModelComponents",
+            "GenerateIndividualSceneNodesPerSubmesh, PutAllCoacdCollidersIntoOneStaticRigidBodyComponent"
+          ]
         },
         "YawPitchRoll": {
           "oneOf": [

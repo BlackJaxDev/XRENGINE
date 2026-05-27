@@ -55,6 +55,76 @@ public sealed class GLMeshRendererLifecycleContractTests
     }
 
     [Test]
+    public void GLMeshRenderer_UsesCheapPipelineFallbackWhileUberProgramsArePending()
+    {
+        string shaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+        string renderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Rendering.cs");
+
+        shaderSource.ShouldContain("ShouldUsePipelineForPendingUberFallbackMaterial(material)");
+        shaderSource.ShouldContain("allowWhenShaderPipelinesDisabled: true");
+        shaderSource.ShouldContain("ReferenceEquals(material.Data, s_pendingUberFallbackMaterial)");
+
+        renderSource.ShouldContain("material.ShaderProgramPriority = EProgramPriority.Interactive;");
+        renderSource.ShouldContain("material.EnsureShaderPipelineProgram(allowWhenShaderPipelinesDisabled: true);");
+    }
+
+    [Test]
+    public void GLMeshRenderer_UsesSharedShadowMaterialForColdUberShadowPass()
+    {
+        string renderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Rendering.cs");
+
+        renderSource.ShouldContain("CanUseSharedUberShadowFallback(globalMaterialOverride, shadowSourceMaterial)");
+        renderSource.ShouldContain("shadowSourceMaterial.TryGetUberMaterialState(out _, out _)");
+        renderSource.ShouldContain("Prefer visible material/link progress over first-frame exact");
+    }
+
+    [Test]
+    public void GLRenderProgram_UseDoesNotBindPendingAsyncProgramHandles()
+    {
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.cs");
+        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+
+        programSource.ShouldContain("public bool Use()");
+        programSource.ShouldContain("Link(nonBlocking: true)");
+        programSource.ShouldContain("if (!IsLinked || IsAsyncBuildPending)");
+        programSource.ShouldContain("Api.UseProgram(BindingId);");
+
+        linkSource.ShouldContain("private void UseRequested(XRRenderProgram program)");
+        linkSource.ShouldContain("Use();");
+        linkSource.ShouldNotContain("Api.UseProgram(BindingId);");
+    }
+
+    [Test]
+    public void GLProgramCompileLinkQueue_SerializesMultiWorkerProgramLinkDriverCalls()
+    {
+        string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/GLProgramCompileLinkQueue.cs");
+
+        queueSource.ShouldContain("XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION");
+        queueSource.ShouldContain("private readonly SemaphoreSlim _programLinkGate;");
+        queueSource.ShouldContain("_serializeProgramLinkDriverCalls = _workers.Length > 1");
+        queueSource.ShouldContain("_programLinkGate.Wait();");
+        queueSource.ShouldContain("_programLinkGate.Release();");
+        queueSource.ShouldContain("serialized shared-context program link/status");
+        queueSource.ShouldContain("publishing a failed async result without another completion query");
+        queueSource.ShouldContain("The shared-context source lane remains enabled for later programs.");
+        queueSource.ShouldContain("SharedContextAbandonedLinkMarker");
+        queueSource.ShouldContain("setBinaryRetrievableHint");
+        queueSource.ShouldContain("worker=source-link-binary-retrievable-hint");
+    }
+
+    [Test]
+    public void GLRenderProgram_AbandonedSharedContextLinksAvoidDeferredCompletionPolling()
+    {
+        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+
+        linkSource.ShouldContain("DriverParallelSourceTimeouts");
+        linkSource.ShouldContain("programId={abandonedProgramId} leaked to avoid blocking GL cleanup calls");
+        linkSource.ShouldContain("shared-context source link stalled; leaving fallback material active");
+        linkSource.ShouldNotContain("RenderThreadDriverParallelRetryHashes");
+        linkSource.ShouldNotContain("DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, abandonedProgramId, []));");
+    }
+
+    [Test]
     public void XRMaterial_DisposesSeparableProgramWhenShaderPipelinesAreDisabled()
     {
         string materialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.cs");

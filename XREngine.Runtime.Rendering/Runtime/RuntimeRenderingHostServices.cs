@@ -67,6 +67,15 @@ public static class RuntimeRenderingHostServices
         public bool CalculateSkinningInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
         public bool CalculateBlendshapesInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
         public int ShaderConfigVersion => RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
+        public bool AllowBinaryProgramCaching => RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
+        public bool AsyncProgramBinaryUpload => RuntimeRenderingHostServiceDefaults.AsyncProgramBinaryUpload;
+        public bool AsyncProgramCompilation => RuntimeRenderingHostServiceDefaults.AsyncProgramCompilation;
+        public int OpenGLProgramCompileLinkWorkerCount => RuntimeRenderingHostServiceDefaults.OpenGLProgramCompileLinkWorkerCount;
+        public int MaxAsyncShaderProgramsPerFrame => RuntimeRenderingHostServiceDefaults.MaxAsyncShaderProgramsPerFrame;
+        public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy => RuntimeRenderingHostServiceDefaults.OpenGLShaderLinkStrategy;
+        public int OpenGLShaderCompilerThreadCount => RuntimeRenderingHostServiceDefaults.OpenGLShaderCompilerThreadCount;
+        public bool OpenGLParallelShaderCompileProbeEnabled => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeEnabled;
+        public int OpenGLParallelShaderCompileProbeTimeoutMs => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeTimeoutMs;
 
         public void SubscribeRenderingSettingsChanged(Action callback)
         {

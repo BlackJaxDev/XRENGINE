@@ -1900,7 +1900,14 @@ internal sealed class RuntimeRenderSettings
     private OpenXRAPI.OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
     private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = OpenXRAPI.OpenXrRenderPacingMode.PostRenderCallback;
 
-    public bool AllowBinaryProgramCaching { get; set; } = true;
+    private bool _allowBinaryProgramCaching = RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
+    public bool AllowBinaryProgramCaching
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.AllowBinaryProgramCaching
+            : _allowBinaryProgramCaching;
+        set => _allowBinaryProgramCaching = value;
+    }
     public bool AllowBlendshapes
     {
         get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
@@ -1928,12 +1935,28 @@ internal sealed class RuntimeRenderSettings
             : _allowSkinning;
         set => SetShaderSetting(ref _allowSkinning, value);
     }
-    public bool AsyncProgramBinaryUpload { get; set; } = true;
-    public bool AsyncProgramCompilation { get; set; } = true;
-    private int _openGLProgramCompileLinkWorkerCount = 1;
+    private bool _asyncProgramBinaryUpload = RuntimeRenderingHostServiceDefaults.AsyncProgramBinaryUpload;
+    public bool AsyncProgramBinaryUpload
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.AsyncProgramBinaryUpload
+            : _asyncProgramBinaryUpload;
+        set => _asyncProgramBinaryUpload = value;
+    }
+    private bool _asyncProgramCompilation = RuntimeRenderingHostServiceDefaults.AsyncProgramCompilation;
+    public bool AsyncProgramCompilation
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.AsyncProgramCompilation
+            : _asyncProgramCompilation;
+        set => _asyncProgramCompilation = value;
+    }
+    private int _openGLProgramCompileLinkWorkerCount = RuntimeRenderingHostServiceDefaults.OpenGLProgramCompileLinkWorkerCount;
     public int OpenGLProgramCompileLinkWorkerCount
     {
-        get => _openGLProgramCompileLinkWorkerCount;
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenGLProgramCompileLinkWorkerCount
+            : _openGLProgramCompileLinkWorkerCount;
         set => _openGLProgramCompileLinkWorkerCount = Math.Clamp(value, 1, 16);
     }
     public bool CacheGpuHiZOcclusionOncePerFrame { get; set; } = true;
@@ -1965,11 +1988,46 @@ internal sealed class RuntimeRenderSettings
     public bool LightProbesCaptureDepth { get; set; } = true;
     public bool LogMaterialTextureBindings { get; set; }
     public bool LogMissingShaderSamplers { get; set; }
-    public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16;
-    public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy { get; set; } = EOpenGLShaderLinkStrategy.Auto;
-    public int OpenGLShaderCompilerThreadCount { get; set; } = -1;
-    public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true;
-    public int OpenGLParallelShaderCompileProbeTimeoutMs { get; set; } = 25;
+    private int _maxAsyncShaderProgramsPerFrame = RuntimeRenderingHostServiceDefaults.MaxAsyncShaderProgramsPerFrame;
+    public int MaxAsyncShaderProgramsPerFrame
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.MaxAsyncShaderProgramsPerFrame
+            : _maxAsyncShaderProgramsPerFrame;
+        set => _maxAsyncShaderProgramsPerFrame = value;
+    }
+    private EOpenGLShaderLinkStrategy _openGLShaderLinkStrategy = RuntimeRenderingHostServiceDefaults.OpenGLShaderLinkStrategy;
+    public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenGLShaderLinkStrategy
+            : _openGLShaderLinkStrategy;
+        set => _openGLShaderLinkStrategy = value;
+    }
+    private int _openGLShaderCompilerThreadCount = RuntimeRenderingHostServiceDefaults.OpenGLShaderCompilerThreadCount;
+    public int OpenGLShaderCompilerThreadCount
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenGLShaderCompilerThreadCount
+            : _openGLShaderCompilerThreadCount;
+        set => _openGLShaderCompilerThreadCount = value;
+    }
+    private bool _openGLParallelShaderCompileProbeEnabled = RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeEnabled;
+    public bool OpenGLParallelShaderCompileProbeEnabled
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenGLParallelShaderCompileProbeEnabled
+            : _openGLParallelShaderCompileProbeEnabled;
+        set => _openGLParallelShaderCompileProbeEnabled = value;
+    }
+    private int _openGLParallelShaderCompileProbeTimeoutMs = RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeTimeoutMs;
+    public int OpenGLParallelShaderCompileProbeTimeoutMs
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenGLParallelShaderCompileProbeTimeoutMs
+            : _openGLParallelShaderCompileProbeTimeoutMs;
+        set => _openGLParallelShaderCompileProbeTimeoutMs = value;
+    }
     public long MaxShadowAtlasMemoryBytes
     {
         get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)

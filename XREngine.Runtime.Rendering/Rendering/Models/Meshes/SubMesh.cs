@@ -1,4 +1,5 @@
 ﻿using MemoryPack;
+using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Meshlets;
@@ -97,11 +98,11 @@ namespace XREngine.Rendering.Models
         /// </summary>
         public AABB CalculateBoundingBox()
         {
-            AABB bounds = new();
+            AABB? bounds = null;
             foreach (SubMeshLOD lod in LODs)
                 if (lod.Mesh != null)
-                    bounds = AABB.Union(bounds, lod.Mesh.Bounds);
-            return bounds;
+                    bounds = bounds?.ExpandedToInclude(lod.Mesh.Bounds) ?? lod.Mesh.Bounds;
+            return bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
         }
     }
 

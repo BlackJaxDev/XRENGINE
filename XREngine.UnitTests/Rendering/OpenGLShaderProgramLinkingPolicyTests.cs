@@ -121,6 +121,21 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
     }
 
     [Test]
+    public void SharedContextStall_DoesNotForceDriverParallelForKnownHazards()
+    {
+        OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            strategy: EOpenGLShaderLinkStrategy.Auto,
+            driverParallelAvailable: true,
+            sharedContextCompileAvailable: false,
+            isKnownAsyncLinkHazard: true,
+            forceDriverParallelSourceRetry: true));
+
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.SourceUnavailable);
+        selection.IsAsync.ShouldBeTrue();
+        selection.Reason.ShouldContain("known async-link hazard");
+    }
+
+    [Test]
     public void SynchronousStrategy_StillAllowsConfiguredAsyncBinaryUploads()
     {
         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
@@ -229,7 +244,8 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
         bool preferSharedContextForLargeSource = false,
         bool hashPreviouslyFailed = false,
         bool allowSynchronousSourceLink = false,
-        bool forceSynchronousSourceRetry = false)
+        bool forceSynchronousSourceRetry = false,
+        bool forceDriverParallelSourceRetry = false)
         => new(
             strategy,
             asyncProgramCompilation,
@@ -246,7 +262,8 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
             preferSharedContextForLargeSource,
             hashPreviouslyFailed,
             allowSynchronousSourceLink,
-            forceSynchronousSourceRetry);
+            forceSynchronousSourceRetry,
+            forceDriverParallelSourceRetry);
 
     private static ShaderBinaryRuntimeFingerprint CreateFingerprint()
         => new("4.6", "TestVendor", "TestRenderer", "4.60");

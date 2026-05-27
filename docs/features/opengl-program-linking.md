@@ -66,14 +66,24 @@ Related settings:
   render-thread driver-parallel source lane for local driver experiments. Leave
   it unset for editor/runtime work.
 - `XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS=<milliseconds>` overrides the
-  shared-context source worker hard-abandon window. The default is 180000 ms so
-  legitimate large imported-model shader links can finish before recovery.
+  shared-context source worker hard-abandon window for shader compile polling.
+  Program link polling uses the shorter per-link abandon described below so one
+  wedged link cannot monopolize the serialized link gate.
 - `XRE_SHARED_CONTEXT_DISABLE_COMPLETION_POLLING=1` disables worker-side
   `GL_COMPLETION_STATUS_ARB` polling. Leave it unset for editor/runtime work;
   polling keeps the worker from issuing the blocking final link-status query
   until the driver reports completion.
+- Multi-worker shared-context source builds serialize the program link/status
+  phase by default because some Windows OpenGL drivers can wedge when several
+  shared contexts poll `GL_COMPLETION_STATUS_ARB` at once. Set
+  `XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION=1` only for local driver
+  throughput experiments.
 - `XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1` remains as a legacy narrower
   single-stage suppression flag for local driver experiments.
+- `XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT=1` opts into the old
+  synchronous source retry after an async source link stalls. Leave it unset for
+  editor/runtime work; the default is to keep the fallback material visible and
+  avoid a render-thread compile/link stall.
 - `MaxAsyncShaderProgramsPerFrame` caps how many pending program builds are
   advanced per frame.
 
@@ -90,8 +100,8 @@ if binary cache hit:
     otherwise load binary synchronously
 else if hash was marked failed:
     fail before source compile/link
-else if a previous async source link for this hash timed out:
-    retry source compile/link synchronously
+else if a previous source link for this hash stalled:
+    fail this hash and keep fallback visible unless synchronous retry is explicitly enabled
 else if async source compilation is disabled or strategy is Synchronous:
     leave source build pending unless synchronous source linking was explicitly allowed
 else if program is a known driver-parallel hazard:
@@ -162,12 +172,26 @@ between polls. This keeps the potentially long compile/link wait on the shared
 context while avoiding the blocking final `GL_LINK_STATUS` query until the
 driver reports completion.
 
-If completion polling never reports done, the worker publishes a failed async
-result after the hard-abandon window (180 s by default, configurable with
-`XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS`). The owning program records that source
-hash as requiring synchronous source retry so duplicate programs stop waiting
-for a binary cache entry that will never be produced by the abandoned async
-job.
+For program links, if completion polling is still false after 5 seconds, the
+worker publishes a failed async result immediately and releases the serialized
+link gate so later programs can continue. The engine does not poll or delete
+that half-linked program again, because the follow-up completion query has been
+observed to block inside the Windows OpenGL driver. The owning program orphans
+the handle locally, negative-caches that source hash, and keeps drawing the
+fallback material. A synchronous retry is only attempted when
+`XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT=1` is set; render-thread
+driver-parallel source linking remains an explicit local experiment via
+`XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1`.
+
+For shared-context source builds, `GL_PROGRAM_BINARY_RETRIEVABLE_HINT` is set
+on the shared-context worker immediately before `glLinkProgram`, not on the
+render thread before enqueue. This preserves binary-cache generation while
+avoiding a startup freeze when the driver serializes `glProgramParameteri`
+against another context's compiler/linker work.
+
+Shader compile completion polling still uses the longer hard-abandon window
+(180 s by default, configurable with `XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS`)
+because large cold compiles can legitimately take longer than a few seconds.
 
 ### Worker unhealthy-job threshold
 
@@ -216,6 +240,45 @@ Both sync and async binary loads validate final `GL_LINK_STATUS` after
 driver accepts the binary and reports a successful link. After a binary load,
 runtime binding state is restored from cached uniform metadata or active-uniform
 reflection.
+
+## Program Identity And Pooling
+
+OpenGL diagnostics distinguish four related identities:
+
+- logical `XRRenderProgram` refs: engine objects that own shader lists,
+  metadata, and backend wrappers,
+- source hashes: resolved shader source plus stage topology,
+- binary cache keys: source identity plus runtime OpenGL fingerprint and
+  binary-cache policy,
+- live GL handles: backend program objects that can be owned by one logical
+  ref or shared through `SharedLinkedPrograms`.
+
+`XRRenderProgramDescriptor` is the lightweight pooling key used before
+constructing new logical programs. It includes ordered shader identities,
+stage topology, separable/monolithic mode, generated vertex source identity,
+render-settings version, material variant hash when it affects shader source,
+vertex-layout requirements, and topology kind. Material names and mesh names
+are diagnostic metadata only; they must not make otherwise identical programs
+miss the pool.
+
+Combined OpenGL mesh programs now lease renderer-level pooled programs keyed
+by this descriptor. Per-mesh VAO and buffer binding state stays on
+`GLMeshRenderer`, while the shared `XRRenderProgram`/`GLRenderProgram` carries
+the shader program. The lease reference count prevents one mesh renderer from
+destroying a pooled program still used by another renderer.
+
+GPU-driven indirect material programs use the same descriptor model: generated
+GPU-indirect vertex source, fragment source identity, render settings, variant
+hash, and layout requirements form the program key; material table rows and
+draw-command data remain outside the program key unless they change generated
+source.
+
+Uniform uploads remain material-specific even when a program object is shared.
+`GLMaterial.SetUniforms()` passes the active material or shadow binding source
+into `GLRenderProgram.MarkSharedMaterialUniformSource()`, which forces a
+uniform refresh whenever the uniform source or binding layout changes. This
+prevents material A from reusing material B's last uploaded values on a shared
+program handle.
 
 ## Clone And Swap
 
@@ -266,15 +329,16 @@ to diagnose stalls and source/binary size.
 Important records:
 
 - `[ShaderLink]` records build-lane decisions, program name, hash, GL program
-  id, backend, separable mode, hazard status, shader count, shader types,
-  source bytes, source lines, shader source labels, binary bytes, binary
-  format, fingerprint, frame, and whether the event ran on the render thread.
+  id, descriptor key, backend, separable mode, hazard status, shader count,
+  shader types, source bytes, source lines, shader source labels, binary
+  bytes, binary format, fingerprint, frame, and whether the event ran on the
+  render thread.
 - `[ShaderBackend]` records final ready/failed telemetry with queue, compile,
-  link, binary-load, and reflection timings plus shader count, stage list,
-  source bytes, source lines, and shader source labels. If the render program
-  has no explicit name, diagnostics synthesize one from stage topology, variant
-  metadata, and source hash so profiler dumps and link logs can still be
-  correlated.
+  link, binary-load, and reflection timings plus descriptor key, handle source,
+  shader count, stage list, source bytes, source lines, and shader source
+  labels. If the render program has no explicit name, diagnostics synthesize
+  one from stage topology, variant metadata, and source hash so profiler dumps
+  and link logs can still be correlated.
 - `[ShaderGLCall]` records measured GL calls related to shader compile,
   program link, attach/detach, program binary upload, binary capture, deletion,
   and parallel-compile configuration. When the call runs on the render thread,
@@ -284,6 +348,11 @@ Important records:
   backpressure, worker start, worker ready, and worker failure events.
 - `[ShaderBinaryUpload]` records async binary upload enqueue, worker start,
   worker ready, and worker failure events.
+- `[ShaderProgramDedupSummary]` records logical creates/destroys, shared
+  attach/detach counts, peak shared refs, combined-program pool hit/miss and
+  eviction counts, active pooled refs, and GPU-driven program pool hit/miss
+  counts. It is emitted at shutdown and can be emitted from the Shader Program
+  Links panel.
 
 The instrumented GL calls include program creation/configuration,
 `glShaderSource`, `glCompileShader`, shader completion/status queries,
@@ -305,6 +374,30 @@ Example records:
 Use `profiler-render-stalls.log` to identify frames whose leaf scope is
 `XRWindow.ProcessPendingUploads`, then correlate that frame with `[ShaderLink]`,
 `[ShaderBackend]`, and `[ShaderGLCall]` lines in `log_rendering.log`.
+
+## Shader Program Links Panel
+
+The ImGui `Shader Program Links` panel opens in grouped mode. Group keys prefer
+program descriptors, then binary cache keys, then prepared cache keys, then
+source hashes. The `Refs` column is the number of logical `XRRenderProgram`
+objects in that group; it is not a count of unique linked GL handles.
+
+The selected-group detail view shows the representative program, logical ref
+counts by state, descriptor key, binary key, shared program id/ref count, and
+sample contributors. Use `Copy Group Summary` for clipboard diagnostics and
+`Log Group Summary` to write a compact `[ShaderProgramDedupSummary]` group line
+to the OpenGL log. Disable `Grouped` to return to the old one-row-per-program
+view when debugging a specific wrapper.
+
+Large duplicate logical counts are not automatically backend failures. First
+check the grouped view:
+
+- if unique hashes and binary keys are low but `Refs` is high, the backend is
+  likely sharing correctly and the remaining cost is logical wrapper churn,
+- if source builds rise with unique hashes, inspect descriptor fields and
+  generated vertex source identities,
+- if shared ref counts never return to zero after scene unload, inspect pooled
+  leases and `SharedLinkedPrograms` detach/delete counters.
 
 ## Validation
 

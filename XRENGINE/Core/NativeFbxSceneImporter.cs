@@ -391,7 +391,7 @@ internal static class NativeFbxSceneImporter
     }
 
     private static string DescribeImportOptions(ModelImportOptions? importOptions, float scaleConversion, bool zUp, int importLayer, Matrix4x4? rootTransformMatrix)
-        => $"scale={scaleConversion}, zUp={zUp}, layer={importLayer}, fbxBackend={importOptions?.FbxBackend.ToString() ?? "Auto"}, pivotPolicy={importOptions?.FbxPivotPolicy.ToString() ?? FbxSceneSemanticsPolicy.Default.PivotImportPolicy.ToString()}, splitSubmeshes={importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false}, separateMeshIslands={importOptions?.SeparateMeshIslands ?? false}, processMeshesAsync={importOptions?.ProcessMeshesAsynchronously?.ToString() ?? "inherit"}, batchSubmeshAdds={importOptions?.BatchSubmeshAddsDuringAsyncImport.ToString() ?? "inherit"}, rootTransformApplied={rootTransformMatrix.HasValue}";
+        => $"scale={scaleConversion}, zUp={zUp}, layer={importLayer}, fbxBackend={importOptions?.FbxBackend.ToString() ?? "Auto"}, pivotPolicy={importOptions?.FbxPivotPolicy.ToString() ?? FbxSceneSemanticsPolicy.Default.PivotImportPolicy.ToString()}, splitSubmeshes={importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false}, submeshSceneNodes={importOptions?.GenerateSceneNodesPerSubmesh ?? false}, separateMeshIslands={importOptions?.SeparateMeshIslands ?? false}, processMeshesAsync={importOptions?.ProcessMeshesAsynchronously?.ToString() ?? "inherit"}, batchSubmeshAdds={importOptions?.BatchSubmeshAddsDuringAsyncImport.ToString() ?? "inherit"}, rootTransformApplied={rootTransformMatrix.HasValue}";
 
     private static int CountSceneNodes(SceneNode rootNode)
     {
@@ -476,16 +476,23 @@ internal static class NativeFbxSceneImporter
         IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
-        bool splitSubmeshesIntoSeparateModelComponents = importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false;
+        bool generateSceneNodesPerSubmesh = importOptions?.GenerateSceneNodesPerSubmesh ?? false;
+        bool splitSubmeshesIntoSeparateModelComponents =
+            (importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false)
+            || generateSceneNodesPerSubmesh;
         if (splitSubmeshesIntoSeparateModelComponents)
         {
             for (int index = 0; index < subMeshes.Count; index++)
             {
                 SubMesh subMesh = subMeshes[index];
-                ModelComponent component = sceneNode.AddComponent<ModelComponent>()!;
-                component.Name = string.IsNullOrWhiteSpace(subMesh.Name)
+                string componentName = string.IsNullOrWhiteSpace(subMesh.Name)
                     ? $"{fallbackName} SubMesh {index}"
                     : subMesh.Name;
+                SceneNode componentNode = generateSceneNodesPerSubmesh
+                    ? new SceneNode(sceneNode, componentName) { Layer = sceneNode.Layer }
+                    : sceneNode;
+                ModelComponent component = componentNode.AddComponent<ModelComponent>()!;
+                component.Name = componentName;
                 component.Model = new Model(subMesh);
                 component.Model.Meshes.ThreadSafe = true;
                 ApplyDefaultBlendShapeWeights(component, blendShapeChannels);

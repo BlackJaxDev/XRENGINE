@@ -34,6 +34,30 @@ namespace XREngine.Components.Physics
         protected virtual ModelComponent? ResolveModelComponentForColliders()
             => GetSiblingComponent<ModelComponent>();
 
+        private protected virtual bool HasCollisionTargetForColliders()
+            => ResolveModelComponentForColliders() is not null;
+
+        private protected virtual ConvexHullInputCollection? CollectCollisionInputCollectionForColliders()
+        {
+            ModelComponent? modelComponent = ResolveModelComponentForColliders();
+            return modelComponent is not null
+                ? ConvexHullUtility.CollectCollisionInputCollection(modelComponent)
+                : null;
+        }
+
+        private protected virtual string DescribeCollisionTargetForColliders()
+        {
+            ModelComponent? modelComponent = ResolveModelComponentForColliders();
+            string nodeLabel = SceneNode?.Name ?? "<unnamed>";
+            if (modelComponent is null)
+                return nodeLabel;
+
+            string componentLabel = string.IsNullOrWhiteSpace(modelComponent.Name)
+                ? modelComponent.GetType().Name
+                : modelComponent.Name;
+            return $"{nodeLabel}/{componentLabel}#{modelComponent.GetHashCode():X8}";
+        }
+
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
@@ -79,21 +103,20 @@ namespace XREngine.Components.Physics
                 return [.. cached];
             }
 
-            var modelComponent = ResolveModelComponentForColliders();
-            if (modelComponent is null)
+            ConvexHullInputCollection? inputCollection = CollectCollisionInputCollectionForColliders();
+            if (inputCollection is not ConvexHullInputCollection inputs)
                 return [];
 
             var results = new List<CoACD.ConvexHullMesh>();
 
-            ConvexHullInputCollection inputCollection = ConvexHullUtility.CollectCollisionInputCollection(modelComponent);
-            List<ConvexHullInputBatch> batches = [.. inputCollection.EnumeratePreferredBatches()];
+            List<ConvexHullInputBatch> batches = [.. inputs.EnumeratePreferredBatches()];
             if (batches.Count == 0)
             {
                 progress?.Report(new ConvexHullGenerationProgress(0, 0, "No collision meshes available."));
                 return results;
             }
 
-            string targetLabel = DescribeCollisionTarget(modelComponent);
+            string targetLabel = DescribeCollisionTargetForColliders();
             for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
             {
                 ConvexHullInputBatch batch = batches[batchIndex];
@@ -265,7 +288,7 @@ namespace XREngine.Components.Physics
                 var trackedProgress = CreateTrackedConvexHullProgress(progress);
 
                 IReadOnlyList<CoACD.ConvexHullMesh>? preparedHulls = null;
-                if (!HasCachedHulls(defaultParams) && ResolveModelComponentForColliders() is not null)
+                if (!HasCachedHulls(defaultParams) && HasCollisionTargetForColliders())
                     preparedHulls = await CreateConvexDecompositionAsync(defaultParams, trackedProgress, cancellationToken).ConfigureAwait(false);
                 else
                 {
@@ -477,13 +500,5 @@ namespace XREngine.Components.Physics
                 => CoACD.CalculateAsync(positions, indices, parameters, cancellationToken);
         }
 
-        private string DescribeCollisionTarget(ModelComponent modelComponent)
-        {
-            string nodeLabel = SceneNode?.Name ?? "<unnamed>";
-            string componentLabel = string.IsNullOrWhiteSpace(modelComponent.Name)
-                ? modelComponent.GetType().Name
-                : modelComponent.Name;
-            return $"{nodeLabel}/{componentLabel}#{modelComponent.GetHashCode():X8}";
-        }
     }
 }

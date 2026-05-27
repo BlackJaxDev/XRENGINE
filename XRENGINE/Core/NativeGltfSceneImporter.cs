@@ -1300,14 +1300,21 @@ internal static class NativeGltfSceneImporter
         ModelImportOptions? importOptions,
         IReadOnlyList<float> defaultBlendShapeWeights)
     {
-        bool splitSubmeshesIntoSeparateModelComponents = importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false;
+        bool generateSceneNodesPerSubmesh = importOptions?.GenerateSceneNodesPerSubmesh ?? false;
+        bool splitSubmeshesIntoSeparateModelComponents =
+            (importOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false)
+            || generateSceneNodesPerSubmesh;
         if (splitSubmeshesIntoSeparateModelComponents)
         {
             for (int index = 0; index < subMeshes.Count; index++)
             {
                 SubMesh subMesh = subMeshes[index];
-                ModelComponent component = sceneNode.AddComponent<ModelComponent>()!;
-                component.Name = string.IsNullOrWhiteSpace(subMesh.Name) ? $"{fallbackName} SubMesh {index}" : subMesh.Name;
+                string componentName = string.IsNullOrWhiteSpace(subMesh.Name) ? $"{fallbackName} SubMesh {index}" : subMesh.Name;
+                SceneNode componentNode = generateSceneNodesPerSubmesh
+                    ? new SceneNode(sceneNode, componentName) { Layer = sceneNode.Layer }
+                    : sceneNode;
+                ModelComponent component = componentNode.AddComponent<ModelComponent>()!;
+                component.Name = componentName;
                 component.Model = new Model(subMesh);
                 component.Model.Meshes.ThreadSafe = true;
                 ApplyDefaultBlendShapeWeights(component, defaultBlendShapeWeights, subMesh);

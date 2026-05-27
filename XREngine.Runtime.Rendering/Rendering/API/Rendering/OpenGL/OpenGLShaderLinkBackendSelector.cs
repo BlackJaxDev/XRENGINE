@@ -36,7 +36,8 @@ internal readonly record struct OpenGLShaderLinkBackendContext(
     bool PreferSharedContextForLargeSource,
     bool HashPreviouslyFailed,
     bool AllowSynchronousSourceLink,
-    bool ForceSynchronousSourceRetry = false);
+    bool ForceSynchronousSourceRetry = false,
+    bool ForceDriverParallelSourceRetry = false);
 
 internal static class OpenGLShaderLinkBackendSelector
 {
@@ -56,6 +57,16 @@ internal static class OpenGLShaderLinkBackendSelector
                 EOpenGLProgramBuildLane.SynchronousSource,
                 "async source link timed out; retrying synchronously",
                 IsAsync: false);
+        }
+
+        if (context.ForceDriverParallelSourceRetry &&
+            context.DriverParallelAvailable &&
+            !context.IsKnownAsyncLinkHazard)
+        {
+            return new OpenGLShaderLinkBackendSelection(
+                EOpenGLProgramBuildLane.DriverParallelSource,
+                "shared-context source link stalled; retrying render-thread driver-parallel source lane",
+                IsAsync: true);
         }
 
         if (context.AllowBinaryProgramCaching && context.HasBinaryCacheHit)

@@ -8,6 +8,8 @@ internal sealed class ShaderSourceResolverOptions
 {
     public IReadOnlyList<string>? AdditionalShaderRoots { get; init; }
     public Action<string>? WarningLogger { get; init; }
+    public bool EmitIncludeDeadCodeMarkers { get; init; }
+    public bool EnableSnippetDeadCodeElimination { get; init; }
 }
 
 internal readonly record struct ShaderSourceFileDependency(string Path, long LastWriteTimeUtcTicks, long Length);
@@ -49,8 +51,12 @@ internal static partial class ShaderSourceResolver
     [GeneratedRegex(@"#pragma\s+snippet\s+[""<](?<name>[^"">]+)["">]", RegexOptions.Compiled)]
     private static partial Regex SnippetDirectiveRegex();
 
-    private readonly record struct IncludeExpansionCacheKey(string Path, bool AnnotateIncludes, string SearchRootsKey);
-    private readonly record struct SnippetResolutionCacheKey(string ExpandedSource, string SearchRootsKey, long RegisteredSnippetVersion);
+    private readonly record struct IncludeExpansionCacheKey(string Path, bool AnnotateIncludes, bool EmitDeadCodeMarkers, string SearchRootsKey);
+    private readonly record struct SnippetResolutionCacheKey(
+        string ExpandedSource,
+        string SearchRootsKey,
+        long RegisteredSnippetVersion,
+        bool EnableDeadCodeElimination);
     private readonly record struct DirectoryDependency(string Path, long LastWriteTimeUtcTicks);
 
     private sealed class SearchContext
@@ -162,9 +168,13 @@ internal static partial class ShaderSourceResolver
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             resolvedPaths,
             fileDependencies,
-            annotateIncludes);
+            annotateIncludes,
+            options?.EmitIncludeDeadCodeMarkers == true);
 
-        SnippetResolutionCacheEntry resolvedSnippets = ResolveSnippetsCached(resolvedIncludes, context);
+        SnippetResolutionCacheEntry resolvedSnippets = ResolveSnippetsCached(
+            resolvedIncludes,
+            context,
+            options?.EnableSnippetDeadCodeElimination == true);
         MergeDependencies(fileDependencies, resolvedSnippets.FileDependencies);
 
         return new(resolvedSnippets.ResolvedSource, [.. resolvedPaths], [.. fileDependencies.Values]);
@@ -243,7 +253,10 @@ internal static partial class ShaderSourceResolver
             return source;
 
         SearchContext context = CreateSearchContext(sourcePath: null, options);
-        return ResolveSnippetsCached(source, context).ResolvedSource;
+        return ResolveSnippetsCached(
+            source,
+            context,
+            options?.EnableSnippetDeadCodeElimination == true).ResolvedSource;
     }
 
     internal static void ClearCaches(bool clearRegisteredSnippets = false)
@@ -313,7 +326,8 @@ internal static partial class ShaderSourceResolver
         HashSet<string> includeStack,
         List<string> resolvedPaths,
         Dictionary<string, ShaderSourceFileDependency> fileDependencies,
-        bool annotateIncludes)
+        bool annotateIncludes,
+        bool emitIncludeDeadCodeMarkers)
     {
         StringBuilder output = new(source.Length + 128);
         using StringReader reader = new(source);
@@ -332,7 +346,7 @@ internal static partial class ShaderSourceResolver
             string resolvedPath = ResolveIncludePath(currentDirectory, context, includePath)
                 ?? throw new InvalidOperationException($"Failed to resolve shader include '{includePath}'.");
 
-            IncludeExpansionCacheEntry expandedInclude = ExpandIncludeFile(resolvedPath, context, includeStack, annotateIncludes);
+            IncludeExpansionCacheEntry expandedInclude = ExpandIncludeFile(resolvedPath, context, includeStack, annotateIncludes, emitIncludeDeadCodeMarkers);
             resolvedPaths.AddRange(expandedInclude.ResolvedPaths);
             MergeDependencies(fileDependencies, expandedInclude.FileDependencies);
 
@@ -346,22 +360,28 @@ internal static partial class ShaderSourceResolver
             // GLSL the front-end accepts (linkStatus=1) but the NVIDIA back-end
             // crashes on first GPU use (TDR + nvoglv64.dll AV, 2026-05-07).
             // Enable with environment variable XRE_GLSL_DCE_INCLUDES=1 to opt
-            // back into include DCE for testing the eliminator.
-            if (s_emitIncludeDceMarkers)
+            // back into include DCE globally; Uber variant generation opts in
+            // locally after feature/static pruning has made the source smaller.
+            if (emitIncludeDeadCodeMarkers || s_emitIncludeDceMarkers)
                 output.AppendLine($"// ===== BEGIN INCLUDE: {includePath} =====");
             if (annotateIncludes)
                 output.AppendLine($"// begin include {includePath}");
             output.AppendLine(expandedInclude.ExpandedSource);
             if (annotateIncludes)
                 output.AppendLine($"// end include {includePath}");
-            if (s_emitIncludeDceMarkers)
+            if (emitIncludeDeadCodeMarkers || s_emitIncludeDceMarkers)
                 output.AppendLine($"// ===== END INCLUDE: {includePath} =====");
         }
 
         return output.ToString();
     }
 
-    private static IncludeExpansionCacheEntry ExpandIncludeFile(string includePath, SearchContext context, HashSet<string> includeStack, bool annotateIncludes)
+    private static IncludeExpansionCacheEntry ExpandIncludeFile(
+        string includePath,
+        SearchContext context,
+        HashSet<string> includeStack,
+        bool annotateIncludes,
+        bool emitIncludeDeadCodeMarkers)
     {
         string normalizedPath = Path.GetFullPath(includePath);
         if (!includeStack.Add(normalizedPath))
@@ -369,7 +389,7 @@ internal static partial class ShaderSourceResolver
 
         try
         {
-            IncludeExpansionCacheKey cacheKey = new(normalizedPath, annotateIncludes, context.SearchRootsKey);
+            IncludeExpansionCacheKey cacheKey = new(normalizedPath, annotateIncludes, emitIncludeDeadCodeMarkers, context.SearchRootsKey);
             if (IncludeExpansionCache.TryGetValue(cacheKey, out IncludeExpansionCacheEntry? cachedEntry) &&
                 cachedEntry is not null &&
                 AreDependenciesCurrent(cachedEntry.FileDependencies) &&
@@ -393,7 +413,8 @@ internal static partial class ShaderSourceResolver
                 includeStack,
                 resolvedPaths,
                 fileDependencies,
-                annotateIncludes);
+                annotateIncludes,
+                emitIncludeDeadCodeMarkers);
 
             IncludeExpansionCacheEntry includeEntry = new(
                 expandedSource,
@@ -422,7 +443,10 @@ internal static partial class ShaderSourceResolver
         }
     }
 
-    private static SnippetResolutionCacheEntry ResolveSnippetsCached(string source, SearchContext context)
+    private static SnippetResolutionCacheEntry ResolveSnippetsCached(
+        string source,
+        SearchContext context,
+        bool enableDeadCodeElimination)
     {
         if (string.IsNullOrEmpty(source))
             return new(source, [], CaptureSearchRootDependencies(context.ShaderRoots));
@@ -432,7 +456,11 @@ internal static partial class ShaderSourceResolver
             return new(source, [], CaptureSearchRootDependencies(context.ShaderRoots));
 
         long registeredSnippetVersion = Volatile.Read(ref _registeredSnippetVersion);
-        SnippetResolutionCacheKey cacheKey = new(source, context.SearchRootsKey, registeredSnippetVersion);
+        SnippetResolutionCacheKey cacheKey = new(
+            source,
+            context.SearchRootsKey,
+            registeredSnippetVersion,
+            enableDeadCodeElimination);
         if (SnippetResolutionCache.TryGetValue(cacheKey, out SnippetResolutionCacheEntry? cachedEntry) &&
             cachedEntry is not null &&
             AreDependenciesCurrent(cachedEntry.FileDependencies) &&
@@ -443,11 +471,13 @@ internal static partial class ShaderSourceResolver
 
         Dictionary<string, ShaderSourceFileDependency> fileDependencies = new(StringComparer.OrdinalIgnoreCase);
         string resolvedSource = ResolveSnippetsRecursive(source, context, new HashSet<string>(StringComparer.OrdinalIgnoreCase), fileDependencies);
-        // Strip unreferenced top-level declarations from the inlined snippet regions
-        // so each variant only carries the functions/uniforms/blocks/buffers it
-        // actually consumes. This is conservative: any chunk that fails to parse
-        // is preserved, and anything outside the snippet markers is untouched.
-        resolvedSource = GlslSnippetDeadCodeEliminator.Trim(resolvedSource);
+        if (enableDeadCodeElimination)
+        {
+            // Strip unreferenced top-level declarations from inlined snippet regions
+            // for generated variants. Runtime shaders keep full snippets because shared
+            // GLSL snippets can expose globals used by functions selected later by GL.
+            resolvedSource = GlslSnippetDeadCodeEliminator.Trim(resolvedSource);
+        }
         SnippetResolutionCacheEntry resolvedEntry = new(
             resolvedSource,
             [.. fileDependencies.Values],

@@ -1,4 +1,5 @@
 using Assimp;
+using Newtonsoft.Json;
 using NUnit.Framework;
 using Shouldly;
 using System.IO;
@@ -121,7 +122,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         var model = new EditorUnitTests.Settings.ModelImportSettings
         {
             Kind = EditorUnitTests.UnitTestModelImportKind.Static,
-            GenerateCoacdCollidersPerSubmesh = true,
+            PostImportFlags = EditorUnitTests.ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh,
         };
 
         ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model, []);
@@ -138,7 +139,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         var model = new EditorUnitTests.Settings.ModelImportSettings
         {
             Kind = EditorUnitTests.UnitTestModelImportKind.Animated,
-            SeparateMeshIslands = true,
+            PostImportFlags = EditorUnitTests.ModelPostImportFlags.SeparateMeshIslands,
         };
 
         ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model, []);
@@ -146,6 +147,81 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         options.ShouldNotBeNull();
         options!.SeparateMeshIslands.ShouldBeTrue();
         options.SplitSubmeshesIntoSeparateModelComponents.ShouldBeFalse();
+    }
+
+    [Test]
+    public void CreateImportOptions_GenerateIndividualSceneNodesPerSubmesh_ImpliesSplitSubmeshes()
+    {
+        var model = new EditorUnitTests.Settings.ModelImportSettings
+        {
+            Kind = EditorUnitTests.UnitTestModelImportKind.Animated,
+            PostImportFlags = EditorUnitTests.ModelPostImportFlags.GenerateIndividualSceneNodesPerSubmesh,
+        };
+
+        ModelImportOptions? options = EditorUnitTests.Models.CreateImportOptions(model, []);
+
+        options.ShouldNotBeNull();
+        options!.GenerateSceneNodesPerSubmesh.ShouldBeTrue();
+        options.SplitSubmeshesIntoSeparateModelComponents.ShouldBeTrue();
+    }
+
+    [Test]
+    public void ModelImportSettings_RoundTripsPostImportFlags_BetweenEditorAndRuntimeSettings()
+    {
+        var editorSettings = new EditorUnitTests.Settings
+        {
+            ModelsToImport =
+            [
+                new EditorUnitTests.Settings.ModelImportSettings
+                {
+                    Path = "Assets\\Models\\scene.fbx",
+                    PostImportFlags =
+                        EditorUnitTests.ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh |
+                        EditorUnitTests.ModelPostImportFlags.GenerateIndividualSceneNodesPerSubmesh |
+                        EditorUnitTests.ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent,
+                },
+            ],
+        };
+
+        UnitTestingWorldSettings runtimeSettings = editorSettings.ToRuntimeSettings();
+
+        runtimeSettings.ModelsToImport.Count.ShouldBe(1);
+        runtimeSettings.ModelsToImport[0].PostImportFlags.ShouldBe(
+            XREngine.Runtime.Bootstrap.ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh |
+            XREngine.Runtime.Bootstrap.ModelPostImportFlags.GenerateIndividualSceneNodesPerSubmesh |
+            XREngine.Runtime.Bootstrap.ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent);
+
+        runtimeSettings.ModelsToImport[0].PostImportFlags = XREngine.Runtime.Bootstrap.ModelPostImportFlags.SeparateMeshIslands;
+
+        EditorUnitTests.Settings roundTrip = EditorUnitTests.Settings.FromRuntime(runtimeSettings);
+
+        roundTrip.ModelsToImport.Count.ShouldBe(1);
+        roundTrip.ModelsToImport[0].PostImportFlags.ShouldBe(EditorUnitTests.ModelPostImportFlags.SeparateMeshIslands);
+    }
+
+    [Test]
+    public void ModelImportSettings_LegacyBooleanPostImportSettings_MapToPostImportFlags()
+    {
+        const string json = """
+        {
+          "ModelsToImport": [
+            {
+              "Path": "Assets\\Models\\scene.fbx",
+              "GenerateCoacdCollidersPerSubmesh": true,
+              "SplitSubmeshesIntoSeparateModelComponents": true,
+              "SeparateMeshIslands": true
+            }
+          ]
+        }
+        """;
+
+        UnitTestingWorldSettings settings = JsonConvert.DeserializeObject<UnitTestingWorldSettings>(json)!;
+
+        settings.ModelsToImport.Count.ShouldBe(1);
+        settings.ModelsToImport[0].PostImportFlags.ShouldBe(
+            XREngine.Runtime.Bootstrap.ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh |
+            XREngine.Runtime.Bootstrap.ModelPostImportFlags.SplitSubmeshesIntoSeparateModelComponents |
+            XREngine.Runtime.Bootstrap.ModelPostImportFlags.SeparateMeshIslands);
     }
 
     [Test]

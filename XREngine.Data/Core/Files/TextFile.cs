@@ -18,6 +18,22 @@ namespace XREngine.Core.Files
     {
         public event Action? TextChanged;
 
+        private string? _directFilePath;
+
+        [YamlIgnore]
+        [JsonIgnore]
+        [MemoryPackIgnore]
+        public new string? FilePath
+        {
+            get => _directFilePath ?? base.FilePath;
+            set
+            {
+                string? normalized = NormalizeDirectFilePath(value);
+                SetField(ref _directFilePath, normalized);
+                base.FilePath = normalized;
+            }
+        }
+
         private string? _text = null;
         public string? Text
         {
@@ -83,6 +99,21 @@ namespace XREngine.Core.Files
             => textFile?.Text;
         public static implicit operator TextFile(string? text)
             => FromText(text ?? string.Empty);
+
+        private static string? NormalizeDirectFilePath(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return path;
+
+            try
+            {
+                return Path.GetFullPath(path);
+            }
+            catch
+            {
+                return path;
+            }
+        }
 
         public unsafe void LoadTextFileMapped(string path)
         {

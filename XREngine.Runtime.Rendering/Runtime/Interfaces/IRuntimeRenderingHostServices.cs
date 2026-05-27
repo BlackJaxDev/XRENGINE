@@ -105,6 +105,51 @@ public interface IRuntimeRenderingHostServices
     int ShaderConfigVersion { get; }
 
     /// <summary>
+    /// Gets whether linked OpenGL shader programs may be cached as driver binaries.
+    /// </summary>
+    bool AllowBinaryProgramCaching { get; }
+
+    /// <summary>
+    /// Gets whether cached OpenGL program binaries may be uploaded on a shared GL context thread.
+    /// </summary>
+    bool AsyncProgramBinaryUpload { get; }
+
+    /// <summary>
+    /// Gets whether uncached OpenGL shader source programs may compile and link asynchronously.
+    /// </summary>
+    bool AsyncProgramCompilation { get; }
+
+    /// <summary>
+    /// Gets the requested shared-context OpenGL source compile/link worker count.
+    /// </summary>
+    int OpenGLProgramCompileLinkWorkerCount { get; }
+
+    /// <summary>
+    /// Gets the maximum number of async OpenGL shader programs advanced per render frame.
+    /// </summary>
+    int MaxAsyncShaderProgramsPerFrame { get; }
+
+    /// <summary>
+    /// Gets the OpenGL shader compile/link backend selection strategy.
+    /// </summary>
+    EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy { get; }
+
+    /// <summary>
+    /// Gets the GL_ARB/KHR_parallel_shader_compile compiler thread request.
+    /// </summary>
+    int OpenGLShaderCompilerThreadCount { get; }
+
+    /// <summary>
+    /// Gets whether the startup driver-parallel OpenGL shader link probe is enabled.
+    /// </summary>
+    bool OpenGLParallelShaderCompileProbeEnabled { get; }
+
+    /// <summary>
+    /// Gets the startup driver-parallel OpenGL shader link probe timeout in milliseconds.
+    /// </summary>
+    int OpenGLParallelShaderCompileProbeTimeoutMs { get; }
+
+    /// <summary>
     /// Subscribes a callback to host rendering setting changes.
     /// </summary>
     void SubscribeRenderingSettingsChanged(Action callback);

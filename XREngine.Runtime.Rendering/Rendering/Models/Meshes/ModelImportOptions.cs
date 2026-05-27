@@ -207,6 +207,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool SplitSubmeshesIntoSeparateModelComponents { get; set; } = false;
 
     /// <summary>
+    /// When true, split imported submeshes are placed on individual child scene nodes
+    /// instead of attaching all generated model components to the source node.
+    /// Implies <see cref="SplitSubmeshesIntoSeparateModelComponents"/>.
+    /// </summary>
+    public bool GenerateSceneNodesPerSubmesh { get; set; } = false;
+
+    /// <summary>
     /// When true, imported triangle submeshes are analyzed for disconnected geometric islands
     /// and each island is emitted as a separate submesh with the original material.
     /// </summary>
