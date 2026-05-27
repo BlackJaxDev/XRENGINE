@@ -112,7 +112,7 @@ public sealed class ImportedTextureStreamingContractTests
         string normalizedAssetManagerSource = assetManagerSource.Replace("\r\n", "\n");
 
         normalizedAssetManagerSource.ShouldContain("XRTexture2D.TryCreateTextureStreamingCacheAsset(\n                texture,");
-        assetManagerSource.ShouldContain("TextureStreaming_v2_preview");
+        assetManagerSource.ShouldContain("TextureStreaming_v3_preview");
 
         payloadSource.ShouldContain("TryCreateTextureStreamingCacheAssetGpu");
         payloadSource.ShouldContain("RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(");

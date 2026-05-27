@@ -576,7 +576,10 @@ namespace XREngine
             if (assetType != typeof(XRTexture2D))
                 return explicitVariantKey;
 
-            string texturePayloadKey = $"TextureStreaming_v2_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed";
+            // v3 = pure binary XRTS streaming payload (no YAML envelope, no hex/base64). Bumped from v2
+            // so existing YAML cache files are orphaned and rewritten on next import; the old YAML
+            // wrapper was producing 50-100 MB cache files for 4K textures and OOM-killing the editor.
+            string texturePayloadKey = $"TextureStreaming_v3_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary";
             if (string.IsNullOrWhiteSpace(explicitVariantKey))
                 return texturePayloadKey;
 
