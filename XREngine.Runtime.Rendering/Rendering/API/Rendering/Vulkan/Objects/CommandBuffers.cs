@@ -1127,10 +1127,7 @@ namespace XREngine.Rendering.Vulkan
             // instead of clearing the composited scene.
             bool swapchainClearedThisFrame = false;
 
-            bool skipUiPipelineOps = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_SKIP_UI_PIPELINE"),
-                "1",
-                StringComparison.Ordinal);
+            bool skipUiPipelineOps = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiPipeline;
 
             // Track swapchain writes that happen outside a swapchain render pass
             // (e.g. CmdBlitImage to swapchain). If true, the first swapchain render
@@ -1960,10 +1957,7 @@ namespace XREngine.Rendering.Vulkan
                         computeCount);
                 }
 
-                bool forceMagentaSwapchain = string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_FORCE_SWAPCHAIN_MAGENTA"),
-                    "1",
-                    StringComparison.Ordinal);
+                bool forceMagentaSwapchain = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
                 if (forceMagentaSwapchain)
                 {
                     ClearAttachment magentaAttachment = new()
@@ -1999,10 +1993,7 @@ namespace XREngine.Rendering.Vulkan
                         "[Vulkan] Forced magenta swapchain clear due to XRE_FORCE_SWAPCHAIN_MAGENTA=1.");
                 }
 
-                bool skipImGui = string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_SKIP_IMGUI"),
-                    "1",
-                    StringComparison.Ordinal);
+                bool skipImGui = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipImGui;
 
                 if (SupportsImGui && !skipImGui)
                 {

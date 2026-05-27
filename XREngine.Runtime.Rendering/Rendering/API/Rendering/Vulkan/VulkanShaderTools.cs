@@ -169,10 +169,7 @@ internal static class VulkanShaderAutoUniforms
 
         source = ApplyVulkanSourceFixups(source);
 
-        bool enableAutoUniformRewrite = !string.Equals(
-            Environment.GetEnvironmentVariable("XRE_VK_ENABLE_AUTO_UNIFORM_REWRITE"),
-            "0",
-            StringComparison.Ordinal);
+        bool enableAutoUniformRewrite = XREngine.Rendering.RenderDiagnosticsFlags.VkEnableAutoUniformRewrite;
 
         if (!enableAutoUniformRewrite)
         {
@@ -1485,10 +1482,7 @@ internal static class VulkanShaderCompiler
                     $"Vulkan.ShaderCompileDiagnostics.{shader.Name ?? "UnnamedShader"}.{shader.Type}",
                     TimeSpan.FromSeconds(2),
                     diagnostics);
-                bool includePreview = string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_VK_DUMP_SHADER_ON_ERROR"),
-                    "1",
-                    StringComparison.Ordinal);
+                bool includePreview = XREngine.Rendering.RenderDiagnosticsFlags.VkDumpShaderOnError;
 
                 if (includePreview)
                 {

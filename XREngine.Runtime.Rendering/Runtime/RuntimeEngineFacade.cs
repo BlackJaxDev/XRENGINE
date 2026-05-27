@@ -2287,9 +2287,9 @@ internal sealed class RuntimeEffectiveSettings
     {
         get
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH");
+            string? raw = EffectiveSettingsEnvOverrides.ZeroReadbackMaterialDrawPath;
             return !string.IsNullOrWhiteSpace(raw) &&
-                Enum.TryParse(raw.Trim(), ignoreCase: true, out EZeroReadbackMaterialDrawPath parsed)
+                Enum.TryParse(raw, ignoreCase: true, out EZeroReadbackMaterialDrawPath parsed)
                 ? parsed
                 : _zeroReadbackMaterialDrawPath;
         }
@@ -2304,9 +2304,9 @@ internal sealed class RuntimeEffectiveSettings
             EOcclusionCullingMode resolved = TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
                 ? services.GpuOcclusionCullingMode
                 : _gpuOcclusionCullingMode;
-            string? raw = Environment.GetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE");
+            string? raw = EffectiveSettingsEnvOverrides.OcclusionCullingMode;
             if (!string.IsNullOrWhiteSpace(raw) &&
-                Enum.TryParse(raw.Trim(), ignoreCase: true, out EOcclusionCullingMode parsed))
+                Enum.TryParse(raw, ignoreCase: true, out EOcclusionCullingMode parsed))
             {
                 resolved = parsed;
             }
@@ -2320,8 +2320,8 @@ internal sealed class RuntimeEffectiveSettings
     {
         get
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES");
-            if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw.Trim(), out int parsed))
+            string? raw = EffectiveSettingsEnvOverrides.CpuQueryOcclusionRetestPeriodFrames;
+            if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out int parsed))
                 return Math.Clamp(parsed, 1, 64);
 
             return TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
@@ -2335,7 +2335,7 @@ internal sealed class RuntimeEffectiveSettings
     {
         get
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_CPU_SOC_OCCLUSION");
+            string? raw = EffectiveSettingsEnvOverrides.CpuSocOcclusion;
             if (!string.IsNullOrWhiteSpace(raw))
             {
                 string trimmed = raw.Trim();
@@ -2420,7 +2420,7 @@ internal sealed class RuntimeEffectiveSettings
     {
         get
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
+            string? raw = EffectiveSettingsEnvOverrides.ForceMeshSubmissionStrategy;
             if (EMeshSubmissionStrategyExtensions.TryParseMeshSubmissionStrategy(
                     raw,
                     out EMeshSubmissionStrategy parsed,
@@ -2448,9 +2448,9 @@ internal sealed class RuntimeEffectiveSettings
     {
         get
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE");
+            string? raw = EffectiveSettingsEnvOverrides.CpuSceneCullingStructure;
             if (!string.IsNullOrWhiteSpace(raw) &&
-                Enum.TryParse(raw.Trim(), ignoreCase: true, out ECpuSceneCullingStructure parsed))
+                Enum.TryParse(raw, ignoreCase: true, out ECpuSceneCullingStructure parsed))
             {
                 return parsed;
             }

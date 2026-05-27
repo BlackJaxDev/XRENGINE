@@ -14,8 +14,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {
-        private static readonly bool _diagEnabled =
-            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DIAG_QUAD_BLIT"));
+        private static bool _diagEnabled => RenderDiagnosticsFlags.DiagQuadBlit;
 
         public string? SourceQuadFBOName { get; set; }
         public string? DestinationFBOName { get; set; } = null;

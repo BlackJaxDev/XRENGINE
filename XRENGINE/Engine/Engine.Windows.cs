@@ -138,7 +138,7 @@ namespace XREngine
         private static ContextFlags ResolveOpenGLContextFlags()
         {
             var flags = ContextFlags.ForwardCompatible;
-            if (string.Equals(Environment.GetEnvironmentVariable("XRE_GL_DEBUG"), "1", StringComparison.Ordinal))
+            if (XREngine.Rendering.RenderDiagnosticsFlags.GLDebug)
                 flags |= ContextFlags.Debug;
             return flags;
         }

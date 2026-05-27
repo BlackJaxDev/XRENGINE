@@ -8,6 +8,9 @@ namespace XREngine.Rendering.OpenGL;
 public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GLTexture<XRTexture2D>(renderer, data)
 {
     private MipmapInfo[] _mipmaps = [];
+    // GL-side per-mip metadata cache rebuilt from Data.Mipmaps. Reassigning this array
+    // is not a GL-state change in itself; do not invalidate the GL handle when it updates.
+    [TransientGLState]
     public MipmapInfo[] Mipmaps
     {
         get => _mipmaps;
@@ -15,6 +18,11 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
     }
 
     private bool _storageSet = false;
+    // Internal bookkeeping that records whether glTextureStorage2D has run for the current
+    // immutable-storage allocation. EnsureStorageAllocated flips this true right after the
+    // storage call; without [TransientGLState] that flip would invalidate the GL handle and
+    // force the next bind to Destroy/Generate, wiping the freshly allocated storage.
+    [TransientGLState]
     public bool StorageSet
     {
         get => _storageSet;
@@ -116,6 +124,26 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
 
     private void DataResized()
     {
+        // No-op when the resize event fires with the same dimensions/format we already hold
+        // immutable storage for. This was observed in the GL submit trace as a per-frame
+        // destroy/recreate/storage/upload cycle on font glyph and similar runtime textures
+        // (~30+ Hz), causing severe lag without changing any GL state. Without this guard the
+        // code below would tear down a valid immutable texture and rebuild an identical one
+        // every time. Sparse and external-memory textures take the slow path so their
+        // promotion logic still runs.
+        if (!Data.Resizable
+            && StorageSet
+            && !_pendingImmutableStorageRecreate
+            && !Data.SparseTextureStreamingEnabled
+            && !Data.UsesOpenGlExternalMemoryImport
+            && _externalMemoryObject == 0
+            && _allocatedWidth == Math.Max(1u, Data.Width)
+            && _allocatedHeight == Math.Max(1u, Data.Height)
+            && _allocatedInternalFormat == Data.SizedInternalFormat)
+        {
+            return;
+        }
+
         bool requiresImmutableRecreate = !Data.Resizable && (StorageSet || _pendingImmutableStorageRecreate);
         uint previousLevels = _allocatedLevels;
         uint previousW = _allocatedWidth;
@@ -153,6 +181,8 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
             if (RuntimeEngine.IsRenderThread)
             {
                 _pendingImmutableStorageRecreate = false;
+                if (GLSubmitTracer.Enabled)
+                    TracePreSubmit("Destroy.DataResized", previousLevels, previousW, previousH);
                 Destroy();
             }
             else
@@ -174,7 +204,11 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
 
         _pendingImmutableStorageRecreate = false;
         if (IsGenerated)
+        {
+            if (GLSubmitTracer.Enabled)
+                TracePreSubmit("Destroy.ApplyPending", _allocatedLevels, _allocatedWidth, _allocatedHeight);
             Destroy();
+        }
     }
 
     /// <summary>
@@ -205,6 +239,10 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
 
         Mipmaps.ForEach(SetFullPush);
         StorageSet = false;
+        _allocatedLevels = 0;
+        _allocatedWidth = 0;
+        _allocatedHeight = 0;
+        _allocatedInternalFormat = default;
         AdvanceStorageGeneration();
         _sparseStorageAllocated = false;
         _sparseLogicalWidth = 0;
@@ -231,6 +269,10 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         }
 
         StorageSet = false;
+        _allocatedLevels = 0;
+        _allocatedWidth = 0;
+        _allocatedHeight = 0;
+        _allocatedInternalFormat = default;
         AdvanceStorageGeneration();
         _sparseStorageAllocated = false;
         _sparseLogicalWidth = 0;

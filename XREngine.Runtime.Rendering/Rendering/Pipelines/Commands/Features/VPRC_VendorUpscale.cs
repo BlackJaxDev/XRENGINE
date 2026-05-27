@@ -18,8 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_VendorUpscale : VPRC_RenderQuadToFBO
     {
-        private static readonly bool _diagEnabled =
-            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DIAG_VENDOR_UPSCALE"));
+        private static bool _diagEnabled => RenderDiagnosticsFlags.DiagVendorUpscale;
 
         public string? SourceTextureName { get; set; }
         public string? DepthTextureName { get; set; }

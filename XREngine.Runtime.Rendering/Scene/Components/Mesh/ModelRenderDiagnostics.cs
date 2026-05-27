@@ -24,9 +24,6 @@ internal static class ModelRenderDiagnostics
     private const int MaxCommandLines = 160;
     private const int MaxRejectLines = 160;
     private static readonly TimeSpan TraceDuration = TimeSpan.FromSeconds(30.0);
-    private static readonly bool s_disabled =
-        string.Equals(System.Environment.GetEnvironmentVariable("XRE_DEBUG_MODEL_RENDER"), "0", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(System.Environment.GetEnvironmentVariable("XRE_MODEL_RENDER_DIAG"), "0", StringComparison.OrdinalIgnoreCase);
 
     private static readonly ConcurrentDictionary<int, long> s_traceUntilTicks = new();
     private static int s_publishDetailLines;
@@ -40,7 +37,7 @@ internal static class ModelRenderDiagnostics
         get
         {
 #if DEBUG || EDITOR
-            return !s_disabled;
+            return RenderDiagnosticsFlags.ModelRenderDiagEnabled;
 #else
             return false;
 #endif

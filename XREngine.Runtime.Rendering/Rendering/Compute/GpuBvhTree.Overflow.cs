@@ -20,15 +20,13 @@ public sealed partial class GpuBvhTree
     private const uint OverflowQueueBit = 1u << 2;
     private const uint OverflowBvhBit = 1u << 3;
 
-    // C-GPU-3 diagnostic flag (XRE_HIZ_CULL_TRACE=1).
-    // When set, the BVH dumps every overflow with full capacity context
-    // (primitive count, node count, computed node/range/morton capacities,
-    // build mode). This lets us distinguish real capacity exhaustion from the
-    // stage-3 malformed-tree detection in bvh_build.comp; both set
-    // OverflowBvhBit but mean very different things. Default off; read once
-    // at type init.
-    private static readonly bool s_traceEnabled =
-        string.Equals(Environment.GetEnvironmentVariable("XRE_HIZ_CULL_TRACE"), "1", StringComparison.Ordinal);
+    // C-GPU-3 diagnostic flag (XRE_HIZ_CULL_TRACE=1, or editor preference
+    // Debug → HiZ Cull Trace). When set, the BVH dumps every overflow with full
+    // capacity context (primitive count, node count, computed node/range/morton
+    // capacities, build mode). Distinguishes real capacity exhaustion from the
+    // stage-3 malformed-tree detection in bvh_build.comp; both set OverflowBvhBit
+    // but mean very different things. Runtime-toggleable via the central flag.
+    private static bool s_traceEnabled => RenderDiagnosticsFlags.HiZCullTrace;
 
     private const uint PendingOverflowFenceDiagnosticFrames = 3u;
 

@@ -98,10 +98,7 @@ public partial class DefaultRenderPipeline2
     {
         ViewportRenderCommandContainer c = new(this);
         bool enableComputePasses = EnableComputeDependentPasses;
-        bool bypassVendorUpscale = string.Equals(
-            Environment.GetEnvironmentVariable("XRE_BYPASS_VENDOR_UPSCALE"),
-            "1",
-            StringComparison.Ordinal);
+        bool bypassVendorUpscale = RenderDiagnosticsFlags.BypassVendorUpscale;
 
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
         AppendDebugVisualizationVariables(c);
@@ -1465,12 +1462,7 @@ public partial class DefaultRenderPipeline2
     }
 
     private static string? ResolveOutputSourceFboOverride()
-    {
-        string? overrideSource = Environment.GetEnvironmentVariable("XRE_OUTPUT_SOURCE_FBO");
-        return string.IsNullOrWhiteSpace(overrideSource)
-            ? null
-            : overrideSource.Trim();
-    }
+        => RenderDiagnosticsFlags.OutputSourceFboOverride;
 
     private static bool IsValidFinalOutputSourceFboOverride(string sourceFboName, bool bypassVendorUpscale)
     {

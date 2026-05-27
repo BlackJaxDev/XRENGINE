@@ -123,14 +123,60 @@ public partial class OpenGLRenderer
         string messageStr = new((sbyte*)message);
         string formattedMessage = $"OPENGL {FormatSeverity(severity)} #{id} | {FormatSource(source)} {FormatType(type)} | {messageStr}";
 
+        bool highSeverity = type == GLEnum.DebugTypeError || severity == GLEnum.DebugSeverityHigh;
+
+        // Rate-limit duplicate high-severity messages.
+        // A misbehaving shader can emit a GL error per draw call (thousands per frame); building a
+        // managed stack trace and synchronously appending to disk for every one stalls the render
+        // thread to ~1 Hz and floods log files to hundreds of MB. We keep the first few full
+        // records (with stack + disk mirror), then collapse duplicates into a periodic summary.
+        bool emitDetailed = true;
+        long suppressedSinceLast = 0;
+        if (highSeverity)
+        {
+            string dedupKey = $"{id}|{messageStr}";
+            DebugDedupEntry entry = _debugDedupCache.GetOrAdd(dedupKey, static _ => new DebugDedupEntry());
+            lock (entry)
+            {
+                long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (entry.TotalCount < HighSeverityDetailedQuota)
+                {
+                    entry.TotalCount++;
+                    entry.LastEmitTicks = nowTicks;
+                    emitDetailed = true;
+                }
+                else
+                {
+                    entry.TotalCount++;
+                    long elapsedTicks = nowTicks - entry.LastEmitTicks;
+                    if (elapsedTicks >= HighSeveritySummaryIntervalTicks)
+                    {
+                        suppressedSinceLast = entry.TotalCount - entry.LastEmitCount - 1;
+                        entry.LastEmitTicks = nowTicks;
+                        entry.LastEmitCount = entry.TotalCount;
+                        emitDetailed = true;
+                    }
+                    else
+                    {
+                        emitDetailed = false;
+                    }
+                }
+            }
+        }
+
         // Mirror high-severity messages to Console.Error synchronously so they survive a
         // driver fastfail (NVIDIA FAST_FAIL_CORRUPT_LIST_ENTRY tears the process down before
         // Serilog flushes). Errors and high-severity messages only; keep noise low.
-        if (type == GLEnum.DebugTypeError || severity == GLEnum.DebugSeverityHigh)
+        if (highSeverity && emitDetailed)
         {
             string? stack = null;
             try { stack = new System.Diagnostics.StackTrace(1, true).ToString(); } catch { }
-            string payload = stack is null ? formattedMessage : formattedMessage + Environment.NewLine + stack;
+            string suppressedSuffix = suppressedSinceLast > 0
+                ? $" [+{suppressedSinceLast} duplicates suppressed since last log]"
+                : string.Empty;
+            string payload = stack is null
+                ? formattedMessage + suppressedSuffix
+                : formattedMessage + suppressedSuffix + Environment.NewLine + stack;
             try { System.Console.Error.WriteLine("[GLDebug] " + payload); } catch { }
             try { System.Diagnostics.Trace.WriteLine("[GLDebug] " + payload); System.Diagnostics.Trace.Flush(); } catch { }
             try
@@ -145,6 +191,9 @@ public partial class OpenGLRenderer
 
         if (type == GLEnum.DebugTypeError)
         {
+            if (!emitDetailed)
+                return;
+
             if (Current is OpenGLRenderer renderer)
             {
                 string context = renderer.BuildOpenGLErrorContext();
@@ -157,6 +206,8 @@ public partial class OpenGLRenderer
         }
         else
         {
+            if (highSeverity && !emitDetailed)
+                return;
             Debug.OpenGLWarning(formattedMessage);
         }
         bool shouldTrack = type == GLEnum.DebugTypeError;
@@ -169,6 +220,19 @@ public partial class OpenGLRenderer
                 renderer._oomDetectedThisFrame = true;
         }
     }
+
+    // How many full (stack + disk mirror) records to emit for each unique high-severity message
+    // before collapsing duplicates into a periodic summary.
+    private const int HighSeverityDetailedQuota = 5;
+    private static readonly long HighSeveritySummaryIntervalTicks =
+        (long)(TimeSpan.FromSeconds(10).TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+    private sealed class DebugDedupEntry
+    {
+        public long TotalCount;
+        public long LastEmitCount;
+        public long LastEmitTicks;
+    }
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DebugDedupEntry> _debugDedupCache = new();
 
     private static string FormatSeverity(GLEnum severity)
         => severity switch

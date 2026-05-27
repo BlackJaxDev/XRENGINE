@@ -9,7 +9,7 @@ public static class UnitTestingWorldSettingsStore
     private static readonly JsonSerializerSettings JsonSettings = new()
     {
         Formatting = Formatting.Indented,
-        Converters = [new MeshSubmissionStrategyJsonConverter()]
+        Converters = [new MeshSubmissionStrategyJsonConverter(), new ModelPostImportFlagsJsonConverter()]
     };
 
     public static UnitTestingWorldSettings Load(bool writeBackAfterRead)

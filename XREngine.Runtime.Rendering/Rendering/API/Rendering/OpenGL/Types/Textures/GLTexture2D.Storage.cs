@@ -28,9 +28,44 @@ public partial class GLTexture2D
     private bool IsStorageGenerationCurrent(int storageGeneration)
         => CurrentStorageGeneration == storageGeneration;
 
+    /// <summary>
+    /// Emits a pre-submit trace line capturing the texture state immediately before a GL
+    /// driver call. Caller must check <see cref="GLSubmitTracer.Enabled"/> to avoid the
+    /// interpolated-string allocation when tracing is off.
+    /// </summary>
+    internal void TracePreSubmit(string op, uint levels, uint width, uint height, int mipLevel = -1, uint xOffset = 0, uint yOffset = 0, bool fullPush = false)
+    {
+        GLSubmitTracer.Trace(op,
+            $"name='{GetDescribingName()}' bind={BindingId} gen={CurrentStorageGeneration} " +
+            $"mip={mipLevel} rect={xOffset},{yOffset} {width}x{height} levels={levels} " +
+            $"sized={Data.SizedInternalFormat} multisample={Data.MultiSample} " +
+            $"sparse={Data.SparseTextureStreamingEnabled} extMem={Data.UsesOpenGlExternalMemoryImport} " +
+            $"finalizePending={Data.RuntimeManagedProgressiveFinalizePending} " +
+            $"pendingRecreate={_pendingImmutableStorageRecreate} storageSet={StorageSet} " +
+            $"allocated={_allocatedWidth}x{_allocatedHeight}/{_allocatedLevels} " +
+            $"residentBase={Data.SparseTextureStreamingResidentBaseMipLevel} " +
+            $"resizable={Data.Resizable} fullPush={fullPush} renderThread={RuntimeEngine.IsRenderThread}");
+    }
+
     internal EPixelInternalFormat? EnsureStorageAllocated()
     {
         EPixelInternalFormat? internalFormatForce = null;
+        // Hardening: treat any retained _allocated* dimensions as proof that the underlying GL
+        // texture object still owns immutable storage. Calling glTextureStorage2D a second time
+        // on an immutable texture is GL_INVALID_OPERATION and (under NVIDIA) eventually triggers
+        // FAST_FAIL_FATAL_APP_EXIT inside nvoglv64.dll. If StorageSet has been cleared without
+        // the size cache being cleared (which would indicate a missing Destroy or a partial reset
+        // in some PostGenerated/PostDeleted path), refuse the resubmit and warn loudly so the
+        // caller can be fixed.
+        if (!Data.Resizable && !StorageSet && (_allocatedLevels != 0 || _allocatedWidth != 0 || _allocatedHeight != 0))
+        {
+            Debug.OpenGLWarning(
+                $"[GLTexture2D] Skipping redundant immutable storage allocation for '{GetDescribingName()}': " +
+                $"StorageSet was reset but _allocated* still populated ({_allocatedWidth}x{_allocatedHeight}/{_allocatedLevels}). " +
+                $"Treating storage as already committed to avoid double glTextureStorage2D on immutable texture.");
+            StorageSet = true;
+            return ToBaseInternalFormat(_allocatedInternalFormat);
+        }
         if (!Data.Resizable && !StorageSet)
         {
             uint width = Math.Max(1u, Data.Width);
@@ -157,6 +192,8 @@ public partial class GLTexture2D
                 Silk.NET.OpenGLES.SizedInternalFormat sizedInternalFormat = (Silk.NET.OpenGLES.SizedInternalFormat)(uint)ToGLEnum(Data.SizedInternalFormat);
                 if (Data.MultiSample)
                 {
+                    if (GLSubmitTracer.Enabled)
+                        TracePreSubmit("TextureStorageMem2DMultisample", levels: 0, width, height);
                     Renderer.EXTMemoryObject?.TextureStorageMem2DMultisample(
                         BindingId,
                         Data.MultiSampleCount,
@@ -169,6 +206,8 @@ public partial class GLTexture2D
                 }
                 else
                 {
+                    if (GLSubmitTracer.Enabled)
+                        TracePreSubmit("TextureStorageMem2D", levels, width, height);
                     Renderer.EXTMemoryObject?.TextureStorageMem2D(
                         BindingId,
                         levels,
@@ -181,10 +220,14 @@ public partial class GLTexture2D
             }
             else if (Data.MultiSample)
             {
+                if (GLSubmitTracer.Enabled)
+                    TracePreSubmit("TextureStorage2DMultisample", levels: 0, width, height);
                 Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), width, height, Data.FixedSampleLocations);
             }
             else
             {
+                if (GLSubmitTracer.Enabled)
+                    TracePreSubmit("TextureStorage2D", levels, width, height);
                 Api.TextureStorage2D(BindingId, levels, ToGLEnum(Data.SizedInternalFormat), width, height);
             }
 

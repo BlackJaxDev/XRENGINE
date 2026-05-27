@@ -10,6 +10,9 @@ namespace XREngine.Rendering.OpenGL
     public class GLTexture3D(OpenGLRenderer renderer, XRTexture3D data) : GLTexture<XRTexture3D>(renderer, data)
     {
         private bool _storageSet = false;
+        // See GLTexture2D.StorageSet — internal bookkeeping that must not invalidate the GL handle,
+        // or EnsureStorageAllocated would tear down the storage it just allocated.
+        [TransientGLState]
         public bool StorageSet
         {
             get => _storageSet;
