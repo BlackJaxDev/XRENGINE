@@ -591,6 +591,29 @@ public sealed class MeshOptimizerInteropTests
     }
 
     [Test]
+    public void DiagnosticMeshletShaders_UseInterfaceBlockForNvMeshVaryings()
+    {
+        string meshShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletRenderDiagnostic.mesh").Replace("\r\n", "\n");
+        string fragmentShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletShading.fs").Replace("\r\n", "\n");
+
+        meshShader.ShouldContain("layout(location = 0) out MeshletVertex");
+        meshShader.ShouldContain("} OUT[];");
+        meshShader.ShouldNotContain("layout(location = 0) out vec3 out_worldPos[];");
+        meshShader.ShouldNotContain("layout(location = 1) out vec3 out_normal[];");
+        meshShader.ShouldNotContain("layout(location = 2) out vec2 out_texCoord[];");
+        meshShader.ShouldNotContain("layout(location = 3) out vec4 out_tangent[];");
+        meshShader.ShouldContain("OUT[tid].worldPos = wpos.xyz;");
+        meshShader.ShouldContain("OUT[tid].meshletIndex = meshletIndex;");
+
+        fragmentShader.ShouldContain("layout(location = 0) in MeshletVertex");
+        fragmentShader.ShouldContain("} IN;");
+        fragmentShader.ShouldContain("Material material = materials[IN.materialID];");
+        fragmentShader.ShouldContain("vec3 V = normalize(cameraPosition - IN.worldPos);");
+        fragmentShader.ShouldNotContain("in_worldPos");
+        fragmentShader.ShouldNotContain("in_meshletIndex");
+    }
+
+    [Test]
     public void MeshletExtVariants_ImplementGlExtMeshShaderContract()
     {
         string taskShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletCullingExt.task").Replace("\r\n", "\n");

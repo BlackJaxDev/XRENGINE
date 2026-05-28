@@ -477,7 +477,7 @@ namespace XREngine
                 private int _openGLProgramCompileLinkWorkerCount = 1;
                 private int _maxAsyncShaderProgramsPerFrame = 16;
                 private EOpenGLShaderLinkStrategy _openGLShaderLinkStrategy = EOpenGLShaderLinkStrategy.Auto;
-                private int _openGLShaderCompilerThreadCount = -1;
+                private int _openGLShaderCompilerThreadCount = 1;
                 private bool _openGLParallelShaderCompileProbeEnabled = true;
                 private int _openGLParallelShaderCompileProbeTimeoutMs = 25;
                 private bool _calculateBlendshapesInComputeShader = true;
@@ -1122,11 +1122,12 @@ namespace XREngine
 
                 /// <summary>
                 /// Requested worker-thread count for GL_ARB/KHR_parallel_shader_compile.
-                /// Use -1 to request the engine default, 0 to request no driver worker threads,
-                /// or a positive value to request an explicit count.
+                /// The default is conservative to avoid flooding the Windows OpenGL driver
+                /// during cold uber-shader startup. Use -1 to request the driver maximum,
+                /// 0 to request no driver worker threads, or a positive explicit count.
                 /// </summary>
                 [Category("Performance")]
-                [Description("Requested worker-thread count for GL_ARB/KHR_parallel_shader_compile. Use -1 for the engine default, 0 for no driver worker threads, or a positive explicit count.")]
+                [Description("Requested worker-thread count for GL_ARB/KHR_parallel_shader_compile. Default is conservative; use -1 for the driver maximum, 0 for no driver worker threads, or a positive explicit count.")]
                 public int OpenGLShaderCompilerThreadCount
                 {
                     get => _openGLShaderCompilerThreadCount;

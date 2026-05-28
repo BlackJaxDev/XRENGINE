@@ -84,7 +84,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 return false;
 
             var resources = GetOrCreateResources(xrMesh);
-            if (!resources.IsValid)
+            if (!resources.SupportsBoundsReduction)
                 return false;
 
             uint vertexCount = (uint)xrMesh.VertexCount;
@@ -108,9 +108,9 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (!resources.TryReadPositions(xrMesh.VertexCount, out Vector3[] worldPositions))
                 return false;
 
-            // Use root bone's world matrix as the basis for skinned mesh bounds.
-            // Bounds are calculated in root bone local space.
-            Matrix4x4 basis = mesh.RootBone?.RenderMatrix ?? mesh.Component.Transform.RenderMatrix;
+            // Bounds are calculated in the same moving basis RenderableMesh uses
+            // for culling, normally the authored root bone.
+            Matrix4x4 basis = mesh.GetSkinnedBoundsBasisMatrix();
             Matrix4x4 invBasis = Matrix4x4.Invert(basis, out var inv) ? inv : Matrix4x4.Identity;
 
             var localPositions = new Vector3[worldPositions.Length];
@@ -165,7 +165,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 return false;
 
             var resources = GetOrCreateResources(xrMesh);
-            if (!resources.IsValid)
+            if (!resources.SupportsBoundsReduction)
                 return false;
 
             uint vertexCount = (uint)xrMesh.VertexCount;
@@ -175,10 +175,13 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             positionsOut.SetBlockIndex(0);
             resources.BindBoundsBufferForReduce(1);
 
+            Matrix4x4 basis = mesh.GetSkinnedBoundsBasisMatrix();
+            Matrix4x4 positionsToBoundsLocal = CalculateWorldToSkinnedBoundsBasis(basis);
+
             _reduceProgram.Uniform("vertexCount", vertexCount);
             _reduceProgram.Uniform("slotIndex", 0u);
-            _reduceProgram.Uniform("transformToWorld", 0); // produce root-local bounds
-            _reduceProgram.Uniform("worldMatrix", Matrix4x4.Identity);
+            _reduceProgram.Uniform("applyTransform", 1);
+            _reduceProgram.Uniform("transformMatrix", positionsToBoundsLocal);
 
             const uint groupSize = 256;
             uint groupsX = Math.Max(1u, (vertexCount + groupSize - 1u) / groupSize);
@@ -190,8 +193,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (!resources.TryReadBounds(out AABB localBounds))
                 return false;
 
-            // Bounds are already in root-bone-local space (SkinningPrepass output convention).
-            Matrix4x4 basis = mesh.RootBone?.RenderMatrix ?? mesh.Component.Transform.RenderMatrix;
+            // SkinningPrepass outputs final skinned positions. Store bounds in the render basis
+            // local space so ApplySkinnedBoundsResult can transform them back exactly once.
             // Empty positions array signals "GPU-only fast path": consumers that need
             // CPU triangle data (e.g. SkinnedMeshBvhScheduler with cooked CPU BVH) must
             // fall back via RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader.
@@ -252,7 +255,6 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         if (commandAabbBuffer is null)
             return false;
 
-        Matrix4x4 basis = mesh.RootBone?.RenderMatrix ?? mesh.Component.Transform.RenderMatrix;
         uint vertexCount = (uint)xrMesh.VertexCount;
         if (vertexCount == 0u)
             return false;
@@ -269,8 +271,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             commandAabbBuffer.SetBlockIndex(1);
 
             _reduceProgram.Uniform("vertexCount", vertexCount);
-            _reduceProgram.Uniform("transformToWorld", 1);
-            _reduceProgram.Uniform("worldMatrix", basis);
+            _reduceProgram.Uniform("applyTransform", 0);
+            _reduceProgram.Uniform("transformMatrix", Matrix4x4.Identity);
 
             const uint groupSize = 256u;
             uint groupsX = Math.Max(1u, (vertexCount + groupSize - 1u) / groupSize);
@@ -384,6 +386,9 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         return new AABB(min, max);
     }
 
+    internal static Matrix4x4 CalculateWorldToSkinnedBoundsBasis(Matrix4x4 basis)
+        => Matrix4x4.Invert(basis, out var inverseBasis) ? inverseBasis : Matrix4x4.Identity;
+
     public void Dispose()
     {
         lock (_syncRoot)
@@ -437,10 +442,18 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         private static readonly UInt4 NegativeInfinityPacked = UInt4.FromVector(new Vector4(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity, -1f));
 
         public bool IsValid { get; }
+        public bool SupportsBoundsReduction => _bounds is not null;
 
         public MeshResources(XRMesh mesh)
         {
             string meshName = string.IsNullOrWhiteSpace(mesh.Name) ? $"Mesh_{mesh.GetHashCode():X}" : mesh.Name;
+
+            _bounds = new XRDataBuffer($"{meshName}_SkinnedBoundsReduction", EBufferTarget.ShaderStorageBuffer, 2, EComponentType.UInt, 4, false, false)
+            {
+                AttributeName = $"{meshName}_SkinnedBoundsReduction",
+                Resizable = false,
+                StorageFlags = EBufferMapStorageFlags.DynamicStorage
+            };
 
             if (mesh.BoneWeightOffsets?.Integral != true)
                 return;
@@ -455,12 +468,6 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 Resizable = false,
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent
-            };
-            _bounds = new XRDataBuffer($"{meshName}_SkinnedBoundsReduction", EBufferTarget.ShaderStorageBuffer, 2, EComponentType.UInt, 4, false, false)
-            {
-                AttributeName = $"{meshName}_SkinnedBoundsReduction",
-                Resizable = false,
-                StorageFlags = EBufferMapStorageFlags.DynamicStorage
             };
 
             if (_positions is null || _boneIndices is null || _boneWeights is null || _outputPositions is null || _bounds is null)

@@ -291,6 +291,15 @@ public sealed class ImportedDeferredMaterialTests
     }
 
     [Test]
+    public void MakeMaterialForwardPlusUberShader_DisablesBackfaceCullingForImportedGeometry()
+    {
+        XRMaterial material = ModelImporter.MakeMaterialForwardPlusUberShader([], [], "UberDoubleSidedMaterial");
+
+        material.RenderOptions.ShouldNotBeNull();
+        material.RenderOptions!.CullMode.ShouldBe(ECullMode.None);
+    }
+
+    [Test]
     public void MakeMaterialForwardPlusUberShader_OpacityMaskTextures_EnableMaskedUberTransparency()
     {
         XRTexture2D albedo = new()

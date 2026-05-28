@@ -1393,7 +1393,7 @@ void main() {
 #endif
     mesh.vertexNormal = normalize(FragNorm);
     mesh.vertexColor = FragColor0;
-    mesh.viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - FragPos);
+    mesh.viewDir = normalize(u_CameraPosition - FragPos);
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
 
     // Flip the interpolated normal when shading the back of a double-sided
@@ -1442,11 +1442,13 @@ void main() {
     }
 #endif
 
-    // Normal map sampling uses the (possibly parallax-warped) UV0.
-#ifndef XRENGINE_UBER_DISABLE_NORMAL_MAP
+    // Normal map sampling uses the (possibly parallax-warped) UV0. Keep
+    // depth/normal and shadow pre-passes on geometric normals; bump/detail
+    // normals describe shading detail, not screen-space occluder shape.
+#if !defined(XRENGINE_UBER_DISABLE_NORMAL_MAP) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     mesh.worldNormal = calculateNormal(mesh);
 #endif
-#ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
+#if !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     mesh.worldNormal = applyDetailNormal(mesh, mesh.worldNormal);
 #endif
 

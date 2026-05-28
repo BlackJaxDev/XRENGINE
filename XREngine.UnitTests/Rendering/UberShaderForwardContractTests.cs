@@ -62,6 +62,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("#pragma snippet \"ForwardLighting\"");
         source.ShouldContain("#pragma snippet \"AmbientOcclusionSampling\"");
         source.ShouldContain("XRENGINE_CalculateAmbientPbr");
+        source.ShouldContain("mesh.viewDir = normalize(u_CameraPosition - FragPos);");
+        source.ShouldNotContain("mesh.viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - FragPos);");
         normalizedSource.ShouldContain("DirLight dirLight = DirectionalLights[i];");
         normalizedSource.ShouldContain("shadow = XRENGINE_ReadShadowMapDir(i, dirLight, mesh.worldPos, mesh.vertexNormal, geometricNDotL);");
         normalizedSource.ShouldContain("XRENGINE_CalculateDirectPbrLightWithViewDir(\n            dirLight.Base.Color,");
@@ -125,6 +127,18 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("tangentNormal = unpackNormal(texture(_BumpMap, normalUV), _BumpScale);");
         source.ShouldNotContain("looksLikeHeightMapSample");
         source.ShouldNotContain("NormalMapMode == 1 ||");
+    }
+
+    [Test]
+    public void UberDepthNormalPrepass_UsesGeometricNormalsForAo()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+        string normalizedSource = source.Replace("\r\n", "\n");
+
+        normalizedSource.ShouldContain("mesh.worldNormal = mesh.vertexNormal;");
+        normalizedSource.ShouldContain("#if !defined(XRENGINE_UBER_DISABLE_NORMAL_MAP) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)");
+        normalizedSource.ShouldContain("#if !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)");
+        normalizedSource.ShouldContain("#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)\n    Normal = XRENGINE_EncodeNormal(mesh.worldNormal);");
     }
 
     [Test]
@@ -400,6 +414,18 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void ForwardLightingUpload_DoesNotEnableDirectionalAtlasShadowsUntilAtlasIsSampleable()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs")
+            .Replace("\r\n", "\n");
+
+        source.ShouldContain("bool perLightShadowEnabled = perLightShadowTex is not null || perLightCascadeTex is not null;");
+        source.ShouldNotContain("bool perLightShadowEnabled = perLightUseAtlas || perLightShadowTex is not null || perLightCascadeTex is not null;");
+        source.ShouldContain("bool perLightAtlasSampleable = directionalAtlasTextureAvailable &&");
+        source.ShouldContain("if (perLightAtlasSampleable)\n                    {\n                        _directionalShadowMapEnabled[i] = 1;");
+    }
+
+    [Test]
     public void CpuDirectUberMainPass_RespectsShaderPipelineSetting()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
@@ -473,7 +499,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("layout(location = 4) in vec2 FragUV0;");
         source.ShouldContain("layout(location = 12) in vec4 FragColor0;");
         source.ShouldContain("layout(location = 20) in vec3 FragPosLocal;");
-        source.ShouldContain("mesh.viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - FragPos);");
+        source.ShouldContain("mesh.viewDir = normalize(u_CameraPosition - FragPos);");
         source.ShouldContain("mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal, FragTan, FragBinorm, mesh.worldPos, mesh.uv[0]);");
     }
 

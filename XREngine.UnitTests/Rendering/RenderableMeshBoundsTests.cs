@@ -4,6 +4,8 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
+using XREngine.Rendering.Compute;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -30,5 +32,56 @@ public sealed class RenderableMeshBoundsTests
         transformed.Max.X.ShouldBe(expected.Max.X, 0.0001f);
         transformed.Max.Y.ShouldBe(expected.Max.Y, 0.0001f);
         transformed.Max.Z.ShouldBe(expected.Max.Z, 0.0001f);
+    }
+
+    [Test]
+    public void HasUsableSkinnedBoundsResult_AcceptsGpuOnlyBoundsWithoutCpuPositions()
+    {
+        AABB bounds = new(new Vector3(-1f, -2f, -3f), new Vector3(1f, 2f, 3f));
+        var result = new SkinnedMeshBoundsCalculator.Result([], bounds, Matrix4x4.Identity);
+
+        RenderableMesh.HasUsableSkinnedBoundsResult(result).ShouldBeTrue();
+    }
+
+    [Test]
+    public void HasUsableSkinnedBoundsResult_RejectsDefaultEmptyBoundsWithoutCpuPositions()
+    {
+        var result = new SkinnedMeshBoundsCalculator.Result([], default, Matrix4x4.Identity);
+
+        RenderableMesh.HasUsableSkinnedBoundsResult(result).ShouldBeFalse();
+    }
+
+    [Test]
+    public void ResolveSkinnedRootBoneTransform_PrefersSerializedRootBoneOverInferredAncestor()
+    {
+        var serializedRootBone = new Transform();
+        var inferredAncestor = new Transform();
+
+        TransformBase? rootBone = RenderableMesh.ResolveSkinnedRootBoneTransform(
+            serializedRootBone,
+            inferredAncestor);
+
+        ReferenceEquals(rootBone, serializedRootBone).ShouldBeTrue();
+    }
+
+    [Test]
+    public void ResolveSkinnedBoundsBasisTransform_PrefersRootBoneOverImportRoot()
+    {
+        var importRoot = new Transform();
+        var rootBone = new Transform();
+        TransformBase? basis = RenderableMesh.ResolveSkinnedBoundsBasisTransform(
+            rootBone,
+            importRoot);
+
+        ReferenceEquals(basis, rootBone).ShouldBeTrue();
+    }
+
+    [Test]
+    public void ResolveSkinnedBoundsBasisTransform_FallsBackToImportRootWithoutRootBone()
+    {
+        var importRoot = new Transform();
+        TransformBase? basis = RenderableMesh.ResolveSkinnedBoundsBasisTransform(null, importRoot);
+
+        ReferenceEquals(basis, importRoot).ShouldBeTrue();
     }
 }

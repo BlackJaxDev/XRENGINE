@@ -63,7 +63,9 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                Sampler(location, texture, textureUnit);
+                var glObj = Renderer.GetOrCreateAPIRenderObject(texture);
+                if (glObj is IGLTexture glTex)
+                    Sampler(location, glTex, textureUnit, name);
             }
 
             /// <summary>
@@ -88,13 +90,16 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                Sampler(location, texture, textureUnit);
+                Sampler(location, texture, textureUnit, name);
             }
 
             /// <summary>
             /// Passes a texture sampler value into the fragment shader of this program by location.
             /// </summary>
             public void Sampler(int location, IGLTexture texture, int textureUnit)
+                => Sampler(location, texture, textureUnit, samplerName: null);
+
+            private void Sampler(int location, IGLTexture texture, int textureUnit, string? samplerName)
             {
                 bool canBindUniform = MarkSamplerBinding(location);
 
@@ -102,7 +107,7 @@ namespace XREngine.Rendering.OpenGL
                     _boundSamplerLocations.Add(location);
 
                 texture.PreSampling();
-                if (!TryResolveSamplerTextureUnit(location, texture, textureUnit, out int resolvedTextureUnit))
+                if (!TryResolveSamplerTextureUnit(location, texture, textureUnit, samplerName, out int resolvedTextureUnit))
                 {
                     texture.PostSampling();
                     return;
@@ -124,10 +129,14 @@ namespace XREngine.Rendering.OpenGL
                 texture.PostSampling();
             }
 
-            private bool TryResolveSamplerTextureUnit(int location, IGLTexture texture, int requestedTextureUnit, out int resolvedTextureUnit)
+            private bool TryResolveSamplerTextureUnit(int location, IGLTexture texture, int requestedTextureUnit, string? samplerName, out int resolvedTextureUnit)
             {
                 int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
-                if (requestedTextureUnit >= 0 && requestedTextureUnit < maxTextureUnits)
+                bool requestedTextureUnitAvailable = requestedTextureUnit >= 0
+                    && requestedTextureUnit < maxTextureUnits
+                    && !IsTextureUnitReservedForDifferentActiveSampler(requestedTextureUnit, samplerName);
+
+                if (requestedTextureUnitAvailable)
                 {
                     if (!_boundSamplerUnits.TryGetValue(requestedTextureUnit, out SamplerUnitBinding existing)
                         || IsSameSamplerBinding(existing, texture))
@@ -143,19 +152,22 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                if (location >= 0 && TryFindFreeSamplerTextureUnit(out resolvedTextureUnit))
+                if (location >= 0 && TryFindFreeSamplerTextureUnit(samplerName, out resolvedTextureUnit))
                     return true;
 
                 resolvedTextureUnit = requestedTextureUnit;
-                return requestedTextureUnit >= 0 && requestedTextureUnit < maxTextureUnits;
+                return requestedTextureUnitAvailable;
             }
 
-            private bool TryFindFreeSamplerTextureUnit(out int textureUnit)
+            private bool TryFindFreeSamplerTextureUnit(string? samplerName, out int textureUnit)
             {
                 int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
                 for (int candidate = maxTextureUnits - 1; candidate >= 0; candidate--)
                 {
                     if (_boundSamplerUnits.ContainsKey(candidate))
+                        continue;
+
+                    if (IsTextureUnitReservedForDifferentActiveSampler(candidate, samplerName))
                         continue;
 
                     textureUnit = candidate;
@@ -168,6 +180,118 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool IsSameSamplerBinding(SamplerUnitBinding binding, IGLTexture texture)
                 => binding.TextureId == texture.BindingId && binding.Target == texture.TextureTarget;
+
+            private bool IsTextureUnitReservedForDifferentActiveSampler(int textureUnit, string? samplerName)
+            {
+                switch (textureUnit)
+                {
+                    case 6:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.BRDF);
+                    case 7:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.IrradianceArray);
+                    case 8:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.PrefilterArray);
+                    case 9:
+                        return IsReservedForDifferentActiveSampler(samplerName, "DirectionalShadowAtlas");
+                    case 12:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.EnvironmentMap);
+                    case 13:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.PbrReflectionCube);
+                    case 15:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ShadowMap, "DirectionalShadowMaps", 0);
+                    case 16:
+                        return IsReservedForDifferentActiveSampler(samplerName, "DirectionalShadowMaps", 1);
+                    case 17:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ShadowMapArray, "DirectionalShadowMapArrays", 0);
+                    case 18:
+                        return IsReservedForDifferentActiveSampler(samplerName, "DirectionalShadowMapArrays", 1);
+                    case >= 19 and <= 22:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.PointLightShadowMaps, textureUnit - 19);
+                    case >= 23 and <= 26:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.SpotLightShadowMaps, textureUnit - 23);
+                    case 27:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.AmbientOcclusionTexture);
+                    case 28:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ForwardContactDepthView);
+                    case 29:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ForwardContactNormalView);
+                    case 30:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ForwardContactDepthViewArray);
+                    case 31:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.ForwardContactNormalViewArray);
+                    case 32:
+                        return IsReservedForDifferentActiveSampler(samplerName, "SpotLightShadowAtlas");
+                    case 33:
+                        return IsReservedForDifferentActiveSampler(samplerName, EngineShaderBindingNames.Samplers.AmbientOcclusionTextureArray);
+                    case 34:
+                        return IsReservedForDifferentActiveSampler(samplerName, "PointLightShadowAtlas");
+                    default:
+                        return false;
+                }
+            }
+
+            private bool IsReservedForDifferentActiveSampler(string? samplerName, string reservedSamplerName)
+            {
+                if (!HasActiveSamplerUniform(reservedSamplerName))
+                    return false;
+
+                return !string.Equals(samplerName, reservedSamplerName, StringComparison.Ordinal);
+            }
+
+            private bool IsReservedForDifferentActiveSampler(string? samplerName, string reservedSamplerName, string reservedArraySamplerName, int reservedArrayElementIndex)
+            {
+                if (string.Equals(samplerName, reservedSamplerName, StringComparison.Ordinal)
+                    || IsSamplerArrayElementName(samplerName, reservedArraySamplerName, reservedArrayElementIndex))
+                    return false;
+
+                return HasActiveSamplerUniform(reservedSamplerName)
+                    || HasActiveSamplerUniform(reservedArraySamplerName);
+            }
+
+            private bool IsReservedForDifferentActiveSampler(string? samplerName, string reservedArraySamplerName, int reservedArrayElementIndex)
+            {
+                if (IsSamplerArrayElementName(samplerName, reservedArraySamplerName, reservedArrayElementIndex))
+                    return false;
+
+                return HasActiveSamplerUniform(reservedArraySamplerName);
+            }
+
+            private bool HasActiveSamplerUniform(string name)
+                => _uniformMetadata.TryGetValue(name, out UniformInfo info) && IsSamplerType(info.Type);
+
+            private static bool IsSamplerArrayElementName(string? samplerName, string arrayName, int elementIndex)
+            {
+                if (string.IsNullOrEmpty(samplerName))
+                    return false;
+
+                if (string.Equals(samplerName, arrayName, StringComparison.Ordinal))
+                    return elementIndex == 0;
+
+                if (!samplerName.StartsWith(arrayName, StringComparison.Ordinal))
+                    return false;
+
+                int arrayNameLength = arrayName.Length;
+                if (samplerName.Length <= arrayNameLength + 2
+                    || samplerName[arrayNameLength] != '['
+                    || samplerName[^1] != ']')
+                    return false;
+
+                ReadOnlySpan<char> indexSpan = samplerName.AsSpan(arrayNameLength + 1, samplerName.Length - arrayNameLength - 2);
+                if (indexSpan.Length == 0)
+                    return false;
+
+                int parsedIndex = 0;
+                for (int i = 0; i < indexSpan.Length; i++)
+                {
+                    char ch = indexSpan[i];
+                    if (ch < '0' || ch > '9')
+                        return false;
+
+                    parsedIndex = checked((parsedIndex * 10) + (ch - '0'));
+                }
+
+                return parsedIndex == elementIndex;
+            }
             #endregion
         }
     }

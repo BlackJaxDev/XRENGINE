@@ -15,10 +15,10 @@
 // The CPU is expected to seed both quads with +inf/-inf bit patterns before
 // each dispatch so the atomic min/max produces a correct envelope.
 //
-// When transformToWorld != 0, each input position is multiplied by
-// worldMatrix before reduction. This is the path used by Path A
-// (write directly into GPUScene._commandAabbBuffer with rootBoneRenderMatrix).
-// Path B (per-mesh bounds in root-local space) sets transformToWorld = 0.
+// SkinningPrepass output positions are already final skinned positions. Path A
+// writes those world-space positions directly into GPUScene._commandAabbBuffer.
+// Path B supplies an inverse render-basis matrix here to reduce them into the
+// local space used by RenderableMesh culling.
 
 layout(local_size_x = 256) in;
 
@@ -34,8 +34,8 @@ layout(std430, binding = 1) buffer BoundsBuffer
 
 uniform uint vertexCount;
 uniform uint slotIndex;
-uniform int transformToWorld;
-uniform mat4 worldMatrix;
+uniform int applyTransform;
+uniform mat4 transformMatrix;
 
 shared vec3 sharedMin[gl_WorkGroupSize.x];
 shared vec3 sharedMax[gl_WorkGroupSize.x];
@@ -124,8 +124,8 @@ void main()
     if (idx < vertexCount)
     {
         vec3 p = PositionsIn[idx].xyz;
-        if (transformToWorld != 0)
-            p = (worldMatrix * vec4(p, 1.0)).xyz;
+        if (applyTransform != 0)
+            p = (transformMatrix * vec4(p, 1.0)).xyz;
         localMin = p;
         localMax = p;
     }

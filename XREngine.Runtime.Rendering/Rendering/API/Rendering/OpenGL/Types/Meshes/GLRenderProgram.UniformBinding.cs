@@ -245,12 +245,15 @@ namespace XREngine.Rendering.OpenGL
                 return Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) as IGLTexture;
             }
 
-            private bool TryReserveFallbackSamplerUnit(out int textureUnit)
+            private bool TryReserveFallbackSamplerUnit(string? samplerName, out int textureUnit)
             {
                 int maxTextureUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
                 for (int candidate = maxTextureUnits - 1; candidate >= 0; candidate--)
                 {
                     if (_boundSamplerUnits.ContainsKey(candidate))
+                        continue;
+
+                    if (IsTextureUnitReservedForDifferentActiveSampler(candidate, samplerName))
                         continue;
 
                     textureUnit = candidate;
@@ -291,7 +294,7 @@ namespace XREngine.Rendering.OpenGL
                     if (fallbackTexture is null)
                         continue;
 
-                    if (!TryReserveFallbackSamplerUnit(out int fallbackUnit))
+                    if (!TryReserveFallbackSamplerUnit(name, out int fallbackUnit))
                     {
                         string programName = Data.Name ?? BindingId.ToString();
                         Debug.OpenGLErrorEvery(

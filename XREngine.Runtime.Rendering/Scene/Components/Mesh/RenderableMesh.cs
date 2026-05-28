@@ -164,6 +164,8 @@ namespace XREngine.Components.Scene.Mesh
             set => SetField(ref _rootBone, value);
         }
 
+        private readonly TransformBase? _skinnedBoundsRootTransform;
+
         private RenderableComponent _component;
         /// <summary>
         /// The transform that owns this mesh.
@@ -210,6 +212,7 @@ namespace XREngine.Components.Scene.Mesh
             Component = component;
             TransformBase? referenceSearchRoot = GetTransformReferenceSearchRoot();
             TransformBase? serializedRootBone = ResolveTransformReference(mesh.RootBone, referenceSearchRoot);
+            _skinnedBoundsRootTransform = ResolveTransformReference(mesh.RootTransform, referenceSearchRoot);
 
             lock (_lodsLock)
             {
@@ -240,7 +243,7 @@ namespace XREngine.Components.Scene.Mesh
 
             }
 
-            RootBone = DetermineRootBoneFromRenderers() ?? serializedRootBone;
+            RootBone = ResolveSkinnedRootBoneTransform(serializedRootBone, DetermineRootBoneFromRenderers());
 
             _renderBoundsCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, DoRenderBounds);
             RenderInfo = RenderInfo3D.New(component, _rc = new RenderCommandMesh3D(0));
@@ -266,7 +269,7 @@ namespace XREngine.Components.Scene.Mesh
             // This avoids the first registration frame depending on a later queued matrix update.
             if (IsSkinned)
             {
-                TransformBase basisTransform = RootBone ?? Component.Transform;
+                TransformBase basisTransform = GetSkinnedBoundsBasisTransform();
                 SetSkinnedRootRenderMatrix(basisTransform.RenderMatrix);
                 RenderInfo.CullingOffsetMatrix = basisTransform.WorldMatrix;
                 QueuePendingRenderMatrixUpdate();
@@ -450,7 +453,7 @@ namespace XREngine.Components.Scene.Mesh
             var box = (RenderInfo as IOctreeItem)?.WorldCullingVolume;
             if (box is not null)
             {
-                RuntimeEngine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, boundsColor);
+                RenderDebugBox(box.Value, boundsColor);
 
                 if (material is not null && (showTransparencyModeOverlay || showTransparencyClassificationOverlay))
                 {
@@ -524,14 +527,8 @@ namespace XREngine.Components.Scene.Mesh
             {
                 if (!EnsureSkinnedBounds())
                 {
-                    // Fallback to bind-pose bounds when GPU skinned bounds fail.
-                    // For skinned meshes, the bind-pose bounds are in mesh-local space (before any import rotation).
-                    // We should NOT transform by Component.Transform because that includes import rotation
-                    // which would double-rotate the bounds. Instead, use identity for world-space aligned bounds
-                    // OR transform bind-pose through the root bone which has the correct hierarchy.
                     RenderInfo.LocalCullingVolume = _bindPoseBounds;
-                    // Use root bone if available (it includes proper hierarchy), otherwise component transform
-                    RenderInfo.CullingOffsetMatrix = GetCurrentCullingBasisMatrix(RootBone ?? Component.Transform);
+                    RenderInfo.CullingOffsetMatrix = GetSkinnedBasisMatrix();
                 }
             }
             else
@@ -568,7 +565,16 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             ColorF4 boundsColor = RuntimeEngine.EditorPreferences.Theme.MeshBoundsContainedColor;
-            RuntimeEngine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, boundsColor);
+            RenderDebugBox(box.Value, boundsColor);
+        }
+
+        private static void RenderDebugBox(in Box box, ColorF4 color)
+        {
+            Matrix4x4 orientation = box.Transform;
+            orientation.M41 = 0.0f;
+            orientation.M42 = 0.0f;
+            orientation.M43 = 0.0f;
+            RuntimeEngine.Rendering.Debug.RenderBox(box.LocalHalfExtents, box.WorldCenter, orientation, false, color);
         }
 
         private bool ShouldQueueCollectedMeshBoundsDebug(RenderCommandCollection passes, IRuntimeRenderCamera? camera)
@@ -801,21 +807,24 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
-        /// <summary>
-        /// Returns the matrix used to transform skinned mesh bounds from world space to local space.
-        /// For skinned meshes, this is the root bone's world matrix (bounds are in root bone local space).
-        /// For non-skinned meshes, this is the component's world matrix.
-        /// </summary>
+        internal static TransformBase? ResolveSkinnedRootBoneTransform(
+            TransformBase? serializedRootBone,
+            TransformBase? inferredRootBone)
+            => serializedRootBone ?? inferredRootBone;
+
+        internal static TransformBase? ResolveSkinnedBoundsBasisTransform(
+            TransformBase? rootBone,
+            TransformBase? rootTransform)
+            => rootBone ?? rootTransform;
+
+        private TransformBase GetSkinnedBoundsBasisTransform()
+            => ResolveSkinnedBoundsBasisTransform(RootBone, _skinnedBoundsRootTransform) ?? Component.Transform;
+
         private Matrix4x4 GetSkinnedBasisMatrix()
-        {
-            // Skinned mesh bounds should be calculated in root bone local space.
-            // The root bone's world matrix transforms from root bone local to world space.
-            // Its inverse transforms from world space to root bone local space.
-            // Fallback to component transform if no root bone.
-            return RootBone is not null
-                ? GetCurrentCullingBasisMatrix(RootBone)
-                : Component is not null ? GetCurrentCullingBasisMatrix(Component.Transform) : Matrix4x4.Identity;
-        }
+            => GetCurrentCullingBasisMatrix(GetSkinnedBoundsBasisTransform());
+
+        internal Matrix4x4 GetSkinnedBoundsBasisMatrix()
+            => GetSkinnedBasisMatrix();
 
         private static Matrix4x4 GetCurrentCullingBasisMatrix(TransformBase transform)
             => RuntimeEngine.IsRenderThread ? transform.RenderMatrix : transform.WorldMatrix;
@@ -1005,7 +1014,14 @@ namespace XREngine.Components.Scene.Mesh
 
                 if (CurrentLODRenderer?.HasGpuDrivenBoneSource == true)
                 {
-                    Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
+                    // Keep the initial GPU/readback refresh eligible. Treating the bind-pose
+                    // placeholder as a cached skinned result pins debug/culling bounds to the
+                    // import-time box and prevents AllowInitialSkinnedBoundsBuildWhenNever from
+                    // doing its one real build.
+                    if (_skinnedBoundsDirty)
+                        return false;
+
+                    Matrix4x4 basis = GetSkinnedBasisMatrix();
                     SetSkinnedRootRenderMatrix(basis);
                     _skinnedLocalBounds = _bindPoseBounds;
                     _skinnedBoundsDirty = false;
@@ -1025,7 +1041,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ApplyCachedSkinnedBoundsLocked()
         {
-            Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
+            Matrix4x4 basis = GetSkinnedBasisMatrix();
             SetSkinnedRootRenderMatrix(basis);
             if (RenderInfo is not null)
             {
@@ -1044,15 +1060,20 @@ namespace XREngine.Components.Scene.Mesh
         private bool ApplySkinnedBoundsResult(SkinnedMeshBoundsCalculator.Result result, bool markBvhDirty)
         {
             var positions = result.Positions ?? [];
-            _skinnedVertexPositions = positions;
-            _skinnedVertexCount = positions.Length;
-            if (_skinnedVertexCount == 0)
+            if (!HasUsableSkinnedBoundsResult(result))
             {
+                _skinnedVertexPositions = [];
+                _skinnedVertexCount = 0;
                 _hasSkinnedBounds = false;
                 _skinnedBoundsAreWorldSpace = false;
                 return false;
             }
 
+            // The GPU prepass reducer can return an AABB without a CPU vertex snapshot.
+            // That is still enough for culling/debug bounds; CPU BVH rebuilds will simply
+            // skip until a path with positions is available.
+            _skinnedVertexPositions = positions;
+            _skinnedVertexCount = positions.Length;
             _skinnedLocalBounds = result.Bounds;
             _skinnedBoundsDirty = false;
             _hasSkinnedBounds = true;
@@ -1067,6 +1088,18 @@ namespace XREngine.Components.Scene.Mesh
                 RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
             }
             return true;
+        }
+
+        internal static bool HasUsableSkinnedBoundsResult(SkinnedMeshBoundsCalculator.Result result)
+        {
+            if (!result.Bounds.IsValid)
+                return false;
+
+            if (result.Positions is { Length: > 0 })
+                return true;
+
+            Vector3 halfExtents = result.Bounds.HalfExtents;
+            return halfExtents.LengthSquared() > 1.0e-12f;
         }
 
         private bool ApplyGpuResidentSkinnedBoundsDispatchLocked()
@@ -1085,15 +1118,20 @@ namespace XREngine.Components.Scene.Mesh
 
             SkinnedMeshBoundsCalculator.Instance.RegisterSkinnedMesh(this);
 
+            if (TryComputeSkinnedBoundsOnGpu(out var previewBounds) &&
+                ApplySkinnedBoundsResult(previewBounds, markBvhDirty: false))
+            {
+                return true;
+            }
+
+            Matrix4x4 basis = GetSkinnedBasisMatrix();
+            SetSkinnedRootRenderMatrix(basis);
             _skinnedVertexPositions = [];
             _skinnedVertexCount = 0;
             _skinnedLocalBounds = _bindPoseBounds;
             _skinnedBoundsDirty = false;
             _hasSkinnedBounds = true;
             _skinnedBoundsAreWorldSpace = false;
-
-            Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
-            SetSkinnedRootRenderMatrix(basis);
             if (RenderInfo is not null)
             {
                 RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
@@ -1748,8 +1786,9 @@ namespace XREngine.Components.Scene.Mesh
             if (!hasSkinning)
                 return;
 
-            SetSkinnedRootRenderMatrix(worldMatrix);
-            RenderInfo?.CullingOffsetMatrix = worldMatrix;
+            Matrix4x4 basis = GetSkinnedBasisMatrix();
+            SetSkinnedRootRenderMatrix(basis);
+            RenderInfo?.CullingOffsetMatrix = basis;
         }
 
         /// <summary>
@@ -1771,10 +1810,10 @@ namespace XREngine.Components.Scene.Mesh
             bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
-                if (RootBone is not null)
-                    return;
-
-                SetSkinnedRootRenderMatrix(worldMatrix);
+                Matrix4x4 basis = GetSkinnedBasisMatrix();
+                SetSkinnedRootRenderMatrix(basis);
+                RenderInfo?.CullingOffsetMatrix = basis;
+                return;
             }
 
             RenderInfo?.CullingOffsetMatrix = worldMatrix;
@@ -1785,10 +1824,7 @@ namespace XREngine.Components.Scene.Mesh
             bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
-                Matrix4x4 basis = RootBone is null
-                    ? componentMatrix ?? Component.Transform.RenderMatrix
-                    : rootMatrix ?? RootBone.RenderMatrix;
-
+                Matrix4x4 basis = GetSkinnedBasisMatrix();
                 _rc.WorldMatrix = Matrix4x4.Identity;
                 SetSkinnedRootRenderMatrix(basis);
                 RenderInfo?.CullingOffsetMatrix = basis;
@@ -1851,20 +1887,18 @@ namespace XREngine.Components.Scene.Mesh
             int componentVersion;
             int rootBoneVersion;
             Matrix4x4 componentMatrix;
-            Matrix4x4 rootMatrix;
 
             lock (_pendingRenderMatrixLock)
             {
                 componentVersion = _pendingComponentRenderMatrixVersion;
                 rootBoneVersion = _pendingRootBoneRenderMatrixVersion;
                 componentMatrix = _pendingComponentRenderMatrix;
-                rootMatrix = _pendingRootBoneRenderMatrix;
             }
 
             bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
-                Matrix4x4 basis = RootBone is null ? componentMatrix : rootMatrix;
+                Matrix4x4 basis = GetSkinnedBasisMatrix();
                 _rc?.WorldMatrix = Matrix4x4.Identity;
                 SetSkinnedRootRenderMatrix(basis);
                 RenderInfo?.CullingOffsetMatrix = basis;

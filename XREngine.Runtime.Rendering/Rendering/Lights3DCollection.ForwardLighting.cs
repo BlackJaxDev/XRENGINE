@@ -895,7 +895,7 @@ namespace XREngine.Scene
                             perLightCascadeTex = dirLight.CascadedShadowMapTexture;
                     }
 
-                    bool perLightShadowEnabled = perLightUseAtlas || perLightShadowTex is not null || perLightCascadeTex is not null;
+                    bool perLightShadowEnabled = perLightShadowTex is not null || perLightCascadeTex is not null;
                     _directionalShadowMapEnabled[i] = perLightShadowEnabled ? 1 : 0;
                     _directionalUseCascadedShadows[i] = perLightUseCascades ? 1 : 0;
                     anyDirectionalShadowEnabled |= perLightShadowEnabled;
