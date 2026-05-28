@@ -529,13 +529,14 @@ public sealed class AlphaToCoveragePhase2Tests
     }
 
     [Test]
-    public void SurfaceDetailNormalMapping_FallsBackToHeightReconstructionForGrayscaleInputs()
+    public void SurfaceDetailNormalMapping_UsesExplicitModeSelectionOnly()
     {
         string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Snippets/SurfaceDetailNormalMapping.glsl").Replace("\r\n", "\n");
         shaderSource.ShouldContain("vec3 T = tangentWS - N * dot(N, tangentWS);");
-        shaderSource.ShouldContain("float grayscaleDelta = max(abs(sampledColor.r - sampledColor.g)");
-        shaderSource.ShouldContain("if (grayscaleDelta <= 0.02)");
+        shaderSource.ShouldContain("if (NormalMapMode == 1)");
         shaderSource.ShouldContain("tangentNormal = XRENGINE_HeightToNormalSobel(uv);");
+        shaderSource.ShouldNotContain("grayscaleDelta");
+        shaderSource.ShouldNotContain("sampledColor.r - sampledColor.g");
     }
 
     [Test]

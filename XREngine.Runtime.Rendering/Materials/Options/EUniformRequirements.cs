@@ -35,8 +35,12 @@ namespace XREngine.Rendering.Models.Materials
         /// Origin is bottom left.
         /// </summary>
         MousePosition = 16,
+        /// <summary>
+        /// Forward ambient occlusion textures and AO tuning uniforms will be provided.
+        /// </summary>
+        AmbientOcclusion = 32,
 
-        //UserInterface = 32,
+        //UserInterface = 64,
 
         //LightsAndCamera = Lights | Camera,
     }
@@ -116,14 +120,14 @@ namespace XREngine.Rendering.Models.Materials
                 [EngineShaderBindingNames.Uniforms.ForwardPlusEyeCount] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ForwardContactShadowsEnabled] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Uniforms.ForwardContactShadowsArrayEnabled] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Uniforms.AmbientOcclusionEnabled] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Uniforms.AmbientOcclusionArrayEnabled] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Uniforms.AmbientOcclusionPower] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Uniforms.AmbientOcclusionMultiBounce] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Samplers.AmbientOcclusionTexture] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Samplers.AmbientOcclusionTextureArray] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Uniforms.SpecularOcclusionEnabled] = EUniformRequirements.Lights,
-                [EngineShaderBindingNames.Uniforms.DebugForwardAOPower] = EUniformRequirements.Lights,
+                [EngineShaderBindingNames.Uniforms.AmbientOcclusionEnabled] = EUniformRequirements.AmbientOcclusion,
+                [EngineShaderBindingNames.Uniforms.AmbientOcclusionArrayEnabled] = EUniformRequirements.AmbientOcclusion,
+                [EngineShaderBindingNames.Uniforms.AmbientOcclusionPower] = EUniformRequirements.AmbientOcclusion,
+                [EngineShaderBindingNames.Uniforms.AmbientOcclusionMultiBounce] = EUniformRequirements.AmbientOcclusion,
+                [EngineShaderBindingNames.Samplers.AmbientOcclusionTexture] = EUniformRequirements.AmbientOcclusion,
+                [EngineShaderBindingNames.Samplers.AmbientOcclusionTextureArray] = EUniformRequirements.AmbientOcclusion,
+                [EngineShaderBindingNames.Uniforms.SpecularOcclusionEnabled] = EUniformRequirements.AmbientOcclusion,
+                [EngineShaderBindingNames.Uniforms.DebugForwardAOPower] = EUniformRequirements.AmbientOcclusion,
                 [EngineShaderBindingNames.Uniforms.ForwardPbrResourcesEnabled] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Samplers.BRDF] = EUniformRequirements.Lights,
                 [EngineShaderBindingNames.Samplers.IrradianceArray] = EUniformRequirements.Lights,
@@ -217,6 +221,34 @@ namespace XREngine.Rendering.Models.Materials
         }
 
         /// <summary>
+        /// Returns the requirement that should be inferred automatically from a shader uniform.
+        /// Forward-lighting uses a broad set of helper uniforms and samplers whose names also
+        /// appear in deferred and post-process shaders, so only unambiguous forward-lighting
+        /// entry points are allowed to trigger <see cref="EUniformRequirements.Lights"/>.
+        /// </summary>
+        public static EUniformRequirements GetAutoDetectedRequirement(string uniformName)
+        {
+            string lookupName = uniformName.EndsWith("[0]", StringComparison.Ordinal)
+                ? uniformName[..^3]
+                : uniformName;
+
+            EUniformRequirements requirement = GetRequirement(lookupName);
+            if (requirement == EUniformRequirements.Lights && !IsForwardLightingAutoBindingTrigger(lookupName))
+                return EUniformRequirements.None;
+
+            return requirement;
+        }
+
+        private static bool IsForwardLightingAutoBindingTrigger(string uniformName)
+            => uniformName is
+                EngineShaderBindingNames.Uniforms.DirLightCount or
+                EngineShaderBindingNames.Uniforms.PointLightCount or
+                EngineShaderBindingNames.Uniforms.SpotLightCount or
+                EngineShaderBindingNames.Uniforms.ForwardPlusEnabled or
+                EngineShaderBindingNames.Uniforms.ForwardPbrResourcesEnabled or
+                EngineShaderBindingNames.Uniforms.ForwardContactShadowsEnabled;
+
+        /// <summary>
         /// Returns the OR of <em>all</em> <see cref="EUniformRequirements"/> flags that
         /// can provide the given uniform, or <see cref="EUniformRequirements.None"/> if it
         /// is not engine-driven. Use this when checking whether an active material already
@@ -248,7 +280,7 @@ namespace XREngine.Rendering.Models.Materials
                     @"\buniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+(\w+)\s*[;\[=]"))
             {
                 string name = match.Groups[1].Value;
-                flags |= GetRequirement(name);
+                flags |= GetAutoDetectedRequirement(name);
             }
 
             return flags;

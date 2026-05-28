@@ -223,6 +223,7 @@ public partial class OpenGLRenderer
             int requestedWorkers = ResolveProgramCompileLinkWorkerCount();
 
             var compileContexts = new List<GLSharedContext>(requestedWorkers);
+            var compileContextNames = new List<string>(requestedWorkers);
             for (int i = 0; i < requestedWorkers; i++)
             {
                 string threadName = requestedWorkers == 1
@@ -232,11 +233,7 @@ public partial class OpenGLRenderer
                 if (compileContext.Initialize(XRWindow))
                 {
                     compileContexts.Add(compileContext);
-                    // KHR_parallel_shader_compile is per-context. Without enabling
-                    // it on each worker, the driver falls back to serial compile/
-                    // link on the worker context, causing cold links of large
-                    // uber fragment shaders to take 60-120+ seconds per program.
-                    EnableParallelShaderCompileOnSharedContextWorker(compileContext, threadName);
+                    compileContextNames.Add(threadName);
                 }
                 else
                 {
@@ -247,6 +244,15 @@ public partial class OpenGLRenderer
                     // transient. After the loop, we still create the queue from
                     // whatever workers we got (or skip queue creation if zero).
                 }
+            }
+
+            for (int i = 0; i < compileContexts.Count; i++)
+            {
+                // KHR_parallel_shader_compile is per-context. Without enabling
+                // it on each worker, the driver falls back to serial compile/
+                // link on the worker context, causing cold links of large
+                // uber fragment shaders to take 60-120+ seconds per program.
+                EnableParallelShaderCompileOnSharedContextWorker(compileContexts[i], compileContextNames[i]);
             }
 
             if (compileContexts.Count > 0)

@@ -99,13 +99,13 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            // Phase D audit: log buffer size and routing decision on first
-            // PostGenerated. One line per buffer; emit to log_opengl.txt so
-            // a cold-start grep can produce a route-by-size histogram and
-            // identify any meaningful number of <AsyncUploadThreshold
-            // buffers slipping into the synchronous ImmutableSync route.
+            // Optional Phase D audit: log buffer size and routing decision on
+            // first PostGenerated when GPU buffer debug logging is enabled.
             private void LogFirstUseAudit(string route)
             {
+                if (!IsGpuBufferLoggingEnabled())
+                    return;
+
                 Debug.OpenGL(
                     $"[BufferUploadAudit] route={route} " +
                     $"sizeBytes={Data.Length} " +

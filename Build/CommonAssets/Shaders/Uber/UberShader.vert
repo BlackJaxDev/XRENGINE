@@ -46,11 +46,11 @@ layout(location = 7) in vec4 Color0;
 // ============================================
 // Locations here are a shared contract with UberShader.frag and the engine's
 // generated vertex shader.
-layout(location = 0)  out vec3 FragPos;        // world-space position
-layout(location = 1)  out vec3 FragNorm;       // world-space geometric normal
-layout(location = 2)  out vec3 FragTan;        // world-space tangent
-layout(location = 3)  out vec3 FragBinorm;     // world-space bitangent
-layout(location = 4)  out vec2 FragUV0;        // primary texture coordinates
+layout(location = 0) out vec3 FragPos;         // world-space position
+layout(location = 1) out vec3 FragNorm;        // world-space geometric normal
+layout(location = 2) out vec3 FragTan;         // world-space tangent
+layout(location = 3) out vec3 FragBinorm;      // world-space bitangent
+layout(location = 4) out vec2 FragUV0;         // primary texture coordinates
 layout(location = 12) out vec4 FragColor0;     // per-vertex RGBA color
 layout(location = 20) out vec3 FragPosLocal;   // object/local-space position
 layout(location = 22) out float FragViewIndex; // which eye (0/1) for stereo

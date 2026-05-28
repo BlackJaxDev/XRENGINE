@@ -578,12 +578,14 @@ namespace XREngine.Rendering.OpenGL
                 if (!blockedMaterial.Data.TryGetUberMaterialState(out _, out _))
                     return false;
 
-                bool combinedPending = ReferenceEquals(_combinedProgramMaterialKey, blockedMaterial.Data) &&
-                    (_combinedProgram?.IsAsyncBuildPending ?? false);
-                if (combinedPending)
+                bool combinedUnavailable = ReferenceEquals(_combinedProgramMaterialKey, blockedMaterial.Data) &&
+                    _combinedProgram is not null &&
+                    !_combinedProgram.IsLinked;
+                if (combinedUnavailable)
                     return true;
 
-                return blockedMaterial.SeparableProgram?.IsAsyncBuildPending ?? false;
+                GLRenderProgram? separableProgram = blockedMaterial.SeparableProgram;
+                return separableProgram is not null && !separableProgram.IsLinked;
             }
 
             private static XRMaterial GetPendingUberFallbackMaterial()
@@ -601,7 +603,8 @@ namespace XREngine.Rendering.OpenGL
                     material = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(0.82f, 0.72f, 0.38f, 1.0f));
                     material.Name = "PendingUberFallbackMaterial";
                     material.ShaderProgramPriority = EProgramPriority.Interactive;
-                    material.EnsureShaderPipelineProgram(allowWhenShaderPipelinesDisabled: true);
+                    if (RuntimeEngine.Rendering.Settings.AllowShaderPipelines)
+                        material.EnsureShaderPipelineProgram();
                     s_pendingUberFallbackMaterial = material;
                     return material;
                 }

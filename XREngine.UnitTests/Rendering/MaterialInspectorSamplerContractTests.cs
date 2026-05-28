@@ -13,10 +13,14 @@ public sealed class MaterialInspectorSamplerContractTests
     [Test]
     public void UniformRequirementsDetection_RecognizesEngineManagedForwardSamplers()
     {
-        string[] engineSamplerNames =
+        string[] ambientOcclusionSamplerNames =
         [
             EngineShaderBindingNames.Samplers.AmbientOcclusionTexture,
             EngineShaderBindingNames.Samplers.AmbientOcclusionTextureArray,
+        ];
+
+        string[] lightSamplerNames =
+        [
             EngineShaderBindingNames.Samplers.BRDF,
             EngineShaderBindingNames.Samplers.IrradianceArray,
             EngineShaderBindingNames.Samplers.PrefilterArray,
@@ -24,7 +28,10 @@ public sealed class MaterialInspectorSamplerContractTests
             EngineShaderBindingNames.Samplers.ShadowMapArray,
         ];
 
-        foreach (string samplerName in engineSamplerNames)
+        foreach (string samplerName in ambientOcclusionSamplerNames)
+            UniformRequirementsDetection.GetAllProviders(samplerName).ShouldBe(EUniformRequirements.AmbientOcclusion, samplerName);
+
+        foreach (string samplerName in lightSamplerNames)
             UniformRequirementsDetection.GetAllProviders(samplerName).ShouldBe(EUniformRequirements.Lights, samplerName);
     }
 

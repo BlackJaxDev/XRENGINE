@@ -87,6 +87,8 @@ uniform int _ColorThemeIndex;
 // Normal Map
 // ============================================
 //@category("Surface")
+//@feature(id="normal-map", name="Normal Map", default=off, cost=medium)
+#ifndef XRENGINE_UBER_DISABLE_NORMAL_MAP
 //@property(name="_BumpMap", display="Normal Map", slot=texture, indirect=texture, semantic=normal)
 //@tooltip("Tangent-space normal map used to perturb surface lighting.")
 uniform sampler2D _BumpMap;
@@ -97,12 +99,13 @@ uniform int _BumpMapUV;
 uniform float _BumpScale;
 uniform int NormalMapMode;
 uniform float HeightMapScale;
+#endif
 
 // ============================================
 // Alpha / Transparency
 // ============================================
 //@category("Transparency", order=10)
-//@feature(id="alpha-masks", name="Alpha Masks", default=on, cost=low)
+//@feature(id="alpha-masks", name="Alpha Masks", default=off, cost=low)
 #ifndef XRENGINE_UBER_DISABLE_ALPHA_MASKS
 //@property(name="_AlphaMask", display="Alpha Mask", slot=texture)
 //@tooltip("Texture that remaps surface alpha before transparency or cutoff decisions.")

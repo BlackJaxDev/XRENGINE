@@ -64,6 +64,8 @@ public sealed class ForwardAmbientOcclusionShaderTests : GpuTestBase
     {
         string source = LoadShaderSource("Snippets/AmbientOcclusionSampling.glsl");
 
+        source.ShouldContain("layout(binding = 27) uniform sampler2D AmbientOcclusionTexture;");
+        source.ShouldContain("layout(binding = 33) uniform sampler2DArray AmbientOcclusionTextureArray;");
         source.ShouldContain("uniform sampler2D AmbientOcclusionTexture;");
         source.ShouldContain("uniform sampler2DArray AmbientOcclusionTextureArray;");
         source.ShouldContain("uniform bool AmbientOcclusionArrayEnabled;");

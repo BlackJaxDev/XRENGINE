@@ -5,6 +5,7 @@ using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering;
+using XREngine.Scene;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -156,7 +157,9 @@ namespace XREngine.Rendering.OpenGL
                         SetTextureUniforms(materialProgram);
                 }
 
-                EUniformRequirements requiredEngineUniforms = renderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None;
+                EUniformRequirements requiredEngineUniforms =
+                    (renderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
+                    materialProgram.GetActiveEngineUniformRequirements();
                 if (RequiresEngineUniformBinding(materialProgram, requiredEngineUniforms))
                 {
                     using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.EngineUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
@@ -266,10 +269,13 @@ namespace XREngine.Rendering.OpenGL
                 if (requiredRequirements == EUniformRequirements.None)
                     return false;
 
-                // Light bindings include shadow-map samplers. Each material draw starts a new
-                // binding batch, so they must be rebound even when scalar light uniforms were
+                // Light/AO bindings include samplers. Each material draw starts a new
+                // binding batch, so they must be rebound even when scalar uniforms were
                 // already cached for the current frame/context.
                 if (requiredRequirements.HasFlag(EUniformRequirements.Lights))
+                    return true;
+
+                if (requiredRequirements.HasFlag(EUniformRequirements.AmbientOcclusion))
                     return true;
 
                 return program.GetMissingEngineUniformRequirements(requiredRequirements) != EUniformRequirements.None;
@@ -283,6 +289,8 @@ namespace XREngine.Rendering.OpenGL
                 EUniformRequirements missingProgramRequirements = program.GetMissingEngineUniformRequirements(reqs);
                 if (reqs.HasFlag(EUniformRequirements.Lights))
                     missingProgramRequirements |= EUniformRequirements.Lights;
+                if (reqs.HasFlag(EUniformRequirements.AmbientOcclusion))
+                    missingProgramRequirements |= EUniformRequirements.AmbientOcclusion;
 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.Camera))
                 {
@@ -290,15 +298,22 @@ namespace XREngine.Rendering.OpenGL
                     RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program.Data, false);
                 }
 
+                bool lightingUniformsBound = false;
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.Lights))
                 {
                     var world = RuntimeEngine.Rendering.State.RenderingWorld;
                     var lights = world?.Lights;
                     if (lights != null)
+                    {
                         lights.SetForwardLightingUniforms(program.Data);
+                        lightingUniformsBound = true;
+                    }
                     else
                         Debug.OpenGL($"[ForwardLighting] Skipped: RenderingWorld={world != null}, Lights={lights != null}");
                 }
+
+                if (missingProgramRequirements.HasFlag(EUniformRequirements.AmbientOcclusion) && !lightingUniformsBound)
+                    Lights3DCollection.SetForwardAmbientOcclusionUniforms(program.Data);
 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.RenderTime))
                 {

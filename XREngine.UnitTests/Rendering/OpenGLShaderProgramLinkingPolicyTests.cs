@@ -136,6 +136,20 @@ public sealed class OpenGLShaderProgramLinkingPolicyTests
     }
 
     [Test]
+    public void SharedContextStall_ForNonHazard_RetriesDriverParallelWhenAvailable()
+    {
+        OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(
+            strategy: EOpenGLShaderLinkStrategy.Auto,
+            driverParallelAvailable: true,
+            sharedContextCompileAvailable: true,
+            forceDriverParallelSourceRetry: true));
+
+        selection.Lane.ShouldBe(EOpenGLProgramBuildLane.DriverParallelSource);
+        selection.IsAsync.ShouldBeTrue();
+        selection.Reason.ShouldContain("shared-context source link stalled");
+    }
+
+    [Test]
     public void SynchronousStrategy_StillAllowsConfiguredAsyncBinaryUploads()
     {
         OpenGLShaderLinkBackendSelection selection = OpenGLShaderLinkBackendSelector.Select(CreateContext(

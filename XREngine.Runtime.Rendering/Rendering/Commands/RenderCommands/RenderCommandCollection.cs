@@ -1,6 +1,8 @@
 using XREngine.Extensions;
 using System;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -33,6 +35,8 @@ namespace XREngine.Rendering.Commands
         private static readonly CpuRenderOcclusionCoordinator s_cpuOcclusionCoordinator = new();
         private static readonly CpuSoftwareOcclusionCuller s_cpuSoftwareOcclusionCuller = new();
         private static int s_addCpuMissingPassDiagCount = 0;
+        private const int SponzaCpuDiagMaxLines = 768;
+        private static int s_sponzaCpuDiagLines;
         private Dictionary<int, Type?> _passSorterTypes = [];
         private Dictionary<int, long> _updatingPassSortOrderCounters = [];
 
@@ -273,8 +277,19 @@ namespace XREngine.Rendering.Commands
             using (_lock.EnterScope())
             {
                 item.SortOrderKey = GetSortOrderKey(pass);
+                int beforeCount = set.Count;
                 set.Add(item);
+                int afterCount = set.Count;
                 ++_numCommandsRecentlyAddedToUpdate;
+                if (ShouldLogSponzaCpuDiag(item))
+                {
+                    LogSponzaCpuDiag(
+                        afterCount == beforeCount ? "collect-duplicate" : "collect-add",
+                        pass,
+                        item,
+                        camera: null,
+                        $"updatingPassCount={afterCount}, dirty={item._dirty}, swapQueued={item._swapQueued}");
+                }
 
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
                 // the last publish. _swapQueued dedups across multiple AddCPU calls for the same
@@ -437,12 +452,14 @@ namespace XREngine.Rendering.Commands
                     bool excludedFromGpuIndirect = meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;
                     if (!excludedFromGpuIndirect)
                     {
+                        LogSponzaCpuDiag("skip-gpu-owned", renderPass, cmd, camera, "skipGpuCommands=True");
                         cpuCmdIndex++;
                         continue;
                     }
 
                     if (!allowExcludedGpuFallbackMeshes)
                     {
+                        LogSponzaCpuDiag("skip-excluded-fallback-disabled", renderPass, cmd, camera, "allowExcludedGpuFallbackMeshes=False");
                         onExcludedGpuFallbackMesh?.Invoke(meshCmd);
                         cpuCmdIndex++;
                         continue;
@@ -455,6 +472,7 @@ namespace XREngine.Rendering.Commands
                     // whose AABB / depth contract is unsuitable for AnySamplesPassedConservative).
                     if (CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(occlMesh))
                     {
+                        LogSponzaCpuDiag("draw-cpu-query-excluded", renderPass, cmd, camera, "cpu-query-occlusion-excluded");
                         cmd.Render();
                         cpuCmdIndex++;
                         continue;
@@ -468,6 +486,8 @@ namespace XREngine.Rendering.Commands
 
                     if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Skip)
                     {
+                        if (ShouldLogSponzaCpuDiag(cmd))
+                            LogSponzaCpuDiag("skip-cpu-query", renderPass, cmd, camera, $"queryKey={queryKey}");
                         XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
                         cpuCmdIndex++;
                         continue;
@@ -489,6 +509,8 @@ namespace XREngine.Rendering.Commands
                         if (!needsHardwareQuery)
                         {
                             // Cull telemetry: visually the mesh contributes no color this frame.
+                            if (ShouldLogSponzaCpuDiag(cmd))
+                                LogSponzaCpuDiag("skip-cpu-query-cached", renderPass, cmd, camera, $"queryKey={queryKey}, cpuSocCull={cpuSocCull}");
                             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
                             cpuCmdIndex++;
                             continue;
@@ -500,6 +522,8 @@ namespace XREngine.Rendering.Commands
                             if (CpuQueryProxyIsNearPlaneUnsafe(camera!, probeBounds.Value))
                             {
                                 s_cpuOcclusionCoordinator.ForceVisible(renderPass, queryKey);
+                                if (ShouldLogSponzaCpuDiag(cmd))
+                                    LogSponzaCpuDiag("draw-cpu-query-near-plane", renderPass, cmd, camera, $"queryKey={queryKey}");
                                 cmd.Render();
                                 cpuCmdIndex++;
                                 continue;
@@ -510,6 +534,8 @@ namespace XREngine.Rendering.Commands
                             // partial depth that would exist at this command's iteration
                             // point. This eliminates render-order false positives.
                             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
+                            if (ShouldLogSponzaCpuDiag(cmd))
+                                LogSponzaCpuDiag("skip-cpu-query-probe", renderPass, cmd, camera, $"queryKey={queryKey}, cpuSocCull={cpuSocCull}");
                             deferredProbes.Add(new DeferredProbe(queryKey, probeBounds.Value));
                             cpuCmdIndex++;
                             continue;
@@ -536,6 +562,8 @@ namespace XREngine.Rendering.Commands
                         else
                             deferredProbes!.Add(new DeferredProbe(queryKey, visibleProbeBounds));
 
+                        if (ShouldLogSponzaCpuDiag(cmd))
+                            LogSponzaCpuDiag("draw-cpu-query-visible", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery=True");
                         cmd?.Render();
                     }
                     else
@@ -550,6 +578,8 @@ namespace XREngine.Rendering.Commands
                             s_cpuOcclusionCoordinator.BeginQuery(renderPass, queryKey);
                         try
                         {
+                            if (ShouldLogSponzaCpuDiag(cmd))
+                                LogSponzaCpuDiag("draw-cpu-query-direct", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery={needsHardwareQuery}");
                             cmd?.Render();
                         }
                         finally
@@ -568,12 +598,15 @@ namespace XREngine.Rendering.Commands
                     cmd.CullingVolume is AABB socBounds &&
                     !s_cpuSoftwareOcclusionCuller.TestVisible(cmd.StableQueryKey, socBounds))
                 {
+                    if (ShouldLogSponzaCpuDiag(cmd))
+                        LogSponzaCpuDiag("skip-cpu-soc", renderPass, cmd, camera, $"queryKey={cmd.StableQueryKey}");
                     cpuCmdIndex++;
                     continue;
                 }
 
                 cpuCmdIndex++;
 
+                LogSponzaCpuDiag("draw-cpu", renderPass, cmd, camera, "occlusion=Disabled");
                 cmd?.Render();
             }
 
@@ -1142,6 +1175,70 @@ namespace XREngine.Rendering.Commands
             => _passMetadata.TryGetValue(passIndex, out metadata!);
 
         public IReadOnlyDictionary<int, RenderPassMetadata> PassMetadata => _passMetadata;
+
+        private static bool SponzaCpuDiagEnabled
+        {
+            get
+            {
+#if DEBUG || EDITOR
+                return RenderDiagnosticsFlags.ModelRenderDiagEnabled && Volatile.Read(ref s_sponzaCpuDiagLines) < SponzaCpuDiagMaxLines;
+#else
+                return false;
+#endif
+            }
+        }
+
+        private static void LogSponzaCpuDiag(string phase, int renderPass, RenderCommand cmd, XRCamera? camera, string detail)
+        {
+            if (!ShouldLogSponzaCpuDiag(cmd) || cmd is not RenderCommandMesh3D meshCommand)
+                return;
+
+            int line = Interlocked.Increment(ref s_sponzaCpuDiagLines);
+            if (line > SponzaCpuDiagMaxLines)
+                return;
+
+            XRMeshRenderer? renderer = meshCommand.Mesh;
+            var material = meshCommand.MaterialOverride ?? renderer?.Material;
+            XRMesh? mesh = renderer?.Mesh;
+            Debug.Rendering(
+                "[SponzaFlickerDiag.CPU] frame={0} phase={1} line={2} cmd={3} stable={4} pass={5} cmdPass={6} enabled={7} renderEnabled={8} forceCpu={9} instances={10} sortKey={11} distance={12:F3} camera={13} sourceSubMesh='{14}' mesh='{15}' material='{16}' detail='{17}'",
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                phase,
+                line,
+                RuntimeHelpers.GetHashCode(cmd),
+                cmd.StableQueryKey,
+                renderPass,
+                cmd.RenderPass,
+                cmd.Enabled,
+                cmd.RenderEnabled,
+                meshCommand.ForceCpuRendering,
+                meshCommand.Instances,
+                cmd.SortOrderKey,
+                meshCommand.RenderDistance,
+                camera?.GetHashCode().ToString() ?? "<null>",
+                renderer?.SourceSubMeshAsset?.Name ?? "<null>",
+                mesh?.Name ?? "<null>",
+                material?.Name ?? "<null>",
+                detail);
+        }
+
+        private static bool ShouldLogSponzaCpuDiag(RenderCommand cmd)
+            => SponzaCpuDiagEnabled &&
+               cmd is RenderCommandMesh3D meshCommand &&
+               IsSponzaCommand(meshCommand);
+
+        private static bool IsSponzaCommand(RenderCommandMesh3D command)
+        {
+            XRMeshRenderer? renderer = command.Mesh;
+            var material = command.MaterialOverride ?? renderer?.Material;
+            return ContainsSponzaToken(renderer?.SourceSubMeshAsset?.Name) ||
+                   ContainsSponzaToken(renderer?.Mesh?.Name) ||
+                   ContainsSponzaToken(material?.Name);
+        }
+
+        private static bool ContainsSponzaToken(string? value)
+            => !string.IsNullOrWhiteSpace(value) &&
+               value.Contains("sponza", StringComparison.OrdinalIgnoreCase);
 
         public bool ValidatePassMetadata()
         {

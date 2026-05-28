@@ -62,6 +62,8 @@ namespace XREngine.Scene
         private const string PointShadowAtlasName = "PointLightShadowAtlas";
         private const string SpotShadowAtlasName = "SpotLightShadowAtlas";
         private const string DirectionalShadowAtlasName = "DirectionalShadowAtlas";
+        private const int ForwardAmbientOcclusionUnit = 27;
+        private const int ForwardAmbientOcclusionArrayUnit = 33;
 
         private static string[] CreateIndexedNames(string prefix, int count)
         {
@@ -514,10 +516,61 @@ namespace XREngine.Scene
             program.Uniform(viewProj.ToStringFast(), viewProjectionMatrix);
         }
 
+        internal static void SetForwardAmbientOcclusionUniforms(XRRenderProgram program)
+        {
+            XRTexture? ambientOcclusionTexture = null;
+            var currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            var ambientOcclusionCamera = RuntimeEngine.Rendering.State.RenderingCamera
+                ?? currentPipeline?.RenderState.SceneCamera
+                ?? currentPipeline?.LastSceneCamera
+                ?? currentPipeline?.LastRenderingCamera;
+            var aoStage = ambientOcclusionCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            AmbientOcclusionSettings? aoSettings = aoStage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true
+                ? backing
+                : null;
+
+            bool ambientOcclusionEnabled = currentPipeline is not null &&
+                (aoSettings?.Enabled ?? true) &&
+                currentPipeline.TryGetTexture(
+                    DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
+                    out ambientOcclusionTexture) && ambientOcclusionTexture is not null;
+            bool ambientOcclusionArrayEnabled = ambientOcclusionTexture is XRTexture2DArray;
+
+            var area = RuntimeEngine.Rendering.State.RenderArea;
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
+
+            program.Uniform(EngineShaderBindingNames.Uniforms.AmbientOcclusionEnabled, ambientOcclusionEnabled);
+            program.Uniform(EngineShaderBindingNames.Uniforms.AmbientOcclusionArrayEnabled, ambientOcclusionArrayEnabled);
+            program.Uniform(EngineShaderBindingNames.Uniforms.AmbientOcclusionPower, aoSettings?.Power ?? 1.0f);
+            program.Uniform(
+                EngineShaderBindingNames.Uniforms.AmbientOcclusionMultiBounce,
+                AmbientOcclusionSettings.NormalizeType(aoSettings?.Type ?? AmbientOcclusionSettings.EType.ScreenSpace) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion
+                && aoSettings?.GroundTruth.MultiBounceEnabled == true);
+            program.Uniform(
+                EngineShaderBindingNames.Uniforms.SpecularOcclusionEnabled,
+                AmbientOcclusionSettings.NormalizeType(aoSettings?.Type ?? AmbientOcclusionSettings.EType.ScreenSpace) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion
+                && aoSettings?.GroundTruth.SpecularOcclusionEnabled == true);
+            program.Uniform(EngineShaderBindingNames.Uniforms.DebugForwardAOPower, 0.0f);
+
+            program.Uniform(EngineShaderBindingNames.Samplers.AmbientOcclusionTexture, ForwardAmbientOcclusionUnit);
+            program.Uniform(EngineShaderBindingNames.Samplers.AmbientOcclusionTextureArray, ForwardAmbientOcclusionArrayUnit);
+            if (ambientOcclusionEnabled && ambientOcclusionTexture is not XRTexture2DArray)
+                program.Sampler(EngineShaderBindingNames.Samplers.AmbientOcclusionTexture, ambientOcclusionTexture!, ForwardAmbientOcclusionUnit);
+            else
+                program.Sampler(EngineShaderBindingNames.Samplers.AmbientOcclusionTexture, DummyShadowMap, ForwardAmbientOcclusionUnit);
+            program.Sampler(
+                EngineShaderBindingNames.Samplers.AmbientOcclusionTextureArray,
+                ambientOcclusionTexture as XRTexture2DArray ?? DummyAmbientOcclusionArray,
+                ForwardAmbientOcclusionArrayUnit);
+        }
+
         internal void SetForwardLightingUniforms(XRRenderProgram program)
         {
             static void DisablePbrResources(XRRenderProgram program)
             {
+                program.SuppressFallbackSamplerWarning("BRDF");
                 program.SuppressFallbackSamplerWarning("IrradianceArray");
                 program.SuppressFallbackSamplerWarning("PrefilterArray");
                 program.Uniform("ForwardPbrResourcesEnabled", false);
@@ -532,7 +585,6 @@ namespace XREngine.Scene
             const int directionalShadowMapArrayStartUnit = 17;
             const int pointShadowStartUnit = 19;
             const int spotShadowStartUnit = 23;
-            const int forwardAmbientOcclusionArrayUnit = 27;
             const int forwardContactDepthUnit = 28;
             const int forwardContactNormalUnit = 29;
             const int forwardContactDepthArrayUnit = 30;
@@ -589,45 +641,8 @@ namespace XREngine.Scene
             }
             program.Uniform("ForwardPlusEyeCount", RuntimeEngine.Rendering.State.IsStereoPass ? 2 : 1);
 
-            const int forwardAmbientOcclusionUnit = 14;
-            XRTexture? ambientOcclusionTexture = null;
+            SetForwardAmbientOcclusionUniforms(program);
             var currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-            var ambientOcclusionCamera = RuntimeEngine.Rendering.State.RenderingCamera
-                ?? currentPipeline?.RenderState.SceneCamera
-                ?? currentPipeline?.LastSceneCamera
-                ?? currentPipeline?.LastRenderingCamera;
-            var aoStage = ambientOcclusionCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
-            AmbientOcclusionSettings? aoSettings = aoStage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true
-                ? backing
-                : null;
-            bool ambientOcclusionEnabled = currentPipeline is not null &&
-                (aoSettings?.Enabled ?? true) &&
-                currentPipeline.TryGetTexture(
-                    DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
-                    out ambientOcclusionTexture) && ambientOcclusionTexture is not null;
-            bool ambientOcclusionArrayEnabled = ambientOcclusionTexture is XRTexture2DArray;
-            program.Uniform("AmbientOcclusionEnabled", ambientOcclusionEnabled);
-            program.Uniform("AmbientOcclusionArrayEnabled", ambientOcclusionArrayEnabled);
-            program.Uniform("AmbientOcclusionPower", aoSettings?.Power ?? 1.0f);
-            program.Uniform(
-                "AmbientOcclusionMultiBounce",
-                AmbientOcclusionSettings.NormalizeType(aoSettings?.Type ?? AmbientOcclusionSettings.EType.ScreenSpace) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion
-                && aoSettings?.GroundTruth.MultiBounceEnabled == true);
-            program.Uniform(
-                "SpecularOcclusionEnabled",
-                AmbientOcclusionSettings.NormalizeType(aoSettings?.Type ?? AmbientOcclusionSettings.EType.ScreenSpace) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion
-                && aoSettings?.GroundTruth.SpecularOcclusionEnabled == true);
-            // Debug power exponent: set > 0 (e.g. 8) to dramatically exaggerate AO on forward objects.
-            // This lets us visually confirm the shader is sampling and applying the AO texture.
-            // 0 = normal behaviour.  Try 8.0 to make subtle AO extremely visible.
-            program.Uniform("DebugForwardAOPower", 0.0f);
-            program.Uniform(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, forwardAmbientOcclusionUnit);
-            program.Uniform("AmbientOcclusionTextureArray", forwardAmbientOcclusionArrayUnit);
-            if (ambientOcclusionEnabled && ambientOcclusionTexture is not XRTexture2DArray)
-                program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, ambientOcclusionTexture!, forwardAmbientOcclusionUnit);
-            else
-                program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, DummyShadowMap, forwardAmbientOcclusionUnit);
-            program.Sampler("AmbientOcclusionTextureArray", ambientOcclusionTexture as XRTexture2DArray ?? DummyAmbientOcclusionArray, forwardAmbientOcclusionArrayUnit);
 
             XRTexture? forwardContactDepthTexture = null;
             XRTexture? forwardContactNormalTexture = null;
@@ -669,56 +684,6 @@ namespace XREngine.Scene
                     DisablePbrResources(program);
                     break;
             }
-
-            /*
-            Debug.LightingEvery(
-                "ForwardAO.Binding",
-                TimeSpan.FromSeconds(1),
-                "[ForwardAO] enabled={0} pipeline={1} texture={2} textureType={3} unit={4} screen={5}x{6} origin={7}",
-                ambientOcclusionEnabled,
-                currentPipeline?.GetType().Name ?? "null",
-                ambientOcclusionTexture?.Name ?? "null",
-                ambientOcclusionTexture?.GetType().Name ?? "null",
-                forwardAmbientOcclusionUnit,
-                area.Width,
-                area.Height,
-                new Vector2(area.X, area.Y));
-            
-            if (ambientOcclusionEnabled)
-            {
-                var renderer = AbstractRenderer.Current;
-                if (renderer is not null && ambientOcclusionTexture is XRTexture2D aoTexture2D)
-                {
-                    // Read center pixel at mip 0 directly instead of CalcDotLuminance.
-                    // CalcDotLuminance uses glGenerateMipmap + reads the smallest mip level,
-                    // but framebuffer textures have maxLevel=0 (no mip chain), so the mip
-                    // readback always returns 0.
-                    float centerAo = renderer.ReadTextureCenterRedMip0(aoTexture2D);
-                    Debug.LightingEvery(
-                        "ForwardAO.Content.2D",
-                        TimeSpan.FromSeconds(1),
-                        "[ForwardAO] centerAo={0:F4} size={1}x{2}",
-                        centerAo,
-                        aoTexture2D.Width,
-                        aoTexture2D.Height);
-                }
-                else if (ambientOcclusionTexture is XRTexture2DArray aoTexture2DArray)
-                {
-                    Debug.LightingEvery(
-                        "ForwardAO.Content.2DArray",
-                        TimeSpan.FromSeconds(1),
-                        "[ForwardAO] texture2DArray size={0}x{1} layers={2}",
-                        aoTexture2DArray.Width,
-                        aoTexture2DArray.Height,
-                        aoTexture2DArray.Depth);
-                }
-            }
-            if (!_loggedForwardAoBindingOnce)
-            {
-                _loggedForwardAoBindingOnce = true;
-                Debug.Lighting($"[ForwardAO] Initial binding enabled={ambientOcclusionEnabled}, texture={ambientOcclusionTexture?.Name ?? "null"}, textureType={ambientOcclusionTexture?.GetType().Name ?? "null"}, screen={area.Width}x{area.Height}, origin=<{area.X}, {area.Y}>");
-            }
-            */
 
             // Forward materials bind their own textures at units [0..N) where N is the texture index.
             // Using a low fixed unit (like 4) for the shadow map collides with multi-texture materials
@@ -1254,7 +1219,8 @@ namespace XREngine.Scene
             XRTexture? forwardShadowTex,
             XRTexture2DArray? forwardCascadeShadowTex)
         {
-            if (light is null ||
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                light is null ||
                 !Debug.ShouldLogEvery(
                     $"DirectionalShadowAudit.ForwardBind.{light.GetHashCode()}",
                     TimeSpan.FromSeconds(1.0)))

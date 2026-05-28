@@ -4,7 +4,8 @@
 // imported height/bump maps), the height-map path is unconditional and no NormalMapMode
 // uniform is emitted — avoiding the runtime uniform pipeline entirely.
 //
-// Without the define, a runtime uniform selects the mode:
+// Without the define, a runtime uniform selects the mode. The shader never
+// infers the mode from texture contents; import/material metadata owns that.
 //   0 = RGB normal map (default)
 //   1 = height map (Sobel 3x3 slopes)
 #ifndef XRENGINE_HEIGHTMAP_MODE
@@ -73,24 +74,12 @@ vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 tangentWS, vec3 bitangentWS, 
     else
     {
         vec3 sampledColor = texture(Texture1, uv).rgb;
-        float grayscaleDelta = max(abs(sampledColor.r - sampledColor.g), max(abs(sampledColor.r - sampledColor.b), abs(sampledColor.g - sampledColor.b)));
+        vec3 sampledNormal = sampledColor * 2.0 - 1.0;
+        sampledNormal.y = -sampledNormal.y;
+        if (!XRENGINE_IsFiniteVec3(sampledNormal) || dot(sampledNormal, sampledNormal) <= 1e-6)
+            return N;
 
-        // Already-imported assets can still route grayscale bump maps or black fallback
-        // textures through the normal-map path. Detect those cases at runtime and fall
-        // back to height reconstruction so deferred lighting does not collapse to black.
-        if (grayscaleDelta <= 0.02)
-        {
-            tangentNormal = XRENGINE_HeightToNormalSobel(uv);
-        }
-        else
-        {
-            vec3 sampledNormal = sampledColor * 2.0 - 1.0;
-            sampledNormal.y = -sampledNormal.y;
-            if (!XRENGINE_IsFiniteVec3(sampledNormal) || dot(sampledNormal, sampledNormal) <= 1e-6)
-                return N;
-
-            tangentNormal = normalize(sampledNormal);
-        }
+        tangentNormal = normalize(sampledNormal);
     }
 #endif
 

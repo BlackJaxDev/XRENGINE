@@ -1,7 +1,7 @@
 // Ambient occlusion sampling helpers for lit forward shaders.
 
-layout(binding = 14) uniform sampler2D AmbientOcclusionTexture;
-layout(binding = 25) uniform sampler2DArray AmbientOcclusionTextureArray;
+layout(binding = 27) uniform sampler2D AmbientOcclusionTexture;
+layout(binding = 33) uniform sampler2DArray AmbientOcclusionTextureArray;
 uniform bool AmbientOcclusionEnabled;
 uniform bool AmbientOcclusionArrayEnabled;
 uniform float AmbientOcclusionPower;
@@ -16,7 +16,7 @@ uniform vec2 ScreenOrigin;
 #endif
 
 // DEBUG uniform: when > 0 the sampled AO is raised to this power so the
-// effect becomes dramatically visible (e.g. 4.0 turns AO 0.9 → 0.66).
+// effect becomes dramatically visible (e.g. 4.0 turns AO 0.9 into 0.66).
 // Set to 0 (default) for normal behaviour.
 uniform float DebugForwardAOPower;
 

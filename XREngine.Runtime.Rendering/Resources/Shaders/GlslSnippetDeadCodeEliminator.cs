@@ -12,7 +12,8 @@ namespace XREngine.Rendering;
 /// Only top-level declarations (functions, function prototypes, uniforms,
 /// uniform/buffer interface blocks, in/out/const variables, structs, and
 /// <c>#define</c> directives) inside snippet regions are eligible for
-/// removal. Anything outside snippet regions is preserved verbatim.
+/// removal. Anything outside snippet regions is preserved verbatim unless
+/// whole-source trimming is requested for generated variants.
 ///
 /// Liveness propagation seeds from identifiers referenced in the consumer
 /// source (text outside any snippet region) plus all preprocessor directives
@@ -110,6 +111,26 @@ internal static partial class GlslSnippetDeadCodeEliminator
         }
     }
 
+    /// <summary>
+    /// Trims unused top-level declarations across the entire GLSL source, using
+    /// explicit declaration names such as <c>main</c> as liveness roots. If none
+    /// of the roots are declared, the source is returned unchanged.
+    /// </summary>
+    public static string TrimWholeSource(string source, IReadOnlyCollection<string> rootNames)
+    {
+        if (string.IsNullOrEmpty(source) || rootNames.Count == 0)
+            return source;
+
+        try
+        {
+            return TrimWholeSourceInternal(source, rootNames);
+        }
+        catch
+        {
+            return source;
+        }
+    }
+
     public static string StripRegionMarkers(string source)
     {
         if (string.IsNullOrEmpty(source))
@@ -167,69 +188,17 @@ internal static partial class GlslSnippetDeadCodeEliminator
         }
 
         // 5) Index decl chunks by name.
-        Dictionary<string, List<Chunk>> chunksByName = new(StringComparer.Ordinal);
-        foreach (Chunk chunk in allChunks)
-        {
-            if (chunk.IsPreprocessor || chunk.Unparseable)
-                continue;
-
-            foreach (string name in chunk.DeclaredNames)
-            {
-                if (!chunksByName.TryGetValue(name, out List<Chunk>? list))
-                {
-                    list = [];
-                    chunksByName[name] = list;
-                }
-                list.Add(chunk);
-            }
-        }
+        Dictionary<string, List<Chunk>> chunksByName = BuildChunksByName(allChunks);
 
         // Unparseable chunks are always live (conservative).
         Queue<Chunk> propagate = new();
-        foreach (Chunk chunk in allChunks)
-        {
-            if (chunk.Unparseable && !chunk.Live)
-            {
-                chunk.Live = true;
-                propagate.Enqueue(chunk);
-            }
-        }
+        MarkUnparseableChunksLive(allChunks, propagate);
 
         // 6) Seed initial live chunks from name set.
-        foreach (string name in live)
-        {
-            if (chunksByName.TryGetValue(name, out List<Chunk>? list))
-            {
-                foreach (Chunk c in list)
-                {
-                    if (!c.Live)
-                    {
-                        c.Live = true;
-                        propagate.Enqueue(c);
-                    }
-                }
-            }
-        }
+        SeedLiveChunks(live, chunksByName, propagate);
 
         // 7) Propagate liveness through references.
-        while (propagate.Count > 0)
-        {
-            Chunk c = propagate.Dequeue();
-            foreach (string referenced in c.ReferencedNames)
-            {
-                if (live.Add(referenced) && chunksByName.TryGetValue(referenced, out List<Chunk>? list))
-                {
-                    foreach (Chunk dep in list)
-                    {
-                        if (!dep.Live)
-                        {
-                            dep.Live = true;
-                            propagate.Enqueue(dep);
-                        }
-                    }
-                }
-            }
-        }
+        PropagateLiveness(live, chunksByName, propagate);
 
         // 8) Rewrite: keep non-snippet text as-is; inside snippet regions emit live + preprocessor + non-decl text.
         StringBuilder output = new(source.Length);
@@ -278,6 +247,150 @@ internal static partial class GlslSnippetDeadCodeEliminator
 
             cursor = region.RegionEnd;
         }
+        if (cursor < source.Length)
+            output.Append(source, cursor, source.Length - cursor);
+
+        return output.ToString();
+    }
+
+    private static string TrimWholeSourceInternal(string source, IReadOnlyCollection<string> rootNames)
+    {
+        string masked = MaskCommentsAndStrings(source);
+        List<Chunk> chunks = [];
+        ParseChunks(source, masked, 0, source.Length, regionIndex: 0, chunks);
+        if (chunks.Count == 0)
+            return source;
+
+        Dictionary<string, List<Chunk>> chunksByName = BuildChunksByName(chunks);
+        bool hasRootDeclaration = false;
+        foreach (string root in rootNames)
+        {
+            if (chunksByName.ContainsKey(root))
+            {
+                hasRootDeclaration = true;
+                break;
+            }
+        }
+
+        if (!hasRootDeclaration)
+            return source;
+
+        HashSet<string> live = new(StringComparer.Ordinal);
+        foreach (string root in rootNames)
+            live.Add(root);
+
+        Queue<Chunk> propagate = new();
+        MarkUnparseableChunksLive(chunks, propagate);
+
+        foreach (Chunk chunk in chunks)
+        {
+            if (chunk.IsPreprocessor)
+                AddIdentifiers(masked, chunk.Start, chunk.End, live);
+        }
+
+        SeedLiveChunks(live, chunksByName, propagate);
+        PropagateLiveness(live, chunksByName, propagate);
+
+        return RewriteWholeSource(source, chunks);
+    }
+
+    private static Dictionary<string, List<Chunk>> BuildChunksByName(IEnumerable<Chunk> chunks)
+    {
+        Dictionary<string, List<Chunk>> chunksByName = new(StringComparer.Ordinal);
+        foreach (Chunk chunk in chunks)
+        {
+            if (chunk.IsPreprocessor || chunk.Unparseable)
+                continue;
+
+            foreach (string name in chunk.DeclaredNames)
+            {
+                if (!chunksByName.TryGetValue(name, out List<Chunk>? list))
+                {
+                    list = [];
+                    chunksByName[name] = list;
+                }
+                list.Add(chunk);
+            }
+        }
+
+        return chunksByName;
+    }
+
+    private static void MarkUnparseableChunksLive(IEnumerable<Chunk> chunks, Queue<Chunk> propagate)
+    {
+        foreach (Chunk chunk in chunks)
+        {
+            if (chunk.Unparseable && !chunk.Live)
+            {
+                chunk.Live = true;
+                propagate.Enqueue(chunk);
+            }
+        }
+    }
+
+    private static void SeedLiveChunks(
+        IEnumerable<string> live,
+        IReadOnlyDictionary<string, List<Chunk>> chunksByName,
+        Queue<Chunk> propagate)
+    {
+        foreach (string name in live)
+        {
+            if (!chunksByName.TryGetValue(name, out List<Chunk>? list))
+                continue;
+
+            foreach (Chunk c in list)
+            {
+                if (c.Live)
+                    continue;
+
+                c.Live = true;
+                propagate.Enqueue(c);
+            }
+        }
+    }
+
+    private static void PropagateLiveness(
+        HashSet<string> live,
+        IReadOnlyDictionary<string, List<Chunk>> chunksByName,
+        Queue<Chunk> propagate)
+    {
+        while (propagate.Count > 0)
+        {
+            Chunk c = propagate.Dequeue();
+            foreach (string referenced in c.ReferencedNames)
+            {
+                if (!live.Add(referenced) || !chunksByName.TryGetValue(referenced, out List<Chunk>? list))
+                    continue;
+
+                foreach (Chunk dep in list)
+                {
+                    if (dep.Live)
+                        continue;
+
+                    dep.Live = true;
+                    propagate.Enqueue(dep);
+                }
+            }
+        }
+    }
+
+    private static string RewriteWholeSource(string source, IReadOnlyList<Chunk> chunks)
+    {
+        StringBuilder output = new(source.Length);
+        int cursor = 0;
+        foreach (Chunk chunk in chunks)
+        {
+            bool keep = chunk.IsPreprocessor || chunk.Unparseable || chunk.Live;
+            if (keep)
+            {
+                if (chunk.Start > cursor)
+                    output.Append(source, cursor, chunk.Start - cursor);
+                output.Append(source, chunk.Start, chunk.End - chunk.Start);
+            }
+
+            cursor = chunk.End;
+        }
+
         if (cursor < source.Length)
             output.Append(source, cursor, source.Length - cursor);
 
@@ -630,9 +743,10 @@ internal static partial class GlslSnippetDeadCodeEliminator
         // Plain variable / uniform / in / out / const declaration. This runs before
         // function classification because GLSL declarations commonly contain
         // constructor calls in initializers, e.g. `mat4 Value = mat4(1.0);`.
-        if (TryExtractPlainDeclarationName(text, out string declarationName))
+        List<string> declarationNames = [];
+        if (TryExtractPlainDeclarationNames(text, declarationNames))
         {
-            chunk.DeclaredNames.Add(declarationName);
+            chunk.DeclaredNames.AddRange(declarationNames);
             FinalizeReferences(chunk, referenced);
             return;
         }
@@ -651,40 +765,53 @@ internal static partial class GlslSnippetDeadCodeEliminator
         FinalizeReferences(chunk, referenced);
     }
 
-    private static bool TryExtractPlainDeclarationName(string text, out string name)
+    private static bool TryExtractPlainDeclarationNames(string text, List<string> names)
     {
-        name = string.Empty;
+        names.Clear();
         string flat = text.TrimEnd(';', '\r', '\n', ' ', '\t');
         if (flat.Length == 0)
             return false;
-
-        int eq = FindTopLevelChar(flat, '=');
-        if (eq >= 0)
-            flat = flat[..eq];
 
         flat = StripLeadingLayoutQualifiers(flat);
 
         // Function prototypes have a signature on the left side; variable
         // declarations only have layout qualifiers, type/qualifier tokens, an
         // identifier, and optional array suffixes.
-        if (FindTopLevelChar(flat, '(') >= 0)
+        int firstInitializer = FindTopLevelChar(flat, '=');
+        int firstComma = FindTopLevelChar(flat, ',');
+        int declarationHeadEnd = firstInitializer >= 0
+            ? firstInitializer
+            : firstComma >= 0
+                ? firstComma
+                : flat.Length;
+        if (ContainsTopLevelChar(flat[..declarationHeadEnd], '('))
             return false;
 
-        int comma = FindLastTopLevelChar(flat, ',');
-        if (comma >= 0)
-            flat = flat[(comma + 1)..];
+        bool firstSegment = true;
+        foreach (string segment in SplitTopLevel(flat, ','))
+        {
+            string declarator = segment;
+            int eq = FindTopLevelChar(declarator, '=');
+            if (eq >= 0)
+                declarator = declarator[..eq];
 
-        flat = StripTrailingArray(flat);
-        Match lastIdent = Regex.Match(flat, @"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*$");
-        if (!lastIdent.Success)
-            return false;
+            declarator = StripTrailingArray(declarator);
+            MatchCollection identifiers = IdentifierRegex().Matches(declarator);
+            if (identifiers.Count == 0)
+                return false;
 
-        string candidate = lastIdent.Groups["name"].Value;
-        if (GlslReserved.Contains(candidate))
-            return false;
+            if (firstSegment && identifiers.Count < 2)
+                return false;
 
-        name = candidate;
-        return true;
+            string candidate = identifiers[identifiers.Count - 1].Value;
+            if (GlslReserved.Contains(candidate))
+                return false;
+
+            names.Add(candidate);
+            firstSegment = false;
+        }
+
+        return names.Count > 0;
     }
 
     private static string StripLeadingLayoutQualifiers(string text)
@@ -728,6 +855,34 @@ internal static partial class GlslSnippetDeadCodeEliminator
         return -1;
     }
 
+    private static bool ContainsTopLevelChar(string text, char target)
+    {
+        int parenDepth = 0;
+        int bracketDepth = 0;
+        int braceDepth = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == target && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0)
+                return true;
+
+            if (c == '(')
+                parenDepth++;
+            else if (c == ')')
+                parenDepth = Math.Max(0, parenDepth - 1);
+            else if (c == '[')
+                bracketDepth++;
+            else if (c == ']')
+                bracketDepth = Math.Max(0, bracketDepth - 1);
+            else if (c == '{')
+                braceDepth++;
+            else if (c == '}')
+                braceDepth = Math.Max(0, braceDepth - 1);
+        }
+
+        return false;
+    }
+
     private static int FindLastTopLevelChar(string text, char target)
     {
         int parenDepth = 0;
@@ -753,6 +908,37 @@ internal static partial class GlslSnippetDeadCodeEliminator
         }
 
         return -1;
+    }
+
+    private static IEnumerable<string> SplitTopLevel(string text, char separator)
+    {
+        int parenDepth = 0;
+        int bracketDepth = 0;
+        int braceDepth = 0;
+        int segmentStart = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '(')
+                parenDepth++;
+            else if (c == ')')
+                parenDepth = Math.Max(0, parenDepth - 1);
+            else if (c == '[')
+                bracketDepth++;
+            else if (c == ']')
+                bracketDepth = Math.Max(0, bracketDepth - 1);
+            else if (c == '{')
+                braceDepth++;
+            else if (c == '}')
+                braceDepth = Math.Max(0, braceDepth - 1);
+            else if (c == separator && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0)
+            {
+                yield return text[segmentStart..i];
+                segmentStart = i + 1;
+            }
+        }
+
+        yield return text[segmentStart..];
     }
 
     private static void FinalizeReferences(Chunk chunk, HashSet<string> referenced)

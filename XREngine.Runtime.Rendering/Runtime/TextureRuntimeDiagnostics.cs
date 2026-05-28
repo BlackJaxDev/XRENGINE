@@ -26,6 +26,8 @@ internal enum TextureRuntimeEventImportance
 internal static class TextureRuntimeDiagnostics
 {
     private const string Unknown = "<unknown>";
+    private const long BindingRiskRepeatFrameInterval = 1800L;
+    private static readonly TimeSpan RenderWorkBudgetLogInterval = TimeSpan.FromSeconds(2.0);
 
     private static long s_transitionQueuedCount;
     private static long s_transitionCoalescedCount;
@@ -418,7 +420,7 @@ internal static class TextureRuntimeDiagnostics
 
         string key = $"{materialName}|{programName}|{textureSlot}|{textureName}|{sourcePath}|{reason}";
         long lastFrame = s_bindingRiskLastFrameByKey.GetOrAdd(key, long.MinValue);
-        if (lastFrame != long.MinValue && frameId - lastFrame < 240L)
+        if (lastFrame != long.MinValue && frameId - lastFrame < BindingRiskRepeatFrameInterval)
             return;
 
         s_bindingRiskLastFrameByKey[key] = frameId;
@@ -637,6 +639,12 @@ internal static class TextureRuntimeDiagnostics
     {
         if (!ShouldLog(TextureRuntimeEventImportance.Summary))
             return;
+        if (!XREngine.Debug.ShouldLogEvery(
+            $"TextureRuntimeDiagnostics.RenderWorkBudget.{eventName}.{reason}",
+            RenderWorkBudgetLogInterval))
+        {
+            return;
+        }
 
         Log(eventName,
             $"frame={frameId} textureQueue={snapshot.TextureUploadQueueDepth} urgentTextureRepair={snapshot.UrgentTextureRepairQueueDepth} shadowQueue={snapshot.ShadowAtlasQueueDepth} textureBudgetMs={snapshot.TextureUploadBudgetMilliseconds:F2} textureConsumedMs={snapshot.TextureUploadConsumedMilliseconds:F2} oldestTextureWaitMs={snapshot.OldestTextureQueueWaitMilliseconds:F2} lastShadowMs={snapshot.LastShadowAtlasMilliseconds:F2} startupBoost={snapshot.StartupBoostActive} reason='{Label(reason)}'");

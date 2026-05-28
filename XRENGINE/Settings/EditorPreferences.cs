@@ -1469,6 +1469,7 @@ namespace XREngine
         private bool _crashBreadcrumbs = XREngine.Rendering.RenderDiagnosticsFlags.CrashBreadcrumbs;
         private int _deferredDebugView = XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView;
         private bool _modelRenderDiagEnabled = XREngine.Rendering.RenderDiagnosticsFlags.ModelRenderDiagEnabled;
+        private bool _directionalShadowAudit = XREngine.Rendering.RenderDiagnosticsFlags.DirectionalShadowAudit;
         private string? _firstChanceExceptionFilter = XREngine.Debug.FirstChanceExceptionFilter;
         private bool _bypassVendorUpscale = XREngine.Rendering.RenderDiagnosticsFlags.BypassVendorUpscale;
         private bool _glDebug = XREngine.Rendering.RenderDiagnosticsFlags.GLDebug;
@@ -1978,8 +1979,8 @@ namespace XREngine
 
         [Category("Diagnostics")]
         [DisplayName("Model Render Diagnostics")]
-        [Description("Master switch for ModelRenderDiagnostics tracing (component publish, registration, visibility, command-list, and rejection logs). Defaults on in DEBUG/EDITOR builds; disable to silence the trace. Seed env: XRE_DEBUG_MODEL_RENDER=0 or XRE_MODEL_RENDER_DIAG=0.")]
-        [DefaultValue(true)]
+        [Description("Master switch for ModelRenderDiagnostics tracing (component publish, registration, visibility, command-list, and rejection logs). Defaults off; enable only while diagnosing model visibility/collection issues. Seed env: XRE_DEBUG_MODEL_RENDER=1 or XRE_MODEL_RENDER_DIAG=1.")]
+        [DefaultValue(false)]
         public bool ModelRenderDiagEnabled
         {
             get => _modelRenderDiagEnabled;
@@ -1987,6 +1988,20 @@ namespace XREngine
             {
                 if (SetField(ref _modelRenderDiagEnabled, value))
                     XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Directional Shadow Audit")]
+        [Description("Verbose directional shadow atlas/cascade audit tracing. Defaults off; enable only while diagnosing shadow atlas or cascade binding issues. Seed env: XRE_DIRECTIONAL_SHADOW_AUDIT=1 or XRE_SHADOW_AUDIT=1.")]
+        [DefaultValue(false)]
+        public bool DirectionalShadowAudit
+        {
+            get => _directionalShadowAudit;
+            set
+            {
+                if (SetField(ref _directionalShadowAudit, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDirectionalShadowAudit(value);
             }
         }
 
@@ -2867,6 +2882,7 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetCrashBreadcrumbs(_crashBreadcrumbs);
             XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(_deferredDebugView);
             XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(_modelRenderDiagEnabled);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDirectionalShadowAudit(_directionalShadowAudit);
             XREngine.Debug.FirstChanceExceptionFilter = _firstChanceExceptionFilter;
             XREngine.Rendering.RenderDiagnosticsFlags.SetBypassVendorUpscale(_bypassVendorUpscale);
             XREngine.Rendering.RenderDiagnosticsFlags.SetGLDebug(_glDebug);
@@ -2925,6 +2941,7 @@ namespace XREngine
             CrashBreadcrumbs = source.CrashBreadcrumbs;
             DeferredDebugView = source.DeferredDebugView;
             ModelRenderDiagEnabled = source.ModelRenderDiagEnabled;
+            DirectionalShadowAudit = source.DirectionalShadowAudit;
             FirstChanceExceptionFilter = source.FirstChanceExceptionFilter;
             BypassVendorUpscale = source.BypassVendorUpscale;
             GLDebug = source.GLDebug;

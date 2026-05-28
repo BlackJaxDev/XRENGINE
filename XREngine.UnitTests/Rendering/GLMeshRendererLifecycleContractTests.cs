@@ -34,7 +34,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     }
 
     [Test]
-    public void GLMeshRenderer_UsesCombinedProgramsWithUberPipelineFallbackWhenPipelinesAreDisabled()
+    public void GLMeshRenderer_UsesCombinedProgramsWithoutUberPipelineFallbackWhenPipelinesAreDisabled()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
 
@@ -46,12 +46,26 @@ public sealed class GLMeshRendererLifecycleContractTests
         source.ShouldContain("material.Data.DestroyShaderPipelineProgram();");
         source.ShouldContain("if (GetCombinedProgram(material, out vertexProgram, out materialProgram))");
         source.ShouldContain("ShouldUsePipelineFallbackForPendingCombinedProgram(material)");
+        source.ShouldContain("!RuntimeEngine.Rendering.Settings.AllowShaderPipelines");
         source.ShouldContain("allowWhenShaderPipelinesDisabled: true");
         source.ShouldContain("material.Data.TryGetUberMaterialState(out _, out _)");
         source.ShouldContain("private void EnsureCombinedProgramForMaterial(GLMaterial material)");
         source.ShouldNotContain("ShouldForceSeparableUberProgram");
         source.ShouldNotContain("|| forceShaderPipelines");
         source.ShouldNotContain("|| materialDiffers");
+    }
+
+    [Test]
+    public void GLMeshRenderer_RequiresCombinedProgramUseBeforeReportingProgramsReady()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+
+        source.ShouldContain("if (!vertexProgram.Use())");
+        source.ShouldContain("vertexProgram = materialProgram = null;");
+        source.ShouldContain("Dbg(\"GetCombinedProgram: use failed\", \"Programs\");");
+        source.ShouldContain("return false;");
+        source.ShouldNotContain("vertexProgram.Use();\r\n                Dbg(\"GetCombinedProgram: linked & in use\", \"Programs\");");
+        source.ShouldNotContain("vertexProgram.Use();\n                Dbg(\"GetCombinedProgram: linked & in use\", \"Programs\");");
     }
 
     [Test]
@@ -62,10 +76,12 @@ public sealed class GLMeshRendererLifecycleContractTests
 
         shaderSource.ShouldContain("ShouldUsePipelineForPendingUberFallbackMaterial(material)");
         shaderSource.ShouldContain("allowWhenShaderPipelinesDisabled: true");
+        shaderSource.ShouldContain("RuntimeEngine.Rendering.Settings.AllowShaderPipelines");
         shaderSource.ShouldContain("ReferenceEquals(material.Data, s_pendingUberFallbackMaterial)");
 
         renderSource.ShouldContain("material.ShaderProgramPriority = EProgramPriority.Interactive;");
-        renderSource.ShouldContain("material.EnsureShaderPipelineProgram(allowWhenShaderPipelinesDisabled: true);");
+        renderSource.ShouldContain("if (RuntimeEngine.Rendering.Settings.AllowShaderPipelines)");
+        renderSource.ShouldContain("material.EnsureShaderPipelineProgram();");
     }
 
     [Test]
@@ -105,11 +121,32 @@ public sealed class GLMeshRendererLifecycleContractTests
         queueSource.ShouldContain("_programLinkGate.Wait();");
         queueSource.ShouldContain("_programLinkGate.Release();");
         queueSource.ShouldContain("serialized shared-context program link/status");
-        queueSource.ShouldContain("publishing a failed async result without another completion query");
-        queueSource.ShouldContain("The shared-context source lane remains enabled for later programs.");
+        queueSource.ShouldContain("bool allowLinkDeferral = !workerCompilerThreadsSuppressed && !_serializeProgramLinkDriverCalls;");
+        queueSource.ShouldContain("allowDeferred: allowLinkDeferral");
+        queueSource.ShouldContain("publishing a failed async result without querying final status");
+        queueSource.ShouldContain("deferring completion polling at background priority so faster shader programs can link first.");
         queueSource.ShouldContain("SharedContextAbandonedLinkMarker");
         queueSource.ShouldContain("setBinaryRetrievableHint");
         queueSource.ShouldContain("worker=source-link-binary-retrievable-hint");
+        queueSource.ShouldContain("worker=source-link-handoff-flush");
+        queueSource.ShouldContain("worker=deferred-source-link-handoff-flush");
+        queueSource.ShouldNotContain("glFinish");
+    }
+
+    [Test]
+    public void GLRenderProgram_CapturesSharedContextSourceBinariesOffRenderThread()
+    {
+        string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/GLProgramCompileLinkQueue.cs");
+        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string binaryCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.BinaryCache.cs");
+
+        queueSource.ShouldContain("ProgramBinarySnapshot");
+        queueSource.ShouldContain("CaptureProgramBinary");
+        queueSource.ShouldContain("worker=source-link-binary-cache-capture");
+        queueSource.ShouldContain("worker=deferred-source-link-binary-cache-capture");
+        linkSource.ShouldContain("CacheBinary(pendingId2, compileResult.ProgramBinary);");
+        binaryCacheSource.ShouldContain("QueueBinaryShaderCacheWrite");
+        binaryCacheSource.ShouldContain("captured linked program binary on shared worker");
     }
 
     [Test]
@@ -138,6 +175,11 @@ public sealed class GLMeshRendererLifecycleContractTests
         materialSource.ShouldContain("EnsureShaderPipelineProgram(bool allowWhenShaderPipelinesDisabled = false)");
         materialSource.ShouldContain("if (!allowWhenShaderPipelinesDisabled && !RuntimeRenderingHostServices.Current.AllowShaderPipelines)");
         materialSource.ShouldContain("if (!RuntimeRenderingHostServices.Current.AllowShaderPipelines)");
+        materialSource.ShouldContain("EnsureShaderPipelineUberSourceReady()");
+        materialSource.ShouldContain("HasShaderPipelineRenderableUberSource()");
+        materialSource.ShouldContain("EnsureUberVariantPreparedForRendering();");
+        materialSource.ShouldContain("if (!HasShaderPipelineRenderableUberSource())");
+        materialSource.ShouldContain("Name = BuildShaderPipelineProgramName()");
         materialSource.ShouldContain("ShaderPipelineProgram.Destroy();");
         materialSource.ShouldContain("ShaderPipelineProgram = null;");
         glMaterialSource.ShouldContain("bool usePipelines = RuntimeEngine.Rendering.Settings.AllowShaderPipelines;");

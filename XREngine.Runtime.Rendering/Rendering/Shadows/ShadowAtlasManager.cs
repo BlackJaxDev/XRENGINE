@@ -1924,7 +1924,8 @@ public sealed class ShadowAtlasManager
         double elapsedMs,
         int budget)
     {
-        if (!XREngine.Debug.ShouldLogEvery(
+        if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+            !XREngine.Debug.ShouldLogEvery(
             $"DirectionalShadowAudit.AtlasRenderSummary.{GetHashCode()}",
             TimeSpan.FromSeconds(1.0)))
         {
@@ -1955,7 +1956,8 @@ public sealed class ShadowAtlasManager
         string state,
         bool requiresRender)
     {
-        if (!IsDirectionalRequest(request) ||
+        if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+            !IsDirectionalRequest(request) ||
             !XREngine.Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.AtlasRequestRender.{request.Key}.{state}",
                 TimeSpan.FromSeconds(1.0)))
