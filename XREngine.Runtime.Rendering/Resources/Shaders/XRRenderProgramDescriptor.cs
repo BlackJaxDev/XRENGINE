@@ -64,6 +64,7 @@ public readonly record struct XRRenderProgramDescriptor(
 
         var stableBuilder = new StringBuilder(256);
         stableBuilder.Append("sep=").Append(separable ? '1' : '0');
+        stableBuilder.Append("|optimizer=").Append(ResolvedShaderSourceOptimizer.BuildIdentitySegment());
         stableBuilder.Append("|settings=").Append(renderSettingsVersion.ToString(CultureInfo.InvariantCulture));
         stableBuilder.Append("|stages=").Append(stageTopology);
         stableBuilder.Append("|shaders=").Append(shaderIdentityKey);
@@ -115,6 +116,9 @@ public readonly record struct XRRenderProgramDescriptor(
             return "<none>";
 
         var builder = new StringBuilder(shaders.Count * 96);
+        builder.Append("optimizer:")
+            .Append(ResolvedShaderSourceOptimizer.BuildIdentitySegment())
+            .Append('|');
         for (int i = 0; i < shaders.Count; i++)
         {
             if (i > 0)
@@ -136,8 +140,8 @@ public readonly record struct XRRenderProgramDescriptor(
     {
         try
         {
-            if (shader.TryGetResolvedSource(out string resolvedSource, logFailures: false))
-                return resolvedSource;
+            if (shader.TryGetOptimizedSource(out string optimizedSource, logFailures: false))
+                return optimizedSource;
         }
         catch
         {

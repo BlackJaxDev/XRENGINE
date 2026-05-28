@@ -13,6 +13,15 @@ namespace XREngine.Rendering
         Animated,
     }
 
+    public enum EShaderUiPropertyMutability
+    {
+        Runtime,
+        MaterialStatic,
+        PassStatic,
+        EngineStatic,
+        DebugStatic,
+    }
+
     public enum EShaderUiFeatureCost
     {
         Unspecified,
@@ -102,7 +111,9 @@ namespace XREngine.Rendering
         bool HasExplicitMetadata,
         int SourceLine,
         string? DefaultLiteral = null,
-        ShaderBindingMetadata? Binding = null);
+        ShaderBindingMetadata? Binding = null,
+        EShaderUiPropertyMutability Mutability = EShaderUiPropertyMutability.Runtime,
+        bool HasExplicitMutability = false);
 
     public sealed record ShaderBindingMetadata(
         string Name,
@@ -199,6 +210,10 @@ namespace XREngine.Rendering
                 string? enumOptions = propertyAnnotation?.EnumOptions;
                 EShaderUiPropertyMode mode = propertyAnnotation?.Mode
                     ?? (isSampler ? EShaderUiPropertyMode.Unspecified : EShaderUiPropertyMode.Static);
+                EShaderUiPropertyMutability? parsedMutability = propertyAnnotation?.Mutability;
+                bool hasExplicitMutability = parsedMutability.HasValue;
+                EShaderUiPropertyMutability mutability = parsedMutability
+                    ?? ResolveDefaultMutability(mode, isSampler, hasExplicitPropertyMetadata);
                 ShaderBindingMetadata? binding = CreateBindingMetadata(
                     uniformName,
                     isSampler,
@@ -229,7 +244,9 @@ namespace XREngine.Rendering
                     hasExplicitPropertyMetadata,
                     lineNumber,
                     propertyAnnotation?.DefaultLiteral,
-                    binding));
+                    binding,
+                    mutability,
+                    hasExplicitMutability));
 
                 state.PendingProperty = null;
                 state.PendingBinding = null;
@@ -485,7 +502,8 @@ namespace XREngine.Rendering
                         namedArgs.TryGetValue("default", out string? defaultLiteral) ? Unquote(defaultLiteral) : null,
                         namedArgs.TryGetValue("indirect", out string? indirect) ? Unquote(indirect) : null,
                         namedArgs.TryGetValue("semantic", out string? semantic) ? Unquote(semantic) : null,
-                        namedArgs.TryGetValue("storage", out string? propertyStorage) ? Unquote(propertyStorage) : null);
+                        namedArgs.TryGetValue("storage", out string? propertyStorage) ? Unquote(propertyStorage) : null,
+                        ParsePropertyMutability(namedArgs));
                     break;
 
                 case "binding":
@@ -824,6 +842,33 @@ namespace XREngine.Rendering
                 "animated" => EShaderUiPropertyMode.Animated,
                 _ => EShaderUiPropertyMode.Unspecified,
             };
+        }
+
+        private static EShaderUiPropertyMutability? ParsePropertyMutability(Dictionary<string, string> namedArgs)
+        {
+            if (!namedArgs.TryGetValue("mutability", out string? value))
+                return null;
+
+            return Unquote(value).Trim().ToLowerInvariant() switch
+            {
+                "runtime" => EShaderUiPropertyMutability.Runtime,
+                "material-static" or "material_static" or "materialstatic" => EShaderUiPropertyMutability.MaterialStatic,
+                "pass-static" or "pass_static" or "passstatic" => EShaderUiPropertyMutability.PassStatic,
+                "engine-static" or "engine_static" or "enginestatic" => EShaderUiPropertyMutability.EngineStatic,
+                "debug-static" or "debug_static" or "debugstatic" => EShaderUiPropertyMutability.DebugStatic,
+                _ => null,
+            };
+        }
+
+        private static EShaderUiPropertyMutability ResolveDefaultMutability(
+            EShaderUiPropertyMode mode,
+            bool isSampler,
+            bool hasExplicitPropertyMetadata)
+        {
+            if (isSampler)
+                return EShaderUiPropertyMutability.Runtime;
+
+            return EShaderUiPropertyMutability.Runtime;
         }
 
         private static ShaderBindingMetadata? CreateBindingMetadata(
@@ -1181,7 +1226,8 @@ namespace XREngine.Rendering
             string? DefaultLiteral,
             string? Indirect,
             string? Semantic,
-            string? Storage);
+            string? Storage,
+            EShaderUiPropertyMutability? Mutability);
 
         private sealed record PendingBindingAnnotation(
             string? Name,

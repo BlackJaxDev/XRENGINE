@@ -481,8 +481,8 @@ namespace XREngine.Rendering.OpenGL
 
                 try
                 {
-                    string resolved = shader.GetResolvedSource();
-                    return GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(resolved, shader.Type, Data.Separable);
+                    string optimized = shader.GetOptimizedSource();
+                    return GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(optimized, shader.Type, Data.Separable);
                 }
                 catch (Exception ex)
                 {
@@ -518,6 +518,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 ulong hash = 17ul;
                 hash = AccumulateHash(hash, Data.Separable ? "separable" : "monolithic");
+                hash = AccumulateHash(hash, ResolvedShaderSourceOptimizer.BuildIdentitySegment());
                 foreach (XRShader shaderData in Data.Shaders)
                 {
                     hash = AccumulateHash(hash, shaderData.Type.ToString());

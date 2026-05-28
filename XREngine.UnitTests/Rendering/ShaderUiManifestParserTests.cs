@@ -35,7 +35,7 @@ public sealed class ShaderUiManifestParserTests
         feature.Id.ShouldBe("matcap");
         feature.DisplayName.ShouldBe("Matcap");
         feature.Category.ShouldBe("Effects");
-        feature.DefaultEnabled.ShouldBeTrue();
+        feature.DefaultEnabled.ShouldBeFalse();
         feature.HasExplicitMetadata.ShouldBeTrue();
 
         ShaderUiProperty sampler = manifest.PropertyLookup["_MatcapTex"];
@@ -66,6 +66,30 @@ public sealed class ShaderUiManifestParserTests
         manifest.ValidationIssues.ShouldBeEmpty();
         manifest.PropertyLookup["_HideInShadow"].IsToggle.ShouldBeTrue();
         manifest.PropertyLookup["_BlendMode"].EnumOptions.ShouldBe("0:Mix|1:Add|2:Multiply");
+    }
+
+    [Test]
+    public void Parse_PropertyMutabilityMetadata_IsCaptured()
+    {
+        const string source = """
+            #version 450 core
+            //@property(name="_ShadowType", display="Shadow Type", mutability=material-static)
+            uniform int _ShadowType;
+            //@property(name="_WindStrength", display="Wind Strength", mutability=runtime)
+            uniform float _WindStrength;
+            //@property(name="_DebugView", display="Debug View", mutability=debug-static)
+            uniform int _DebugView;
+            """;
+
+        ShaderUiManifest manifest = ShaderUiManifestParser.Parse(source);
+
+        manifest.ValidationIssues.ShouldBeEmpty();
+        manifest.PropertyLookup["_ShadowType"].Mutability.ShouldBe(EShaderUiPropertyMutability.MaterialStatic);
+        manifest.PropertyLookup["_ShadowType"].HasExplicitMutability.ShouldBeTrue();
+        manifest.PropertyLookup["_WindStrength"].Mutability.ShouldBe(EShaderUiPropertyMutability.Runtime);
+        manifest.PropertyLookup["_WindStrength"].HasExplicitMutability.ShouldBeTrue();
+        manifest.PropertyLookup["_DebugView"].Mutability.ShouldBe(EShaderUiPropertyMutability.DebugStatic);
+        manifest.PropertyLookup["_DebugView"].HasExplicitMutability.ShouldBeTrue();
     }
 
     [Test]

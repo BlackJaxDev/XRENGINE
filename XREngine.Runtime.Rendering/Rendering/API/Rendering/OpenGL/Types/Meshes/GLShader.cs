@@ -359,7 +359,7 @@ namespace XREngine.Rendering.OpenGL
 
             private string ResolveFullSourceCore(bool separableProgram)
             {
-                Data.TryGetResolvedSource(out string src);
+                Data.TryGetOptimizedSource(out string src);
                 return GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(src, Mode, separableProgram);
             }
 

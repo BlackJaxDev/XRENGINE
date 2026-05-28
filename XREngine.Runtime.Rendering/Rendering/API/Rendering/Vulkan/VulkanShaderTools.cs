@@ -1427,6 +1427,12 @@ internal static class VulkanShaderCompiler
         entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
         source = ShaderSourcePreprocessor.ResolveSource(source, shader.Source?.FilePath, annotateIncludes: true);
+        source = ResolvedShaderSourceOptimizer.Optimize(
+            source,
+            new ResolvedShaderSourceOptimizationOptions
+            {
+                DiagnosticLabel = shader.Name ?? "UnnamedShader",
+            }).Source;
         source = NormalizeLegacyStereoForVulkan(source, shader.Name ?? "UnnamedShader");
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
