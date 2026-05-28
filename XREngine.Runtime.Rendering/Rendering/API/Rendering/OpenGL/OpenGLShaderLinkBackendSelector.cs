@@ -51,24 +51,6 @@ internal static class OpenGLShaderLinkBackendSelector
                 IsAsync: false);
         }
 
-        if (context.ForceSynchronousSourceRetry)
-        {
-            return new OpenGLShaderLinkBackendSelection(
-                EOpenGLProgramBuildLane.SynchronousSource,
-                "async source link timed out; retrying synchronously",
-                IsAsync: false);
-        }
-
-        if (context.ForceDriverParallelSourceRetry &&
-            context.DriverParallelAvailable &&
-            !context.IsKnownAsyncLinkHazard)
-        {
-            return new OpenGLShaderLinkBackendSelection(
-                EOpenGLProgramBuildLane.DriverParallelSource,
-                "shared-context source link stalled; retrying render-thread driver-parallel source lane",
-                IsAsync: true);
-        }
-
         if (context.AllowBinaryProgramCaching && context.HasBinaryCacheHit)
         {
             if (context.AsyncProgramBinaryUpload && context.BinaryUploadAvailable)
@@ -89,6 +71,24 @@ internal static class OpenGLShaderLinkBackendSelector
                 EOpenGLProgramBuildLane.BinaryUploadSynchronous,
                 "binary cache hit without async upload lane",
                 IsAsync: false);
+        }
+
+        if (context.ForceSynchronousSourceRetry)
+        {
+            return new OpenGLShaderLinkBackendSelection(
+                EOpenGLProgramBuildLane.SynchronousSource,
+                "async source link timed out; retrying synchronously",
+                IsAsync: false);
+        }
+
+        if (context.ForceDriverParallelSourceRetry &&
+            context.DriverParallelAvailable &&
+            !context.IsKnownAsyncLinkHazard)
+        {
+            return new OpenGLShaderLinkBackendSelection(
+                EOpenGLProgramBuildLane.DriverParallelSource,
+                "shared-context source link stalled; retrying render-thread driver-parallel source lane",
+                IsAsync: true);
         }
 
         if (!context.AsyncProgramCompilation || context.Strategy == EOpenGLShaderLinkStrategy.Synchronous)

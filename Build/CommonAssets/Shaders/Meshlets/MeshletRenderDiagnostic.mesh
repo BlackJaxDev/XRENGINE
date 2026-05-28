@@ -37,12 +37,15 @@ taskNV in TaskPayload
     uint count;
 } IN;
 
-layout(location = 0) out vec3 out_worldPos[];
-layout(location = 1) out vec3 out_normal[];
-layout(location = 2) out vec2 out_texCoord[];
-layout(location = 3) out vec4 out_tangent[];
-layout(location = 4) flat out uint out_materialID[];
-layout(location = 5) flat out uint out_meshletIndex[];
+layout(location = 0) out MeshletVertex
+{
+    vec3 worldPos;
+    vec3 normal;
+    vec2 texCoord;
+    vec4 tangent;
+    flat uint materialID;
+    flat uint meshletIndex;
+} OUT[];
 
 uniform mat4 ViewProjectionMatrix;
 
@@ -76,12 +79,12 @@ void main()
 
         vec4 wpos = worldMatrix * vec4(v.position.xyz, 1.0);
         gl_MeshVerticesNV[tid].gl_Position = mvp * vec4(v.position.xyz, 1.0);
-        out_worldPos[tid] = wpos.xyz;
-        out_normal[tid] = normalize(normalMatrix * v.normal.xyz);
-        out_texCoord[tid] = v.texCoord;
-        out_tangent[tid] = vec4(normalize(normalMatrix * v.tangent.xyz), v.tangent.w);
-        out_materialID[tid] = m.Meta.y;
-        out_meshletIndex[tid] = meshletIndex;
+        OUT[tid].worldPos = wpos.xyz;
+        OUT[tid].normal = normalize(normalMatrix * v.normal.xyz);
+        OUT[tid].texCoord = v.texCoord;
+        OUT[tid].tangent = vec4(normalize(normalMatrix * v.tangent.xyz), v.tangent.w);
+        OUT[tid].materialID = m.Meta.y;
+        OUT[tid].meshletIndex = meshletIndex;
     }
 
     for (uint tri = tid; tri < m.Indices.w; tri += GROUP_SIZE)

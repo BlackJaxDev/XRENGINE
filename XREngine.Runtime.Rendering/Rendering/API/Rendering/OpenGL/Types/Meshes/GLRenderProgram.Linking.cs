@@ -226,7 +226,15 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (!Use())
                 {
-                    Debug.OpenGLWarning("Cannot dispatch compute shader, program is not linked.");
+                    if (Debug.ShouldLogEvery(ComputeDispatchNotLinkedLogKey, ComputeDispatchNotLinkedLogInterval))
+                    {
+                        Debug.OpenGL(
+                            "[WARN] Cannot dispatch compute shader because program '{0}' is not linked yet. hash={1} linkReady={2} binding={3}",
+                            GetProgramDebugName(),
+                            Hash,
+                            Data.LinkReady,
+                            BindingId);
+                    }
                     return;
                 }
                 if (textures is not null)
@@ -548,6 +556,10 @@ namespace XREngine.Rendering.OpenGL
                 Environment.GetEnvironmentVariable("XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE"),
                 "1",
                 StringComparison.Ordinal);
+            private static readonly bool SharedLinkedProgramReuseEnabled = string.Equals(
+                Environment.GetEnvironmentVariable("XRE_ENABLE_SHARED_LINKED_PROGRAM_REUSE"),
+                "1",
+                StringComparison.Ordinal);
             private static readonly ProgramBinaryRetrievableHintMode BinaryRetrievableHintMode = ResolveBinaryRetrievableHintMode();
 
             private enum ProgramBinaryRetrievableHintMode : byte
@@ -577,7 +589,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool ShouldSetProgramBinaryRetrievableHintForSourceBuild()
                 => BinaryRetrievableHintMode is ProgramBinaryRetrievableHintMode.Always or ProgramBinaryRetrievableHintMode.SourceBuildOnly;
-            private const int DriverParallelLargeSourceSharedContextThresholdBytes = 256 * 1024;
+            private const int LargeSourceSharedContextPreferenceThresholdBytes = 128 * 1024;
 
             /// <summary>
             /// Pre-computes the shader source hash and binary cache lookup.
@@ -719,7 +731,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool ShouldPreferSharedContextForLargeSource(GLProgramCompileLinkQueue.ShaderInput[]? inputs)
             {
-                if (inputs is not { Length: > 1 })
+                if (inputs is not { Length: > 0 })
                     return false;
 
                 long sourceBytes = 0;
@@ -731,7 +743,7 @@ namespace XREngine.Rendering.OpenGL
                         hasGraphicsStage = true;
 
                     sourceBytes += CountUtf8Bytes(inputs[index].ResolvedSource);
-                    if (hasGraphicsStage && sourceBytes >= DriverParallelLargeSourceSharedContextThresholdBytes)
+                    if (hasGraphicsStage && sourceBytes >= LargeSourceSharedContextPreferenceThresholdBytes)
                         return true;
                 }
 
@@ -788,7 +800,6 @@ namespace XREngine.Rendering.OpenGL
                 Environment.GetEnvironmentVariable("XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT"),
                 "1",
                 StringComparison.Ordinal);
-
             private static bool IsAsyncBinaryUploadTimedOutCacheKey(string? cacheKey)
                 => !string.IsNullOrWhiteSpace(cacheKey) && AsyncBinaryUploadTimeoutCacheKeys.ContainsKey(cacheKey);
 
@@ -2378,7 +2389,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void RegisterCurrentLinkedProgramForSharing(string? cacheKey, GLEnum format, uint programId)
             {
-                if (_replacementProgramPending || string.IsNullOrWhiteSpace(cacheKey) || programId == 0)
+                if (!SharedLinkedProgramReuseEnabled || _replacementProgramPending || string.IsNullOrWhiteSpace(cacheKey) || programId == 0)
                     return;
 
                 if (_sharedLinkedProgram is not null && _sharedLinkedProgram.ProgramId == programId)
@@ -2411,6 +2422,9 @@ namespace XREngine.Rendering.OpenGL
 
             private bool TryUseSharedLinkedProgram(BinaryProgram binProg)
             {
+                if (!SharedLinkedProgramReuseEnabled)
+                    return false;
+
                 if (_replacementProgramPending || !TryAcquireSharedLinkedProgram(binProg.CacheKey, out SharedLinkedProgram sharedProgram))
                     return false;
 
@@ -2442,7 +2456,10 @@ namespace XREngine.Rendering.OpenGL
 
             private bool CanCompleteFromSharedBinaryCache()
             {
-                if (!_asyncBinaryUploadQueueWaitPending || _replacementProgramPending || _cachedProgram is not { } cachedProgram)
+                if (!SharedLinkedProgramReuseEnabled ||
+                    !_asyncBinaryUploadQueueWaitPending ||
+                    _replacementProgramPending ||
+                    _cachedProgram is not { } cachedProgram)
                     return false;
 
                 if (string.IsNullOrWhiteSpace(cachedProgram.CacheKey))
@@ -3506,6 +3523,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         InFlightCompilations.TryRemove(Hash, out _);
                         _asyncCompileDuplicateHashWaitPending = false;
+
                         _asyncCompileLinkQueueWaitPending = true;
                         PublishBackendStatus(
                             EShaderProgramBackendStage.QueueBackpressure,

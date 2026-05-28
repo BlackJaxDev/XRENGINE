@@ -194,7 +194,12 @@ namespace XREngine.Rendering.Info
             if (box is null)
                 return;
 
-            RuntimeRenderingHostServices.Current.RenderDebugBox(box.Value.HalfExtents, box.Value.Center, CullingOffsetMatrix, false, ColorF4.Red);
+            Box worldBox = box.Value.ToBox(CullingOffsetMatrix);
+            Matrix4x4 orientation = worldBox.Transform;
+            orientation.M41 = 0.0f;
+            orientation.M42 = 0.0f;
+            orientation.M43 = 0.0f;
+            RuntimeRenderingHostServices.Current.RenderDebugBox(worldBox.LocalHalfExtents, worldBox.WorldCenter, orientation, false, ColorF4.Red);
         }
 
         private void TryQueueOctreeMove()
@@ -223,7 +228,28 @@ namespace XREngine.Rendering.Info
                    MathF.Abs(a.LocalCenter.Z - b.LocalCenter.Z) <= epsilon &&
                    MathF.Abs(a.LocalHalfExtents.X - b.LocalHalfExtents.X) <= epsilon &&
                    MathF.Abs(a.LocalHalfExtents.Y - b.LocalHalfExtents.Y) <= epsilon &&
-                   MathF.Abs(a.LocalHalfExtents.Z - b.LocalHalfExtents.Z) <= epsilon;
+                   MathF.Abs(a.LocalHalfExtents.Z - b.LocalHalfExtents.Z) <= epsilon &&
+                   MatrixNearlyEqual(a.Transform, b.Transform, epsilon);
+        }
+
+        private static bool MatrixNearlyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon)
+        {
+            return MathF.Abs(a.M11 - b.M11) <= epsilon &&
+                   MathF.Abs(a.M12 - b.M12) <= epsilon &&
+                   MathF.Abs(a.M13 - b.M13) <= epsilon &&
+                   MathF.Abs(a.M14 - b.M14) <= epsilon &&
+                   MathF.Abs(a.M21 - b.M21) <= epsilon &&
+                   MathF.Abs(a.M22 - b.M22) <= epsilon &&
+                   MathF.Abs(a.M23 - b.M23) <= epsilon &&
+                   MathF.Abs(a.M24 - b.M24) <= epsilon &&
+                   MathF.Abs(a.M31 - b.M31) <= epsilon &&
+                   MathF.Abs(a.M32 - b.M32) <= epsilon &&
+                   MathF.Abs(a.M33 - b.M33) <= epsilon &&
+                   MathF.Abs(a.M34 - b.M34) <= epsilon &&
+                   MathF.Abs(a.M41 - b.M41) <= epsilon &&
+                   MathF.Abs(a.M42 - b.M42) <= epsilon &&
+                   MathF.Abs(a.M43 - b.M43) <= epsilon &&
+                   MathF.Abs(a.M44 - b.M44) <= epsilon;
         }
     }
 }

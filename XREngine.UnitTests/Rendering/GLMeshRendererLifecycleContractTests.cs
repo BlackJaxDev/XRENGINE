@@ -117,11 +117,12 @@ public sealed class GLMeshRendererLifecycleContractTests
 
         queueSource.ShouldContain("XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION");
         queueSource.ShouldContain("private readonly SemaphoreSlim _programLinkGate;");
-        queueSource.ShouldContain("_serializeProgramLinkDriverCalls = _workers.Length > 1");
+        queueSource.ShouldContain("LargeSourceLinkDeferralThresholdBytes");
         queueSource.ShouldContain("_programLinkGate.Wait();");
         queueSource.ShouldContain("_programLinkGate.Release();");
         queueSource.ShouldContain("serialized shared-context program link/status");
-        queueSource.ShouldContain("bool allowLinkDeferral = !workerCompilerThreadsSuppressed && !_serializeProgramLinkDriverCalls;");
+        queueSource.ShouldContain("bool allowLinkDeferral = ShouldAllowLinkDeferral(");
+        queueSource.ShouldContain("summary.SourceBytes < LargeSourceLinkDeferralThresholdBytes");
         queueSource.ShouldContain("allowDeferred: allowLinkDeferral");
         queueSource.ShouldContain("publishing a failed async result without querying final status");
         queueSource.ShouldContain("deferring completion polling at background priority so faster shader programs can link first.");
@@ -147,6 +148,34 @@ public sealed class GLMeshRendererLifecycleContractTests
         linkSource.ShouldContain("CacheBinary(pendingId2, compileResult.ProgramBinary);");
         binaryCacheSource.ShouldContain("QueueBinaryShaderCacheWrite");
         binaryCacheSource.ShouldContain("captured linked program binary on shared worker");
+    }
+
+    [Test]
+    public void GLRenderProgram_DisablesSharedLinkedProgramReuseByDefault()
+    {
+        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+
+        linkSource.ShouldContain("XRE_ENABLE_SHARED_LINKED_PROGRAM_REUSE");
+        linkSource.ShouldContain("private static readonly bool SharedLinkedProgramReuseEnabled");
+        linkSource.ShouldContain("if (!SharedLinkedProgramReuseEnabled)");
+        linkSource.ShouldContain("if (!SharedLinkedProgramReuseEnabled ||");
+    }
+
+    [Test]
+    public void GLRenderProgram_BlocksColdLargeSourceLinksByDefault()
+    {
+        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLShaderLinkBackendSelector.cs");
+
+        linkSource.ShouldContain("XRE_ENABLE_LARGE_OPENGL_SOURCE_LINKS");
+        linkSource.ShouldContain("LargeSourceSourceLinkWatchdogThresholdBytes = 128 * 1024");
+        linkSource.ShouldContain("ShouldBlockLargeSourceSourceLink(inputs)");
+        linkSource.ShouldContain("BlockLargeSourceSourceLink: blockLargeSourceSourceLink");
+        linkSource.ShouldContain("SOURCE_LARGE_BLOCKED");
+
+        selectorSource.ShouldContain("BlockLargeSourceSourceLink");
+        selectorSource.ShouldContain("large source compile/link is disabled for editor stability");
+        selectorSource.ShouldContain("use a binary cache hit or set XRE_ENABLE_LARGE_OPENGL_SOURCE_LINKS=1");
     }
 
     [Test]

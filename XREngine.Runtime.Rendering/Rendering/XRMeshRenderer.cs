@@ -1406,32 +1406,51 @@ namespace XREngine.Rendering
             _bonesInvalidated = true;
         }
 
+        internal void SyncDirtyBoneMatricesToClientBuffer()
+            => WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: false, logDiagnostics: false);
+
         //TODO: use mapped buffer for constant streaming
         public void PushBoneMatricesToGPU()
         {
-            if (BoneMatricesBuffer is null || !_bonesInvalidated)
+            if (!WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: true, logDiagnostics: true))
                 return;
+
+            BoneMatricesBuffer!.PushSubData();
+        }
+
+        private bool WriteDirtyBoneMatricesToClientBuffer(bool clearDirtyState, bool logDiagnostics)
+        {
+            if (BoneMatricesBuffer is null || !_bonesInvalidated)
+                return false;
 
             if (_dirtyBoneIndices is null || _dirtyBoneFlags is null || _dirtyBoneMatrices is null)
-                return;
-
-            _bonesInvalidated = false;
+                return false;
 
             if (_dirtyBoneIndices.Count == 0)
-                return;
+            {
+                if (clearDirtyState)
+                    _bonesInvalidated = false;
+                return false;
+            }
 
-            if (_skinningDiagnosticsEnabled && _bones is not null)
+            if (logDiagnostics && _skinningDiagnosticsEnabled && _bones is not null)
                 LogDirtyBoneDiagnostics();
 
             foreach (var index in _dirtyBoneIndices)
             {
                 int i = (int)index;
                 BoneMatricesBuffer.Set(index, _dirtyBoneMatrices[i]);
-                _dirtyBoneFlags[i] = false;
+                if (clearDirtyState)
+                    _dirtyBoneFlags[i] = false;
             }
 
-                BoneMatricesBuffer.PushSubData();
-            _dirtyBoneIndices.Clear();
+            if (clearDirtyState)
+            {
+                _bonesInvalidated = false;
+                _dirtyBoneIndices.Clear();
+            }
+
+            return true;
         }
 
         /// <summary>

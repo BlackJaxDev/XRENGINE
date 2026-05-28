@@ -50,6 +50,38 @@ public sealed class GizmoStencilStateIsolationTests
         faceMethod.ShouldContain("BothPassOp = EStencilOp.Replace,");
     }
 
+    [Test]
+    public void DisabledOpenGlStencilState_KeepsFramebufferStencilClearsWritable()
+    {
+        string source = LoadOpenGlRendererFile("OpenGLRenderer.RenderParameters.cs").Replace("\r\n", "\n");
+        string applyStencilMethod = SliceMethod(source, "private void ApplyStencil(RenderingParameters r)");
+
+        AssertContainsInOrder(
+            applyStencilMethod,
+            "case ERenderParamUsage.Disabled:",
+            "Api.Disable(EnableCap.StencilTest);",
+            "Api.StencilMask(0xFF);",
+            "Api.StencilOp(GLEnum.Keep, GLEnum.Keep, GLEnum.Keep);",
+            "Api.StencilFunc(StencilFunction.Always, 0, 0xFF);");
+        applyStencilMethod.ShouldNotContain("Api.StencilMask(0);");
+        applyStencilMethod.ShouldNotContain("Api.StencilFunc(StencilFunction.Always, 0, 0);");
+    }
+
+    [Test]
+    public void FboBindClear_RestoresFullStencilWriteMaskBeforeStencilClear()
+    {
+        string source = LoadCommandFile(Path.Combine("State", "VPRC_BindFBOByName.cs")).Replace("\r\n", "\n");
+        string executeMethod = SliceMethod(source, "protected override void Execute()");
+
+        AssertContainsInOrder(
+            executeMethod,
+            "bool clearStencil = ClearStencil;",
+            "if (clearColor || clearDepth || clearStencil)",
+            "if (clearStencil)",
+            "RuntimeEngine.Rendering.State.StencilMask(0xFF);",
+            "RuntimeEngine.Rendering.State.ClearByBoundFBO(clearColor, clearDepth, clearStencil);");
+    }
+
     private static void AssertContainsInOrder(string source, params string[] expected)
     {
         int previousIndex = -1;
@@ -95,6 +127,13 @@ public sealed class GizmoStencilStateIsolationTests
     {
         string fullPath = Path.Combine(ResolveRepoRoot(), "XREngine.Runtime.Rendering", "Objects", "Materials", fileName);
         File.Exists(fullPath).ShouldBeTrue($"Material file not found: {fullPath}");
+        return File.ReadAllText(fullPath);
+    }
+
+    private static string LoadOpenGlRendererFile(string fileName)
+    {
+        string fullPath = Path.Combine(ResolveRepoRoot(), "XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", fileName);
+        File.Exists(fullPath).ShouldBeTrue($"OpenGL renderer file not found: {fullPath}");
         return File.ReadAllText(fullPath);
     }
 

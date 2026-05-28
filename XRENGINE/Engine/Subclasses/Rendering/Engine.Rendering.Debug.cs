@@ -999,7 +999,11 @@ namespace XREngine
                             RenderAABB(a.HalfExtents, a.Center, solid, color);
                             break;
                         case Box b:
-                            RenderBox(b.LocalHalfExtents, b.LocalCenter, b.Transform, solid, color);
+                            Matrix4x4 orientation = b.Transform;
+                            orientation.M41 = 0.0f;
+                            orientation.M42 = 0.0f;
+                            orientation.M43 = 0.0f;
+                            RenderBox(b.LocalHalfExtents, b.WorldCenter, orientation, solid, color);
                             break;
                         case Capsule c:
                             RenderCapsule(c.Center, c.UpAxis, c.Radius, c.HalfHeight, solid, color);

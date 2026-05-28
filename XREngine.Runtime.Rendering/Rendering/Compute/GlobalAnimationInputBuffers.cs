@@ -97,6 +97,7 @@ internal sealed class GlobalAnimationInputBuffers : IDisposable
             if (requiredElements > 0u)
             {
                 EnsureGlobalBoneBuffersCapacity(_boneCursorElements + requiredElements);
+                renderer.SyncDirtyBoneMatricesToClientBuffer();
 
                 // Copy the renderer's current bone matrices / inv bind matrices into the global buffers.
                 // Keep the +1 identity slot at index 0 to preserve existing bone index semantics.

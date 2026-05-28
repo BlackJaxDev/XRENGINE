@@ -95,9 +95,9 @@ public partial class OpenGLRenderer
 
             case ERenderParamUsage.Disabled:
                 Api.Disable(EnableCap.StencilTest);
-                Api.StencilMask(0);
+                Api.StencilMask(0xFF);
                 Api.StencilOp(GLEnum.Keep, GLEnum.Keep, GLEnum.Keep);
-                Api.StencilFunc(StencilFunction.Always, 0, 0);
+                Api.StencilFunc(StencilFunction.Always, 0, 0xFF);
                 break;
         }
     }

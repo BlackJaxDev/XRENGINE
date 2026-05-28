@@ -44,6 +44,7 @@ namespace XREngine.Rendering.OpenGL
             private const int WorkerCompletionFastPollIterations = 64;
             private const double WorkerCompletionStuckFlushMilliseconds = 5000.0;
             private const double WorkerLinkDeferralMilliseconds = 5000.0;
+            private const long LargeSourceLinkDeferralThresholdBytes = 64 * 1024;
             private const int DeferredLinkRepollDelayMilliseconds = 50;
             private const double DeferredLinkProgressLogMilliseconds = 15000.0;
             private const double ShaderCompletionPollGlCallSlowLogMilliseconds = 1.0;
@@ -634,11 +635,14 @@ namespace XREngine.Rendering.OpenGL
                             // separable fragment program), freezing the render thread.
                             if (useWorkerCompletionPolling)
                             {
-                                // Serialized shared-context linking must keep the gate held until
-                                // the driver reports completion. Deferring here releases the gate
-                                // while the program is still linking inside the driver, which lets
-                                // several huge uber variants pile up and starve one another.
-                                bool allowLinkDeferral = !workerCompilerThreadsSuppressed && !_serializeProgramLinkDriverCalls;
+                                // Deferring leaves the driver compiling/linking the program while
+                                // the worker starts newer jobs. Keep that only for small programs;
+                                // large uber variants must drain serially or NVIDIA can stack
+                                // several compiler jobs and trip the watchdog during startup.
+                                bool allowLinkDeferral = ShouldAllowLinkDeferral(
+                                    summary,
+                                    workerCompilerThreadsSuppressed,
+                                    _serializeProgramLinkDriverCalls);
                                 CompletionPollResult linkPollResult = PollCompletionStatusBlocking(
                                     gl,
                                     worker,
@@ -1271,6 +1275,14 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private static bool ShouldSuppressParallelCompileForWorkerProgram(ReadOnlySpan<ShaderInput> shaders)
                 => SuppressParallelCompileForSingleStageWorkerPrograms && IsSingleStageSeparableGraphicsHazard(shaders);
+
+            private static bool ShouldAllowLinkDeferral(
+                ShaderInputSummary summary,
+                bool workerCompilerThreadsSuppressed,
+                bool serializedProgramLinkDriverCalls)
+                => !workerCompilerThreadsSuppressed &&
+                   !serializedProgramLinkDriverCalls &&
+                   summary.SourceBytes < LargeSourceLinkDeferralThresholdBytes;
 
             private static bool IsSingleStageSeparableGraphicsHazard(ReadOnlySpan<ShaderInput> shaders)
             {

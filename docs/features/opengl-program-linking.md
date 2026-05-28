@@ -53,6 +53,8 @@ Related settings:
 - `OpenGLParallelShaderCompileProbeEnabled` and
   `OpenGLParallelShaderCompileProbeTimeoutMs` control the startup probe.
 - `OpenGLShaderCompilerThreadCount` configures driver shader compiler threads.
+  The default is `1` for Windows/NVIDIA startup stability; `-1` opts into the
+  driver implementation maximum for local throughput experiments.
 - `OpenGLProgramCompileLinkWorkerCount` configures the shared-context source
   worker count. The runtime uses one worker by default for OpenGL driver
   startup stability; values above one require
@@ -65,10 +67,18 @@ Related settings:
 - `XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1` opts back into the older
   render-thread driver-parallel source lane for local driver experiments. Leave
   it unset for editor/runtime work.
+- `XRE_ENABLE_SHARED_LINKED_PROGRAM_REUSE=1` opts into reusing one live linked
+  OpenGL program object across multiple logical program wrappers that share the
+  same binary fingerprint. The default keeps independent GL handles because
+  NVIDIA drivers have crashed during Sponza-scale startup floods while this
+  reuse path was active.
+- Large generated graphics sources (128 KiB and up) are treated as a scheduling
+  hint, not a failure reason. The selector prefers the shared-context source
+  lane for those cold links so Sponza-scale Uber fragments can compile without
+  blocking the render thread.
 - `XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS=<milliseconds>` overrides the
-  shared-context source worker hard-abandon window for shader compile polling.
-  Program link polling uses the shorter per-link abandon described below so one
-  wedged link cannot monopolize the serialized link gate.
+  shared-context source worker hard-abandon window for shader compile and link
+  polling.
 - `XRE_SHARED_CONTEXT_DISABLE_COMPLETION_POLLING=1` disables worker-side
   `GL_COMPLETION_STATUS_ARB` polling. Leave it unset for editor/runtime work;
   polling keeps the worker from issuing the blocking final link-status query
@@ -109,6 +119,8 @@ else if program is a known driver-parallel hazard:
         enqueue source compile/link on the shared-context worker
     else:
         leave source build pending
+else if source is a large graphics program and a shared-context source lane is available:
+    enqueue source compile/link on the shared-context worker
 else if selected/fallback shared-context source queue is available:
   enqueue source compile/link unless the queue is at capacity
 else if render-thread driver-parallel source linking is explicitly opted in and the probe passed:
@@ -172,13 +184,13 @@ between polls. This keeps the potentially long compile/link wait on the shared
 context while avoiding the blocking final `GL_LINK_STATUS` query until the
 driver reports completion.
 
-For program links, if completion polling is still false after 5 seconds, the
-worker publishes a failed async result immediately and releases the serialized
-link gate so later programs can continue. The engine does not poll or delete
-that half-linked program again, because the follow-up completion query has been
-observed to block inside the Windows OpenGL driver. The owning program orphans
-the handle locally, negative-caches that source hash, and keeps drawing the
-fallback material. A synchronous retry is only attempted when
+Small program links may be deferred to background polling if
+`GL_COMPLETION_STATUS_ARB` is still false after 5 seconds. Large source programs
+(64 KiB and up, including imported-model uber variants) do not use that
+deferral path: the worker keeps polling the same link until it completes or
+reaches the hard-abandon timeout. This avoids leaving several huge NVIDIA
+compiler jobs active at once, which can trip the Windows GPU watchdog during a
+cold Sponza-scale startup flood. A synchronous retry is only attempted when
 `XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT=1` is set; render-thread
 driver-parallel source linking remains an explicit local experiment via
 `XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1`.

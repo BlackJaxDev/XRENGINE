@@ -27,7 +27,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const int OpenGLProgramCompileLinkWorkerCount = 1;
     public const int MaxAsyncShaderProgramsPerFrame = 16;
     public const EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy = EOpenGLShaderLinkStrategy.Auto;
-    public const int OpenGLShaderCompilerThreadCount = -1;
+    public const int OpenGLShaderCompilerThreadCount = 1;
     public const bool OpenGLParallelShaderCompileProbeEnabled = true;
     public const int OpenGLParallelShaderCompileProbeTimeoutMs = 25;
 

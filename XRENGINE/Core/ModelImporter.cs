@@ -1505,7 +1505,7 @@ namespace XREngine
         public static RenderingParameters CreateForwardPlusUberShaderRenderOptions()
             => new()
             {
-                CullMode = ECullMode.Back,
+                CullMode = ECullMode.None,
                 DepthTest = new DepthTest()
                 {
                     UpdateDepth = true,
@@ -2006,13 +2006,19 @@ namespace XREngine
                 //Quaternion rotation = tfm.WorldRotation;
                 //Debug.Out($"Processing node {nodeInfo.SceneNode.Name} with world T[{translation}] R[{rotation}] S[{scale}]");
 
-                Matrix4x4 geometryTransform = nodeInfo.OriginalWorldMatrix * rootTransform.InverseWorldMatrix;
+                Matrix4x4 skinnedGeometryTransform = CalculateAssimpSkinnedGeometryTransform(
+                    nodeInfo.OriginalWorldMatrix,
+                    rootTransform.InverseWorldMatrix);
+                Matrix4x4 unskinnedGeometryTransform = CalculateAssimpUnskinnedGeometryTransform(
+                    nodeInfo.OriginalWorldMatrix,
+                    nodeInfo.SceneNode.Transform.WorldMatrix);
                 EnqueueProcessMeshes(
                     nodeInfo.MeshIndices,
                     scene,
                     nodeInfo.SceneNode,
                     nodeInfo.SceneNode.Name ?? "Imported Mesh",
-                    geometryTransform,
+                    skinnedGeometryTransform,
+                    unskinnedGeometryTransform,
                     rootTransform,
                     cancellationToken,
                     importedRenderersGenerateAsync,
@@ -2022,6 +2028,30 @@ namespace XREngine
                     publishSubMeshesOnSwapThread: processMeshesAsynchronously,
                     batchSubmeshAddsDuringAsyncImport: processMeshesAsynchronously && batchSubmeshAddsDuringAsyncImport);
             }
+        }
+
+        internal static Matrix4x4 CalculateAssimpSkinnedGeometryTransform(
+            Matrix4x4 originalNodeWorldMatrix,
+            Matrix4x4 inverseRootWorldMatrix)
+            => originalNodeWorldMatrix * inverseRootWorldMatrix;
+
+        internal static Matrix4x4 CalculateAssimpUnskinnedGeometryTransform(
+            Matrix4x4 originalNodeWorldMatrix,
+            Matrix4x4 normalizedNodeWorldMatrix)
+            => Matrix4x4.Invert(normalizedNodeWorldMatrix, out var inverseNormalizedNodeWorldMatrix)
+                ? originalNodeWorldMatrix * inverseNormalizedNodeWorldMatrix
+                : Matrix4x4.Identity;
+
+        private static bool HasWeightedBones(Mesh mesh)
+        {
+            for (int i = 0; i < mesh.BoneCount; i++)
+            {
+                Bone bone = mesh.Bones[i];
+                if (bone.HasVertexWeights && bone.VertexWeightCount > 0)
+                    return true;
+            }
+
+            return false;
         }
 
         private void TrackNodeTransform(SceneNode sceneNode, Vector3 scale, List<int> meshIndices)
@@ -2161,7 +2191,8 @@ namespace XREngine
             AScene scene,
             SceneNode sceneNode,
             string componentBaseName,
-            Matrix4x4 dataTransform,
+            Matrix4x4 skinnedDataTransform,
+            Matrix4x4 unskinnedDataTransform,
             TransformBase rootTransform,
             CancellationToken cancellationToken,
             bool importedRenderersGenerateAsync,
@@ -2278,11 +2309,15 @@ namespace XREngine
                 cancellationToken.ThrowIfCancellationRequested();
 
                 Mesh mesh = scene.Meshes[meshIndex];
+                // Weighted meshes use the legacy root-space skinning convention.
+                // Unweighted child meshes keep node-local vertices so the scene node
+                // hierarchy supplies rotation/translation exactly once at render time.
+                Matrix4x4 dataTransform = HasWeightedBones(mesh) ? skinnedDataTransform : unskinnedDataTransform;
                 (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform, cancellationToken);
-                    // BindRootMatrix is not set for the Assimp/legacy path:
-                    // The legacy GLSL convention outputs root-local positions (via implicit transpose),
-                    // and ModelMatrix correctly transforms root-local to world. Pre-multiplying rootBind
-                    // would produce world-space skinning output, causing double-transformation with ModelMatrix.
+                // BindRootMatrix is not set for weighted Assimp/legacy meshes:
+                // the legacy GLSL convention outputs root-local positions (via implicit transpose),
+                // and ModelMatrix correctly transforms root-local to world. Pre-multiplying rootBind
+                // would produce world-space skinning output, causing double-transformation with ModelMatrix.
 
                 SubMesh subMesh = new(new SubMeshLOD(xrMaterial, xrMesh, 0.0f)
                 {

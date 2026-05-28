@@ -1,12 +1,14 @@
 #version 460 core
 
-// Input vertex attributes
-layout(location = 0) in vec3 in_worldPos;
-layout(location = 1) in vec3 in_normal;
-layout(location = 2) in vec2 in_texCoord;
-layout(location = 3) in vec4 in_tangent;
-layout(location = 4) flat in uint in_materialID;
-layout(location = 5) flat in uint in_meshletIndex;
+layout(location = 0) in MeshletVertex
+{
+    vec3 worldPos;
+    vec3 normal;
+    vec2 texCoord;
+    vec4 tangent;
+    flat uint materialID;
+    flat uint meshletIndex;
+} IN;
 
 // Output
 layout(location = 0) out vec4 out_color;
@@ -108,27 +110,27 @@ void main()
 {
     if (EnableMeshletDebugDisplay != 0u)
     {
-        out_color = vec4(XRE_MeshletDebugColor(in_meshletIndex), 1.0);
+        out_color = vec4(XRE_MeshletDebugColor(IN.meshletIndex), 1.0);
         return;
     }
 
     // Get material
-    Material material = materials[in_materialID];
+    Material material = materials[IN.materialID];
     
     // Sample textures
     vec4 albedo = material.albedo;
     if (material.diffuseTextureID < 32u)
-        albedo *= texture(textures[material.diffuseTextureID], in_texCoord);
+        albedo *= texture(textures[material.diffuseTextureID], IN.texCoord);
     
-    vec3 normal = normalize(in_normal);
+    vec3 normal = normalize(IN.normal);
     if (material.normalTextureID < 32u)
     {
         // Sample normal map and transform to world space
-        vec3 normalMap = texture(textures[material.normalTextureID], in_texCoord).rgb * 2.0 - 1.0;
+        vec3 normalMap = texture(textures[material.normalTextureID], IN.texCoord).rgb * 2.0 - 1.0;
             
-        vec3 T = normalize(in_tangent.xyz);
+        vec3 T = normalize(IN.tangent.xyz);
         vec3 N = normal;
-        vec3 B = normalize(cross(N, T)) * in_tangent.w;
+        vec3 B = normalize(cross(N, T)) * IN.tangent.w;
         mat3 TBN = mat3(T, B, N);
         
         normal = normalize(TBN * normalMap);
@@ -140,14 +142,14 @@ void main()
     
     if (material.metallicRoughnessTextureID < 32u)
     {
-        vec3 mrSample = texture(textures[material.metallicRoughnessTextureID], in_texCoord).rgb;
+        vec3 mrSample = texture(textures[material.metallicRoughnessTextureID], IN.texCoord).rgb;
         metallic *= mrSample.b;
         roughness *= mrSample.g;
         ao *= mrSample.r;
     }
     
     // PBR lighting calculation
-    vec3 V = normalize(cameraPosition - in_worldPos);
+    vec3 V = normalize(cameraPosition - IN.worldPos);
     vec3 L = normalize(-lightDirection);
     vec3 H = normalize(V + L);
     

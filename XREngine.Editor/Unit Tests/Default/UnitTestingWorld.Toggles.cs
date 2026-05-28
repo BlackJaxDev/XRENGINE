@@ -334,7 +334,7 @@ public static partial class EditorUnitTests
         public bool AllowSkinning { get; set; } = true; //Enables skeletal skinning for bounds updates and rendering. Import still preserves skinning data so this can be toggled live.
         public int OpenGLProgramCompileLinkWorkerCount { get; set; } = 1; //Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. Values above one require XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1.
         public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16; //Maximum number of pending async OpenGL shader programs to advance per render frame.
-        public int OpenGLShaderCompilerThreadCount { get; set; } = -1; //Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.
+        public int OpenGLShaderCompilerThreadCount { get; set; } = 1; //Worker-thread count requested from GL_ARB/KHR_parallel_shader_compile. -1 requests the driver default maximum.
         public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true; //Runs a small startup probe before using the explicit DriverParallel OpenGL link path.
         public int OpenGLParallelShaderCompileProbeTimeoutMs { get; set; } = 25; //Maximum time spent polling the startup driver-parallel OpenGL shader-link probe.
         public bool RenderMeshBounds = true;

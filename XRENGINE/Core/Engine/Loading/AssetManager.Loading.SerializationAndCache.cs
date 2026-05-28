@@ -945,25 +945,24 @@ namespace XREngine
         /// </remarks>
         private static bool TryWriteTextureBinaryStreamingCache(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
         {
-            if (cacheAsset is not XRTexture2D texture)
+            if (cacheAsset is not XRTexture2D texture || 
+                !HasStreamableTextureCacheShape(texture))
                 return false;
-            if (!HasStreamableTextureCacheShape(texture))
-                return false;
-
+            
             DateTime sourceTimestampUtc = texture.OriginalLastWriteTimeUtc ?? DateTime.MinValue;
             if (sourceTimestampUtc == DateTime.MinValue && TryResolveTextureCacheSourcePath(texture, out string sourcePath))
                 sourceTimestampUtc = File.GetLastWriteTimeUtc(sourcePath);
-            if (sourceTimestampUtc == DateTime.MinValue)
-                return false;
 
-            if (!XRTexture2D.WriteBinaryStreamingCacheFile(texture, cachePath, sourceTimestampUtc))
+            if (sourceTimestampUtc == DateTime.MinValue ||
+                !XRTexture2D.WriteBinaryStreamingCacheFile(texture, cachePath, sourceTimestampUtc))
                 return false;
-
+            
             LogTextureCacheEvent(
                 "Texture.CacheWrite",
                 originalAsset.OriginalPath ?? originalAsset.FilePath ?? string.Empty,
                 cachePath,
                 "binary streaming payload (no YAML envelope)");
+            
             return true;
         }
 

@@ -24,6 +24,8 @@ namespace XREngine.Rendering.OpenGL
             private bool _isLinked = false;
             private uint _replacementProgramId;
             private bool _replacementProgramPending;
+            private string? _computeDispatchNotLinkedLogKey;
+            private static readonly System.TimeSpan ComputeDispatchNotLinkedLogInterval = System.TimeSpan.FromSeconds(5.0);
             public bool IsLinked
             {
                 get => _isLinked;
@@ -80,6 +82,9 @@ namespace XREngine.Rendering.OpenGL
             private readonly record struct SamplerUniformInfo(string Name, GLEnum Type);
             private readonly record struct SamplerUnitBinding(uint TextureId, ETextureTarget Target);
             internal readonly record struct UniformMetadataEntry(string Name, GLEnum Type, int Size);
+
+            private string ComputeDispatchNotLinkedLogKey
+                => _computeDispatchNotLinkedLogKey ??= "GLRenderProgram.DispatchCompute.NotLinked:" + Hash.ToString(CultureInfo.InvariantCulture);
 
             private static XRTexture2D? _fallbackTexture2D;
             private static XRTexture2DArray? _fallbackTexture2DArray;
