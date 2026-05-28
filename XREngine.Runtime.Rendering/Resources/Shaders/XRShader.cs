@@ -19,6 +19,10 @@ namespace XREngine.Rendering
         private string? _resolvedSourceCache;
         private string? _resolvedSourceCachePath;
         private string? _resolvedSourceCacheText;
+        private ResolvedShaderSource? _resolvedSourcePayloadCache;
+        private string? _optimizedSourceCache;
+        private string? _optimizedSourceCachePath;
+        private string? _optimizedSourceCacheText;
         private ShaderSourceFileDependency[]? _resolvedSourceDependencies;
         private ShaderUiManifest? _uiManifestCache;
         private string? _uiManifestCachePath;
@@ -199,6 +203,10 @@ namespace XREngine.Rendering
                 _resolvedSourceCache = null;
                 _resolvedSourceCachePath = null;
                 _resolvedSourceCacheText = null;
+                _resolvedSourcePayloadCache = null;
+                _optimizedSourceCache = null;
+                _optimizedSourceCachePath = null;
+                _optimizedSourceCacheText = null;
                 _resolvedSourceDependencies = null;
                 _uiManifestCache = null;
                 _uiManifestCachePath = null;
@@ -255,6 +263,19 @@ namespace XREngine.Rendering
 
         public bool TryGetResolvedSource(out string resolvedSource, bool annotateIncludes = false, bool logFailures = true)
         {
+            bool success = TryGetResolvedShaderSource(out ResolvedShaderSource resolved, annotateIncludes, logFailures);
+            resolvedSource = resolved.ResolvedSource;
+            return success;
+        }
+
+        public ResolvedShaderSource GetResolvedShaderSource(bool annotateIncludes = false)
+        {
+            TryGetResolvedShaderSource(out ResolvedShaderSource resolvedSource, annotateIncludes, logFailures: true);
+            return resolvedSource;
+        }
+
+        public bool TryGetResolvedShaderSource(out ResolvedShaderSource resolvedSource, bool annotateIncludes = false, bool logFailures = true)
+        {
             string sourceText = Source?.Text ?? string.Empty;
             string? sourcePath = Source?.FilePath;
 
@@ -262,12 +283,12 @@ namespace XREngine.Rendering
             {
                 lock (_resolvedSourceCacheLock)
                 {
-                    if (_resolvedSourceCache is not null &&
+                    if (_resolvedSourcePayloadCache is not null &&
                         string.Equals(_resolvedSourceCacheText, sourceText, StringComparison.Ordinal) &&
                         string.Equals(_resolvedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
                         ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
                     {
-                        resolvedSource = _resolvedSourceCache;
+                        resolvedSource = _resolvedSourcePayloadCache;
                         return true;
                     }
                 }
@@ -275,20 +296,21 @@ namespace XREngine.Rendering
 
             try
             {
-                ShaderSourceResolutionResult resolution = ShaderSourceResolver.ResolveSourceDetailed(
+                ResolvedShaderSource resolvedPayload = ShaderSourceResolver.ResolveSourcePayload(
                     sourceText,
                     sourcePath,
                     annotateIncludes: annotateIncludes);
-                resolvedSource = resolution.Source;
+                resolvedSource = resolvedPayload;
 
                 if (!annotateIncludes)
                 {
                     lock (_resolvedSourceCacheLock)
                     {
-                        _resolvedSourceCache = resolvedSource;
+                        _resolvedSourceCache = resolvedPayload.ResolvedSource;
+                        _resolvedSourcePayloadCache = resolvedPayload;
                         _resolvedSourceCacheText = sourceText;
                         _resolvedSourceCachePath = sourcePath;
-                        _resolvedSourceDependencies = resolution.FileDependencies;
+                        _resolvedSourceDependencies = resolvedPayload.FileDependencies;
                     }
                 }
 
@@ -299,8 +321,73 @@ namespace XREngine.Rendering
                 if (logFailures)
                     RuntimeShaderServices.Current?.LogWarning($"Failed to resolve shader source for '{Name ?? FilePath ?? "UnnamedShader"}': {ex.Message}");
 
-                resolvedSource = sourceText;
+                resolvedSource = new ResolvedShaderSource(
+                    sourcePath,
+                    sourceText,
+                    sourceText,
+                    [],
+                    [],
+                    ShaderSourceMacroSummary.Scan(sourceText));
                 return false;
+            }
+        }
+
+        public string GetOptimizedSource(bool annotateIncludes = false)
+        {
+            TryGetOptimizedSource(out string optimizedSource, annotateIncludes, logFailures: true);
+            return optimizedSource;
+        }
+
+        public bool TryGetOptimizedSource(
+            out string optimizedSource,
+            bool annotateIncludes = false,
+            bool logFailures = true,
+            ResolvedShaderSourceOptimizationOptions? options = null)
+        {
+            string sourceText = Source?.Text ?? string.Empty;
+            string? sourcePath = Source?.FilePath;
+            bool useDefaultCache = !annotateIncludes && options is null;
+
+            if (useDefaultCache)
+            {
+                lock (_resolvedSourceCacheLock)
+                {
+                    if (_optimizedSourceCache is not null &&
+                        string.Equals(_optimizedSourceCacheText, sourceText, StringComparison.Ordinal) &&
+                        string.Equals(_optimizedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
+                        ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
+                    {
+                        optimizedSource = _optimizedSourceCache;
+                        return true;
+                    }
+                }
+            }
+
+            bool resolved = TryGetResolvedSource(out string resolvedSource, annotateIncludes, logFailures);
+            try
+            {
+                ResolvedShaderSourceOptimizationResult result = ResolvedShaderSourceOptimizer.Optimize(resolvedSource, options);
+                optimizedSource = result.Source;
+
+                if (useDefaultCache && resolved)
+                {
+                    lock (_resolvedSourceCacheLock)
+                    {
+                        _optimizedSourceCache = optimizedSource;
+                        _optimizedSourceCacheText = sourceText;
+                        _optimizedSourceCachePath = sourcePath;
+                    }
+                }
+
+                return resolved;
+            }
+            catch (Exception ex)
+            {
+                if (logFailures)
+                    RuntimeShaderServices.Current?.LogWarning($"Failed to optimize shader source for '{Name ?? FilePath ?? "UnnamedShader"}': {ex.Message}");
+
+                optimizedSource = resolvedSource;
+                return resolved;
             }
         }
 
@@ -370,7 +457,7 @@ namespace XREngine.Rendering
             if (Source is null)
                 return false;
 
-            if (!TryGetResolvedSource(out string text, logFailures: false) || string.IsNullOrEmpty(text))
+            if (!TryGetOptimizedSource(out string text, logFailures: false) || string.IsNullOrEmpty(text))
                 return false;
 
             //If the uniform name has a . in it, it's in a struct

@@ -12,7 +12,7 @@ internal sealed class ShaderSourceResolverOptions
     public bool EnableSnippetDeadCodeElimination { get; init; }
 }
 
-internal readonly record struct ShaderSourceFileDependency(string Path, long LastWriteTimeUtcTicks, long Length);
+public readonly record struct ShaderSourceFileDependency(string Path, long LastWriteTimeUtcTicks, long Length);
 
 internal sealed class ShaderSourceResolutionResult
 {
@@ -178,6 +178,16 @@ internal static partial class ShaderSourceResolver
         MergeDependencies(fileDependencies, resolvedSnippets.FileDependencies);
 
         return new(resolvedSnippets.ResolvedSource, [.. resolvedPaths], [.. fileDependencies.Values]);
+    }
+
+    internal static ResolvedShaderSource ResolveSourcePayload(
+        string source,
+        string? sourcePath,
+        ShaderSourceResolverOptions? options = null,
+        bool annotateIncludes = false)
+    {
+        ShaderSourceResolutionResult result = ResolveSourceDetailed(source, sourcePath, options, annotateIncludes);
+        return ResolvedShaderSource.Create(sourcePath, source, result);
     }
 
     internal static bool AreDependenciesCurrent(IReadOnlyList<ShaderSourceFileDependency>? dependencies)

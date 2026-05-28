@@ -1541,7 +1541,7 @@ namespace XREngine.Rendering
                 if (shader is null)
                     return;
 
-                string source = shader.GetResolvedSource();
+                string source = shader.GetOptimizedSource();
                 if (string.IsNullOrWhiteSpace(source))
                     return;
 

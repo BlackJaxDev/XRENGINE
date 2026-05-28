@@ -1976,8 +1976,8 @@ namespace XREngine.Rendering.OpenGL
                 if (_shaderCache.TryGetValue(shaderData, out GLShader? shader) && shader is not null)
                     return shader.ResolveFullSource();
 
-                return shaderData.TryGetResolvedSource(out string resolvedSource, logFailures: false)
-                    ? GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(resolvedSource, shaderData.Type, Data.Separable)
+                return shaderData.TryGetOptimizedSource(out string optimizedSource, logFailures: false)
+                    ? GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(optimizedSource, shaderData.Type, Data.Separable)
                     : null;
             }
 
@@ -2078,9 +2078,9 @@ namespace XREngine.Rendering.OpenGL
                     {
                         source = shader.ResolveFullSource();
                     }
-                    else if (shaderData.TryGetResolvedSource(out string resolvedSource, logFailures: false))
+                    else if (shaderData.TryGetOptimizedSource(out string optimizedSource, logFailures: false))
                     {
-                        source = GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(resolvedSource, shaderData.Type, Data.Separable);
+                        source = GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(optimizedSource, shaderData.Type, Data.Separable);
                     }
 
                     bytes += CountUtf8Bytes(source);

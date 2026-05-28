@@ -125,6 +125,12 @@ public static class RenderDiagnosticsFlags
     /// <summary>Append shader source preview to Vulkan shader compile error messages. Seed: <c>XRE_VK_DUMP_SHADER_ON_ERROR=1</c>.</summary>
     public static volatile bool VkDumpShaderOnError;
 
+    /// <summary>
+    /// Generic resolved shader source optimizer. Default <b>true</b>. Seed:
+    /// <c>XRE_SHADER_SOURCE_OPTIMIZER=0</c> disables; any other value or unset keeps it on.
+    /// </summary>
+    public static volatile bool ShaderSourceOptimizerEnabled = true;
+
     /// <summary>Log every Vulkan graphics pipeline creation with full stage/format details. Seed: <c>XRE_VK_TRACE_PIPECREATE=1</c>.</summary>
     public static volatile bool VkTracePipeCreate;
 
@@ -227,6 +233,19 @@ public static class RenderDiagnosticsFlags
         }
 
         VkDumpShaderOnError = ReadBool("XRE_VK_DUMP_SHADER_ON_ERROR");
+        try
+        {
+            string? raw = Environment.GetEnvironmentVariable("XRE_SHADER_SOURCE_OPTIMIZER");
+            if (string.Equals(raw, "0", StringComparison.Ordinal) ||
+                string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase))
+            {
+                ShaderSourceOptimizerEnabled = false;
+            }
+        }
+        catch
+        {
+        }
+
         VkTracePipeCreate = ReadBool("XRE_VK_TRACE_PIPECREATE");
         VkTraceSwapDraw = ReadBool("XRE_VK_TRACE_SWAPDRAW");
         VkTraceDraw = ReadBool("XRE_VK_TRACE_DRAW");
@@ -285,6 +304,7 @@ public static class RenderDiagnosticsFlags
 
     public static void SetVkEnableAutoUniformRewrite(bool value) => VkEnableAutoUniformRewrite = value;
     public static void SetVkDumpShaderOnError(bool value) => VkDumpShaderOnError = value;
+    public static void SetShaderSourceOptimizerEnabled(bool value) => ShaderSourceOptimizerEnabled = value;
     public static void SetVkTracePipeCreate(bool value) => VkTracePipeCreate = value;
     public static void SetVkTraceSwapDraw(bool value) => VkTraceSwapDraw = value;
     public static void SetVkTraceDraw(bool value) => VkTraceDraw = value;

@@ -26,7 +26,7 @@ internal static partial class UberShaderVariantBuilder
 
     private static readonly ConcurrentDictionary<UberVariantCacheKey, string> GeneratedSourceCache = new();
     private static readonly ConcurrentDictionary<UberVariantCacheKey, XRShader> GeneratedShaderCache = new();
-    private static readonly ConcurrentDictionary<SourceResolveCacheKey, Lazy<ResolvedShaderSource>> ResolvedSourceCache = new();
+    private static readonly ConcurrentDictionary<SourceResolveCacheKey, Lazy<ResolvedUberShaderSource>> ResolvedSourceCache = new();
     private static readonly ConcurrentDictionary<VertexPermutationCacheKey, ulong> VertexPermutationHashCache = new();
     private static readonly ConcurrentDictionary<string, long> LastKnownSourceVersionsByPath = new(StringComparer.Ordinal);
     private static readonly ConditionalWeakTable<ShaderUiManifest, ManifestDerivedData> ManifestDerivedCache = new();
@@ -51,7 +51,7 @@ internal static partial class UberShaderVariantBuilder
     private readonly record struct SourceResolveCacheKey(string SourceText, string? SourcePath, bool EmitIncludeDeadCodeMarkers);
     private readonly record struct VertexPermutationCacheKey(EShaderType Type, string SourceText, string? SourcePath, long SourceVersion);
 
-    private sealed class ResolvedShaderSource
+    private sealed class ResolvedUberShaderSource
     {
         public required string Source { get; init; }
         public required string? SourcePath { get; init; }
@@ -127,7 +127,7 @@ internal static partial class UberShaderVariantBuilder
     internal static PreparedUberVariant PrepareVariant(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, CancellationToken cancellationToken = default)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
-        ResolvedShaderSource resolvedSource = ResolveCanonicalVariantSource(canonicalShader);
+        ResolvedUberShaderSource resolvedSource = ResolveCanonicalVariantSource(canonicalShader);
         cancellationToken.ThrowIfCancellationRequested();
 
         UberMaterialVariantRequest request = BuildRequest(material, canonicalShader, manifest, resolvedSource);
@@ -167,7 +167,7 @@ internal static partial class UberShaderVariantBuilder
         };
     }
 
-    private static UberMaterialVariantRequest BuildRequest(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, ResolvedShaderSource resolvedSource)
+    private static UberMaterialVariantRequest BuildRequest(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, ResolvedUberShaderSource resolvedSource)
     {
         MaterialVariantAxes axes = BuildMaterialAxes(material, canonicalShader, manifest, resolvedSource);
 
@@ -193,7 +193,7 @@ internal static partial class UberShaderVariantBuilder
         };
     }
 
-    private static MaterialVariantAxes BuildMaterialAxes(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, ResolvedShaderSource resolvedSource)
+    private static MaterialVariantAxes BuildMaterialAxes(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, ResolvedUberShaderSource resolvedSource)
     {
         ManifestDerivedData manifestData = GetManifestDerivedData(manifest);
 
@@ -232,7 +232,10 @@ internal static partial class UberShaderVariantBuilder
                 continue;
 
             EShaderUiPropertyMode mode = ResolvePropertyMode(material, property);
-            if (property.IsSampler || mode == EShaderUiPropertyMode.Animated || !manifestData.StaticSupportedPropertyNames.Contains(property.Name))
+            bool staticForVariant = mode == EShaderUiPropertyMode.Static &&
+                                    (!property.HasExplicitMutability || property.Mutability != EShaderUiPropertyMutability.Runtime) &&
+                                    manifestData.StaticSupportedPropertyNames.Contains(property.Name);
+            if (property.IsSampler || !staticForVariant)
             {
                 if (!property.IsSampler)
                     animatedProperties.Add(property.Name);
@@ -319,10 +322,12 @@ internal static partial class UberShaderVariantBuilder
         strippedSource = StripStaticUniformDeclarations(strippedSource, staticPropertyNames);
         strippedSource = InlineStaticPropertyLiterals(strippedSource, staticLiterals);
         strippedSource = PruneStaticIfBlocks(strippedSource);
-        strippedSource = GlslSnippetDeadCodeEliminator.Trim(strippedSource);
-        strippedSource = GlslSnippetDeadCodeEliminator.TrimWholeSource(strippedSource, ["main"]);
-        strippedSource = GlslSnippetDeadCodeEliminator.StripRegionMarkers(strippedSource);
-        strippedSource = CollapseBlankLineRuns(strippedSource);
+        strippedSource = ResolvedShaderSourceOptimizer.Optimize(
+            strippedSource,
+            new ResolvedShaderSourceOptimizationOptions
+            {
+                DiagnosticLabel = "UberVariant",
+            }).Source;
 
         HashSet<string> residualMacros = ResolveResidualDefineMacros(strippedSource, disabledFeatureMacros, request.PipelineMacros);
         List<string> defines = new(residualMacros.Count + 2);
@@ -335,10 +340,10 @@ internal static partial class UberShaderVariantBuilder
         return InsertDefinesAfterVersion(strippedSource, defines);
     }
 
-    private static ResolvedShaderSource ResolveCanonicalVariantSource(XRShader canonicalShader)
+    private static ResolvedUberShaderSource ResolveCanonicalVariantSource(XRShader canonicalShader)
         => ResolveShaderSourceCached(canonicalShader, emitIncludeDeadCodeMarkers: true);
 
-    private static ResolvedShaderSource ResolveShaderSourceCached(XRShader shader, bool emitIncludeDeadCodeMarkers)
+    private static ResolvedUberShaderSource ResolveShaderSourceCached(XRShader shader, bool emitIncludeDeadCodeMarkers)
     {
         string sourceText = shader.Source?.Text ?? string.Empty;
         string? sourcePath = ResolveShaderSourcePathOrName(shader);
@@ -346,9 +351,9 @@ internal static partial class UberShaderVariantBuilder
 
         while (true)
         {
-            if (ResolvedSourceCache.TryGetValue(cacheKey, out Lazy<ResolvedShaderSource>? cachedLazy))
+            if (ResolvedSourceCache.TryGetValue(cacheKey, out Lazy<ResolvedUberShaderSource>? cachedLazy))
             {
-                ResolvedShaderSource cached;
+                ResolvedUberShaderSource cached;
                 try
                 {
                     cached = cachedLazy.Value;
@@ -368,14 +373,14 @@ internal static partial class UberShaderVariantBuilder
                 ResolvedSourceCache.TryRemove(cacheKey, out _);
             }
 
-            Lazy<ResolvedShaderSource> created = new(
+            Lazy<ResolvedUberShaderSource> created = new(
                 () => ResolveShaderSourceUncached(shader, sourceText, sourcePath, emitIncludeDeadCodeMarkers),
                 LazyThreadSafetyMode.ExecutionAndPublication);
-            Lazy<ResolvedShaderSource> actual = ResolvedSourceCache.GetOrAdd(cacheKey, created);
+            Lazy<ResolvedUberShaderSource> actual = ResolvedSourceCache.GetOrAdd(cacheKey, created);
 
             try
             {
-                ResolvedShaderSource resolved = actual.Value;
+                ResolvedUberShaderSource resolved = actual.Value;
                 if (!ShaderSourceResolver.AreDependenciesCurrent(resolved.Dependencies))
                 {
                     ResolvedSourceCache.TryRemove(cacheKey, out _);
@@ -398,7 +403,7 @@ internal static partial class UberShaderVariantBuilder
         }
     }
 
-    private static ResolvedShaderSource ResolveShaderSourceUncached(
+    private static ResolvedUberShaderSource ResolveShaderSourceUncached(
         XRShader shader,
         string sourceText,
         string? sourcePath,
@@ -439,13 +444,13 @@ internal static partial class UberShaderVariantBuilder
         return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies);
     }
 
-    private static ResolvedShaderSource CreateResolvedShaderSource(
+    private static ResolvedUberShaderSource CreateResolvedShaderSource(
         string resolvedSource,
         string? sourcePath,
         ShaderSourceFileDependency[] dependencies)
     {
         string? normalizedPath = NormalizeSourcePathKey(sourcePath);
-        return new ResolvedShaderSource
+        return new ResolvedUberShaderSource
         {
             Source = resolvedSource,
             SourcePath = normalizedPath,
@@ -1017,12 +1022,19 @@ internal static partial class UberShaderVariantBuilder
 
     internal static EShaderUiPropertyMode ResolvePropertyMode(XRMaterial material, ShaderUiProperty property)
     {
+        if (property.IsSampler)
+            return EShaderUiPropertyMode.Animated;
+
+        if (property.HasExplicitMutability)
+        {
+            return property.Mutability == EShaderUiPropertyMutability.Runtime
+                ? EShaderUiPropertyMode.Animated
+                : EShaderUiPropertyMode.Static;
+        }
+
         UberMaterialPropertyState? authored = material.UberAuthoredState.GetProperty(property.Name);
         if (authored is not null)
             return authored.Mode;
-
-        if (property.IsSampler)
-            return EShaderUiPropertyMode.Animated;
 
         return property.DefaultMode == EShaderUiPropertyMode.Unspecified
             ? EShaderUiPropertyMode.Static
@@ -1231,7 +1243,7 @@ internal static partial class UberShaderVariantBuilder
             .Where(static x => x is not null && x.Type != EShaderType.Fragment)
             .OrderBy(static x => x.Type))
         {
-            ResolvedShaderSource resolved = ResolveShaderSourceCached(shader, emitIncludeDeadCodeMarkers: false);
+            ResolvedUberShaderSource resolved = ResolveShaderSourceCached(shader, emitIncludeDeadCodeMarkers: false);
             VertexPermutationCacheKey cacheKey = new(
                 shader.Type,
                 shader.Source?.Text ?? string.Empty,

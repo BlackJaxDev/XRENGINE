@@ -62,8 +62,8 @@ namespace XREngine.Rendering.OpenGL
 
         private static string GetShaderSource(XRShader shader)
         {
-            if (shader.TryGetResolvedSource(out string resolvedSource, logFailures: false) && !string.IsNullOrWhiteSpace(resolvedSource))
-                return resolvedSource;
+            if (shader.TryGetOptimizedSource(out string optimizedSource, logFailures: false) && !string.IsNullOrWhiteSpace(optimizedSource))
+                return optimizedSource;
 
             return shader.Source?.Text ?? string.Empty;
         }

@@ -353,6 +353,12 @@ public sealed partial class XRMaterialInspector
                 (featureLookup.TryGetValue(featureId, out ShaderUiFeature? bucketFeature) && material.IsUberFeatureEnabled(bucketFeature.Id, bucketFeature.DefaultEnabled)) ||
                 (featureLookup.TryGetValue(featureId, out ShaderUiFeature? requiredFeature) && requiredFeature.Required));
             EShaderUiPropertyMode propertyMode = material.GetUberPropertyMode(property.Name, property.DefaultMode, property.IsSampler);
+            if (!property.IsSampler && property.HasExplicitMutability)
+            {
+                propertyMode = property.Mutability == EShaderUiPropertyMutability.Runtime
+                    ? EShaderUiPropertyMode.Animated
+                    : EShaderUiPropertyMode.Static;
+            }
 
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
@@ -372,6 +378,14 @@ public sealed partial class XRMaterialInspector
             if (property.IsSampler)
             {
                 ImGui.TextDisabled("Texture");
+            }
+            else if (property.HasExplicitMutability && property.Mutability == EShaderUiPropertyMutability.Runtime)
+            {
+                ImGui.TextDisabled("Runtime");
+            }
+            else if (property.HasExplicitMutability && property.Mutability != EShaderUiPropertyMutability.Runtime)
+            {
+                ImGui.TextDisabled(FormatShaderPropertyMutability(property.Mutability));
             }
             else
             {
@@ -438,7 +452,11 @@ public sealed partial class XRMaterialInspector
                 if (!featureAvailable)
                     ImGui.TextDisabled("Unavailable");
                 else if (propertyMode == EShaderUiPropertyMode.Static)
-                    ImGui.TextDisabled(featureEnabled ? "Rebuild variant" : "Feature off");
+                    ImGui.TextDisabled(featureEnabled
+                        ? property.HasExplicitMutability
+                            ? FormatStaticPropertyUpdateText(property.Mutability)
+                            : "Rebuild material variant"
+                        : "Feature off");
                 else
                     DrawParameterDriveCell(material, parameter, property.Name, property.GlslType);
             }
@@ -480,13 +498,17 @@ public sealed partial class XRMaterialInspector
 
         if (!property.IsSampler)
         {
-            bool canSwitchToAnimated = propertyMode != EShaderUiPropertyMode.Animated;
+            bool canSwitchToAnimated =
+                (!property.HasExplicitMutability || property.Mutability == EShaderUiPropertyMutability.Runtime) &&
+                propertyMode != EShaderUiPropertyMode.Animated;
             if (ImGui.MenuItem("Convert To Animated", null, false, canSwitchToAnimated))
             {
                 variantChanged |= material.SetUberPropertyMode(property.Name, EShaderUiPropertyMode.Animated);
             }
 
-            bool canSwitchToConstant = propertyMode != EShaderUiPropertyMode.Static;
+            bool canSwitchToConstant =
+                (!property.HasExplicitMutability || property.Mutability != EShaderUiPropertyMutability.Runtime) &&
+                propertyMode != EShaderUiPropertyMode.Static;
             if (ImGui.MenuItem("Convert To Constant", null, false, canSwitchToConstant))
             {
                 variantChanged |= material.SetUberPropertyMode(property.Name, EShaderUiPropertyMode.Static);
@@ -517,6 +539,26 @@ public sealed partial class XRMaterialInspector
 
         ImGui.EndPopup();
     }
+
+    private static string FormatShaderPropertyMutability(EShaderUiPropertyMutability mutability)
+        => mutability switch
+        {
+            EShaderUiPropertyMutability.MaterialStatic => "Material static",
+            EShaderUiPropertyMutability.PassStatic => "Pass static",
+            EShaderUiPropertyMutability.EngineStatic => "Engine static",
+            EShaderUiPropertyMutability.DebugStatic => "Debug static",
+            _ => "Runtime",
+        };
+
+    private static string FormatStaticPropertyUpdateText(EShaderUiPropertyMutability mutability)
+        => mutability switch
+        {
+            EShaderUiPropertyMutability.MaterialStatic => "Rebuild material variant",
+            EShaderUiPropertyMutability.PassStatic => "Pass variant",
+            EShaderUiPropertyMutability.EngineStatic => "Engine cache rebuild",
+            EShaderUiPropertyMutability.DebugStatic => "Debug variant rebuild",
+            _ => "Runtime uniform",
+        };
 
     private static bool IsAuthorableUberProperty(ShaderUiProperty property)
     {

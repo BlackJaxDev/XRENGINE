@@ -47,6 +47,24 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
+    public void EnsureUberStateInitialized_UsesMutabilityAsPropertyModeContract()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_RuntimeValue", display="Runtime Value", mode=static, mutability=runtime)
+            uniform float _RuntimeValue;
+            //@property(name="_ShadowType", display="Shadow Type", mode=animated, mutability=material-static)
+            uniform int _ShadowType;
+            """);
+
+        material.EnsureUberStateInitialized();
+
+        material.GetUberPropertyMode("_RuntimeValue", EShaderUiPropertyMode.Static, isSampler: false).ShouldBe(EShaderUiPropertyMode.Animated);
+        material.GetUberPropertyMode("_ShadowType", EShaderUiPropertyMode.Animated, isSampler: false).ShouldBe(EShaderUiPropertyMode.Static);
+    }
+
+    [Test]
     public void RequestUberVariantRebuild_StripsCanonicalFeatureGuard_WhenFeatureIsEnabled()
     {
         XRMaterial material = CreateUberMaterial(

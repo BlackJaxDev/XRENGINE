@@ -152,6 +152,94 @@ public sealed class ShaderSourceResolverCachingTests
     }
 
     [Test]
+    public void ResolvedSourceOptimizer_PrunesUnreachableHelpersAndKeepsStageInterfaces()
+    {
+        const string source =
+            """
+            #version 450 core
+            layout(location = 0) in vec3 UnusedButRequiredInput;
+            layout(location = 0) out vec4 FragColor;
+            uniform float RuntimeValue;
+            float UsedHelper() { return RuntimeValue; }
+            float UnusedHelper() { return 42.0; }
+            void main() { FragColor = vec4(UsedHelper()); }
+            """;
+
+        ResolvedShaderSourceOptimizationResult result = ResolvedShaderSourceOptimizer.Optimize(source);
+
+        result.Source.ShouldContain("UnusedButRequiredInput");
+        result.Source.ShouldContain("FragColor");
+        result.Source.ShouldContain("UsedHelper");
+        result.Source.ShouldNotContain("UnusedHelper");
+    }
+
+    [Test]
+    public void ResolvedSourceOptimizer_FoldsStaticLiteralsAndRemovesStaticUniforms()
+    {
+        const string source =
+            """
+            #version 450 core
+            layout(location = 0) out vec4 FragColor;
+            uniform float StaticScale;
+            float UsedHelper() { return StaticScale; }
+            void main() { FragColor = vec4(UsedHelper()); }
+            """;
+
+        ResolvedShaderSourceOptimizationResult result = ResolvedShaderSourceOptimizer.Optimize(
+            source,
+            new ResolvedShaderSourceOptimizationOptions
+            {
+                StaticLiterals = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["StaticScale"] = "2.0",
+                },
+            });
+
+        result.Source.ShouldNotContain("uniform float StaticScale");
+        result.Source.ShouldContain("return 2.0;");
+        result.FoldedStaticLiteralCount.ShouldBeGreaterThan(0);
+    }
+
+    [Test]
+    public void ResolvedSourceOptimizer_KeepsAnnotatedSymbols()
+    {
+        const string source =
+            """
+            #version 450 core
+            layout(location = 0) out vec4 FragColor;
+            //@keep DebugProbe
+            float DebugProbe() { return 1.0; }
+            float UnusedHelper() { return 42.0; }
+            void main() { FragColor = vec4(0.0); }
+            """;
+
+        ResolvedShaderSourceOptimizationResult result = ResolvedShaderSourceOptimizer.Optimize(source);
+
+        result.Source.ShouldContain("DebugProbe");
+        result.Source.ShouldNotContain("UnusedHelper");
+        result.RootNames.ShouldContain("DebugProbe");
+    }
+
+    [Test]
+    public void ResolvedSourceOptimizer_KeepsLayoutBoundResources()
+    {
+        const string source =
+            """
+            #version 450 core
+            layout(location = 0) out vec4 FragColor;
+            layout(binding = 6) uniform sampler2D PinnedSampler;
+            uniform sampler2D UnusedSampler;
+            void main() { FragColor = vec4(0.0); }
+            """;
+
+        ResolvedShaderSourceOptimizationResult result = ResolvedShaderSourceOptimizer.Optimize(source);
+
+        result.Source.ShouldContain("PinnedSampler");
+        result.Source.ShouldNotContain("UnusedSampler");
+        result.RootNames.ShouldContain("PinnedSampler");
+    }
+
+    [Test]
     public void LegacyPreprocessor_ResolvesRegisteredSnippetsThroughSharedResolver()
     {
         const string snippetName = "UnitTest_RegisteredSnippet";
