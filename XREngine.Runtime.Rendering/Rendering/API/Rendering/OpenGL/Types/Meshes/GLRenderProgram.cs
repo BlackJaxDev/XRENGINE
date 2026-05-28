@@ -45,6 +45,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly ConcurrentDictionary<int, string> _locationNameCache = new();
             private readonly ConcurrentDictionary<string, UniformInfo> _uniformMetadata = new();
             private SamplerUniformInfo[] _activeSamplerUniforms = [];
+            private EUniformRequirements _activeEngineUniformRequirements = EUniformRequirements.None;
             private readonly ConcurrentDictionary<string, byte> _loggedUniformMismatches = new();
 
             // Binding-batch sampler tracking is scoped to the active draw on the render thread.
@@ -257,6 +258,7 @@ namespace XREngine.Rendering.OpenGL
                 _locationNameCache.Clear();
                 _uniformMetadata.Clear();
                 _activeSamplerUniforms = [];
+                _activeEngineUniformRequirements = EUniformRequirements.None;
                 _loggedUniformMismatches.Clear();
                 _loggedEmptyBindingBatches.Clear();
                 _boundSamplerLocations.Clear();

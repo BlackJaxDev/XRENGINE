@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using XREngine;
 using XREngine.Data.Profiling;
 using XREngine.Rendering.Shaders;
@@ -190,7 +191,22 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
-            private void WriteToBinaryShaderCache(BinaryProgram binary)
+            private static void QueueBinaryShaderCacheWrite(BinaryProgram binary)
+            {
+                ThreadPool.QueueUserWorkItem(static state =>
+                {
+                    try
+                    {
+                        WriteToBinaryShaderCache((BinaryProgram)state!);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.OpenGLWarning($"[ShaderCache] Async program binary cache write failed: {ex.GetType().Name}: {ex.Message}");
+                    }
+                }, binary);
+            }
+
+            private static void WriteToBinaryShaderCache(BinaryProgram binary)
             {
                 string path = GetShaderCacheDirectoryPath();
                 Directory.CreateDirectory(path);
@@ -257,7 +273,7 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            private void CacheBinary(uint bindingId)
+            private void CacheBinary(uint bindingId, GLProgramCompileLinkQueue.ProgramBinarySnapshot? capturedBinary = null)
             {
                 if (!RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching)
                     return;
@@ -268,6 +284,30 @@ namespace XREngine.Rendering.OpenGL
                 string cacheKey = BuildBinaryCacheKey(Hash);
                 if (string.IsNullOrWhiteSpace(cacheKey))
                     return;
+
+                if (capturedBinary is { } snapshot)
+                {
+                    if (snapshot.Length <= 0 || snapshot.Binary.Length == 0 || snapshot.Format == GLEnum.None)
+                    {
+                        Debug.OpenGLWarning($"[ShaderCache] Program {bindingId} for key {cacheKey} did not expose a retrievable worker-captured program binary. Cache write skipped.");
+                        LogRenderingProgramBuildEvent(
+                            "BINARY_CACHE_WRITE_SKIPPED",
+                            _activeBuildBackend ?? "BinaryCache",
+                            "worker-captured program binary length was zero",
+                            cacheKey,
+                            bindingId);
+                        return;
+                    }
+
+                    StoreBinaryCacheEntry(
+                        cacheKey,
+                        bindingId,
+                        snapshot.Binary,
+                        snapshot.Format,
+                        snapshot.Length,
+                        "captured linked program binary on shared worker");
+                    return;
+                }
 
                 int len = 0;
                 MeasureRenderingProgramGlCall(
@@ -308,10 +348,28 @@ namespace XREngine.Rendering.OpenGL
                     binaryLength = capturedLength;
                     format = capturedFormat;
                 }
+
+                StoreBinaryCacheEntry(
+                    cacheKey,
+                    bindingId,
+                    binary,
+                    format,
+                    binaryLength,
+                    "captured linked program binary");
+            }
+
+            private void StoreBinaryCacheEntry(
+                string cacheKey,
+                uint bindingId,
+                byte[] binary,
+                GLEnum format,
+                uint binaryLength,
+                string reason)
+            {
                 LogRenderingProgramBuildEvent(
                     "BINARY_CACHE_WRITE",
                     _activeBuildBackend ?? "BinaryCache",
-                    "captured linked program binary",
+                    reason,
                     cacheKey,
                     bindingId,
                     binaryBytes: binaryLength,
@@ -333,7 +391,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 binaryCache[cacheKey] = bin;
-                WriteToBinaryShaderCache(bin);
+                QueueBinaryShaderCacheWrite(bin);
             }
 
             private ShaderBinaryCacheMetadata CreateBinaryCacheMetadata(ulong sourceHash, string cacheKey, GLEnum format, uint length)

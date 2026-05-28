@@ -673,7 +673,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool useCascadedDirectionalShadows,
             Lights3DCollection? lights)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.DeferredBind.{light.GetHashCode()}",
                 TimeSpan.FromSeconds(1.0)))
             {

@@ -116,6 +116,18 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void UberNormalMapDecode_UsesExplicitModeSelectionOnly()
+    {
+        string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+
+        source.ShouldContain("if (NormalMapMode == 1)");
+        source.ShouldContain("tangentNormal = heightMapToTangentNormal(normalUV, heightScale * _BumpScale);");
+        source.ShouldContain("tangentNormal = unpackNormal(texture(_BumpMap, normalUV), _BumpScale);");
+        source.ShouldNotContain("looksLikeHeightMapSample");
+        source.ShouldNotContain("NormalMapMode == 1 ||");
+    }
+
+    [Test]
     public void UberShaderFragment_StylizedModesDriveAllDirectLights()
     {
         string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
@@ -326,6 +338,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             "shadow-masks",
             "emission",
             "matcap",
+            "normal-map",
             "rim-lighting",
             "advanced-specular",
             "detail-textures",
@@ -412,10 +425,14 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         material.RenderOptions.RequiredEngineUniforms.ShouldBe(
             EUniformRequirements.Camera
             | EUniformRequirements.Lights
+            | EUniformRequirements.AmbientOcclusion
             | EUniformRequirements.ViewportDimensions
             | EUniformRequirements.RenderTime);
 
         material.Parameter<ShaderFloat>("_LightDataAOStrengthR")?.Value.ShouldBe(0.0f);
+        material.Parameter<ShaderFloat>("_ForwardShadowsEnabled")?.Value.ShouldBe(1.0f);
+        material.Parameter<ShaderFloat>("_ForwardContactShadowsEnabled")?.Value.ShouldBe(1.0f);
+        material.Parameter<ShaderFloat>("_ForwardPbrResourcesEnabled")?.Value.ShouldBe(0.0f);
         material.Parameter<ShaderFloat>("_PBRBRDF")?.Value.ShouldBe(0.0f);
         material.Parameter<ShaderFloat>("_SpecularStrength")?.Value.ShouldBe(1.0f);
         material.Parameter<ShaderFloat>("_MainVertexColoringEnabled")?.Value.ShouldBe(0.0f);
@@ -561,15 +578,9 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     private static object GetRuntimeRenderingSettings()
-    {
-        Type engineType = typeof(DefaultVertexShaderGenerator).Assembly.GetType("XREngine.Engine", throwOnError: true)!;
-        Type renderingType = engineType.GetNestedType("Rendering", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Runtime rendering facade was not found.");
-        return renderingType.GetProperty("Settings", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(null)
-            ?? throw new InvalidOperationException("Runtime render settings were not found.");
-    }
+        => RuntimeEngine.Rendering.Settings;
 
-    private static string LoadShaderSource(string shaderRelativePath)
+    private static new string LoadShaderSource(string shaderRelativePath)
     {
         string shaderRoot = ResolveShaderRoot();
         string normalizedRelativePath = shaderRelativePath.Replace('/', Path.DirectorySeparatorChar);

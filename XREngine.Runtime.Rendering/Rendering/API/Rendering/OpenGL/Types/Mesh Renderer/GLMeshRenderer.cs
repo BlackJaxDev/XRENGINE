@@ -53,6 +53,7 @@ namespace XREngine.Rendering.OpenGL
             private GLRenderProgram? _separatedVertexProgram;
             private GLRenderProgram? _forcedGeneratedVertexProgram;
             private bool _combinedProgramPipelineFallbackLogged;
+            private bool _combinedProgramUseFailureLogged;
             private bool _pendingUberFallbackLogged;
             private static readonly object s_pendingUberFallbackMaterialLock = new();
             private static XRMaterial? s_pendingUberFallbackMaterial;
@@ -241,15 +242,7 @@ namespace XREngine.Rendering.OpenGL
             private const int ModelDrawDiagMaxLogsPerPhase = 12;
             private const int ModelDrawDiagMaxEarlyPhaseLogs = 3;
             private static readonly ConcurrentDictionary<string, int> s_modelDrawDiagPhaseCounts = new();
-            private static readonly string[] ModelDrawDiagDefaultFilters =
-            [
-                "Body",
-                "Face",
-                "Glass",
-                "Glasses",
-                "Sunglass",
-                "Sunglasses"
-            ];
+            private static readonly string[] ModelDrawDiagDefaultFilters = [];
 
             private static readonly string[] ModelDrawDiagFilters = BuildModelDrawDiagFilters();
 
@@ -280,6 +273,7 @@ namespace XREngine.Rendering.OpenGL
                 string? materialName = meshRenderer?.Material?.Name;
                 string? meshName = meshRenderer?.Mesh?.Name;
                 string? rendererName = meshRenderer?.Name;
+                string? sourceSubMeshName = meshRenderer?.SourceSubMeshAsset?.Name;
 
                 for (int i = 0; i < ModelDrawDiagFilters.Length; i++)
                 {
@@ -289,7 +283,8 @@ namespace XREngine.Rendering.OpenGL
 
                     if (ContainsDiagnosticFilter(materialName, filter) ||
                         ContainsDiagnosticFilter(meshName, filter) ||
-                        ContainsDiagnosticFilter(rendererName, filter))
+                        ContainsDiagnosticFilter(rendererName, filter) ||
+                        ContainsDiagnosticFilter(sourceSubMeshName, filter))
                     {
                         return true;
                     }
@@ -327,7 +322,7 @@ namespace XREngine.Rendering.OpenGL
                 bool computeSkinning = (mesh?.HasSkinning ?? false) && allowSkinning && computeSkinningSetting;
                 Debug.OpenGL(
                     $"[ModelDrawDiag.GL] phase={phase} #{count} phaseLog={phaseCount} glRenderer={_instanceId} renderer='{meshRenderer?.Name ?? "<null>"}' " +
-                    $"mesh='{mesh?.Name ?? "<null>"}' material='{meshRenderer?.Material?.Name ?? "<null>"}' instances={instances} " +
+                    $"mesh='{mesh?.Name ?? "<null>"}' sourceSubMesh='{meshRenderer?.SourceSubMeshAsset?.Name ?? "<null>"}' material='{meshRenderer?.Material?.Name ?? "<null>"}' instances={instances} " +
                     $"generated={IsGenerated} prepared={IsPreparedForRendering} lastPrepare={LastPrepareResult} " +
                     $"lastPrepareDetail='{LastPrepareDetail}' buffersBound={BuffersBound} buffersReady={buffersReady} " +
                     $"vao={(TryGetBindingId(out uint vaoId) ? vaoId : 0u)} triCount={TriangleIndicesBuffer?.Data?.ElementCount ?? 0u} " +

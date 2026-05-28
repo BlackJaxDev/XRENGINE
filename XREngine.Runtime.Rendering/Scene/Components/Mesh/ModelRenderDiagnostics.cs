@@ -232,9 +232,12 @@ internal static class ModelRenderDiagnostics
         XRMaterial? material = command.MaterialOverride ?? renderer?.Material;
         XRMesh? mesh = renderer?.Mesh;
         Debug.Rendering(
-            "[ModelRenderDiag] CommandCollect component={0} renderable={1} mesh='{2}' material='{3}' pass={4} effectivePass={5} cmdEnabled={6} forceCpu={7} instances={8} isShadow={9} distance={10:F3} camera={11}",
+            "[ModelRenderDiag] CommandCollect component={0} renderable={1} cmd={2} stable={3} sourceSubMesh='{4}' mesh='{5}' material='{6}' pass={7} effectivePass={8} cmdEnabled={9} forceCpu={10} instances={11} isShadow={12} distance={13:F3} cmdDistance={14:F3} sortKey={15} camera={16}",
             component is null ? "<non-model>" : ComponentLabel(component),
             RenderableLabel(renderable),
+            RuntimeHelpers.GetHashCode(command),
+            command.StableQueryKey,
+            renderer?.SourceSubMeshAsset?.Name ?? "<null>",
             mesh?.Name ?? "<null>",
             material?.Name ?? "<null>",
             command.RenderPass,
@@ -244,6 +247,8 @@ internal static class ModelRenderDiagnostics
             command.Instances,
             commands.IsShadowPass,
             distance,
+            command.RenderDistance,
+            command.SortOrderKey,
             camera?.GetHashCode().ToString() ?? "<null>");
     }
 

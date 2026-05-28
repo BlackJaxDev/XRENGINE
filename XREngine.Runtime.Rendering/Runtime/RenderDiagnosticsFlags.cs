@@ -62,11 +62,16 @@ public static class RenderDiagnosticsFlags
     public static volatile int DeferredDebugView;
 
     /// <summary>
-    /// When false, <c>ModelRenderDiagnostics</c> short-circuits all trace work. Default is true
-    /// in DEBUG/EDITOR builds. Seed: <c>XRE_DEBUG_MODEL_RENDER=0</c> or
-    /// <c>XRE_MODEL_RENDER_DIAG=0</c> sets this to false.
+    /// When false, <c>ModelRenderDiagnostics</c> short-circuits all trace work. Default is false;
+    /// seed <c>XRE_DEBUG_MODEL_RENDER=1</c> or <c>XRE_MODEL_RENDER_DIAG=1</c> to enable.
     /// </summary>
-    public static volatile bool ModelRenderDiagEnabled = true;
+    public static volatile bool ModelRenderDiagEnabled;
+
+    /// <summary>
+    /// Directional shadow atlas/cascade audit tracing. Default is false; seed
+    /// <c>XRE_DIRECTIONAL_SHADOW_AUDIT=1</c> or <c>XRE_SHADOW_AUDIT=1</c> to enable.
+    /// </summary>
+    public static volatile bool DirectionalShadowAudit;
 
     /// <summary>
     /// Bypasses vendor upscaler resolve/blit and routes the final present from the raw scene FBO.
@@ -166,6 +171,7 @@ public static class RenderDiagnosticsFlags
         {
         }
 
+        bool modelDiagEnabled = ReadBool("XRE_DEBUG_MODEL_RENDER") || ReadBool("XRE_MODEL_RENDER_DIAG");
         bool modelDiagDisabled = ReadBool("XRE_DEBUG_MODEL_RENDER_ZERO") || ReadBool("XRE_MODEL_RENDER_DIAG_ZERO");
         // The legacy env-var contract was "set to 0 to disable"; preserve that by checking for the
         // exact literal "0".
@@ -173,13 +179,16 @@ public static class RenderDiagnosticsFlags
         {
             string? a = Environment.GetEnvironmentVariable("XRE_DEBUG_MODEL_RENDER");
             string? b = Environment.GetEnvironmentVariable("XRE_MODEL_RENDER_DIAG");
+            if (string.Equals(a, "1", StringComparison.OrdinalIgnoreCase) || string.Equals(b, "1", StringComparison.OrdinalIgnoreCase))
+                modelDiagEnabled = true;
             if (string.Equals(a, "0", StringComparison.OrdinalIgnoreCase) || string.Equals(b, "0", StringComparison.OrdinalIgnoreCase))
                 modelDiagDisabled = true;
         }
         catch
         {
         }
-        ModelRenderDiagEnabled = !modelDiagDisabled;
+        ModelRenderDiagEnabled = modelDiagEnabled && !modelDiagDisabled;
+        DirectionalShadowAudit = ReadBool("XRE_DIRECTIONAL_SHADOW_AUDIT") || ReadBool("XRE_SHADOW_AUDIT");
 
         BypassVendorUpscale = ReadBool("XRE_BYPASS_VENDOR_UPSCALE");
         GLDebug = ReadBool("XRE_GL_DEBUG");
@@ -264,6 +273,7 @@ public static class RenderDiagnosticsFlags
     }
 
     public static void SetModelRenderDiagEnabled(bool value) => ModelRenderDiagEnabled = value;
+    public static void SetDirectionalShadowAudit(bool value) => DirectionalShadowAudit = value;
 
     public static void SetBypassVendorUpscale(bool value) => BypassVendorUpscale = value;
     public static void SetGLDebug(bool value) => GLDebug = value;

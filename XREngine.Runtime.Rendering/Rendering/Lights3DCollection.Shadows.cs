@@ -952,7 +952,8 @@ namespace XREngine.Scene
 
         private void LogShadowAtlasFrameSummary(bool collectVisibleNow, ShadowScratch scratch)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.AtlasFrame.{GetHashCode()}",
                 TimeSpan.FromSeconds(1.0)))
             {
@@ -989,7 +990,8 @@ namespace XREngine.Scene
             bool hasPrevious,
             ShadowAtlasAllocation previous)
         {
-            if (request.ProjectionType is not EShadowProjectionType.DirectionalCascade and not EShadowProjectionType.DirectionalPrimary ||
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                request.ProjectionType is not EShadowProjectionType.DirectionalCascade and not EShadowProjectionType.DirectionalPrimary ||
                 !Debug.ShouldLogEvery(
                     $"DirectionalShadowAudit.AtlasSubmit.{request.Key}",
                     TimeSpan.FromSeconds(1.0)))
@@ -1032,7 +1034,8 @@ namespace XREngine.Scene
             bool needsLegacyPrimary,
             int activeCascadeCount)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.LegacyDecision.{light.GetHashCode()}",
                 TimeSpan.FromSeconds(1.0)))
             {

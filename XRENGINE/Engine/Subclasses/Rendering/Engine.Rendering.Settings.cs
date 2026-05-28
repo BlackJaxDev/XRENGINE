@@ -689,12 +689,15 @@ namespace XREngine
                             return;
 
                         Volatile.Write(ref _useDirectionalShadowAtlas, value);
-                        XREngine.Debug.Lighting(
-                            EOutputVerbosity.Normal,
-                            false,
-                            "[DirectionalShadowAudit][Setting] frame={0} UseDirectionalShadowAtlas={1}",
-                            Engine.Rendering.State.RenderFrameId,
-                            value);
+                        if (XREngine.Rendering.RenderDiagnosticsFlags.DirectionalShadowAudit)
+                        {
+                            XREngine.Debug.Lighting(
+                                EOutputVerbosity.Normal,
+                                false,
+                                "[DirectionalShadowAudit][Setting] frame={0} UseDirectionalShadowAtlas={1}",
+                                Engine.Rendering.State.RenderFrameId,
+                                value);
+                        }
                     }
                 }
 

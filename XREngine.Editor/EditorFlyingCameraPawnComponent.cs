@@ -1742,9 +1742,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (hasNonScrollInput)
             _scrollSmoothTarget = null;
 
-        while (_pendingScrollDeltas.Count > 0)
-            transformChanged |= ApplyScrollTransformation(vp, tfm, _pendingScrollDeltas.Dequeue());
-        transformChanged |= UpdateScrollSmooth(tfm);
+        bool waitingForScrollDepthHit = _depthQueryRequested && _pendingScrollDeltas.Count > 0;
+        if (!waitingForScrollDepthHit)
+        {
+            while (_pendingScrollDeltas.Count > 0)
+                transformChanged |= ApplyScrollTransformation(vp, tfm, _pendingScrollDeltas.Dequeue());
+
+            transformChanged |= UpdateScrollSmooth(tfm);
+        }
+
         if (trans.HasValue && WorldDragPoint.HasValue && DepthHitNormalizedViewportPoint.HasValue)
         {
             Vector3 normCoord = DepthHitNormalizedViewportPoint.Value;
@@ -1768,7 +1774,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
 
         if (transformChanged)
+        {
+            InvalidateView();
             RecalculateCameraWorldMatrix(tfm);
+        }
     }
 
     private bool ApplyScrollTransformation(XRViewport vp, Transform tfm, float scrollDelta)
@@ -1787,6 +1796,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
         else
         {
+            _scrollSmoothTarget = null;
             if (ShiftPressed)
                 scrollDelta *= ShiftSpeedModifier;
             base.OnScrolled(scrollDelta);

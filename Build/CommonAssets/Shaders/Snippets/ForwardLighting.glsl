@@ -4,7 +4,9 @@
 
 #pragma snippet "LightStructs"
 #pragma snippet "LightAttenuation"
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 #pragma snippet "ShadowSampling"
+#endif
 
 const float PI = 3.14159265359;
 const float MAX_REFLECTION_LOD = 4.0;
@@ -19,7 +21,9 @@ uniform float Metallic = 0.0;
 uniform float Emission = 0.0;
 uniform bool AmbientOcclusionMultiBounce;
 uniform bool SpecularOcclusionEnabled;
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
 uniform bool ForwardPbrResourcesEnabled;
+#endif
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
@@ -52,6 +56,7 @@ uniform float ScreenWidth;
 uniform float ScreenHeight;
 #endif
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
 layout(binding = 6) uniform sampler2D BRDF;
 layout(binding = 7) uniform sampler2DArray IrradianceArray;
 layout(binding = 8) uniform sampler2DArray PrefilterArray;
@@ -103,8 +108,10 @@ uniform ivec3 ProbeGridDims;
 uniform vec3 ProbeGridOrigin;
 uniform float ProbeGridCellSize;
 uniform bool UseProbeGrid;
+#endif
 
 // Directional shadow maps use fixed high texture units to avoid collision with material textures.
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 const int XRENGINE_MAX_DIRECTIONAL_SHADOW_RECORDS = XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS * XRENGINE_MAX_CASCADES;
 layout(binding = 15) uniform sampler2D DirectionalShadowMaps[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
 layout(binding = 17) uniform sampler2DArray DirectionalShadowMapArrays[XRENGINE_MAX_FORWARD_DIRECTIONAL_LIGHTS];
@@ -152,6 +159,7 @@ uniform vec4 DirectionalShadowAtlasParams1[XRENGINE_MAX_DIRECTIONAL_SHADOW_RECOR
 #define ShadowDepthBiasTexels ShadowBiasParams.x
 #define ShadowSlopeBiasTexels ShadowBiasParams.y
 #define ShadowNormalBiasTexels ShadowBiasParams.z
+#endif
 
 uniform int DirLightCount; 
 uniform int SpotLightCount;
@@ -176,17 +184,23 @@ const int XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS = 4;
 const int XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS = 4;
 const int XRENGINE_POINT_SHADOW_FACE_COUNT = 6;
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 layout(binding = 19) uniform samplerCube PointLightShadowMaps[XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS];
 layout(binding = 23) uniform sampler2D SpotLightShadowMaps[XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS];
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_CONTACT_SHADOWS
 layout(binding = 28) uniform sampler2D ForwardContactDepthView;
 layout(binding = 29) uniform sampler2D ForwardContactNormalView;
 layout(binding = 30) uniform sampler2DArray ForwardContactDepthViewArray;
 layout(binding = 31) uniform sampler2DArray ForwardContactNormalViewArray;
+uniform bool ForwardContactShadowsEnabled = false;
+uniform bool ForwardContactShadowsArrayEnabled = false;
+#else
+const bool ForwardContactShadowsEnabled = false;
+const bool ForwardContactShadowsArrayEnabled = false;
+#endif
 layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;
 layout(binding = 32) uniform sampler2DArray SpotLightShadowAtlas;
 layout(binding = 34) uniform sampler2DArray PointLightShadowAtlas;
-uniform bool ForwardContactShadowsEnabled = false;
-uniform bool ForwardContactShadowsArrayEnabled = false;
 
 struct ForwardPointShadowData
 {
@@ -231,6 +245,7 @@ layout(std430, binding = 28) readonly buffer ForwardSpotShadowMetadataBuffer
 {
     ForwardSpotShadowData SpotLightShadows[];
 };
+#endif
 
 // Forward+ tiled light culling uniforms
 uniform bool ForwardPlusEnabled;
@@ -267,8 +282,6 @@ layout(std430, binding = 21) readonly buffer ForwardPlusVisibleIndicesBuffer
     int ForwardPlusVisibleIndices[];
 };
 
-int XRENGINE_ForwardShadowDebugModeActive = 0;
-vec3 XRENGINE_ForwardShadowDebugColor = vec3(0.0);
 bool XRENGINE_ForwardLightingContextInitialized = false;
 int XRENGINE_ResolvedForwardViewIndex = 0;
 mat4 XRENGINE_ResolvedForwardViewMatrix = mat4(1.0);
@@ -279,6 +292,9 @@ mat4 XRENGINE_ResolvedForwardViewProjectionMatrix = mat4(1.0);
 vec3 XRENGINE_ResolvedForwardCameraPosition = vec3(0.0);
 vec3 XRENGINE_ResolvedForwardFragPos = vec3(0.0);
 float XRENGINE_ResolvedForwardViewDepth = 0.0;
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
+int XRENGINE_ForwardShadowDebugModeActive = 0;
+vec3 XRENGINE_ForwardShadowDebugColor = vec3(0.0);
 int XRENGINE_DirectionalShadowAtlasLayerCount = 0;
 int XRENGINE_PointShadowAtlasLayerCount = 0;
 int XRENGINE_SpotShadowAtlasLayerCount = 0;
@@ -312,6 +328,7 @@ void XRENGINE_TrySetForwardShadowDebug(int debugMode, float lit, float margin)
     XRENGINE_ForwardShadowDebugModeActive = debugMode;
     XRENGINE_ForwardShadowDebugColor = XRENGINE_ResolveForwardShadowDebugColor(debugMode, lit, margin);
 }
+#endif
 
 vec3 XRENGINE_MultiBounceAO(float ao, vec3 albedo)
 {
@@ -354,6 +371,7 @@ vec3 XRENGINE_SpecF_SchlickRoughnessApprox(float VoH, vec3 F0, float roughness)
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * powTerm;
 }
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
 vec2 XRENGINE_EncodeOcta(vec3 dir)
 {
     vec3 octDir = vec3(dir.x, dir.z, dir.y);
@@ -378,6 +396,7 @@ vec3 XRENGINE_SampleOctaArrayLod(sampler2DArray tex, vec3 dir, float layer, floa
 {
     return textureLod(tex, vec3(XRENGINE_EncodeOcta(dir), layer), lod).rgb;
 }
+#endif
 
 int XRENGINE_GetForwardViewIndex()
 {
@@ -546,6 +565,7 @@ float XRENGINE_GetForwardResolvedViewDepth(vec3 fragPosWS)
     return XRENGINE_ViewDepthFromWorldPosWithViewMatrix(fragPosWS, XRENGINE_ResolvedForwardViewMatrix);
 }
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 int XRENGINE_GetDirectionalShadowAtlasLayerCount()
 {
     return XRENGINE_ForwardLightingContextInitialized
@@ -608,6 +628,7 @@ vec4 XRENGINE_GetForwardShadowParams3()
         ? XRENGINE_ResolvedShadowParams3
         : ShadowParams3;
 }
+#endif
 
 void XRENGINE_BeginForwardLightingFragment(vec3 fragPosWS)
 {
@@ -623,6 +644,7 @@ void XRENGINE_BeginForwardLightingFragment(vec3 fragPosWS)
     XRENGINE_ResolvedForwardViewDepth = XRENGINE_ViewDepthFromWorldPosWithViewMatrix(
         fragPosWS,
         XRENGINE_ResolvedForwardViewMatrix);
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
     XRENGINE_DirectionalShadowAtlasLayerCount = textureSize(DirectionalShadowAtlas, 0).z;
     XRENGINE_PointShadowAtlasLayerCount = textureSize(PointLightShadowAtlas, 0).z;
     XRENGINE_SpotShadowAtlasLayerCount = textureSize(SpotLightShadowAtlas, 0).z;
@@ -632,9 +654,11 @@ void XRENGINE_BeginForwardLightingFragment(vec3 fragPosWS)
     XRENGINE_ResolvedShadowParams1 = ShadowParams1;
     XRENGINE_ResolvedShadowParams2 = ShadowParams2;
     XRENGINE_ResolvedShadowParams3 = ShadowParams3;
+#endif
     XRENGINE_ForwardLightingContextInitialized = true;
 }
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 float XRENGINE_GetLocalShadowBias(float NoL, float shadowBase, float shadowExponent, float minBias, float maxBias)
 {
     float baseMapped = max(shadowBase, 0.0) * (1.0 - NoL);
@@ -666,7 +690,9 @@ float XRENGINE_GetPointShadowSampleRadius(samplerCube shadowMap, float filterRad
     float requestedScale = clamp(filterRadius * 256.0, 0.0, 4.0);
     return texelDirectionSpan * max(1.0, requestedScale);
 }
+#endif
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
 mat3 XRENGINE_QuaternionToMat3(vec4 q)
 {
     vec3 q2 = q.xyz + q.xyz;
@@ -868,6 +894,7 @@ void XRENGINE_ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4
     if (sum > 0.0)
         weights /= sum;
 }
+#endif
 
 vec3 XRENGINE_ResolveForwardAmbientFallback()
 {
@@ -897,6 +924,10 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     vec3 diffuseAO = AmbientOcclusionMultiBounce
         ? XRENGINE_MultiBounceAO(ambientOcclusion, albedo)
         : vec3(ambientOcclusion);
+
+#ifdef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
+    return XRENGINE_GetForwardAmbientFallback(albedo, diffuseAO);
+#else
     float specularOcclusion = SpecularOcclusionEnabled
         ? XRENGINE_GTSpecularOcclusion(NoV, ambientOcclusion, roughness)
         : ambientOcclusion;
@@ -960,8 +991,10 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     vec3 diffuse = GlobalAmbient * irradianceColor * albedo;
     vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
     return kD * diffuse * diffuseAO + specular * specularOcclusion;
+#endif
 }
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 float XRENGINE_GetShadowBiasRange(float diffuseFactor, float biasMin, float biasMax)
 {
     vec4 shadowParams = XRENGINE_GetForwardShadowParams0();
@@ -994,6 +1027,9 @@ float XRENGINE_SampleForwardContactShadowScreenSpace(
     float jitterStrength,
     float viewDepth)
 {
+#ifdef XRENGINE_UBER_DISABLE_FORWARD_CONTACT_SHADOWS
+    return 1.0;
+#else
     if (ForwardContactShadowsArrayEnabled)
     {
         return XRENGINE_SampleContactShadowScreenSpace(
@@ -1043,6 +1079,7 @@ float XRENGINE_SampleForwardContactShadowScreenSpace(
         contactNormalOffset,
         jitterStrength,
         viewDepth);
+#endif
 }
 
 float XRENGINE_SampleDirectionalAtlasPage(
@@ -1540,6 +1577,12 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
         shadowF1.w,
         shadowI0.z) * contact;
 }
+#else
+float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, vec3 normal, float diffuseFactor)
+{
+    return 1.0;
+}
+#endif
 
 vec3 XRENGINE_CalculateDirectPbrLightWithViewDir(vec3 lightColor, float diffuseIntensity, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, float attenuation, vec3 viewDir)
 {
@@ -1596,6 +1639,7 @@ vec3 XRENGINE_CalcDirLight(int lightIndex, DirLight light, vec3 normal, vec3 fra
     return XRENGINE_CalcDirLightWithViewDir(lightIndex, light, normal, fragPos, albedo, rms, F0, useShadow, viewDir);
 }
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 // Forward+ light lists vary per fragment. OpenGL sampler arrays require
 // dynamically uniform indices, so point shadow cubemaps dispatch through
 // fixed-slot branches instead of indexing the sampler array by runtime slot.
@@ -3131,6 +3175,17 @@ float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, v
 
     return XRENGINE_ReadShadowMapSpotLegacySlot(shadowSlot, shadowData, light, normal, fragPos, lightDir);
 }
+#else
+float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal, vec3 fragPos)
+{
+    return 1.0;
+}
+
+float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 lightDir)
+{
+    return 1.0;
+}
+#endif
 
 vec3 XRENGINE_CalcPointLightWithViewDir(int lightIndex, PointLight light, vec3 normal, vec3 fragPos, vec3 albedo, vec3 rms, vec3 F0, vec3 viewDir)
 {
@@ -3221,8 +3276,10 @@ vec3 XRENGINE_CalcForwardPlusSpotLight(ForwardPlusLocalLight light, vec3 normal,
 vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, float specularIntensity, float ambientOcclusion)
 {
     XRENGINE_BeginForwardLightingFragment(fragPos);
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
     XRENGINE_ForwardShadowDebugModeActive = 0;
     XRENGINE_ForwardShadowDebugColor = vec3(0.0);
+#endif
     normal = normalize(normal);
     vec3 viewDir = normalize(XRENGINE_GetForwardResolvedCameraPosition() - fragPos);
     vec3 rms = vec3(clamp(Roughness, 0.0, 1.0), clamp(Metallic, 0.0, 1.0), max(specularIntensity, 0.0));
@@ -3267,12 +3324,15 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
             totalLight += XRENGINE_CalcSpotLightWithViewDir(i, SpotLights[i], normal, fragPos, albedo, rms, F0, viewDir);
     }
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
     if (XRENGINE_ForwardShadowDebugModeActive != 0)
         return XRENGINE_ForwardShadowDebugColor;
+#endif
 
     return totalLight + XRENGINE_CalculateAmbientPbr(normal, fragPos, albedo, viewDir, rms, ambientOcclusion) + albedo * Emission;
 }
 
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
 #undef ShadowBlockerSamples
 #undef ShadowFilterSamples
 #undef ShadowVogelTapCount
@@ -3298,3 +3358,4 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
 #undef ShadowDepthBiasTexels
 #undef ShadowSlopeBiasTexels
 #undef ShadowNormalBiasTexels
+#endif

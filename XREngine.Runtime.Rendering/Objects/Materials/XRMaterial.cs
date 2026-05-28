@@ -873,20 +873,16 @@ namespace XREngine.Rendering
                 return;
             }
 
+            if (!EnsureShaderPipelineUberSourceReady())
+            {
+                DestroyShaderPipelineProgram();
+                return;
+            }
+
             if (ShaderPipelineProgram is not null)
                 return;
 
-            var nonVertexShaders = Shaders.Where(x => x.Type != EShaderType.Vertex);
-            if (!nonVertexShaders.Any())
-                return;
-
-            ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders)
-            {
-                Name = $"MaterialPipeline:{Name ?? "unknown"}",
-                UsageTag = $"MaterialFragmentPipeline | material={Name ?? "<unnamed>"}",
-                Priority = ShaderProgramPriority,
-            };
-            ApplyShaderProgramMetadata(ShaderPipelineProgram);
+            CreateShaderPipelineProgramFromCurrentShaders();
         }
 
         public void DestroyShaderPipelineProgram()
@@ -932,13 +928,44 @@ namespace XREngine.Rendering
             if (!RuntimeRenderingHostServices.Current.AllowShaderPipelines)
                 return;
 
+            if (!HasShaderPipelineRenderableUberSource())
+                return;
+
+            CreateShaderPipelineProgramFromCurrentShaders();
+        }
+
+        private bool EnsureShaderPipelineUberSourceReady()
+        {
+            if (HasShaderPipelineRenderableUberSource())
+                return true;
+
+            if (UberVariantStatus.Stage is EUberMaterialVariantStage.Requested or
+                EUberMaterialVariantStage.Preparing or
+                EUberMaterialVariantStage.Compiling)
+            {
+                return false;
+            }
+
+            EnsureUberVariantPreparedForRendering();
+            return HasShaderPipelineRenderableUberSource();
+        }
+
+        private bool HasShaderPipelineRenderableUberSource()
+        {
+            XRShader? fragmentShader = GetShader(EShaderType.Fragment);
+            return HasRenderableUberVariantState(fragmentShader) ||
+                   !TryGetUberMaterialState(out _, out _);
+        }
+
+        private void CreateShaderPipelineProgramFromCurrentShaders()
+        {
             var nonVertexShaders = Shaders.Where(x => x.Type != EShaderType.Vertex);
             if (!nonVertexShaders.Any())
                 return;
 
             ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders)
             {
-                Name = $"MaterialPipeline:{Name ?? "unknown"}",
+                Name = BuildShaderPipelineProgramName(),
                 UsageTag = $"MaterialFragmentPipeline | material={Name ?? "<unnamed>"}",
                 Priority = ShaderProgramPriority,
             };

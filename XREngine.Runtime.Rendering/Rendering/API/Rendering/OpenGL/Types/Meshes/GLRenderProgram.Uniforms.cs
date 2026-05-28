@@ -230,7 +230,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.IntVec2))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.IntVec2))
                     return;
 
                 fixed (IVector2* ptr = p)
@@ -243,7 +243,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.IntVec3))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.IntVec3))
                     return;
 
                 fixed (IVector3* ptr = p)
@@ -256,7 +256,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.IntVec4))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.IntVec4))
                     return;
 
                 fixed (IVector4* ptr = p)
@@ -283,7 +283,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.FloatVec2))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.FloatVec2))
                     return;
 
                 fixed (Vector2* ptr = p)
@@ -296,7 +296,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.FloatVec3))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.FloatVec3))
                     return;
 
                 fixed (Vector3* ptr = p)
@@ -309,7 +309,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.FloatVec4))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.FloatVec4))
                     return;
 
                 fixed (Vector4* ptr = p)
@@ -322,7 +322,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.FloatVec4))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.FloatVec4))
                     return;
 
                 fixed (Quaternion* ptr = p)
@@ -335,7 +335,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.Int, GLEnum.Bool))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.Int, GLEnum.Bool))
                     return;
 
                 fixed (int* ptr = p)
@@ -348,7 +348,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.Float))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.Float))
                     return;
 
                 fixed (float* ptr = p)
@@ -361,7 +361,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.Float))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.Float))
                     return;
 
                 unsafe
@@ -377,7 +377,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.UnsignedInt))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.UnsignedInt))
                     return;
 
                 fixed (uint* ptr = p)
@@ -390,7 +390,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.Double))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.Double))
                     return;
 
                 fixed (double* ptr = p)
@@ -403,7 +403,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.FloatMat4))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.FloatMat4))
                     return;
 
                 fixed (Matrix4x4* ptr = p)
@@ -416,7 +416,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.Bool, GLEnum.Int))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.Bool, GLEnum.Int))
                     return;
 
                 int[] conv = new int[p.Length];
@@ -465,7 +465,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.BoolVec2, GLEnum.IntVec2))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.BoolVec2, GLEnum.IntVec2))
                     return;
 
                 int[] conv = new int[p.Length * 2];
@@ -484,7 +484,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.BoolVec3, GLEnum.IntVec3))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.BoolVec3, GLEnum.IntVec3))
                     return;
 
                 int[] conv = new int[p.Length * 3];
@@ -505,7 +505,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.BoolVec4, GLEnum.IntVec4))
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.BoolVec4, GLEnum.IntVec4))
                     return;
 
                 int[] conv = new int[p.Length * 4];

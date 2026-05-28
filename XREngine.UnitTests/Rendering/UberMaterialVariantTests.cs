@@ -587,8 +587,7 @@ public sealed class UberMaterialVariantTests
                 new ShaderVector4(new Vector4(0.8f, 0.7f, 0.6f, 1.0f), "_Color"));
 
             material.EnsureUberStateInitialized();
-            material.RequestUberVariantRebuild();
-            WaitForActiveUberVariant(material);
+            material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
 
             string generatedSource = GetFragmentSource(material);
             generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
@@ -612,14 +611,99 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
+    public void RequestUberVariantRebuild_PrunesUnusedMainHelpersBeforeSnippetReferencesKeepThemAlive()
+    {
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"xrengine-uber-main-dce-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            string shaderPath = Path.Combine(tempDirectory, "UberShader.frag");
+            File.WriteAllText(Path.Combine(tempDirectory, "common.glsl"),
+                """
+                vec3 UsedSnippetHelper(vec3 value) { return value; }
+                vec3 KeptOnlyByUnusedMainHelper(vec3 value) { return value * 9.0; }
+                """);
+            File.WriteAllText(shaderPath,
+                """
+                #version 450 core
+                #include "common.glsl"
+                //@property(name="_Color", display="Color", mode=static)
+                uniform vec4 _Color;
+                vec3 UnusedMainHelper(vec3 color) { return KeptOnlyByUnusedMainHelper(color); }
+                void main()
+                {
+                    vec3 color = UsedSnippetHelper(_Color.rgb);
+                }
+                """);
+
+            XRMaterial material = CreateUberMaterialFromFile(
+                shaderPath,
+                new ShaderVector4(new Vector4(0.8f, 0.7f, 0.6f, 1.0f), "_Color"));
+
+            material.EnsureUberStateInitialized();
+            material.RequestUberVariantRebuild();
+            WaitForActiveUberVariant(material);
+
+            string generatedSource = GetFragmentSource(material);
+            generatedSource.ShouldContain("UsedSnippetHelper");
+            generatedSource.ShouldContain("void main()");
+            generatedSource.ShouldNotContain("UnusedMainHelper");
+            generatedSource.ShouldNotContain("KeptOnlyByUnusedMainHelper");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDirectory))
+                Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void RequestUberVariantRebuild_PrunesStaticIfBlocksBeforeDce()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            #define MODE_CUTOUT 1
+            const float EPSILON = 0.0001;
+            //@property(name="_Color", display="Color", mode=static)
+            uniform vec4 _Color;
+            void UsedPath() { }
+            void RemovedPath() { }
+            void main()
+            {
+                if (0 == MODE_CUTOUT) {
+                    RemovedPath();
+                } else {
+                    UsedPath();
+                }
+
+                if (abs(1.0) > EPSILON) {
+                    UsedPath();
+                }
+            }
+            """,
+            new ShaderVector4(new Vector4(1.0f, 1.0f, 1.0f, 1.0f), "_Color"));
+
+        material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldContain("UsedPath");
+        generatedSource.ShouldNotContain("RemovedPath");
+        generatedSource.ShouldNotContain("0 == MODE_CUTOUT");
+        generatedSource.ShouldNotContain("abs(1.0) > EPSILON");
+    }
+
+    [Test]
     public void PrepareVariant_RealUberForwardSnippetRetainsReferencedRuntimeGlobals()
     {
         string shaderPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", "Uber", "UberShader.frag"));
-        XRMaterial material = CreateUberMaterialFromFile(shaderPath);
+        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelImporter.CreateDefaultForwardPlusUberShaderParameters());
+        material.RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions();
+        material.Parameter<ShaderFloat>("_ForwardPbrResourcesEnabled")?.SetValue(1.0f);
 
         material.EnsureUberStateInitialized();
-        material.RequestUberVariantRebuild();
-        WaitForActiveUberVariant(material);
+        material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
 
         string generatedSource = GetFragmentSource(material);
         generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
@@ -632,6 +716,61 @@ public sealed class UberMaterialVariantTests
         generatedSource.ShouldContain("layout(binding = 6) uniform sampler2D BRDF;");
         generatedSource.ShouldNotContain("BEGIN SNIPPET");
         generatedSource.ShouldNotContain("BEGIN INCLUDE");
+    }
+
+    [Test]
+    public void PrepareVariant_RealUberForwardLighting_PrunesShadowAndPbrResourceFamiliesWhenExplicitlyDisabled()
+    {
+        string shaderPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", "Uber", "UberShader.frag"));
+        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelImporter.CreateDefaultForwardPlusUberShaderParameters());
+        material.RenderOptions = ModelImporter.CreateForwardPlusUberShaderRenderOptions();
+        material.Parameter<ShaderFloat>("_ForwardShadowsEnabled")?.SetValue(0.0f);
+        material.Parameter<ShaderFloat>("_ForwardContactShadowsEnabled")?.SetValue(0.0f);
+        material.Parameter<ShaderFloat>("_ForwardPbrResourcesEnabled")?.SetValue(0.0f);
+
+        material.EnsureUberStateInitialized();
+        material.PrepareUberVariantImmediately().ShouldBeTrue(material.UberVariantStatus.FailureReason);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
+        generatedSource.ShouldContain("DirLightCount");
+        generatedSource.ShouldContain("DirectionalLights[]");
+        generatedSource.ShouldContain("XRENGINE_CalculateDirectPbrLightWithViewDir");
+        generatedSource.ShouldNotContain("const vec2 XRENGINE_ShadowPoissonDisk[16]");
+        generatedSource.ShouldNotContain("const vec3 XRENGINE_ShadowCubeKernel[20]");
+        generatedSource.ShouldNotContain("layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
+        generatedSource.ShouldNotContain("layout(binding = 19) uniform samplerCube PointLightShadowMaps");
+        generatedSource.ShouldNotContain("ForwardContactDepthView");
+        generatedSource.ShouldNotContain("layout(binding = 6) uniform sampler2D BRDF;");
+        generatedSource.ShouldNotContain("layout(binding = 7) uniform sampler2DArray IrradianceArray;");
+        generatedSource.ShouldNotContain("layout(std430, binding = 0) readonly buffer LightProbePositions");
+        generatedSource.ShouldNotContain("XRENGINE_ResolveProbeWeightsGrid");
+        generatedSource.Length.ShouldBeLessThan(180_000);
+    }
+
+    [Test]
+    public void PrepareVariant_RealUberWithoutForwardRequirements_PrunesForwardLightingAndDefaultTextureFeatures()
+    {
+        string shaderPath = ResolveWorkspacePath(Path.Combine("Build", "CommonAssets", "Shaders", "Uber", "UberShader.frag"));
+        XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelImporter.CreateDefaultForwardPlusUberShaderParameters());
+
+        material.EnsureUberStateInitialized();
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
+        generatedSource.ShouldContain("fragData.finalColor = fragData.baseColor;");
+        generatedSource.ShouldNotContain("layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
+        generatedSource.ShouldNotContain("layout(binding = 6) uniform sampler2D BRDF;");
+        generatedSource.ShouldNotContain("XRENGINE_CalculateAmbientPbr");
+        generatedSource.ShouldNotContain("uniform sampler2D _BumpMap;");
+        generatedSource.ShouldNotContain("uniform sampler2D _AlphaMask;");
+        generatedSource.ShouldNotContain("applyDetailNormal");
+        generatedSource.ShouldNotContain("sampleMaterialAmbientOcclusion");
+        generatedSource.ShouldNotContain("calculateStylizedAdditionalLighting");
+        material.ActiveUberVariant.EnabledFeatures.ShouldNotContain("alpha-masks");
+        material.ActiveUberVariant.EnabledFeatures.ShouldNotContain("normal-map");
     }
 
     [Test]

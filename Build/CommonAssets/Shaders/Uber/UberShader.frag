@@ -25,6 +25,7 @@
 // per-material variant is adopted. Keep additive/default-off modules stripped
 // here so unprepared imported meshes do not render as emissive white.
 #define XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR 1
+#define XRENGINE_UBER_DISABLE_ALPHA_MASKS 1
 #define XRENGINE_UBER_DISABLE_BACKFACE 1
 #define XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS 1
 #define XRENGINE_UBER_DISABLE_DETAIL_TEXTURES 1
@@ -34,6 +35,7 @@
 #define XRENGINE_UBER_DISABLE_GLITTER 1
 #define XRENGINE_UBER_DISABLE_MATERIAL_AO 1
 #define XRENGINE_UBER_DISABLE_MATCAP 1
+#define XRENGINE_UBER_DISABLE_NORMAL_MAP 1
 #define XRENGINE_UBER_DISABLE_OUTLINE 1
 #define XRENGINE_UBER_DISABLE_PARALLAX 1
 #define XRENGINE_UBER_DISABLE_RIM_LIGHTING 1
@@ -51,8 +53,12 @@
 // #pragma snippet pulls in engine-managed GLSL fragments that provide
 // implementations for direct/indirect lighting, AO sampling, and normal
 // encoding for the prepass.
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
 #pragma snippet "ForwardLighting"
+#endif
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION
 #pragma snippet "AmbientOcclusionSampling"
+#endif
 #pragma snippet "NormalEncoding"
 
 // Transparency algorithm snippets. These are mutually exclusive with each
@@ -86,11 +92,11 @@
 // ============================================
 // Locations must agree with the vertex stage's out contract. The gaps are
 // intentional: other slots are reserved for optional attributes.
-layout(location = 0)  in vec3 FragPos;        // world-space position
-layout(location = 1)  in vec3 FragNorm;       // world-space geometric normal
-layout(location = 2)  in vec3 FragTan;        // world-space tangent
-layout(location = 3)  in vec3 FragBinorm;     // world-space bitangent
-layout(location = 4)  in vec2 FragUV0;        // primary texture coordinates
+layout(location = 0) in vec3 FragPos;         // world-space position
+layout(location = 1) in vec3 FragNorm;        // world-space geometric normal
+layout(location = 2) in vec3 FragTan;         // world-space tangent
+layout(location = 3) in vec3 FragBinorm;      // world-space bitangent
+layout(location = 4) in vec2 FragUV0;         // primary texture coordinates
 layout(location = 12) in vec4 FragColor0;     // per-vertex RGBA color
 layout(location = 20) in vec3 FragPosLocal;   // object-space position
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
@@ -320,6 +326,7 @@ vec2 getUV(int uvIndex, ToonMesh mesh) {
 // ============================================
 // Normal Mapping
 // ============================================
+#ifndef XRENGINE_UBER_DISABLE_NORMAL_MAP
 vec3 heightMapToTangentNormal(vec2 uv, float scale)
 {
     vec2 texelSize = 1.0 / vec2(textureSize(_BumpMap, 0));
@@ -337,16 +344,15 @@ vec3 heightMapToTangentNormal(vec2 uv, float scale)
     return normalize(vec3(vec2(slopeX, slopeY) * scale, 1.0));
 }
 
-bool looksLikeHeightMapSample(vec3 sampleColor)
-{
-    float delta = max(abs(sampleColor.r - sampleColor.g), max(abs(sampleColor.r - sampleColor.b), abs(sampleColor.g - sampleColor.b)));
-    return delta <= 0.02;
-}
+#endif
 
 // Samples the bump/normal map, decodes it into a tangent-space vector, and
 // rotates it into world space via the fragment's TBN. When _BumpScale is
 // effectively zero we skip the work entirely and keep the vertex normal.
 vec3 calculateNormal(ToonMesh mesh) {
+#ifdef XRENGINE_UBER_DISABLE_NORMAL_MAP
+    return mesh.vertexNormal;
+#else
     if (abs(_BumpScale) <= EPSILON) {
         return mesh.vertexNormal;
     }
@@ -357,11 +363,13 @@ vec3 calculateNormal(ToonMesh mesh) {
     vec2 normalUV = transformUV(getUV(_BumpMapUV, mesh), _BumpMap_ST);
     normalUV = panUV(normalUV, _BumpMapPan, u_Time);
 
-    vec4 normalTex = texture(_BumpMap, normalUV);
-    float heightScale = abs(HeightMapScale) > EPSILON ? HeightMapScale : 1.0;
-    vec3 tangentNormal = (NormalMapMode == 1 || looksLikeHeightMapSample(normalTex.rgb))
-        ? heightMapToTangentNormal(normalUV, heightScale * _BumpScale)
-        : unpackNormal(normalTex, _BumpScale);
+    vec3 tangentNormal;
+    if (NormalMapMode == 1) {
+        float heightScale = abs(HeightMapScale) > EPSILON ? HeightMapScale : 1.0;
+        tangentNormal = heightMapToTangentNormal(normalUV, heightScale * _BumpScale);
+    } else {
+        tangentNormal = unpackNormal(texture(_BumpMap, normalUV), _BumpScale);
+    }
     tangentNormal.z = max(tangentNormal.z, 0.001);
     tangentNormal = normalize(tangentNormal);
 
@@ -369,6 +377,7 @@ vec3 calculateNormal(ToonMesh mesh) {
     vec3 worldNormal = normalize(mesh.TBN * tangentNormal);
 
     return worldNormal;
+#endif
 }
 
 // ============================================
@@ -1188,7 +1197,7 @@ vec3 calculateStylizedAdditionalLighting(ToonMesh mesh, vec3 baseColor, vec3 nor
 // ============================================
 // Self-illumination: texture * color * strength. Does not interact with
 // lighting — it's added on top at the end so it survives tonemap/bloom.
-vec3 calculateEmission(ToonMesh mesh, ToonLight light) {
+vec3 calculateEmission(ToonMesh mesh) {
 #ifdef XRENGINE_UBER_DISABLE_EMISSION
     return vec3(0.0);
 #else
@@ -1379,7 +1388,7 @@ void main() {
     mesh.uv[3] = FragUV0;
     mesh.worldPos = FragPos;
     mesh.localPos = FragPosLocal;
-#if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+#if !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     XRENGINE_BeginForwardLightingFragment(mesh.worldPos);
 #endif
     mesh.vertexNormal = normalize(FragNorm);
@@ -1396,13 +1405,17 @@ void main() {
     // fallback for meshes that did not provide usable tangents.
     // Initialize to an identity-like frame so downstream helpers that touch
     // TBN directly (rare) still see a well-formed matrix.
-    if (abs(_BumpScale) > EPSILON) {
+#if !defined(XRENGINE_UBER_DISABLE_NORMAL_MAP) || !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES) || !defined(XRENGINE_UBER_DISABLE_PARALLAX)
+    {
         mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal, FragTan, FragBinorm, mesh.worldPos, mesh.uv[0]);
-    } else {
+    }
+#else
+    {
         vec3 n = mesh.vertexNormal;
         vec3 t = normalize(abs(n.z) < 0.999 ? cross(n, vec3(0.0, 0.0, 1.0)) : cross(n, vec3(0.0, 1.0, 0.0)));
         mesh.TBN = mat3(t, cross(n, t), n);
     }
+#endif
 
     // ---- 2. Depth-peel gate -------------------------------------------------
 #if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
@@ -1430,8 +1443,12 @@ void main() {
 #endif
 
     // Normal map sampling uses the (possibly parallax-warped) UV0.
+#ifndef XRENGINE_UBER_DISABLE_NORMAL_MAP
     mesh.worldNormal = calculateNormal(mesh);
+#endif
+#ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
     mesh.worldNormal = applyDetailNormal(mesh, mesh.worldNormal);
+#endif
 
     // ---- 4. Base color, color adjustments, alpha ----------------------------
     FragmentData fragData;
@@ -1491,12 +1508,22 @@ void main() {
 #endif
     
     // Occlusion = screen-space SSAO * material-baked AO.
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION
     float screenAmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
+#else
+    float screenAmbientOcclusion = 1.0;
+#endif
+#ifndef XRENGINE_UBER_DISABLE_MATERIAL_AO
     float materialAmbientOcclusion = sampleMaterialAmbientOcclusion(mesh);
+#else
+    float materialAmbientOcclusion = 1.0;
+#endif
     float combinedAmbientOcclusion = saturate(screenAmbientOcclusion * materialAmbientOcclusion);
     PBRData surfacePbr = buildSurfacePbrData(mesh.uv[0], fragData.baseColor);
     vec3 ambientLighting = calculateForwardAmbientLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, combinedAmbientOcclusion);
     ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
+#endif
 
     // ---- 7. Feature overlays (back face, SSS, matcap, rim, etc.) ----------
     // Separate material for the back side of double-sided geometry.
@@ -1514,7 +1541,9 @@ void main() {
     // BRDF path. Stylized modes own every direct light so switching
     // `_LightingMode` changes the response for the sun, extra directionals,
     // points, and spots together.
-#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+#ifdef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
+    fragData.finalColor = fragData.baseColor;
+#elif defined(XRENGINE_UBER_DISABLE_STYLIZED_SHADING)
     fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
 #else
     // _LightingMode == 6 is Realistic (plain Lambert) which is equivalent to
@@ -1612,7 +1641,7 @@ void main() {
     
     // Authored emission (texture * color * strength).
 #ifndef XRENGINE_UBER_DISABLE_EMISSION
-    fragData.emission += calculateEmission(mesh, light);
+    fragData.emission += calculateEmission(mesh);
 #endif
 
     // Final composite: emission is always added on top of lit color so it

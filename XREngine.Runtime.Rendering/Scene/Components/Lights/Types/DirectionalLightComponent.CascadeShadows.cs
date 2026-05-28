@@ -2195,7 +2195,8 @@ namespace XREngine.Components.Lights
 
         private void LogCascadeClearReason(string reason)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.CascadeClear.{GetHashCode()}",
                 TimeSpan.FromSeconds(1.0)))
             {
@@ -2223,7 +2224,8 @@ namespace XREngine.Components.Lights
             float totalDepth,
             ReadOnlySpan<CascadeShadowSlice> slices)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.CascadeUpdate.{GetHashCode()}",
                 TimeSpan.FromSeconds(1.0)))
             {
@@ -2280,7 +2282,8 @@ namespace XREngine.Components.Lights
             bool collectVisibleNow,
             XRCamera? camera)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.AtlasTileRender.{GetHashCode()}.{projection}.{cascadeIndex}",
                 TimeSpan.FromSeconds(1.0)))
             {
@@ -2309,7 +2312,8 @@ namespace XREngine.Components.Lights
             bool collectVisibleNow,
             XRCamera? camera)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.AtlasGroupedRender.{GetHashCode()}",
                 TimeSpan.FromSeconds(1.0)))
             {
@@ -2332,7 +2336,8 @@ namespace XREngine.Components.Lights
 
         private void LogLegacyDirectionalShadowRender(bool renderCascades, bool hasShadowMap, bool hasShadowMaterial, int cascadeCount)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.LegacyRender.{GetHashCode()}",
                 TimeSpan.FromSeconds(1.0)))
             {

@@ -18,6 +18,11 @@ internal static partial class UberShaderVariantBuilder
 {
     internal const string GeneratedVariantMarker = "XRENGINE_UBER_GENERATED_VARIANT";
     private const int GeneratedVariantHeaderScanLimit = 2048;
+    private const string DisableForwardLightingMacro = "XRENGINE_UBER_DISABLE_FORWARD_LIGHTING";
+    private const string DisableForwardAmbientOcclusionMacro = "XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION";
+    private const string DisableForwardShadowsMacro = "XRENGINE_UBER_DISABLE_FORWARD_SHADOWS";
+    private const string DisableForwardContactShadowsMacro = "XRENGINE_UBER_DISABLE_FORWARD_CONTACT_SHADOWS";
+    private const string DisableForwardPbrResourcesMacro = "XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES";
 
     private static readonly ConcurrentDictionary<UberVariantCacheKey, string> GeneratedSourceCache = new();
     private static readonly ConcurrentDictionary<UberVariantCacheKey, XRShader> GeneratedShaderCache = new();
@@ -35,6 +40,11 @@ internal static partial class UberShaderVariantBuilder
         "XRENGINE_FORWARD_WEIGHTED_OIT",
         "XRENGINE_FORWARD_PPLL",
         "XRENGINE_FORWARD_DEPTH_PEEL",
+        DisableForwardLightingMacro,
+        DisableForwardAmbientOcclusionMacro,
+        DisableForwardShadowsMacro,
+        DisableForwardContactShadowsMacro,
+        DisableForwardPbrResourcesMacro,
     ];
 
     private readonly record struct UberVariantCacheKey(ulong VariantHash, long SourceVersion, ulong SourcePathHash, string? SourcePath);
@@ -152,7 +162,7 @@ internal static partial class UberShaderVariantBuilder
             PreparationMilliseconds = stopwatch.Elapsed.TotalMilliseconds,
             CacheHit = cacheHit,
             UniformCount = request.AnimatedProperties.Length,
-            SamplerCount = CountReferencedSamplers(manifest, request),
+            SamplerCount = CountReferencedSamplers(manifest, request, generatedSource),
             GeneratedSourceLength = generatedSource.Length,
         };
     }
@@ -196,6 +206,23 @@ internal static partial class UberShaderVariantBuilder
 
         enabledFeatures.Sort(StringComparer.Ordinal);
         HashSet<string> enabledFeatureSet = new(enabledFeatures, StringComparer.Ordinal);
+        HashSet<string> pipelineMacros = new(resolvedSource.PipelineMacros, StringComparer.Ordinal);
+        bool forwardLightingEnabled = RequiresForwardLighting(material, enabledFeatureSet);
+        bool forwardShadowsEnabled = forwardLightingEnabled && RequiresForwardShadows(material);
+        if (!forwardLightingEnabled)
+            pipelineMacros.Add(DisableForwardLightingMacro);
+        if (!forwardLightingEnabled || !material.RenderOptions.RequiredEngineUniforms.HasFlag(EUniformRequirements.AmbientOcclusion))
+            pipelineMacros.Add(DisableForwardAmbientOcclusionMacro);
+        if (!forwardShadowsEnabled)
+            pipelineMacros.Add(DisableForwardShadowsMacro);
+        if (!forwardShadowsEnabled || !RequiresForwardContactShadows(material))
+            pipelineMacros.Add(DisableForwardContactShadowsMacro);
+        if (!forwardLightingEnabled || !RequiresForwardPbrResources(material))
+            pipelineMacros.Add(DisableForwardPbrResourcesMacro);
+
+        string[] pipelineMacroArray = [.. pipelineMacros];
+        Array.Sort(pipelineMacroArray, StringComparer.Ordinal);
+
         List<string> animatedProperties = [];
         List<string> staticProperties = [];
 
@@ -222,12 +249,34 @@ internal static partial class UberShaderVariantBuilder
         return new MaterialVariantAxes
         {
             EnabledFeatures = [.. enabledFeatures],
-            PipelineMacros = resolvedSource.PipelineMacros,
+            PipelineMacros = pipelineMacroArray,
             AnimatedProperties = [.. animatedProperties],
             StaticProperties = [.. staticProperties],
             VertexPermutationHash = ComputeVertexPermutationHash(material),
         };
     }
+
+    private static bool RequiresForwardLighting(XRMaterial material, IReadOnlySet<string> enabledFeatures)
+    {
+        if (material.RenderOptions.RequiredEngineUniforms.HasFlag(EUniformRequirements.Lights))
+            return true;
+
+        return enabledFeatures.Contains("stylized-shading") ||
+               enabledFeatures.Contains("shadow-masks") ||
+               enabledFeatures.Contains("matcap") ||
+               enabledFeatures.Contains("rim-lighting") ||
+               enabledFeatures.Contains("advanced-specular") ||
+               enabledFeatures.Contains("subsurface");
+    }
+
+    private static bool RequiresForwardShadows(XRMaterial material)
+        => HasTruthyParameter(material, "_ForwardShadowsEnabled", "ForwardShadowsEnabled");
+
+    private static bool RequiresForwardContactShadows(XRMaterial material)
+        => HasTruthyParameter(material, "_ForwardContactShadowsEnabled", "ForwardContactShadowsEnabled");
+
+    private static bool RequiresForwardPbrResources(XRMaterial material)
+        => HasTruthyParameter(material, "_ForwardPbrResourcesEnabled", "ForwardPbrResourcesEnabled");
 
     private static XRShader CreateVariantShader(XRShader canonicalShader, string generatedSource, ulong variantHash)
     {
@@ -269,7 +318,9 @@ internal static partial class UberShaderVariantBuilder
             ResolveDefinedConditionalMacros(disabledFeatureMacros, request.PipelineMacros));
         strippedSource = StripStaticUniformDeclarations(strippedSource, staticPropertyNames);
         strippedSource = InlineStaticPropertyLiterals(strippedSource, staticLiterals);
+        strippedSource = PruneStaticIfBlocks(strippedSource);
         strippedSource = GlslSnippetDeadCodeEliminator.Trim(strippedSource);
+        strippedSource = GlslSnippetDeadCodeEliminator.TrimWholeSource(strippedSource, ["main"]);
         strippedSource = GlslSnippetDeadCodeEliminator.StripRegionMarkers(strippedSource);
         strippedSource = CollapseBlankLineRuns(strippedSource);
 
@@ -906,10 +957,62 @@ internal static partial class UberShaderVariantBuilder
     private static bool ResolveFeatureEnabled(XRMaterial material, XRShader canonicalShader, ShaderUiFeature feature)
     {
         UberMaterialFeatureState? authored = material.UberAuthoredState.GetFeature(feature.Id);
-        if (authored is not null)
+        if (authored is { ExplicitlyAuthored: true })
             return authored.Enabled;
 
-        return feature.DefaultEnabled;
+        bool defaultEnabled = authored?.Enabled ?? feature.DefaultEnabled;
+        return ResolveInferredFeatureEnabled(material, feature.Id, defaultEnabled);
+    }
+
+    private static bool ResolveInferredFeatureEnabled(XRMaterial material, string featureId, bool defaultEnabled)
+    {
+        return featureId switch
+        {
+            "alpha-masks" => HasPositiveIntParameter(material, "_MainAlphaMaskMode") ||
+                             HasAuthoredSamplerTexture(material, "_AlphaMask"),
+            "normal-map" => HasPositiveFloatParameter(material, "_BumpScale") ||
+                            HasAuthoredSamplerTexture(material, "_BumpMap"),
+            _ => defaultEnabled,
+        };
+    }
+
+    private static bool HasPositiveIntParameter(XRMaterial material, string name)
+        => material.Parameter<ShaderInt>(name) is { Value: > 0 };
+
+    private static bool HasPositiveFloatParameter(XRMaterial material, string name)
+        => material.Parameter<ShaderFloat>(name) is { Value: > 0.000001f };
+
+    private static bool HasTruthyParameter(XRMaterial material, params string[] names)
+    {
+        foreach (string name in names)
+        {
+            if (material.Parameter<ShaderBool>(name) is { Value: true } ||
+                material.Parameter<ShaderInt>(name) is { Value: not 0 } ||
+                material.Parameter<ShaderUInt>(name) is { Value: not 0u } ||
+                material.Parameter<ShaderFloat>(name) is { Value: > 0.000001f })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasAuthoredSamplerTexture(XRMaterial material, string samplerName)
+    {
+        foreach (XRTexture? texture in material.Textures)
+        {
+            if (texture is null ||
+                !string.Equals(texture.SamplerName, samplerName, StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(texture.FilePath))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     internal static EShaderUiPropertyMode ResolvePropertyMode(XRMaterial material, ShaderUiProperty property)
@@ -1012,20 +1115,31 @@ internal static partial class UberShaderVariantBuilder
         return text.StartsWith("-0.0", StringComparison.Ordinal) ? "0.0" : text;
     }
 
-    private static int CountReferencedSamplers(ShaderUiManifest manifest, UberMaterialVariantRequest request)
+    private static int CountReferencedSamplers(ShaderUiManifest manifest, UberMaterialVariantRequest request, string generatedSource)
     {
         ManifestDerivedData manifestData = GetManifestDerivedData(manifest);
         HashSet<string> enabledFeatures = request.EnabledFeatures.ToHashSet(StringComparer.Ordinal);
+        HashSet<string> declaredSamplers = CollectDeclaredSamplerNames(generatedSource);
         int count = 0;
         foreach (ShaderUiProperty property in manifestData.SamplerProperties)
         {
             if (property.FeatureId is not null && !enabledFeatures.Contains(property.FeatureId))
+                continue;
+            if (!declaredSamplers.Contains(property.Name))
                 continue;
 
             count++;
         }
 
         return count;
+    }
+
+    private static HashSet<string> CollectDeclaredSamplerNames(string source)
+    {
+        HashSet<string> samplers = new(StringComparer.Ordinal);
+        foreach (Match match in SamplerUniformRegex().Matches(source))
+            samplers.Add(match.Groups["name"].Value);
+        return samplers;
     }
 
     private static string ResolveStaticLiteral(XRMaterial material, ShaderUiProperty property)
@@ -1253,6 +1367,9 @@ internal static partial class UberShaderVariantBuilder
 
     [GeneratedRegex(@"^\s*(?:layout\s*\([^\)]*\)\s*)?uniform\s+(?:(?:lowp|mediump|highp)\s+)?(?<type>\w+)\s+(?<name>\w+)(?:\s*\[[^\]]+\])?\s*;", RegexOptions.Multiline)]
     private static partial Regex UberStaticUniformRegex();
+
+    [GeneratedRegex(@"^\s*(?:layout\s*\([^\)]*\)\s*)?uniform\s+(?:(?:lowp|mediump|highp)\s+)?\w*sampler\w*\s+(?<name>\w+)(?:\s*\[[^\]]+\])?\s*;", RegexOptions.Multiline)]
+    private static partial Regex SamplerUniformRegex();
 
     [GeneratedRegex(@"^[ \t]*#define[ \t]+(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:[^\r\n]*)?\r?\n?", RegexOptions.Multiline)]
     private static partial Regex DefineLineRegex();

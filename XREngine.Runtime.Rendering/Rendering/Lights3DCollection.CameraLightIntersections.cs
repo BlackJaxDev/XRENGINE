@@ -150,7 +150,8 @@ namespace XREngine.Scene
 
         private void LogDirectionalShadowSourceAudit(bool wantsCascades, XRCamera? cascadeCamera)
         {
-            if (!Debug.ShouldLogEvery(
+            if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+                !Debug.ShouldLogEvery(
                 $"DirectionalShadowAudit.Source.{GetHashCode()}",
                 TimeSpan.FromSeconds(1.0)))
             {

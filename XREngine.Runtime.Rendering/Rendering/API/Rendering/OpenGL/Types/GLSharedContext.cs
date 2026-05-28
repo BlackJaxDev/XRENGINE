@@ -21,6 +21,7 @@ namespace XREngine.Rendering.OpenGL
         {
             private readonly string _threadName;
             private readonly double _workerUnhealthySeconds;
+            private static readonly object GlfwSharedContextStartupLock = new();
             // Per-priority FIFO buckets (lower priority value drained first). Indexed by (byte)EProgramPriority.
             // Buckets cover the full enum range so callers can route work without bounds checks.
             private const int PriorityBucketCount = (int)EProgramPriority.Compute + 1;
@@ -94,6 +95,12 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            internal static void RunWithStartupLock(Action action)
+            {
+                lock (GlfwSharedContextStartupLock)
+                    action();
+            }
+
             /// <summary>
             /// Creates the shared context and starts the background thread.
             /// Must be called from the main render thread while the primary GL context is current.
@@ -110,6 +117,7 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
+                IWindow? window = null;
                 try
                 {
                     var options = WindowOptions.Default;
@@ -119,18 +127,23 @@ namespace XREngine.Rendering.OpenGL
                     options.SharedContext = primaryGLContext;
                     options.ShouldSwapAutomatically = false;
 
-                    Silk.NET.Windowing.Window.PrioritizeGlfw();
-                    var window = Silk.NET.Windowing.Window.Create(options);
-                    window.Initialize();
-                    _window = window;
+                    lock (GlfwSharedContextStartupLock)
+                    {
+                        Debug.OpenGL($"[SharedContext] Creating hidden GLFW shared context '{_threadName}'.");
+                        Silk.NET.Windowing.Window.PrioritizeGlfw();
+                        window = Silk.NET.Windowing.Window.Create(options);
+                        window.Initialize();
+                        _window = window;
 
-                    // Ensure the primary context is current on this thread after creating the shared window.
-                    primaryWindow.Window.MakeCurrent();
+                        // Ensure the primary context is current on this thread after creating the shared window.
+                        primaryWindow.Window.MakeCurrent();
+                        Debug.OpenGL($"[SharedContext] Hidden GLFW shared context '{_threadName}' initialized.");
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Debug.RenderingWarning($"[SharedContext] Failed to create shared GL context: {ex.Message}");
-                    _window?.Dispose();
+                    Debug.RenderingWarning($"[SharedContext] Failed to create shared GL context '{_threadName}': {ex.Message}");
+                    (window ?? _window)?.Dispose();
                     _window = null;
                     return false;
                 }
@@ -144,6 +157,7 @@ namespace XREngine.Rendering.OpenGL
                     IsBackground = true,
                     Name = _threadName,
                 };
+                Debug.OpenGL($"[SharedContext] Starting worker '{_threadName}'.");
                 _thread.Start();
 
                 SpinWait.SpinUntil(() => _running || token.IsCancellationRequested, TimeSpan.FromSeconds(3));
@@ -258,7 +272,7 @@ namespace XREngine.Rendering.OpenGL
 
                 Thread? thread = _thread;
                 bool joined = thread is null || !thread.IsAlive;
-                if (!joined && joinTimeout > TimeSpan.Zero && thread != Thread.CurrentThread)
+                if (!joined && thread is not null && joinTimeout > TimeSpan.Zero && thread != Thread.CurrentThread)
                     joined = thread.Join(joinTimeout);
 
                 if (!joined && thread is not null && !thread.IsAlive)
@@ -289,39 +303,47 @@ namespace XREngine.Rendering.OpenGL
             {
                 try
                 {
-                    window.MakeCurrent();
-                    using var gl = GL.GetApi(window.GLContext);
-
-                    _running = true;
-
-                    while (!token.IsCancellationRequested)
+                    GL gl;
+                    lock (GlfwSharedContextStartupLock)
                     {
-                        if (!TryDequeueHighestPriority(out var job))
-                        {
-                            Interlocked.Exchange(ref _oldestQueuedTimestamp, 0);
-                            _signal.WaitOne(TimeSpan.FromMilliseconds(5));
-                            continue;
-                        }
+                        Debug.OpenGL($"[SharedContext] Worker '{_threadName}' making hidden shared context current.");
+                        window.MakeCurrent();
+                        gl = GL.GetApi(window.GLContext);
+                        _running = true;
+                        Debug.OpenGL($"[SharedContext] Worker '{_threadName}' is running.");
+                    }
 
-                        try
+                    using (gl)
+                    {
+                        while (!token.IsCancellationRequested)
                         {
-                            _currentJobName = job.Name;
-                            Interlocked.Exchange(ref _currentJobStartTimestamp, Stopwatch.GetTimestamp());
-                            job.Action(gl);
-                            Interlocked.Increment(ref _completedCount);
-                        }
-                        catch (Exception ex)
-                        {
-                            Interlocked.Increment(ref _failedCount);
-                            Debug.RenderingWarning($"[SharedContext] Job failed: {ex.Message}");
-                        }
-                        finally
-                        {
-                            _currentJobName = null;
-                            Interlocked.Exchange(ref _currentJobStartTimestamp, 0);
+                            if (!TryDequeueHighestPriority(out var job))
+                            {
+                                Interlocked.Exchange(ref _oldestQueuedTimestamp, 0);
+                                _signal.WaitOne(TimeSpan.FromMilliseconds(5));
+                                continue;
+                            }
 
-                            long oldestTs = PeekOldestPendingTimestamp();
-                            Interlocked.Exchange(ref _oldestQueuedTimestamp, oldestTs);
+                            try
+                            {
+                                _currentJobName = job.Name;
+                                Interlocked.Exchange(ref _currentJobStartTimestamp, Stopwatch.GetTimestamp());
+                                job.Action(gl);
+                                Interlocked.Increment(ref _completedCount);
+                            }
+                            catch (Exception ex)
+                            {
+                                Interlocked.Increment(ref _failedCount);
+                                Debug.RenderingWarning($"[SharedContext] Job failed: {ex.Message}");
+                            }
+                            finally
+                            {
+                                _currentJobName = null;
+                                Interlocked.Exchange(ref _currentJobStartTimestamp, 0);
+
+                                long oldestTs = PeekOldestPendingTimestamp();
+                                Interlocked.Exchange(ref _oldestQueuedTimestamp, oldestTs);
+                            }
                         }
                     }
                 }

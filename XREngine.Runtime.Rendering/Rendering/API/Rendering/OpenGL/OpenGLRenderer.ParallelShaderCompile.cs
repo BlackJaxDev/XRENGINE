@@ -308,32 +308,37 @@ public partial class OpenGLRenderer
 
         worker.Enqueue(gl =>
         {
-            try
+            GLSharedContext.RunWithStartupLock(() =>
             {
-                bool set = false;
-                if (extensionName == ArbParallelShaderCompileExtensionName &&
-                    gl.TryGetExtension<ArbParallelShaderCompile>(out var arb))
+                try
                 {
-                    arb.MaxShaderCompilerThreads(requested);
-                    set = true;
-                }
-                else if (extensionName == KhrParallelShaderCompileExtensionName && khrDelegate is not null)
-                {
-                    khrDelegate(requested);
-                    set = true;
-                }
+                    Debug.OpenGL($"[ShaderCache] Worker '{workerLabel}' configuring parallel shader compile.");
 
-                int reported = TryGetMaxShaderCompilerThreads(gl);
-                Debug.OpenGL(
-                    $"[ShaderCache] Worker '{workerLabel}' parallel shader compile: " +
-                    $"extension={extensionName}, requested={FormatThreadCount(requested)}, " +
-                    $"reported={reported}, set={set}.");
-            }
-            catch (Exception ex)
-            {
-                Debug.OpenGLWarning(
-                    $"[ShaderCache] Worker '{workerLabel}' failed to enable parallel shader compile: {ex.Message}");
-            }
+                    bool set = false;
+                    if (extensionName == ArbParallelShaderCompileExtensionName &&
+                        gl.TryGetExtension<ArbParallelShaderCompile>(out var arb))
+                    {
+                        arb.MaxShaderCompilerThreads(requested);
+                        set = true;
+                    }
+                    else if (extensionName == KhrParallelShaderCompileExtensionName && khrDelegate is not null)
+                    {
+                        khrDelegate(requested);
+                        set = true;
+                    }
+
+                    int reported = TryGetMaxShaderCompilerThreads(gl);
+                    Debug.OpenGL(
+                        $"[ShaderCache] Worker '{workerLabel}' parallel shader compile: " +
+                        $"extension={extensionName}, requested={FormatThreadCount(requested)}, " +
+                        $"reported={reported}, set={set}.");
+                }
+                catch (Exception ex)
+                {
+                    Debug.OpenGLWarning(
+                        $"[ShaderCache] Worker '{workerLabel}' failed to enable parallel shader compile: {ex.Message}");
+                }
+            });
         }, "InitParallelShaderCompile");
     }
 

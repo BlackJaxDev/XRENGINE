@@ -1354,6 +1354,9 @@ namespace XREngine
                 new ShaderFloat(0.0f, "_LightingWrappedNormalization"),
                 new ShaderFloat(0.0f, "_LightingGradientStart"),
                 new ShaderFloat(1.0f, "_LightingGradientEnd"),
+                new ShaderFloat(1.0f, "_ForwardShadowsEnabled"),
+                new ShaderFloat(1.0f, "_ForwardContactShadowsEnabled"),
+                new ShaderFloat(0.0f, "_ForwardPbrResourcesEnabled"),
 
                 new ShaderVector4(identitySt, "_LightingAOMaps_ST"),
                 new ShaderVector2(Vector2.Zero, "_LightingAOMapsPan"),
@@ -1512,6 +1515,7 @@ namespace XREngine
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera
                     | EUniformRequirements.Lights
+                    | EUniformRequirements.AmbientOcclusion
                     | EUniformRequirements.ViewportDimensions
                     | EUniformRequirements.RenderTime,
             };

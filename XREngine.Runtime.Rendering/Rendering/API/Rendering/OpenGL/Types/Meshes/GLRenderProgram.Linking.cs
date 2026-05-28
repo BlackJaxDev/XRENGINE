@@ -9,6 +9,7 @@ using System.Text;
 using XREngine;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders;
 using static XREngine.Rendering.XRRenderProgram;
 
@@ -523,7 +524,7 @@ namespace XREngine.Rendering.OpenGL
             private string? _activeBuildBackend;
             private string? _activeBuildFingerprint;
             private long _activeBuildQueueTimestamp;
-            private const double AsyncShaderSlowWarningSeconds = 2.0;
+            private const double AsyncShaderSlowWarningSeconds = 15.0;
             // After this long without COMPLETION_STATUS_ARB == 1, issue a single glFlush()
             // to nudge the driver in case its parallel-link worker is starved on a missing fence.
             private const double AsyncShaderStuckFlushSeconds = 5.0;
@@ -532,8 +533,17 @@ namespace XREngine.Rendering.OpenGL
             // call is documented to implicitly wait for completion and is known to hang
             // indefinitely on NVIDIA's threaded driver when the parallel-link worker is stuck.
             private const double AsyncShaderHardAbandonSeconds = 30.0;
-            private const double SlowLinkPreparationWarningMilliseconds = 25.0;
-            private const double SlowShaderLinkSourceDumpMilliseconds = 500.0;
+            private const double SlowLinkPreparationWarningMilliseconds = 100.0;
+            private const double SlowShaderLinkSourceDumpMilliseconds = 5000.0;
+            private const double ShaderCompletionPollGlCallSlowLogMilliseconds = 1.0;
+            private static readonly bool DumpSlowShaderSources = string.Equals(
+                Environment.GetEnvironmentVariable("XRE_DUMP_SLOW_SHADER_SOURCE"),
+                "1",
+                StringComparison.Ordinal);
+            private static readonly bool TraceShaderCompletionPollGlCalls = string.Equals(
+                Environment.GetEnvironmentVariable("XRE_TRACE_SHADER_COMPLETION_POLL_GLCALLS"),
+                "1",
+                StringComparison.Ordinal);
             private static readonly bool AllowRenderThreadDriverParallelSourceLinks = string.Equals(
                 Environment.GetEnvironmentVariable("XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE"),
                 "1",
@@ -624,7 +634,7 @@ namespace XREngine.Rendering.OpenGL
                 double preparationMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - preparationStartTimestamp);
                 if (preparationMilliseconds >= SlowLinkPreparationWarningMilliseconds)
                 {
-                    Debug.OpenGLWarning($"[ShaderCache] Slow link preparation: hash={hash}, shaderCount={_shaderCache.Count}, cached={isCached}, compileInputs={compileInputs?.Length ?? 0}, elapsedMs={preparationMilliseconds:F2}.");
+                    Debug.OpenGL($"[ShaderCache] Slow link preparation: hash={hash}, shaderCount={_shaderCache.Count}, cached={isCached}, compileInputs={compileInputs?.Length ?? 0}, elapsedMs={preparationMilliseconds:F2}.");
                     ShaderProgramLifecycleDiagnostics.RecordSlowLinkPreparation();
                 }
             }
@@ -938,7 +948,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 _lastAsyncPendingWarningTimestamp = now;
-                Debug.OpenGLWarning($"[ShaderAsync] Program '{GetProgramDebugName()}' hash={Hash} phase={phase} still pending after {elapsedSeconds:F2}s; continuing non-blocking poll.");
+                Debug.OpenGL($"[ShaderAsync] Program '{GetProgramDebugName()}' hash={Hash} phase={phase} still pending after {elapsedSeconds:F2}s; continuing non-blocking poll.");
             }
 
             // Soft time budget for synchronous link work performed inline by
@@ -1367,6 +1377,8 @@ namespace XREngine.Rendering.OpenGL
                     DriverParallelSourceTimeouts.TryAdd(Hash, 0);
                     if (AllowSynchronousSourceRetryAfterAsyncTimeout)
                         SynchronousSourceRetryHashes.TryAdd(Hash, 0);
+                    else
+                        MarkHashFailed("Driver-parallel source link timed out.");
                 }
                 CompleteUberBackendTracking(false, "Async link timed out (driver never reported completion).");
                 PublishBackendStatus(
@@ -1913,6 +1925,18 @@ namespace XREngine.Rendering.OpenGL
                 string backend = _activeBuildBackend ?? "<unknown>";
                 string fingerprint = _activeBuildFingerprint ?? "<none>";
                 int shaderCount = inputs is { Length: > 0 } ? inputs.Length : Data.Shaders.Count;
+                ShaderProgramSourceSummary sourceSummary = CollectShaderProgramSourceSummary(inputs);
+                Debug.OpenGL(
+                    $"[ShaderSlowLink] thresholdMs={SlowShaderLinkSourceDumpMilliseconds:F2} linkMs={linkMilliseconds:F2} " +
+                    $"result={result} program='{programName}' hash={Hash} backend={backend} fingerprint={fingerprint} " +
+                    $"separable={Data.Separable} hazard={IsKnownAsyncLinkHazard} shaderCount={shaderCount} " +
+                    $"shaderTypes={sourceSummary.StageList} sourceBytes={sourceSummary.SourceBytes} sourceLines={sourceSummary.SourceLines} " +
+                    $"sourceLabels={sourceSummary.SourceLabels} dumpSources={DumpSlowShaderSources}" +
+                    (string.IsNullOrWhiteSpace(failureReason) ? "." : $" failure='{failureReason}'."));
+
+                if (!DumpSlowShaderSources)
+                    return;
+
                 Debug.OpenGL(
                     $"[ShaderSourceDump] BEGIN reason=slow-link thresholdMs={SlowShaderLinkSourceDumpMilliseconds:F2} " +
                     $"linkMs={linkMilliseconds:F2} result={result} program='{programName}' hash={Hash} backend={backend} " +
@@ -2077,7 +2101,8 @@ namespace XREngine.Rendering.OpenGL
                 long startTimestamp = Stopwatch.GetTimestamp();
                 action();
                 double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
-                LogRenderingProgramGlCall(callName, programId, elapsedMilliseconds, detail);
+                if (ShouldLogRenderingShaderGlCall(callName, detail, elapsedMilliseconds))
+                    LogRenderingProgramGlCall(callName, programId, elapsedMilliseconds, detail);
                 return elapsedMilliseconds;
             }
 
@@ -2110,6 +2135,8 @@ namespace XREngine.Rendering.OpenGL
                 long startTimestamp = Stopwatch.GetTimestamp();
                 action();
                 double elapsedMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - startTimestamp);
+                if (!ShouldLogRenderingShaderGlCall(callName, detail, elapsedMilliseconds))
+                    return elapsedMilliseconds;
 
                 bool renderThread = RuntimeEngine.IsRenderThread;
                 Debug.Rendering(
@@ -2127,6 +2154,20 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool ShouldLogRenderingShaderLinkVerbose()
                 => Debug.AllowOutput && RuntimeDebugHostServices.Current.OutputVerbosity >= EOutputVerbosity.Verbose;
+
+            private static bool ShouldLogRenderingShaderGlCall(string callName, string? detail, double elapsedMilliseconds)
+            {
+                if (!IsShaderCompletionPollGlCall(callName, detail))
+                    return true;
+
+                return TraceShaderCompletionPollGlCalls ||
+                       elapsedMilliseconds >= ShaderCompletionPollGlCallSlowLogMilliseconds;
+            }
+
+            private static bool IsShaderCompletionPollGlCall(string callName, string? detail)
+                => callName.Contains("GL_COMPLETION_STATUS", StringComparison.OrdinalIgnoreCase) ||
+                   (detail?.Contains("completion-poll", StringComparison.OrdinalIgnoreCase) ?? false) ||
+                   (detail?.Contains("deferred-cleanup", StringComparison.OrdinalIgnoreCase) ?? false);
 
             private static string FormatRenderingDetail(string? detail)
                 => string.IsNullOrWhiteSpace(detail) ? string.Empty : $" detail='{detail.Replace('\'', '"')}'";
@@ -2482,6 +2523,7 @@ namespace XREngine.Rendering.OpenGL
                 _locationNameCache.Clear();
                 _uniformMetadata.Clear();
                 _activeSamplerUniforms = [];
+                _activeEngineUniformRequirements = EUniformRequirements.None;
                 _explicitAttributeLocations.Clear();
                 _explicitAttributeLocationsResolved = false;
             }
@@ -2613,11 +2655,16 @@ namespace XREngine.Rendering.OpenGL
             private void DeferRetryAfterSharedContextSourceTimeout(uint abandonedProgramId)
             {
                 bool retrySynchronously = AllowSynchronousSourceRetryAfterAsyncTimeout;
+                bool retryDriverParallel = !retrySynchronously &&
+                    Renderer.UseDriverParallelShaderCompile &&
+                    !IsKnownAsyncLinkHazard;
                 if (Hash != 0)
                 {
                     SharedContextLargeSourceTimeouts.TryAdd(Hash, 0);
                     if (retrySynchronously)
                         SynchronousSourceRetryHashes.TryAdd(Hash, 0);
+                    else if (retryDriverParallel)
+                        DriverParallelSourceTimeouts.TryRemove(Hash, out _);
                     else
                         MarkHashFailed("Shared-context source link timed out.");
                     InFlightCompilations.TryRemove(Hash, out _);
@@ -2655,6 +2702,20 @@ namespace XREngine.Rendering.OpenGL
                         EShaderProgramBackendStage.SynchronousFallback,
                         "SharedContextSource",
                         "shared-context source link stalled; retrying with synchronous source link",
+                        "Shared-context source link timed out.");
+                    BeginPrepareLinkData();
+                    RegisterPendingAsyncProgram();
+                    return;
+                }
+
+                if (retryDriverParallel)
+                {
+                    _hashComputed = false;
+                    InvalidatePreparedLinkData();
+                    PublishBackendStatus(
+                        EShaderProgramBackendStage.DriverParallelPending,
+                        "SharedContextSource",
+                        "shared-context source link stalled; retrying driver-parallel source lane",
                         "Shared-context source link timed out.");
                     BeginPrepareLinkData();
                     RegisterPendingAsyncProgram();
@@ -2834,14 +2895,15 @@ namespace XREngine.Rendering.OpenGL
                         if (compileResult.Status == GLProgramCompileLinkQueue.CompileStatus.Success)
                         {
                             CompleteUberBackendTracking(true, compileMilliseconds: compileResult.CompileMilliseconds, linkMilliseconds: compileResult.LinkMilliseconds);
-                            Debug.OpenGL($"[ShaderCache] READY hash={Hash}, shared-context compileMs={compileResult.CompileMilliseconds:F2}, linkMs={compileResult.LinkMilliseconds:F2}.");
+                            if (ShouldLogRenderingShaderLinkVerbose())
+                                Debug.OpenGL($"[ShaderCache] READY hash={Hash}, shared-context compileMs={compileResult.CompileMilliseconds:F2}, linkMs={compileResult.LinkMilliseconds:F2}.");
                             AdoptLinkedBuildProgram(pendingId2);
                             IsLinked = true;
                             long reflectionStart = Stopwatch.GetTimestamp();
                             using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
                             CacheActiveUniforms();
                             double reflectionMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - reflectionStart);
-                            CacheBinary(pendingId2);
+                            CacheBinary(pendingId2, compileResult.ProgramBinary);
                             if (_cachedProgram is { } cachedSourceProgram)
                                 RegisterCurrentLinkedProgramForSharing(cachedSourceProgram.CacheKey, cachedSourceProgram.Format, pendingId2);
                             PublishBackendStatus(
@@ -3286,14 +3348,21 @@ namespace XREngine.Rendering.OpenGL
                         CaptureLinkRequestStackTrace();
                         ShaderProgramLifecycleDiagnostics.RecordBinaryCacheMiss();
                         ShaderProgramLifecycleDiagnostics.RecordSourceBuild();
-                        Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
+                        if (ShouldLogRenderingShaderLinkVerbose())
+                            Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
                     }
 
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
                     bool isKnownAsyncLinkHazard = IsKnownAsyncLinkHazard;
                     bool forceSynchronousSourceRetry = Hash != 0 && SynchronousSourceRetryHashes.ContainsKey(Hash);
                     bool driverParallelSourceTimedOut = Hash != 0 && DriverParallelSourceTimeouts.ContainsKey(Hash);
-                    bool forceDriverParallelSourceRetry = false;
+                    bool sharedContextSourceTimedOut = Hash != 0 && SharedContextLargeSourceTimeouts.ContainsKey(Hash);
+                    bool forceDriverParallelSourceRetry =
+                        sharedContextSourceTimedOut &&
+                        !driverParallelSourceTimedOut &&
+                        !forceSynchronousSourceRetry &&
+                        !isKnownAsyncLinkHazard &&
+                        Renderer.UseDriverParallelShaderCompile;
                     bool driverParallelSourceAvailable =
                         Renderer.UseDriverParallelShaderCompile &&
                         (AllowRenderThreadDriverParallelSourceLinks || forceDriverParallelSourceRetry);
@@ -3417,7 +3486,8 @@ namespace XREngine.Rendering.OpenGL
                                 sourceSelection.Reason,
                                 fingerprint: cacheKey);
                             ShaderProgramLifecycleDiagnostics.RecordSharedContextSourceQueued();
-                            Debug.OpenGL($"[ShaderCache] QUEUE hash={Hash}, compiling {_shaderCache.Count} shader(s) on shared context.");
+                            if (ShouldLogRenderingShaderLinkVerbose())
+                                Debug.OpenGL($"[ShaderCache] QUEUE hash={Hash}, compiling {_shaderCache.Count} shader(s) on shared context.");
                             LogRenderingProgramBuildEvent(
                                 "SOURCE_QUEUE_ASYNC_QUEUED",
                                 "SharedContextSource",

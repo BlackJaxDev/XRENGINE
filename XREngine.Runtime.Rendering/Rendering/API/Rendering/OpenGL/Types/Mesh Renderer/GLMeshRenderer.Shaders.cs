@@ -80,6 +80,7 @@ namespace XREngine.Rendering.OpenGL
                 _combinedProgramMaterialKey = null;
                 _combinedProgramMaterialShaderStateRevision = 0;
                 _combinedProgramPipelineFallbackLogged = false;
+                _combinedProgramUseFailureLogged = false;
             }
 
             private void ReleaseCombinedProgramEntry(CombinedProgramCacheEntry entry)
@@ -528,13 +529,18 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private static bool ShouldUsePipelineForPendingUberFallbackMaterial(GLMaterial material)
-                => s_pendingUberFallbackMaterial is not null &&
+                => RuntimeEngine.Rendering.Settings.AllowShaderPipelines &&
+                   s_pendingUberFallbackMaterial is not null &&
                    ReferenceEquals(material.Data, s_pendingUberFallbackMaterial);
 
             private bool ShouldUsePipelineFallbackForPendingCombinedProgram(GLMaterial material)
             {
-                if (RuntimeEngine.Rendering.State.IsShadowPass || !Data.AllowShaderPipelines)
+                if (RuntimeEngine.Rendering.State.IsShadowPass ||
+                    !RuntimeEngine.Rendering.Settings.AllowShaderPipelines ||
+                    !Data.AllowShaderPipelines)
+                {
                     return false;
+                }
 
                 if (_combinedProgram is not { IsAsyncBuildPending: true })
                     return false;
@@ -601,7 +607,24 @@ namespace XREngine.Rendering.OpenGL
                 // so the combined program takes full effect.
                 Api.BindProgramPipeline(0);
 
-                vertexProgram.Use();
+                if (!vertexProgram.Use())
+                {
+                    Api.UseProgram(0);
+                    if (!_combinedProgramUseFailureLogged)
+                    {
+                        _combinedProgramUseFailureLogged = true;
+                        uint programId = vertexProgram.TryGetBindingId(out uint bindingId) ? bindingId : 0u;
+                        Debug.OpenGL(
+                            $"[GLMeshRenderer] Combined program for '{GetDescribingName()}' material '{material.Data.Name ?? "<unnamed>"}' " +
+                            $"is not ready for use; keeping fallback active. linked={vertexProgram.IsLinked}, " +
+                            $"pending={vertexProgram.IsAsyncBuildPending}, linkReady={vertexProgram.LinkReady}, programId={programId}.");
+                    }
+
+                    vertexProgram = materialProgram = null;
+                    Dbg("GetCombinedProgram: use failed", "Programs");
+                    return false;
+                }
+
                 Dbg("GetCombinedProgram: linked & in use", "Programs");
                 return true;
             }

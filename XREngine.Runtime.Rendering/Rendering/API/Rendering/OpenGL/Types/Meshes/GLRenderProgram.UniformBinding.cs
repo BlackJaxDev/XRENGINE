@@ -4,6 +4,7 @@ using System.Text;
 using XREngine;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.OpenGL
@@ -19,6 +20,7 @@ namespace XREngine.Rendering.OpenGL
 
                 _uniformMetadata.Clear();
                 _activeSamplerUniforms = [];
+                _activeEngineUniformRequirements = EUniformRequirements.None;
 
                 Api.GetProgram(BindingId, GLEnum.ActiveUniforms, out int uniformCount);
                 if (uniformCount <= 0)
@@ -60,6 +62,7 @@ namespace XREngine.Rendering.OpenGL
                 if (metadata is not { Length: > 0 })
                 {
                     _activeSamplerUniforms = [];
+                    _activeEngineUniformRequirements = EUniformRequirements.None;
                     return false;
                 }
 
@@ -81,17 +84,22 @@ namespace XREngine.Rendering.OpenGL
                 if (_uniformMetadata.Count == 0)
                 {
                     _activeSamplerUniforms = [];
+                    _activeEngineUniformRequirements = EUniformRequirements.None;
                     return;
                 }
 
                 List<SamplerUniformInfo> samplerUniforms = [];
+                EUniformRequirements engineUniformRequirements = EUniformRequirements.None;
                 foreach (var pair in _uniformMetadata)
                 {
+                    engineUniformRequirements |= UniformRequirementsDetection.GetAutoDetectedRequirement(pair.Key);
+
                     if (IsSamplerType(pair.Value.Type))
                         samplerUniforms.Add(new SamplerUniformInfo(pair.Key, pair.Value.Type));
                 }
 
                 _activeSamplerUniforms = [.. samplerUniforms];
+                _activeEngineUniformRequirements = engineUniformRequirements;
             }
 
             private UniformMetadataEntry[] SnapshotUniformMetadata()
@@ -314,6 +322,9 @@ namespace XREngine.Rendering.OpenGL
             public bool HasActiveSamplerUniforms()
                 => IsLinked && _activeSamplerUniforms.Length > 0;
 
+            public EUniformRequirements GetActiveEngineUniformRequirements()
+                => IsLinked ? _activeEngineUniformRequirements : EUniformRequirements.None;
+
             private bool MarkUniformBinding(int location)
             {
                 if (location < 0)
@@ -462,6 +473,20 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
+            private bool ValidateUniformArrayType(int location, int uploadCount, params GLEnum[] expectedTypes)
+            {
+                if (!ValidateUniformType(location, expectedTypes))
+                    return false;
+
+                if (uploadCount <= 1)
+                    return true;
+
+                if (_locationNameCache.TryGetValue(location, out string? name))
+                    return ValidateUniformArrayLength(name, location, uploadCount);
+
+                return true;
+            }
+
             private bool ValidateUniformType(string name, int? location, params GLEnum[] expectedTypes)
             {
                 if (!_uniformMetadata.TryGetValue(name, out var meta))
@@ -478,6 +503,24 @@ namespace XREngine.Rendering.OpenGL
                     string programName = Data?.Name ?? BindingId.ToString();
                     Debug.LogWarning($"Uniform '{name}' (location {locDesc}) in program '{programName}' is declared as GL type {meta.Type} (size {meta.Size}) but received upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
                 }
+                return false;
+            }
+
+            private bool ValidateUniformArrayLength(string name, int location, int uploadCount)
+            {
+                if (!_uniformMetadata.TryGetValue(name, out var meta))
+                    return true;
+
+                if (uploadCount <= meta.Size)
+                    return true;
+
+                string key = $"{name}:array-count";
+                if (_loggedUniformMismatches.TryAdd(key, 0))
+                {
+                    string programName = Data?.Name ?? BindingId.ToString();
+                    Debug.LogWarning($"Uniform '{name}' (location {location}) in program '{programName}' is declared with size {meta.Size} but received array upload count {uploadCount}. Skipping to avoid GL_INVALID_OPERATION.");
+                }
+
                 return false;
             }
         }
