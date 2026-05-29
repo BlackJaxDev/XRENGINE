@@ -527,12 +527,15 @@ public sealed class NativeFbxImporterTests
 
         string source = new DefaultVertexShaderGenerator(mesh).Generate();
 
-        source.ShouldContain("layout(row_major, std430, binding = 0) buffer BoneMatricesBuffer");
-        source.ShouldContain("layout(row_major, std430, binding = 1) buffer BoneInvBindMatricesBuffer");
-        source.ShouldContain($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
-        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalPositionName} += (vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f) * boneMatrix) * weight;");
-        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalNormalName} += ({DefaultVertexShaderGenerator.BaseNormalName} * boneMatrix3) * weight;");
-        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalTangentName} += ({DefaultVertexShaderGenerator.BaseTangentName} * boneMatrix3) * weight;");
+        source.ShouldContain("layout(std430, binding = 0) buffer SkinPaletteBuffer");
+        source.ShouldContain("vec4 SkinPaletteRows[];");
+        source.ShouldContain("uint paletteIndex = skinPaletteBase + boneIndex;");
+        source.ShouldContain("dot(SkinPaletteRows[skinRowBase + 0u], skinPosition)");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalPositionName} += vec4(skinnedPosition, 1.0f) * weight;");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalNormalName} += skinnedNormal * weight;");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalTangentName} += skinnedTangent * weight;");
+        source.ShouldNotContain("BoneMatricesBuffer");
+        source.ShouldNotContain("BoneInvBindMatricesBuffer");
         source.ShouldNotContain($"boneMatrix * vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f)");
         source.ShouldNotContain($"boneMatrix3 * {DefaultVertexShaderGenerator.BaseNormalName}");
         source.ShouldNotContain($"boneMatrix3 * {DefaultVertexShaderGenerator.BaseTangentName}");
@@ -577,15 +580,16 @@ public sealed class NativeFbxImporterTests
 
         string source = new DefaultVertexShaderGenerator(mesh).Generate();
 
-        source.ShouldContain("layout(std430, binding = 0) buffer BoneMatricesBuffer");
-        source.ShouldContain("layout(std430, binding = 1) buffer BoneInvBindMatricesBuffer");
-        source.ShouldNotContain("layout(row_major, std430, binding = 0) buffer BoneMatricesBuffer");
-        source.ShouldNotContain("layout(row_major, std430, binding = 1) buffer BoneInvBindMatricesBuffer");
-        source.ShouldContain($"mat4 boneMatrix = {ECommonBufferType.BoneMatrices}[paletteIndex] * {ECommonBufferType.BoneInvBindMatrices}[paletteIndex];");
-        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalPositionName} += (boneMatrix * vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f)) * weight;");
-        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalNormalName} += (boneMatrix3 * {DefaultVertexShaderGenerator.BaseNormalName}) * weight;");
-        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalTangentName} += (boneMatrix3 * {DefaultVertexShaderGenerator.BaseTangentName}) * weight;");
-        source.ShouldNotContain($"{DefaultVertexShaderGenerator.FinalPositionName} += (vec4({DefaultVertexShaderGenerator.BasePositionName}, 1.0f) * boneMatrix) * weight;");
+        source.ShouldContain("layout(std430, binding = 0) buffer SkinPaletteBuffer");
+        source.ShouldContain("vec4 SkinPaletteRows[];");
+        source.ShouldContain("uint paletteIndex = skinPaletteBase + boneIndex;");
+        source.ShouldContain("dot(SkinPaletteRows[skinRowBase + 0u], skinPosition)");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalPositionName} += vec4(skinnedPosition, 1.0f) * weight;");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalNormalName} += skinnedNormal * weight;");
+        source.ShouldContain($"{DefaultVertexShaderGenerator.FinalTangentName} += skinnedTangent * weight;");
+        source.ShouldNotContain("BoneMatricesBuffer");
+        source.ShouldNotContain("BoneInvBindMatricesBuffer");
+        source.ShouldNotContain("boneMatrix =");
     }
 
     private static string CreateSyntheticFbx(string relativeTexturePath)

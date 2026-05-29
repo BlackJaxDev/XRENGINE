@@ -155,9 +155,6 @@ namespace XREngine.Rendering.OpenGL
                     && allowSkinning
                     && RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
                 bool useVertexSkinning = hasSkinning && allowSkinning && !useComputeSkinning;
-                bool optimizeSkinningTo4Weights = useVertexSkinning
-                    && (RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights
-                        || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && (mesh?.MaxWeightCount ?? int.MaxValue) <= 4));
                 bool useComputeBlendshapes = hasBlendshapes
                     && allowBlendshapes
                     && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
@@ -165,17 +162,18 @@ namespace XREngine.Rendering.OpenGL
 
                 if (!useVertexSkinning)
                 {
-                    RemoveCollectedBuffer(ECommonBufferType.BoneMatrixOffset.ToString());
-                    RemoveCollectedBuffer(ECommonBufferType.BoneMatrixCount.ToString());
-                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrixIndices}Buffer");
-                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+                    RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceCoreIndices.ToString());
+                    RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceCoreWeights.ToString());
+                    RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
+                    RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
                     RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrices}Buffer");
                     RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.SkinPalette}Buffer");
                 }
-                else if (optimizeSkinningTo4Weights)
+                else if (mesh?.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill)
                 {
-                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrixIndices}Buffer");
-                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrices}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
                 }
 
                 if (!useVertexBlendshapes)

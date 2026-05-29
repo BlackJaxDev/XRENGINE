@@ -6,28 +6,19 @@
 
 layout(local_size_x = 256) in;
 
-layout(row_major, std430, binding = 0) buffer BoneMatricesBuffer
+layout(std430, binding = 0) buffer SkinPaletteBuffer
 {
-    mat4 BoneMatrices[];
-};
-
-layout(row_major, std430, binding = 1) buffer BoneInvBindMatricesBuffer
-{
-    mat4 BoneInvBindMatrices[];
+    vec4 SkinPaletteRows[];
 };
 
 layout(std430, binding = 2) buffer BoneIndicesOrOffsetsBuffer
 {
-    // When optimized4=1: stores 4 bone indices per vertex (stride 16 bytes)
-    // When optimized4=0: stores 1 offset per vertex (stride 4 bytes)
-    uint BoneIndicesOrOffsetsRaw[];
+    uint BoneInfluenceCoreIndicesRaw[];
 };
 
 layout(std430, binding = 3) buffer BoneWeightsOrCountsBuffer
 {
-    // When optimized4=1: stores 4 bone weights per vertex (stride 16 bytes)  
-    // When optimized4=0: stores 1 count per vertex (stride 4 bytes)
-    uint BoneWeightsOrCountsRaw[];
+    uint BoneInfluenceCoreWeightsRaw[];
 };
 
 layout(std430, binding = 4) buffer BlendshapeCountsBuffer
@@ -61,15 +52,14 @@ layout(std430, binding = 9) buffer InterleavedOutBuffer
     uint InterleavedOut[];
 };
 
-// Variable weight skinning buffers (only used when optimized4 == 0)
-layout(std430, binding = 10) buffer BoneIndexListBuffer
+layout(std430, binding = 10) buffer BoneInfluenceSpillHeadersBuffer
 {
-    uint BoneIndexList[];
+    uint BoneInfluenceSpillHeaders[];
 };
 
-layout(std430, binding = 11) buffer BoneWeightListBuffer
+layout(std430, binding = 11) buffer BoneInfluenceSpillEntriesBuffer
 {
-    float BoneWeightList[];
+    uint BoneInfluenceSpillEntries[];
 };
 
 uniform uint vertexCount;
@@ -81,9 +71,9 @@ uniform int allowBlendshapes;
 uniform int absoluteBlendshapePositions;
 uniform int maxBlendshapeAccumulation;
 uniform int useIntegerUniforms;
-uniform int optimized4;
-uniform uint boneMatrixBase;
-uniform uint boneMatrixCount;
+uniform int skinningCoreIndexFormat;
+uniform uint skinPaletteBase;
+uniform uint skinPaletteCount;
 uniform uint blendshapeWeightBase;
 uniform uint interleavedStride;
 uniform uint positionOffsetBytes;
@@ -218,150 +208,74 @@ void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent
     }
 }
 
-uint loadIndexValue(uint raw)
+uvec4 loadCoreIndices(uint vertexIndex)
 {
-    return useIntegerUniforms != 0 ? raw : uint(round(uintBitsToFloat(raw)));
-}
-
-// Matches vertex shader adjoint() - computes cofactor matrix for normal transformation
-mat3 adjoint(mat4 m)
-{
-    return mat3(
-        cross(m[1].xyz, m[2].xyz),
-        cross(m[2].xyz, m[0].xyz),
-        cross(m[0].xyz, m[1].xyz)
-    );
-}
-
-void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
-{
-    // When optimized4=1, data is laid out as ivec4/vec4 per vertex (16 bytes stride each)
-    // Note: The C# PopulateOptWeightsParallel always writes bone indices as int,
-    // so we read them directly as int without useIntegerUniforms decoding.
-    uint base = vertexIndex * 4u;
-    ivec4 indices = ivec4(
-        int(BoneIndicesOrOffsetsRaw[base + 0u]),
-        int(BoneIndicesOrOffsetsRaw[base + 1u]),
-        int(BoneIndicesOrOffsetsRaw[base + 2u]),
-        int(BoneIndicesOrOffsetsRaw[base + 3u]));
-    vec4 weightsRaw = vec4(
-        uintBitsToFloat(BoneWeightsOrCountsRaw[base + 0u]),
-        uintBitsToFloat(BoneWeightsOrCountsRaw[base + 1u]),
-        uintBitsToFloat(BoneWeightsOrCountsRaw[base + 2u]),
-        uintBitsToFloat(BoneWeightsOrCountsRaw[base + 3u]));
-
-    // Preserve the source vertex attributes for each bone contribution
-    vec3 basePosition = position;
-    vec3 baseNormal = normal;
-    vec3 baseTangent = tangent;
-
-    vec3 skinnedPos = vec3(0.0);
-    vec3 skinnedNormal = vec3(0.0);
-    vec3 skinnedTangent = vec3(0.0);
-    float totalWeight = 0.0f;
-
-    uint boneCount = boneMatrixCount;
-
-    for (int i = 0; i < 4; ++i)
+    if (skinningCoreIndexFormat == 1)
     {
-        int boneIndex = indices[i];
-        float weight = weightsRaw[i];
-        if (boneIndex < 0 || weight <= 0.0f)
-            continue;
-
-        // Drop invalid indices instead of indexing past the buffer and crashing
-        if (uint(boneIndex) >= boneCount)
-            continue;
-
-        // With row_major buffers, use row-vector multiplication to match CPU/System.Numerics conventions.
-        uint idx = boneMatrixBase + uint(boneIndex);
-        mat4 boneMatrix = BoneInvBindMatrices[idx] * BoneMatrices[idx];
-        vec4 p = vec4(basePosition, 1.0f) * boneMatrix;
-        skinnedPos += p.xyz * weight;
-        totalWeight += weight;
-
-        // Use adjoint for normal transformation - matches vertex shader and is much faster
-        mat3 boneMatrix3 = adjoint(boneMatrix);
-        if (hasNormals != 0)
-            skinnedNormal += (baseNormal * boneMatrix3) * weight;
-        if (hasTangents != 0)
-            skinnedTangent += (baseTangent * boneMatrix3) * weight;
+        uint raw = BoneInfluenceCoreIndicesRaw[vertexIndex];
+        return uvec4(raw & 0xFFu, (raw >> 8) & 0xFFu, (raw >> 16) & 0xFFu, (raw >> 24) & 0xFFu);
     }
 
-    // If no bones contributed, preserve original position (vertex has no skinning)
-    if (totalWeight <= 0.0001f)
-        return;
-
-    position = skinnedPos;
-    if (hasNormals != 0)
-        normal = skinnedNormal;
-    if (hasTangents != 0)
-        tangent = skinnedTangent;
+    uint base = vertexIndex * 2u;
+    uint lo = BoneInfluenceCoreIndicesRaw[base + 0u];
+    uint hi = BoneInfluenceCoreIndicesRaw[base + 1u];
+    return uvec4(lo & 0xFFFFu, lo >> 16, hi & 0xFFFFu, hi >> 16);
 }
 
-void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
+vec4 loadCoreWeights(uint vertexIndex)
 {
-    // When optimized4=0, offset and count are single values per vertex (4 bytes stride)
-    uint offset = loadIndexValue(BoneIndicesOrOffsetsRaw[vertexIndex]);
-    uint count = loadIndexValue(BoneWeightsOrCountsRaw[vertexIndex]);
-    if (count == 0u)
+    return unpackUnorm4x8(BoneInfluenceCoreWeightsRaw[vertexIndex]);
+}
+
+uint skinPaletteRowBase(uint paletteIndex)
+{
+    return paletteIndex * 3u;
+}
+
+vec3 transformSkinPosition(uint paletteIndex, vec3 position)
+{
+    uint rowBase = skinPaletteRowBase(paletteIndex);
+    vec4 p = vec4(position, 1.0f);
+    return vec3(
+        dot(SkinPaletteRows[rowBase + 0u], p),
+        dot(SkinPaletteRows[rowBase + 1u], p),
+        dot(SkinPaletteRows[rowBase + 2u], p));
+}
+
+vec3 transformSkinNormal(uint paletteIndex, vec3 normal)
+{
+    uint rowBase = skinPaletteRowBase(paletteIndex);
+    vec3 row0 = SkinPaletteRows[rowBase + 0u].xyz;
+    vec3 row1 = SkinPaletteRows[rowBase + 1u].xyz;
+    vec3 row2 = SkinPaletteRows[rowBase + 2u].xyz;
+    vec3 cof0 = cross(row1, row2);
+    vec3 cof1 = cross(row2, row0);
+    vec3 cof2 = cross(row0, row1);
+    return vec3(dot(cof0, normal), dot(cof1, normal), dot(cof2, normal));
+}
+
+void accumulateSkinInfluence(
+    uint boneIndex,
+    float weight,
+    vec3 basePosition,
+    vec3 baseNormal,
+    vec3 baseTangent,
+    inout vec3 skinnedPos,
+    inout vec3 skinnedNormal,
+    inout vec3 skinnedTangent,
+    inout float totalWeight)
+{
+    if (boneIndex == 0u || weight <= 0.0f || boneIndex >= skinPaletteCount)
         return;
 
-    vec3 basePosition = position;
-    vec3 baseNormal = normal;
-    vec3 baseTangent = tangent;
+    uint idx = skinPaletteBase + boneIndex;
+    skinnedPos += transformSkinPosition(idx, basePosition) * weight;
+    totalWeight += weight;
 
-    vec3 skinnedPos = vec3(0.0);
-    vec3 skinnedNormal = vec3(0.0);
-    vec3 skinnedTangent = vec3(0.0);
-    float totalWeight = 0.0f;
-
-    uint boneCount = boneMatrixCount;
-
-    uint indexListSize = BoneIndexList.length();
-    uint weightListSize = BoneWeightList.length();
-    if (offset >= indexListSize || offset >= weightListSize)
-        return;
-
-    uint maxAvailable = min(indexListSize - offset, weightListSize - offset);
-    uint safeCount = min(count, maxAvailable);
-
-    for (uint i = 0u; i < safeCount; ++i)
-    {
-        uint listIndex = offset + i;
-        uint rawIndex = BoneIndexList[listIndex];
-        float weight = BoneWeightList[listIndex];
-        int boneIndex = int(loadIndexValue(rawIndex));
-        if (boneIndex < 0 || weight <= 0.0f)
-            continue;
-
-        if (uint(boneIndex) >= boneCount)
-            continue;
-
-        // With row_major buffers, use row-vector multiplication to match CPU/System.Numerics conventions.
-        uint idx = boneMatrixBase + uint(boneIndex);
-        mat4 boneMatrix = BoneInvBindMatrices[idx] * BoneMatrices[idx];
-        vec4 p = vec4(basePosition, 1.0f) * boneMatrix;
-        skinnedPos += p.xyz * weight;
-        totalWeight += weight;
-
-        // Use adjoint for normal transformation - matches vertex shader and is much faster
-        mat3 boneMatrix3 = adjoint(boneMatrix);
-        if (hasNormals != 0)
-            skinnedNormal += (baseNormal * boneMatrix3) * weight;
-        if (hasTangents != 0)
-            skinnedTangent += (baseTangent * boneMatrix3) * weight;
-    }
-
-    // If no bones contributed, preserve original position (vertex has no skinning)
-    if (totalWeight <= 0.0001f)
-        return;
-
-    position = skinnedPos;
     if (hasNormals != 0)
-        normal = skinnedNormal;
+        skinnedNormal += transformSkinNormal(idx, baseNormal) * weight;
     if (hasTangents != 0)
-        tangent = skinnedTangent;
+        skinnedTangent += transformSkinNormal(idx, baseTangent) * weight;
 }
 
 void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
@@ -369,10 +283,57 @@ void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, u
     if (hasSkinning == 0)
         return;
 
-    if (optimized4 != 0)
-        applySkinningOptimized4(position, normal, tangent, vertexIndex);
-    else
-        applySkinningVariable(position, normal, tangent, vertexIndex);
+    vec3 basePosition = position;
+    vec3 baseNormal = normal;
+    vec3 baseTangent = tangent;
+
+    vec3 skinnedPos = vec3(0.0);
+    vec3 skinnedNormal = vec3(0.0);
+    vec3 skinnedTangent = vec3(0.0);
+    float totalWeight = 0.0f;
+
+    uvec4 coreIndices = loadCoreIndices(vertexIndex);
+    vec4 coreWeights = loadCoreWeights(vertexIndex);
+    for (int i = 0; i < 4; ++i)
+    {
+        accumulateSkinInfluence(
+            coreIndices[i],
+            coreWeights[i],
+            basePosition,
+            baseNormal,
+            baseTangent,
+            skinnedPos,
+            skinnedNormal,
+            skinnedTangent,
+            totalWeight);
+    }
+
+    uint spillHeader = BoneInfluenceSpillHeaders[vertexIndex];
+    uint spillOffset = spillHeader & 0x00FFFFFFu;
+    uint spillCount = spillHeader >> 24;
+    for (uint i = 0u; i < spillCount; ++i)
+    {
+        uint entry = BoneInfluenceSpillEntries[spillOffset + i];
+        accumulateSkinInfluence(
+            entry & 0xFFFFu,
+            float((entry >> 16) & 0xFFu) * (1.0f / 255.0f),
+            basePosition,
+            baseNormal,
+            baseTangent,
+            skinnedPos,
+            skinnedNormal,
+            skinnedTangent,
+            totalWeight);
+    }
+
+    if (totalWeight <= 0.0001f)
+        return;
+
+    position = skinnedPos;
+    if (hasNormals != 0)
+        normal = skinnedNormal;
+    if (hasTangents != 0)
+        tangent = skinnedTangent;
 }
 
 void main()

@@ -122,25 +122,8 @@ namespace XREngine.Rendering.Shaders.Generator
 
             if (_useSkinningInputs && Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
             {
-                bool optimizeTo4Weights = RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
-                if (optimizeTo4Weights)
-                {
-                    EShaderVarType intVecVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
-                        ? EShaderVarType._ivec4
-                        : EShaderVarType._vec4;
-
-                    InputVars.Add(ECommonBufferType.BoneMatrixOffset.ToString(), (location++, intVecVarType));
-                    InputVars.Add(ECommonBufferType.BoneMatrixCount.ToString(), (location++, EShaderVarType._vec4));
-                }
-                else
-                {
-                    EShaderVarType intVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
-                        ? EShaderVarType._int
-                        : EShaderVarType._float;
-
-                    InputVars.Add(ECommonBufferType.BoneMatrixOffset.ToString(), (location++, intVarType));
-                    InputVars.Add(ECommonBufferType.BoneMatrixCount.ToString(), (location++, intVarType));
-                }
+                InputVars.Add(ECommonBufferType.BoneInfluenceCoreIndices.ToString(), (location++, EShaderVarType._uvec4));
+                InputVars.Add(ECommonBufferType.BoneInfluenceCoreWeights.ToString(), (location++, EShaderVarType._vec4));
             }
 
             if (_texCoordsUsed > 0)
@@ -200,7 +183,10 @@ namespace XREngine.Rendering.Shaders.Generator
             UniformNames.Add(EEngineUniform.ModelMatrix.ToStringFast(), (EShaderVarType._mat4, false));
 
             if (Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
-                UniformNames.Add("boneMatrixBase", (EShaderVarType._uint, false));
+            {
+                UniformNames.Add("skinPaletteBase", (EShaderVarType._uint, false));
+                UniformNames.Add("skinPaletteCount", (EShaderVarType._uint, false));
+            }
 
             // Used when gl_BaseInstance is 0 (non-indirect draw path).
             if (EmitTransformId)
@@ -422,21 +408,14 @@ namespace XREngine.Rendering.Shaders.Generator
             bool skinning = Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
             if (skinning)
             {
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrices}Buffer", binding++, rowMajor: UseExplicitRowVectorSkinningConvention))
-                    WriteUniform(EShaderVarType._mat4, ECommonBufferType.BoneMatrices.ToString(), true);
+                using (StartShaderStorageBufferBlock($"{ECommonBufferType.SkinPalette}Buffer", binding++))
+                    WriteUniform(EShaderVarType._vec4, "SkinPaletteRows", true);
 
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInvBindMatrices}Buffer", binding++, rowMajor: UseExplicitRowVectorSkinningConvention))
-                    WriteUniform(EShaderVarType._mat4, ECommonBufferType.BoneInvBindMatrices.ToString(), true);
+                using (StartShaderStorageBufferBlock(ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), binding++))
+                    WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), true);
 
-                bool optimizeTo4Weights = RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
-                if (!optimizeTo4Weights)
-                {
-                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrixIndices}Buffer", binding++))
-                        WriteUniform(EShaderVarType._int, ECommonBufferType.BoneMatrixIndices.ToString(), true);
-
-                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrixWeights}Buffer", binding++))
-                        WriteUniform(EShaderVarType._float, ECommonBufferType.BoneMatrixWeights.ToString(), true);
-                }
+                using (StartShaderStorageBufferBlock(ECommonBufferType.BoneInfluenceSpillEntries.ToString(), binding++))
+                    WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillEntries.ToString(), true);
 
                 wroteAnything = true;
             }
@@ -607,89 +586,84 @@ namespace XREngine.Rendering.Shaders.Generator
 
             bool hasNormals = _useNormals;
             bool hasTangents = _useTangents;
-            bool explicitRowVector = UseExplicitRowVectorSkinningConvention;
 
-            bool optimizeTo4Weights = RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
-            if (optimizeTo4Weights)
+            if (Mesh.SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill)
+                return false;
+
+            Line($"vec3 xreSkinBasePosition = {BasePositionName};");
+            if (hasNormals)
+                Line($"vec3 xreSkinBaseNormal = {BaseNormalName};");
+            if (hasTangents)
+                Line($"vec3 xreSkinBaseTangent = {BaseTangentName};");
+            Line("float xreTotalSkinWeight = 0.0f;");
+
+            void EmitInfluenceContribution(string boneIndexExpression, string weightExpression)
             {
-                Line($"for (int i = 0; i < 4; i++)");
+                Line($"uint boneIndex = uint({boneIndexExpression});");
+                Line($"float weight = {weightExpression};");
+                Line("if (boneIndex > 0u && weight > 0.0f && boneIndex < skinPaletteCount)");
                 using (OpenBracketState())
                 {
-                    Line($"int boneIndex = int({ECommonBufferType.BoneMatrixOffset}[i]);");
-                    Line($"float weight = {ECommonBufferType.BoneMatrixCount}[i];");
-                    Line("if (boneIndex <= 0 || weight <= 0.0f)");
-                    using (OpenBracketState())
-                        Line("continue;");
-                    Line("uint paletteIndex = boneMatrixBase + uint(boneIndex);");
-                    // ExplicitRowVector: row_major SSBO so GLSL sees the C# matrix as-is.
-                    //   boneMatrix = InvBind * World;  pos * boneMatrix ≡ pos * InvBind * World  ✔
-                    // Legacy: no row_major so GLSL sees C# matrices transposed.
-                        //   boneMatrix = InvBind^T * World^T = (World * InvBind)^T;
-                        //   boneMatrix * pos ≡ pos * World * InvBind
-                        //   Skinning output is root-local; ModelMatrix transforms to world.
-                    if (explicitRowVector)
-                        Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
-                    else
-                            Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
-                    if (explicitRowVector)
-                        Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
-                    else
-                        Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
-                    Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
+                    Line("uint paletteIndex = skinPaletteBase + boneIndex;");
+                    Line("uint skinRowBase = paletteIndex * 3u;");
+                    Line("vec4 skinPosition = vec4(xreSkinBasePosition, 1.0f);");
+                    Line("vec3 skinnedPosition = vec3(");
+                    Line("    dot(SkinPaletteRows[skinRowBase + 0u], skinPosition),");
+                    Line("    dot(SkinPaletteRows[skinRowBase + 1u], skinPosition),");
+                    Line("    dot(SkinPaletteRows[skinRowBase + 2u], skinPosition));");
+                    Line($"{FinalPositionName} += vec4(skinnedPosition, 1.0f) * weight;");
+                    Line("xreTotalSkinWeight += weight;");
+                    if (hasNormals || hasTangents)
+                    {
+                        Line("vec3 skinRow0 = SkinPaletteRows[skinRowBase + 0u].xyz;");
+                        Line("vec3 skinRow1 = SkinPaletteRows[skinRowBase + 1u].xyz;");
+                        Line("vec3 skinRow2 = SkinPaletteRows[skinRowBase + 2u].xyz;");
+                        Line("vec3 skinCofactor0 = cross(skinRow1, skinRow2);");
+                        Line("vec3 skinCofactor1 = cross(skinRow2, skinRow0);");
+                        Line("vec3 skinCofactor2 = cross(skinRow0, skinRow1);");
+                    }
                     if (hasNormals)
                     {
-                        if (explicitRowVector)
-                            Line($"{FinalNormalName} += ({BaseNormalName} * boneMatrix3) * weight;");
-                        else
-                            Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
+                        Line("vec3 skinnedNormal = vec3(");
+                        Line("    dot(skinCofactor0, xreSkinBaseNormal),");
+                        Line("    dot(skinCofactor1, xreSkinBaseNormal),");
+                        Line("    dot(skinCofactor2, xreSkinBaseNormal));");
+                        Line($"{FinalNormalName} += skinnedNormal * weight;");
                     }
                     if (hasTangents)
                     {
-                        if (explicitRowVector)
-                            Line($"{FinalTangentName} += ({BaseTangentName} * boneMatrix3) * weight;");
-                        else
-                            Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
-                    }
-                }
-            }
-            else
-            {
-                Line($"for (int i = 0; i < int({ECommonBufferType.BoneMatrixCount}); i++)");
-                using (OpenBracketState())
-                {
-                    Line($"int index = int({ECommonBufferType.BoneMatrixOffset}) + i;");
-                    Line($"int boneIndex = int({ECommonBufferType.BoneMatrixIndices}[index]);");
-                    Line($"float weight = {ECommonBufferType.BoneMatrixWeights}[index];");
-                    Line("if (boneIndex <= 0 || weight <= 0.0f)");
-                    using (OpenBracketState())
-                        Line("continue;");
-                    Line("uint paletteIndex = boneMatrixBase + uint(boneIndex);");
-                    if (explicitRowVector)
-                        Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
-                    else
-                            Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[paletteIndex] * {ECommonBufferType.BoneMatrices}[paletteIndex];");
-                    if (explicitRowVector)
-                        Line($"{FinalPositionName} += (vec4({BasePositionName}, 1.0f) * boneMatrix) * weight;");
-                    else
-                        Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
-                    Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
-                    if (hasNormals)
-                    {
-                        if (explicitRowVector)
-                            Line($"{FinalNormalName} += ({BaseNormalName} * boneMatrix3) * weight;");
-                        else
-                            Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
-                    }
-                    if (hasTangents)
-                    {
-                        if (explicitRowVector)
-                            Line($"{FinalTangentName} += ({BaseTangentName} * boneMatrix3) * weight;");
-                        else
-                            Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
+                        Line("vec3 skinnedTangent = vec3(");
+                        Line("    dot(skinCofactor0, xreSkinBaseTangent),");
+                        Line("    dot(skinCofactor1, xreSkinBaseTangent),");
+                        Line("    dot(skinCofactor2, xreSkinBaseTangent));");
+                        Line($"{FinalTangentName} += skinnedTangent * weight;");
                     }
                 }
             }
 
+            Line("for (int i = 0; i < 4; i++)");
+            using (OpenBracketState())
+                EmitInfluenceContribution($"{ECommonBufferType.BoneInfluenceCoreIndices}[i]", $"{ECommonBufferType.BoneInfluenceCoreWeights}[i]");
+
+            Line($"uint xreSpillHeader = {ECommonBufferType.BoneInfluenceSpillHeaders}[gl_VertexID];");
+            Line("uint xreSpillOffset = xreSpillHeader & 0x00FFFFFFu;");
+            Line("uint xreSpillCount = xreSpillHeader >> 24;");
+            Line("for (uint i = 0u; i < xreSpillCount; i++)");
+            using (OpenBracketState())
+            {
+                Line($"uint xreSpillEntry = {ECommonBufferType.BoneInfluenceSpillEntries}[xreSpillOffset + i];");
+                EmitInfluenceContribution("xreSpillEntry & 0xFFFFu", "float((xreSpillEntry >> 16) & 0xFFu) * (1.0f / 255.0f)");
+            }
+
+            Line("if (xreTotalSkinWeight <= 0.0001f)");
+            using (OpenBracketState())
+            {
+                Line($"{FinalPositionName} = vec4({BasePositionName}, 1.0f);");
+                if (hasNormals)
+                    Line($"{FinalNormalName} = {BaseNormalName};");
+                if (hasTangents)
+                    Line($"{FinalTangentName} = {BaseTangentName};");
+            }
             return true;
         }
         

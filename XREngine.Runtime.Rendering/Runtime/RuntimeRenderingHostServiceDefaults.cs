@@ -16,8 +16,6 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool PopulateVertexDataInParallel = true;
     public const bool ProcessMeshImportsAsynchronously = false;
     public const bool AllowSkinning = true;
-    public const bool OptimizeSkinningTo4Weights = false;
-    public const bool OptimizeSkinningWeightsIfPossible = false;
     public const bool CalculateSkinningInComputeShader = false;
     public const bool CalculateBlendshapesInComputeShader = false;
     public const int ShaderConfigVersion = 0;

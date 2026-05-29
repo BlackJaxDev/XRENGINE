@@ -74,7 +74,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         if (TryComputeFromPrepassOutput(mesh, renderer, xrMesh, out result))
             return true;
 
-        if (renderer.ActiveBoneMatricesBuffer is null || renderer.ActiveBoneInvBindMatricesBuffer is null)
+        if (renderer.ActiveSkinPaletteBuffer is null)
             return false;
 
         lock (_syncRoot)
@@ -90,12 +90,13 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             uint vertexCount = (uint)xrMesh.VertexCount;
             resources.EnsureCapacity(vertexCount);
             resources.ResetBoundsBuffer();
-            renderer.ActiveBoneMatricesBuffer.SetBlockIndex(0);
-            renderer.ActiveBoneInvBindMatricesBuffer.SetBlockIndex(1);
+            renderer.ActiveSkinPaletteBuffer.SetBlockIndex(0);
 
             _program.Uniform("vertexCount", vertexCount);
             _program.Uniform("hasSkinning", 1);
-            _program.Uniform("boneMatrixBase", renderer.ActiveBoneMatrixBase);
+            _program.Uniform("skinningCoreIndexFormat", (int)xrMesh.SkinningCoreIndexFormat);
+            _program.Uniform("skinPaletteBase", renderer.ActiveSkinPaletteBase);
+            _program.Uniform("skinPaletteCount", renderer.ActiveSkinPaletteCount);
             _program.Uniform("fallbackMatrix", mesh.Component.Transform.RenderMatrix);
 
             const uint groupSize = 256;
@@ -366,10 +367,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         if (!mesh.HasSkinning)
             return false;
 
-        if (mesh.MaxWeightCount <= 4)
-            return true;
-
-        return RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights;
+        return mesh.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill;
     }
 
     internal static AABB CalculateBounds(IReadOnlyList<Vector3> positions)
@@ -435,6 +433,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         private readonly XRDataBuffer? _positions;
         private readonly XRDataBuffer? _boneIndices;
         private readonly XRDataBuffer? _boneWeights;
+        private readonly XRDataBuffer? _spillHeaders;
+        private readonly XRDataBuffer? _spillEntries;
         private readonly XRDataBuffer? _outputPositions;
         private readonly XRDataBuffer? _bounds;
 
@@ -455,12 +455,14 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage
             };
 
-            if (mesh.BoneWeightOffsets?.Integral != true)
+            if (mesh.SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill || mesh.BoneInfluenceCoreIndices?.Integral != true)
                 return;
 
             _positions = CloneSourceBuffer(mesh, ECommonBufferType.Position.ToString(), meshName, 4u);
-            _boneIndices = mesh.BoneWeightOffsets.Clone(false, EBufferTarget.ShaderStorageBuffer);
-            _boneWeights = mesh.BoneWeightCounts?.Clone(false, EBufferTarget.ShaderStorageBuffer);
+            _boneIndices = mesh.BoneInfluenceCoreIndices.Clone(false, EBufferTarget.ShaderStorageBuffer);
+            _boneWeights = mesh.BoneInfluenceCoreWeights?.Clone(false, EBufferTarget.ShaderStorageBuffer);
+            _spillHeaders = mesh.BoneInfluenceSpillHeaders?.Clone(false, EBufferTarget.ShaderStorageBuffer);
+            _spillEntries = mesh.BoneInfluenceSpillEntries?.Clone(false, EBufferTarget.ShaderStorageBuffer);
             _outputPositions = new XRDataBuffer($"{meshName}_SkinnedBoundsOutput", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(1, mesh.VertexCount), EComponentType.Float, 4, false, false)
             {
                 AttributeName = $"{meshName}_SkinnedBoundsOutput",
@@ -470,7 +472,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent
             };
 
-            if (_positions is null || _boneIndices is null || _boneWeights is null || _outputPositions is null || _bounds is null)
+            if (_positions is null || _boneIndices is null || _boneWeights is null || _spillHeaders is null || _spillEntries is null || _outputPositions is null || _bounds is null)
                 return;
 
             _boneIndices.AttributeName = $"{meshName}_SkinnedBoundsIndices";
@@ -478,6 +480,12 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 
             _boneWeights.AttributeName = $"{meshName}_SkinnedBoundsWeights";
             _boneWeights.SetBlockIndex(3);
+
+            _spillHeaders.AttributeName = $"{meshName}_SkinnedBoundsSpillHeaders";
+            _spillHeaders.SetBlockIndex(7);
+
+            _spillEntries.AttributeName = $"{meshName}_SkinnedBoundsSpillEntries";
+            _spillEntries.SetBlockIndex(8);
 
             _outputPositions.SetBlockIndex(5);
             _bounds.SetBlockIndex(6);
@@ -578,6 +586,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _positions?.Destroy();
             _boneIndices?.Destroy();
             _boneWeights?.Destroy();
+            _spillHeaders?.Destroy();
+            _spillEntries?.Destroy();
             _outputPositions?.Destroy();
             _bounds?.Destroy();
         }

@@ -47,8 +47,6 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool PopulateVertexDataInParallel => Engine.Rendering.Settings.PopulateVertexDataInParallel;
     public bool ProcessMeshImportsAsynchronously => Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
     public bool AllowSkinning => Engine.Rendering.Settings.AllowSkinning;
-    public bool OptimizeSkinningTo4Weights => Engine.Rendering.Settings.OptimizeSkinningTo4Weights;
-    public bool OptimizeSkinningWeightsIfPossible => Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible;
     public bool CalculateSkinningInComputeShader => Engine.Rendering.Settings.CalculateSkinningInComputeShader;
     public bool CalculateBlendshapesInComputeShader => Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
     public int ShaderConfigVersion => Engine.Rendering.Settings.ShaderConfigVersion;

@@ -80,16 +80,6 @@ public interface IRuntimeRenderingHostServices
     bool AllowSkinning { get; }
 
     /// <summary>
-    /// Gets whether skinning data should always be reduced to four weights where possible.
-    /// </summary>
-    bool OptimizeSkinningTo4Weights { get; }
-
-    /// <summary>
-    /// Gets whether skinning data may be reduced to four weights when the mesh already fits that limit.
-    /// </summary>
-    bool OptimizeSkinningWeightsIfPossible { get; }
-
-    /// <summary>
     /// Gets whether skeletal skinning should be evaluated by the compute pre-pass.
     /// </summary>
     bool CalculateSkinningInComputeShader { get; }

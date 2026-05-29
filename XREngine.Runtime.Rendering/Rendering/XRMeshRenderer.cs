@@ -1042,13 +1042,13 @@ namespace XREngine.Rendering
         /// Call this before attempting to bind GPU-driven bone palette shaders if there's a chance
         /// the buffers weren't created during renderer construction.
         /// </summary>
-        /// <returns>True if BoneMatricesBuffer is available after this call; false otherwise.</returns>
+        /// <returns>True if the renderer skin palette is available after this call; false otherwise.</returns>
         public bool EnsureSkinningBuffers(bool logWarnings = true)
         {
-            if (BoneMatricesBuffer is not null && BoneInvBindMatricesBuffer is not null)
+            if (BoneMatricesBuffer is not null && BoneInvBindMatricesBuffer is not null && SkinPaletteBuffer is not null)
                 return true;
 
-            if (BoneMatricesBuffer is not null || BoneInvBindMatricesBuffer is not null)
+            if (BoneMatricesBuffer is not null || BoneInvBindMatricesBuffer is not null || SkinPaletteBuffer is not null)
             {
                 RemoveMeshDeformBuffer(BoneMatricesBuffer);
                 BoneMatricesBuffer?.Destroy();
@@ -1057,6 +1057,10 @@ namespace XREngine.Rendering
                 RemoveMeshDeformBuffer(BoneInvBindMatricesBuffer);
                 BoneInvBindMatricesBuffer?.Destroy();
                 BoneInvBindMatricesBuffer = null;
+
+                RemoveMeshDeformBuffer(SkinPaletteBuffer);
+                SkinPaletteBuffer?.Destroy();
+                SkinPaletteBuffer = null;
             }
 
             if (Mesh is null)
@@ -1085,7 +1089,7 @@ namespace XREngine.Rendering
 
             PopulateBoneMatrixBuffers();
 
-            if (BoneMatricesBuffer is null || BoneInvBindMatricesBuffer is null)
+            if (BoneMatricesBuffer is null || BoneInvBindMatricesBuffer is null || SkinPaletteBuffer is null)
             {
                 if (logWarnings)
                     Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: PopulateBoneMatrixBuffers did not create buffer. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
@@ -1153,7 +1157,7 @@ namespace XREngine.Rendering
             _dirtyBoneMatrices = null;
             _gpuDrivenBoneRefCounts = null;
             _gpuDrivenBoneCount = 0;
-            ClearGpuDrivenBoneMatrixSource();
+            ClearGpuDrivenSkinPaletteSource();
 
             _bones = null;
 
@@ -1164,6 +1168,14 @@ namespace XREngine.Rendering
             RemoveMeshDeformBuffer(BoneInvBindMatricesBuffer);
             BoneInvBindMatricesBuffer?.Destroy();
             BoneInvBindMatricesBuffer = null;
+
+            RemoveMeshDeformBuffer(SkinPaletteBuffer);
+            SkinPaletteBuffer?.Destroy();
+            SkinPaletteBuffer = null;
+
+            RemoveMeshDeformBuffer(PreviousSkinPaletteBuffer);
+            PreviousSkinPaletteBuffer?.Destroy();
+            PreviousSkinPaletteBuffer = null;
 
             RemoveMeshDeformBuffer(BlendshapeWeights);
             BlendshapeWeights?.Destroy();
@@ -1230,33 +1242,41 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         public XRDataBuffer? BoneMatricesBuffer { get; private set; }
 
-        [MemoryPackIgnore]
-        public XRDataBuffer? ActiveBoneMatricesBuffer => HasExternalBoneMatrixSource ? _externalBoneMatricesBuffer : BoneMatricesBuffer;
-
         /// <summary>
         /// All bone inverse bind matrices for the mesh.
         /// </summary>
         [MemoryPackIgnore]
         public XRDataBuffer? BoneInvBindMatricesBuffer { get; private set; }
 
+        /// <summary>
+        /// Precomposed final skin palette stored as three vec4 rows per bone.
+        /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? ActiveBoneInvBindMatricesBuffer => HasExternalBoneMatrixSource ? _externalBoneInvBindMatricesBuffer : BoneInvBindMatricesBuffer;
+        public XRDataBuffer? SkinPaletteBuffer { get; private set; }
 
         [MemoryPackIgnore]
-        public uint ActiveBoneMatrixBase => HasExternalBoneMatrixSource ? _externalBoneMatrixBase : 0u;
+        public XRDataBuffer? PreviousSkinPaletteBuffer { get; private set; }
 
         [MemoryPackIgnore]
-        public uint ActiveBoneMatrixCount => HasExternalBoneMatrixSource ? _externalBoneMatrixCount : (uint)(Mesh?.UtilizedBones?.Length ?? 0) + 1u;
+        public XRDataBuffer? ActiveSkinPaletteBuffer => HasExternalSkinPaletteSource ? _externalSkinPaletteBuffer : SkinPaletteBuffer;
+
+        [MemoryPackIgnore]
+        public XRDataBuffer? ActivePreviousSkinPaletteBuffer => HasExternalSkinPaletteSource ? _externalPreviousSkinPaletteBuffer : PreviousSkinPaletteBuffer;
+
+        [MemoryPackIgnore]
+        public uint ActiveSkinPaletteBase => HasExternalSkinPaletteSource ? _externalSkinPaletteBase : 0u;
+
+        [MemoryPackIgnore]
+        public uint ActiveSkinPaletteCount => HasExternalSkinPaletteSource ? _externalSkinPaletteCount : (uint)(Mesh?.UtilizedBones?.Length ?? 0) + 1u;
 
         [MemoryPackIgnore]
         public bool HasGpuDrivenBoneSource => _gpuDrivenBoneCount > 0;
 
         [MemoryPackIgnore]
-        public bool HasExternalBoneMatrixSource
+        public bool HasExternalSkinPaletteSource
             => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-                && _externalBoneMatricesBuffer is not null
-                && _externalBoneInvBindMatricesBuffer is not null
-                && _externalBoneMatrixCount > 0u;
+                && _externalSkinPaletteBuffer is not null
+                && _externalSkinPaletteCount > 0u;
 
         /// <summary>
         /// All blendshape weights for the mesh.
@@ -1385,9 +1405,15 @@ namespace XREngine.Rendering
             {
                 Usage = EBufferUsage.StaticCopy
             };
+            SkinPaletteBuffer = new($"{ECommonBufferType.SkinPalette}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 12, false, false)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                DisposeOnPush = false
+            };
 
             BoneMatricesBuffer.Set(0, Matrix4x4.Identity);
             BoneInvBindMatricesBuffer.Set(0, Matrix4x4.Identity);
+            SkinPaletteBuffer.Set(0, SkinPaletteMatrix.Identity);
 
             _bones = new RenderBone[boneCount];
             _boneByTransform = new Dictionary<TransformBase, RenderBone>((int)boneCount);
@@ -1412,22 +1438,25 @@ namespace XREngine.Rendering
                 _bones[i] = rb;
 
                 BoneMatricesBuffer.Set(boneIndex, tfm.WorldMatrix);
-                BoneInvBindMatricesBuffer.Set(boneIndex, rootBindMtx * invBindWorldMtx);
+                Matrix4x4 adjustedInvBind = rootBindMtx * invBindWorldMtx;
+                BoneInvBindMatricesBuffer.Set(boneIndex, adjustedInvBind);
+                SkinPaletteBuffer.Set(boneIndex, SkinPaletteMatrix.FromRowVectorMatrix(adjustedInvBind * tfm.WorldMatrix));
             }
 
             Buffers.Add(BoneMatricesBuffer.AttributeName, BoneMatricesBuffer);
             Buffers.Add(BoneInvBindMatricesBuffer.AttributeName, BoneInvBindMatricesBuffer);
+            Buffers.Add(SkinPaletteBuffer.AttributeName, SkinPaletteBuffer);
         }
 
         private bool _bonesInvalidated = false;
         private bool _blendshapesInvalidated = false;
     private int[]? _gpuDrivenBoneRefCounts;
     private int _gpuDrivenBoneCount;
-    private object? _externalBoneMatrixSourceOwner;
-    private XRDataBuffer? _externalBoneMatricesBuffer;
-    private XRDataBuffer? _externalBoneInvBindMatricesBuffer;
-    private uint _externalBoneMatrixBase;
-    private uint _externalBoneMatrixCount;
+    private object? _externalSkinPaletteSourceOwner;
+    private XRDataBuffer? _externalSkinPaletteBuffer;
+    private XRDataBuffer? _externalPreviousSkinPaletteBuffer;
+    private uint _externalSkinPaletteBase;
+    private uint _externalSkinPaletteCount;
 
         private void BoneTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
@@ -1463,8 +1492,9 @@ namespace XREngine.Rendering
             if (!WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: true, logDiagnostics: true))
                 return;
 
-            BoneMatricesBuffer!.PushSubData();
-            RuntimeEngine.Rendering.Stats.RecordSkinningUpload(dirtyBoneCount * 16L * sizeof(float), 0L);
+            BoneMatricesBuffer?.PushSubData();
+            SkinPaletteBuffer?.PushSubData();
+            RuntimeEngine.Rendering.Stats.RecordSkinningUpload(dirtyBoneCount * 12L * sizeof(float), 0L);
         }
 
         private bool WriteDirtyBoneMatricesToClientBuffer(bool clearDirtyState, bool logDiagnostics)
@@ -1488,7 +1518,10 @@ namespace XREngine.Rendering
             foreach (var index in _dirtyBoneIndices)
             {
                 int i = (int)index;
-                BoneMatricesBuffer.Set(index, _dirtyBoneMatrices[i]);
+                Matrix4x4 currentMatrix = _dirtyBoneMatrices[i];
+                BoneMatricesBuffer.Set(index, currentMatrix);
+                if (SkinPaletteBuffer is not null)
+                    SkinPaletteBuffer.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(ComposeSkinPaletteMatrix(index, currentMatrix)));
                 if (clearDirtyState)
                     _dirtyBoneFlags[i] = false;
             }
@@ -1500,6 +1533,16 @@ namespace XREngine.Rendering
             }
 
             return true;
+        }
+
+        private Matrix4x4 ComposeSkinPaletteMatrix(uint boneIndex, in Matrix4x4 currentWorldMatrix)
+        {
+            if (boneIndex == 0u || _bones is null || boneIndex > (uint)_bones.Length)
+                return currentWorldMatrix;
+
+            RenderBone bone = _bones[(int)boneIndex - 1];
+            Matrix4x4 rootBindMtx = Mesh?.BindRootMatrix ?? Matrix4x4.Identity;
+            return rootBindMtx * bone.InvBindMatrix * currentWorldMatrix;
         }
 
         /// <summary>
@@ -1602,35 +1645,35 @@ namespace XREngine.Rendering
             }
         }
 
-        internal void SetGpuDrivenBoneMatrixSource(
+        internal void SetGpuDrivenSkinPaletteSource(
             object owner,
-            XRDataBuffer boneMatrices,
-            XRDataBuffer boneInvBindMatrices,
+            XRDataBuffer skinPalette,
+            XRDataBuffer? previousSkinPalette,
             uint baseElement,
             uint elementCount)
         {
-            _externalBoneMatrixSourceOwner = owner;
-            _externalBoneMatricesBuffer = boneMatrices;
-            _externalBoneInvBindMatricesBuffer = boneInvBindMatrices;
-            _externalBoneMatrixBase = baseElement;
-            _externalBoneMatrixCount = elementCount;
+            _externalSkinPaletteSourceOwner = owner;
+            _externalSkinPaletteBuffer = skinPalette;
+            _externalPreviousSkinPaletteBuffer = previousSkinPalette;
+            _externalSkinPaletteBase = baseElement;
+            _externalSkinPaletteCount = elementCount;
         }
 
-        internal void ClearGpuDrivenBoneMatrixSource(object owner)
+        internal void ClearGpuDrivenSkinPaletteSource(object owner)
         {
-            if (!ReferenceEquals(_externalBoneMatrixSourceOwner, owner))
+            if (!ReferenceEquals(_externalSkinPaletteSourceOwner, owner))
                 return;
 
-            ClearGpuDrivenBoneMatrixSource();
+            ClearGpuDrivenSkinPaletteSource();
         }
 
-        private void ClearGpuDrivenBoneMatrixSource()
+        private void ClearGpuDrivenSkinPaletteSource()
         {
-            _externalBoneMatrixSourceOwner = null;
-            _externalBoneMatricesBuffer = null;
-            _externalBoneInvBindMatricesBuffer = null;
-            _externalBoneMatrixBase = 0u;
-            _externalBoneMatrixCount = 0u;
+            _externalSkinPaletteSourceOwner = null;
+            _externalSkinPaletteBuffer = null;
+            _externalPreviousSkinPaletteBuffer = null;
+            _externalSkinPaletteBase = 0u;
+            _externalSkinPaletteCount = 0u;
         }
 
         private bool IsBoneGpuDriven(int index)

@@ -19,6 +19,8 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh : ICookedBinarySerializable
 {
+    private const int CurrentSkinningPayloadVersion = 2;
+
     private MeshPayloadWritePlan? _meshPayloadPlan;
     private readonly Dictionary<string, MeshBufferEncoding> _bufferEncodingOverrides = new(StringComparer.OrdinalIgnoreCase);
 
@@ -472,6 +474,15 @@ public partial class XRMesh : ICookedBinarySerializable
         }
 
         reader.ReadInt32();
+        int version = reader.ReadInt32();
+        if (version != CurrentSkinningPayloadVersion)
+            return false;
+        if (!TrySkipBytes(reader, sizeof(byte) * 2L)
+            || !TrySkipBytes(reader, sizeof(bool))
+            || !TrySkipBytes(reader, sizeof(int)))
+        {
+            return false;
+        }
         return TrySkipBufferData(reader, allowMetadata: true)
             && TrySkipBufferData(reader, allowMetadata: true)
             && TrySkipBufferData(reader, allowMetadata: true)
@@ -896,6 +907,11 @@ public partial class XRMesh : ICookedBinarySerializable
         }
 
         writer.Write(plan.MaxWeightCount);
+        writer.Write(CurrentSkinningPayloadVersion);
+        writer.Write((byte)plan.InfluenceEncoding);
+        writer.Write((byte)plan.CoreIndexFormat);
+        writer.Write(plan.HasSpillInfluences);
+        writer.Write(plan.MaxSpillInfluenceCount);
         WriteBufferPlan(writer, plan.Offsets);
         WriteBufferPlan(writer, plan.Counts);
         WriteBufferPlan(writer, plan.Indices);
@@ -908,10 +924,14 @@ public partial class XRMesh : ICookedBinarySerializable
         if (!hasSkinning)
         {
             UtilizedBones = Array.Empty<(TransformBase tfm, Matrix4x4 invBindWorldMtx)>();
-            BoneWeightOffsets = null;
-            BoneWeightCounts = null;
-            BoneWeightIndices = null;
-            BoneWeightValues = null;
+            BoneInfluenceCoreIndices = null;
+            BoneInfluenceCoreWeights = null;
+            BoneInfluenceSpillHeaders = null;
+            BoneInfluenceSpillEntries = null;
+            SkinningInfluenceEncoding = SkinningInfluenceEncoding.None;
+            SkinningCoreIndexFormat = SkinningCoreIndexFormat.None;
+            HasSpillInfluences = false;
+            MaxSpillInfluenceCount = 0;
             _maxWeightCount = 0;
             return;
         }
@@ -935,11 +955,24 @@ public partial class XRMesh : ICookedBinarySerializable
         UtilizedBones = utilized;
 
         _maxWeightCount = reader.ReadInt32();
+        int payloadVersion = reader.ReadInt32();
+        if (payloadVersion != CurrentSkinningPayloadVersion)
+            throw new InvalidOperationException($"Unsupported cooked skinning payload version {payloadVersion}; recook the source mesh for compressed skinning.");
 
-        BoneWeightOffsets = ReadBufferData(reader, null, allowMetadata: true);
-        BoneWeightCounts = ReadBufferData(reader, null, allowMetadata: true);
-        BoneWeightIndices = ReadBufferData(reader, null, allowMetadata: true);
-        BoneWeightValues = ReadBufferData(reader, null, allowMetadata: true);
+        SkinningInfluenceEncoding = (SkinningInfluenceEncoding)reader.ReadByte();
+        SkinningCoreIndexFormat = (SkinningCoreIndexFormat)reader.ReadByte();
+        HasSpillInfluences = reader.ReadBoolean();
+        MaxSpillInfluenceCount = reader.ReadInt32();
+
+        if (SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill)
+            throw new InvalidOperationException($"Unsupported cooked skinning influence encoding '{SkinningInfluenceEncoding}'.");
+        if (SkinningCoreIndexFormat is not (SkinningCoreIndexFormat.Core4x8 or SkinningCoreIndexFormat.Core4x16))
+            throw new InvalidOperationException($"Unsupported cooked skinning core index format '{SkinningCoreIndexFormat}'.");
+
+        BoneInfluenceCoreIndices = ReadBufferData(reader, null, allowMetadata: true);
+        BoneInfluenceCoreWeights = ReadBufferData(reader, null, allowMetadata: true);
+        BoneInfluenceSpillHeaders = ReadBufferData(reader, null, allowMetadata: true);
+        BoneInfluenceSpillEntries = ReadBufferData(reader, null, allowMetadata: true);
     }
 
     private void WriteBlendshapeData(CookedBinaryWriter writer, BlendshapePlan plan)
@@ -991,10 +1024,14 @@ public partial class XRMesh : ICookedBinarySerializable
             HasSkinning = true,
             Bones = bones,
             MaxWeightCount = MaxWeightCount,
-            Offsets = CreateBufferPlan(BoneWeightOffsets, BoneWeightOffsets?.AttributeName ?? "BoneWeightOffsets", CaptureBufferMetadata(BoneWeightOffsets)),
-            Counts = CreateBufferPlan(BoneWeightCounts, BoneWeightCounts?.AttributeName ?? "BoneWeightCounts", CaptureBufferMetadata(BoneWeightCounts)),
-            Indices = CreateBufferPlan(BoneWeightIndices, BoneWeightIndices?.AttributeName ?? "BoneWeightIndices", CaptureBufferMetadata(BoneWeightIndices)),
-            Values = CreateBufferPlan(BoneWeightValues, BoneWeightValues?.AttributeName ?? "BoneWeightValues", CaptureBufferMetadata(BoneWeightValues))
+            InfluenceEncoding = SkinningInfluenceEncoding,
+            CoreIndexFormat = SkinningCoreIndexFormat,
+            HasSpillInfluences = HasSpillInfluences,
+            MaxSpillInfluenceCount = MaxSpillInfluenceCount,
+            Offsets = CreateBufferPlan(BoneInfluenceCoreIndices, BoneInfluenceCoreIndices?.AttributeName ?? "BoneInfluenceCoreIndices", CaptureBufferMetadata(BoneInfluenceCoreIndices)),
+            Counts = CreateBufferPlan(BoneInfluenceCoreWeights, BoneInfluenceCoreWeights?.AttributeName ?? "BoneInfluenceCoreWeights", CaptureBufferMetadata(BoneInfluenceCoreWeights)),
+            Indices = CreateBufferPlan(BoneInfluenceSpillHeaders, BoneInfluenceSpillHeaders?.AttributeName ?? "BoneInfluenceSpillHeaders", CaptureBufferMetadata(BoneInfluenceSpillHeaders)),
+            Values = CreateBufferPlan(BoneInfluenceSpillEntries, BoneInfluenceSpillEntries?.AttributeName ?? "BoneInfluenceSpillEntries", CaptureBufferMetadata(BoneInfluenceSpillEntries))
         };
     }
 
@@ -1328,6 +1365,10 @@ public partial class XRMesh : ICookedBinarySerializable
         public bool HasSkinning { get; init; }
         public BoneInfo[] Bones { get; init; } = Array.Empty<BoneInfo>();
         public int MaxWeightCount { get; init; }
+        public SkinningInfluenceEncoding InfluenceEncoding { get; init; }
+        public SkinningCoreIndexFormat CoreIndexFormat { get; init; }
+        public bool HasSpillInfluences { get; init; }
+        public int MaxSpillInfluenceCount { get; init; }
         public BufferPlan? Offsets { get; init; }
         public BufferPlan? Counts { get; init; }
         public BufferPlan? Indices { get; init; }
@@ -1349,6 +1390,11 @@ public partial class XRMesh : ICookedBinarySerializable
             }
 
             size += sizeof(int); // max weight count
+            size += sizeof(int); // skinning payload version
+            size += sizeof(byte); // influence encoding
+            size += sizeof(byte); // core index format
+            size += sizeof(bool); // has spill influences
+            size += sizeof(int); // max spill count
             size += Offsets?.GetSerializedLength() ?? 0;
             size += Counts?.GetSerializedLength() ?? 0;
             size += Indices?.GetSerializedLength() ?? 0;
@@ -1389,10 +1435,14 @@ public partial class XRMesh : ICookedBinarySerializable
         if (payload is null)
         {
             UtilizedBones = Array.Empty<(TransformBase tfm, Matrix4x4 invBindWorldMtx)>();
-            BoneWeightOffsets = null;
-            BoneWeightCounts = null;
-            BoneWeightIndices = null;
-            BoneWeightValues = null;
+            BoneInfluenceCoreIndices = null;
+            BoneInfluenceCoreWeights = null;
+            BoneInfluenceSpillHeaders = null;
+            BoneInfluenceSpillEntries = null;
+            SkinningInfluenceEncoding = SkinningInfluenceEncoding.None;
+            SkinningCoreIndexFormat = SkinningCoreIndexFormat.None;
+            HasSpillInfluences = false;
+            MaxSpillInfluenceCount = 0;
             _maxWeightCount = 0;
             return;
         }
@@ -1405,16 +1455,20 @@ public partial class XRMesh : ICookedBinarySerializable
 
         UtilizedBones = utilized;
         _maxWeightCount = payload.MaxWeightCount;
+        SkinningInfluenceEncoding = payload.InfluenceEncoding;
+        SkinningCoreIndexFormat = payload.CoreIndexFormat;
+        HasSpillInfluences = payload.HasSpillInfluences;
+        MaxSpillInfluenceCount = payload.MaxSpillInfluenceCount;
 
-        BoneWeightOffsets = RestoreBuffer(payload.Offsets);
-        BoneWeightCounts = RestoreBuffer(payload.Counts);
-        BoneWeightIndices = RestoreBuffer(payload.Indices);
-        BoneWeightValues = RestoreBuffer(payload.Values);
+        BoneInfluenceCoreIndices = RestoreBuffer(payload.Offsets);
+        BoneInfluenceCoreWeights = RestoreBuffer(payload.Counts);
+        BoneInfluenceSpillHeaders = RestoreBuffer(payload.Indices);
+        BoneInfluenceSpillEntries = RestoreBuffer(payload.Values);
 
-        RegisterBuffer(BoneWeightOffsets);
-        RegisterBuffer(BoneWeightCounts);
-        RegisterBuffer(BoneWeightIndices);
-        RegisterBuffer(BoneWeightValues);
+        RegisterBuffer(BoneInfluenceCoreIndices);
+        RegisterBuffer(BoneInfluenceCoreWeights);
+        RegisterBuffer(BoneInfluenceSpillHeaders);
+        RegisterBuffer(BoneInfluenceSpillEntries);
     }
 
     private void ApplyBlendshapePayload(BlendshapePayload? payload)
@@ -1611,6 +1665,10 @@ public partial class XRMesh : ICookedBinarySerializable
         public BufferBlob? Indices { get; set; }
         public BufferBlob? Values { get; set; }
         public int MaxWeightCount { get; set; }
+        public SkinningInfluenceEncoding InfluenceEncoding { get; set; }
+        public SkinningCoreIndexFormat CoreIndexFormat { get; set; }
+        public bool HasSpillInfluences { get; set; }
+        public int MaxSpillInfluenceCount { get; set; }
     }
 
     internal sealed class BlendshapePayload

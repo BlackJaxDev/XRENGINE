@@ -41,15 +41,28 @@ layout(std430, binding = 2) readonly buffer BoneMappingBuffer
     BoneMappingData BoneMappings[];
 };
 
-layout(std430, binding = 3) buffer BoneMatricesBuffer
+layout(std430, binding = 3) buffer SkinPaletteBuffer
 {
-    mat4 BoneMatrices[];
+    vec4 SkinPaletteRows[];
+};
+
+layout(row_major, std430, binding = 4) readonly buffer BoneInvBindMatricesBuffer
+{
+    mat4 BoneInvBindMatrices[];
 };
 
 uniform int particleBaseOffset;
 uniform int mappingCount;
 
 const int ROTATE_WITH_CHILD = 1;
+
+void writeSkinPalette(uint paletteIndex, mat4 skinMatrix)
+{
+    uint rowBase = paletteIndex * 3u;
+    SkinPaletteRows[rowBase + 0u] = skinMatrix[0];
+    SkinPaletteRows[rowBase + 1u] = skinMatrix[1];
+    SkinPaletteRows[rowBase + 2u] = skinMatrix[2];
+}
 
 mat3 quaternionToMatrix(vec4 q)
 {
@@ -122,9 +135,11 @@ void main()
         }
     }
 
-    BoneMatrices[mapping.BoneMatrixIndex] = mat4(
+    mat4 boneWorld = mat4(
         vec4(basis[0], 0.0),
         vec4(basis[1], 0.0),
         vec4(basis[2], 0.0),
         vec4(particlePosition, 1.0));
+    mat4 skinMatrix = BoneInvBindMatrices[mapping.BoneMatrixIndex] * boneWorld;
+    writeSkinPalette(uint(mapping.BoneMatrixIndex), skinMatrix);
 }

@@ -1186,7 +1186,7 @@ public partial class PhysicsChainComponent
             if (!state.DrivesCompleteBonePalette)
                 continue;
 
-            if (state.Renderer.BoneMatricesBuffer is null || state.Renderer.BoneInvBindMatricesBuffer is null)
+            if (state.Renderer.SkinPaletteBuffer is null || state.Renderer.BoneInvBindMatricesBuffer is null)
                 continue;
 
             bindings.Add(new GPUPhysicsChainDispatcher.GpuDrivenRendererPaletteBinding(
@@ -1202,7 +1202,7 @@ public partial class PhysicsChainComponent
     internal void ClearBatchedGpuDrivenBonePaletteSources()
     {
         for (int i = 0; i < _gpuDrivenRenderers.Count; ++i)
-            _gpuDrivenRenderers[i].Renderer.ClearGpuDrivenBoneMatrixSource(this);
+            _gpuDrivenRenderers[i].Renderer.ClearGpuDrivenSkinPaletteSource(this);
     }
 
     private void TryAddGpuDrivenRendererState(
@@ -1222,9 +1222,9 @@ public partial class PhysicsChainComponent
         }
 
         // Solution 2: Force renderer buffer initialization if needed
-        if (renderer.BoneMatricesBuffer is null)
+        if (renderer.SkinPaletteBuffer is null || renderer.BoneInvBindMatricesBuffer is null)
         {
-            Debug.PhysicsWarning($"[PhysicsChain] TryAddGpuDrivenRendererState: BoneMatricesBuffer is null, attempting late initialization. Component={GetHashCode():X}, Renderer={renderer.GetHashCode():X}, Mesh='{mesh.Name}'");
+            Debug.PhysicsWarning($"[PhysicsChain] TryAddGpuDrivenRendererState: skin palette buffer is null, attempting late initialization. Component={GetHashCode():X}, Renderer={renderer.GetHashCode():X}, Mesh='{mesh.Name}'");
 
             if (!renderer.EnsureSkinningBuffers())
             {
@@ -1310,7 +1310,7 @@ public partial class PhysicsChainComponent
         for (int i = 0; i < _gpuDrivenRenderers.Count; ++i)
         {
             GpuDrivenRendererState state = _gpuDrivenRenderers[i];
-            state.Renderer.ClearGpuDrivenBoneMatrixSource(this);
+            state.Renderer.ClearGpuDrivenSkinPaletteSource(this);
             state.Renderer.UnregisterGpuDrivenBoneIndices(state.DrivenBoneIndices);
             state.MappingBuffer.Destroy();
         }
@@ -1379,13 +1379,14 @@ public partial class PhysicsChainComponent
                 continue;
 
             if (state.DrivesCompleteBonePalette)
-                state.Renderer.ClearGpuDrivenBoneMatrixSource(this);
+                state.Renderer.ClearGpuDrivenSkinPaletteSource(this);
 
-            XRDataBuffer? outputBoneMatrices = state.Renderer.BoneMatricesBuffer;
+            XRDataBuffer? outputSkinPalette = state.Renderer.SkinPaletteBuffer;
+            XRDataBuffer? boneInvBindMatrices = state.Renderer.BoneInvBindMatricesBuffer;
 
-            if (outputBoneMatrices is null)
+            if (outputSkinPalette is null || boneInvBindMatrices is null)
             {
-                Debug.PhysicsWarning($"[PhysicsChain] PublishGpuDrivenBoneMatrices: Renderer BoneMatricesBuffer is NULL (index {i}). Component={GetHashCode():X}, RendererHash={state.Renderer.GetHashCode():X}, MappingCount={state.MappingCount}");
+                Debug.PhysicsWarning($"[PhysicsChain] PublishGpuDrivenBoneMatrices: Renderer skin palette or inverse bind buffer is NULL (index {i}). Component={GetHashCode():X}, RendererHash={state.Renderer.GetHashCode():X}, MappingCount={state.MappingCount}");
                 ++skippedCount;
                 continue;
             }
@@ -1398,14 +1399,15 @@ public partial class PhysicsChainComponent
             }
 
             if (VerboseGpuDrivenRendererLogging)
-                Debug.Out($"[PhysicsChain] PublishGpuDrivenBoneMatrices: Dispatching bone palette. Component={GetHashCode():X}, RendererIndex={i}, RendererHash={state.Renderer.GetHashCode():X}, ParticleBaseOffset={particleBaseOffset}, MappingCount={state.MappingCount}, OutputBufferHash={outputBoneMatrices.GetHashCode():X}");
+                Debug.Out($"[PhysicsChain] PublishGpuDrivenBoneMatrices: Dispatching skin palette. Component={GetHashCode():X}, RendererIndex={i}, RendererHash={state.Renderer.GetHashCode():X}, ParticleBaseOffset={particleBaseOffset}, MappingCount={state.MappingCount}, OutputBufferHash={outputSkinPalette.GetHashCode():X}");
 
             _gpuBonePaletteProgram.Uniform("particleBaseOffset", particleBaseOffset);
             _gpuBonePaletteProgram.Uniform("mappingCount", state.MappingCount);
             _gpuBonePaletteProgram.BindBuffer(particlesBuffer, 0);
             _gpuBonePaletteProgram.BindBuffer(transformMatricesBuffer, 1);
             _gpuBonePaletteProgram.BindBuffer(state.MappingBuffer, 2);
-            _gpuBonePaletteProgram.BindBuffer(outputBoneMatrices, 3);
+            _gpuBonePaletteProgram.BindBuffer(outputSkinPalette, 3);
+            _gpuBonePaletteProgram.BindBuffer(boneInvBindMatrices, 4);
 
             uint groupsX = (uint)(state.MappingCount + 63) / 64u;
             _gpuBonePaletteProgram.DispatchCompute(Math.Max(groupsX, 1u), 1u, 1u);

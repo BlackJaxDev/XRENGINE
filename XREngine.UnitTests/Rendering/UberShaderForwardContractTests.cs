@@ -21,11 +21,14 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class UberShaderForwardContractTests : GpuTestBase
 {
     private IRuntimeShaderServices? _previousServices;
+    private IRuntimeRenderingHostServices? _previousRenderingHostServices;
 
     [SetUp]
     public void SetUp()
     {
         _previousServices = RuntimeShaderServices.Current;
+        _previousRenderingHostServices = RuntimeRenderingHostServices.Current;
+        RuntimeRenderingHostServices.Current = null!;
         RuntimeShaderServices.Current = new FileSystemRuntimeShaderServices(ResolveShaderRoot());
         ShaderHelper.ClearDefinedVariantSourceCache();
     }
@@ -35,6 +38,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     {
         ShaderHelper.ClearDefinedVariantSourceCache();
         RuntimeShaderServices.Current = _previousServices;
+        RuntimeRenderingHostServices.Current = _previousRenderingHostServices!;
     }
 
     [Test]
@@ -545,9 +549,11 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             string source = new DefaultVertexShaderGenerator(mesh).Generate();
 
             source.ShouldContain("SkinnedPositionsInput");
-            source.ShouldContain("BoneMatricesBuffer");
+            source.ShouldContain("SkinPaletteBuffer");
             source.ShouldContain("BasePosition = SkinnedPositions[gl_VertexID].xyz;");
-            source.ShouldContain("FinalPosition += (boneMatrix * vec4(BasePosition, 1.0f)) * weight;");
+            source.ShouldContain("FinalPosition += vec4(skinnedPosition, 1.0f) * weight;");
+            source.ShouldNotContain("BoneMatricesBuffer");
+            source.ShouldNotContain("BoneInvBindMatricesBuffer");
         }
         finally
         {
@@ -657,11 +663,20 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             new Vertex(new Vector3(0.0f, 1.0f, 0.0f), normal, new Vector2(0.0f, 1.0f), Vector4.One) { Tangent = tangent },
         ];
 
+        Transform bone = new();
+        var weights = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>
+        {
+            [bone] = (1.0f, Matrix4x4.Identity),
+        };
+        for (int i = 0; i < vertices.Count; i++)
+            vertices[i].Weights = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>(weights);
+
         XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 })
         {
             BlendshapeNames = ["Smile"],
-            UtilizedBones = [(new Transform(), Matrix4x4.Identity)],
+            UtilizedBones = [(bone, Matrix4x4.Identity)],
         };
+        mesh.RebuildSkinningBuffersFromVertices();
 
         return mesh;
     }

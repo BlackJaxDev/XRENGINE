@@ -106,7 +106,7 @@ public sealed class GPUPhysicsChainDispatcher
     private XRDataBuffer? _collidersBuffer;
     private XRDataBuffer? _perTreeParamsBuffer;
     private XRDataBuffer? _gpuDrivenBonePaletteMappingsBuffer;
-    private XRDataBuffer? _gpuDrivenBoneMatricesBuffer;
+    private XRDataBuffer? _gpuDrivenSkinPaletteBuffer;
     private XRDataBuffer? _gpuDrivenBoneInvBindMatricesBuffer;
 
     // Combined data lists
@@ -116,7 +116,7 @@ public sealed class GPUPhysicsChainDispatcher
     private readonly List<GPUPerTreeParams> _allPerTreeParams = [];
     private readonly List<GpuDrivenRendererPaletteBinding> _gpuDrivenPaletteBindings = [];
     private readonly List<GPUDrivenBoneMappingData> _gpuDrivenBoneMappings = [];
-    private readonly List<Matrix4x4> _gpuDrivenBoneMatrices = [];
+    private readonly List<SkinPaletteMatrix> _gpuDrivenSkinPalette = [];
     private readonly List<Matrix4x4> _gpuDrivenBoneInvBindMatrices = [];
     private readonly List<GPUPhysicsChainRequest> _authoritativeParticleRequests = [];
     private int _staticParticleSignature = int.MinValue;
@@ -1183,7 +1183,7 @@ public sealed class GPUPhysicsChainDispatcher
         int signature = ComputeGpuDrivenBonePaletteSignature(_gpuDrivenPaletteBindings);
         bool needsRebuild = signature != _gpuDrivenBonePaletteSignature
             || _gpuDrivenBonePaletteMappingsBuffer is null
-            || _gpuDrivenBoneMatricesBuffer is null
+            || _gpuDrivenSkinPaletteBuffer is null
             || _gpuDrivenBoneInvBindMatricesBuffer is null;
 
         if (needsRebuild)
@@ -1191,7 +1191,7 @@ public sealed class GPUPhysicsChainDispatcher
 
         if (_gpuDrivenBoneMappings.Count == 0
             || _gpuDrivenBonePaletteMappingsBuffer is null
-            || _gpuDrivenBoneMatricesBuffer is null
+            || _gpuDrivenSkinPaletteBuffer is null
             || _gpuDrivenBoneInvBindMatricesBuffer is null)
             return false;
 
@@ -1200,7 +1200,8 @@ public sealed class GPUPhysicsChainDispatcher
         _gpuBonePaletteProgram.BindBuffer(_particlesBuffer, 0);
         _gpuBonePaletteProgram.BindBuffer(_transformMatricesBuffer, 1);
         _gpuBonePaletteProgram.BindBuffer(_gpuDrivenBonePaletteMappingsBuffer, 2);
-        _gpuBonePaletteProgram.BindBuffer(_gpuDrivenBoneMatricesBuffer, 3);
+        _gpuBonePaletteProgram.BindBuffer(_gpuDrivenSkinPaletteBuffer, 3);
+        _gpuBonePaletteProgram.BindBuffer(_gpuDrivenBoneInvBindMatricesBuffer, 4);
 
         uint groupsX = (uint)(_gpuDrivenBoneMappings.Count + 63) / 64u;
         _gpuBonePaletteProgram.DispatchCompute(Math.Max(groupsX, 1u), 1u, 1u);
@@ -1241,7 +1242,7 @@ public sealed class GPUPhysicsChainDispatcher
     private void RebuildBatchedGpuDrivenBonePaletteBuffers(int signature)
     {
         _gpuDrivenBoneMappings.Clear();
-        _gpuDrivenBoneMatrices.Clear();
+        _gpuDrivenSkinPalette.Clear();
         _gpuDrivenBoneInvBindMatrices.Clear();
 
         uint boneCursor = 0u;
@@ -1251,7 +1252,7 @@ public sealed class GPUPhysicsChainDispatcher
             uint baseElement = boneCursor;
             uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
 
-            AppendMatrixRange(binding.Renderer.BoneMatricesBuffer, _gpuDrivenBoneMatrices, elementCount);
+            AppendSkinPaletteRange(binding.Renderer.SkinPaletteBuffer, _gpuDrivenSkinPalette, elementCount);
             AppendMatrixRange(binding.Renderer.BoneInvBindMatricesBuffer, _gpuDrivenBoneInvBindMatrices, elementCount);
 
             for (int mappingIndex = 0; mappingIndex < binding.Mappings.Length; ++mappingIndex)
@@ -1272,11 +1273,11 @@ public sealed class GPUPhysicsChainDispatcher
             "PhysicsChainGlobalBonePaletteMappings",
             (uint)Math.Max(_gpuDrivenBoneMappings.Count, 1),
             8);
-        bool matricesResized = EnsureBufferCapacity(
-            ref _gpuDrivenBoneMatricesBuffer,
-            "PhysicsChainGlobalBoneMatrices",
-            (uint)Math.Max(_gpuDrivenBoneMatrices.Count, 1),
-            16);
+        bool skinPaletteResized = EnsureBufferCapacity(
+            ref _gpuDrivenSkinPaletteBuffer,
+            "PhysicsChainGlobalSkinPalette",
+            (uint)Math.Max(_gpuDrivenSkinPalette.Count, 1),
+            12);
         bool invBindMatricesResized = EnsureBufferCapacity(
             ref _gpuDrivenBoneInvBindMatricesBuffer,
             "PhysicsChainGlobalBoneInvBindMatrices",
@@ -1286,8 +1287,8 @@ public sealed class GPUPhysicsChainDispatcher
         uint mappingBytes = _gpuDrivenBonePaletteMappingsBuffer?.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuDrivenBoneMappings)) ?? 0u;
         PushBufferUpdate(_gpuDrivenBonePaletteMappingsBuffer, mappingsResized, mappingBytes);
 
-        uint matrixBytes = _gpuDrivenBoneMatricesBuffer?.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuDrivenBoneMatrices)) ?? 0u;
-        PushBufferUpdate(_gpuDrivenBoneMatricesBuffer, matricesResized, matrixBytes);
+        uint skinPaletteBytes = _gpuDrivenSkinPaletteBuffer?.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuDrivenSkinPalette)) ?? 0u;
+        PushBufferUpdate(_gpuDrivenSkinPaletteBuffer, skinPaletteResized, skinPaletteBytes);
 
         uint invBindBytes = _gpuDrivenBoneInvBindMatricesBuffer?.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuDrivenBoneInvBindMatrices)) ?? 0u;
         PushBufferUpdate(_gpuDrivenBoneInvBindMatricesBuffer, invBindMatricesResized, invBindBytes);
@@ -1297,10 +1298,10 @@ public sealed class GPUPhysicsChainDispatcher
         {
             GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
             uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
-            binding.Renderer.SetGpuDrivenBoneMatrixSource(
+            binding.Renderer.SetGpuDrivenSkinPaletteSource(
                 binding.Component,
-                _gpuDrivenBoneMatricesBuffer!,
-                _gpuDrivenBoneInvBindMatricesBuffer!,
+                _gpuDrivenSkinPaletteBuffer!,
+                null,
                 boneCursor,
                 elementCount);
             boneCursor += elementCount;
@@ -1325,6 +1326,24 @@ public sealed class GPUPhysicsChainDispatcher
         Span<Matrix4x4> destinationSpan = CollectionsMarshal.AsSpan(destination).Slice(start, (int)copyCount);
         fixed (Matrix4x4* destinationPtr = destinationSpan)
             Memory.Move(destinationPtr, source.Address, copyCount * (uint)Unsafe.SizeOf<Matrix4x4>());
+    }
+
+    private static unsafe void AppendSkinPaletteRange(XRDataBuffer? source, List<SkinPaletteMatrix> destination, uint elementCount)
+    {
+        int start = destination.Count;
+        for (uint i = 0; i < elementCount; ++i)
+            destination.Add(SkinPaletteMatrix.Identity);
+
+        if (source?.ClientSideSource is null || source.Address == VoidPtr.Zero)
+            return;
+
+        uint copyCount = Math.Min(elementCount, source.ElementCount);
+        if (copyCount == 0u)
+            return;
+
+        Span<SkinPaletteMatrix> destinationSpan = CollectionsMarshal.AsSpan(destination).Slice(start, (int)copyCount);
+        fixed (SkinPaletteMatrix* destinationPtr = destinationSpan)
+            Memory.Move(destinationPtr, source.Address, copyCount * (uint)Unsafe.SizeOf<SkinPaletteMatrix>());
     }
 
     private static void ClearBatchedGpuDrivenBonePaletteSources(IReadOnlyList<GPUPhysicsChainRequest> requests)
@@ -1766,7 +1785,7 @@ public sealed class GPUPhysicsChainDispatcher
 
         _gpuDrivenPaletteBindings.Clear();
         _gpuDrivenBoneMappings.Clear();
-        _gpuDrivenBoneMatrices.Clear();
+        _gpuDrivenSkinPalette.Clear();
         _gpuDrivenBoneInvBindMatrices.Clear();
         _gpuDrivenBonePaletteSignature = int.MinValue;
     }
@@ -1781,7 +1800,7 @@ public sealed class GPUPhysicsChainDispatcher
         _collidersBuffer?.Dispose();
         _perTreeParamsBuffer?.Dispose();
         _gpuDrivenBonePaletteMappingsBuffer?.Dispose();
-        _gpuDrivenBoneMatricesBuffer?.Dispose();
+        _gpuDrivenSkinPaletteBuffer?.Dispose();
         _gpuDrivenBoneInvBindMatricesBuffer?.Dispose();
         _particlesBuffer = null;
         _particleStaticBuffer = null;
@@ -1789,7 +1808,7 @@ public sealed class GPUPhysicsChainDispatcher
         _collidersBuffer = null;
         _perTreeParamsBuffer = null;
         _gpuDrivenBonePaletteMappingsBuffer = null;
-        _gpuDrivenBoneMatricesBuffer = null;
+        _gpuDrivenSkinPaletteBuffer = null;
         _gpuDrivenBoneInvBindMatricesBuffer = null;
         _authoritativeParticleRequests.Clear();
         _authoritativeParticleLayoutSignature = 0UL;

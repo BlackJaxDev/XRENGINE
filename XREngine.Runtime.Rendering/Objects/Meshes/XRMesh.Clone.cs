@@ -27,6 +27,10 @@ public partial class XRMesh
             _bounds = Bounds,
             _maxWeightCount = MaxWeightCount,
             _skinningShaderConvention = SkinningShaderConvention,
+            _skinningInfluenceEncoding = SkinningInfluenceEncoding,
+            _skinningCoreIndexFormat = SkinningCoreIndexFormat,
+            _hasSpillInfluences = HasSpillInfluences,
+            _maxSpillInfluenceCount = MaxSpillInfluenceCount,
             BindRootMatrix = BindRootMatrix,
             BlendshapeNames = [.. BlendshapeNames],
             _vertices = new Vertex[Vertices.Length]
@@ -65,10 +69,10 @@ public partial class XRMesh
         {
             clone.UtilizedBones = new (TransformBase tfm, System.Numerics.Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
             Array.Copy(UtilizedBones, clone.UtilizedBones, UtilizedBones.Length);
-            clone.BoneWeightOffsets = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneMatrixOffset.ToString());
-            clone.BoneWeightCounts = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneMatrixCount.ToString());
-            clone.BoneWeightIndices = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BoneMatrixIndices}Buffer");
-            clone.BoneWeightValues = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+            clone.BoneInfluenceCoreIndices = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreIndices.ToString());
+            clone.BoneInfluenceCoreWeights = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreWeights.ToString());
+            clone.BoneInfluenceSpillHeaders = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
+            clone.BoneInfluenceSpillEntries = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
         }
 
         if (HasBlendshapes)

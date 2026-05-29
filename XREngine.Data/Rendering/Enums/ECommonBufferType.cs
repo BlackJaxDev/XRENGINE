@@ -49,33 +49,39 @@
         BlendshapeDeltas,
 
         /// <summary>
-        /// The offset into the indices/weights array for each vertex.
-        /// Add indices up until count to retrieve all bone indices/weights for a vertex.
+        /// Four compact core bone indices per vertex for compressed skinning.
         /// </summary>
-        BoneMatrixOffset,
+        BoneInfluenceCoreIndices,
         /// <summary>
-        /// The number of bones affecting the postion of each vertex.
+        /// Four normalized compact core bone weights per vertex for compressed skinning.
         /// </summary>
-        BoneMatrixCount,
+        BoneInfluenceCoreWeights,
         /// <summary>
-        /// The weight of each bone affecting the position of each vertex.
+        /// One packed spill header per vertex for compressed skinning.
         /// </summary>
-        BoneMatrixWeights,
+        BoneInfluenceSpillHeaders,
         /// <summary>
-        /// The index into the bone matrix buffer for each bone affecting each vertex.
+        /// Packed extra influence entries for vertices with more than four retained influences.
         /// </summary>
-        BoneMatrixIndices,
+        BoneInfluenceSpillEntries,
 
         /// <summary>
         /// The animated world matrices for each bone utilized by the mesh.
         /// The first matrix is identity.
+        /// Legacy source stream retained for systems that still publish bone matrices.
         /// </summary>
         BoneMatrices,
         /// <summary>
         /// The bind pose inverse world matrices for each bone utilized by the mesh.
         /// The first matrix is identity.
+        /// Legacy source stream retained for systems that still publish inverse bind matrices.
         /// </summary>
         BoneInvBindMatrices,
+        /// <summary>
+        /// Final affine skin matrices, packed as three vec4 rows per bone.
+        /// The first record is identity.
+        /// </summary>
+        SkinPalette,
 
         GlyphTransforms,
         GlyphTexCoords,

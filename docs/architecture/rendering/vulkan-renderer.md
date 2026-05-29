@@ -623,6 +623,24 @@ The ImGui integration supports registering custom textures (e.g., scene render t
 
 ## Advanced Features
 
+### Skinning Buffer Contract
+
+Vulkan should expose the same logical skinning contract as OpenGL and the
+compute shaders:
+
+- `BoneInfluenceCoreIndices`: four compact integer lanes per vertex
+  (`Core4x8` or `Core4x16`).
+- `BoneInfluenceCoreWeights`: four normalized `UNorm8` weight lanes.
+- `BoneInfluenceSpillHeaders`: one `uint` per vertex, with offset in bits
+  `0..23` and extra influence count in bits `24..31`.
+- `BoneInfluenceSpillEntries`: one `uint` per overflow influence, with
+  `boneIndexPlusOne` in bits `0..15` and `weightUNorm8` in bits `16..23`.
+- `SkinPaletteBuffer`: final affine skin matrices stored as three `vec4` rows
+  per bone, indexed through `skinPaletteBase` for shared palette slices.
+
+The active renderer path must not reintroduce the old mesh-wide fixed-4 vs
+variable influence branch or a paired bone-world/inverse-bind palette contract.
+
 ### Ray Tracing
 
 `VulkanRaytracing.cs` provides ray tracing support when `VK_KHR_ray_tracing_pipeline` or `VK_NV_ray_tracing` is available:
