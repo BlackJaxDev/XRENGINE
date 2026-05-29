@@ -10,6 +10,111 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
+    public void EnsureComputeSkinningBuffers()
+    {
+        if (!HasSkinning)
+            return;
+
+        if (HasCanonicalComputeSkinningBuffers())
+            return;
+
+        if (CanRebuildSkinningBuffersFromVertices())
+            RebuildSkinningBuffersFromVertices();
+
+        if (!HasCanonicalComputeSkinningBuffers())
+            throw new InvalidOperationException(BuildInvalidComputeSkinningMessage(GetComputeSkinningValidationError()));
+    }
+
+    private bool CanRebuildSkinningBuffersFromVertices()
+        => Vertices is { Length: > 0 } vertices &&
+           vertices.Length == VertexCount &&
+           UtilizedBones is { Length: > 0 };
+
+    private bool HasCanonicalComputeSkinningBuffers()
+    {
+        if (!HasSkinning)
+            return false;
+        if (VertexCount <= 0)
+            return false;
+        if (SkinningInfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill))
+            return false;
+        if (SkinningCoreIndexFormat is not (SkinningCoreIndexFormat.Core4x8 or SkinningCoreIndexFormat.Core4x16))
+            return false;
+        if (!IsCanonicalCoreIndexBuffer(BoneInfluenceCoreIndices))
+            return false;
+        if (!IsCanonicalCoreWeightBuffer(BoneInfluenceCoreWeights))
+            return false;
+
+        if (!HasSpillInfluences)
+            return SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4NoSpill;
+
+        return SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill &&
+               IsCanonicalSpillHeaderBuffer(BoneInfluenceSpillHeaders) &&
+               IsCanonicalSpillEntryBuffer(BoneInfluenceSpillEntries);
+    }
+
+    private string GetComputeSkinningValidationError()
+    {
+        if (!HasSkinning)
+            return "mesh has no utilized bones";
+        if (VertexCount <= 0)
+            return "mesh has no vertices";
+        if (SkinningInfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill))
+            return $"influence encoding is '{SkinningInfluenceEncoding}'";
+        if (SkinningCoreIndexFormat is not (SkinningCoreIndexFormat.Core4x8 or SkinningCoreIndexFormat.Core4x16))
+            return $"core index format is '{SkinningCoreIndexFormat}'";
+        if (!IsCanonicalCoreIndexBuffer(BoneInfluenceCoreIndices))
+            return "core influence index buffer is missing or has an invalid layout";
+        if (!IsCanonicalCoreWeightBuffer(BoneInfluenceCoreWeights))
+            return "core influence weight buffer is missing or has an invalid layout";
+        if (!HasSpillInfluences && SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4NoSpill)
+            return "no-spill mesh is not encoded as Core4NoSpill";
+        if (HasSpillInfluences && SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill)
+            return "spill mesh is not encoded as Core4Spill";
+        if (HasSpillInfluences && !IsCanonicalSpillHeaderBuffer(BoneInfluenceSpillHeaders))
+            return "spill header buffer is missing or has an invalid layout";
+        if (HasSpillInfluences && !IsCanonicalSpillEntryBuffer(BoneInfluenceSpillEntries))
+            return "spill entry buffer is missing or has an invalid layout";
+        return "unknown invalid skinning buffer state";
+    }
+
+    private string BuildInvalidComputeSkinningMessage(string reason)
+        => $"Skinned mesh '{Name ?? "<unnamed>"}' is not in the required Core4 compute-skinning runtime format ({reason}). Recook or reimport the source mesh.";
+
+    private bool IsCanonicalCoreIndexBuffer(XRDataBuffer? buffer)
+    {
+        EComponentType expectedType = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x8
+            ? EComponentType.Byte
+            : EComponentType.UShort;
+
+        return buffer is not null &&
+               buffer.ElementCount >= (uint)VertexCount &&
+               buffer.ComponentType == expectedType &&
+               buffer.ComponentCount == 4u &&
+               buffer.Integral;
+    }
+
+    private bool IsCanonicalCoreWeightBuffer(XRDataBuffer? buffer)
+        => buffer is not null &&
+           buffer.ElementCount >= (uint)VertexCount &&
+           buffer.ComponentType == EComponentType.Byte &&
+           buffer.ComponentCount == 4u &&
+           buffer.Normalize &&
+           !buffer.Integral;
+
+    private bool IsCanonicalSpillHeaderBuffer(XRDataBuffer? buffer)
+        => buffer is not null &&
+           buffer.ElementCount >= (uint)VertexCount &&
+           buffer.ComponentType == EComponentType.UInt &&
+           buffer.ComponentCount == 1u &&
+           buffer.Integral;
+
+    private static bool IsCanonicalSpillEntryBuffer(XRDataBuffer? buffer)
+        => buffer is not null &&
+           buffer.ComponentType == EComponentType.UInt &&
+           buffer.ComponentCount == 1u &&
+           buffer.Integral;
+
     public void RebuildSkinningBuffersFromVertices()
     {
         ClearSkinningBuffers();
@@ -304,10 +409,12 @@ public partial class XRMesh
         if (utilizedBoneCount > ushort.MaxValue)
             throw new NotSupportedException($"Compressed skinning supports at most {ushort.MaxValue} utilized bones; mesh '{Name}' uses {utilizedBoneCount}.");
 
-        SkinningInfluenceEncoding = SkinningInfluenceEncoding.Core4Spill;
+        SkinningInfluenceEncoding = SkinningInfluenceEncoding.Core4NoSpill;
         SkinningCoreIndexFormat = utilizedBoneCount <= byte.MaxValue
             ? SkinningCoreIndexFormat.Core4x8
             : SkinningCoreIndexFormat.Core4x16;
+        HasSpillInfluences = false;
+        MaxSpillInfluenceCount = 0;
 
         EComponentType coreIndexType = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x8
             ? EComponentType.Byte
@@ -323,18 +430,21 @@ public partial class XRMesh
             Usage = EBufferUsage.StaticDraw,
             DisposeOnPush = false
         };
-        BoneInfluenceSpillHeaders = new XRDataBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), EBufferTarget.ShaderStorageBuffer, vertCount, EComponentType.UInt, 1, false, true)
-        {
-            Usage = EBufferUsage.StaticDraw,
-            DisposeOnPush = false
-        };
-
         PopulateWeightBuffers(boneToIndexTable, weightsPerVertex);
 
         Buffers.Add(BoneInfluenceCoreIndices.AttributeName, BoneInfluenceCoreIndices);
         Buffers.Add(BoneInfluenceCoreWeights.AttributeName, BoneInfluenceCoreWeights);
-        Buffers.Add(BoneInfluenceSpillHeaders.AttributeName, BoneInfluenceSpillHeaders);
-        Buffers.Add(BoneInfluenceSpillEntries!.AttributeName, BoneInfluenceSpillEntries);
+        if (BoneInfluenceSpillHeaders is not null)
+            Buffers.Add(BoneInfluenceSpillHeaders.AttributeName, BoneInfluenceSpillHeaders);
+        if (BoneInfluenceSpillEntries is not null)
+            Buffers.Add(BoneInfluenceSpillEntries.AttributeName, BoneInfluenceSpillEntries);
+
+        RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
+            0L,
+            0L,
+            coreInfluenceBytes: (long)(BoneInfluenceCoreIndices.Length + BoneInfluenceCoreWeights.Length),
+            spillHeaderBytes: (long)(BoneInfluenceSpillHeaders?.Length ?? 0u),
+            spillEntryBytes: (long)(BoneInfluenceSpillEntries?.Length ?? 0u));
     }
 
     private void PopulateWeightBuffers(
@@ -354,11 +464,10 @@ public partial class XRMesh
         int vertexCount = VertexCount;
         var coreIndices = BoneInfluenceCoreIndices!;
         var coreWeights = BoneInfluenceCoreWeights!;
-        var spillHeaders = BoneInfluenceSpillHeaders!;
         byte* coreIndex8 = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x8 ? (byte*)coreIndices.Address : null;
         ushort* coreIndex16 = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x16 ? (ushort*)coreIndices.Address : null;
         byte* coreWeightData = (byte*)coreWeights.Address;
-        uint* spillHeaderData = (uint*)spillHeaders.Address;
+        uint[] spillHeaders = new uint[vertexCount];
         List<uint> spillEntries = [];
 
         for (int vi = 0; vi < vertexCount; vi++)
@@ -375,7 +484,7 @@ public partial class XRMesh
                         coreIndex16![coreBase + k] = 0;
                     coreWeightData[coreBase + k] = 0;
                 }
-                spillHeaderData[vi] = 0u;
+                spillHeaders[vi] = 0u;
                 continue;
             }
 
@@ -406,7 +515,7 @@ public partial class XRMesh
             int extraCount = Math.Max(0, influences.Count - 4);
             if (extraCount == 0)
             {
-                spillHeaderData[vi] = 0u;
+                spillHeaders[vi] = 0u;
                 continue;
             }
 
@@ -417,7 +526,7 @@ public partial class XRMesh
             if (spillOffset > 0x00FF_FFFFu)
                 throw new NotSupportedException($"Compressed skinning spill list for mesh '{Name}' exceeds the 24-bit offset limit.");
 
-            spillHeaderData[vi] = spillOffset | ((uint)extraCount << 24);
+            spillHeaders[vi] = spillOffset | ((uint)extraCount << 24);
             HasSpillInfluences = true;
             MaxSpillInfluenceCount = Math.Max(MaxSpillInfluenceCount, extraCount);
 
@@ -428,7 +537,26 @@ public partial class XRMesh
             }
         }
 
-        uint spillElementCount = Math.Max(1u, (uint)spillEntries.Count);
+        if (!HasSpillInfluences)
+        {
+            BoneInfluenceSpillHeaders = null;
+            BoneInfluenceSpillEntries = null;
+            SkinningInfluenceEncoding = SkinningInfluenceEncoding.Core4NoSpill;
+            return;
+        }
+
+        SkinningInfluenceEncoding = SkinningInfluenceEncoding.Core4Spill;
+        BoneInfluenceSpillHeaders = new XRDataBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), EBufferTarget.ShaderStorageBuffer, (uint)vertexCount, EComponentType.UInt, 1, false, true)
+        {
+            Usage = EBufferUsage.StaticDraw,
+            DisposeOnPush = false
+        };
+
+        uint* spillHeaderData = (uint*)BoneInfluenceSpillHeaders.Address;
+        for (int i = 0; i < vertexCount; i++)
+            spillHeaderData[i] = spillHeaders[i];
+
+        uint spillElementCount = (uint)spillEntries.Count;
         BoneInfluenceSpillEntries = new XRDataBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString(), EBufferTarget.ShaderStorageBuffer, spillElementCount, EComponentType.UInt, 1, false, true)
         {
             Usage = EBufferUsage.StaticDraw,
@@ -438,8 +566,6 @@ public partial class XRMesh
         uint* spillEntryData = (uint*)BoneInfluenceSpillEntries.Address;
         for (int i = 0; i < spillEntries.Count; i++)
             spillEntryData[i] = spillEntries[i];
-        for (int i = spillEntries.Count; i < spillElementCount; i++)
-            spillEntryData[i] = 0u;
     }
 
     private static List<PackedSkinningInfluence> BuildPackedInfluences(

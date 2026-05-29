@@ -505,7 +505,18 @@ public static class RuntimeRenderingHostServices
         {
         }
 
-        public void RecordRenderSkinningUpload(long boneMatrixBytes, long blendshapeWeightBytes, int skinningDispatches = 0, int blendshapeDispatches = 0)
+        public void RecordRenderSkinningUpload(
+            long boneMatrixBytes,
+            long blendshapeWeightBytes,
+            int skinningDispatches = 0,
+            int blendshapeDispatches = 0,
+            long coreInfluenceBytes = 0,
+            long spillHeaderBytes = 0,
+            long spillEntryBytes = 0,
+            long skinPaletteBytes = 0,
+            int skippedSkinningDispatches = 0,
+            int reusedSkinnedOutputBuffers = 0,
+            int liveSkinningShaderPermutations = 0)
         {
         }
 

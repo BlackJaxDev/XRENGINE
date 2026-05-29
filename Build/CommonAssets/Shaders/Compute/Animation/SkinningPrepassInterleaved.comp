@@ -72,6 +72,8 @@ uniform int absoluteBlendshapePositions;
 uniform int maxBlendshapeAccumulation;
 uniform int useIntegerUniforms;
 uniform int skinningCoreIndexFormat;
+uniform int hasSpillInfluences;
+uniform int skinningInfluenceCap;
 uniform uint skinPaletteBase;
 uniform uint skinPaletteCount;
 uniform uint blendshapeWeightBase;
@@ -291,10 +293,11 @@ void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, u
     vec3 skinnedNormal = vec3(0.0);
     vec3 skinnedTangent = vec3(0.0);
     float totalWeight = 0.0f;
+    int influenceLimit = skinningInfluenceCap <= 0 ? 2147483647 : skinningInfluenceCap;
 
     uvec4 coreIndices = loadCoreIndices(vertexIndex);
     vec4 coreWeights = loadCoreWeights(vertexIndex);
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 4 && i < influenceLimit; ++i)
     {
         accumulateSkinInfluence(
             coreIndices[i],
@@ -308,22 +311,25 @@ void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, u
             totalWeight);
     }
 
-    uint spillHeader = BoneInfluenceSpillHeaders[vertexIndex];
-    uint spillOffset = spillHeader & 0x00FFFFFFu;
-    uint spillCount = spillHeader >> 24;
-    for (uint i = 0u; i < spillCount; ++i)
+    if (hasSpillInfluences != 0)
     {
-        uint entry = BoneInfluenceSpillEntries[spillOffset + i];
-        accumulateSkinInfluence(
-            entry & 0xFFFFu,
-            float((entry >> 16) & 0xFFu) * (1.0f / 255.0f),
-            basePosition,
-            baseNormal,
-            baseTangent,
-            skinnedPos,
-            skinnedNormal,
-            skinnedTangent,
-            totalWeight);
+        uint spillHeader = BoneInfluenceSpillHeaders[vertexIndex];
+        uint spillOffset = spillHeader & 0x00FFFFFFu;
+        uint spillCount = spillHeader >> 24;
+        for (uint i = 0u; i < spillCount && int(i) + 4 < influenceLimit; ++i)
+        {
+            uint entry = BoneInfluenceSpillEntries[spillOffset + i];
+            accumulateSkinInfluence(
+                entry & 0xFFFFu,
+                float((entry >> 16) & 0xFFu) * (1.0f / 255.0f),
+                basePosition,
+                baseNormal,
+                baseTangent,
+                skinnedPos,
+                skinnedNormal,
+                skinnedTangent,
+                totalWeight);
+        }
     }
 
     if (totalWeight <= 0.0001f)

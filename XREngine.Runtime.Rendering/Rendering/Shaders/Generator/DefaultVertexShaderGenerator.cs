@@ -47,6 +47,8 @@ namespace XREngine.Rendering.Shaders.Generator
 
         public DefaultVertexShaderGenerator(XRMesh mesh) : base(mesh)
         {
+            Mesh.EnsureComputeSkinningBuffers();
+
             HelperMethodWriters.Add(WriteAdjointMethod);
 
             ComputeAttributeBudget();
@@ -186,6 +188,7 @@ namespace XREngine.Rendering.Shaders.Generator
             {
                 UniformNames.Add("skinPaletteBase", (EShaderVarType._uint, false));
                 UniformNames.Add("skinPaletteCount", (EShaderVarType._uint, false));
+                UniformNames.Add("skinningInfluenceCap", (EShaderVarType._int, false));
             }
 
             // Used when gl_BaseInstance is 0 (non-indirect draw path).
@@ -411,11 +414,14 @@ namespace XREngine.Rendering.Shaders.Generator
                 using (StartShaderStorageBufferBlock($"{ECommonBufferType.SkinPalette}Buffer", binding++))
                     WriteUniform(EShaderVarType._vec4, "SkinPaletteRows", true);
 
-                using (StartShaderStorageBufferBlock(ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), binding++))
-                    WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), true);
+                if (Mesh.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill && Mesh.HasSpillInfluences)
+                {
+                    using (StartShaderStorageBufferBlock(ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), binding++))
+                        WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), true);
 
-                using (StartShaderStorageBufferBlock(ECommonBufferType.BoneInfluenceSpillEntries.ToString(), binding++))
-                    WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillEntries.ToString(), true);
+                    using (StartShaderStorageBufferBlock(ECommonBufferType.BoneInfluenceSpillEntries.ToString(), binding++))
+                        WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillEntries.ToString(), true);
+                }
 
                 wroteAnything = true;
             }
@@ -587,8 +593,9 @@ namespace XREngine.Rendering.Shaders.Generator
             bool hasNormals = _useNormals;
             bool hasTangents = _useTangents;
 
-            if (Mesh.SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill)
-                return false;
+            if (Mesh.SkinningInfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill))
+                throw new InvalidOperationException($"Skinned mesh '{Mesh.Name ?? "<unnamed>"}' is not in the required Core4 skinning format. Recook or reimport the source mesh.");
+            bool hasSpillInfluences = Mesh.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill && Mesh.HasSpillInfluences;
 
             Line($"vec3 xreSkinBasePosition = {BasePositionName};");
             if (hasNormals)
@@ -596,6 +603,7 @@ namespace XREngine.Rendering.Shaders.Generator
             if (hasTangents)
                 Line($"vec3 xreSkinBaseTangent = {BaseTangentName};");
             Line("float xreTotalSkinWeight = 0.0f;");
+            Line("int xreSkinningInfluenceLimit = skinningInfluenceCap <= 0 ? 2147483647 : skinningInfluenceCap;");
 
             void EmitInfluenceContribution(string boneIndexExpression, string weightExpression)
             {
@@ -641,18 +649,21 @@ namespace XREngine.Rendering.Shaders.Generator
                 }
             }
 
-            Line("for (int i = 0; i < 4; i++)");
+            Line("for (int i = 0; i < 4 && i < xreSkinningInfluenceLimit; i++)");
             using (OpenBracketState())
                 EmitInfluenceContribution($"{ECommonBufferType.BoneInfluenceCoreIndices}[i]", $"{ECommonBufferType.BoneInfluenceCoreWeights}[i]");
 
-            Line($"uint xreSpillHeader = {ECommonBufferType.BoneInfluenceSpillHeaders}[gl_VertexID];");
-            Line("uint xreSpillOffset = xreSpillHeader & 0x00FFFFFFu;");
-            Line("uint xreSpillCount = xreSpillHeader >> 24;");
-            Line("for (uint i = 0u; i < xreSpillCount; i++)");
-            using (OpenBracketState())
+            if (hasSpillInfluences)
             {
-                Line($"uint xreSpillEntry = {ECommonBufferType.BoneInfluenceSpillEntries}[xreSpillOffset + i];");
-                EmitInfluenceContribution("xreSpillEntry & 0xFFFFu", "float((xreSpillEntry >> 16) & 0xFFu) * (1.0f / 255.0f)");
+                Line($"uint xreSpillHeader = {ECommonBufferType.BoneInfluenceSpillHeaders}[gl_VertexID];");
+                Line("uint xreSpillOffset = xreSpillHeader & 0x00FFFFFFu;");
+                Line("uint xreSpillCount = xreSpillHeader >> 24;");
+                Line("for (uint i = 0u; i < xreSpillCount && int(i) + 4 < xreSkinningInfluenceLimit; i++)");
+                using (OpenBracketState())
+                {
+                    Line($"uint xreSpillEntry = {ECommonBufferType.BoneInfluenceSpillEntries}[xreSpillOffset + i];");
+                    EmitInfluenceContribution("xreSpillEntry & 0xFFFFu", "float((xreSpillEntry >> 16) & 0xFFu) * (1.0f / 255.0f)");
+                }
             }
 
             Line("if (xreTotalSkinWeight <= 0.0001f)");

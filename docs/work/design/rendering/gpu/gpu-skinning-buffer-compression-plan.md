@@ -37,9 +37,11 @@ and the final affine skin-palette contract in one cleanup pass:
   `UseGlobalSkinPaletteBufferForComputeSkinning`.
 - GPU physics-chain palette output writes final skin palette rows directly.
 
-The original design text below is retained as architectural rationale. For the
-task completion record and validation notes, see
-[GPU Skinning Buffer Compression Completion](../../../todo/rendering/gpu/gpu-skinning-buffer-compression-todo.md).
+The original design text below is retained as architectural rationale. Follow-up
+optimization work now lives in
+[Skinning GPU Efficiency Follow-Ups TODO](../../../todo/rendering/gpu/skinning-gpu-efficiency-followups-todo.md)
+and
+[Blendshape Compression And GPU Efficiency TODO](../../../todo/rendering/gpu/blendshape-compression-and-gpu-efficiency-todo.md).
 
 ## 1. Executive Summary
 

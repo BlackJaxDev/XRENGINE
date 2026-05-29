@@ -180,8 +180,15 @@ public sealed class ProfilerProtocolTests
                     SkinnedRendererCount = 52,
                     BoneMatrixUploadBytes = 53_000,
                     BlendshapeWeightUploadBytes = 54_000,
+                    SkinningCoreInfluenceBytes = 54_100,
+                    SkinningSpillHeaderBytes = 54_200,
+                    SkinningSpillEntryBytes = 54_300,
+                    SkinPaletteUploadBytes = 54_400,
                     SkinningComputeDispatchCount = 55,
                     BlendshapeComputeDispatchCount = 56,
+                    SkippedSkinningComputeDispatchCount = 56_100,
+                    ReusedSkinnedOutputBufferCount = 56_200,
+                    LiveSkinningShaderPermutationCount = 56_300,
                     AvatarSourceMeshCount = 57,
                     AvatarOptimizedLodCount = 58,
                     AvatarMeshletCount = 59,
@@ -480,8 +487,15 @@ public sealed class ProfilerProtocolTests
         sceneAssets.SkinnedRendererCount.ShouldBe(52);
         sceneAssets.BoneMatrixUploadBytes.ShouldBe(53_000);
         sceneAssets.BlendshapeWeightUploadBytes.ShouldBe(54_000);
+        sceneAssets.SkinningCoreInfluenceBytes.ShouldBe(54_100);
+        sceneAssets.SkinningSpillHeaderBytes.ShouldBe(54_200);
+        sceneAssets.SkinningSpillEntryBytes.ShouldBe(54_300);
+        sceneAssets.SkinPaletteUploadBytes.ShouldBe(54_400);
         sceneAssets.SkinningComputeDispatchCount.ShouldBe(55);
         sceneAssets.BlendshapeComputeDispatchCount.ShouldBe(56);
+        sceneAssets.SkippedSkinningComputeDispatchCount.ShouldBe(56_100);
+        sceneAssets.ReusedSkinnedOutputBufferCount.ShouldBe(56_200);
+        sceneAssets.LiveSkinningShaderPermutationCount.ShouldBe(56_300);
         sceneAssets.AvatarSourceMeshCount.ShouldBe(57);
         sceneAssets.AvatarOptimizedLodCount.ShouldBe(58);
         sceneAssets.AvatarMeshletCount.ShouldBe(59);

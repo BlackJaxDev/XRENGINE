@@ -512,8 +512,30 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderTextureUpload(long bytes, TimeSpan elapsed)
         => Engine.Rendering.Stats.SceneAssets.RecordTextureUpload(bytes, elapsed);
 
-    public void RecordRenderSkinningUpload(long boneMatrixBytes, long blendshapeWeightBytes, int skinningDispatches = 0, int blendshapeDispatches = 0)
-        => Engine.Rendering.Stats.SceneAssets.RecordSkinningUpload(boneMatrixBytes, blendshapeWeightBytes, skinningDispatches, blendshapeDispatches);
+    public void RecordRenderSkinningUpload(
+        long boneMatrixBytes,
+        long blendshapeWeightBytes,
+        int skinningDispatches = 0,
+        int blendshapeDispatches = 0,
+        long coreInfluenceBytes = 0,
+        long spillHeaderBytes = 0,
+        long spillEntryBytes = 0,
+        long skinPaletteBytes = 0,
+        int skippedSkinningDispatches = 0,
+        int reusedSkinnedOutputBuffers = 0,
+        int liveSkinningShaderPermutations = 0)
+        => Engine.Rendering.Stats.SceneAssets.RecordSkinningUpload(
+            boneMatrixBytes,
+            blendshapeWeightBytes,
+            skinningDispatches,
+            blendshapeDispatches,
+            coreInfluenceBytes,
+            spillHeaderBytes,
+            spillEntryBytes,
+            skinPaletteBytes,
+            skippedSkinningDispatches,
+            reusedSkinnedOutputBuffers,
+            liveSkinningShaderPermutations);
 
     public void RecordRenderShaderVariant(bool requested, bool warming, bool linked, bool failed, bool loadedFromDiskCache, bool generatedThisRun)
         => Engine.Rendering.Stats.SceneAssets.RecordShaderVariant(requested, warming, linked, failed, loadedFromDiskCache, generatedThisRun);

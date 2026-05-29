@@ -1024,6 +1024,7 @@ namespace XREngine.Rendering
 
             BlendshapeWeights.SetFloat(index, weight);
             _blendshapesInvalidated = true;
+            MarkSkinnedOutputDirty();
         }
 
         private void InitializeDrivableBuffers()
@@ -1263,6 +1264,64 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         public XRDataBuffer? ActivePreviousSkinPaletteBuffer => HasExternalSkinPaletteSource ? _externalPreviousSkinPaletteBuffer : PreviousSkinPaletteBuffer;
 
+        private SkinningLodProfile? _skinningLodProfile;
+        private int _activeSkinningLodTier;
+        private int _skinningInfluenceCapOverride;
+
+        [MemoryPackIgnore]
+        public SkinningLodProfile? SkinningLodProfile
+        {
+            get => _skinningLodProfile;
+            set
+            {
+                SetField(ref _skinningLodProfile, value);
+                MarkSkinnedOutputDirty();
+            }
+        }
+
+        [MemoryPackIgnore]
+        public int ActiveSkinningLodTier
+        {
+            get => _activeSkinningLodTier;
+            set
+            {
+                int normalized = Math.Max(0, value);
+                SetField(ref _activeSkinningLodTier, normalized);
+                MarkSkinnedOutputDirty();
+            }
+        }
+
+        [MemoryPackIgnore]
+        public int SkinningInfluenceCapOverride
+        {
+            get => _skinningInfluenceCapOverride;
+            set
+            {
+                int normalized = Math.Clamp(value, 0, 4 + Math.Max(0, Mesh?.MaxSpillInfluenceCount ?? 0));
+                SetField(ref _skinningInfluenceCapOverride, normalized);
+                MarkSkinnedOutputDirty();
+            }
+        }
+
+        [MemoryPackIgnore]
+        internal int ActiveSkinningInfluenceCap
+        {
+            get
+            {
+                if (_skinningInfluenceCapOverride > 0)
+                    return _skinningInfluenceCapOverride;
+                if (_skinningLodProfile is not null && _skinningLodProfile.TryGetTier(_activeSkinningLodTier, out SkinningLodTier tier))
+                    return Math.Max(0, tier.InfluenceCap);
+                return 0;
+            }
+        }
+
+        [MemoryPackIgnore]
+        internal BoneRemap? ActiveSkinningBoneRemap
+            => _skinningLodProfile is not null && _skinningLodProfile.TryGetTier(_activeSkinningLodTier, out SkinningLodTier tier)
+                ? tier.BoneRemap
+                : null;
+
         [MemoryPackIgnore]
         public uint ActiveSkinPaletteBase => HasExternalSkinPaletteSource ? _externalSkinPaletteBase : 0u;
 
@@ -1317,6 +1376,42 @@ namespace XREngine.Rendering
         /// </summary>
         [MemoryPackIgnore]
         public XRDataBuffer? SkinnedInterleavedBuffer { get; internal set; }
+
+        private bool _skinnedOutputDirty = true;
+        private ulong _skinnedOutputVersion;
+
+        [MemoryPackIgnore]
+        internal bool SkinnedOutputDirty => _skinnedOutputDirty;
+
+        [MemoryPackIgnore]
+        internal ulong SkinnedOutputVersion => _skinnedOutputVersion;
+
+        [MemoryPackIgnore]
+        internal bool HasPendingComputeSkinningInputChanges
+            => _bonesInvalidated || _blendshapesInvalidated || _meshDeformInvalidated;
+
+        internal void MarkSkinnedOutputDirty()
+        {
+            if (!_skinnedOutputDirty)
+            {
+                bool dirty = true;
+                SetField(ref _skinnedOutputDirty, dirty);
+            }
+
+            unchecked
+            {
+                _skinnedOutputVersion++;
+            }
+        }
+
+        internal void MarkSkinnedOutputClean()
+        {
+            if (_skinnedOutputDirty)
+            {
+                bool dirty = false;
+                SetField(ref _skinnedOutputDirty, dirty);
+            }
+        }
 
         #region Mesh Deform Buffers
 
@@ -1480,6 +1575,7 @@ namespace XREngine.Rendering
                 _dirtyBoneIndices.Add(bone.Index);
             }
             _bonesInvalidated = true;
+            MarkSkinnedOutputDirty();
         }
 
         internal void SyncDirtyBoneMatricesToClientBuffer()
@@ -1494,7 +1590,8 @@ namespace XREngine.Rendering
 
             BoneMatricesBuffer?.PushSubData();
             SkinPaletteBuffer?.PushSubData();
-            RuntimeEngine.Rendering.Stats.RecordSkinningUpload(dirtyBoneCount * 12L * sizeof(float), 0L);
+            long skinPaletteBytes = dirtyBoneCount * 12L * sizeof(float);
+            RuntimeEngine.Rendering.Stats.RecordSkinningUpload(skinPaletteBytes, 0L, skinPaletteBytes: skinPaletteBytes);
         }
 
         private bool WriteDirtyBoneMatricesToClientBuffer(bool clearDirtyState, bool logDiagnostics)
@@ -1657,6 +1754,7 @@ namespace XREngine.Rendering
             _externalPreviousSkinPaletteBuffer = previousSkinPalette;
             _externalSkinPaletteBase = baseElement;
             _externalSkinPaletteCount = elementCount;
+            MarkSkinnedOutputDirty();
         }
 
         internal void ClearGpuDrivenSkinPaletteSource(object owner)
@@ -1674,6 +1772,7 @@ namespace XREngine.Rendering
             _externalPreviousSkinPaletteBuffer = null;
             _externalSkinPaletteBase = 0u;
             _externalSkinPaletteCount = 0u;
+            MarkSkinnedOutputDirty();
         }
 
         private bool IsBoneGpuDriven(int index)

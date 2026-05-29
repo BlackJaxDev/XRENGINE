@@ -31,6 +31,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
     private XRRenderProgram? _program;
     private XRShader? _interleavedShader;
     private XRRenderProgram? _interleavedProgram;
+    private XRDataBuffer? _emptySpillHeaders;
+    private XRDataBuffer? _emptySpillEntries;
 
     private readonly GlobalSkinPaletteBuffers _globalInputs = new();
 
@@ -50,6 +52,10 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             _shader = null;
             _interleavedProgram = null;
             _interleavedShader = null;
+            _emptySpillHeaders?.Destroy();
+            _emptySpillEntries?.Destroy();
+            _emptySpillHeaders = null;
+            _emptySpillEntries = null;
 
             _globalInputs.Dispose();
         }
@@ -104,6 +110,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         if (!doSkinning && !doBlendshapes)
             return;
 
+        if (doSkinning)
+            mesh.EnsureComputeSkinningBuffers();
+
         if (doSkinning && !renderer.HasExternalSkinPaletteSource)
             renderer.EnsureSkinningBuffers(logWarnings: false);
         if (doBlendshapes)
@@ -148,6 +157,17 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             if (!resources.Validate(mesh, doSkinning, doBlendshapes, isInterleaved))
                 return;
 
+            if (resources.CanReuseOutput(doSkinning, doBlendshapes))
+            {
+                resources.LastComputePrepassFrameId = frameId;
+                RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
+                    0L,
+                    0L,
+                    skippedSkinningDispatches: doSkinning ? 1 : 0,
+                    reusedSkinnedOutputBuffers: 1);
+                return;
+            }
+
             resources.LastComputePrepassFrameId = frameId;
 
             // Ensure this renderer's animation inputs are present in the global packed buffers (if enabled).
@@ -178,13 +198,18 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
             try
             {
+                if (doSkinning && !mesh.HasSpillInfluences)
+                    EnsureEmptySpillBuffers();
+
                 resources.BindBlocks(
                     doSkinning,
                     doBlendshapes,
                     isInterleaved,
                     useGlobalBlendWeights,
                     activeSkinPalette,
-                    _globalInputs.GlobalBlendshapeWeights);
+                    _globalInputs.GlobalBlendshapeWeights,
+                    _emptySpillHeaders,
+                    _emptySpillEntries);
 
                 uint vertexCount = (uint)mesh.VertexCount;
                 activeProgram.Uniform("vertexCount", vertexCount);
@@ -197,6 +222,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 activeProgram.Uniform("maxBlendshapeAccumulation", mesh.MaxBlendshapeAccumulation ? 1 : 0);
                 activeProgram.Uniform("useIntegerUniforms", RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
                 activeProgram.Uniform("skinningCoreIndexFormat", (int)mesh.SkinningCoreIndexFormat);
+                activeProgram.Uniform("hasSpillInfluences", mesh.HasSpillInfluences ? 1 : 0);
+                activeProgram.Uniform("skinningInfluenceCap", renderer.ActiveSkinningInfluenceCap);
 
                 // Global-packed animation input base offsets (0 when using per-renderer buffers).
                 activeProgram.Uniform("skinPaletteBase", skinPaletteBase);
@@ -214,6 +241,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
                 uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
                 activeProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
+                resources.MarkOutputValid();
                 RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
                     0L,
                     0L,
@@ -234,6 +262,23 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
         for (uint binding = 0u; binding <= MaxComputeStorageBinding; binding++)
             glRenderer.RawGL.BindBufferBase(GLEnum.ShaderStorageBuffer, binding, 0);
+    }
+
+    private void EnsureEmptySpillBuffers()
+    {
+        _emptySpillHeaders ??= CreateEmptySpillBuffer("EmptyBoneInfluenceSpillHeaders");
+        _emptySpillEntries ??= CreateEmptySpillBuffer("EmptyBoneInfluenceSpillEntries");
+    }
+
+    private static XRDataBuffer CreateEmptySpillBuffer(string name)
+    {
+        XRDataBuffer buffer = new(name, EBufferTarget.ShaderStorageBuffer, 1u, EComponentType.UInt, 1u, false, true)
+        {
+            Usage = EBufferUsage.StaticDraw,
+            DisposeOnPush = false,
+        };
+        buffer.SetDataRawAtIndex(0u, 0u);
+        return buffer;
     }
 
     public void RunVisible(RenderCommandCollection commands)
@@ -322,8 +367,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
     private sealed class RendererResources(XRMeshRenderer renderer)
     {
         private readonly XRMeshRenderer _renderer = renderer;
+        private XRMesh? _lastMesh;
         private int _lastVertexCount;
         private bool _lastWasInterleaved;
+        private bool _hasValidOutput;
+        private ulong _lastOutputVersion;
 
         public ulong LastComputePrepassFrameId;
 
@@ -353,10 +401,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             {
                 if (_renderer.ActiveSkinPaletteBuffer is null)
                     return false;
-                if (mesh.SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill)
-                    return false;
-                if (mesh.BoneInfluenceCoreIndices is null || mesh.BoneInfluenceCoreWeights is null ||
-                    mesh.BoneInfluenceSpillHeaders is null || mesh.BoneInfluenceSpillEntries is null)
+                if (!mesh.SupportsComputeSkinning)
                     return false;
             }
 
@@ -386,6 +431,28 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             return true;
         }
 
+        public bool CanReuseOutput(bool doSkinning, bool doBlendshapes)
+        {
+            if (!_hasValidOutput)
+                return false;
+            if (_renderer.SkinnedOutputDirty)
+                return false;
+            if (_renderer.HasPendingComputeSkinningInputChanges)
+                return false;
+            if (_lastOutputVersion != _renderer.SkinnedOutputVersion)
+                return false;
+            if (doSkinning && (_renderer.HasExternalSkinPaletteSource || _renderer.HasGpuDrivenBoneSource))
+                return false;
+            return doSkinning || doBlendshapes;
+        }
+
+        public void MarkOutputValid()
+        {
+            _hasValidOutput = true;
+            _lastOutputVersion = _renderer.SkinnedOutputVersion;
+            _renderer.MarkSkinnedOutputClean();
+        }
+
         private void EnsureOutputBuffers(XRMesh mesh, bool isInterleaved)
         {
             int vertexCount = mesh.VertexCount;
@@ -397,9 +464,10 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 ? _renderer.SkinnedInterleavedBuffer is not null
                 : _renderer.SkinnedPositionsBuffer is not null;
 
-            if (buffersExist && _lastVertexCount == vertexCount && _lastWasInterleaved == isInterleaved)
+            if (buffersExist && ReferenceEquals(_lastMesh, mesh) && _lastVertexCount == vertexCount && _lastWasInterleaved == isInterleaved)
                 return;
 
+            _lastMesh = mesh;
             _lastVertexCount = vertexCount;
             _lastWasInterleaved = isInterleaved;
 
@@ -412,6 +480,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             _renderer.SkinnedNormalsBuffer = null;
             _renderer.SkinnedTangentsBuffer = null;
             _renderer.SkinnedInterleavedBuffer = null;
+            _hasValidOutput = false;
+            _renderer.MarkSkinnedOutputDirty();
 
             if (isInterleaved)
             {
@@ -496,7 +566,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             bool isInterleaved,
             bool useGlobalBlendshapeWeights,
             XRDataBuffer? skinPalette,
-            XRDataBuffer? globalBlendshapeWeights)
+            XRDataBuffer? globalBlendshapeWeights,
+            XRDataBuffer? emptySpillHeaders,
+            XRDataBuffer? emptySpillEntries)
         {
             var mesh = _renderer.Mesh;
             if (mesh is null)
@@ -526,17 +598,20 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 skinPalette?.SetBlockIndex(0);
                 mesh.BoneInfluenceCoreIndices?.SetBlockIndex(2);
                 mesh.BoneInfluenceCoreWeights?.SetBlockIndex(3);
-                
-                // Spill influence buffers have different bindings for interleaved vs non-interleaved
+
+                XRDataBuffer? spillHeaders = mesh.HasSpillInfluences ? mesh.BoneInfluenceSpillHeaders : emptySpillHeaders;
+                XRDataBuffer? spillEntries = mesh.HasSpillInfluences ? mesh.BoneInfluenceSpillEntries : emptySpillEntries;
+
+                // Spill influence buffers have different bindings for interleaved vs non-interleaved.
                 if (isInterleaved)
                 {
-                    mesh.BoneInfluenceSpillHeaders?.SetBlockIndex(10);
-                    mesh.BoneInfluenceSpillEntries?.SetBlockIndex(11);
+                    spillHeaders?.SetBlockIndex(10);
+                    spillEntries?.SetBlockIndex(11);
                 }
                 else
                 {
-                    mesh.BoneInfluenceSpillHeaders?.SetBlockIndex(13);
-                    mesh.BoneInfluenceSpillEntries?.SetBlockIndex(14);
+                    spillHeaders?.SetBlockIndex(13);
+                    spillEntries?.SetBlockIndex(14);
                 }
             }
 
@@ -564,6 +639,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             _renderer.SkinnedInterleavedBuffer = null;
             _lastVertexCount = 0;
             _lastWasInterleaved = false;
+            _lastMesh = null;
+            _hasValidOutput = false;
+            _lastOutputVersion = 0;
         }
     }
 }

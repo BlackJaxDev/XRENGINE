@@ -13,6 +13,7 @@ namespace XREngine.Rendering.Compute;
 internal sealed class GlobalSkinPaletteBuffers : IDisposable
 {
     private readonly Dictionary<XRMeshRenderer, Entry> _entries = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<PaletteDedupeKey, PaletteSlice> _paletteDedupe = [];
 
     private ulong _frameId = ulong.MaxValue;
 
@@ -37,6 +38,7 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         _globalBlendshapeWeights = null;
 
         _entries.Clear();
+        _paletteDedupe.Clear();
         _frameId = ulong.MaxValue;
         _skinPaletteCursorElements = 0;
         _blendCursorElements = 0;
@@ -51,6 +53,7 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
 
         _frameId = frameId;
         _entries.Clear();
+        _paletteDedupe.Clear();
         _skinPaletteCursorElements = 0;
         _blendCursorElements = 0;
         _globalSkinPaletteDirty = false;
@@ -87,19 +90,34 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
 
             if (activeSkinPalette is not null && requiredElements > 0u)
             {
-                EnsureGlobalSkinPaletteCapacity(_skinPaletteCursorElements + requiredElements);
                 if (!renderer.HasExternalSkinPaletteSource)
                     renderer.SyncDirtyBoneMatricesToClientBuffer();
 
-                CopyBufferRange(activeSkinPalette, _globalSkinPalette, renderer.ActiveSkinPaletteBase, _skinPaletteCursorElements, requiredElements);
+                PaletteDedupeKey key = CreatePaletteDedupeKey(mesh, activeSkinPalette, renderer.ActiveSkinPaletteBase, requiredElements);
+                bool reusedSkinPalette = false;
+                if (_paletteDedupe.TryGetValue(key, out PaletteSlice existingSlice) &&
+                    BufferRangesEqual(activeSkinPalette, renderer.ActiveSkinPaletteBase, _globalSkinPalette, existingSlice.BaseElement, requiredElements))
+                {
+                    entry.SkinPaletteBase = existingSlice.BaseElement;
+                    entry.SkinPaletteCount = existingSlice.ElementCount;
+                    entry.HasSkinPalette = true;
+                    reusedSkinPalette = true;
+                }
 
-                entry.SkinPaletteBase = _skinPaletteCursorElements;
-                entry.SkinPaletteCount = requiredElements;
-                entry.HasSkinPalette = true;
+                if (!reusedSkinPalette)
+                {
+                    EnsureGlobalSkinPaletteCapacity(_skinPaletteCursorElements + requiredElements);
+                    CopyBufferRange(activeSkinPalette, _globalSkinPalette, renderer.ActiveSkinPaletteBase, _skinPaletteCursorElements, requiredElements);
 
-                _skinPaletteCursorElements += requiredElements;
-                _globalSkinPaletteDirty = true;
-                anyChange = true;
+                    entry.SkinPaletteBase = _skinPaletteCursorElements;
+                    entry.SkinPaletteCount = requiredElements;
+                    entry.HasSkinPalette = true;
+                    _paletteDedupe[key] = new PaletteSlice(_skinPaletteCursorElements, requiredElements);
+
+                    _skinPaletteCursorElements += requiredElements;
+                    _globalSkinPaletteDirty = true;
+                    anyChange = true;
+                }
             }
         }
 
@@ -241,6 +259,38 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         Memory.Move(dstPtr, srcPtr, byteCount);
     }
 
+    private static unsafe PaletteDedupeKey CreatePaletteDedupeKey(XRMesh mesh, XRDataBuffer buffer, uint baseElement, uint elementCount)
+    {
+        uint byteCount = elementCount * buffer.ElementSize;
+        int offsetBytes = checked((int)(baseElement * buffer.ElementSize));
+        byte* ptr = (byte*)(buffer.Address + offsetBytes).Pointer;
+        ulong hash = 14695981039346656037UL;
+        for (uint i = 0; i < byteCount; i++)
+        {
+            hash ^= ptr[i];
+            hash *= 1099511628211UL;
+        }
+
+        return new PaletteDedupeKey(mesh, elementCount, buffer.ElementSize, hash);
+    }
+
+    private static unsafe bool BufferRangesEqual(XRDataBuffer? left, uint leftBaseElement, XRDataBuffer? right, uint rightBaseElement, uint elementCount)
+    {
+        if (left is null || right is null || left.ElementSize != right.ElementSize)
+            return false;
+
+        uint byteCount = elementCount * left.ElementSize;
+        int leftOffsetBytes = checked((int)(leftBaseElement * left.ElementSize));
+        int rightOffsetBytes = checked((int)(rightBaseElement * right.ElementSize));
+        byte* leftPtr = (byte*)(left.Address + leftOffsetBytes).Pointer;
+        byte* rightPtr = (byte*)(right.Address + rightOffsetBytes).Pointer;
+        for (uint i = 0; i < byteCount; i++)
+            if (leftPtr[i] != rightPtr[i])
+                return false;
+
+        return true;
+    }
+
     private struct Entry
     {
         public bool HasSkinPalette;
@@ -251,4 +301,7 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         public uint BlendshapeWeightBase;
         public uint BlendshapeWeightCount;
     }
+
+    private readonly record struct PaletteDedupeKey(XRMesh Mesh, uint ElementCount, uint ElementSize, ulong Hash);
+    private readonly record struct PaletteSlice(uint BaseElement, uint ElementCount);
 }

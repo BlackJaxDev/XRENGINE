@@ -737,7 +737,18 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
-        public void RecordRenderSkinningUpload(long matrixBytes, long weightBytes, int matrices, int vertices)
+        public void RecordRenderSkinningUpload(
+            long matrixBytes,
+            long weightBytes,
+            int matrices = 0,
+            int vertices = 0,
+            long coreInfluenceBytes = 0,
+            long spillHeaderBytes = 0,
+            long spillEntryBytes = 0,
+            long skinPaletteBytes = 0,
+            int skippedSkinningDispatches = 0,
+            int reusedSkinnedOutputBuffers = 0,
+            int liveSkinningShaderPermutations = 0)
         {
         }
 
