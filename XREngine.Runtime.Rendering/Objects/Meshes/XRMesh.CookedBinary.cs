@@ -19,7 +19,7 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh : ICookedBinarySerializable
 {
-    private const int CurrentSkinningPayloadVersion = 2;
+    private const int CurrentSkinningPayloadVersion = 3;
 
     private MeshPayloadWritePlan? _meshPayloadPlan;
     private readonly Dictionary<string, MeshBufferEncoding> _bufferEncodingOverrides = new(StringComparer.OrdinalIgnoreCase);
@@ -964,7 +964,7 @@ public partial class XRMesh : ICookedBinarySerializable
         HasSpillInfluences = reader.ReadBoolean();
         MaxSpillInfluenceCount = reader.ReadInt32();
 
-        if (SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill)
+        if (SkinningInfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill))
             throw new InvalidOperationException($"Unsupported cooked skinning influence encoding '{SkinningInfluenceEncoding}'.");
         if (SkinningCoreIndexFormat is not (SkinningCoreIndexFormat.Core4x8 or SkinningCoreIndexFormat.Core4x16))
             throw new InvalidOperationException($"Unsupported cooked skinning core index format '{SkinningCoreIndexFormat}'.");
@@ -973,6 +973,20 @@ public partial class XRMesh : ICookedBinarySerializable
         BoneInfluenceCoreWeights = ReadBufferData(reader, null, allowMetadata: true);
         BoneInfluenceSpillHeaders = ReadBufferData(reader, null, allowMetadata: true);
         BoneInfluenceSpillEntries = ReadBufferData(reader, null, allowMetadata: true);
+
+        if (SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4NoSpill)
+        {
+            HasSpillInfluences = false;
+            MaxSpillInfluenceCount = 0;
+            BoneInfluenceSpillHeaders = null;
+            BoneInfluenceSpillEntries = null;
+        }
+        else if (HasSpillInfluences && (BoneInfluenceSpillHeaders is null || BoneInfluenceSpillEntries is null))
+        {
+            throw new InvalidOperationException("Cooked Core4Spill skinning payload is missing spill influence buffers.");
+        }
+
+        EnsureComputeSkinningBuffers();
     }
 
     private void WriteBlendshapeData(CookedBinaryWriter writer, BlendshapePlan plan)
@@ -1015,6 +1029,8 @@ public partial class XRMesh : ICookedBinarySerializable
 
     private SkinningPlan BuildSkinningPlan()
     {
+        EnsureComputeSkinningBuffers();
+
         if (!HasSkinning)
             return SkinningPlan.Empty;
 
@@ -1469,6 +1485,8 @@ public partial class XRMesh : ICookedBinarySerializable
         RegisterBuffer(BoneInfluenceCoreWeights);
         RegisterBuffer(BoneInfluenceSpillHeaders);
         RegisterBuffer(BoneInfluenceSpillEntries);
+
+        EnsureComputeSkinningBuffers();
     }
 
     private void ApplyBlendshapePayload(BlendshapePayload? payload)

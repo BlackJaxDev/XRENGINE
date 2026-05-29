@@ -23,6 +23,7 @@ public enum SkinningInfluenceEncoding : byte
 {
     None = 0,
     Core4Spill = 1,
+    Core4NoSpill = 2,
 }
 
 public enum SkinningCoreIndexFormat : byte
@@ -205,6 +206,7 @@ public partial class XRMesh : XRAsset
     public bool HasSkinning => _utilizedBones is { Length: > 0 };
     public bool IsSingleBound => UtilizedBones.Length == 1;
     public bool IsUnskinned => UtilizedBones.Length == 0;
+    public bool SupportsComputeSkinning => HasCanonicalComputeSkinningBuffers();
 
     // Blendshapes
     private string[] _blendshapeNames = [];

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
@@ -56,8 +57,11 @@ public class GpuSkinningBufferCompressionTests
 
         mesh.RebuildSkinningBuffersFromVertices();
 
+        mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4NoSpill);
         mesh.HasSpillInfluences.ShouldBeFalse();
         mesh.MaxSpillInfluenceCount.ShouldBe(0);
+        mesh.BoneInfluenceSpillHeaders.ShouldBeNull();
+        mesh.BoneInfluenceSpillEntries.ShouldBeNull();
 
         DecodedVertex decoded = DecodeVertex(mesh, 0);
         decoded.CoreIndices.ShouldBe([1, 2, 3, 4]);
@@ -77,6 +81,7 @@ public class GpuSkinningBufferCompressionTests
 
         mesh.RebuildSkinningBuffersFromVertices();
 
+        mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4NoSpill);
         mesh.SkinningCoreIndexFormat.ShouldBe(SkinningCoreIndexFormat.Core4x16);
         DecodeVertex(mesh, 0).CoreIndices.ShouldBe([256, 0, 0, 0]);
     }
@@ -102,12 +107,50 @@ public class GpuSkinningBufferCompressionTests
 
         mesh.RebuildSkinningBuffersFromVertices();
 
+        mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4NoSpill);
         mesh.HasSpillInfluences.ShouldBeFalse();
         DecodedVertex decoded = DecodeVertex(mesh, 0);
         decoded.CoreIndices.ShouldBe([0, 0, 0, 0]);
         decoded.CoreWeights.ShouldBe([0, 0, 0, 0]);
         decoded.SpillIndices.ShouldBeEmpty();
         decoded.SpillWeights.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void EnsureComputeSkinningBuffers_RebuildsCore4ForWeightedSourceMesh()
+    {
+        Transform[] bones = CreateBones(2);
+        XRMesh mesh = CreateWeightedMesh(bones, new Dictionary<int, float>
+        {
+            [0] = 0.75f,
+            [1] = 0.25f,
+        });
+
+        mesh.SupportsComputeSkinning.ShouldBeFalse();
+
+        mesh.EnsureComputeSkinningBuffers();
+
+        mesh.SupportsComputeSkinning.ShouldBeTrue();
+        mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4NoSpill);
+        DecodedVertex decoded = DecodeVertex(mesh, 0);
+        decoded.CoreIndices.ShouldBe([1, 2, 0, 0]);
+        decoded.CoreWeights.Sum(x => x).ShouldBe(255);
+    }
+
+    [Test]
+    public void RuntimeCookedBinarySerializer_RejectsSkinnedMeshWithoutCanonicalCore4Buffers()
+    {
+        Transform[] bones = CreateBones(1);
+        XRMesh mesh = new()
+        {
+            Name = "InvalidSkinnedCook",
+            UtilizedBones = CreateUtilizedBones(bones),
+        };
+
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(() =>
+            RuntimeCookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => RuntimeCookedBinarySerializer.Serialize(mesh)));
+        ex.Message.ShouldContain("Core4 compute-skinning runtime format");
+        ex.Message.ShouldContain("Recook or reimport");
     }
 
     [Test]
@@ -177,8 +220,6 @@ public class GpuSkinningBufferCompressionTests
     {
         mesh.BoneInfluenceCoreIndices.ShouldNotBeNull();
         mesh.BoneInfluenceCoreWeights.ShouldNotBeNull();
-        mesh.BoneInfluenceSpillHeaders.ShouldNotBeNull();
-        mesh.BoneInfluenceSpillEntries.ShouldNotBeNull();
 
         ushort[] coreIndices = new ushort[4];
         byte[] indexBytes = mesh.BoneInfluenceCoreIndices.GetRawBytes();
@@ -199,13 +240,14 @@ public class GpuSkinningBufferCompressionTests
         byte[] coreWeights = new byte[4];
         Array.Copy(weightBytes, vertexIndex * 4, coreWeights, 0, 4);
 
-        uint spillHeader = mesh.BoneInfluenceSpillHeaders.GetDataRawAtIndex<uint>((uint)vertexIndex);
+        uint spillHeader = mesh.BoneInfluenceSpillHeaders?.GetDataRawAtIndex<uint>((uint)vertexIndex) ?? 0u;
         uint spillOffset = spillHeader & 0x00FF_FFFFu;
         uint spillCount = spillHeader >> 24;
         ushort[] spillIndices = new ushort[spillCount];
         byte[] spillWeights = new byte[spillCount];
         for (uint i = 0; i < spillCount; i++)
         {
+            mesh.BoneInfluenceSpillEntries.ShouldNotBeNull();
             uint entry = mesh.BoneInfluenceSpillEntries.GetDataRawAtIndex<uint>(spillOffset + i);
             spillIndices[i] = (ushort)(entry & 0xFFFFu);
             spillWeights[i] = (byte)((entry >> 16) & 0xFFu);

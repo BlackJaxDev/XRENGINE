@@ -34,6 +34,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     private XRRenderProgram? _program;
     private XRShader? _reduceShader;
     private XRRenderProgram? _reduceProgram;
+    private XRDataBuffer? _emptySpillHeaders;
+    private XRDataBuffer? _emptySpillEntries;
 
     private SkinnedMeshBoundsCalculator()
     {
@@ -91,10 +93,18 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             resources.EnsureCapacity(vertexCount);
             resources.ResetBoundsBuffer();
             renderer.ActiveSkinPaletteBuffer.SetBlockIndex(0);
+            if (!xrMesh.HasSpillInfluences)
+            {
+                EnsureEmptySpillBuffers();
+                _emptySpillHeaders?.SetBlockIndex(7);
+                _emptySpillEntries?.SetBlockIndex(8);
+            }
 
             _program.Uniform("vertexCount", vertexCount);
             _program.Uniform("hasSkinning", 1);
             _program.Uniform("skinningCoreIndexFormat", (int)xrMesh.SkinningCoreIndexFormat);
+            _program.Uniform("hasSpillInfluences", xrMesh.HasSpillInfluences ? 1 : 0);
+            _program.Uniform("skinningInfluenceCap", renderer.ActiveSkinningInfluenceCap);
             _program.Uniform("skinPaletteBase", renderer.ActiveSkinPaletteBase);
             _program.Uniform("skinPaletteCount", renderer.ActiveSkinPaletteCount);
             _program.Uniform("fallbackMatrix", mesh.Component.Transform.RenderMatrix);
@@ -364,7 +374,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 
     private static bool MeshSupportsGpuSkinning(XRMesh mesh)
     {
-        if (!mesh.HasSkinning)
+        if (!mesh.SupportsComputeSkinning)
             return false;
 
         return mesh.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill;
@@ -404,7 +414,28 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _reduceShader?.Destroy();
             _reduceProgram = null;
             _reduceShader = null;
+            _emptySpillHeaders?.Destroy();
+            _emptySpillEntries?.Destroy();
+            _emptySpillHeaders = null;
+            _emptySpillEntries = null;
         }
+    }
+
+    private void EnsureEmptySpillBuffers()
+    {
+        _emptySpillHeaders ??= CreateEmptySpillBuffer("EmptySkinnedBoundsSpillHeaders");
+        _emptySpillEntries ??= CreateEmptySpillBuffer("EmptySkinnedBoundsSpillEntries");
+    }
+
+    private static XRDataBuffer CreateEmptySpillBuffer(string name)
+    {
+        XRDataBuffer buffer = new(name, EBufferTarget.ShaderStorageBuffer, 1u, EComponentType.UInt, 1u, false, true)
+        {
+            Usage = EBufferUsage.StaticDraw,
+            DisposeOnPush = false,
+        };
+        buffer.SetDataRawAtIndex(0u, 0u);
+        return buffer;
     }
 
     public readonly struct Result(Vector3[] positions, AABB bounds, Matrix4x4 basis, bool isWorldSpace)
@@ -442,7 +473,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         private static readonly UInt4 NegativeInfinityPacked = UInt4.FromVector(new Vector4(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity, -1f));
 
         public bool IsValid { get; }
-        public bool SupportsBoundsReduction => _bounds is not null;
+        public bool SupportsBoundsReduction => IsValid && _bounds is not null;
 
         public MeshResources(XRMesh mesh)
         {
@@ -455,7 +486,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage
             };
 
-            if (mesh.SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill || mesh.BoneInfluenceCoreIndices?.Integral != true)
+            if (mesh.SkinningInfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill) || mesh.BoneInfluenceCoreIndices?.Integral != true)
                 return;
 
             _positions = CloneSourceBuffer(mesh, ECommonBufferType.Position.ToString(), meshName, 4u);
@@ -472,7 +503,9 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent
             };
 
-            if (_positions is null || _boneIndices is null || _boneWeights is null || _spillHeaders is null || _spillEntries is null || _outputPositions is null || _bounds is null)
+            if (_positions is null || _boneIndices is null || _boneWeights is null || _outputPositions is null || _bounds is null)
+                return;
+            if (mesh.HasSpillInfluences && (_spillHeaders is null || _spillEntries is null))
                 return;
 
             _boneIndices.AttributeName = $"{meshName}_SkinnedBoundsIndices";
@@ -481,11 +514,17 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _boneWeights.AttributeName = $"{meshName}_SkinnedBoundsWeights";
             _boneWeights.SetBlockIndex(3);
 
-            _spillHeaders.AttributeName = $"{meshName}_SkinnedBoundsSpillHeaders";
-            _spillHeaders.SetBlockIndex(7);
+            if (_spillHeaders is not null)
+            {
+                _spillHeaders.AttributeName = $"{meshName}_SkinnedBoundsSpillHeaders";
+                _spillHeaders.SetBlockIndex(7);
+            }
 
-            _spillEntries.AttributeName = $"{meshName}_SkinnedBoundsSpillEntries";
-            _spillEntries.SetBlockIndex(8);
+            if (_spillEntries is not null)
+            {
+                _spillEntries.AttributeName = $"{meshName}_SkinnedBoundsSpillEntries";
+                _spillEntries.SetBlockIndex(8);
+            }
 
             _outputPositions.SetBlockIndex(5);
             _bounds.SetBlockIndex(6);

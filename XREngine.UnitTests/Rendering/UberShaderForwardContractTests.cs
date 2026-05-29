@@ -565,6 +565,43 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void DefaultVertexShaderGenerator_NoSpillSkinning_OmitsSpillStorageBlocks()
+    {
+        XRMesh mesh = CreateGeneratedContractMesh();
+        mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4NoSpill);
+
+        bool previousComputeSkinning = GetRuntimeRenderingBool("CalculateSkinningInComputeShader");
+        bool previousAllowSkinning = GetRuntimeRenderingBool("AllowSkinning");
+
+        try
+        {
+            SetRuntimeRenderingBool("AllowSkinning", true);
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", false);
+
+            string source = new DefaultVertexShaderGenerator(mesh).Generate();
+
+            source.ShouldContain("SkinPaletteBuffer");
+            source.ShouldContain("BoneInfluenceCoreIndices");
+            source.ShouldNotContain("BoneInfluenceSpillHeaders");
+            source.ShouldNotContain("BoneInfluenceSpillEntries");
+        }
+        finally
+        {
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", previousComputeSkinning);
+            SetRuntimeRenderingBool("AllowSkinning", previousAllowSkinning);
+        }
+    }
+
+    [Test]
+    public void ComputeSkinningShader_NoSpillPath_IsUniformGated()
+    {
+        string source = LoadShaderSource("Compute/Animation/SkinningPrepass.comp");
+
+        source.ShouldContain("uniform int hasSpillInfluences;");
+        source.ShouldContain("if (hasSpillInfluences != 0)");
+    }
+
+    [Test]
     public void DefaultVertexShaderGenerator_ComputeSkinning_UsesComputeBlendshapePathToo()
     {
         XRMesh mesh = CreateGeneratedContractMesh();
@@ -593,6 +630,35 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", previousComputeBlendshapes);
             SetRuntimeRenderingBool("AllowSkinning", previousAllowSkinning);
             SetRuntimeRenderingBool("AllowBlendshapes", previousAllowBlendshapes);
+        }
+    }
+
+    [Test]
+    public void DefaultVertexShaderGenerator_ComputeSkinning_InvalidSkinnedMeshThrowsInsteadOfVertexFallback()
+    {
+        Transform bone = new();
+        XRMesh mesh = new()
+        {
+            Name = "InvalidShaderSkinningMesh",
+            UtilizedBones = [(bone, Matrix4x4.Identity)],
+        };
+
+        bool previousComputeSkinning = GetRuntimeRenderingBool("CalculateSkinningInComputeShader");
+        bool previousAllowSkinning = GetRuntimeRenderingBool("AllowSkinning");
+
+        try
+        {
+            SetRuntimeRenderingBool("AllowSkinning", true);
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", true);
+
+            InvalidOperationException ex = Should.Throw<InvalidOperationException>(() => new DefaultVertexShaderGenerator(mesh));
+            ex.Message.ShouldContain("Core4 compute-skinning runtime format");
+            ex.Message.ShouldContain("Recook or reimport");
+        }
+        finally
+        {
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", previousComputeSkinning);
+            SetRuntimeRenderingBool("AllowSkinning", previousAllowSkinning);
         }
     }
 

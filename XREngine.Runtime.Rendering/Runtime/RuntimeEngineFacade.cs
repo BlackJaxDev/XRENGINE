@@ -721,10 +721,32 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderTextureUpload(bytes, elapsed);
             }
 
-            public static void RecordSkinningUpload(long boneMatrixBytes, long blendshapeWeightBytes, int skinningDispatches = 0, int blendshapeDispatches = 0)
+            public static void RecordSkinningUpload(
+                long boneMatrixBytes,
+                long blendshapeWeightBytes,
+                int skinningDispatches = 0,
+                int blendshapeDispatches = 0,
+                long coreInfluenceBytes = 0,
+                long spillHeaderBytes = 0,
+                long spillEntryBytes = 0,
+                long skinPaletteBytes = 0,
+                int skippedSkinningDispatches = 0,
+                int reusedSkinnedOutputBuffers = 0,
+                int liveSkinningShaderPermutations = 0)
             {
                 if (EnableTracking && HasHostStats)
-                    RuntimeRenderingHostServices.Current.RecordRenderSkinningUpload(boneMatrixBytes, blendshapeWeightBytes, skinningDispatches, blendshapeDispatches);
+                    RuntimeRenderingHostServices.Current.RecordRenderSkinningUpload(
+                        boneMatrixBytes,
+                        blendshapeWeightBytes,
+                        skinningDispatches,
+                        blendshapeDispatches,
+                        coreInfluenceBytes,
+                        spillHeaderBytes,
+                        spillEntryBytes,
+                        skinPaletteBytes,
+                        skippedSkinningDispatches,
+                        reusedSkinnedOutputBuffers,
+                        liveSkinningShaderPermutations);
             }
 
             public static void RecordShaderVariant(bool requested = false, bool warming = false, bool linked = false, bool failed = false, bool loadedFromDiskCache = false, bool generatedThisRun = false)

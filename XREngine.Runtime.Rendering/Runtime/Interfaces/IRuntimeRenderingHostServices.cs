@@ -908,7 +908,18 @@ public interface IRuntimeRenderingHostServices
         bool skinned,
         string? representation);
     void RecordRenderTextureUpload(long bytes, TimeSpan elapsed);
-    void RecordRenderSkinningUpload(long boneMatrixBytes, long blendshapeWeightBytes, int skinningDispatches = 0, int blendshapeDispatches = 0);
+    void RecordRenderSkinningUpload(
+        long boneMatrixBytes,
+        long blendshapeWeightBytes,
+        int skinningDispatches = 0,
+        int blendshapeDispatches = 0,
+        long coreInfluenceBytes = 0,
+        long spillHeaderBytes = 0,
+        long spillEntryBytes = 0,
+        long skinPaletteBytes = 0,
+        int skippedSkinningDispatches = 0,
+        int reusedSkinnedOutputBuffers = 0,
+        int liveSkinningShaderPermutations = 0);
     void RecordRenderShaderVariant(bool requested, bool warming, bool linked, bool failed, bool loadedFromDiskCache, bool generatedThisRun);
     void RecordRenderGpuDrivenBucketWork(int activeBuckets, int emptyBucketSkips, int fullBucketScans, int materialScatterDispatches);
     void RecordRenderGpuDrivenCommandCompaction(long culledCommands, long delayedDrawCountValue, long gpuCompactionOverflow, long activeListOverflow, long bucketOverflow, long meshletOverflow);

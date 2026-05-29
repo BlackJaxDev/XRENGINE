@@ -170,10 +170,15 @@ namespace XREngine.Rendering.OpenGL
                     RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
                     RemoveCollectedBuffer($"{ECommonBufferType.SkinPalette}Buffer");
                 }
-                else if (mesh?.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill)
+                else if (mesh?.SkinningInfluenceEncoding is SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill)
                 {
                     RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrices}Buffer");
                     RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
+                    if (!mesh.HasSpillInfluences)
+                    {
+                        RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
+                        RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
+                    }
                 }
 
                 if (!useVertexBlendshapes)
@@ -304,7 +309,10 @@ namespace XREngine.Rendering.OpenGL
                 var skinnedTan = MeshRenderer.SkinnedTangentsBuffer;
 
                 if (skinnedPos is null && skinnedNorm is null && skinnedTan is null)
+                {
+                    ClearSkinnedVertexBufferBindings();
                     return;
+                }
 
                 if (skinnedPos is not null)
                 {

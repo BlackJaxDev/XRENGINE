@@ -47,6 +47,8 @@ layout(std430, binding = 8) buffer BoneInfluenceSpillEntriesBuffer
 uniform uint vertexCount;
 uniform int hasSkinning;
 uniform int skinningCoreIndexFormat;
+uniform int hasSpillInfluences;
+uniform int skinningInfluenceCap;
 uniform uint skinPaletteBase;
 uniform uint skinPaletteCount;
 uniform mat4 fallbackMatrix;
@@ -209,24 +211,28 @@ void main()
         if (hasSkinning != 0)
         {
             float accumulatedWeight = 0.0;
+            int influenceLimit = skinningInfluenceCap <= 0 ? 2147483647 : skinningInfluenceCap;
             uvec4 coreIndices = loadCoreIndices(index);
             vec4 coreWeights = loadCoreWeights(index);
 
-            for (int i = 0; i < 4; ++i)
+            for (int i = 0; i < 4 && i < influenceLimit; ++i)
                 accumulateSkinInfluence(coreIndices[i], coreWeights[i], basePosition, skinnedPosition, accumulatedWeight);
 
-            uint spillHeader = BoneInfluenceSpillHeaders[index];
-            uint spillOffset = spillHeader & 0x00FFFFFFu;
-            uint spillCount = spillHeader >> 24;
-            for (uint i = 0u; i < spillCount; ++i)
+            if (hasSpillInfluences != 0)
             {
-                uint entry = BoneInfluenceSpillEntries[spillOffset + i];
-                accumulateSkinInfluence(
-                    entry & 0xFFFFu,
-                    float((entry >> 16) & 0xFFu) * (1.0 / 255.0),
-                    basePosition,
-                    skinnedPosition,
-                    accumulatedWeight);
+                uint spillHeader = BoneInfluenceSpillHeaders[index];
+                uint spillOffset = spillHeader & 0x00FFFFFFu;
+                uint spillCount = spillHeader >> 24;
+                for (uint i = 0u; i < spillCount && int(i) + 4 < influenceLimit; ++i)
+                {
+                    uint entry = BoneInfluenceSpillEntries[spillOffset + i];
+                    accumulateSkinInfluence(
+                        entry & 0xFFFFu,
+                        float((entry >> 16) & 0xFFu) * (1.0 / 255.0),
+                        basePosition,
+                        skinnedPosition,
+                        accumulatedWeight);
+                }
             }
 
             if (accumulatedWeight <= 0.00001)

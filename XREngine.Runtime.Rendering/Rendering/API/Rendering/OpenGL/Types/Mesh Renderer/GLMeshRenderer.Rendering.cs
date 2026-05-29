@@ -732,6 +732,8 @@ namespace XREngine.Rendering.OpenGL
                 materialProgram?.Uniform("skinPaletteBase", meshRenderer.ActiveSkinPaletteBase);
                 vertexProgram.Uniform("skinPaletteCount", meshRenderer.ActiveSkinPaletteCount);
                 materialProgram?.Uniform("skinPaletteCount", meshRenderer.ActiveSkinPaletteCount);
+                vertexProgram.Uniform("skinningInfluenceCap", meshRenderer.ActiveSkinningInfluenceCap);
+                materialProgram?.Uniform("skinningInfluenceCap", meshRenderer.ActiveSkinningInfluenceCap);
                 SetDirectionalCascadeLayeredUniforms(vertexProgram);
                 SetPointLightLayeredUniforms(vertexProgram);
 
