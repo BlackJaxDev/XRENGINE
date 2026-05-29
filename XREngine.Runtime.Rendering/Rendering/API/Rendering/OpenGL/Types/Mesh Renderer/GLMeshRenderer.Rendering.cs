@@ -728,8 +728,10 @@ namespace XREngine.Rendering.OpenGL
                 uint transformId = RuntimeEngine.Rendering.State.CurrentTransformId;
                 vertexProgram.Uniform("TransformId", transformId);
                 materialProgram?.Uniform("TransformId", transformId);
-                vertexProgram.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
-                materialProgram?.Uniform("boneMatrixBase", meshRenderer.ActiveBoneMatrixBase);
+                vertexProgram.Uniform("skinPaletteBase", meshRenderer.ActiveSkinPaletteBase);
+                materialProgram?.Uniform("skinPaletteBase", meshRenderer.ActiveSkinPaletteBase);
+                vertexProgram.Uniform("skinPaletteCount", meshRenderer.ActiveSkinPaletteCount);
+                materialProgram?.Uniform("skinPaletteCount", meshRenderer.ActiveSkinPaletteCount);
                 SetDirectionalCascadeLayeredUniforms(vertexProgram);
                 SetPointLightLayeredUniforms(vertexProgram);
 

@@ -37,16 +37,20 @@ Relevant code:
 
 The rendering side already has the right pieces for a GPU animation consumer:
 
-- `XRMeshRenderer` has renderer-owned bone and inverse bind buffers, plus external GPU-driven bone source support.
-- `SkinningPrepassDispatcher` can bind active bone matrix sources and run compute skinning into GPU-resident output buffers.
-- The compute skinning shader already consumes `boneMatrixBase` and `boneMatrixCount` for palette slices.
-- GPU physics-chain work already includes direct GPU palette publication patterns for driven renderers.
+- `XRMeshRenderer` publishes current and optional previous final skin palettes,
+  plus external GPU-driven skin-palette source support.
+- `SkinningPrepassDispatcher` can bind active skin-palette sources and run
+  compute skinning into GPU-resident output buffers.
+- The compute skinning shader consumes `skinPaletteBase` and
+  `skinPaletteCount` for palette slices.
+- GPU physics-chain work already writes final affine skin-palette rows for
+  driven renderers.
 
 Relevant code:
 
-- [XRENGINE/Rendering/XRMeshRenderer.cs](../../../XRENGINE/Rendering/XRMeshRenderer.cs)
-- [XRENGINE/Rendering/Compute/SkinningPrepassDispatcher.cs](../../../XRENGINE/Rendering/Compute/SkinningPrepassDispatcher.cs)
-- [XRENGINE/Rendering/Compute/GlobalAnimationInputBuffers.cs](../../../XRENGINE/Rendering/Compute/GlobalAnimationInputBuffers.cs)
+- `XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs`
+- `XREngine.Runtime.Rendering/Rendering/Compute/SkinningPrepassDispatcher.cs`
+- `XREngine.Runtime.Rendering/Rendering/Compute/GlobalSkinPaletteBuffers.cs`
 - [Build/CommonAssets/Shaders/Compute/Animation/SkinningPrepass.comp](../../../Build/CommonAssets/Shaders/Compute/Animation/SkinningPrepass.comp)
 - [Build/CommonAssets/Shaders/Compute/Animation/SkinningPrepassInterleaved.comp](../../../Build/CommonAssets/Shaders/Compute/Animation/SkinningPrepassInterleaved.comp)
 - [Build/CommonAssets/Shaders/Compute/PhysicsChain/PhysicsChainBonePalette.comp](../../../Build/CommonAssets/Shaders/Compute/PhysicsChain/PhysicsChainBonePalette.comp)
@@ -60,7 +64,7 @@ Relevant code:
 5. Compile CPU object graphs into flat GPU tables instead of executing reflection or managed callbacks on GPU.
 6. Expose a simple CPU/GPU backend selector on `AnimationClipComponent` and `AnimStateMachineComponent`.
 7. Keep CPU as the default, fully supported backend for unsupported animation features and gameplay systems that need CPU transforms.
-8. Feed the existing renderer active bone source and compute skinning contracts.
+8. Feed the existing renderer active skin-palette source and compute skinning contracts.
 9. Avoid GPU readback in the normal visible rendering path.
 
 ## Separate CPU And GPU Backends
@@ -189,7 +193,7 @@ struct GpuAnimatorInstance
     uint parameterBase;
     uint localPoseBase;
     uint worldPoseBase;
-    uint boneMatrixBase;
+    uint skinPaletteBase;
     uint uniformOutputBase;
     float deltaTime;
     float globalWeight;
@@ -300,27 +304,33 @@ Dispatch one depth range at a time, or use a persistent per-skeleton workgroup s
 
 Publish final outputs:
 
-- current bone render matrices,
-- previous bone render matrices for temporal passes,
+- current final skin palettes,
+- previous final skin palettes for temporal passes,
 - animated blendshape weights,
 - animated material/uniform values,
 - optional root motion deltas.
 
-Bone palette output must match XRENGINE's current row-vector skinning convention. The existing compute skinning path expects:
+Bone palette output must match XRENGINE's row-vector skinning convention. The
+active rendering contract is a precomposed affine skin matrix stored as three
+`vec4` rows per bone:
 
 ```glsl
-mat4 boneMatrix = BoneInvBindMatrices[idx] * BoneMatrices[idx];
-vec4 p = vec4(basePosition, 1.0f) * boneMatrix;
+SkinPaletteRow0[idx]
+SkinPaletteRow1[idx]
+SkinPaletteRow2[idx]
 ```
 
-So the GPU animation path should write the same kind of render/world bone matrices that CPU transform updates currently place in `XRMeshRenderer.BoneMatricesBuffer`.
+So the GPU animation path should write final skin palette rows, not raw
+render/world bone matrices. CPU-driven renderers compose the same final
+palette from their current bone and inverse-bind state before upload.
 
 ### 7. Render Consumption
 
-The renderer should consume GPU animation outputs through the existing active bone source pattern:
+The renderer should consume GPU animation outputs through the existing active
+skin-palette source pattern:
 
-- compute skinning binds active bone matrix and inverse bind matrix buffers,
-- direct vertex skinning uses the same palette base and active buffers,
+- compute skinning binds active final skin-palette buffers,
+- direct vertex skinning uses the same skin-palette base and active buffers,
 - material shaders fetch animated uniform values from bound buffers,
 - blendshape compute uses GPU-produced blendshape weights instead of CPU-pushed weights.
 
@@ -427,26 +437,28 @@ GPU state-machine mode should stage only dense parameter writes and trigger mask
 
 ### XRMeshRenderer
 
-`XRMeshRenderer` should treat GPU animation like any other external bone matrix producer. The active skin source should expose:
+`XRMeshRenderer` should treat GPU animation like any other external skin
+palette producer. The active skin source should expose:
 
-- current bone matrices buffer,
-- previous bone matrices buffer,
-- inverse bind matrices buffer,
+- current final skin-palette buffer,
+- previous final skin-palette buffer when temporal consumers need it,
 - palette base,
 - palette count,
 - source ownership/lifetime.
 
-The current `SetGpuDrivenBoneMatrixSource` pattern is a good starting seam.
+The current implementation surface uses `SetGpuDrivenSkinPaletteSource` and
+`ClearGpuDrivenSkinPaletteSource`.
 
 ### Compute Skinning
 
-`SkinningPrepassDispatcher` should bind active bone sources without trying to repack GPU-originating palette data through CPU memory.
+`SkinningPrepassDispatcher` should bind active skin-palette sources without
+trying to repack GPU-originating palette data through CPU memory.
 
 Preferred final shape:
 
-- GPU animation writes directly into a global animation palette atlas,
+- GPU animation writes directly into a global skin-palette atlas,
 - each renderer receives a stable palette slice,
-- compute skinning receives `boneMatrixBase` and `boneMatrixCount`.
+- compute skinning receives `skinPaletteBase` and `skinPaletteCount`.
 
 Acceptable early shape:
 
@@ -455,11 +467,15 @@ Acceptable early shape:
 
 ### Direct Vertex Skinning
 
-Direct vertex skinning should keep supporting `boneMatrixBase` so it can consume shared palette atlases and external GPU sources the same way compute skinning does.
+Direct vertex skinning should keep supporting `skinPaletteBase` so it can
+consume shared palette atlases and external GPU sources the same way compute
+skinning does.
 
 ### Blendshapes
 
-Animated blendshape channels should produce a GPU blendshape weight buffer. The existing compute skinning blendshape path can then consume the active weight source, similar to active bone sources.
+Animated blendshape channels should produce a GPU blendshape weight buffer. The
+existing compute skinning blendshape path can then consume the active weight
+source, similar to active skin-palette sources.
 
 ### Material And Renderer Uniforms
 

@@ -32,7 +32,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
     private XRShader? _interleavedShader;
     private XRRenderProgram? _interleavedProgram;
 
-    private readonly GlobalAnimationInputBuffers _globalInputs = new();
+    private readonly GlobalSkinPaletteBuffers _globalInputs = new();
 
     private SkinningPrepassDispatcher()
     {
@@ -104,22 +104,20 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         if (!doSkinning && !doBlendshapes)
             return;
 
-        if (doSkinning && !renderer.HasExternalBoneMatrixSource)
+        if (doSkinning && !renderer.HasExternalSkinPaletteSource)
             renderer.EnsureSkinningBuffers(logWarnings: false);
         if (doBlendshapes)
             renderer.EnsureBlendshapeBuffers(logWarnings: false);
 
-        bool useExternalBoneSource = doSkinning && renderer.HasExternalBoneMatrixSource;
-        bool usePackedGlobalBones = doSkinning
-            && !useExternalBoneSource
-            && RuntimeEngine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning
+        bool useExternalSkinPaletteSource = doSkinning && renderer.HasExternalSkinPaletteSource;
+        bool usePackedGlobalSkinPalette = doSkinning
+            && !useExternalSkinPaletteSource
+            && RuntimeEngine.Rendering.Settings.UseGlobalSkinPaletteBufferForComputeSkinning
             && !renderer.HasGpuDrivenBoneSource;
-        bool useSharedBoneBuffers = useExternalBoneSource || usePackedGlobalBones;
+        bool useSharedSkinPaletteBuffer = useExternalSkinPaletteSource || usePackedGlobalSkinPalette;
         bool useGlobalBlendWeights = doBlendshapes && RuntimeEngine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
 
         bool isInterleaved = mesh.Interleaved;
-        bool optimizeTo4Weights = RuntimeEngine.Rendering.Settings.OptimizeSkinningTo4Weights || (RuntimeEngine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && mesh.MaxWeightCount <= 4);
-
         lock (_syncRoot)
         {
             // Avoid re-running the compute deformation for the same renderer more than once per global render frame.
@@ -147,33 +145,31 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             if (resources.LastComputePrepassFrameId == frameId)
                 return;
 
-            if (!resources.Validate(mesh, doSkinning, doBlendshapes, optimizeTo4Weights, isInterleaved))
+            if (!resources.Validate(mesh, doSkinning, doBlendshapes, isInterleaved))
                 return;
 
             resources.LastComputePrepassFrameId = frameId;
 
             // Ensure this renderer's animation inputs are present in the global packed buffers (if enabled).
             // This may resize and/or re-upload global buffers.
-            if (usePackedGlobalBones || useGlobalBlendWeights)
+            if (usePackedGlobalSkinPalette || useGlobalBlendWeights)
             {
-                _globalInputs.EnsurePackedForRenderer(renderer, usePackedGlobalBones, useGlobalBlendWeights);
-                _globalInputs.PushIfDirty(pushBones: usePackedGlobalBones, pushBlendshapeWeights: useGlobalBlendWeights);
+                _globalInputs.EnsurePackedForRenderer(renderer, usePackedGlobalSkinPalette, useGlobalBlendWeights);
+                _globalInputs.PushIfDirty(pushSkinPalette: usePackedGlobalSkinPalette, pushBlendshapeWeights: useGlobalBlendWeights);
             }
 
             resources.SyncDynamicBuffers(
-                pushBoneMatrices: !useSharedBoneBuffers,
+                pushSkinPalette: !useSharedSkinPaletteBuffer,
                 pushBlendshapeWeights: !useGlobalBlendWeights);
 
-            uint boneBase = renderer.ActiveBoneMatrixBase;
-            uint boneCount = renderer.ActiveBoneMatrixCount;
-            XRDataBuffer? activeBoneMatrices = renderer.ActiveBoneMatricesBuffer;
-            XRDataBuffer? activeBoneInvBindMatrices = renderer.ActiveBoneInvBindMatricesBuffer;
-            if (usePackedGlobalBones && _globalInputs.TryGetBoneSlice(renderer, out uint packedBase, out uint packedCount))
+            uint skinPaletteBase = renderer.ActiveSkinPaletteBase;
+            uint skinPaletteCount = renderer.ActiveSkinPaletteCount;
+            XRDataBuffer? activeSkinPalette = renderer.ActiveSkinPaletteBuffer;
+            if (usePackedGlobalSkinPalette && _globalInputs.TryGetSkinPaletteSlice(renderer, out uint packedBase, out uint packedCount))
             {
-                boneBase = packedBase;
-                boneCount = packedCount;
-                activeBoneMatrices = _globalInputs.GlobalBoneMatrices;
-                activeBoneInvBindMatrices = _globalInputs.GlobalBoneInvBindMatrices;
+                skinPaletteBase = packedBase;
+                skinPaletteCount = packedCount;
+                activeSkinPalette = _globalInputs.GlobalSkinPalette;
             }
 
             uint blendBase = 0u;
@@ -187,8 +183,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                     doBlendshapes,
                     isInterleaved,
                     useGlobalBlendWeights,
-                    activeBoneMatrices,
-                    activeBoneInvBindMatrices,
+                    activeSkinPalette,
                     _globalInputs.GlobalBlendshapeWeights);
 
                 uint vertexCount = (uint)mesh.VertexCount;
@@ -201,11 +196,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 activeProgram.Uniform("absoluteBlendshapePositions", RuntimeEngine.Rendering.Settings.UseAbsoluteBlendshapePositions ? 1 : 0);
                 activeProgram.Uniform("maxBlendshapeAccumulation", mesh.MaxBlendshapeAccumulation ? 1 : 0);
                 activeProgram.Uniform("useIntegerUniforms", RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
-                activeProgram.Uniform("optimized4", optimizeTo4Weights ? 1 : 0);
+                activeProgram.Uniform("skinningCoreIndexFormat", (int)mesh.SkinningCoreIndexFormat);
 
                 // Global-packed animation input base offsets (0 when using per-renderer buffers).
-                activeProgram.Uniform("boneMatrixBase", boneBase);
-                activeProgram.Uniform("boneMatrixCount", boneCount);
+                activeProgram.Uniform("skinPaletteBase", skinPaletteBase);
+                activeProgram.Uniform("skinPaletteCount", skinPaletteCount);
                 activeProgram.Uniform("blendshapeWeightBase", blendBase);
 
                 // Set interleaved-specific uniforms
@@ -266,9 +261,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             return;
 
         // Optionally pre-pack all visible renderers into global buffers for this frame.
-        bool globalBones = RuntimeEngine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning;
+        bool globalSkinPalette = RuntimeEngine.Rendering.Settings.UseGlobalSkinPaletteBufferForComputeSkinning;
         bool globalBlend = RuntimeEngine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
-        if (globalBones || globalBlend)
+        if (globalSkinPalette || globalBlend)
         {
             lock (_syncRoot)
             {
@@ -283,22 +278,22 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                     bool skinningInCompute = RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
                         && mesh.HasSkinning
                         && RuntimeEngine.Rendering.Settings.AllowSkinning;
-                    bool needsBones = globalBones
-                        && !renderer.HasExternalBoneMatrixSource
+                    bool needsSkinPalette = globalSkinPalette
+                        && !renderer.HasExternalSkinPaletteSource
                         && !renderer.HasGpuDrivenBoneSource
                         && skinningInCompute;
                     bool needsBlend = globalBlend
                         && mesh.BlendshapeCount > 0
                         && RuntimeEngine.Rendering.Settings.AllowBlendshapes
                         && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || skinningInCompute);
-                    if (!needsBones && !needsBlend)
+                    if (!needsSkinPalette && !needsBlend)
                         continue;
 
-                    anyChanged |= _globalInputs.EnsurePackedForRenderer(renderer, needsBones, needsBlend);
+                    anyChanged |= _globalInputs.EnsurePackedForRenderer(renderer, needsSkinPalette, needsBlend);
                 }
 
                 if (anyChanged)
-                    _globalInputs.PushIfDirty(pushBones: globalBones, pushBlendshapeWeights: globalBlend);
+                    _globalInputs.PushIfDirty(pushSkinPalette: globalSkinPalette, pushBlendshapeWeights: globalBlend);
             }
         }
 
@@ -352,15 +347,16 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         /// </summary>
         public XRDataBuffer? SkinnedInterleaved => _renderer.SkinnedInterleavedBuffer;
 
-        public bool Validate(XRMesh mesh, bool doSkinning, bool doBlendshapes, bool optimizeTo4Weights, bool isInterleaved)
+        public bool Validate(XRMesh mesh, bool doSkinning, bool doBlendshapes, bool isInterleaved)
         {
             if (doSkinning)
             {
-                if (_renderer.ActiveBoneMatricesBuffer is null || _renderer.ActiveBoneInvBindMatricesBuffer is null)
+                if (_renderer.ActiveSkinPaletteBuffer is null)
                     return false;
-                if (mesh.BoneWeightOffsets is null || mesh.BoneWeightCounts is null)
+                if (mesh.SkinningInfluenceEncoding != SkinningInfluenceEncoding.Core4Spill)
                     return false;
-                if (!optimizeTo4Weights && (mesh.BoneWeightIndices is null || mesh.BoneWeightValues is null))
+                if (mesh.BoneInfluenceCoreIndices is null || mesh.BoneInfluenceCoreWeights is null ||
+                    mesh.BoneInfluenceSpillHeaders is null || mesh.BoneInfluenceSpillEntries is null)
                     return false;
             }
 
@@ -486,9 +482,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             }
         }
 
-        public void SyncDynamicBuffers(bool pushBoneMatrices, bool pushBlendshapeWeights)
+        public void SyncDynamicBuffers(bool pushSkinPalette, bool pushBlendshapeWeights)
         {
-            if (pushBoneMatrices)
+            if (pushSkinPalette)
                 _renderer.PushBoneMatricesToGPU();
             if (pushBlendshapeWeights)
                 _renderer.PushBlendshapeWeightsToGPU();
@@ -499,8 +495,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             bool doBlendshapes,
             bool isInterleaved,
             bool useGlobalBlendshapeWeights,
-            XRDataBuffer? boneMatrices,
-            XRDataBuffer? boneInvBindMatrices,
+            XRDataBuffer? skinPalette,
             XRDataBuffer? globalBlendshapeWeights)
         {
             var mesh = _renderer.Mesh;
@@ -528,23 +523,20 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
             if (doSkinning)
             {
-                boneMatrices?.SetBlockIndex(0);
-                boneInvBindMatrices?.SetBlockIndex(1);
-                mesh.BoneWeightOffsets?.SetBlockIndex(2);
-                mesh.BoneWeightCounts?.SetBlockIndex(3);
+                skinPalette?.SetBlockIndex(0);
+                mesh.BoneInfluenceCoreIndices?.SetBlockIndex(2);
+                mesh.BoneInfluenceCoreWeights?.SetBlockIndex(3);
                 
-                // Variable weight skinning buffers have different bindings for interleaved vs non-interleaved
+                // Spill influence buffers have different bindings for interleaved vs non-interleaved
                 if (isInterleaved)
                 {
-                    // Interleaved shader uses bindings 10-11 for variable weights
-                    mesh.BoneWeightIndices?.SetBlockIndex(10);
-                    mesh.BoneWeightValues?.SetBlockIndex(11);
+                    mesh.BoneInfluenceSpillHeaders?.SetBlockIndex(10);
+                    mesh.BoneInfluenceSpillEntries?.SetBlockIndex(11);
                 }
                 else
                 {
-                    // Non-interleaved shader uses bindings 13-14 for variable weights
-                    mesh.BoneWeightIndices?.SetBlockIndex(13);
-                    mesh.BoneWeightValues?.SetBlockIndex(14);
+                    mesh.BoneInfluenceSpillHeaders?.SetBlockIndex(13);
+                    mesh.BoneInfluenceSpillEntries?.SetBlockIndex(14);
                 }
             }
 

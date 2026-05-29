@@ -19,6 +19,19 @@ public enum ESkinningShaderConvention : byte
     ExplicitRowMajorRowVector = 1,
 }
 
+public enum SkinningInfluenceEncoding : byte
+{
+    None = 0,
+    Core4Spill = 1,
+}
+
+public enum SkinningCoreIndexFormat : byte
+{
+    None = 0,
+    Core4x8 = 1,
+    Core4x16 = 2,
+}
+
 [XRAssetInspector("XREngine.Editor.AssetEditors.XRMeshInspector")]
 [MemoryPackable(GenerateType.NoGenerate)]
 public partial class XRMesh : XRAsset
@@ -152,6 +165,34 @@ public partial class XRMesh : XRAsset
         set => SetField(ref _skinningShaderConvention, value);
     }
 
+    private SkinningInfluenceEncoding _skinningInfluenceEncoding = SkinningInfluenceEncoding.None;
+    public SkinningInfluenceEncoding SkinningInfluenceEncoding
+    {
+        get => _skinningInfluenceEncoding;
+        private set => SetField(ref _skinningInfluenceEncoding, value);
+    }
+
+    private SkinningCoreIndexFormat _skinningCoreIndexFormat = SkinningCoreIndexFormat.None;
+    public SkinningCoreIndexFormat SkinningCoreIndexFormat
+    {
+        get => _skinningCoreIndexFormat;
+        private set => SetField(ref _skinningCoreIndexFormat, value);
+    }
+
+    private bool _hasSpillInfluences;
+    public bool HasSpillInfluences
+    {
+        get => _hasSpillInfluences;
+        private set => SetField(ref _hasSpillInfluences, value);
+    }
+
+    private int _maxSpillInfluenceCount;
+    public int MaxSpillInfluenceCount
+    {
+        get => _maxSpillInfluenceCount;
+        private set => SetField(ref _maxSpillInfluenceCount, value);
+    }
+
     /// <summary>
     /// The import-root's BindMatrix at the time this mesh was created.
     /// Used by the renderer to convert InverseBindMatrices from world-space to
@@ -194,21 +235,21 @@ public partial class XRMesh : XRAsset
     [MemoryPackIgnore]
     public XRDataBuffer? InterleavedVertexBuffer { get; private set; }
 
-    // Bone weight indirection
+    // Bone influence buffers
     [MemoryPackIgnore]
-    public XRDataBuffer? BoneWeightOffsets { get; private set; }
+    public XRDataBuffer? BoneInfluenceCoreIndices { get; private set; }
     [MemoryPackIgnore]
-    public XRDataBuffer? BoneWeightCounts { get; private set; }
+    public XRDataBuffer? BoneInfluenceCoreWeights { get; private set; }
+    [MemoryPackIgnore]
+    public XRDataBuffer? BoneInfluenceSpillHeaders { get; private set; }
+    [MemoryPackIgnore]
+    public XRDataBuffer? BoneInfluenceSpillEntries { get; private set; }
 
     // Blendshape indirection
     [MemoryPackIgnore]
     public XRDataBuffer? BlendshapeCounts { get; private set; }
 
     // Non-per-vertex (skinning / blendshape)
-    [MemoryPackIgnore]
-    public XRDataBuffer? BoneWeightIndices { get; private set; }
-    [MemoryPackIgnore]
-    public XRDataBuffer? BoneWeightValues { get; private set; }
     [MemoryPackIgnore]
     public XRDataBuffer? BlendshapeDeltas { get; private set; }
     [MemoryPackIgnore]
@@ -301,10 +342,10 @@ public partial class XRMesh : XRAsset
 
         if (HasSkinning)
         {
-            BoneWeightOffsets = Buffers.GetValueOrDefault(ECommonBufferType.BoneMatrixOffset.ToString());
-            BoneWeightCounts = Buffers.GetValueOrDefault(ECommonBufferType.BoneMatrixCount.ToString());
-            BoneWeightIndices = Buffers.GetValueOrDefault($"{ECommonBufferType.BoneMatrixIndices}Buffer");
-            BoneWeightValues = Buffers.GetValueOrDefault($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+            BoneInfluenceCoreIndices = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreIndices.ToString());
+            BoneInfluenceCoreWeights = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreWeights.ToString());
+            BoneInfluenceSpillHeaders = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
+            BoneInfluenceSpillEntries = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
         }
 
         if (HasBlendshapes)

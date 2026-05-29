@@ -1,7 +1,7 @@
 # GPU Skinning Buffer Compression Plan
 
 Last Updated: 2026-05-06
-Status: design
+Status: implemented on branch `gpu-skinning-buffer-compression` as of 2026-05-29
 Scope: renderer-level refactor of XRMesh and XRMeshRenderer skinning influence and palette buffers across direct vertex skinning, compute skinning, OpenGL, Vulkan, and cooked mesh payloads.
 
 Related docs:
@@ -14,6 +14,32 @@ Related docs:
 - [Rendering Code Map](../../architecture/rendering/RenderingCodeMap.md)
 
 ---
+
+## 2026-05-29 Implementation Update
+
+The implementation landed the planned `Core4 + Spill` mesh influence encoding
+and the final affine skin-palette contract in one cleanup pass:
+
+- `XRMesh` now owns `BoneInfluenceCoreIndices`,
+  `BoneInfluenceCoreWeights`, `BoneInfluenceSpillHeaders`, and
+  `BoneInfluenceSpillEntries`.
+- `Core4x8` and `Core4x16` replace the old mesh-wide fixed-4 vs variable
+  branch. `MaxWeightCount` remains descriptive data, not a layout selector.
+- Compute and direct vertex skinning consume the same packed core/spill bit
+  layout.
+- `XRMeshRenderer` exposes `ActiveSkinPaletteBuffer`,
+  `ActivePreviousSkinPaletteBuffer`, `ActiveSkinPaletteBase`, and
+  `ActiveSkinPaletteCount` as the hot-path palette surface.
+- Skin palettes are precomposed affine matrices stored as three `vec4` rows per
+  bone, reducing the active palette cost from 128 B/bone to 48 B/bone.
+- `GlobalAnimationInputBuffers` has been replaced by
+  `GlobalSkinPaletteBuffers`, and the compute setting is now
+  `UseGlobalSkinPaletteBufferForComputeSkinning`.
+- GPU physics-chain palette output writes final skin palette rows directly.
+
+The original design text below is retained as architectural rationale. For the
+task completion record and validation notes, see
+[GPU Skinning Buffer Compression Completion](../../../todo/rendering/gpu/gpu-skinning-buffer-compression-todo.md).
 
 ## 1. Executive Summary
 

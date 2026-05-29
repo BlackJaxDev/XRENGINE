@@ -304,8 +304,6 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool PopulateVertexDataInParallel => true;
         public bool ProcessMeshImportsAsynchronously => false;
         public bool AllowSkinning => true;
-        public bool OptimizeSkinningTo4Weights => false;
-        public bool OptimizeSkinningWeightsIfPossible => false;
         public bool CalculateSkinningInComputeShader => false;
         public bool CalculateBlendshapesInComputeShader => false;
         public int ShaderConfigVersion => 0;

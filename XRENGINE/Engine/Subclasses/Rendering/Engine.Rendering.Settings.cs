@@ -465,8 +465,6 @@ namespace XREngine
                 private uint _msaaSampleCount = 4u;
                 private bool _allowShaderPipelines = true;
                 private bool _useIntegerUniformsInShaders = true;
-                private bool _optimizeTo4Weights = false;
-                private bool _optimizeWeightsIfPossible = true;
                 private bool _tickGroupedItemsInParallel = true;
                 private ELoopType _recalcChildMatricesLoopType = ELoopType.Asynchronous;
                 private uint _lightProbeResolution = 512u;
@@ -483,7 +481,7 @@ namespace XREngine
                 private bool _calculateBlendshapesInComputeShader = true;
                 private bool _calculateSkinningInComputeShader = true;
                 private bool _useDetailPreservingComputeMipmaps = true;
-                private bool _useGlobalBoneMatricesBufferForComputeSkinning = false;
+                private bool _useGlobalSkinPaletteBufferForComputeSkinning = false;
                 private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
                 private ESkinnedBoundsRecomputePolicy _skinnedBoundsRecomputePolicy = ESkinnedBoundsRecomputePolicy.Never;
                 private bool _allowInitialSkinnedBoundsBuildWhenNever = true;
@@ -971,30 +969,6 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// When true, the engine will optimize the number of bone weights used per vertex if any vertex uses more than 4 weights.
-                /// Will reduce shader calculations at the expense of skinning quality.
-                /// </summary>
-                [Category("Performance")]
-                [Description("When true, the engine will optimize the number of bone weights used per vertex if any vertex uses more than 4 weights. Will reduce shader calculations at the expense of skinning quality.")]
-                public bool OptimizeSkinningTo4Weights
-                {
-                    get => _optimizeTo4Weights;
-                    set => SetField(ref _optimizeTo4Weights, value, null, _ => BumpShaderConfigVersion());
-                }
-
-                /// <summary>
-                /// This will pass vertex weights and indices to the shader as elements of a vec4 instead of using SSBO remaps for more straightforward calculation.
-                /// Will not result in any quality loss and should be enabled if possible.
-                /// </summary>
-                [Category("Performance")]
-                [Description("This will pass vertex weights and indices to the shader as elements of a vec4 instead of using SSBO remaps for more straightforward calculation. Will not result in any quality loss and should be enabled if possible.")]
-                public bool OptimizeSkinningWeightsIfPossible
-                {
-                    get => _optimizeWeightsIfPossible;
-                    set => SetField(ref _optimizeWeightsIfPossible, value, null, _ => BumpShaderConfigVersion());
-                }
-
-                /// <summary>
                 /// When items in the same group also have the same order value, this will dictate whether they are ticked in parallel or sequentially.
                 /// Depending on how many items are in a singular tick order, this could be faster or slower.
                 /// </summary>
@@ -1195,15 +1169,15 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// If true (and compute skinning is enabled), bone matrices will be packed into a single global SSBO for all visible renderers.
+                /// If true (and compute skinning is enabled), skin palettes will be packed into a single global SSBO for all visible renderers.
                 /// This reduces per-renderer SSBO binding and upload churn at the cost of building a packed buffer each render.
                 /// </summary>
                 [Category("Performance")]
-                [Description("If true (and compute skinning is enabled), packs bone matrices into a single global SSBO for all visible renderers.")]
-                public bool UseGlobalBoneMatricesBufferForComputeSkinning
+                [Description("If true (and compute skinning is enabled), packs skin palettes into a single global SSBO for all visible renderers.")]
+                public bool UseGlobalSkinPaletteBufferForComputeSkinning
                 {
-                    get => _useGlobalBoneMatricesBufferForComputeSkinning;
-                    set => SetField(ref _useGlobalBoneMatricesBufferForComputeSkinning, value);
+                    get => _useGlobalSkinPaletteBufferForComputeSkinning;
+                    set => SetField(ref _useGlobalSkinPaletteBufferForComputeSkinning, value);
                 }
 
                 /// <summary>

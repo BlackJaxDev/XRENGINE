@@ -12,8 +12,19 @@ The design must support both existing skinning consumption modes:
 The target outcome is straightforward:
 
 - the physics chain remains authoritative for secondary-motion bone pose on GPU,
-- renderers consume GPU-resident bone palette data directly,
+- renderers consume GPU-resident final skin-palette data directly,
 - CPU bone synchronization becomes optional and is no longer required for visible deformation.
+
+## 2026-05-29 Implementation Update
+
+The rendering side now uses final affine skin palettes as the shared GPU
+contract. `XRMeshRenderer` exposes `ActiveSkinPaletteBuffer`,
+`ActivePreviousSkinPaletteBuffer`, `ActiveSkinPaletteBase`, and
+`ActiveSkinPaletteCount`; `SkinningPrepassDispatcher` and direct vertex
+skinning consume `skinPaletteBase` slices; and the physics-chain palette pass
+writes final `SkinPaletteMatrix` rows directly. The older references below to
+raw bone-matrix buffers describe the pre-compression design state and have been
+updated where they affected the final contract.
 
 ## Current State
 
@@ -35,7 +46,7 @@ What this already provides:
 
 What it does not currently provide:
 
-- a GPU-resident render-facing bone palette output,
+- a GPU-resident render-facing skin-palette output,
 - a direct render binding between chain simulation output and skinned mesh consumption,
 - previous-frame GPU bone palette tracking for temporal rendering,
 - a zero-readback visible path.
@@ -45,20 +56,21 @@ What it does not currently provide:
 Relevant code:
 
 - [XRENGINE/Rendering/Compute/SkinningPrepassDispatcher.cs](../../../XRENGINE/Rendering/Compute/SkinningPrepassDispatcher.cs)
-- [XRENGINE/Rendering/Compute/GlobalAnimationInputBuffers.cs](../../../XRENGINE/Rendering/Compute/GlobalAnimationInputBuffers.cs)
+- `XREngine.Runtime.Rendering/Rendering/Compute/GlobalSkinPaletteBuffers.cs`
 - [Build/CommonAssets/Shaders/Compute/Animation/SkinningPrepass.comp](../../../Build/CommonAssets/Shaders/Compute/Animation/SkinningPrepass.comp)
 - [Build/CommonAssets/Shaders/Compute/Animation/SkinningPrepassInterleaved.comp](../../../Build/CommonAssets/Shaders/Compute/Animation/SkinningPrepassInterleaved.comp)
 
 Important existing capabilities:
 
-- compute skinning already consumes SSBO bone matrices and inverse bind matrices,
-- global packed palette support already exists through `boneMatrixBase`,
+- compute skinning already consumes final skin-palette SSBO rows,
+- global packed palette support already exists through `skinPaletteBase`,
 - skinned output buffers are already GPU-resident and render-consumable,
 - the renderer already has a compute-prepass integration seam.
 
 Current limitation:
 
-- the global packing path currently assumes source data originates from CPU-visible renderer buffers and is copied through CPU-side buffer memory before upload.
+- CPU-driven global packing copies final renderer skin palettes; GPU-driven
+  sources can publish final palette rows directly.
 
 ### 3. Direct vertex-shader skinning also already exists
 
@@ -70,9 +82,10 @@ Relevant code:
 
 Important observation:
 
-- the direct vertex path still assumes the active bone palette starts at zero for that renderer,
-- shader generation currently indexes `BoneMatrices[boneIndex]` and `BoneInvBindMatrices[boneIndex]`,
-- there is no base-offset abstraction equivalent to compute prepass `boneMatrixBase`.
+- the direct vertex path consumes the same final skin-palette rows as compute
+  skinning,
+- shader generation indexes `SkinPalette[skinPaletteBase + boneIndex]`,
+- the direct path supports the same base-offset abstraction as compute skinning.
 
 ### 4. Skinned bounds still contain a GPU-to-CPU sync point
 
@@ -96,9 +109,8 @@ That means removing `GpuSyncToBones` alone is not sufficient for a fully zero-re
 
 For rendering, the engine does not fundamentally need CPU bone transforms. It needs:
 
-- current skinning matrices,
-- previous skinning matrices when temporal data is required,
-- inverse bind matrices,
+- current final skin-palette rows,
+- previous final skin-palette rows when temporal data is required,
 - palette slice metadata.
 
 The CPU transform hierarchy should therefore stop being the mandatory bridge between GPU simulation and skinned rendering.
@@ -116,15 +128,15 @@ The CPU transform hierarchy should therefore stop being the mandatory bridge bet
 
 ## 1. Introduce an external GPU skin source abstraction
 
-`XRMeshRenderer` should stop assuming that dynamic bone matrices always come from its own CPU-populated `BoneMatricesBuffer`.
+`XRMeshRenderer` should stop assuming that dynamic skinning data always comes
+from its own CPU-populated bone transform buffers.
 
 Add a renderer-facing abstraction representing the active skinning source for the current frame.
 
 Suggested logical shape:
 
-- current bone matrices buffer,
-- previous bone matrices buffer,
-- inverse bind matrices buffer,
+- current final skin-palette buffer,
+- previous final skin-palette buffer,
 - palette base,
 - palette count,
 - source mode.
@@ -144,7 +156,8 @@ This is the key decoupling step. Once present, render code no longer needs to kn
 
 ## 2. Add a physics-chain bone-palette compute pass
 
-After the main physics-chain solve, add a second compute stage that builds a skinning palette directly on GPU.
+After the main physics-chain solve, add a second compute stage that builds a
+final skinning palette directly on GPU.
 
 Inputs:
 
@@ -156,8 +169,8 @@ Inputs:
 
 Outputs:
 
-- current bone matrices buffer,
-- previous bone matrices buffer,
+- current final skin-palette buffer,
+- previous final skin-palette buffer,
 - optional packed atlas slice metadata.
 
 This pass should not attempt to update `TransformBase` objects. It exists solely to translate simulation state into render-ready skinning matrices.
@@ -185,7 +198,8 @@ Recommended approach:
 
 ## 3. Route compute skinning through the active skin source
 
-`SkinningPrepassDispatcher` should bind the renderer's active skin source rather than assuming `renderer.BoneMatricesBuffer` is always authoritative.
+`SkinningPrepassDispatcher` should bind the renderer's active skin source
+rather than assuming renderer-owned CPU bone data is always authoritative.
 
 That requires two changes:
 
@@ -199,7 +213,7 @@ The best long-term option is for the physics-chain palette builder to write dire
 In that model:
 
 - no extra repack is needed,
-- `boneMatrixBase` already fits the contract,
+- `skinPaletteBase` already fits the contract,
 - compute skinning simply receives slice offsets.
 
 ### 3.2 Acceptable intermediate path
@@ -218,9 +232,9 @@ The direct vertex path should be updated to consume the same external palette ab
 
 Required shader-side change:
 
-- add `boneMatrixBase` support to the non-compute skinning path,
+- add `skinPaletteBase` support to the non-compute skinning path,
 - optionally add previous-palette base support if a later pass needs it,
-- index bone data as `boneMatrixBase + boneIndex`.
+- index skin-palette data as `skinPaletteBase + boneIndex`.
 
 This is the missing compatibility layer between direct vertex skinning and a shared GPU palette atlas.
 
@@ -233,7 +247,7 @@ Once this change is in place, both skinning modes consume the same conceptual da
 - a buffer,
 - a base,
 - a count,
-- inverse bind matrices.
+- final skin-palette rows.
 
 That unifies the design and prevents separate special-case paths for compute and non-compute renderers.
 
@@ -268,7 +282,8 @@ In those cases, CPU sync remains available, but it becomes an explicit extra cos
 ### Target path
 
 1. Physics-chain compute updates particles.
-2. Physics-chain palette compute builds current and previous bone matrices on GPU.
+2. Physics-chain palette compute builds current and previous final skin
+   palettes on GPU.
 3. Renderer references the resulting palette slice as its active skin source.
 4. Compute prepass or direct vertex skinning consumes that palette directly.
 5. CPU sync happens only if explicitly requested by gameplay or tools.
@@ -337,7 +352,8 @@ Outcome:
 
 ## Phase 2: Physics-chain GPU palette output
 
-- Add a compute pass that converts chain particle state into current and previous bone matrices on GPU.
+- Add a compute pass that converts chain particle state into current and
+  previous final skin palettes on GPU.
 - Expose palette slice metadata to driven renderers.
 - Do not require CPU transform updates for those renderers.
 

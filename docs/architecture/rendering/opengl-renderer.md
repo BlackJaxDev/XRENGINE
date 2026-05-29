@@ -237,6 +237,24 @@ GLMeshRenderer.Render()
 
 The draw calls use `glDrawElementsInstanced` for standard rendering, supporting triangles, lines, and points in a single mesh.
 
+### Skinning Buffer Contract
+
+OpenGL skinning uses the compact `Core4 + Spill` mesh influence layout:
+
+- `BoneInfluenceCoreIndices` is bound as an integer vertex attribute through
+  `glVertexAttribIPointer`; it is either four `u8` lanes (`Core4x8`) or four
+  `u16` lanes (`Core4x16`).
+- `BoneInfluenceCoreWeights` is bound as normalized `UNorm8` weights.
+- `BoneInfluenceSpillHeaders` and `BoneInfluenceSpillEntries` are bound as
+  `uint` SSBOs for vertices with more than four retained influences.
+- Direct vertex skinning and compute skinning use the same bit layout and the
+  same sentinel convention: `0` means no bone, live bones are `boneIndex + 1`.
+
+Skin palettes are final affine skin matrices, not paired bone-world and
+inverse-bind `mat4` streams. Each bone occupies three `vec4` rows in
+`SkinPaletteBuffer`; `skinPaletteBase` selects the renderer's slice when a
+global palette buffer is used.
+
 ### Indirect Drawing
 
 For GPU-driven rendering, the OpenGL renderer supports multiple indirect draw paths with automatic fallback:

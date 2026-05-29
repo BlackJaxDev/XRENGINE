@@ -174,15 +174,19 @@ public partial class XRMesh
 
     private void ClearSkinningBuffers()
     {
-        Buffers.RemoveBuffer(ECommonBufferType.BoneMatrixOffset.ToString());
-        Buffers.RemoveBuffer(ECommonBufferType.BoneMatrixCount.ToString());
-        Buffers.RemoveBuffer($"{ECommonBufferType.BoneMatrixIndices}Buffer");
-        Buffers.RemoveBuffer($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+        Buffers.RemoveBuffer(ECommonBufferType.BoneInfluenceCoreIndices.ToString());
+        Buffers.RemoveBuffer(ECommonBufferType.BoneInfluenceCoreWeights.ToString());
+        Buffers.RemoveBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
+        Buffers.RemoveBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
 
-        BoneWeightOffsets = null;
-        BoneWeightCounts = null;
-        BoneWeightIndices = null;
-        BoneWeightValues = null;
+        BoneInfluenceCoreIndices = null;
+        BoneInfluenceCoreWeights = null;
+        BoneInfluenceSpillHeaders = null;
+        BoneInfluenceSpillEntries = null;
+        SkinningInfluenceEncoding = SkinningInfluenceEncoding.None;
+        SkinningCoreIndexFormat = SkinningCoreIndexFormat.None;
+        HasSpillInfluences = false;
+        MaxSpillInfluenceCount = 0;
         _maxWeightCount = 0;
     }
 
@@ -296,193 +300,233 @@ public partial class XRMesh
         Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
     {
         uint vertCount = (uint)VertexCount;
-        bool intVarType = RuntimeRenderingHostServices.Current.UseIntegerUniformsInShaders;
-        var indexVarType = intVarType ? EComponentType.Int : EComponentType.Float;
+        int utilizedBoneCount = UtilizedBones.Length;
+        if (utilizedBoneCount > ushort.MaxValue)
+            throw new NotSupportedException($"Compressed skinning supports at most {ushort.MaxValue} utilized bones; mesh '{Name}' uses {utilizedBoneCount}.");
 
-        bool optimizeTo4Weights = RuntimeRenderingHostServices.Current.OptimizeSkinningTo4Weights ||
-                                  (RuntimeRenderingHostServices.Current.OptimizeSkinningWeightsIfPossible && MaxWeightCount <= 4);
+        SkinningInfluenceEncoding = SkinningInfluenceEncoding.Core4Spill;
+        SkinningCoreIndexFormat = utilizedBoneCount <= byte.MaxValue
+            ? SkinningCoreIndexFormat.Core4x8
+            : SkinningCoreIndexFormat.Core4x16;
 
-        if (optimizeTo4Weights)
+        EComponentType coreIndexType = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x8
+            ? EComponentType.Byte
+            : EComponentType.UShort;
+
+        BoneInfluenceCoreIndices = new XRDataBuffer(ECommonBufferType.BoneInfluenceCoreIndices.ToString(), EBufferTarget.ArrayBuffer, vertCount, coreIndexType, 4, false, true)
         {
-            BoneWeightOffsets = new XRDataBuffer(ECommonBufferType.BoneMatrixOffset.ToString(), EBufferTarget.ArrayBuffer, vertCount, indexVarType, 4, false, intVarType);
-            BoneWeightCounts = new XRDataBuffer(ECommonBufferType.BoneMatrixCount.ToString(), EBufferTarget.ArrayBuffer, vertCount, EComponentType.Float, 4, false, false);
-        }
-        else
+            Usage = EBufferUsage.StaticDraw,
+            DisposeOnPush = false
+        };
+        BoneInfluenceCoreWeights = new XRDataBuffer(ECommonBufferType.BoneInfluenceCoreWeights.ToString(), EBufferTarget.ArrayBuffer, vertCount, EComponentType.Byte, 4, true, false)
         {
-            BoneWeightOffsets = new XRDataBuffer(ECommonBufferType.BoneMatrixOffset.ToString(), EBufferTarget.ArrayBuffer, vertCount, indexVarType, 1, false, intVarType);
-            BoneWeightCounts = new XRDataBuffer(ECommonBufferType.BoneMatrixCount.ToString(), EBufferTarget.ArrayBuffer, vertCount, indexVarType, 1, false, intVarType);
+            Usage = EBufferUsage.StaticDraw,
+            DisposeOnPush = false
+        };
+        BoneInfluenceSpillHeaders = new XRDataBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), EBufferTarget.ShaderStorageBuffer, vertCount, EComponentType.UInt, 1, false, true)
+        {
+            Usage = EBufferUsage.StaticDraw,
+            DisposeOnPush = false
+        };
 
-            BoneWeightIndices = new XRDataBuffer($"{ECommonBufferType.BoneMatrixIndices}Buffer", EBufferTarget.ShaderStorageBuffer, true);
-            Buffers.Add(BoneWeightIndices.AttributeName, BoneWeightIndices);
-            BoneWeightValues = new XRDataBuffer($"{ECommonBufferType.BoneMatrixWeights}Buffer", EBufferTarget.ShaderStorageBuffer, false);
-            Buffers.Add(BoneWeightValues.AttributeName, BoneWeightValues);
-        }
+        PopulateWeightBuffers(boneToIndexTable, weightsPerVertex);
 
-        Buffers.Add(BoneWeightOffsets.AttributeName, BoneWeightOffsets);
-        Buffers.Add(BoneWeightCounts.AttributeName, BoneWeightCounts);
-
-        PopulateWeightBuffers(boneToIndexTable, weightsPerVertex, optimizeTo4Weights);
+        Buffers.Add(BoneInfluenceCoreIndices.AttributeName, BoneInfluenceCoreIndices);
+        Buffers.Add(BoneInfluenceCoreWeights.AttributeName, BoneInfluenceCoreWeights);
+        Buffers.Add(BoneInfluenceSpillHeaders.AttributeName, BoneInfluenceSpillHeaders);
+        Buffers.Add(BoneInfluenceSpillEntries!.AttributeName, BoneInfluenceSpillEntries);
     }
 
     private void PopulateWeightBuffers(
         Dictionary<TransformBase, int> boneToIndexTable,
-        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex,
-        bool optimizeTo4Weights)
+        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
     {
         _maxWeightCount = 0;
-        if (optimizeTo4Weights)
-            PopulateOptWeightsParallel(boneToIndexTable, weightsPerVertex);
-        else
-            PopulateUnoptWeightsParallel(boneToIndexTable, weightsPerVertex);
+        PopulateCompressedWeights(boneToIndexTable, weightsPerVertex);
     }
 
-    private unsafe void PopulateUnoptWeightsParallel(
+    private unsafe void PopulateCompressedWeights(
         Dictionary<TransformBase, int> boneToIndexTable,
         Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
     {
         using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
 
         int vertexCount = VertexCount;
-        uint[] counts = new uint[vertexCount];
-        List<int>[] localBoneIndices = new List<int>[vertexCount];
-        List<float>[] localBoneWeights = new List<float>[vertexCount];
-        bool intVarType = RuntimeRenderingHostServices.Current.UseIntegerUniformsInShaders;
+        var coreIndices = BoneInfluenceCoreIndices!;
+        var coreWeights = BoneInfluenceCoreWeights!;
+        var spillHeaders = BoneInfluenceSpillHeaders!;
+        byte* coreIndex8 = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x8 ? (byte*)coreIndices.Address : null;
+        ushort* coreIndex16 = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x16 ? (ushort*)coreIndices.Address : null;
+        byte* coreWeightData = (byte*)coreWeights.Address;
+        uint* spillHeaderData = (uint*)spillHeaders.Address;
+        List<uint> spillEntries = [];
 
         for (int vi = 0; vi < vertexCount; vi++)
         {
             var group = weightsPerVertex[vi];
-            if (group == null)
-            {
-                counts[vi] = 0;
-                localBoneIndices[vi] = [];
-                localBoneWeights[vi] = [];
-                continue;
-            }
-
-            VertexWeightGroup.Normalize(group);
-            int count = group.Count;
-            counts[vi] = (uint)count;
-            var indicesList = new List<int>(count);
-            var weightsList = new List<float>(count);
-            foreach (var pair in group)
-            {
-                int bIndex = boneToIndexTable[pair.Key];
-                float bWeight = pair.Value.weight;
-                if (bIndex < 0)
-                {
-                    bIndex = -1;
-                    bWeight = 0f;
-                }
-                indicesList.Add(bIndex + 1);
-                weightsList.Add(bWeight);
-            }
-            localBoneIndices[vi] = indicesList;
-            localBoneWeights[vi] = weightsList;
-            if (count > _maxWeightCount)
-                _maxWeightCount = count;
-        }
-
-        uint offset = 0;
-        var offsetsBuf = BoneWeightOffsets!;
-        var countsBuf = BoneWeightCounts!;
-        for (int vi = 0; vi < vertexCount; vi++)
-        {
-            uint count = counts[vi];
-            if (intVarType)
-            {
-                ((uint*)offsetsBuf.Address)[vi] = offset;
-                ((uint*)countsBuf.Address)[vi] = count;
-            }
-            else
-            {
-                ((float*)offsetsBuf.Address)[vi] = offset;
-                ((float*)countsBuf.Address)[vi] = count;
-            }
-            offset += count;
-        }
-
-        BoneWeightIndices!.Allocate<int>(offset);
-        BoneWeightValues!.Allocate<int>(offset);
-        offset = 0;
-        for (int i = 0; i < vertexCount; i++)
-        {
-            uint count = counts[i];
-            if (intVarType)
-            {
-                for (int j = 0; j < count; j++)
-                {
-                    ((int*)BoneWeightIndices.Address)[offset] = localBoneIndices[i][j];
-                    ((float*)BoneWeightValues.Address)[offset] = localBoneWeights[i][j];
-                    offset++;
-                }
-            }
-            else
-            {
-                for (int j = 0; j < count; j++)
-                {
-                    ((float*)BoneWeightIndices.Address)[offset] = localBoneIndices[i][j];
-                    ((float*)BoneWeightValues.Address)[offset] = localBoneWeights[i][j];
-                    offset++;
-                }
-            }
-        }
-    }
-
-    private unsafe void PopulateOptWeightsParallel(
-        Dictionary<TransformBase, int> boneToIndexTable,
-        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
-    {
-        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope();
-
-        int vertexCount = VertexCount;
-        var weightOffsets = BoneWeightOffsets!;
-        var weightCounts = BoneWeightCounts!;
-
-        int* idxData = (int*)weightOffsets.Address;
-        float* wtData = (float*)weightCounts.Address;
-
-        for (int vi = 0; vi < vertexCount; vi++)
-        {
-            var group = weightsPerVertex[vi];
-            int baseIndex = vi * 4;
-
-            if (group == null)
+            int coreBase = vi * 4;
+            if (group is null || group.Count == 0)
             {
                 for (int k = 0; k < 4; k++)
                 {
-                    idxData[baseIndex + k] = 0;
-                    wtData[baseIndex + k] = 0f;
+                    if (coreIndex8 is not null)
+                        coreIndex8[coreBase + k] = 0;
+                    else
+                        coreIndex16![coreBase + k] = 0;
+                    coreWeightData[coreBase + k] = 0;
                 }
+                spillHeaderData[vi] = 0u;
                 continue;
             }
 
-            VertexWeightGroup.Optimize(group, 4);
-            int count = group.Count;
-            if (count > _maxWeightCount)
-                _maxWeightCount = count;
+            List<PackedSkinningInfluence> influences = BuildPackedInfluences(boneToIndexTable, group, out int logicalInfluenceCount);
+            _maxWeightCount = Math.Max(_maxWeightCount, logicalInfluenceCount);
 
             int i = 0;
-            foreach (var pair in group)
+            for (; i < influences.Count && i < 4; i++)
             {
-                int bIndex = boneToIndexTable[pair.Key];
-                float bWeight = pair.Value.weight;
-                if (bIndex < 0)
-                {
-                    bIndex = -1;
-                    bWeight = 0f;
-                }
-                idxData[baseIndex + i] = bIndex + 1;
-                wtData[baseIndex + i] = bWeight;
-                i++;
+                PackedSkinningInfluence influence = influences[i];
+                if (coreIndex8 is not null)
+                    coreIndex8[coreBase + i] = checked((byte)influence.BoneIndexPlusOne);
+                else
+                    coreIndex16![coreBase + i] = influence.BoneIndexPlusOne;
+                coreWeightData[coreBase + i] = influence.WeightUNorm8;
             }
+
             while (i < 4)
             {
-                idxData[baseIndex + i] = 0;
-                wtData[baseIndex + i] = 0f;
+                if (coreIndex8 is not null)
+                    coreIndex8[coreBase + i] = 0;
+                else
+                    coreIndex16![coreBase + i] = 0;
+                coreWeightData[coreBase + i] = 0;
                 i++;
             }
+
+            int extraCount = Math.Max(0, influences.Count - 4);
+            if (extraCount == 0)
+            {
+                spillHeaderData[vi] = 0u;
+                continue;
+            }
+
+            if (extraCount > byte.MaxValue)
+                throw new NotSupportedException($"Compressed skinning supports at most {byte.MaxValue} spill influences per vertex; mesh '{Name}' vertex {vi} has {extraCount}.");
+
+            uint spillOffset = (uint)spillEntries.Count;
+            if (spillOffset > 0x00FF_FFFFu)
+                throw new NotSupportedException($"Compressed skinning spill list for mesh '{Name}' exceeds the 24-bit offset limit.");
+
+            spillHeaderData[vi] = spillOffset | ((uint)extraCount << 24);
+            HasSpillInfluences = true;
+            MaxSpillInfluenceCount = Math.Max(MaxSpillInfluenceCount, extraCount);
+
+            for (int spillIndex = 4; spillIndex < influences.Count; spillIndex++)
+            {
+                PackedSkinningInfluence influence = influences[spillIndex];
+                spillEntries.Add(influence.BoneIndexPlusOne | ((uint)influence.WeightUNorm8 << 16));
+            }
         }
+
+        uint spillElementCount = Math.Max(1u, (uint)spillEntries.Count);
+        BoneInfluenceSpillEntries = new XRDataBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString(), EBufferTarget.ShaderStorageBuffer, spillElementCount, EComponentType.UInt, 1, false, true)
+        {
+            Usage = EBufferUsage.StaticDraw,
+            DisposeOnPush = false
+        };
+
+        uint* spillEntryData = (uint*)BoneInfluenceSpillEntries.Address;
+        for (int i = 0; i < spillEntries.Count; i++)
+            spillEntryData[i] = spillEntries[i];
+        for (int i = spillEntries.Count; i < spillElementCount; i++)
+            spillEntryData[i] = 0u;
     }
+
+    private static List<PackedSkinningInfluence> BuildPackedInfluences(
+        Dictionary<TransformBase, int> boneToIndexTable,
+        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)> group,
+        out int logicalInfluenceCount)
+    {
+        List<LogicalSkinningInfluence> logical = new(group.Count);
+        float totalWeight = 0.0f;
+        foreach (var pair in group)
+        {
+            float weight = pair.Value.weight;
+            if (weight <= 0.0f || !boneToIndexTable.TryGetValue(pair.Key, out int boneIndex) || boneIndex < 0)
+                continue;
+
+            logical.Add(new LogicalSkinningInfluence(boneIndex, weight));
+            totalWeight += weight;
+        }
+
+        logicalInfluenceCount = logical.Count;
+        if (logical.Count == 0 || totalWeight <= 0.0f)
+            return [];
+
+        logical.Sort(static (left, right) =>
+        {
+            int weightOrder = right.Weight.CompareTo(left.Weight);
+            return weightOrder != 0 ? weightOrder : left.BoneIndex.CompareTo(right.BoneIndex);
+        });
+
+        List<PackedSkinningInfluence> packed = new(logical.Count);
+        for (int i = 0; i < logical.Count; i++)
+        {
+            LogicalSkinningInfluence influence = logical[i];
+            int quantized = (int)MathF.Round(influence.Weight / totalWeight * byte.MaxValue, MidpointRounding.AwayFromZero);
+            if (quantized <= 0)
+                continue;
+
+            packed.Add(new PackedSkinningInfluence(
+                checked((ushort)(influence.BoneIndex + 1)),
+                (byte)Math.Min(byte.MaxValue, quantized)));
+        }
+
+        if (packed.Count == 0)
+            packed.Add(new PackedSkinningInfluence(checked((ushort)(logical[0].BoneIndex + 1)), byte.MaxValue));
+
+        NormalizePackedWeights(packed);
+        return packed;
+    }
+
+    private static void NormalizePackedWeights(List<PackedSkinningInfluence> packed)
+    {
+        int sum = 0;
+        for (int i = 0; i < packed.Count; i++)
+            sum += packed[i].WeightUNorm8;
+
+        while (sum > byte.MaxValue)
+        {
+            int excess = sum - byte.MaxValue;
+            PackedSkinningInfluence largestInfluence = packed[0];
+            if (largestInfluence.WeightUNorm8 > excess)
+            {
+                packed[0] = largestInfluence with { WeightUNorm8 = (byte)(largestInfluence.WeightUNorm8 - excess) };
+                return;
+            }
+
+            if (packed.Count <= 1)
+            {
+                packed[0] = largestInfluence with { WeightUNorm8 = byte.MaxValue };
+                return;
+            }
+
+            PackedSkinningInfluence tail = packed[^1];
+            sum -= tail.WeightUNorm8;
+            packed.RemoveAt(packed.Count - 1);
+        }
+
+        int delta = byte.MaxValue - sum;
+        if (delta == 0)
+            return;
+
+        PackedSkinningInfluence largest = packed[0];
+        int adjusted = Math.Clamp(largest.WeightUNorm8 + delta, 1, byte.MaxValue);
+        packed[0] = largest with { WeightUNorm8 = (byte)adjusted };
+    }
+
+    private readonly record struct LogicalSkinningInfluence(int BoneIndex, float Weight);
+    private readonly record struct PackedSkinningInfluence(ushort BoneIndexPlusOne, byte WeightUNorm8);
 
     private static unsafe bool TryGetTransform(Dictionary<string, List<SceneNode>> nodeCache, string name, out TransformBase? transform)
     {

@@ -62,8 +62,6 @@ public static class RuntimeRenderingHostServices
         public bool PopulateVertexDataInParallel => RuntimeRenderingHostServiceDefaults.PopulateVertexDataInParallel;
         public bool ProcessMeshImportsAsynchronously => RuntimeRenderingHostServiceDefaults.ProcessMeshImportsAsynchronously;
         public bool AllowSkinning => RuntimeRenderingHostServiceDefaults.AllowSkinning;
-        public bool OptimizeSkinningTo4Weights => RuntimeRenderingHostServiceDefaults.OptimizeSkinningTo4Weights;
-        public bool OptimizeSkinningWeightsIfPossible => RuntimeRenderingHostServiceDefaults.OptimizeSkinningWeightsIfPossible;
         public bool CalculateSkinningInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
         public bool CalculateBlendshapesInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
         public int ShaderConfigVersion => RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;

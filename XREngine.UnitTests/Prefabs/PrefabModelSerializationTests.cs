@@ -87,8 +87,8 @@ public sealed class PrefabModelSerializationTests
         clone.BlendshapeNames.ShouldContain("Smile");
         clone.UtilizedBones.Length.ShouldBe(1);
         clone.UtilizedBones[0].tfm.SerializedReferenceId.ShouldBe(bone.ID);
-        clone.BoneWeightOffsets.ShouldNotBeNull();
-        clone.BoneWeightCounts.ShouldNotBeNull();
+        clone.BoneInfluenceCoreIndices.ShouldNotBeNull();
+        clone.BoneInfluenceCoreWeights.ShouldNotBeNull();
     }
 
     [Test]

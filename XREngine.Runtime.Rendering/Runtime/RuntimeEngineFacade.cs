@@ -1969,8 +1969,6 @@ internal sealed class RuntimeRenderSettings
     private bool _allowSkinning = RuntimeRenderingHostServiceDefaults.AllowSkinning;
     private bool _calculateBlendshapesInComputeShader = RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
     private bool _calculateSkinningInComputeShader = RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
-    private bool _optimizeSkinningTo4Weights = RuntimeRenderingHostServiceDefaults.OptimizeSkinningTo4Weights;
-    private bool _optimizeSkinningWeightsIfPossible = RuntimeRenderingHostServiceDefaults.OptimizeSkinningWeightsIfPossible;
     private bool _useIntegerUniformsInShaders = RuntimeRenderingHostServiceDefaults.UseIntegerUniformsInShaders;
     private bool _useSpotShadowAtlas = true;
     private bool _useDirectionalShadowAtlas = true;
@@ -2256,20 +2254,6 @@ internal sealed class RuntimeRenderSettings
             : _openXrRenderPacingMode;
         set => _openXrRenderPacingMode = value;
     }
-    public bool OptimizeSkinningTo4Weights
-    {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
-            ? services.OptimizeSkinningTo4Weights
-            : _optimizeSkinningTo4Weights;
-        set => SetShaderSetting(ref _optimizeSkinningTo4Weights, value);
-    }
-    public bool OptimizeSkinningWeightsIfPossible
-    {
-        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
-            ? services.OptimizeSkinningWeightsIfPossible
-            : _optimizeSkinningWeightsIfPossible;
-        set => SetShaderSetting(ref _optimizeSkinningWeightsIfPossible, value);
-    }
     public bool OutputHDR { get; set; } = true;
     public bool PreferNVStereo { get; set; }
     public bool ProcessMeshImportsAsynchronously { get; set; } = true;
@@ -2308,7 +2292,7 @@ internal sealed class RuntimeRenderSettings
     }
 
     public bool UseGlobalBlendshapeWeightsBufferForComputeSkinning { get; set; } = true;
-    public bool UseGlobalBoneMatricesBufferForComputeSkinning { get; set; } = true;
+    public bool UseGlobalSkinPaletteBufferForComputeSkinning { get; set; } = true;
     public bool UseIntegerUniformsInShaders
     {
         get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)

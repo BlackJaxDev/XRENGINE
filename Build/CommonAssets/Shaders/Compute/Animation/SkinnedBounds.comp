@@ -2,24 +2,19 @@
 
 layout(local_size_x = 256) in;
 
-layout(std430, binding = 0) buffer BoneMatricesBuffer
+layout(std430, binding = 0) buffer SkinPaletteBuffer
 {
-    mat4 BoneMatrices[];
-};
-
-layout(std430, binding = 1) buffer BoneInvBindMatricesBuffer
-{
-    mat4 BoneInvBindMatrices[];
+    vec4 SkinPaletteRows[];
 };
 
 layout(std430, binding = 2) buffer BoneIndicesBuffer
 {
-    ivec4 BoneIndices[];
+    uint BoneInfluenceCoreIndicesRaw[];
 };
 
 layout(std430, binding = 3) buffer BoneWeightsBuffer
 {
-    vec4 BoneWeights[];
+    uint BoneInfluenceCoreWeightsRaw[];
 };
 
 layout(std430, binding = 4) buffer PositionBuffer
@@ -39,9 +34,21 @@ layout(std430, binding = 6) buffer BoundsBuffer
     uvec4 MaxBoundsBits;
 };
 
+layout(std430, binding = 7) buffer BoneInfluenceSpillHeadersBuffer
+{
+    uint BoneInfluenceSpillHeaders[];
+};
+
+layout(std430, binding = 8) buffer BoneInfluenceSpillEntriesBuffer
+{
+    uint BoneInfluenceSpillEntries[];
+};
+
 uniform uint vertexCount;
 uniform int hasSkinning;
-uniform uint boneMatrixBase;
+uniform int skinningCoreIndexFormat;
+uniform uint skinPaletteBase;
+uniform uint skinPaletteCount;
 uniform mat4 fallbackMatrix;
 
 const float FLT_MAX = 3.402823466e+38;
@@ -141,6 +148,50 @@ vec3 loadPosition(uint vertexIndex)
     return vec3(Positions[base + 0u], Positions[base + 1u], Positions[base + 2u]);
 }
 
+uvec4 loadCoreIndices(uint vertexIndex)
+{
+    if (skinningCoreIndexFormat == 1)
+    {
+        uint raw = BoneInfluenceCoreIndicesRaw[vertexIndex];
+        return uvec4(raw & 0xFFu, (raw >> 8) & 0xFFu, (raw >> 16) & 0xFFu, (raw >> 24) & 0xFFu);
+    }
+
+    uint base = vertexIndex * 2u;
+    uint lo = BoneInfluenceCoreIndicesRaw[base + 0u];
+    uint hi = BoneInfluenceCoreIndicesRaw[base + 1u];
+    return uvec4(lo & 0xFFFFu, lo >> 16, hi & 0xFFFFu, hi >> 16);
+}
+
+vec4 loadCoreWeights(uint vertexIndex)
+{
+    return unpackUnorm4x8(BoneInfluenceCoreWeightsRaw[vertexIndex]);
+}
+
+vec3 transformSkinPosition(uint paletteIndex, vec3 position)
+{
+    uint rowBase = paletteIndex * 3u;
+    vec4 p = vec4(position, 1.0);
+    return vec3(
+        dot(SkinPaletteRows[rowBase + 0u], p),
+        dot(SkinPaletteRows[rowBase + 1u], p),
+        dot(SkinPaletteRows[rowBase + 2u], p));
+}
+
+void accumulateSkinInfluence(
+    uint boneIndex,
+    float weight,
+    vec3 basePosition,
+    inout vec4 skinnedPosition,
+    inout float accumulatedWeight)
+{
+    if (boneIndex == 0u || weight <= 0.0 || boneIndex >= skinPaletteCount)
+        return;
+
+    uint paletteIndex = skinPaletteBase + boneIndex;
+    skinnedPosition += vec4(transformSkinPosition(paletteIndex, basePosition), 1.0) * weight;
+    accumulatedWeight += weight;
+}
+
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
@@ -152,41 +203,38 @@ void main()
     bool isValid = index < vertexCount;
     if (isValid)
     {
-        vec4 basePosition = vec4(loadPosition(index), 1.0);
+        vec3 basePosition = loadPosition(index);
         vec4 skinnedPosition = vec4(0.0);
 
         if (hasSkinning != 0)
         {
-            ivec4 indices = BoneIndices[index];
-            vec4 weights = BoneWeights[index];
             float accumulatedWeight = 0.0;
-
-            uint boneCount = BoneMatrices.length();
+            uvec4 coreIndices = loadCoreIndices(index);
+            vec4 coreWeights = loadCoreWeights(index);
 
             for (int i = 0; i < 4; ++i)
+                accumulateSkinInfluence(coreIndices[i], coreWeights[i], basePosition, skinnedPosition, accumulatedWeight);
+
+            uint spillHeader = BoneInfluenceSpillHeaders[index];
+            uint spillOffset = spillHeader & 0x00FFFFFFu;
+            uint spillCount = spillHeader >> 24;
+            for (uint i = 0u; i < spillCount; ++i)
             {
-                int boneIndex = indices[i];
-                float weight = weights[i];
-                accumulatedWeight += weight;
-
-                if (boneIndex <= 0 || weight <= 0.0)
-                    continue;
-
-                // Avoid reading outside the bone matrix buffers
-                uint paletteIndex = boneMatrixBase + uint(boneIndex);
-                if (paletteIndex >= boneCount)
-                    continue;
-
-                mat4 boneMatrix = BoneInvBindMatrices[paletteIndex] * BoneMatrices[paletteIndex];
-                skinnedPosition += (boneMatrix * basePosition) * weight;
+                uint entry = BoneInfluenceSpillEntries[spillOffset + i];
+                accumulateSkinInfluence(
+                    entry & 0xFFFFu,
+                    float((entry >> 16) & 0xFFu) * (1.0 / 255.0),
+                    basePosition,
+                    skinnedPosition,
+                    accumulatedWeight);
             }
 
             if (accumulatedWeight <= 0.00001)
-                skinnedPosition = fallbackMatrix * basePosition;
+                skinnedPosition = fallbackMatrix * vec4(basePosition, 1.0);
         }
         else
         {
-            skinnedPosition = fallbackMatrix * basePosition;
+            skinnedPosition = fallbackMatrix * vec4(basePosition, 1.0);
         }
 
         OutputPositions[index] = skinnedPosition;
