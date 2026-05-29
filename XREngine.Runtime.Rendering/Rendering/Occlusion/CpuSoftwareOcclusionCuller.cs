@@ -16,14 +16,18 @@ namespace XREngine.Rendering.Occlusion
     {
         private static readonly bool EnvironmentEnabled = ReadEnvironmentEnabled();
 
-        private readonly MaskedOcclusionBuffer _buffer = new();
+        private readonly MaskedOcclusionBuffer _leftBuffer = new();
+        private readonly MaskedOcclusionBuffer _rightBuffer = new();
         private readonly MaskedOcclusionRasterizer _rasterizer = new();
         private readonly MaskedOcclusionAabbTester _tester = new();
         private readonly List<OccluderCandidate> _occluderCandidates = new(128);
         private readonly HashSet<uint> _selectedOccluderKeys = new();
 
         private XRCamera? _camera;
-        private Matrix4x4 _viewProjectionMatrix;
+        private XRCamera? _rightEyeCamera;
+        private Matrix4x4 _leftViewProjectionMatrix;
+        private Matrix4x4 _rightViewProjectionMatrix;
+        private bool _stereo;
         private bool _frameOpen;
         private bool _occludersSubmitted;
         private RenderCommandCollection? _sourceCommands;
@@ -53,6 +57,16 @@ namespace XREngine.Rendering.Occlusion
         public bool IsFrameInitializedFor(XRCamera camera, int viewportWidth, int viewportHeight)
             => _frameOpen &&
                ReferenceEquals(_camera, camera) &&
+               _rightEyeCamera is null &&
+               !_stereo &&
+               _viewportWidth == viewportWidth &&
+               _viewportHeight == viewportHeight &&
+               _renderFrameId == RuntimeEngine.Rendering.State.RenderFrameId;
+
+        public bool IsFrameInitializedFor(XRCamera camera, XRCamera? rightEyeCamera, int viewportWidth, int viewportHeight)
+            => _frameOpen &&
+               ReferenceEquals(_camera, camera) &&
+               ReferenceEquals(_rightEyeCamera, rightEyeCamera) &&
                _viewportWidth == viewportWidth &&
                _viewportHeight == viewportHeight &&
                _renderFrameId == RuntimeEngine.Rendering.State.RenderFrameId;
@@ -61,13 +75,19 @@ namespace XREngine.Rendering.Occlusion
             => _occludersSubmitted && ReferenceEquals(_sourceCommands, commands);
 
         public void BeginFrame(XRCamera camera, int viewportWidth, int viewportHeight)
+            => BeginFrame(camera, rightEyeCamera: null, viewportWidth, viewportHeight);
+
+        public void BeginFrame(XRCamera camera, XRCamera? rightEyeCamera, int viewportWidth, int viewportHeight)
         {
             if (!IsEnabled)
                 return;
 
             long start = Stopwatch.GetTimestamp();
             _camera = camera;
-            _viewProjectionMatrix = camera.ViewProjectionMatrix;
+            _rightEyeCamera = rightEyeCamera;
+            _leftViewProjectionMatrix = camera.ViewProjectionMatrix;
+            _rightViewProjectionMatrix = rightEyeCamera?.ViewProjectionMatrix ?? default;
+            _stereo = rightEyeCamera is not null && !ReferenceEquals(camera, rightEyeCamera);
             _viewportWidth = Math.Max(1, viewportWidth);
             _viewportHeight = Math.Max(1, viewportHeight);
             _renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
@@ -81,8 +101,13 @@ namespace XREngine.Rendering.Occlusion
 
             int bufferWidth = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocBufferWidth, 64, 4096);
             int bufferHeight = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocBufferHeight, 32, 4096);
-            _buffer.Resize(bufferWidth, bufferHeight);
-            _buffer.Clear();
+            _leftBuffer.Resize(bufferWidth, bufferHeight);
+            _leftBuffer.Clear();
+            if (_stereo)
+            {
+                _rightBuffer.Resize(bufferWidth, bufferHeight);
+                _rightBuffer.Clear();
+            }
 
             double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             OcclusionTelemetry.RecordCpuSocFrameBegin(elapsedMs, RuntimeEngine.EffectiveSettings.CpuSocDebugForceVisible);
@@ -103,14 +128,27 @@ namespace XREngine.Rendering.Occlusion
             for (int i = 0; i < _occluderCandidates.Count && triangleBudget > 0; i++)
             {
                 OccluderCandidate candidate = _occluderCandidates[i];
-                int drawn = _rasterizer.RasterizeMesh(
-                    _buffer,
+                int drawnLeft = _rasterizer.RasterizeMesh(
+                    _leftBuffer,
                     candidate.Mesh,
                     candidate.ModelMatrix,
-                    _viewProjectionMatrix,
+                    _leftViewProjectionMatrix,
                     candidate.RenderOptions,
                     triangleBudget);
 
+                int drawnRight = 0;
+                if (_stereo)
+                {
+                    drawnRight = _rasterizer.RasterizeMesh(
+                        _rightBuffer,
+                        candidate.Mesh,
+                        candidate.ModelMatrix,
+                        _rightViewProjectionMatrix,
+                        candidate.RenderOptions,
+                        triangleBudget);
+                }
+
+                int drawn = Math.Max(drawnLeft, drawnRight);
                 if (drawn <= 0)
                     continue;
 
@@ -121,7 +159,8 @@ namespace XREngine.Rendering.Occlusion
 
             _frameOccludersRasterized = rasterized;
             double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            OcclusionTelemetry.RecordCpuSocOccluders(_frameOccludersSelected, rasterized, _buffer.TilesClosed, elapsedMs);
+            int tilesClosed = _leftBuffer.TilesClosed + (_stereo ? _rightBuffer.TilesClosed : 0);
+            OcclusionTelemetry.RecordCpuSocOccluders(_frameOccludersSelected, rasterized, tilesClosed, elapsedMs);
         }
 
         public bool TestVisible(uint stableQueryKey, in AABB worldBounds)
@@ -143,7 +182,9 @@ namespace XREngine.Rendering.Occlusion
             }
 
             long start = Stopwatch.GetTimestamp();
-            bool visible = _tester.TestVisible(_buffer, _viewProjectionMatrix, worldBounds);
+            bool visible = _tester.TestVisible(_leftBuffer, _leftViewProjectionMatrix, worldBounds);
+            if (!visible && _stereo)
+                visible = _tester.TestVisible(_rightBuffer, _rightViewProjectionMatrix, worldBounds);
             double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             OcclusionTelemetry.RecordCpuSocTest(elapsedMs, !visible);
             return visible;
@@ -154,7 +195,7 @@ namespace XREngine.Rendering.Occlusion
 
         public CpuSoftwareOcclusionDebugReadback? ReadDebugBuffer()
             => RuntimeEngine.EffectiveSettings.CpuSocDebugVisualization && _frameOpen
-                ? _buffer.CreateDebugReadback()
+                ? _leftBuffer.CreateDebugReadback()
                 : null;
 
         public int FrameOccludersSubmitted => _frameOccludersRasterized;
@@ -175,7 +216,8 @@ namespace XREngine.Rendering.Occlusion
         {
             _occluderCandidates.Clear();
             int maxOccluders = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocMaxOccluders, 0, 4096);
-            if (maxOccluders == 0)
+            int triangleBudget = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocOccluderTriangleBudget, 0, 1_000_000);
+            if (maxOccluders == 0 || triangleBudget == 0)
                 return;
 
             float minScreenArea = Math.Clamp(RuntimeEngine.EffectiveSettings.CpuSocMinOccluderScreenArea, 0.0f, 1.0f);
@@ -187,8 +229,21 @@ namespace XREngine.Rendering.Occlusion
                 int scoreCompare = b.Score.CompareTo(a.Score);
                 return scoreCompare != 0 ? scoreCompare : a.StableQueryKey.CompareTo(b.StableQueryKey);
             });
-            if (_occluderCandidates.Count > maxOccluders)
-                _occluderCandidates.RemoveRange(maxOccluders, _occluderCandidates.Count - maxOccluders);
+
+            int write = 0;
+            int remainingTriangles = triangleBudget;
+            for (int read = 0; read < _occluderCandidates.Count && write < maxOccluders; read++)
+            {
+                OccluderCandidate candidate = _occluderCandidates[read];
+                if (candidate.TriangleCount > remainingTriangles)
+                    continue;
+
+                _occluderCandidates[write++] = candidate;
+                remainingTriangles -= candidate.TriangleCount;
+            }
+
+            if (_occluderCandidates.Count > write)
+                _occluderCandidates.RemoveRange(write, _occluderCandidates.Count - write);
             _frameOccludersSelected = _occluderCandidates.Count;
         }
 
@@ -219,14 +274,16 @@ namespace XREngine.Rendering.Occlusion
                 if (renderer is null || instances != 1 || IsCpuOcclusionExcluded(meshCommand))
                     continue;
 
-                if (!IsRenderOptionsOccluderSafe(optionsOverride ?? materialOverride?.RenderOptions ?? renderer.Material?.RenderOptions))
+                XRMaterial? rendererMaterial = materialOverride ?? renderer.Material;
+                if (!IsMaterialOccluderSafe(rendererMaterial) ||
+                    !IsRenderOptionsOccluderSafe(optionsOverride ?? rendererMaterial?.RenderOptions))
                     continue;
 
                 AABB? bounds = command.CullingVolume;
                 if (!bounds.HasValue ||
-                    !MaskedOcclusionAabbTester.TryProjectAabb(bounds.Value, _viewProjectionMatrix, _buffer.Width, _buffer.Height, out ProjectedAabb projected) ||
+                    !MaskedOcclusionAabbTester.TryProjectAabb(bounds.Value, _leftViewProjectionMatrix, _leftBuffer.Width, _leftBuffer.Height, out ProjectedAabb projected) ||
                     projected.OutsideFrustum ||
-                    projected.NormalizedArea(_buffer.Width, _buffer.Height) < minScreenArea)
+                    projected.NormalizedArea(_leftBuffer.Width, _leftBuffer.Height) < minScreenArea)
                 {
                     continue;
                 }
@@ -257,15 +314,19 @@ namespace XREngine.Rendering.Occlusion
             in ProjectedAabb projected)
         {
             RenderingParameters? options = optionsOverride ?? material?.RenderOptions;
-            if (mesh is null || !IsMeshOccluderSafe(mesh) || !IsRenderOptionsOccluderSafe(options))
+            if (mesh is null ||
+                !IsMeshOccluderSafe(mesh) ||
+                !IsMaterialOccluderSafe(material) ||
+                !IsRenderOptionsOccluderSafe(options))
                 return;
 
             int triangleCount = mesh.Triangles?.Count ?? 0;
             if (triangleCount == 0)
                 return;
 
-            float score = projected.NormalizedArea(_buffer.Width, _buffer.Height) * triangleCount;
-            _occluderCandidates.Add(new OccluderCandidate(stableQueryKey, mesh, options, modelMatrix, score));
+            float normalizedArea = projected.NormalizedArea(_leftBuffer.Width, _leftBuffer.Height);
+            float score = MaskedOcclusionRasterizer.ComputeOccluderScore(normalizedArea, triangleCount);
+            _occluderCandidates.Add(new OccluderCandidate(stableQueryKey, mesh, options, modelMatrix, score, triangleCount));
         }
 
         internal static bool IsCpuOcclusionExcluded(IRenderCommandMesh command)
@@ -327,6 +388,19 @@ namespace XREngine.Rendering.Occlusion
                    options.CullMode != ECullMode.Both;
         }
 
+        internal static bool IsMaterialOccluderSafe(XRMaterial? material)
+        {
+            if (material is null)
+                return true;
+
+            ETransparencyMode mode = material.GetEffectiveTransparencyMode();
+            if (mode == ETransparencyMode.Masked || mode == ETransparencyMode.AlphaToCoverage)
+                return false;
+
+            ETransparencyMode inferred = material.InferTransparencyMode();
+            return inferred != ETransparencyMode.Masked && inferred != ETransparencyMode.AlphaToCoverage;
+        }
+
         private static bool HasEnabledBlending(RenderingParameters options)
         {
             if (options.BlendModeAllDrawBuffers?.Enabled == ERenderParamUsage.Enabled)
@@ -350,13 +424,15 @@ namespace XREngine.Rendering.Occlusion
             XRMesh mesh,
             RenderingParameters? renderOptions,
             Matrix4x4 modelMatrix,
-            float score)
+            float score,
+            int triangleCount)
         {
             public readonly uint StableQueryKey = stableQueryKey;
             public readonly XRMesh Mesh = mesh;
             public readonly RenderingParameters? RenderOptions = renderOptions;
             public readonly Matrix4x4 ModelMatrix = modelMatrix;
             public readonly float Score = score;
+            public readonly int TriangleCount = triangleCount;
         }
     }
 }

@@ -94,35 +94,65 @@ namespace XREngine.Rendering.Occlusion
             bool wroteAny = false;
             float invArea = 1.0f / area;
             bool positive = area > 0.0f;
+
+            float edge0X = v1.Position.Y - v2.Position.Y;
+            float edge0Y = v2.Position.X - v1.Position.X;
+            float edge0C = v1.Position.X * v2.Position.Y - v2.Position.X * v1.Position.Y;
+            float edge1X = v2.Position.Y - v0.Position.Y;
+            float edge1Y = v0.Position.X - v2.Position.X;
+            float edge1C = v2.Position.X * v0.Position.Y - v0.Position.X * v2.Position.Y;
+            float edge2X = v0.Position.Y - v1.Position.Y;
+            float edge2Y = v1.Position.X - v0.Position.X;
+            float edge2C = v0.Position.X * v1.Position.Y - v1.Position.X * v0.Position.Y;
+
+            float depthDx = (edge0X * v0.ReciprocalW + edge1X * v1.ReciprocalW + edge2X * v2.ReciprocalW) * invArea;
+            float depthDy = (edge0Y * v0.ReciprocalW + edge1Y * v1.ReciprocalW + edge2Y * v2.ReciprocalW) * invArea;
+            float depthC = (edge0C * v0.ReciprocalW + edge1C * v1.ReciprocalW + edge2C * v2.ReciprocalW) * invArea;
+
             for (int y = minY; y <= maxY; y++)
             {
                 float py = y + 0.5f;
+                float px = minX + 0.5f;
+                float w0 = edge0X * px + edge0Y * py + edge0C;
+                float w1 = edge1X * px + edge1Y * py + edge1C;
+                float w2 = edge2X * px + edge2Y * py + edge2C;
+                float reciprocalDepth = depthDx * px + depthDy * py + depthC;
+
                 for (int x = minX; x <= maxX; x++)
                 {
-                    Vector2 p = new(x + 0.5f, py);
-                    float w0 = SignedArea(v1.Position, v2.Position, p);
-                    float w1 = SignedArea(v2.Position, v0.Position, p);
-                    float w2 = SignedArea(v0.Position, v1.Position, p);
                     if (positive)
                     {
-                        if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f)
-                            continue;
+                        if (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f)
+                        {
+                            buffer.WritePixelUnchecked(x, y, reciprocalDepth);
+                            wroteAny = true;
+                        }
                     }
                     else
                     {
-                        if (w0 > 0.0f || w1 > 0.0f || w2 > 0.0f)
-                            continue;
+                        if (w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f)
+                        {
+                            buffer.WritePixelUnchecked(x, y, reciprocalDepth);
+                            wroteAny = true;
+                        }
                     }
 
-                    float b0 = w0 * invArea;
-                    float b1 = w1 * invArea;
-                    float b2 = w2 * invArea;
-                    float reciprocalDepth = b0 * v0.ReciprocalW + b1 * v1.ReciprocalW + b2 * v2.ReciprocalW;
-                    wroteAny |= buffer.TryWritePixel(x, y, reciprocalDepth);
+                    w0 += edge0X;
+                    w1 += edge1X;
+                    w2 += edge2X;
+                    reciprocalDepth += depthDx;
                 }
             }
 
             return wroteAny;
+        }
+
+        internal static float ComputeOccluderScore(float normalizedScreenArea, int triangleCount)
+        {
+            if (normalizedScreenArea <= 0.0f || triangleCount <= 0)
+                return 0.0f;
+
+            return normalizedScreenArea / MathF.Sqrt(triangleCount);
         }
 
         private static bool IsCulled(float signedScreenArea, RenderingParameters? renderOptions)

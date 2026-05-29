@@ -118,6 +118,7 @@ public partial class OpenGLRenderer
 
         glBuf.EnsureStorageAllocatedForGpuCopy();
         Api.BindBuffer(GLEnum.DrawIndirectBuffer, glBuf.BindingId);
+        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.DrawIndirectBufferBinds);
     }
 
     public override void UnbindDrawIndirectBuffer()
@@ -138,6 +139,7 @@ public partial class OpenGLRenderer
 
         const GLEnum GL_PARAMETER_BUFFER = (GLEnum)0x80EE;
         Api.BindBuffer(GL_PARAMETER_BUFFER, glBuf.BindingId);
+        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.ParameterBufferBinds);
     }
 
     public override void UnbindParameterBuffer()
@@ -230,6 +232,8 @@ public partial class OpenGLRenderer
         ApplyPatchParameters(ActiveMeshRenderer);
         Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, (IntPtr)countByteOffset, maxDrawCount, stride);
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.IndirectCountCalls);
+        RuntimeEngine.Rendering.Stats.RecordGpuDrivenDelayedDiagnosticReadback(sizeof(uint));
         QueueBoundParameterDrawCountReadback(countByteOffset);
     }
 
@@ -246,6 +250,8 @@ public partial class OpenGLRenderer
             stride,
             1);
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.IndirectCountCalls);
+        RuntimeEngine.Rendering.Stats.RecordGpuDrivenDelayedDiagnosticReadback(sizeof(uint));
         QueueBoundParameterDrawCountReadback(drawCountOffset);
     }
 
@@ -262,6 +268,8 @@ public partial class OpenGLRenderer
             maxDrawCount,
             stride);
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
+        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.IndirectCountCalls);
+        RuntimeEngine.Rendering.Stats.RecordGpuDrivenDelayedDiagnosticReadback(sizeof(uint));
         QueueBoundParameterDrawCountReadback(drawCountOffset);
     }
 

@@ -1459,10 +1459,12 @@ namespace XREngine.Rendering
         //TODO: use mapped buffer for constant streaming
         public void PushBoneMatricesToGPU()
         {
+            int dirtyBoneCount = _dirtyBoneIndices?.Count ?? 0;
             if (!WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: true, logDiagnostics: true))
                 return;
 
             BoneMatricesBuffer!.PushSubData();
+            RuntimeEngine.Rendering.Stats.RecordSkinningUpload(dirtyBoneCount * 16L * sizeof(float), 0L);
         }
 
         private bool WriteDirtyBoneMatricesToClientBuffer(bool clearDirtyState, bool logDiagnostics)
@@ -1655,8 +1657,10 @@ namespace XREngine.Rendering
             if (BlendshapeWeights is null || !_blendshapesInvalidated)
                 return;
 
+            long blendshapeWeightBytes = BlendshapeWeights.Length;
             _blendshapesInvalidated = false;
             BlendshapeWeights.PushSubData();
+            RuntimeEngine.Rendering.Stats.RecordSkinningUpload(0L, blendshapeWeightBytes);
         }
 
         #region Mesh Deformation Methods

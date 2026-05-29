@@ -4452,6 +4452,9 @@ namespace XREngine.Rendering
                 EMemoryBarrierMask.ClientMappedBuffer |
                 EMemoryBarrierMask.Command);
 
+            RuntimeEngine.Rendering.Stats.RecordGpuDrivenBucketWork(
+                fullBucketScans: checked((int)Math.Min(int.MaxValue, (long)materialSlotIds.Count * GPUBatchingBindings.MaterialTierCount)));
+
             for (int slotIndex = 0; slotIndex < materialSlotIds.Count; ++slotIndex)
             {
                 P3Diagnostics.IncSlotIterated();
@@ -4586,6 +4589,10 @@ namespace XREngine.Rendering
                 return;
 
             IReadOnlyList<uint> materialSlotIds = renderPasses.MaterialSlotIds;
+            RuntimeEngine.Rendering.Stats.RecordGpuDrivenBucketWork(
+                activeBuckets: activeBuckets.Count,
+                emptyBucketSkips: Math.Max(0, (materialSlotIds.Count * (int)GPUBatchingBindings.MaterialTierCount) - activeBuckets.Count));
+
             if (!EnsureZeroReadbackActiveBucketProgramsReady(
                 renderPasses,
                 currentRenderPass,

@@ -1196,7 +1196,10 @@ namespace XREngine.Rendering
                 // This MUST run even when viewport rendering fails, otherwise Vulkan never presents and the window
                 // shows uninitialized (white) content. With empty/partial frame ops, the Vulkan backend will at
                 // minimum clear to the background color and render the debug triangle + ImGui overlay.
-                Renderer.RenderWindow(delta);
+                using (var presentSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Renderer.RenderWindowPresent"))
+                {
+                    Renderer.RenderWindow(delta);
+                }
 
                 using (var postViewportsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.PostRenderViewportsCallback"))
                 {

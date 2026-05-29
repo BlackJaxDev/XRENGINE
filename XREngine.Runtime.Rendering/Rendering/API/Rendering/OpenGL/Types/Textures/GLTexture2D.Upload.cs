@@ -801,47 +801,60 @@ public partial class GLTexture2D
         // expected origin with the expected row/image stride.
         ResetUnpackStateForTextureUpload();
 
+        long uploadBytes = data?.Length ?? pbo?.Length ?? 0L;
+        long uploadStart = TextureRuntimeDiagnostics.StartTiming();
         // If a non-zero named buffer object is bound to the GL_PIXEL_UNPACK_BUFFER target (see glBindBuffer) while a texture image is specified,
         // the data ptr is treated as a byte offset into the buffer object's data store.
-        if (!fullPush || StorageSet)
+        try
         {
-            if (data is null)
+            if (!fullPush || StorageSet)
             {
-                pbo?.Bind();
+                if (data is null)
+                {
+                    pbo?.Bind();
+                    if (GLSubmitTracer.Enabled)
+                        TracePreSubmit("TexSubImage2D.PBO", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                    Api.TexSubImage2D(glTarget, mipLevel, 0, 0, width, height, pixelFormat, pixelType, null);
+                    pbo?.Unbind();
+                }
+                else
+                {
+                    if (GLSubmitTracer.Enabled)
+                        TracePreSubmit("TexSubImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                    Api.TexSubImage2D(glTarget, mipLevel, 0, 0, width, height, pixelFormat, pixelType, data.Address.Pointer);
+                }
+            }
+            else if (Data.MultiSample)
+            {
+                if (data is not null)
+                    Debug.OpenGLWarning("Multisample textures do not support initial data, ignoring all mipmaps.");
+
                 if (GLSubmitTracer.Enabled)
-                    TracePreSubmit("TexSubImage2D.PBO", levels: 0, width, height, mipLevel, fullPush: fullPush);
-                Api.TexSubImage2D(glTarget, mipLevel, 0, 0, width, height, pixelFormat, pixelType, null);
-                pbo?.Unbind();
+                    TracePreSubmit("TexImage2DMultisample", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, width, height, Data.FixedSampleLocations);
+            }
+            else if (data is not null)
+            {
+                if (GLSubmitTracer.Enabled)
+                    TracePreSubmit("TexImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, data.Address.Pointer);
             }
             else
             {
+                pbo?.Bind();
                 if (GLSubmitTracer.Enabled)
-                    TracePreSubmit("TexSubImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
-                Api.TexSubImage2D(glTarget, mipLevel, 0, 0, width, height, pixelFormat, pixelType, data.Address.Pointer);
+                    TracePreSubmit("TexImage2D.PBO", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, null);
+                pbo?.Unbind();
             }
         }
-        else if (Data.MultiSample)
+        finally
         {
-            if (data is not null)
-                Debug.OpenGLWarning("Multisample textures do not support initial data, ignoring all mipmaps.");
-
-            if (GLSubmitTracer.Enabled)
-                TracePreSubmit("TexImage2DMultisample", levels: 0, width, height, mipLevel, fullPush: fullPush);
-            Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, width, height, Data.FixedSampleLocations);
-        }
-        else if (data is not null)
-        {
-            if (GLSubmitTracer.Enabled)
-                TracePreSubmit("TexImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
-            Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, data.Address.Pointer);
-        }
-        else
-        {
-            pbo?.Bind();
-            if (GLSubmitTracer.Enabled)
-                TracePreSubmit("TexImage2D.PBO", levels: 0, width, height, mipLevel, fullPush: fullPush);
-            Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, null);
-            pbo?.Unbind();
+            if (uploadBytes > 0L)
+            {
+                double uploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart);
+                RuntimeEngine.Rendering.Stats.RecordTextureUpload(uploadBytes, TimeSpan.FromMilliseconds(uploadMilliseconds));
+            }
         }
     }
 
@@ -883,7 +896,11 @@ public partial class GLTexture2D
             ResetUnpackStateForTextureUpload();
             if (GLSubmitTracer.Enabled)
                 TracePreSubmit("TexImage2D.RowsFallback", levels: 0, width, height, mipLevel, fullPush: fullPush);
+            long fallbackUploadStart = TextureRuntimeDiagnostics.StartTiming();
             Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, data.Address.Pointer);
+            RuntimeEngine.Rendering.Stats.RecordTextureUpload(
+                data.Length,
+                TimeSpan.FromMilliseconds(TextureRuntimeDiagnostics.ElapsedMilliseconds(fallbackUploadStart)));
             return;
         }
 
@@ -905,7 +922,11 @@ public partial class GLTexture2D
         ResetUnpackStateForTextureUpload();
         if (GLSubmitTracer.VerboseEnabled)
             TracePreSubmit("TexSubImage2D.Rows", levels: 0, width, (uint)rowCount, mipLevel, xOffset: 0, yOffset: (uint)startRow, fullPush: fullPush);
+        long uploadStart = TextureRuntimeDiagnostics.StartTiming();
         Api.TexSubImage2D(glTarget, mipLevel, 0, startRow, width, (uint)rowCount, pixelFormat, pixelType, rowPointer);
+        RuntimeEngine.Rendering.Stats.RecordTextureUpload(
+            rowBytes * rowCount,
+            TimeSpan.FromMilliseconds(TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart)));
     }
 
     private bool TryPrepareTexSubImageUpload(

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using XREngine.Data.Profiling;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Pipelines.Commands;
 
@@ -723,6 +724,7 @@ internal sealed class RenderPipelineGpuProfiler
         try
         {
             candidate.QueryCounter();
+            RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TimestampQueryCount);
         }
         catch (Exception ex)
         {
@@ -978,6 +980,7 @@ internal sealed class RenderPipelineGpuProfiler
             return false;
 
         timestamp = (ulong)query.GetQueryObject(EGetQueryObject.QueryResult);
+        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TimestampQueryReadbackBytes, sizeof(ulong));
         return true;
     }
 

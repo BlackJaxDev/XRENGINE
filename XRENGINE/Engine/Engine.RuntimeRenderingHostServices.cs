@@ -484,6 +484,63 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderGpuReadbackBytes(long bytes)
         => Engine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(bytes);
 
+    public void RecordRenderRendererStateCounter(ERendererProfilerCounter counter, long count = 1)
+        => Engine.Rendering.Stats.RendererState.RecordCounter(counter, count);
+
+    public void RecordRenderMemoryBarrier(EMemoryBarrierMask mask)
+        => Engine.Rendering.Stats.RendererState.RecordMemoryBarrier(mask);
+
+    public void RecordRenderSceneAssetVisible(
+        string? sourceAssetIdentity,
+        string? cookedVariantIdentity,
+        string? meshName,
+        string? materialName,
+        int materialSlots,
+        int textureCount,
+        long triangleCount,
+        bool skinned,
+        string? representation)
+        => Engine.Rendering.Stats.SceneAssets.RecordVisibleRenderer(
+            sourceAssetIdentity,
+            cookedVariantIdentity,
+            meshName,
+            materialName,
+            materialSlots,
+            textureCount,
+            triangleCount,
+            skinned,
+            representation);
+
+    public void RecordRenderTextureUpload(long bytes, TimeSpan elapsed)
+        => Engine.Rendering.Stats.SceneAssets.RecordTextureUpload(bytes, elapsed);
+
+    public void RecordRenderSkinningUpload(long boneMatrixBytes, long blendshapeWeightBytes, int skinningDispatches = 0, int blendshapeDispatches = 0)
+        => Engine.Rendering.Stats.SceneAssets.RecordSkinningUpload(boneMatrixBytes, blendshapeWeightBytes, skinningDispatches, blendshapeDispatches);
+
+    public void RecordRenderShaderVariant(bool requested, bool warming, bool linked, bool failed, bool loadedFromDiskCache, bool generatedThisRun)
+        => Engine.Rendering.Stats.SceneAssets.RecordShaderVariant(requested, warming, linked, failed, loadedFromDiskCache, generatedThisRun);
+
+    public void RecordRenderGpuDrivenBucketWork(int activeBuckets, int emptyBucketSkips, int fullBucketScans, int materialScatterDispatches)
+        => Engine.Rendering.Stats.GpuDriven.RecordBucketWork(activeBuckets, emptyBucketSkips, fullBucketScans, materialScatterDispatches);
+
+    public void RecordRenderGpuDrivenCommandCompaction(long culledCommands, long delayedDrawCountValue, long gpuCompactionOverflow, long activeListOverflow, long bucketOverflow, long meshletOverflow)
+        => Engine.Rendering.Stats.GpuDriven.RecordCommandCompaction(culledCommands, delayedDrawCountValue, gpuCompactionOverflow, activeListOverflow, bucketOverflow, meshletOverflow);
+
+    public void RecordRenderGpuDrivenStageTiming(TimeSpan indirectGeneration, TimeSpan gpuCull, TimeSpan sortCompact)
+        => Engine.Rendering.Stats.GpuDriven.RecordGpuDrivenStageTiming(indirectGeneration, gpuCull, sortCompact);
+
+    public void RecordRenderGpuDrivenDelayedDiagnosticReadback(long bytes)
+        => Engine.Rendering.Stats.GpuDriven.RecordDelayedDiagnosticReadback(bytes);
+
+    public void RecordRenderGpuDrivenHiZMode(string? mode)
+        => Engine.Rendering.Stats.GpuDriven.UpdateHiZMode(mode);
+
+    public void RecordRenderGpuDrivenHiZPhase(bool twoPhase, long phaseOneDraws, long phaseTwoDraws)
+        => Engine.Rendering.Stats.GpuDriven.RecordHiZPhase(twoPhase, phaseOneDraws, phaseTwoDraws);
+
+    public void RecordRenderVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading)
+        => Engine.Rendering.Stats.GpuDriven.RecordVisibilityBuffer(passDraws, classifiedPixels, activeMaterialTiles, classificationOverflow, reconstruction, materialShading);
+
     public void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands)
         => Engine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(eventCount, recoveredCommands);
 

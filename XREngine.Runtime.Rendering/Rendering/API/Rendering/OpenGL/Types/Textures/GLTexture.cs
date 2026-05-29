@@ -259,6 +259,7 @@ namespace XREngine.Rendering.OpenGL
                 // sampled, and emit a loud diagnostic identifying the affected unit + wrapper.
                 Api.BindTexture(ToGLEnum(TextureTarget), 0);
                 Renderer.SetBoundTexture(TextureTarget, null);
+                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TextureBindSkips);
                 Debug.OpenGLWarning(
                     $"[GLTexture.Bind] Binding SKIPPED (id=InvalidBindingId) for '{Data?.Name ?? GetType().Name}' " +
                     $"on active unit {Renderer.ActiveTextureUnit}, target={TextureTarget}. " +
@@ -282,6 +283,7 @@ namespace XREngine.Rendering.OpenGL
                     // the target on the current unit and warn.
                     Api.BindTexture(ToGLEnum(TextureTarget), 0);
                     Renderer.SetBoundTexture(TextureTarget, null);
+                    RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TextureBindSkips);
                     Debug.OpenGLWarning(
                         $"[GLTexture.Bind] Binding VETOED by OnPreBind for '{Data?.Name ?? GetType().Name}' " +
                         $"on active unit {Renderer.ActiveTextureUnit}, target={TextureTarget}. " +
@@ -292,6 +294,7 @@ namespace XREngine.Rendering.OpenGL
 
             Api.BindTexture(ToGLEnum(TextureTarget), id);
             Renderer.SetBoundTexture(TextureTarget, this, Data.Name);
+            RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TextureBinds);
             VerifySettings();
         }
 

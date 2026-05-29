@@ -905,6 +905,28 @@ public interface IRuntimeRenderingHostServices
     bool CanAllocateRenderVram(long requestedBytes, long existingAllocationBytes, out long projectedBytes, out long budgetBytes);
     void RecordRenderGpuBufferMapped(int count = 1);
     void RecordRenderGpuReadbackBytes(long bytes);
+    void RecordRenderRendererStateCounter(ERendererProfilerCounter counter, long count = 1);
+    void RecordRenderMemoryBarrier(EMemoryBarrierMask mask);
+    void RecordRenderSceneAssetVisible(
+        string? sourceAssetIdentity,
+        string? cookedVariantIdentity,
+        string? meshName,
+        string? materialName,
+        int materialSlots,
+        int textureCount,
+        long triangleCount,
+        bool skinned,
+        string? representation);
+    void RecordRenderTextureUpload(long bytes, TimeSpan elapsed);
+    void RecordRenderSkinningUpload(long boneMatrixBytes, long blendshapeWeightBytes, int skinningDispatches = 0, int blendshapeDispatches = 0);
+    void RecordRenderShaderVariant(bool requested, bool warming, bool linked, bool failed, bool loadedFromDiskCache, bool generatedThisRun);
+    void RecordRenderGpuDrivenBucketWork(int activeBuckets, int emptyBucketSkips, int fullBucketScans, int materialScatterDispatches);
+    void RecordRenderGpuDrivenCommandCompaction(long culledCommands, long delayedDrawCountValue, long gpuCompactionOverflow, long activeListOverflow, long bucketOverflow, long meshletOverflow);
+    void RecordRenderGpuDrivenStageTiming(TimeSpan indirectGeneration, TimeSpan gpuCull, TimeSpan sortCompact);
+    void RecordRenderGpuDrivenDelayedDiagnosticReadback(long bytes);
+    void RecordRenderGpuDrivenHiZMode(string? mode);
+    void RecordRenderGpuDrivenHiZPhase(bool twoPhase, long phaseOneDraws, long phaseTwoDraws);
+    void RecordRenderVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading);
     void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands);
     void RecordRenderForbiddenGpuFallback(int eventCount = 1);
     void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible);

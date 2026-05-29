@@ -714,6 +714,67 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public void RecordRenderRendererStateCounter(ERendererProfilerCounter counter, long count = 1)
+        {
+        }
+
+        public void RecordRenderMemoryBarrier(EMemoryBarrierMask mask)
+        {
+        }
+
+        public void RecordRenderSceneAssetVisible(
+            string? assetType,
+            string? assetName,
+            string? rendererType,
+            string? meshName,
+            int materialCount,
+            int vertexCount,
+            long triangleCount,
+            bool gpuEligible,
+            string? exclusionReason)
+        {
+        }
+
+        public void RecordRenderTextureUpload(long bytes, TimeSpan elapsed)
+        {
+        }
+
+        public void RecordRenderSkinningUpload(long matrixBytes, long weightBytes, int matrices, int vertices)
+        {
+        }
+
+        public void RecordRenderShaderVariant(bool hasSkinning, bool hasBlendshapes, bool hasMorphNormals, bool hasTangents, bool hasInstancing, bool hasStereo)
+        {
+        }
+
+        public void RecordRenderGpuDrivenBucketWork(int bucketCount, int activeBucketCount, int emptyBucketCount, int materialCount)
+        {
+        }
+
+        public void RecordRenderGpuDrivenCommandCompaction(long inputCommands, long outputCommands, long culledCommands, long inputBytes, long outputBytes, long overflowCount)
+        {
+        }
+
+        public void RecordRenderGpuDrivenStageTiming(TimeSpan cull, TimeSpan scatter, TimeSpan compact)
+        {
+        }
+
+        public void RecordRenderGpuDrivenDelayedDiagnosticReadback(long bytes)
+        {
+        }
+
+        public void RecordRenderGpuDrivenHiZMode(string? mode)
+        {
+        }
+
+        public void RecordRenderGpuDrivenHiZPhase(bool enabled, long candidates, long culled)
+        {
+        }
+
+        public void RecordRenderVisibilityBuffer(int drawCount, long pixelCount, int materialCount, int overflowCount, TimeSpan buildTime, TimeSpan shadeTime)
+        {
+        }
+
         public void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1)
         {
         }

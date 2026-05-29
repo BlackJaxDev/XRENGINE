@@ -377,6 +377,7 @@ namespace XREngine.Rendering.OpenGL
                     return false;
 
                 Api.UseProgram(BindingId);
+                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.ShaderProgramSwitches);
                 return true;
             }
 

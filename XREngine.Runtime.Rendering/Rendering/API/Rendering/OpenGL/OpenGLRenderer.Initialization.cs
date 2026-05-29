@@ -187,6 +187,7 @@ public partial class OpenGLRenderer
 
     public override void MemoryBarrier(EMemoryBarrierMask mask)
     {
+        RuntimeEngine.Rendering.Stats.RecordMemoryBarrier(mask);
         Api.MemoryBarrier(ToGLMask(mask));
     }
 

@@ -541,6 +541,7 @@ namespace XREngine.Rendering.Commands
             bool cacheOncePerFrame = RuntimeEngine.Rendering.Settings.CacheGpuHiZOcclusionOncePerFrame;
             bool invalidateTemporalHiZ = ShouldInvalidateGpuHiZTemporalState(scene, camera);
             uint temporalInvalidations = invalidateTemporalHiZ ? 1u : 0u;
+            RuntimeEngine.Rendering.Stats.RecordGpuDrivenHiZMode(depthInput.History ? "two-phase-history-depth" : "two-phase-current-depth");
             if (cacheOncePerFrame)
             {
                 var shared = _hiZSharedCache.GetValue(pipeline, static _ => new HiZSharedState());
@@ -616,6 +617,7 @@ namespace XREngine.Rendering.Commands
 
                 bool readbackAvailableDirty = !IsCpuReadbackCountDisabledForPass();
                 RecordOcclusionFrameStats(candidates, 0u, 0u, temporalInvalidations);
+                RuntimeEngine.Rendering.Stats.RecordGpuDrivenHiZPhase(twoPhase: false, phaseOneDraws: candidates, phaseTwoDraws: 0L);
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPass(
                     (int)candidates, 0, readbackAvailableDirty);
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPassthroughDirty();
@@ -630,7 +632,12 @@ namespace XREngine.Rendering.Commands
             Crumb($"HiZ.Refine.BEGIN pass={RenderPass} cand={candidates}");
             long _refineStart = Stopwatch.GetTimestamp();
             ApplyHiZOcclusionRefine(scene, camera, depthInput.ViewProjection);
-            HiZStageStats.Record("Refine", (Stopwatch.GetTimestamp() - _refineStart) * 1000.0 / Stopwatch.Frequency);
+            long refineTicks = Stopwatch.GetTimestamp() - _refineStart;
+            HiZStageStats.Record("Refine", refineTicks * 1000.0 / Stopwatch.Frequency);
+            RuntimeEngine.Rendering.Stats.RecordGpuDrivenStageTiming(
+                TimeSpan.Zero,
+                TimeSpan.FromSeconds((double)refineTicks / Stopwatch.Frequency),
+                TimeSpan.Zero);
             Crumb($"HiZ.Refine.END pass={RenderPass}");
 
             // Swap in refined buffer for subsequent indirect build.
@@ -649,6 +656,7 @@ namespace XREngine.Rendering.Commands
                 uint visibleAfter = VisibleCommandCount;
                 occluded = candidates > visibleAfter ? (candidates - visibleAfter) : 0u;
             }
+            RuntimeEngine.Rendering.Stats.RecordGpuDrivenHiZPhase(twoPhase: true, phaseOneDraws: candidates, phaseTwoDraws: readbackAvailable ? Math.Max(0u, VisibleCommandCount) : 0L);
             RecordOcclusionFrameStats(candidates, occluded, 0u, temporalInvalidations);
             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuPass(
                 (int)candidates, (int)occluded, readbackAvailable);

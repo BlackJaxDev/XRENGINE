@@ -679,6 +679,102 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderGpuReadbackBytes(bytes);
             }
 
+            public static void RecordRendererStateCounter(ERendererProfilerCounter counter, long count = 1)
+            {
+                if (EnableTracking && count > 0 && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderRendererStateCounter(counter, count);
+            }
+
+            public static void RecordMemoryBarrier(EMemoryBarrierMask mask)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderMemoryBarrier(mask);
+            }
+
+            public static void RecordSceneAssetVisible(
+                string? sourceAssetIdentity,
+                string? cookedVariantIdentity,
+                string? meshName,
+                string? materialName,
+                int materialSlots,
+                int textureCount,
+                long triangleCount,
+                bool skinned,
+                string? representation)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderSceneAssetVisible(
+                        sourceAssetIdentity,
+                        cookedVariantIdentity,
+                        meshName,
+                        materialName,
+                        materialSlots,
+                        textureCount,
+                        triangleCount,
+                        skinned,
+                        representation);
+            }
+
+            public static void RecordTextureUpload(long bytes, TimeSpan elapsed)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderTextureUpload(bytes, elapsed);
+            }
+
+            public static void RecordSkinningUpload(long boneMatrixBytes, long blendshapeWeightBytes, int skinningDispatches = 0, int blendshapeDispatches = 0)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderSkinningUpload(boneMatrixBytes, blendshapeWeightBytes, skinningDispatches, blendshapeDispatches);
+            }
+
+            public static void RecordShaderVariant(bool requested = false, bool warming = false, bool linked = false, bool failed = false, bool loadedFromDiskCache = false, bool generatedThisRun = false)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderShaderVariant(requested, warming, linked, failed, loadedFromDiskCache, generatedThisRun);
+            }
+
+            public static void RecordGpuDrivenBucketWork(int activeBuckets = 0, int emptyBucketSkips = 0, int fullBucketScans = 0, int materialScatterDispatches = 0)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuDrivenBucketWork(activeBuckets, emptyBucketSkips, fullBucketScans, materialScatterDispatches);
+            }
+
+            public static void RecordGpuDrivenCommandCompaction(long culledCommands = 0, long delayedDrawCountValue = 0, long gpuCompactionOverflow = 0, long activeListOverflow = 0, long bucketOverflow = 0, long meshletOverflow = 0)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuDrivenCommandCompaction(culledCommands, delayedDrawCountValue, gpuCompactionOverflow, activeListOverflow, bucketOverflow, meshletOverflow);
+            }
+
+            public static void RecordGpuDrivenStageTiming(TimeSpan indirectGeneration, TimeSpan gpuCull, TimeSpan sortCompact)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuDrivenStageTiming(indirectGeneration, gpuCull, sortCompact);
+            }
+
+            public static void RecordGpuDrivenDelayedDiagnosticReadback(long bytes)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuDrivenDelayedDiagnosticReadback(bytes);
+            }
+
+            public static void RecordGpuDrivenHiZMode(string? mode)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuDrivenHiZMode(mode);
+            }
+
+            public static void RecordGpuDrivenHiZPhase(bool twoPhase, long phaseOneDraws, long phaseTwoDraws)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderGpuDrivenHiZPhase(twoPhase, phaseOneDraws, phaseTwoDraws);
+            }
+
+            public static void RecordVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVisibilityBuffer(passDraws, classifiedPixels, activeMaterialTiles, classificationOverflow, reconstruction, materialShading);
+            }
+
             public static void RecordGpuCpuFallback(int events, int recoveredCommands)
             {
                 if (!EnableTracking || events <= 0)

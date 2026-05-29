@@ -354,17 +354,17 @@ namespace XREngine.Rendering.Commands
             if (!CpuSoftwareOcclusionCuller.IsEnabled ||
                 camera is null ||
                 RuntimeEngine.Rendering.State.IsShadowPass ||
-                IsStereoRenderPassActive() ||
                 !RenderPassIsOcclusionTestable(renderPass))
             {
                 return false;
             }
 
             GetActiveViewportSize(out int viewportWidth, out int viewportHeight);
-            if (!s_cpuSoftwareOcclusionCuller.IsFrameInitializedFor(camera, viewportWidth, viewportHeight) ||
+            XRCamera? rightEyeCamera = GetActiveRightEyeCamera();
+            if (!s_cpuSoftwareOcclusionCuller.IsFrameInitializedFor(camera, rightEyeCamera, viewportWidth, viewportHeight) ||
                 !s_cpuSoftwareOcclusionCuller.HasOccludersFrom(this))
             {
-                s_cpuSoftwareOcclusionCuller.BeginFrame(camera, viewportWidth, viewportHeight);
+                s_cpuSoftwareOcclusionCuller.BeginFrame(camera, rightEyeCamera, viewportWidth, viewportHeight);
                 s_cpuSoftwareOcclusionCuller.SubmitOccludersFromOpaqueCommands(this);
             }
 
@@ -374,8 +374,7 @@ namespace XREngine.Rendering.Commands
         internal static bool TestCpuSoftwareOcclusionForGpuSource(GPUScene scene, uint sourceCommandIndex)
         {
             if (!CpuSoftwareOcclusionCuller.IsEnabled ||
-                !s_cpuSoftwareOcclusionCuller.IsFrameOpen ||
-                IsStereoRenderPassActive())
+                !s_cpuSoftwareOcclusionCuller.IsFrameOpen)
             {
                 return true;
             }
@@ -973,6 +972,9 @@ namespace XREngine.Rendering.Commands
 
         private static bool IsStereoRenderPassActive()
             => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState?.StereoPass == true;
+
+        private static XRCamera? GetActiveRightEyeCamera()
+            => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState?.StereoRightEyeCamera as XRCamera;
 
         private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, IRuntimeRenderCommandExecutionState renderState, IRuntimeRenderCamera leftCamera)
         {
