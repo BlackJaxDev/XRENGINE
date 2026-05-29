@@ -26,6 +26,7 @@ namespace XREngine.Rendering.Commands
         private uint _instances = 1;
         private bool _worldMatrixIsModelMatrix = true;
         private bool _forceCpuRendering;
+        private string? _gpuProfilingLabel;
 
         private XRMeshRenderer? _renderMesh;
         private Matrix4x4 _renderWorldMatrix;
@@ -84,6 +85,14 @@ namespace XREngine.Rendering.Commands
         {
             get => _forceCpuRendering;
             set => SetField(ref _forceCpuRendering, value);
+        }
+        /// <summary>
+        /// Optional stable source label for GPU timing dumps.
+        /// </summary>
+        public string? GpuProfilingLabel
+        {
+            get => _gpuProfilingLabel;
+            set => SetField(ref _gpuProfilingLabel, value);
         }
 
         public RenderCommandMesh3D() : base() { }

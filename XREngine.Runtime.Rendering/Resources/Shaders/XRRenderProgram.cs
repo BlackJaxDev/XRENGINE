@@ -496,8 +496,9 @@ namespace XREngine.Rendering
         /// are processed FIFO. Defaults to <see cref="EProgramPriority.Main"/>. Creators should
         /// override (e.g. <see cref="EProgramPriority.Interactive"/> for editor/user-interaction overlays,
         /// <see cref="EProgramPriority.Shadow"/> for shadow-pass variants,
-        /// <see cref="EProgramPriority.VR"/> for stereo variants, <see cref="EProgramPriority.Compute"/>
-        /// for compute programs) so user-visible main-pass programs link before background work.
+        /// <see cref="EProgramPriority.VR"/> for active stereo variants, <see cref="EProgramPriority.Compute"/>
+        /// for compute programs, <see cref="EProgramPriority.Deferred"/> for inactive run-mode variants)
+        /// so user-visible main-pass programs link before background work.
         /// </summary>
         [YamlIgnore]
         public EProgramPriority Priority

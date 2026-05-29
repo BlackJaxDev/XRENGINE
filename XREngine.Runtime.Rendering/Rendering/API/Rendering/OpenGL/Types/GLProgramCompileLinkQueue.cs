@@ -341,7 +341,7 @@ namespace XREngine.Rendering.OpenGL
             /// Queues a compile/attach/link job tagged with a priority bucket. Lower-valued
             /// priorities (<see cref="EProgramPriority.Interactive"/>, then <see cref="EProgramPriority.Main"/>)
             /// are linked before higher-valued background work (<see cref="EProgramPriority.Shadow"/>, <see cref="EProgramPriority.VR"/>,
-            /// <see cref="EProgramPriority.Compute"/>) inside the shared-context worker.
+            /// <see cref="EProgramPriority.Compute"/>, <see cref="EProgramPriority.Deferred"/>) inside the shared-context worker.
             /// </summary>
             public bool TryEnqueueCompileAndLink(uint programId, ShaderInput[] shaders, EProgramPriority priority, out string? rejectReason)
                 => TryEnqueueCompileAndLink(programId, shaders, priority, setBinaryRetrievableHint: false, out rejectReason);
@@ -972,7 +972,7 @@ namespace XREngine.Rendering.OpenGL
                 worker.Enqueue(
                     gl => ContinueDeferredProgramLinkCompletion(gl, worker, state),
                     $"ProgramDeferredLinkPoll:{state.ProgramId}",
-                    EProgramPriority.Compute);
+                    EProgramPriority.Deferred);
             }
 
             private void ContinueDeferredProgramLinkCompletion(GL gl, GLSharedContext worker, DeferredProgramLinkState state)

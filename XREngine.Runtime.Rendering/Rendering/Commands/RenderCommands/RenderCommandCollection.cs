@@ -1,5 +1,6 @@
 using XREngine.Extensions;
 using System;
+using System.IO;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -473,7 +474,7 @@ namespace XREngine.Rendering.Commands
                     if (CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(occlMesh))
                     {
                         LogSponzaCpuDiag("draw-cpu-query-excluded", renderPass, cmd, camera, "cpu-query-occlusion-excluded");
-                        cmd.Render();
+                        RenderWithGpuScope(cmd, renderPass);
                         cpuCmdIndex++;
                         continue;
                     }
@@ -524,7 +525,7 @@ namespace XREngine.Rendering.Commands
                                 s_cpuOcclusionCoordinator.ForceVisible(renderPass, queryKey);
                                 if (ShouldLogSponzaCpuDiag(cmd))
                                     LogSponzaCpuDiag("draw-cpu-query-near-plane", renderPass, cmd, camera, $"queryKey={queryKey}");
-                                cmd.Render();
+                                RenderWithGpuScope(cmd, renderPass);
                                 cpuCmdIndex++;
                                 continue;
                             }
@@ -564,7 +565,7 @@ namespace XREngine.Rendering.Commands
 
                         if (ShouldLogSponzaCpuDiag(cmd))
                             LogSponzaCpuDiag("draw-cpu-query-visible", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery=True");
-                        cmd?.Render();
+                        RenderWithGpuScope(cmd, renderPass);
                     }
                     else
                     {
@@ -580,7 +581,7 @@ namespace XREngine.Rendering.Commands
                         {
                             if (ShouldLogSponzaCpuDiag(cmd))
                                 LogSponzaCpuDiag("draw-cpu-query-direct", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery={needsHardwareQuery}");
-                            cmd?.Render();
+                            RenderWithGpuScope(cmd, renderPass);
                         }
                         finally
                         {
@@ -607,7 +608,7 @@ namespace XREngine.Rendering.Commands
                 cpuCmdIndex++;
 
                 LogSponzaCpuDiag("draw-cpu", renderPass, cmd, camera, "occlusion=Disabled");
-                cmd?.Render();
+                RenderWithGpuScope(cmd, renderPass);
             }
 
             // Phase 3: deferred probe-only AABB draws. Now the depth buffer reflects all
@@ -673,7 +674,7 @@ namespace XREngine.Rendering.Commands
 
             foreach (var cmd in list)
                 if (cmd is IRenderCommandMesh)
-                    cmd?.Render();
+                    RenderWithGpuScope(cmd, renderPass);
         }
 
         /// <summary>
@@ -703,7 +704,7 @@ namespace XREngine.Rendering.Commands
                         continue;
                 }
 
-                cmd.Render();
+                RenderWithGpuScope(cmd, renderPass);
             }
         }
 
@@ -753,10 +754,115 @@ namespace XREngine.Rendering.Commands
                     }
                 }
 
-                cmd.Render();
+                RenderWithGpuScope(cmd, renderPass);
                 cpuCmdIndex++;
             }
         }
+
+        private static void RenderWithGpuScope(RenderCommand? command, int renderPass)
+        {
+            if (command is null)
+                return;
+
+            RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
+            if (!profiler.IsProfilingActive)
+            {
+                command.Render();
+                return;
+            }
+
+            using (profiler.StartScope(BuildRenderCommandGpuScopeName(renderPass, command)))
+                command.Render();
+        }
+
+        private static string BuildRenderCommandGpuScopeName(int renderPass, RenderCommand command)
+        {
+            if (command is IRenderCommandMesh meshCommand)
+                return BuildMeshDrawGpuScopeName(renderPass, meshCommand);
+
+            string passName = GetRenderPassDisplayName(renderPass);
+            string commandName = command is RenderCommandMethod2D methodCommand
+                ? methodCommand.GetGpuProfilingLabel()
+                : command.GetType().Name;
+
+            return $"RenderCommand[{passName}; {SanitizeGpuScopeLabel(commandName)}]";
+        }
+
+        private static string BuildMeshDrawGpuScopeName(int renderPass, IRenderCommandMesh meshCommand)
+        {
+            XRMeshRenderer? meshRenderer = meshCommand.Mesh;
+            XRMaterial? material = meshCommand.MaterialOverride ?? meshRenderer?.Material;
+            string passName = GetRenderPassDisplayName(renderPass);
+            string rawMeshName = meshRenderer?.Mesh?.Name ?? meshRenderer?.Name ?? string.Empty;
+            string rawMaterialName = material?.Name ?? string.Empty;
+            string shaderName = SanitizeGpuScopeLabel(GetMaterialShaderDisplayName(material));
+            string meshName = SanitizeGpuScopeLabel(string.IsNullOrWhiteSpace(rawMeshName) ? "<unnamed-mesh>" : rawMeshName);
+            string materialName = SanitizeGpuScopeLabel(string.IsNullOrWhiteSpace(rawMaterialName) ? "<unnamed-material>" : rawMaterialName);
+            string commandLabel = GetMeshCommandGpuScopeLabel(meshCommand, rawMeshName, rawMaterialName, shaderName);
+            string commandSegment = string.IsNullOrWhiteSpace(commandLabel)
+                ? string.Empty
+                : $"source={SanitizeGpuScopeLabel(commandLabel)}; ";
+
+            return string.IsNullOrWhiteSpace(shaderName)
+                ? $"MeshDraw[{passName}; {commandSegment}mesh={meshName}; material={materialName}]"
+                : $"MeshDraw[{passName}; {commandSegment}mesh={meshName}; material={materialName}; shader={shaderName}]";
+        }
+
+        private static string GetMeshCommandGpuScopeLabel(
+            IRenderCommandMesh meshCommand,
+            string? meshName,
+            string? materialName,
+            string? shaderName)
+        {
+            string? label = meshCommand switch
+            {
+                RenderCommandMesh3D mesh3D => mesh3D.GpuProfilingLabel,
+                RenderCommandMesh2D mesh2D => mesh2D.GpuProfilingLabel,
+                _ => null
+            };
+
+            if (!string.IsNullOrWhiteSpace(label))
+                return label!;
+
+            bool hasNamedResource =
+                !string.IsNullOrWhiteSpace(meshName) ||
+                !string.IsNullOrWhiteSpace(materialName) ||
+                !string.IsNullOrWhiteSpace(shaderName);
+            if (hasNamedResource || meshCommand is not RenderCommand command)
+                return string.Empty;
+
+            return $"{command.GetType().Name}#{command.StableQueryKey}";
+        }
+
+        private static string GetRenderPassDisplayName(int renderPass)
+            => Enum.IsDefined(typeof(EDefaultRenderPass), renderPass)
+                ? ((EDefaultRenderPass)renderPass).ToString()
+                : renderPass.ToString();
+
+        private static string GetMaterialShaderDisplayName(XRMaterial? material)
+        {
+            if (material is null)
+                return string.Empty;
+
+            IReadOnlyList<XRShader> fragmentShaders = material.FragmentShaders;
+            XRShader? fragmentShader = fragmentShaders.Count > 0
+                ? fragmentShaders[fragmentShaders.Count - 1]
+                : null;
+
+            if (fragmentShader is null)
+                return string.Empty;
+
+            string? path = fragmentShader.Source?.FilePath ?? fragmentShader.FilePath;
+            if (!string.IsNullOrWhiteSpace(path))
+                return Path.GetFileName(path);
+
+            return fragmentShader.Name ?? string.Empty;
+        }
+
+        private static string SanitizeGpuScopeLabel(string label)
+            => string.IsNullOrWhiteSpace(label)
+                ? "<unnamed>"
+                : label.Replace('\n', ' ').Replace('\r', ' ');
 
         public void RenderGPU(int renderPass)
             => RenderGPU(renderPass, RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true));

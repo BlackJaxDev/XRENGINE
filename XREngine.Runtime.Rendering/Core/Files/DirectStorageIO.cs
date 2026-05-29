@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace XREngine.Core.Files;
 
-public static class DirectStorageIO
+public static class RuntimeDirectStorageIO
 {
     public static bool IsEnabled => false;
     public static string Status => "DirectStorage host service is not configured for the runtime rendering assembly.";

@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Commands
         private uint _instances = 1;
         private BoundingRectangle? _worldCropRegion = null;
         private bool _forceCpuRendering;
+        private string? _gpuProfilingLabel;
 
         /// <summary>
         /// The mesh to render.
@@ -67,6 +68,14 @@ namespace XREngine.Rendering.Commands
         {
             get => _forceCpuRendering;
             set => SetField(ref _forceCpuRendering, value);
+        }
+        /// <summary>
+        /// Optional stable source label for GPU timing dumps.
+        /// </summary>
+        public string? GpuProfilingLabel
+        {
+            get => _gpuProfilingLabel;
+            set => SetField(ref _gpuProfilingLabel, value);
         }
         /// <summary>
         /// If not null, the mesh will be cropped to this region before rendering.

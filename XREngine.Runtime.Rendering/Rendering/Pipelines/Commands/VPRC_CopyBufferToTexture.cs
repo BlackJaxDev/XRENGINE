@@ -16,6 +16,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         public EPixelType? PixelTypeOverride { get; set; }
         public bool PushToGpuTexture { get; set; } = true;
 
+        public override string GpuProfilingName
+            => SourceBufferName is null || DestinationTextureName is null
+                ? base.GpuProfilingName
+                : $"{base.GpuProfilingName}[{SourceBufferName}->{DestinationTextureName}]";
+
         protected override void Execute()
         {
             if (SourceBufferName is null || DestinationTextureName is null)

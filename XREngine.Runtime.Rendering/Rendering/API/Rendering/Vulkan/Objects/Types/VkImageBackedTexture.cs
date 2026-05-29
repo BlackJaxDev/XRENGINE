@@ -1598,7 +1598,7 @@ public unsafe partial class VulkanRenderer
             {
                 // Read file data directly into the mapped staging buffer via DirectStorage.
                 // Falls back to RandomAccess I/O if DirectStorage is unavailable.
-                DirectStorageIO.TryReadInto(filePath, offset, length, mappedPtr);
+                RuntimeDirectStorageIO.TryReadInto(filePath, offset, length, mappedPtr);
             }
             catch
             {

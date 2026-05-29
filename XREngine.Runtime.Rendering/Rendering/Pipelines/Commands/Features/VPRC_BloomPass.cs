@@ -52,6 +52,46 @@ namespace XREngine.Rendering.Pipelines.Commands
         public BoundingRectangle BloomRect2;
         public BoundingRectangle BloomRect1;
 
+        private const string BloomCopyScopeName = "Bloom Copy Input->Mip0";
+        private const string BloomDownsampleFallbackScopeName = "Bloom Downsample shader=BloomDownsample.fs";
+        private const string BloomDownsampleStereoFallbackScopeName = "Bloom Downsample shader=BloomDownsampleStereo.fs";
+        private const string BloomUpsampleFallbackScopeName = "Bloom Upsample shader=BloomUpsample.fs";
+        private const string BloomUpsampleStereoFallbackScopeName = "Bloom Upsample shader=BloomUpsampleStereo.fs";
+
+        private static readonly string[] BloomDownsampleScopeNames =
+        [
+            "Bloom Downsample mip0->1 shader=BloomDownsample.fs",
+            "Bloom Downsample mip1->2 shader=BloomDownsample.fs",
+            "Bloom Downsample mip2->3 shader=BloomDownsample.fs",
+            "Bloom Downsample mip3->4 shader=BloomDownsample.fs",
+        ];
+
+        private static readonly string[] BloomDownsampleStereoScopeNames =
+        [
+            "Bloom Downsample mip0->1 shader=BloomDownsampleStereo.fs",
+            "Bloom Downsample mip1->2 shader=BloomDownsampleStereo.fs",
+            "Bloom Downsample mip2->3 shader=BloomDownsampleStereo.fs",
+            "Bloom Downsample mip3->4 shader=BloomDownsampleStereo.fs",
+        ];
+
+        private static readonly string[] BloomUpsampleScopeNames =
+        [
+            string.Empty,
+            string.Empty,
+            "Bloom Upsample mip2->1 shader=BloomUpsample.fs",
+            "Bloom Upsample mip3->2 shader=BloomUpsample.fs",
+            "Bloom Upsample mip4->3 shader=BloomUpsample.fs",
+        ];
+
+        private static readonly string[] BloomUpsampleStereoScopeNames =
+        [
+            string.Empty,
+            string.Empty,
+            "Bloom Upsample mip2->1 shader=BloomUpsampleStereo.fs",
+            "Bloom Upsample mip3->2 shader=BloomUpsampleStereo.fs",
+            "Bloom Upsample mip4->3 shader=BloomUpsampleStereo.fs",
+        ];
+
         /// <summary>
         /// The name of the FBO that will be used as input for the bloom pass.
         /// </summary>
@@ -76,6 +116,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private int _activeBloomMaxMip = 0;
 
         private const int BloomMaxMipmapLevel = 4;
+
+        public override string GpuProfilingName
+            => $"{base.GpuProfilingName}[{InputFBOName}->{BloomOutputTextureName}; {(Stereo ? "stereo" : "mono")}]";
 
         private XRTexture CreateBloomTexture(uint width, uint height, int maxMipLevel,
             EPixelInternalFormat internalFormat, ESizedInternalFormat sizedInternalFormat,
@@ -181,6 +224,22 @@ namespace XREngine.Rendering.Pipelines.Commands
                 4 => BloomRect4,
                 _ => default,
             };
+
+        private string GetDownsampleScopeName(int sourceMip)
+        {
+            string[] names = Stereo ? BloomDownsampleStereoScopeNames : BloomDownsampleScopeNames;
+            return (uint)sourceMip < (uint)names.Length
+                ? names[sourceMip]
+                : Stereo ? BloomDownsampleStereoFallbackScopeName : BloomDownsampleFallbackScopeName;
+        }
+
+        private string GetUpsampleScopeName(int sourceMip)
+        {
+            string[] names = Stereo ? BloomUpsampleStereoScopeNames : BloomUpsampleScopeNames;
+            return (uint)sourceMip < (uint)names.Length && !string.IsNullOrEmpty(names[sourceMip])
+                ? names[sourceMip]
+                : Stereo ? BloomUpsampleStereoFallbackScopeName : BloomUpsampleFallbackScopeName;
+        }
 
         private void RegenerateFBOs(uint width, uint height)
         {
@@ -314,6 +373,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             // Step 1: Copy HDR scene into bloom texture mip 0.
+            using (RenderPipelineGpuProfiler.Instance.StartScope(BloomCopyScopeName))
             using (mip0.BindForWritingState())
                 inputFBO.Render();
 
@@ -359,6 +419,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             fbo.Material?.SetInt(0, sourceMip); // SourceLOD
+            using (RenderPipelineGpuProfiler.Instance.StartScope(GetDownsampleScopeName(sourceMip)))
             using (fbo.BindForWritingState())
             using (instance.RenderState.PushRenderArea(rect))
                 fbo.Render();
@@ -378,6 +439,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             fbo.Material?.SetInt(0, sourceMip); // SourceLOD
+            using (RenderPipelineGpuProfiler.Instance.StartScope(GetUpsampleScopeName(sourceMip)))
             using (fbo.BindForWritingState())
             using (instance.RenderState.PushRenderArea(rect))
                 fbo.Render();

@@ -1,544 +1,1064 @@
-# Shadow Atlas Major Overhaul TODO
+# Shadow System Overhaul TODO
 
-Status: proposed phased TODO. Supersedes and merges:
-- `shadow-atlas-region-organization-todo.md` (allocator and packing performance)
-- `shadow-relevance-scoring-todo.md` (score-driven request resolution from camera visibility)
-- `point-light-atlas-stability-todo.md` (per-face stability under contention)
+Status: active master plan, refreshed 2026-05-28.
 
-Implementation note 2026-05-07: the active runtime now includes the first overhaul slice: single-pass request bucketing by atlas kind/encoding, fixed-level buddy allocator buckets with incremental free stats, direct prior-slot reservation, sticky sub-rect reuse across downsizes, deferred in-place upgrades, relevance/priority-driven sticky demotion, O(1) published allocation lookup, honored multi-page settings, a bounded resident allocation table with TTL reuse, safe `NotRelevant` stale-tile reservation after live allocations, published point-face group metadata, and depth-only spot/point atlas eligibility so moment-encoded local lights stay on standalone maps. Remaining open items are the broader receiver-aware relevance pass, explicit fragmentation-triggered compaction, anchor slots, full heterogeneous point-face pre-reservation, and editor diagnostic expansion.
+This document is the single source of truth for the shadow-system overhaul.
+It absorbs the previously separate atlas/LOD allocation, VSM/EVSM filtering,
+and contact-shadow optimization TODOs. The workstreams below are intended to
+be worked in parallel where dependencies allow; cross-cutting design rules and
+the immediate atlas bugs are at the top because everything else assumes them.
 
-Source files (primary edit surface):
+Primary files:
+
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasFrameData.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasTypes.cs`
+- `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowMapResources.cs`
+- `XREngine.Runtime.Rendering/Rendering/Shadows/LocalShadowFrustumRelevance.cs`
 - `XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs`
-- `XREngine.Runtime.Rendering/Rendering/RenderTree/` (visibility/culling reuse)
+- `XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent*.cs`
+- `XREngine.Runtime.Rendering/Scene/Components/Lights/Types/SpotLightComponent.cs`
+- `XREngine.Runtime.Rendering/Scene/Components/Lights/Types/PointLightComponent.cs`
+- `XREngine.Runtime.Rendering/Scene/Components/Lights/Types/LightComponent.cs`
+- `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_LightCombinePass.cs`
+- `Build/CommonAssets/Shaders/Scene3D/DeferredLightingDir.fs`
+- `Build/CommonAssets/Shaders/Snippets/ShadowSampling.glsl`
+- `Build/CommonAssets/Shaders/Snippets/ShadowMomentEncoding.glsl`
 - `XREngine.UnitTests/Rendering/ShadowAtlasManagerPhaseTests.cs`
+- `XREngine.UnitTests/Rendering/PointShadowAtlasStabilityTests.cs`
+- `XREngine.UnitTests/Rendering/LocalShadowFrustumRelevanceTests.cs`
+- `XREngine.UnitTests/Rendering/CascadedShadowDefaultsAndForwardShaderTests.cs`
 
 Related docs:
-- [Dynamic Shadow Atlas And LOD Allocation TODO](dynamic-shadow-atlas-lod-todo.md)
-- [Local Shadow Frustum Culling TODO](local-shadow-frustum-culling-todo.md)
+
 - [Dynamic Shadow Atlas LOD Plan](../design/rendering/shadows/dynamic-shadow-atlas-lod-plan.md)
 - [Shadow Filtering VSM/EVSM Plan](../design/rendering/shadows/shadow-filtering-vsm-evsm-plan.md)
-
-## Problem Statement
-
-Three independent gaps add up to one user-visible failure mode (flicker and wasted shadow budget):
-
-1. **Allocator is slow and frame-coupled.** `SolveAllocations` rescans `_requests` per atlas state, the page allocator uses `SortedDictionary<int, List<ShadowBlock>>`, free-block stats are recomputed by scanning, prior-region reuse goes through generic free-list searches, and `_previousAllocations` is a fresh dictionary every frame. The whole atlas is reasoned about as if every frame were the first.
-2. **Inputs are still too shallow.** The tactical local shadow-frustum culling path can skip spot requests and point faces with `SkipReason.NotRelevant`, but the broader allocator still needs receiver-aware scoring, sticky demotion, and unified relevance across directional cascades, spots, and point faces. Off-screen lights and far cascades can still compete for atlas space against on-screen lights when the tactical frustum test is not enough.
-3. **Allocation under contention is unstable.** When the atlas is full, `TryReduceLargestBalancedAllocation` halves the *largest, lowest-priority, first-encountered* entry per retry, and `TryBuildBalancedAllocations` resets every buddy allocator at the top of every retry iteration. The chosen victim and the resulting placement both rotate frame-to-frame. For point lights specifically, `TryAllocateCandidate` only reuses a prior slot when `prior.Resolution == candidate`, so any forced downsize relinquishes the slot, the buddy allocator places the smaller tile elsewhere, and the 6-frame `LodChangeCooldownFrames` becomes an oscillation period under sustained pressure.
-
-Result: shadow flicker on contended lights (especially point lights), per-face slot churn even at constant resolution, and shadow texel budget spent on shadows the player cannot see.
-
-## Light-Type-Specific Concerns
-
-The three light types have different stability and packing needs. The overhaul respects all three.
-
-### Directional Lights
-
-- Multiple cascades per light (typically 4) with strongly correlated content; share a per-light view direction.
-- Cascades naturally pack into a 2×2 grid at equal resolution and benefit from grouped allocation for layered-render efficiency.
-- **Cascade-level relevance is independent.** A far cascade fully outside the camera frustum should demote or skip without affecting near cascades. A cascade slice AABB ∩ visible-receiver bounds is the correct signal.
-- Editor-pinned directional lights are common; pin must hold even under heavy contention.
-- Atlas mode is authoritative when `UseDirectionalShadowAtlas` is enabled; the allocator must reduce cascade tile resolutions until every required active cascade is resident, never falling through to legacy maps mid-frame.
-
-### Spot Lights
-
-- One frustum, one tile per light.
-- Often many spot lights compete for the spot atlas at once (city/interior scenes).
-- Spot atlas pages are depth-only today; VSM/EVSM-encoded spot lights bypass the spot atlas (standalone moment maps with mip chains). The allocator must not assume every spot request lives in the atlas.
-- Stability concerns: tile-id sort order changes can swap two equal-priority spot lights between slots and induce one-frame churn even at the same resolution.
-- Spot lights respond well to anchor-slot strategies because each light is one tile.
-
-### Point Lights
-
-- Six independent faces per light (each is its own `ShadowMapRequest` with `ProjectionType == PointFace`).
-- **Per-face heterogeneous resolution is desirable, not a bug.** A face the camera does not see can render at 1/4 or 1/16 of the user-facing face's size, freeing texels for what the player perceives. The overhaul preserves and exploits this.
-- Cube faces of one light should still co-locate on a single page when possible to keep the layered/`gl_ViewportIndex` grouped render path productive. The grouped reservation is a heterogeneous mosaic, not a uniform 3×2 of equal tiles.
-- The flicker root cause for point lights is the *demotion target* changing across frames (which face goes to lower res) plus *slot churn* on resolution changes. Both must be stabilized without forcing atomic per-light resolution.
-- PCF/PCSS taps cross face seams; per-face metadata already carries individual `UvScaleBias` and `InnerPixelRect`. Heterogeneous face sizes within one light are sampling-safe today.
-- The legacy non-atlas point cubemap path remains available when point atlas mode is disabled; this overhaul does not remove it.
-
-## Goals
-
-Allocator and frame data:
-- `ShadowAtlasManager.SolveAllocations()` performs one classification pass per frame, not one scan per atlas kind and encoding.
-- Page allocator uses fixed power-of-two level buckets, not `SortedDictionary`.
-- Allocation stats are maintained incrementally.
-- Previous-frame region reuse is a direct buddy-tree reservation, not a free-list scan.
-- Stable resident allocations survive across frames unless invalidated.
-- `MaxShadowAtlasPages` is honored where memory and metadata allow.
-- Published frame allocation lookup is O(1)/O(log n) keyed access for renderer upload paths.
-- Persistent storage replaces per-frame dictionary churn.
-- No per-frame heap allocations on the steady-state hot path inside `SolveAllocations` after warmup.
-
-Relevance and budget:
-- A `ShadowRelevanceScore` per light (per cascade for directional, per face for point) is computed once per frame from the active camera set.
-- `ShadowMapRequest.RequestedResolution` is derived from the relevance score, clamped to the configured ladder.
-- Lights/cascades/faces with no visible receivers submit at minimum resolution or skip via `SkipReason.NotRelevant`.
-- Stereo VR uses the union of both eyes plus mirror/probe cameras.
-- Off-screen casters that shadow on-screen receivers remain fully relevant.
-
-Stability:
-- The selected demotion victim is determined by relevance, not request sort order, and is sticky across frames under hysteresis.
-- A light/cascade/face that fits last frame retains its slot this frame whenever the desired layout still fits, regardless of submission order.
-- A resolution change does not relocate the slot unless the prior slot cannot host the new size.
-- Asymmetric hysteresis: forced downsizes have a long re-promotion cooldown; voluntary changes have a short cooldown; in-place upgrades that the buddy can satisfy "for free" bypass the cooldown.
-
-## Non-Goals
-
-- Do not remove the legacy non-atlas shadow path.
-- Do not change receiver-side filtering, sampling, bias math, or PCF/PCSS seam handling.
-- Do not introduce new shadow encodings.
-- Do not switch to virtual shadow maps; keep metadata names and reserved fields compatible with that later direction.
-- Do not require Vulkan parity before the OpenGL path is optimized, but avoid OpenGL-only policy in renderer-neutral atlas contracts.
-- Do not force atomic per-light resolution. Heterogeneous per-face point sizes are intentional.
-- Do not introduce a new full visibility pass; reuse forward+/visibility data already produced.
-
-## Behavioral Invariants
-
-- Existing directional, spot, and point atlas receiver output remains visually equivalent for unchanged tile layouts.
-- A tile that reuses the same atlas id, page, rect, resolution, and content version keeps its `LastRenderedFrame` and avoids a fresh render when the request is clean.
-- Dirty stale-tile requests may publish `SkipReason.StaleTileReused` until rerendered.
-- Atlas allocations are deterministic for identical request sets and settings.
-- Resident regions in the same atlas id and page never overlap, including grouped cascade and point-face allocations.
-- Tile gutters remain part of allocation rects; receivers sample inner rects.
-- `ShadowAtlasFrameData.Generation` increments only when the published resident layout changes.
-- Relevance is computed against **receivers in view**, never against caster on-screen presence; off-screen casters that shadow on-screen receivers stay fully relevant.
-- `EditorPinned` lights are not demoted or skipped by relevance under normal pressure. They may only be displaced by an explicit user settings change or hard memory cap miss, with a logged warning.
-- Six `PointFace` requests for one light continue to share a single page when grouped rendering applies; cube faces may have different `Resolution` values, including in the same group.
-- Resident allocations never migrate page or rect within a single frame. Cross-frame migration is allowed only via the explicit compaction/repack path.
-- Headless/dedicated-server paths short-circuit relevance and resolve to no-op or fallback-only when no renderer resources are available.
-
-## Threading Invariants
-
-- `SubmitRequest` is the only public entry point that may be called from non-solve threads, and it remains lock-protected by `_submitSync`.
-- `BeginFrame`, `SolveAllocations`, `MarkTileRendered`, and `Publish` run on the render scheduler thread.
-- `PublishedFrameData` is read by the render thread via the existing double-buffer swap; persistent state added by this overhaul must not be mutated after publish until the next solve begins.
-
----
-
-## Phase 0 — Branch, Baseline, Acceptance Tests
-
-Goal: isolate the work and capture current behavior across all three concerns before changing anything.
-
-- [ ] Create dedicated branch: `shadow-atlas-overhaul`.
-- [ ] Record current public settings behavior:
-  - [ ] `ShadowAtlasPageSize`
-  - [ ] `MaxShadowAtlasPages`
-  - [ ] `MaxShadowAtlasMemoryBytes`
-  - [ ] `MinShadowAtlasTileResolution`
-  - [ ] `MaxShadowAtlasTileResolution`
-  - [ ] `MaxShadowTilesRenderedPerFrame`
-  - [ ] `LodChangeCooldownFrames` (will be split in Phase 8)
-- [ ] Run and preserve targeted baselines:
-  - [ ] `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter ShadowAtlasManagerPhaseTests`
-  - [ ] `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter CascadedShadowDefaultsAndForwardShaderTests`
-  - [ ] `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj`
-- [ ] Add or extend tests that lock down current behavior so regressions are visible:
-  - [ ] deterministic layouts across identical frames
-  - [ ] no resident region overlap
-  - [ ] previous allocation reuse
-  - [ ] stale tile reuse
-  - [ ] balanced demotion under a one-page cap
-  - [ ] allocation failure fallback when minimum resolutions cannot fit
-  - [ ] all eligible lights produce shadow requests today
-  - [ ] pre-local-frustum-culling baseline: no skip path used a `NotRelevant` reason
-  - [ ] cascades are submitted as a uniform set per directional light today
-- [ ] Add a lightweight solver stress test/benchmark harness exercising mixed spot, point-face, and directional requests with no GPU work.
-- [ ] Add a relevance-pass benchmark harness with N lights, M visible receivers, and a configurable camera set, no GPU work.
-- [ ] Add a `PointShadowAtlasStabilityTests` fixture in `XREngine.UnitTests/Rendering/` that builds a contended scenario (≥6 point lights, single page) and asserts face slot identity is stable across 60 frames once the layout has settled. The test will initially fail; failing-state output goes into the test log as the baseline.
-- [ ] Capture baseline solve metrics for: many small tiles, mixed 128/256/512/1024 tiles, four-cascade directional sets, point lights with six face requests, atlas-full demotion retries.
-- [ ] Capture baseline GC-allocation budget per solve via `GC.GetAllocatedBytesForCurrentThread()` deltas around `SolveAllocations` and around the relevance pass once it exists.
-- [ ] Record `_previousAllocations` dictionary churn (current code rebuilds every frame) as a separate baseline so Phase 2's persistent-storage fix has a measurable target.
-- [ ] Capture baseline scene-level metrics: submitted requests/frame, sum of requested texels/frame, off-screen lights at non-minimum resolution, cascades fully off-screen at full resolution, shadow render cost.
-- [ ] Add a profiler block `ShadowAtlas.PointFaceDemotion` recording per point light: requested resolutions, granted resolutions, page index, pixel rect for each face.
-- [ ] Add a debug `XREngine.Debug.LightingEvery` line tagged `ShadowAtlas.PointFace.SlotChurn` when a face's `(PageIndex, X, Y)` changes between frames at the same `Resolution`. Track count per light per frame.
-- [ ] Add a threading-contract acceptance test that exercises concurrent `SubmitRequest` calls during a simulated solve.
-
----
-
-## Phase 1 — Allocator Core Performance
-
-Owner module: `ShadowAtlasManager.SolveAllocations`, `ShadowAtlasEncodingState`, `ShadowBuddyPageAllocator`.
-
-Combines the four allocator-internals goals from the region-organization TODO into one phase since they share the same code path.
-
-### 1A — Single-Pass Request Bucketing
-
-- [ ] Replace the per-state full `_requests` scan with a single classification pass into fixed buckets indexed by atlas kind and encoding.
-- [ ] Sort per bucket rather than globally (smaller N, better cache locality). Fall back to a single global sort only if a benchmark shows it cheaper for representative request mixes.
-- [ ] Preserve disabled-light and skipped-request publication semantics.
-- [ ] Keep `_frameAllocations` and `_currentAllocationIndices` coherent for `MarkTileRendered`.
-- [ ] Pre-size bucket storage from `MaxRequestsPerFrame`; reuse each frame.
-- [ ] Add tests for mixed directional/point/spot/encoding requests verifying allocations land in the correct atlas id.
-
-### 1B — Fixed-Level Buddy Allocator
-
-- [ ] Replace `SortedDictionary<int, List<ShadowBlock>>` with fixed buckets keyed by block level.
-- [ ] Precompute page-level metadata from `PageSize`: maximum level count, level-to-size table, size-to-level mapping for normalized tile sizes, page texel area per level.
-- [ ] Track non-empty levels with a compact bitmask or level count array.
-- [ ] Preserve deterministic bottom-left allocation order within each level.
-- [ ] No heap allocations during `Reset`, `TryAllocate`, `TryReserve`, or `SplitToSize` after warmup.
-- [ ] Tighten `NormalizeSettings`: `PageSize`, `MinTileResolution`, `MaxTileResolution` must be powers of two and aligned to a buddy level. Round non-power-of-two values to the nearest valid level (or reject with a clear log).
-- [ ] Allocator-only tests: exact-size allocation, splitting larger blocks, filling a page, exhaustion, deterministic placement, no overlap across randomized request sizes, non-power-of-two settings normalize correctly.
-
-### 1C — Incremental Free Stats
-
-- [ ] Update `FreeTexelCount` incrementally on add/remove.
-- [ ] Update `LargestFreeBlockSize` from level occupancy, not by scanning free lists.
-- [ ] `Reset` initializes stats directly from one full-page free block.
-- [ ] `AppendPageDescriptors` reads current stats without forcing recalculation.
-- [ ] Compare incremental stats against an explicit slow validation pass in debug-only code.
-- [ ] Verify metrics still populate: `LargestFreeRect`, `FreeTexelCount`, `ResidentBytes`, `PageCount`.
-
-### 1D — Direct Previous-Layout Reservation
-
-- [ ] Replace `TryReserve` free-list scanning with direct buddy-path reservation for known page, x, y, size.
-- [ ] Validate requested regions are power-of-two sized, aligned, and contained in the page before attempting reservation.
-- [ ] Split from the root or nearest available ancestor to reserve the exact prior region.
-- [ ] Return false (not throw) when a higher-priority allocation already claimed the prior region.
-- [ ] Keep fail-fast invariant for allocator inconsistency in debug builds.
-- [ ] Tests: prior tile reserves the same region, lower-priority prior loses to higher-priority, resized prior does not reserve an incompatible region, stale-tile reuse survives direct reservation.
-
-### 1E — Validation
-
-- [ ] No new per-frame allocations after warmup in the solve path (compare against Phase 0 GC baseline).
-
----
-
-## Phase 2 — Persistent Resident Layout
-
-Goal: stop rebuilding the atlas every frame when only a few requests change.
-
-- [ ] Introduce a persistent resident table keyed by `ShadowRequestKey`.
-- [ ] Track resident metadata separately from the frame's submitted request list:
-  - [ ] atlas kind, encoding, page index, pixel rect, resolution, content version
-  - [ ] last rendered frame, last requested frame
-  - [ ] eviction score or TTL
-  - [ ] LOD transition reason and frame (Phase 8 input)
-  - [ ] prior placement key tuple `(PageIndex, X, Y)` for sort tiebreak (Phase 8 input)
-- [ ] Replace per-frame `_previousAllocations` dictionary swap with this persistent table or with two persistent dictionaries used in alternating roles. Either way, no fresh dictionary is allocated per solve.
-- [ ] Keep stable residents allocated across frames when the request is still valid and the resolution/format family is unchanged.
-- [ ] Allocate only new, resized, or migrated requests in the common path.
-- [ ] Free vanished requests after a short TTL so transient visibility changes do not churn the atlas.
-- [ ] Eviction policy inputs: frames since last requested, frames since last rendered, priority, resolution (prefer demote-then-evict for live requests), whether a higher-priority pending request actually needs the slot this frame.
-- [ ] Editor-pinned requests are never evicted under normal pressure; only displaceable by an explicit settings change or hard memory cap miss, with a logged warning.
-- [ ] Add an explicit compaction/repack path that runs only when fragmentation or failed allocations justify it.
-- [ ] Preserve stale-tile fallback for dirty tiles retaining their previous region.
-- [ ] Tests: stable layout with one changed request, eviction after TTL, no eviction for editor-pinned high-priority, compaction generation increments, clean tile render skipping after persistent reuse.
-- [ ] Guarantee the table is pre-sized in `Configure` and cleared (not reallocated) in `ResetResources`.
-
----
-
-## Phase 3 — Multi-Page Support
-
-Goal: honor `MaxShadowAtlasPages` where renderer metadata and memory budgets allow.
-
-- [ ] Remove the hard one-page cap:
-  - [ ] `NormalizeSettings` no longer forces `MaxPages = 1`.
-  - [ ] `GetPageLimit(ShadowAtlasManagerSettings)` returns the real configured limit.
-- [ ] Preserve a forced one-page mode for tests and low-memory configurations via explicit settings opt-in.
-- [ ] Check `MaxMemoryBytes` against all atlas kind/encoding pages.
-- [ ] Page creation policy: fill existing pages before creating a new page; optionally prefer pages by atlas kind, encoding, or fragmentation score; avoid creating a new page when demoting a low-priority request is preferable.
-- [ ] Audit every receiver/shader path for hardcoded `pageIndex == 0`:
-  - [ ] `Lights3DCollection.Shadows.cs` metadata upload (directional, spot, point)
-  - [ ] Atlas binding/sampling for spot and directional receivers
-  - [ ] Point-light atlas receiver path when point rendering is enabled
-  - [ ] Per-tile uniform writers (page index, atlas id, UV scale/offset)
-  - [ ] Any debug visualization that draws atlas contents
-- [ ] Tests: two-page success without demotion, one-page forced demotion, memory cap blocking a new page, page descriptors for multiple pages, layout generation when a tile migrates between pages.
-- [ ] Update any source-contract tests that intentionally assert one-page behavior.
-
----
-
-## Phase 4 — Published Frame Lookup Index
-
-Goal: remove linear allocation lookup from renderer metadata upload paths.
-
-- [ ] Add a no-allocation-after-warmup lookup index to `ShadowAtlasFrameData`.
-- [ ] Choose representation: reused `Dictionary<ShadowRequestKey, int>` for fastest general lookup, sorted key/index arrays for compact data + binary search, or a hybrid if upload needs both ordered iteration and keyed lookup.
-- [ ] Duplicate-key policy: deterministic last-write-wins in release, debug-only assert. Both representations implement identical policy.
-- [ ] Update `TryGetAllocation` and `TryGetAllocationIndex` to use the index.
-- [ ] Ensure `SetData` clears stale index entries when allocation count shrinks.
-- [ ] Preserve read-only span iteration for renderer upload code.
-- [ ] Tests: lookup after same-size publish, grow publish, shrink publish, skipped allocation publication, duplicate-key last-write-wins (with debug assert).
-
----
-
-## Phase 5 — Camera Relevance Set
-
-Goal: define the authoritative set of cameras whose visibility drives relevance.
-
-- [ ] Introduce `ShadowRelevanceCameraSet`, built once per frame, reused.
-- [ ] Inputs: desktop main camera(s), both VR eye cameras when XR is active, active mirror/preview cameras flagged as relevance-contributing, optional reflection/probe cameras flagged as relevance-contributing.
-- [ ] Each camera contributes: world-space frustum, near/far range, viewport pixel size, importance weight (main = 1.0, mirrors/probes = configurable, default lower).
-- [ ] Provide a fast, allocation-free union-frustum query (point/sphere/AABB).
-- [ ] Wire `ShadowAtlasManager.BeginFrame(IRuntimeRenderWorld, ReadOnlySpan<XRCamera>)` to construct or accept the relevance camera set.
-- [ ] The fallback `BeginFrame(ulong, int)` overload still produces safe (uniform) demotion using current heuristics for headless/diagnostic paths.
-- [ ] Tests: desktop-only set, VR stereo set (both eyes contribute), VR + mirror set, empty set (headless) short-circuits the pass.
-
----
-
-## Phase 6 — Receiver-In-View And Caster Coupling
-
-Goal: per-light/per-cascade/per-face evidence that shadows would actually affect on-screen pixels.
-
-### 6A — Receiver-In-View Aggregation
-
-- [ ] Reuse the existing forward+/visibility pass that already tags renderables with affecting lights.
-- [ ] Build a per-light bitset: "is at least one receiver of this light visible to any camera in the relevance set?"
-- [ ] Per light, accumulate a screen-space AABB from the union of visible receivers' projected bounds across the camera set, weighted by camera importance.
-- [ ] Cost guardrail: bound per-light receiver iteration by an existing list. If unbounded for a given light type, gate aggregation behind a max-receivers-per-light setting and log when truncated.
-- [ ] Tests: receiver fully off-screen → light not in-view; receiver partially on-screen → screen-space AABB clamped correctly; stereo VR with receiver visible only to one eye still flags the light as in-view; truncated receiver list still produces a valid conservative AABB.
-
-### 6B — Caster-To-Visible-Receiver Coupling
-
-- [ ] For each in-view light, run a cheap caster/receiver coupling test:
-  - [ ] **directional**: cascade slice AABB ∩ visible-receiver bounds (per cascade)
-  - [ ] **spot**: spot frustum ∩ visible-receiver bounds
-  - [ ] **point**: light sphere ∩ visible-receiver bounds, plus per-face frustum intersection for each cube face
-- [ ] Output per light (and per cascade / per face): `HasVisibleReceiver`, `VisibleReceiverScreenAreaPixels` (deterministic sum or AABB area).
-- [ ] **Do not** filter by caster on-screen visibility. Off-screen casters that shadow on-screen receivers stay relevant. Add an explicit regression test.
-- [ ] Tests: caster off-screen + receiver on-screen → relevant; caster on-screen + receiver off-screen → not relevant; partial cascade coverage demotes only off-screen cascades.
-
----
-
-## Phase 7 — Relevance Score And Resolution Mapping
-
-Goal: convert per-light/per-cascade/per-face signals into a `RequestedResolution`.
-
-- [ ] Define `ShadowRelevanceScore` inputs:
-  - [ ] receiver pixel area (Phase 6A)
-  - [ ] caster-receiver coupling area (Phase 6B)
-  - [ ] light intensity / contribution estimate
-  - [ ] light priority and `EditorPinned`
-  - [ ] distance / angular size to nearest relevance camera
-  - [ ] caster motion / dirtiness (static + static = candidate for cached reuse)
-- [ ] Per light type, additional inputs:
-  - [ ] **directional**: cascade index distance from camera, cascade slice volume covered by visible receivers
-  - [ ] **spot**: spot cone tightness, projected on-screen tile area estimate
-  - [ ] **point**: per-face camera-axis dot (`saturate(dot(faceAxis, normalize(cameraPos - lightPos)))`), weighted by per-face screen-space radius
-- [ ] Compute a scalar score with documented weights stored in settings with safe defaults.
-- [ ] Map score → tile resolution via the existing `MinTileResolution`/`MaxTileResolution` ladder.
-- [ ] Editor-pinned lights bypass demotion; their score sets a floor, not a ceiling.
-- [ ] Score → 0 (no visible receiver):
-  - [ ] **directional cascade**: skip with `SkipReason.NotRelevant` per cascade.
-  - [ ] **spot**: submit at minimum resolution if the light is still required for fallback; otherwise skip submission.
-  - [ ] **point face**: skip with `SkipReason.NotRelevant` per face; do not submit a missing-face placeholder unless an existing receiver contract requires it (document the chosen path).
-- [ ] Tests: deterministic score → resolution mapping; pinned light keeps its floor under low score; zero-score produces `SkipReason.NotRelevant`; equal scores produce equal resolutions for equivalent requests.
-
----
-
-## Phase 8 — Stability Under Contention
-
-Owner module: `ShadowAtlasManager.SolveAllocationsForState`, `TryReduceLargestBalancedAllocation`, `TryAllocateCandidate`, `TryBuildBalancedAllocations`, `RequestComparer`, `ApplyLodHysteresis`, and `_lodStates` (or its persistent-table replacement from Phase 2).
-
-This phase contains the changes that directly fix the flicker problem.
-
-### 8A — Relevance-Driven, Stable Demotion Target
-
-- [ ] Extend `BalancedAllocationEntry` with `RelevanceScore` (float) and `DemotionStickiness` (small int, frame counter).
-- [ ] Replace the largest/lowest-priority pick in `TryReduceLargestBalancedAllocation` with: among entries where `Resolution > MinimumResolution`, pick the entry with the **lowest** `RelevanceScore`. Tie-break by lowest `Priority`, then deterministic `Key` ordering.
-- [ ] Add demotion hysteresis: once a face/cascade/spot is demoted this frame, store `(LightId, FaceOrCascadeIndex, demotedFrame)` in a persistent dictionary `_demotionState`. On the next solve, bias the relevance comparison so a previously-demoted entry stays the demotion target unless another entry's relevance is lower than it by a configurable margin (e.g. 25%) for at least `DemotionPromotionCooldownFrames` (default 12).
-- [ ] When a previously-demoted entry is not chosen this frame, only clear persistent state after the cooldown expires; do not clear on a single frame's reprieve.
-- [ ] Bound dictionary capacity by `MaxRequestsPerFrame`; pre-size in `Configure`.
-- [ ] Tests:
-  - [ ] static camera + static lights → demotion target does not change across 120 frames
-  - [ ] camera 180° swing eventually rotates the demotion target after ≥ cooldown frames, not within one
-  - [ ] point-light specific: with three on-screen-facing faces and three back-facing, the back-facing faces are the consistent demotion victims
-
-### 8B — Sticky Placement Under Resolution Change
-
-- [ ] Extend the prior-slot reuse path in `TryAllocateCandidate` so that when `candidate < prior.Resolution`, the manager attempts to reserve a sub-square of the prior slot at `candidate` size (anchored at `(prior.X, prior.Y)` if buddy alignment allows; otherwise the nearest aligned sub-rect inside the prior region).
-- [ ] When `candidate > prior.Resolution`, attempt an in-place upgrade: ask the buddy whether the surrounding `candidate`-aligned block containing the prior slot is fully free. If yes, reserve and reuse. If no, leave the entry at the prior resolution this frame and record `DeferredUpgrade` so promotion attempts again next frame; do not relocate.
-- [ ] Add `ShadowBuddyPageAllocator.TryReserveAlignedSubBlock(int x, int y, int requestedSize)` that finds the smallest free buddy block containing `(x, y)` of at least `requestedSize` and reserves the requested size at the aligned origin.
-- [ ] Carry `LastRenderedFrame` and `ContentVersion` across resolution change when the new rect is contained in the prior rect (texels remain valid; receiver samples by `InnerPixelRect` and `UvScaleBias`).
-- [ ] When a face/spot/cascade shrinks in-place we still re-render to redistribute texels; mark the tile dirty but allow `SkipReason.StaleTileReused` against prior content until rerendered.
-- [ ] Tests: a light forced from 1024 → 512 keeps its top-left 512 sub-rect on the same page with `LastRenderedFrame` preserved; an in-place upgrade succeeds when the surrounding block is free, otherwise stays put.
-- [ ] Audit: when `_repackRequested` is true, all sticky paths are bypassed (already true in `TryAllocateCandidate`); confirm new sticky paths honor it.
-
-### 8C — Incremental Reservation, No Full Reset On Retry
-
-- [ ] Replace the "reset all allocators and retry from scratch" loop in `TryBuildBalancedAllocations` with incremental reservation:
-  - [ ] Maintain a per-entry `Allocation` plus a *reserved* flag.
-  - [ ] On placement failure for entry `i`, do not call `state.BeginFrame()`. Pick a demotion target (8A) among entries `[0, i]`. If the chosen target is `j < i`, free only `j`'s reservation, halve its `Resolution`, re-reserve `j`, then continue from `i`. If the target is `i` itself, halve `i` and retry only `i`.
-  - [ ] When a previously-placed entry is freed, prefer its prior `(PageIndex, X, Y)` first via the 8B sticky path.
-- [ ] Hard cap on demotion iterations per state per frame (e.g. `entryCount * 2`); on cap, fall back to the existing wholesale reset path and log `ShadowAtlas.SolverFallback`.
-- [ ] Tests: contended scenario where adding a low-priority light forces one face/cascade/spot to demote leaves all other reservations bit-identical to the previous frame.
-- [ ] Profiler check: median `SolveAllocations` cost does not regress; under contention it should improve.
-
-### 8D — Sort Tiebreaker By Prior Slot Identity
-
-- [ ] Pre-compute a per-request "prior placement key" on `Submit`/`BeginFrame` from the persistent resident table (Phase 2).
-- [ ] In `RequestComparer`, after `Priority`, tie-break by prior `(PageIndex, PixelRect.X, PixelRect.Y)` for entries that had a resident allocation last frame. New entrants tie-break by `Key` (current behavior).
-- [ ] Verify the comparer remains a total, stable ordering. Add a comparer self-test in `ShadowAtlasManagerPhaseTests`.
-- [ ] Test: two equal-priority lights retain stable relative ordering across 60 frames despite per-frame `IsDirty` toggles.
-
-### 8E — Asymmetric LOD Hysteresis
-
-- [ ] Replace `LodChangeCooldownFrames` with two values:
-  - [ ] `LodDownsizeRePromotionCooldownFrames` (default 30–60): wait after a *forced* downsize before allowing growth.
-  - [ ] `LodVoluntaryChangeCooldownFrames` (default 6): wait between voluntary LOD changes (e.g. distance-based).
-- [ ] Tag prior LOD transition reason in `ShadowLodState`: `Voluntary | ForcedDownsize | ForcedUpsize`. The reason determines which cooldown is consulted on the next promotion attempt.
-- [ ] An in-place upgrade (8B) that the buddy can satisfy "for free" without displacing any other entry bypasses the cooldown.
-- [ ] Promotion may apply immediately for newly visible receivers (relevance promotion), since the worse failure mode is sustained low resolution on suddenly important lights.
-- [ ] Pinned lights ignore both delays.
-- [ ] Tests:
-  - [ ] sustained contention: forced-down entry stays demoted until contention drops for ≥ `LodDownsizeRePromotionCooldownFrames` consecutive frames
-  - [ ] score oscillating across a ladder boundary produces stable resolution
-  - [ ] sudden visibility promotes within one frame
-  - [ ] pinned light unaffected by hysteresis
-
-### 8F — Stale-Tile And Skip Interaction Matrix
-
-- [ ] Define and implement:
-  - [ ] relevance-demoted + clean tile + same region available → reuse, no re-render
-  - [ ] relevance-demoted + dirty tile + previous region available → publish `SkipReason.StaleTileReused`
-  - [ ] relevance-zero + previous region available → publish `SkipReason.NotRelevant`, may keep stale tile for one-frame fallback
-  - [ ] relevance-zero + no previous region → do not submit
-- [ ] Decide and document the one-frame popping policy when a previously-skipped light becomes relevant: either accept a one-frame stale render or pre-allocate a minimum-resolution placeholder.
-- [ ] Tests covering each row.
-
----
-
-## Phase 9 — Light-Type Granularity
-
-Goal: drive resolution per cascade and per face, and reserve groups in a layout that respects each light type's render path.
-
-### 9A — Directional Cascade Granularity And Grouping
-
-- [ ] Compute relevance per cascade using the cascade slice AABB (Phase 6B).
-- [ ] Cascades fully outside the camera-set frustum demote to minimum resolution or skip with `SkipReason.NotRelevant`.
-- [ ] Add a grouped allocation path for cascades from the same light and encoding.
-- [ ] Prefer a deterministic 2×2 cascade pack when four cascades share a resolution.
-- [ ] Support partial cascade groups when only primary or fewer cascades are submitted.
-- [ ] **Cascade group atomicity**: best-effort. If the 2×2 pack cannot fit, fall back to ungrouped per-cascade allocation rather than failing the whole light.
-- [ ] When `UseDirectionalShadowAtlas` is true, the allocator must reduce cascade tile resolutions until every required active cascade is resident; never fall through to legacy `ShadowMap`/`ShadowMapArray` mid-frame.
-- [ ] Receiver binding enables the directional atlas for a light only when its required active directional tiles are sampleable.
-- [ ] Tests: far cascade off-screen + near cascades on-screen → only far demoted; mixed cascade resolutions; grouped 2×2 still occurs when all four are relevant.
-
-### 9B — Spot Specifics
-
-- [ ] Spot relevance is one tile per light; resolution maps from `Phase 7` score directly.
-- [ ] Spot atlas pages remain depth-only. A spot light whose resolved `ShadowMapEncoding` is VSM or EVSM bypasses the spot atlas (standalone moment shadow map with mip chain) and is excluded from atlas balancing for that frame; relevance still drives its resolution.
-- [ ] Anchor-slot strategy (Phase 10) is especially effective for many-spot scenes; ensure the per-spot prior placement key is stable.
-- [ ] Tests: VSM/EVSM spot bypasses the atlas while relevance-zero non-VSM spot publishes `NotRelevant`; many-spot scene retains stable per-spot slot across 60 frames.
-
-### 9C — Point Face Granularity
-
-- [ ] Compute relevance per face using the face frustum (Phase 6B) and the per-face camera-axis dot (Phase 7).
-- [ ] Faces with no on-screen receivers demote or skip independently. A point light may have one face at full resolution and five at 1/4 or 1/16, or any other heterogeneous combination, in the same group.
-- [ ] **Heterogeneous cube-face group reservation**:
-  - [ ] Add a pre-allocation step `TryReservePointLightFaceGroup(LightId, EncodingState, faceSizes[6])`:
-    - [ ] sort faces by relevance descending
-    - [ ] compute the smallest power-of-two bounding square that can host the six face sizes as buddy sub-tiles (1×`S`, 2×`S/2`, 4×`S/4`, etc.)
-    - [ ] reserve that bounding block on a single page; sub-divide deterministically; assign each face to its sub-tile
-  - [ ] Use this grouped reservation when at least two faces of the same light are dirty in the same frame; otherwise fall back to per-face allocation.
-  - [ ] Update `BuildPointFaceGroups` to emit `ShadowAtlasGroupedPointFaceAllocation` with **heterogeneous** `InnerPixelRect`/`UvScaleBias` per member, ordered by face index.
-- [ ] **Point face group atomicity is partial**: individual faces may be allocated, demoted, skipped, or evicted independently when budgets require it.
-- [ ] Receiver code path is unchanged; per-face metadata already carries individual `UvScaleBias` and `InnerPixelRect`.
-- [ ] PCF/PCSS/Vogel taps that cross face seams continue to perturb the receiver direction, re-select the owning face, and sample that face's atlas metadata.
-- [ ] Missing or demoted faces use their published fallback (usually a stale tile when a previous render exists, or contact-only before first render) instead of sampling undefined atlas texels.
-- [ ] Tests:
-  - [ ] light with one full-res face and five quarter-res faces produces a single group on one page with non-overlapping tiles and stable layout across frames
-  - [ ] grouped layered render for heterogeneous faces issues in one pass (`gl_ViewportIndex` per face); scissors set per face from `PixelRect`
-  - [ ] adjacent dirty faces continue past the soft per-frame budget once refresh starts (matches current contract)
-  - [ ] PCF taps crossing a face edge between two different-resolution faces sample the correct neighbor metadata
-
----
-
-## Phase 10 — Anchor Slots For High-Priority Lights
-
-Goal: bound visible churn under heavy pressure to lower-priority lights.
-
-- [ ] Setting `ShadowAnchorLightCount` (default small, e.g. 2 per kind). The top-K lights per kind by `(EditorPinned, Priority, RelevanceScore)` get an anchor reservation other lights cannot displace within a frame.
-- [ ] Implementation: solve anchor lights' `BalancedAllocationEntry`s first as a separate pass, then solve the rest.
-- [ ] Anchor slots are sticky reservations; when an anchor light's prior slot is free, it is always taken first.
-- [ ] Tests: with K = 2 and four contended lights of a kind, the two anchor lights retain stable slots across 120 frames; the other two may demote/swap but cannot evict anchors.
-
----
-
-## Phase 11 — VR / Stereo
-
-- [ ] Verify the camera set always includes both eyes when XR is active.
-- [ ] Verify mirror/preview cameras can be flagged as relevance-contributing without forcing them on by default (lower importance by default).
-- [ ] Stereo regression test: a receiver visible only to the right eye keeps its light at full resolution.
-- [ ] Mirror-display test: a receiver visible only on the desktop mirror keeps its light at the mirror's importance-weighted score.
-- [ ] Confirm point-face per-face relevance handles per-eye visibility correctly (a face seen by only one eye stays at full res).
-
----
-
-## Phase 12 — Diagnostics And Editor Visibility
-
-- [ ] Per-light diagnostic record: score inputs, computed score, mapped resolution, hysteresis state, skip reason.
-- [ ] ImGui editor inspector for the active relevance camera set and per-light score breakdown.
-- [ ] Counters using plain `int`/`long`/`uint` fields (no boxing, no per-frame `Dictionary<string, int>`-style updates, no LINQ aggregation):
-  - [ ] reserve hits / misses
-  - [ ] new allocations / reused persistent allocations
-  - [ ] demotions / repacks / evictions / page creations / failed allocations by reason
-  - [ ] lights demoted by relevance / skipped with `NotRelevant` / promoted within one frame
-  - [ ] cascades and point faces demoted independently
-  - [ ] point-face slot churn count (target zero in steady state)
-- [ ] Surface page count, largest free block, and free texels in existing shadow atlas diagnostics.
-- [ ] Rate-limited debug logging for repack/eviction/promotion/demotion in editor builds; no per-frame string construction unless logging is enabled and rate-limited.
-- [ ] Update docs when settings, task entries, launch flags, or editor diagnostics change.
-
----
-
-## Phase 13 — Persistent State Lifecycle Audit
-
-- [ ] All persistent dictionaries pre-sized in `Configure`, cleared (not reallocated) in `ResetResources`.
-- [ ] None of the new state is touched between `Publish` and the next `BeginFrame`.
-- [ ] Bounded eviction policy keyed on `_frameId - lastSeenFrame > N` so dictionaries do not grow unbounded when lights are destroyed.
-- [ ] No-allocation steady state: profiler/test guard asserts zero managed allocations during `SolveAllocations` and the relevance pass after warmup.
-
----
-
-## Phase 14 — Validation And Closeout
-
-- [ ] Run targeted tests:
-  - [ ] `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter ShadowAtlasManagerPhaseTests`
-  - [ ] `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter PointShadowAtlasStabilityTests`
-  - [ ] `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter CascadedShadowDefaultsAndForwardShaderTests`
-  - [ ] new relevance fixture
-  - [ ] any new allocator-specific test fixture
-- [ ] Run targeted builds:
-  - [ ] `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj`
-  - [ ] `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
-- [ ] Smoke validation in `Editor (Unit Testing World)`:
-  - [ ] directional cascades, many spot lights, point-light atlas path, stale-tile fallback, one-page and multi-page settings
-  - [ ] desktop scene with many off-screen lights → submitted texel count drops vs. baseline
-  - [ ] VR scene with stereo eyes → no per-eye popping
-  - [ ] mirror display enabled → mirror-only-visible lights remain at appropriate score
-  - [ ] camera rapidly turning across a ladder boundary → hysteresis prevents popping
-  - [ ] ≥6 dynamic point lights inside a single page's reach with static camera → `ShadowAtlas.PointFace.SlotChurn` is 0
-  - [ ] same scene with moving camera → churn rises during motion and decays after motion stops within `LodDownsizeRePromotionCooldownFrames`
-- [ ] Compare baseline and final metrics from Phase 0:
-  - [ ] submitted requests/frame, submitted texels/frame, off-screen lights at non-minimum resolution, shadow render cost
-  - [ ] median and 99th percentile `SolveAllocations` cost
-  - [ ] GC allocations per solve
-- [ ] Confirm hot-path expectations: no per-frame allocator data-structure allocations after warmup, no LINQ or captured closures in solve/relevance hot paths, no avoidable string formatting in per-frame logs.
-- [ ] Update related docs and TODOs:
-  - [ ] [dynamic-shadow-atlas-lod-todo.md](dynamic-shadow-atlas-lod-todo.md) cross-reference
-  - [ ] `docs/work/README.md` index
-  - [ ] rendering architecture notes if public behavior or settings changed
-- [ ] Split any deferred follow-ups (virtual shadow maps, GPU-driven relevance, ray-traced relevance occlusion, Vulkan parity) into focused TODO docs.
-
----
-
-## Risks
-
-- Relevance scoring depends on having the active camera set at solve time. Ensure the runtime path uses `BeginFrame(IRuntimeRenderWorld, ReadOnlySpan<XRCamera>)`. The fallback overload must remain safe for headless/diagnostic paths.
-- Sticky placement (Phase 8B) interacts with `RequestRepack`. When `_repackRequested` is true, all sticky paths must be bypassed; audit each Phase 8 change against that.
-- Heterogeneous group reservation (Phase 9C) must not serialize what is currently a layered render. Keep the contract: one reservation, one render submission, six viewports for a fully-grouped light.
-- Multi-page support (Phase 3) requires every receiver path to read `pageIndex` correctly; an audit miss produces silent sampling of the wrong page.
-- Anchor slots (Phase 10) can starve lower-priority lights in pathological scenes; keep `ShadowAnchorLightCount` small and configurable.
-- Asymmetric hysteresis (Phase 8E) interacting with rapid contention changes (e.g. `RequestRepack`) needs explicit documented behavior to avoid surprise pinning.
-
----
-
-## Final Task
-
-- [ ] Merge the dedicated `shadow-atlas-overhaul` branch back into `main` after all phases complete, validation passes, docs are updated, and any follow-up TODOs are filed.
+- [Shadow Resource Migration Audit](../design/shadow-resource-migration-audit.md)
+- [Post-v1 Advanced Shadow Features Plan](../design/post-v1-advanced-shadow-features-plan.md)
+
+## Workstream Index
+
+1. [Current Runtime Snapshot](#current-runtime-snapshot)
+2. [Immediate Bugs](#immediate-bugs)
+3. [Workstream A: Atlas Allocator And Relevance Overhaul](#workstream-a-atlas-allocator-and-relevance-overhaul)
+4. [Workstream B: Dynamic Atlas And LOD Allocation (Remaining Phases)](#workstream-b-dynamic-atlas-and-lod-allocation-remaining-phases)
+5. [Workstream C: VSM And EVSM Shadow Filtering](#workstream-c-vsm-and-evsm-shadow-filtering)
+6. [Workstream D: Contact Shadow Optimizations](#workstream-d-contact-shadow-optimizations)
+7. [Cross-Cutting Policy Decisions](#cross-cutting-policy-decisions)
+8. [Closeout Checklist](#closeout-checklist)
+
+## Current Runtime Snapshot
+
+Implemented:
+
+- Single-pass request bucketing by atlas kind and encoding.
+- Fixed-level buddy allocator buckets.
+- Direct prior-slot reservation and prior-placement sort tiebreaks.
+- Sticky sub-rect reuse on downsize and deferred in-place upgrade attempts.
+- Resident allocation table with TTL reuse.
+- Relevance/priority-driven sticky demotion state.
+- Split LOD cooldown constants for voluntary changes and forced downsize
+  re-promotion.
+- `NotRelevant` stale-tile reservation after live allocations.
+- O(1)-style published allocation lookup through `ShadowAtlasFrameData`.
+- Multi-page settings are honored per atlas family/encoding.
+- Depth-only spot and point atlas eligibility; moment-encoded spot/point lights
+  stay on standalone maps.
+- Per-face point requests, per-face point relevance mask, and point face
+  resolution demotion from camera-face alignment.
+- Published directional cascade and point-face group metadata.
+- Directional atlas render path with sequential tile rendering and an optional
+  grouped viewport/scissor path.
+- Spot/point/directional standalone moment-map rendering and receivers
+  (`Depth`, `Variance2`, `ExponentialVariance2`, `ExponentialVariance4`).
+- Local shadow-frustum relevance publishes `NotRelevant` skip metadata for
+  spot atlas requests and point atlas faces; standalone spot moment renders
+  and mip regeneration are skipped when the spot frustum is not relevant.
+
+Not complete:
+
+- Directional atlas performance is not equivalent to the legacy layered cascade
+  path.
+- Directional VSM/EVSM selection is internally inconsistent and can disable
+  directional shadows (see [Immediate Bugs](#immediate-bugs)).
+- Broad receiver-aware relevance scoring is still missing. The allocator's
+  `ResolveRelevanceScore` currently derives score from request priority.
+- Directional cascade relevance is not independent. Cascades are always
+  submitted by active cascade index and static priority.
+- Point face group pre-reservation is not implemented. Groups are discovered
+  after independent allocation, so co-location is opportunistic.
+- Retry solving still resets allocator state and starts over after demotion.
+- Fragmentation-triggered compaction is not implemented. `RequestRepack()` is
+  manual only.
+- Anchor slots are not implemented.
+- Diagnostics do not yet expose score inputs, grouped-render fallback reasons,
+  demotion counts, reserve misses, churn counts, or fragmentation ratios.
+- Unified GPU `ShadowAtlasTile` SSBO publish, tile-aware separable blur for
+  atlas tiles, atlas moment-tile mip generation, and warmup-free allocation in
+  submit/solve/publish remain open.
+- Moment encodings currently use standalone shadow maps for local lights and
+  the directional legacy path. Full VSM/EVSM atlas and cascaded-atlas support
+  is intentionally tracked as future work under Workstream C.
+- The focused shadow-atlas tests are not currently green in this worktree.
+  Several failures are caused by `RuntimeShaderServices.Current` not being
+  configured in test setup; several are direct atlas assertion failures and
+  need triage.
+
+## Immediate Bugs
+
+### Directional Atlas Halves Framerate
+
+Observed question: directional lights can roughly halve framerate when
+`UseDirectionalShadowAtlas` is enabled.
+
+Current likely causes:
+
+- Legacy directional cascades can render all cascades through one layered
+  texture-array pass when the selected backend is instanced or geometry
+  layered rendering.
+- Atlas mode only keeps that one-pass property when all active cascade tiles
+  publish a coherent group and the OpenGL viewport/scissor-index path is
+  supported. If the group is missing or the GPU capability checks fail, atlas
+  mode falls back to one `viewport.Render(...)` per cascade tile.
+- Directional dirty requests are treated as critical. When the dirty reason
+  matches any of `FirstSubmission`, `ContentChanged`,
+  `ProjectionOrCameraFitChanged`, `DynamicLight`, `ReuseDisabled`, or
+  `NeverRendered`, the request bypasses the per-frame tile budget through
+  `ShouldRenderDirectionalRefreshPastBudget` / `HasCriticalDirtyReason`.
+- Dynamic directional lights, unstable cascade fits, or content hashes that
+  change every frame therefore force every active cascade through the atlas
+  render path every frame.
+- The atlas path preserves existing page contents with render/crop rectangles.
+  That is correct for atlases, but it makes sequential fallback especially
+  expensive compared with a full layered cascade texture render.
+
+Fix plan:
+
+- [ ] Add a directional atlas frame diagnostic that records, per light:
+  requested cascades, resident cascades, dirty cascades, rendered cascades,
+  grouped render attempted, grouped render succeeded, selected cascade backend,
+  fallback reason, elapsed shadow time, and whether critical budget bypass was
+  used.
+- [ ] Add a warning when directional atlas mode falls back to sequential
+  cascade rendering while legacy layered rendering is available.
+- [ ] Make a same-page 2x2 cascade reservation path for equal-resolution
+  directional cascades before independent allocation. Do not rely on
+  post-allocation group discovery for performance-critical directional lights.
+- [ ] Ensure grouped atlas rendering remains the default on GL 4.6 hardware
+  with viewport/scissor index support.
+- [ ] Revisit directional critical-refresh bypass. First render may bypass the
+  budget; steady-state projection jitter should not force all cascades every
+  frame.
+- [ ] Add profiler counters
+  `ShadowAtlas.Directional.SequentialFallbackFrames` and
+  `ShadowAtlas.Directional.GroupedFrames`.
+- [ ] Acceptance: with a static camera and one 4-cascade directional light,
+  atlas mode renders no more cascade passes per frame than legacy after the
+  first warmup frames.
+- [ ] Acceptance: with grouped rendering supported, atlas-on framerate is
+  within 10 percent of atlas-off legacy layered cascades for the Unit Testing
+  World.
+
+### Directional VSM/EVSM Does Not Work
+
+Observed question: VSM and EVSM directional shadows do not work.
+
+There are two current contract mismatches.
+
+Atlas-on mismatch:
+
+- `Lights3DCollection.SubmitShadowAtlasRequest` hardcodes the request
+  encoding to `EShadowMapEncoding.Depth` for every atlas request (directional,
+  spot, point). Spot and point are saved by their explicit depth-only atlas
+  gates; directional is not.
+- `DirectionalLightComponent.UsesDirectionalShadowAtlasForCurrentEncoding`
+  does not gate atlas use to depth encoding. It only checks
+  `DemotionReason != SkipReason.UnsupportedEncoding`, while
+  `SpotLightComponent.UsesSpotShadowAtlasForCurrentEncoding` and
+  `PointLightComponent.UsesPointShadowAtlasForCurrentEncoding` explicitly
+  require `Encoding == EShadowMapEncoding.Depth`.
+- `VPRC_LightCombinePass.BindDirectionalAtlasShadows` later asks the atlas
+  for the directional light's resolved encoding. For VSM/EVSM this asks for a
+  moment atlas page that was never submitted.
+- Because `useDirectionalShadowAtlas` remains true, the deferred pass also
+  avoids binding the legacy `ShadowMap` / `ShadowMapArray` path. The shader
+  uniform `ShadowMapEncoding` is set to VSM/EVSM, but
+  `materialProgram.Sampler("ShadowMapArray", DummyShadowMapArray, ...)` is
+  bound instead of the cascade texture. Result: no valid directional shadow
+  source.
+
+Atlas-off or legacy mismatch:
+
+- When atlas is disabled, `ShouldRenderLegacyDirectionalShadowMap` treats
+  moment directional shadows as a primary single-map path and sets
+  `renderCascades = false`.
+- When atlas is enabled, the same method unconditionally sets
+  `renderCascades = false` regardless of encoding, because cascades are
+  expected to come from the atlas.
+- The deferred light combine pass still enables cascaded directional sampling
+  whenever the camera requests cascades, `EnableCascadedShadows` is true, and
+  either the atlas is in use or `CascadedShadowMapTexture` exists.
+- In the VSM/EVSM + atlas-enabled state, moment shaders sample
+  `ShadowMapArray`, but the cascade moment array was intentionally not
+  rendered for that frame, and the dummy texture is bound. Result: stale,
+  empty, or invalid cascade moment sampling instead of the primary moment map.
+
+Near-term fix plan:
+
+- [x] Decide the v1 contract: directional atlas is depth-only until a moment
+  atlas is implemented.
+- [x] Change `UsesDirectionalShadowAtlasForCurrentEncoding` to match
+  spot/point behavior: return true only when the resolved directional
+  sampling encoding is `Depth`.
+- [x] When the resolved directional encoding is VSM/EVSM, force the legacy
+  directional path even if `UseDirectionalShadowAtlas` is enabled.
+- [x] Make the deferred pass disable cascaded directional sampling for the
+  primary-single-map moment path, or render and validate moment cascade
+  arrays.
+- [x] Add a test for `UseDirectionalShadowAtlas = true` plus directional VSM:
+  atlas must be bypassed and the legacy moment map must be bound.
+- [x] Add a test for directional EVSM with cascades enabled: either cascaded
+  sampling is disabled and the primary map is sampled, or every cascade
+  moment layer is rendered and sampled intentionally.
+
+Longer-term option (tracked under [Workstream C](#workstream-c-vsm-and-evsm-shadow-filtering)):
+
+- [ ] Implement moment-encoded directional atlases end to end: submit
+  requests with the resolved encoding, allocate moment atlas pages, render
+  `Frag_ShadowMomentOutput` into the atlas sampling texture with a separate
+  raster depth attachment, generate mipmaps/blur for moment atlases, bind the
+  same encoding in receivers, and validate VSM/EVSM bias/moment depth against
+  atlas UVs.
+
+### Point VSM/EVSM Does Not Work
+
+Observed issue: point lights using `Variance2`, `ExponentialVariance2`, or
+`ExponentialVariance4` can fail even though spot and directional standalone
+moment maps work.
+
+Current cause:
+
+- Point-light receivers compare normalized radial light distance.
+- The shared `PointLightShadowDepth.fs` shader writes radial moments correctly,
+  but point shadow caster material variants for cutout/uber materials still
+  wrote plain radial depth, so VSM/EVSM receivers interpreted missing moment
+  channels as invalid moments.
+- Some point caster variants also used the generic projected-depth moment
+  helper. That is correct for spot/directional maps, but wrong for cubemap
+  point shadows.
+
+Fix status:
+
+- [x] Add `XRENGINE_WritePointShadowCasterDepth(...)` to
+  `ShadowMomentEncoding.glsl`; it encodes normalized radial depth with the
+  active shadow encoding.
+- [x] Update point shadow caster variants in common alpha/cutout shaders and
+  the uber shader to use the radial point moment writer.
+- [x] Make geometry-shader point caster variants use the source material's
+  point shadow fragment variant when one exists, preserving alpha discards and
+  moment encoding.
+- [ ] Add/refresh a visual validation scene for point VSM, EVSM2, and EVSM4
+  with masked casters and receivers crossing cube-face boundaries.
+
+### Moving Point/Spot Atlas Shadows Reuse Stale Tiles
+
+Observed issue: dragging or animating point/spot lights while their depth
+shadows are in the atlas can reuse an old atlas tile instead of updating the
+shadow immediately.
+
+Current cause:
+
+- The atlas request content hash already includes `LightComponent.MovementVersion`.
+- A moved local light is therefore marked dirty, but `ShadowFallbackMode.StaleTile`
+  was still allowed for point and spot dirty refreshes before the new tile was
+  rendered.
+- The published allocation could advertise the previous tile as sampleable,
+  making the receiver display a shadow from the old light transform.
+
+Fix status:
+
+- [x] Classify recent point/spot movement as
+  `ProjectionOrCameraFitChanged`, not generic `LightOrSettingsChanged`.
+- [x] Disallow stale-tile fallback for local atlas requests whose dirty reason
+  is a projection/camera-fit change.
+- [x] Keep stale-tile fallback available for non-movement local atlas pressure
+  cases such as relevance misses and low-priority contention.
+- [ ] Add an editor smoke test: drag and animate one point light and one spot
+  light with atlas mode enabled, confirm shadow tiles refresh with the light.
+
+## Workstream A: Atlas Allocator And Relevance Overhaul
+
+### A.1 Make Tests Trustworthy Again
+
+- [ ] Configure runtime shader services or replace light construction helpers
+  so shadow-atlas allocator tests do not fail before the allocator is
+  exercised.
+- [ ] Fix current direct assertion failures:
+  - `SolveAllocations_ReusesResidentTileAfterTransientMissingRequest`
+  - `SolveAllocations_ReusesNotRelevantStaleTileWhenRegionRemainsFree`
+  - `Submit_WhenQueueIsFullPublishesQueueOverflowDiagnostic`
+- [ ] Split pure solver tests from render-path tests. Solver tests should not
+  need shader or renderer services.
+- [ ] Add regression tests for directional VSM/EVSM atlas bypass.
+- [ ] Add regression tests for directional grouped atlas render selection.
+
+Validation targets:
+
+```powershell
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter ShadowAtlasManagerPhaseTests
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter PointShadowAtlasStabilityTests
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter LocalShadowFrustumRelevanceTests
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter CascadedShadowDefaultsAndForwardShaderTests
+dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
+```
+
+### A.2 Receiver-Aware Relevance
+
+Current local relevance is frustum-based and tactical:
+
+- Spot lights can submit `SkipReason.NotRelevant`.
+- Point faces can submit `SkipReason.NotRelevant`.
+- Point face resolution can demote from camera-face alignment.
+
+Still needed:
+
+- [ ] Compute a `ShadowRelevanceScore` per request, not just request priority.
+- [ ] Reuse existing visible/culling data. Do not add a new broad visibility
+  pass for v1.
+- [ ] Score from receivers in view, not from caster visibility. Off-screen
+  casters that shadow visible receivers must remain relevant.
+- [ ] Directional cascades: score each cascade from the cascade slice and the
+  visible receiver bounds it can affect.
+- [ ] Spot lights: score cone/frustum intersection, projected on-screen
+  influence, receiver overlap, distance, brightness, and stale-tile age.
+- [ ] Point faces: combine face frustum receiver overlap with the existing
+  camera-face alignment estimate.
+- [ ] Map score to the existing power-of-two tile ladder.
+- [ ] Submit zero-score cascades/faces as `NotRelevant` only when receiver
+  fallback behavior is defined.
+- [ ] Preserve VR behavior by scoring against both eyes and any explicitly
+  contributing mirror camera.
+
+Acceptance:
+
+- [ ] Static off-screen local lights with no visible receivers no longer
+  consume full-resolution atlas tiles.
+- [ ] A visible receiver shadowed by an off-screen caster keeps the caster's
+  tile relevant.
+- [ ] Far directional cascades that do not affect visible receivers demote or
+  skip independently of near cascades.
+
+### A.3 Directional Group Reservation
+
+Current grouping is discovered after allocation. That is not strong enough for
+directional performance.
+
+- [ ] Add a pre-allocation path for active cascades of one directional light.
+- [ ] Prefer a deterministic 2x2 pack when four cascades share a resolution.
+- [ ] Support partial groups when fewer cascades are active or relevant.
+- [ ] If a grouped pack cannot fit, demote lower-relevance cascades before
+  falling back to independent sequential tiles.
+- [ ] Publish a reason when grouped allocation is not possible.
+- [ ] Keep receiver binding conservative: enable atlas sampling only when
+  every required cascade tile is sampleable or has an explicit fallback.
+
+Acceptance:
+
+- [ ] Four equal-resolution cascades allocate as one page-coherent group.
+- [ ] Grouped atlas rendering issues one render submission on capable GL 4.6
+  hardware.
+- [ ] If one far cascade demotes, the remaining group remains deterministic
+  and non-overlapping.
+
+### A.4 Incremental Solver Retry
+
+Current solver retry demotes a victim, resets all allocators for the state,
+and replays allocations. That is deterministic enough for some cases, but it
+churns work under contention.
+
+- [ ] Track reserved allocations per balanced entry.
+- [ ] On placement failure, demote one selected entry and free only affected
+  reservations.
+- [ ] Prefer prior placement when re-reserving demoted entries.
+- [ ] Bound retry iterations and log a solver fallback if the incremental
+  path cannot converge.
+- [ ] Keep the existing full reset path as a debug fallback until the
+  incremental path has coverage.
+
+Acceptance:
+
+- [ ] Adding a low-priority light to a full atlas does not move unrelated
+  high-priority residents.
+- [ ] Median and 99th percentile solve time do not regress versus the current
+  reset/retry path.
+
+### A.5 Point Face Group Pre-Reservation
+
+Current point-face grouping is metadata over independently allocated faces.
+That allows grouped rendering when faces happen to share a page, but it does
+not reserve a heterogeneous mosaic as a unit.
+
+- [ ] Add `TryReservePointLightFaceGroup(LightId, state, faceSizes[6])`.
+- [ ] Sort faces by relevance, then assign deterministic buddy sub-tiles
+  inside the smallest containing power-of-two block.
+- [ ] Keep point face atomicity partial: individual faces may still demote,
+  skip, or evict when budget requires it.
+- [ ] Update group metadata to carry each member's own `InnerPixelRect` and
+  `UvScaleBias`, ordered by face index.
+- [ ] Validate grouped rendering with different face resolutions.
+
+Acceptance:
+
+- [ ] One full-resolution face plus five quarter-resolution faces can form a
+  single page-coherent point-face group.
+- [ ] Neighbor face sampling remains metadata-driven; no receiver assumes
+  equal face sizes.
+
+### A.6 Fragmentation And Repack Policy
+
+Current repack support is manual through `RequestRepack()`.
+
+- [ ] Add per-page fragmentation metrics: `FreeTexelCount`,
+  `LargestFreeRect`, and a fragmentation ratio.
+- [ ] Trigger compaction only on failed allocation, explicit editor request,
+  or sustained high fragmentation.
+- [ ] Increment `ShadowAtlasFrameData.Generation` on repack.
+- [ ] Publish repack reason and affected atlas family/encoding.
+- [ ] Do not repack during the same frame a receiver is using stale published
+  metadata.
+
+### A.7 Anchor Slots
+
+Anchor slots are still useful, but only after relevance and grouped
+directional allocation are stable.
+
+- [ ] Add `ShadowAnchorLightCount` or a per-kind equivalent.
+- [ ] Solve top-K requests by `(EditorPinned, Priority, RelevanceScore)`
+  first.
+- [ ] Reserve their prior slots before ordinary requests.
+- [ ] Do not allow non-anchor requests to displace anchors within a frame.
+- [ ] Keep the default small so anchors do not starve dense scenes.
+
+### A.8 Diagnostics And Editor Visibility
+
+- [ ] Expose per-light atlas diagnostics in ImGui: score, score inputs,
+  requested resolution, allocated resolution, skip reason, fallback mode,
+  resident age, last rendered frame, page, rect, and encoding.
+- [ ] Expose directional grouped-render state: selected backend, fallback
+  reason, grouped/ungrouped pass count, and time.
+- [ ] Count reserve hits, reserve misses, demotions, deferred upgrades,
+  evictions, repacks, page creations, failed allocations, and `NotRelevant`
+  skips.
+- [ ] Add point-face slot churn diagnostics.
+- [ ] Add directional atlas sequential fallback diagnostics.
+- [ ] Avoid per-frame string formatting unless logging is enabled and
+  rate-limited.
+
+## Workstream B: Dynamic Atlas And LOD Allocation (Remaining Phases)
+
+This workstream tracks the original allocator-plan items that are still open
+after the 2026-05 bring-up. Items already shipped (request bucketing, buddy
+allocator, prior-slot reuse, multi-page atlases, depth-only spot/point atlas
+eligibility, per-face point requests, published group metadata, etc.) are
+captured in the [Current Runtime Snapshot](#current-runtime-snapshot).
+
+### B.1 Request Model And Diagnostics (Phase 1 remainder)
+
+- [ ] Add projected-screen-area scoring, per-face frustum visibility, and
+  editor pinning to desired/minimum resolution computation.
+- [ ] Add caster set and material state to `ContentHash` inputs.
+- [ ] Add explicit dirty-reason reporting in the per-light ImGui diagnostics.
+- [ ] Add tests for cascade request expansion.
+- [ ] Run targeted rendering/unit tests for light components once unrelated
+  compile blockers in the unit-test project are cleared.
+
+### B.2 Atlas Manager, Resources, And Allocator (Phase 2 remainder)
+
+- [ ] Implement VSM/EVSM tile rendering and receiver sampling on the atlas
+  path (see [Workstream C](#workstream-c-vsm-and-evsm-shadow-filtering)).
+- [ ] Add the GPU metadata SSBO publish for the unified `ShadowAtlasTile`
+  contract; current directional/spot paths still bind compact uniform
+  arrays / family-specific SSBO metadata.
+- [ ] Add memory and fragmentation metrics:
+  - [ ] bytes / max budget,
+  - [ ] tiles allocated / possible.
+- [ ] Add a standalone atlas occupancy panel with owner/LOD/dirty-state
+  details (per-light ImGui previews already exist).
+- [ ] Make the warmed allocation/solve path allocation-free in debug
+  instrumentation.
+
+Allocator validation:
+
+- [ ] Add gutter-math, editor-pinned budget bypass, and full stress tests
+  after the unit-test project compile blockers are cleared.
+- [ ] Stress test many mixed-size requests beyond capacity.
+
+### B.3 Spot Lights In Atlas (Phase 3 validation)
+
+- [ ] Visual scene with more shadowed spot lights than fit the atlas.
+- [ ] Forward and deferred spot receivers.
+- [ ] Forced fallback scene covering `Lit`, `ContactOnly`, `StaleTile`, and
+  `Disabled`.
+
+### B.4 Directional Cascades In Atlas (Phase 4 validation)
+
+- [ ] VR stereo edge artifacts are not introduced by single-eye fitting.
+- [ ] VR active viewport validation when available.
+
+### B.5 Point Lights In Atlas (Phase 5 remainder)
+
+- [ ] Add projected receiver/caster overlap and editor pinning to per-face
+  active-consumer scoring (frustum-based scoring already lands).
+- [ ] Optional per-face request skip for faces outside active consumers
+  (beyond the current `SkipReason.NotRelevant` frustum gate).
+
+Validation:
+
+- [ ] Point light in a six-sided orientation test scene.
+- [ ] Moving receiver across face boundaries.
+- [ ] Oversubscribed point-light scene near the camera.
+- [ ] Partial-face scene where only one to three faces are resident.
+- [ ] Visual GS path versus sequential path comparison with identical face
+  masks.
+
+### B.6 Unified Forward+ Local Shadow Metadata (Phase 6)
+
+- [ ] Validate Forward+ scenes with more than four shadowed point lights and
+  more than four shadowed spot lights in atlas mode.
+- [ ] Forward+ scene with many local shadowed lights.
+- [ ] Shader compile/permutation test for atlas and legacy paths.
+
+### B.7 Budgeted Updates, Hysteresis, And Stability (Phase 7 remainder)
+
+- [ ] Add caster/material set hashing to the dirty-reason contract.
+- [ ] Add optional LOD-transition strength fade.
+- [ ] Moving-camera stress scene.
+- [ ] Profiler capture of solve time, render tiles per frame, and repack
+  frequency.
+- [ ] Visual check for shadow shimmer during LOD transitions.
+
+### B.8 Caster Materials, VR, And Probe Policy (Phase 8)
+
+- [ ] Wire `ShadowCasterFilterMode` from request to shadow draw record to
+  material variant.
+- [ ] Add opaque depth-only variant.
+- [ ] Add alpha-tested variant with alpha clip.
+- [ ] Add two-sided raster state handling.
+- [ ] Keep `AlphaToCoverage` out of v1 unless separately scheduled.
+- [ ] Add probe classification: shadow consumers vs non-consumers.
+- [ ] Add per-probe `UsesShadowAtlas` opt-in.
+- [ ] Ensure multi-camera priority uses max projected score across consumers,
+  not sum.
+- [ ] Preserve one shared tile for both VR eyes in v1.
+
+Validation:
+
+- [ ] Foliage/cutout caster visual scene.
+- [ ] Probe capture scene proving no unexpected atlas request explosion.
+- [ ] Stereo cascade coverage validation.
+
+### B.9 Static / Dynamic Caster Split (Phase 9)
+
+- [ ] Measure redraw cost in representative static-heavy scenes.
+- [ ] Track static and dynamic caster sets per request.
+- [ ] Choose implementation based on profiling: two-tile-per-light,
+  hash-stable single tile with static copy, or continue single-tile full
+  redraw.
+- [ ] If enabled, schedule static refresh only when light or static set
+  changes.
+- [ ] Composite dynamic movers over static cache.
+- [ ] Add inspector view for static/dynamic composition state.
+- [ ] Cache invalidation tests for moved light, changed material, and changed
+  static set.
+
+### B.10 Virtual Shadow Maps Follow-Up (Phase 10)
+
+- [ ] Gate Virtual Shadow Maps behind a feature flag.
+- [ ] Add page-table backing store and residency tracking.
+- [ ] Reuse `ShadowMapRequest` schema unchanged.
+- [ ] Reuse receiver metadata shape with `vsmPacked` populated.
+- [ ] Drive page requests from screen-visible texel analysis using HZB or
+  depth-pyramid feedback.
+- [ ] Retain v1 atlas as fallback for hardware or driver paths where virtual
+  pages are impractical.
+
+### B.11 Allocator Validation Matrix (remaining items)
+
+Unit tests:
+
+- [ ] gutter and inner-rect calculation
+- [ ] point light expands to six requests
+- [ ] point-light face metadata supports partial residency
+- [ ] editor-pinned budget bypass
+- [ ] thread-safe deterministic submit under fixed input
+- [ ] no allocations after warmup in submit/solve/publish
+- [ ] alpha-tested caster discard path
+- [ ] non-consuming probes do not submit requests
+
+Visual scenes:
+
+- [ ] many spot lights beyond atlas capacity
+- [ ] many point lights near the camera
+- [ ] partial point-face residency and fallback
+- [ ] mixed moving and static shadow casters
+- [ ] moment filtering with gutters
+- [ ] broad spot/point atlas validation (forward and deferred)
+- [ ] VR active viewport
+- [ ] alpha-tested foliage
+- [ ] formal mixed-light / mixed-LOD bias regression scene
+- [ ] forced fallback oversubscription
+
+Performance counters:
+
+- [ ] atlas solve time
+- [ ] shadow tiles rendered per frame
+- [ ] `Lights3DCollection.RenderShadowMaps`
+- [ ] receiver shader cost
+- [ ] atlas memory use
+- [ ] fragmentation ratio
+- [ ] forward shader sampler count
+- [ ] request submit cost from job threads
+- [ ] generation/repack frequency
+
+### B.12 Allocator Risk Checklist
+
+- [ ] Tile-edge leaks mitigated with gutters, inner rect clamping, and
+  tile-aware blur/mip generation.
+- [ ] Shadow shimmer mitigated with reuse, hysteresis, texel snapping, and
+  controlled repacks.
+- [ ] Point-light seams covered by face transform tests and gutter edge
+  handling.
+- [ ] Forward shader metadata complexity controlled by migrating spot lights
+  first.
+- [ ] Bias regression covered by mixed-LOD validation.
+- [ ] Allocator fragmentation tracked before adding new allocator modes.
+- [ ] Shader permutation growth tracked through existing uber-feature
+  tooling.
+- [ ] Probe-capture request explosion prevented by default opt-out.
+
+### B.13 Out Of Scope For Atlas v1
+
+- Translucent, colored, stochastic, deep-shadow, or Fourier opacity shadows.
+- Ray-traced shadow-map encodings.
+- Per-eye virtual page residency.
+- Alpha-to-coverage shadow path.
+- Cookie or IES profile atlasing.
+
+## Workstream C: VSM And EVSM Shadow Filtering
+
+### C.1 Design Rules
+
+- `Depth` remains the default behavior until a light explicitly opts into
+  moment maps.
+- `EShadowMapEncoding` is separate from depth filter mode.
+- Moment maps encode linear normalized depth, not raw projected
+  `gl_FragCoord.z`.
+- Point-light moment maps encode radial normalized depth.
+- The encoder, clear value, receiver comparison, and reversed-Z/depth-direction
+  constant always agree.
+- Moment map clears use an unoccluded sentinel, never zero.
+- EVSM4 uses signed floating-point formats; unsigned formats are forbidden.
+- Format selection probes render-target and linear-filter capability before
+  allocation.
+- Unsupported formats demote deterministically to a supported encoding,
+  logging once per light.
+- Moment controls on `XRBase`-derived light components use `SetField(...)`.
+- Cascades blend post-filter visibility values, never raw depth or moment
+  vectors.
+- Atlas gutters use the same encoding-specific unoccluded clear sentinel.
+- Contact shadows stay independent and multiply on top of both depth and
+  moment visibility.
+
+### C.2 Pre-v1 API Cleanup
+
+- [ ] Rename `ESoftShadowMode` to `EShadowDepthFilterMode`.
+- [ ] Rename `SoftShadowMode` to `DepthShadowFilterMode`.
+- [ ] Present both encoding and filtering under an editor group named
+  `Shadow Filtering`.
+
+### C.3 Clear Sentinels And Format Defaults
+
+- [ ] Use the same encoding-specific clear sentinel for untouched atlas
+  texels and gutters.
+- [ ] Validate / expose an `R32f` color option for color-depth atlas users.
+
+### C.4 Standalone Resource Slice Remainder
+
+- [ ] With default settings, validate that existing depth shadows render as
+  before (Phase 1 exit criterion still open).
+
+### C.5 Spot Moment Slice Remainder
+
+- [ ] Add per-resource separable blur for non-atlas moment spot maps.
+- [ ] Implement moment debug viewer for `sampler2D` resources: `M1`, `M2`,
+  variance, EVSM warped channels, bleed mask, active clear sentinel.
+
+Validation:
+
+- [ ] Visual comparison: `Depth + PCSS`, VSM, EVSM2, EVSM4.
+- [ ] Long-range spot light scene.
+- [ ] Masked/cutout caster scene.
+- [ ] Profiler capture for shadow render, blur, and receiver cost.
+
+### C.6 Point Moment Remainder
+
+- [ ] Validate masked caster variants write correct radial moments.
+- [ ] Geometry-shader and six-pass paths match within expected filtering
+  differences.
+- [ ] Face seams are no worse than depth mode.
+
+Validation:
+
+- [ ] Point light near shadow casters.
+- [ ] Moving receiver crossing cube face boundaries.
+- [ ] Masked point-shadow caster.
+- [ ] EVSM overflow/clamp test for point lights.
+
+### C.7 Directional Single-Map Remainder
+
+- [ ] Confirm unified color `Depth` path quality against the legacy hardware
+  depth path.
+- [ ] Depth mode quality remains acceptable with manual compare.
+
+Validation:
+
+- [ ] Directional single-light scene.
+- [ ] Volumetric fog scene if applicable.
+- [ ] Depth manual-compare reference against previous behavior.
+
+### C.8 Directional Cascaded Remainder
+
+- [ ] Validate cascade debug colors and blend widths.
+- [ ] Moment maps do not amplify cascade jitter beyond acceptable tolerance.
+
+Validation:
+
+- [ ] Directional cascaded scene with camera movement.
+- [ ] Cascade transition-band scene.
+- [ ] Mixed depth and moment encoding preset checks.
+
+### C.9 Blur, Mip Filtering, And MSAA
+
+- [ ] Keep Phase 2 per-resource blur for non-atlas resources until atlas blur
+  is ready.
+- [ ] Add tile-aware separable blur once atlas tile rects are available.
+- [ ] Clamp blur samples to tile inner rects.
+- [ ] Add optional MSAA shadow rasterization for non-atlas resources first.
+- [ ] Add single-sample moment resolve from MSAA depth source.
+- [ ] Keep tile-aware MSAA resolve out of v1 atlas unless separately
+  validated.
+
+Validation:
+
+- [ ] Wide soft spot shadow with blur.
+- [ ] Atlas gutter leak scene once atlas integration exists.
+- [ ] MSAA moment resolve comparison on non-atlas spot or directional
+  resource.
+
+### C.10 Atlas Integration
+
+- [ ] Replace the depth-only atlas request path with encoding-aware requests
+  for all light families. `SubmitShadowAtlasRequest` must use each light's
+  resolved `ShadowMapFormatSelection.Encoding`, not a hardcoded `Depth`.
+- [ ] Keep separate atlas pages per `(atlas kind, encoding)`, including
+  `Variance2`, `ExponentialVariance2`, and `ExponentialVariance4`.
+- [ ] Spot VSM/EVSM atlas path: render `Frag_ShadowMomentOutput` into the
+  atlas color page with a separate raster depth attachment, publish moment
+  filter params, and sample through the same atlas metadata as depth spots.
+- [ ] Point VSM/EVSM atlas path: render radial moments per face into the
+  point atlas color page, keep per-face near/far and resolution metadata, and
+  validate face-boundary filtering against the standalone cubemap path.
+- [ ] Directional VSM/EVSM atlas path: support both primary single-map moment
+  atlas tiles and cascaded moment atlas tiles. Cascades must blend filtered
+  visibility results, not raw moment vectors.
+- [ ] Cascaded moment support must work in both legacy texture-array mode and
+  atlas mode, with a single receiver contract deciding whether the source is
+  a standalone map, cascade array, or atlas tile.
+- [ ] Use clear sentinel for untouched atlas texels and gutters.
+- [ ] Implement agreed demotion policy when encoding budget is exhausted.
+- [ ] Publish moment filter parameters through `ShadowAtlasTile.filterParams`.
+- [ ] Add atlas debug views for moment channels.
+- [ ] Moment filtering respects atlas tile boundaries.
+- [ ] Generate moment mipmaps and/or tile-aware separable blur per atlas tile
+  without bleeding across inner rects or gutters.
+
+Validation:
+
+- [ ] Mixed encoding atlas scene.
+- [ ] Encoding flip at runtime.
+- [ ] Oversubscribed moment atlas scene exercising demotion and fallback.
+- [ ] Directional VSM/EVSM cascades in atlas mode and legacy array mode.
+- [ ] Spot and point VSM/EVSM atlas scenes, deferred and forward.
+
+### C.11 Other Shadow Consumers And Legacy Cleanup
+
+- [ ] Convert or explicitly exclude volumetric fog directional sampling.
+- [ ] Convert or explicitly exclude SSGI / probe GI directional shadowing.
+- [ ] Convert or explicitly exclude water and translucency shadow sampling.
+- [ ] Convert or explicitly exclude decals using shadow matrices.
+- [ ] Convert or explicitly exclude GPU particle lighting.
+- [ ] Add a build-time or test-time check that legacy binding names are not
+  used outside approved compatibility shims.
+- [ ] Remove compatibility shims once common materials and debug views use
+  the dispatcher.
+- [ ] Update relevant docs and editor help text for user-visible settings.
+
+Validation:
+
+- [ ] Shader source scan for legacy binding names.
+- [ ] Visual smoke test of each converted consumer.
+- [ ] Editor inspector smoke test.
+
+### C.12 Shader Helper Remainder
+
+Encoding helpers:
+
+- [ ] `XRENGINE_EncodeVsmMoments(float depth, float minVariance)`.
+- [ ] `XRENGINE_EncodeEvsm2Moments(float depth, float exponent, float minVariance)`.
+- [ ] `XRENGINE_EncodeEvsm4Moments(float depth, float positiveExponent, float negativeExponent, float minVariance)`.
+- [ ] Clamp exponents based on selected format.
+- [ ] Add a derivative-free or derivative-clamped path for cube faces, atlas
+  tiles, cascades, and masked casters.
+
+Sampling helpers:
+
+- [ ] `XRENGINE_ChebyshevUpperBound(...)`.
+- [ ] EVSM2 visibility helper.
+- [ ] EVSM4 visibility helper using min of positive and negative visibility
+  estimates.
+- [ ] `sampler2D`, `sampler2DArray`, and `samplerCube` dispatchers.
+- [ ] Keep depth compare helpers for hard, Poisson, Vogel, and PCSS.
+- [ ] Apply contact shadows after map visibility.
+
+### C.13 Filtering Validation Matrix
+
+Unit tests:
+
+- [ ] enum/default values
+- [ ] `LightComponent` moment settings use `SetField(...)`
+- [ ] format selection per encoding and light type
+- [ ] format capability demotion
+- [ ] EVSM exponent clamps
+- [ ] clear sentinel calculation
+- [ ] central depth-direction consistency
+- [ ] shader source contains moment encoding helpers
+- [ ] shader source contains receiver dispatchers
+- [ ] cascade receiver does not blend raw moment vectors
+- [ ] default `Depth` mode remains unchanged
+
+Visual tests:
+
+- [ ] one directional light with cascades
+- [ ] one long-range spot light
+- [ ] one point light near shadow casters
+- [ ] masked foliage or cutout material
+- [ ] moving receiver
+- [ ] moving light
+- [ ] cascade transition bands
+- [ ] atlas gutter leak scene after atlas integration
+
+Compare these presets:
+
+- [ ] `Depth + Hard`
+- [ ] `Depth + FixedPoisson`
+- [ ] `Depth + VogelDisk`
+- [ ] `Depth + ContactHardeningPcss`
+- [ ] `Variance2`
+- [ ] `ExponentialVariance2`
+- [ ] `ExponentialVariance4`
+
+Performance tests:
+
+- [ ] `Lights3DCollection.RenderShadowMaps`
+- [ ] moment blur pass cost
+- [ ] deferred light passes
+- [ ] forward material draws with local lights
+- [ ] `GLMeshRenderer.Render.SetMaterialUniforms`
+- [ ] shader sampler/binding count
+- [ ] memory use by encoding
+
+### C.14 Filtering Risk Checklist
+
+- [ ] Light bleeding mitigated with bleed reduction, min variance, EVSM
+  presets, and depth fallback.
+- [ ] EVSM overflow mitigated with format-specific exponent clamps and
+  optional 32-bit formats.
+- [ ] Atlas filtering bleed mitigated with gutters, inner-rect clamps, and
+  tile-aware blur/mips.
+- [ ] Point-light seams mitigated with radial depth consistency and
+  face-boundary validation.
+- [ ] Reversed-Z drift mitigated with one central depth-direction constant
+  and tests.
+- [ ] Shader permutation growth monitored through the existing uber-feature
+  tooling.
+- [ ] Derivative-derived moment variance disabled or clamped where
+  derivatives are unreliable.
+
+### C.15 Filtering Out Of Scope For v1
+
+- Variance-based PCSS / VSSM.
+- Tile-aware MSAA resolve for atlas resources.
+- Translucent, colored, stochastic, deep-shadow, or Fourier opacity shadows.
+- Runtime per-fragment dynamic branching between encodings in hot receiver
+  loops.
+
+Post-v1 features are tracked in
+[Post-v1 Advanced Shadow Features Plan](../design/post-v1-advanced-shadow-features-plan.md).
+
+## Workstream D: Contact Shadow Optimizations
+
+Reduce per-pixel cost of contact shadows so they can stay enabled by default
+on multi-light scenes without dragging frame time.
+
+Today, `XRENGINE_SampleContactShadowScreenSpace` in
+`Build/CommonAssets/Shaders/Snippets/ShadowSampling.glsl` runs a world-space
+ray march. Per sample it executes roughly four `mat4 * vec4` reconstructions:
+
+- `viewProjectionMatrix * worldPos` — project current sample to clip
+- `inverseProjMatrix * clipPos` — reconstruct view-space from sampled depth
+- `inverseViewMatrix * viewPos` — back to world to compare distances
+- `viewMatrix * samplePosWS` — recompute the sample's view depth
+
+Default sample counts:
+`DirectionalLightComponent.ContactShadowSamples = 16`,
+`SpotLightComponent.ContactShadowSamples = 16`,
+`LightComponent` base (point inherits) `= 4`.
+
+Worst-case per-pixel-per-light is ~16 samples × ~4 mat4×vec4 + a depth fetch
++ a few dot products, which compounds quickly across multiple shadow-casting
+lights.
+
+### D.0 Branch Setup
+
+- [ ] Create branch `rendering/contact-shadow-optimizations` and move all
+  subsequent work onto it.
+
+### D.1 Refactor To Pure Screen-Space Marching (highest gain)
+
+- [ ] Replace per-sample world-space reprojection with a constant per-step UV
+  + clip-depth delta:
+  - Compute start clip position (`viewProjectionMatrix * worldPos`) once.
+  - Compute end clip position
+    (`viewProjectionMatrix * (worldPos + rayDir * maxDist)`) once.
+  - Convert to screen UV + clip-depth, derive `vec2 duv` and `float dz` per
+    step at function entry.
+  - Loop body:
+    `uv += duv; rayClipDepth += dz; sceneDepth = textureLod(SceneDepth, uv, 0); compare`.
+- [ ] Drop `inverseViewMatrix` and the redundant `viewMatrix * samplePosWS`
+  per-sample multiplications; keep `inverseProjMatrix` only if still needed
+  for thickness compare, and prefer linear depth comparison instead.
+- [ ] Move all four overloads to a shared internal helper to keep the four
+  entry points thin.
+
+### D.2 Compare In View Space, Not World Space
+
+- [ ] Build the ray once in view space (`viewMatrix * worldPos`,
+  `viewMatrix * lightDir`) at function entry, then compare against linearized
+  scene depth without ever reconstructing a sample world position.
+- [ ] Keep the existing thickness / fade parameters; only the coordinate
+  system changes.
+
+### D.3 Lower Default Sample Counts
+
+- [ ] `DirectionalLightComponent.ContactShadowSamples` 16 → 8.
+- [ ] `SpotLightComponent.ContactShadowSamples` 16 → 8.
+- [ ] `LightComponent` base 4 → 6 (point lights gain a bit; cost still capped
+  by short `ContactShadowDistance` defaults).
+- [ ] Update
+  `XREngine.UnitTests/Rendering/CascadedShadowDefaultsAndForwardShaderTests.cs`
+  expectations (lines around 1075 / 1216 at time of writing).
+- [ ] Add a short note in
+  `docs/architecture/rendering/default-render-pipeline-notes.md` documenting
+  the new defaults and rationale.
+
+### D.4 Tighter Early-Outs
+
+- [ ] Skip the sample loop when `dot(N, L) <= 0` (already partially done in
+  some paths — audit all four overloads).
+- [ ] Skip the loop when `viewDepth > contactFadeEnd` before computing the
+  ray start/delta.
+- [ ] Add a per-light tile-size early-out: if the light's clip-space bound
+  does not overlap the fragment's screen tile, skip contact shadow entirely.
+  (Optional; revisit after D.1–D.3.)
+
+### D.5 (Optional Follow-Up) Per-Light Screen-Space Contact-Shadow Pass
+
+- [ ] Evaluate moving contact shadows to a half-res compute pass that writes
+  a per-light occlusion texture, sampled as a single texture fetch in
+  lighting. Useful when many shadow-casters overlap on screen.
+- [ ] Out of scope until D.1–D.4 land and are profiled.
+
+### D.6 Final Merge
+
+- [ ] After validation, merge `rendering/contact-shadow-optimizations` back
+  into `main`.
+
+### D.7 Contact Shadow Validation Plan
+
+1. Build editor: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`.
+2. Boot `Start-Editor-NoDebug` with the unit testing world; confirm contact
+   shadows still appear under directional + at least one spot and one point
+   light.
+3. Run `Test-SurfelGi` and any forward-lighting / deferred shading smoke
+   tests.
+4. Capture before/after profiler GPU traces in a multi-light scene
+   (`profiler-render-stalls.log`, `profiler-fps-drops.log`).
+5. Update or add a test in
+   `XREngine.UnitTests/Rendering/CascadedShadowDefaultsAndForwardShaderTests.cs`
+   (or a new contact-shadow-specific file) that asserts the new sample-count
+   defaults.
+
+### D.8 Contact Shadow Risks / Notes
+
+- The four `XRENGINE_SampleContactShadowScreenSpace` overloads must stay in
+  sync — refactor one, port the same pattern to the others in the same
+  commit.
+- View-space vs world-space switch can subtly change thickness behavior for
+  long rays (`ContactShadowDistance > ~5m`); keep the fade parameters in the
+  same units and visually compare at distance.
+- Sample-count changes are user-visible defaults; surface in patch notes.
+
+## Cross-Cutting Policy Decisions
+
+- Directional, spot, and point atlas paths are depth-only until a complete
+  moment-atlas path exists.
+- VSM/EVSM local lights use standalone shadow maps in the near term, but the
+  atlas architecture must preserve a clean path to moment atlas pages and
+  cascaded moment atlas sampling.
+- Legacy non-atlas paths stay available for debug, fallback, and moment
+  encodings.
+- The atlas must not silently suppress shadows when an encoding is
+  unsupported. It must either bypass to legacy or publish an explicit
+  fallback/diagnostic.
+- Receiver shaders must treat atlas metadata as authoritative. They must not
+  assume one page, one resolution, or equal point-face sizes.
+- Hot paths must avoid managed allocations after warmup. New diagnostics must
+  use fixed counters or preallocated storage.
+- `Depth` shadow behavior remains the default until a light opts into moment
+  maps; the encoder, clear, receiver compare, and depth-direction constant
+  always agree.
+- Probe captures do not consume live atlas shadows by default.
+- VR directional cascade fitting uses the union of both eye frusta.
+- Contact shadows always multiply on top of map visibility, independent of
+  encoding.
+
+## Closeout Checklist
+
+- [ ] Directional depth atlas performance is measured and no longer halves
+  framerate versus legacy layered cascades in the same scene.
+- [ ] Directional VSM/EVSM works with `UseDirectionalShadowAtlas` both
+  enabled and disabled, using the documented bypass or a complete
+  moment-atlas path.
+- [ ] Focused shadow-atlas tests pass.
+- [ ] Runtime rendering build passes without new warnings.
+- [ ] Editor Unit Testing World smoke test covers: directional cascades,
+  directional VSM/EVSM, many spots, point atlas, stale-tile fallback,
+  one-page pressure, and multi-page settings.
+- [ ] Forward+ scene shades more than four shadowed point lights and more
+  than four shadowed spot lights in atlas mode.
+- [ ] Spot, point, and directional VSM/EVSM end-to-end visual comparisons
+  recorded.
+- [ ] Contact shadow refactor merged and default sample counts updated, with
+  before/after profiler captures in a multi-light scene.
+- [ ] Docs are updated if settings, editor diagnostics, launch flags, or
+  shadow encoding behavior changes.

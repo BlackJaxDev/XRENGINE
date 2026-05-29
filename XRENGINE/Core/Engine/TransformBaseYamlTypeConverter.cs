@@ -49,7 +49,6 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
         TransformBase? result = null;
         TransformBase[]? serializedChildren = null;
         bool hasSerializedChildren = false;
-        bool sawRecognizedKey = false;
 
         while (!parser.TryConsume<MappingEnd>(out _))
         {
@@ -66,13 +65,11 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
             switch (key)
             {
                 case TypeKey:
-                    sawRecognizedKey = true;
                     if (parser.TryConsume<Scalar>(out var typeScalar))
                         runtimeType = ResolveTransformType(typeScalar.Value);
                     break;
 
                 case ValueKey:
-                    sawRecognizedKey = true;
                     if (runtimeType is null && !YamlDefaultTypeContext.TryConsumeRead(type, out runtimeType))
                         runtimeType = typeof(Transform);
                     if (runtimeType == typeof(Transform))
@@ -101,7 +98,6 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
                     break;
 
                 case ChildrenKey:
-                    sawRecognizedKey = true;
                     serializedChildren = rootDeserializer(typeof(TransformBase[])) as TransformBase[];
                     hasSerializedChildren = true;
                     break;
@@ -109,7 +105,6 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
                 default:
                     if (TryReadInlineConcreteTransformProperty(key, type, ref runtimeType, ref result, rootDeserializer, parser))
                     {
-                        sawRecognizedKey = true;
                         break;
                     }
 

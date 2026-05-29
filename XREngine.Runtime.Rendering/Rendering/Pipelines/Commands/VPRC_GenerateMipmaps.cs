@@ -5,6 +5,11 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         public string? TextureName { get; set; }
 
+        public override string GpuProfilingName
+            => string.IsNullOrWhiteSpace(TextureName)
+                ? base.GpuProfilingName
+                : $"{base.GpuProfilingName}[{TextureName}]";
+
         protected override void Execute()
         {
             if (TextureName is null)

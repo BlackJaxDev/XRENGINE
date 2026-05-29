@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using XREngine.Core.Attributes;
 using XREngine.Rendering.RenderGraph;
 
@@ -31,6 +33,23 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool RenderToSourceFrameBuffer { get; set; }
         public bool MatchDestinationRenderArea { get; set; }
 
+        public override string GpuProfilingName
+        {
+            get
+            {
+                if (string.IsNullOrWhiteSpace(SourceQuadFBOName))
+                    return base.GpuProfilingName;
+
+                XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                string destination = ResolveDestinationLabel(activeInstance);
+                string shaderLabel = ResolveShaderLabel(activeInstance);
+
+                return string.IsNullOrWhiteSpace(shaderLabel)
+                    ? $"{base.GpuProfilingName}[{SourceQuadFBOName}->{destination}]"
+                    : $"{base.GpuProfilingName}[{SourceQuadFBOName}->{destination}; {shaderLabel}]";
+            }
+        }
+
         public VPRC_RenderQuadToFBO SetTargets(string sourceQuadFBOName, string? destinationFBOName = null, bool matchDestinationRenderArea = false)
         {
             SourceQuadFBOName = sourceQuadFBOName;
@@ -50,6 +69,48 @@ namespace XREngine.Rendering.Pipelines.Commands
             RenderToSourceFrameBuffer = renderToSourceFrameBuffer;
             MatchDestinationRenderArea = false;
             return this;
+        }
+
+        private string ResolveDestinationLabel(XRRenderPipelineInstance? activeInstance)
+            => DestinationFBOName
+                ?? (RenderToSourceFrameBuffer ? SourceQuadFBOName : null)
+                ?? activeInstance?.RenderState.OutputFBO?.Name
+                ?? RenderGraphResourceNames.OutputRenderTarget;
+
+        private string ResolveShaderLabel(XRRenderPipelineInstance? activeInstance)
+        {
+            XRQuadFrameBuffer? sourceFBO = SourceQuadFBOName is null
+                ? null
+                : activeInstance?.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
+
+            XRMaterial? material = sourceFBO?.Material;
+            if (material is null)
+                return string.Empty;
+
+            IReadOnlyList<XRShader> fragmentShaders = material.FragmentShaders;
+            XRShader? fragmentShader = fragmentShaders.Count > 0
+                ? fragmentShaders[fragmentShaders.Count - 1]
+                : null;
+
+            string shaderName = GetShaderDisplayName(fragmentShader);
+            if (string.IsNullOrWhiteSpace(material.Name))
+                return shaderName;
+
+            return string.IsNullOrWhiteSpace(shaderName)
+                ? $"material={material.Name}"
+                : $"material={material.Name}; shader={shaderName}";
+        }
+
+        private static string GetShaderDisplayName(XRShader? shader)
+        {
+            if (shader is null)
+                return string.Empty;
+
+            string? path = shader.Source?.FilePath ?? shader.FilePath;
+            if (!string.IsNullOrWhiteSpace(path))
+                return Path.GetFileName(path);
+
+            return shader.Name ?? string.Empty;
         }
 
         protected override void Execute()

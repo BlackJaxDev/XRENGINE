@@ -81,7 +81,7 @@ void main()
       discard;
 
 #if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    Depth = vec4(length(FragPos - LightPos) / FarPlaneDist, 0.0, 0.0, 0.0);
+    XRENGINE_WritePointShadowCasterDepth(Depth, FragPos, LightPos, FarPlaneDist);
 #elif defined(XRENGINE_SHADOW_CASTER_PASS)
     // Future tinted transmission: add a separate transmittance target and accumulate color-filtered light attenuation here instead of a depth-only write.
     XRENGINE_WriteShadowCasterDepth(Depth, gl_FragCoord.z);

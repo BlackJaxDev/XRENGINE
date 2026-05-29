@@ -1018,7 +1018,7 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                DirectStorageIO.TryReadInto(filePath, offset, length, mappedPtr);
+                RuntimeDirectStorageIO.TryReadInto(filePath, offset, length, mappedPtr);
             }
             catch
             {

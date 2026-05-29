@@ -13,6 +13,8 @@ uniform float SkyStarIntensity = 1.0;
 uniform float SkyHorizonHaze = 1.0;
 uniform float SkySunDiscSize = 0.9994;
 uniform float SkyMoonDiscSize = 0.99965;
+uniform float SkyCameraTwinkle = 0.0;
+uniform float SkyTwinklePhase = 0.0;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -56,6 +58,21 @@ float Hash3(vec3 p)
     p = fract(p * vec3(443.8975, 397.2973, 491.1871));
     p += dot(p, p.yzx + 19.19);
     return fract((p.x + p.y) * p.z);
+}
+
+float MotionStarTwinkle(vec3 cell, float seed, float amount, float speed)
+{
+    float motion = clamp(SkyCameraTwinkle, 0.0, 1.0);
+    if (motion <= 0.001)
+        return 1.0;
+
+    float phase = SkyTwinklePhase * speed + seed * 13.37;
+    float phaseBase = floor(phase);
+    float phaseBlend = smoothstep(0.0, 1.0, fract(phase));
+    vec3 phaseSeed = vec3(seed * 31.0 + 7.0, seed * 17.0 + 3.0, phaseBase);
+    float a = Hash3(cell + phaseSeed);
+    float b = Hash3(cell + phaseSeed + vec3(0.0, 0.0, 1.0));
+    return 1.0 + (mix(a, b, phaseBlend) - 0.5) * amount * motion;
 }
 
 float Noise(vec2 p)
@@ -256,36 +273,38 @@ void main()
     // Dusk saturation warmth
     color *= mix(vec3(1.0), vec3(1.20, 0.88, 0.78), duskFactor * 0.55);
 
-    // --- Stars + Milky Way (sampled directly on the 3D direction - no seams, no pole stretch) ---
-    float starDensity = 256.0;
-    vec3 starP = dir * starDensity;
-    vec3 starCell = floor(starP);
-    float starHash = Hash3(starCell);
-    float twinkle = 0.65 + 0.35 * sin(TAU * (SkyTimeOfDay * 360.0 + starHash * 53.0));
-    float smallStar = step(0.9975, starHash) * (0.55 + 0.45 * fract(starHash * 17.3)) * twinkle;
+    vec3 starField = vec3(0.0);
+    if (nightFactor > 0.001 && SkyStarIntensity > 0.001)
+    {
+        float starDensity = 256.0;
+        vec3 starP = dir * starDensity;
+        vec3 starCell = floor(starP);
+        float starHash = Hash3(starCell);
+        float twinkle = MotionStarTwinkle(starCell, starHash, 0.16, 1.0);
+        float smallStar = step(0.9975, starHash) * (0.55 + 0.45 * fract(starHash * 17.3)) * twinkle;
 
-    // Bigger, rarer stars with a soft gaussian disc and color variation
-    float bigDensity = 64.0;
-    vec3 bigP = dir * bigDensity;
-    vec3 bigCell = floor(bigP);
-    float bigHash = Hash3(bigCell);
-    vec3 bigOffset = fract(bigP) - 0.5;
-    float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 60.0);
-    bigStar *= 0.6 + 0.4 * sin(TAU * (SkyTimeOfDay * 180.0 + bigHash * 91.0));
-    float hueSeed = Hash3(starCell + vec3(11.0, 23.0, 7.0));
-    vec3 starColor = mix(vec3(0.85, 0.90, 1.10), vec3(1.10, 0.95, 0.78), hueSeed);
+        float bigDensity = 64.0;
+        vec3 bigP = dir * bigDensity;
+        vec3 bigCell = floor(bigP);
+        float bigHash = Hash3(bigCell);
+        vec3 bigOffset = fract(bigP) - 0.5;
+        float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 60.0);
+        bigStar *= MotionStarTwinkle(bigCell, bigHash, 0.10, 0.73);
+        float hueSeed = Hash3(starCell + vec3(11.0, 23.0, 7.0));
+        vec3 starColor = mix(vec3(0.85, 0.90, 1.10), vec3(1.10, 0.95, 0.78), hueSeed);
 
-    vec3 stars = (smallStar + bigStar * 2.4) * starColor;
+        vec3 stars = (smallStar + bigStar * 2.4) * starColor;
 
-    // Milky Way band along a tilted galactic plane - detail from 3D fbm on the direction
-    vec3 galacticUp = SafeNormalize3(vec3(0.35, 0.22, 0.91));
-    float bandCoord = dot(dir, galacticUp);
-    float band = exp(-bandCoord * bandCoord * 38.0);
-    float mwDetail = smoothstep(0.35, 0.95, Fbm3_6(dir * 6.2));
-    vec3 milkyWay = mix(vec3(0.06, 0.08, 0.15), vec3(0.22, 0.18, 0.28), mwDetail) * band * mwDetail * 0.35;
+        vec3 galacticUp = SafeNormalize3(vec3(0.35, 0.22, 0.91));
+        float bandCoord = dot(dir, galacticUp);
+        float band = exp(-bandCoord * bandCoord * 38.0);
+        vec2 galaxyUv = DirectionToOctahedralPlane(dir) * 5.2 + vec2(3.1, 7.4);
+        float mwDetail = smoothstep(0.35, 0.95, Fbm(galaxyUv));
+        vec3 milkyWay = mix(vec3(0.06, 0.08, 0.15), vec3(0.22, 0.18, 0.28), mwDetail) * band * mwDetail * 0.35;
 
-    float starHorizonFade = smoothstep(-0.05, 0.22, dir.y);
-    vec3 starField = (stars + milkyWay) * SkyStarIntensity * starHorizonFade;
+        float starHorizonFade = smoothstep(-0.05, 0.22, dir.y);
+        starField = (stars + milkyWay) * SkyStarIntensity * starHorizonFade;
+    }
 
     // Night deep-sky base
     vec3 nightBase = vec3(0.006, 0.009, 0.022) * (0.4 + 0.6 * smoothstep(-0.12, 0.4, dir.y));
@@ -294,21 +313,14 @@ void main()
     vec3 night = nightBase + starField * nightFactor;
     color = mix(night, color + night * 0.15, clamp(dayFactor + duskFactor * 0.35, 0.0, 1.0));
 
-    // --- Volumetric-style clouds sampled in 3D on the direction (seamless) ---
+    // --- Seamless directional clouds ---
     float timeAdvect = SkyCloudSpeed * SkyTimeOfDay * 240.0;
-    // Flow direction perpendicular to the vertical axis, slowly rotating over time
     float flowAngle = SkyTimeOfDay * 0.35;
-    vec3 flow = vec3(cos(flowAngle), 0.0, sin(flowAngle)) * timeAdvect * 0.25;
-    vec3 cloudP = dir * SkyCloudScale * 3.0 + flow;
-
-    vec3 warp = vec3(Fbm3(cloudP * 1.3 + vec3(3.2, 7.1, 0.5)),
-                     Fbm3(cloudP * 1.3 + vec3(1.7, 9.3, 4.2)),
-                     Fbm3(cloudP * 1.3 + vec3(6.1, 2.8, 8.4))) - 0.5;
-    vec3 warped = cloudP + warp * 1.2;
-    float cloudBase = Fbm3_6(warped);
-    float cloudDetail = Fbm3(warped * 3.7 - flow * 0.3);
-    float cloudShape = cloudBase * 0.75 + cloudDetail * 0.25;
-
+    vec2 flow = vec2(cos(flowAngle), sin(flowAngle)) * timeAdvect * 0.25;
+    vec2 cloudP = DirectionToOctahedralPlane(dir) * SkyCloudScale * 3.0 + flow;
+    float cloudBase = Fbm(cloudP);
+    float cloudDetail = Noise(cloudP * 6.5 - flow * 0.35);
+    float cloudShape = cloudBase * 0.82 + cloudDetail * 0.18;
     float cloudMask = smoothstep(-0.08, 0.12, dir.y);
     float cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloudShape, SkyCloudSharpness)) * cloudMask;
 

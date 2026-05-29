@@ -63,6 +63,7 @@ namespace XREngine.Rendering
             FullScreenMesh.Name = $"FullscreenQuad:{mat.Name ?? "Material"}";
             FullScreenMesh.GenerateAsync = false;
             FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
+            FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
             FullScreenMesh.EnsureRenderPipelineVersionsCreated();
             FullScreenMesh.SettingUniforms += SetUniforms;
 
@@ -71,15 +72,9 @@ namespace XREngine.Rendering
             // Force simple program linking for fullscreen blits; shader pipelines may skip rendering
             // if no separable program is present on the material (common for utility shaders).
             var defaultVer = FullScreenMesh.GetDefaultVersion();
-            var ovrVer = FullScreenMesh.GetOVRMultiViewVersion();
-            var nvVer = FullScreenMesh.GetNVStereoVersion();
 
             defaultVer.AllowShaderPipelines = false;
             defaultVer.Name = diagName;
-            ovrVer.AllowShaderPipelines = false;
-            ovrVer.Name = diagName;
-            nvVer.AllowShaderPipelines = false;
-            nvVer.Name = diagName;
 
             // Pre-generate GL resources immediately when on the render thread to avoid
             // inline-generate fallback stalls on the first frame these quads are drawn.

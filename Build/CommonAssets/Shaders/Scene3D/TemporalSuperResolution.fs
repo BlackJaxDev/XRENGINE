@@ -117,13 +117,17 @@ float SamplePostTemporalForwardMask(vec2 uv)
 void ComputePostTemporalForwardAA(vec2 uv, out float centerMask, out float coverage, out vec3 overlayColor)
 {
     centerMask = SamplePostTemporalForwardMask(uv);
-    coverage = centerMask;
+    if (centerMask <= 0.5f)
+    {
+        coverage = 0.0f;
+        overlayColor = vec3(0.0f);
+        return;
+    }
 
+    coverage = centerMask;
     vec3 rawOverlay = texture(PostProcessOutputTexture, uv).rgb;
     vec3 filteredOverlay = SampleCurrentReconstruction(PostProcessOutputTexture, uv, SourceTexelSize);
-    overlayColor = centerMask > 0.5f
-        ? mix(rawOverlay, filteredOverlay, 0.25f)
-        : rawOverlay;
+    overlayColor = mix(rawOverlay, filteredOverlay, 0.25f);
 }
 
 // ── Clip toward AABB center (Karis 2014) ──────────────────────────
@@ -219,10 +223,12 @@ void main()
 
     vec2 uv = clipXY * 0.5f + 0.5f;
 
-    // Closest-depth velocity for sharper silhouettes.
     // MotionVectors.fs writes unjittered current-minus-previous NDC, so do
     // not apply the temporal jitter delta again here.
-    vec2 velocity = FindClosestVelocity(uv);
+    float depthDiscontinuity = EvaluateDepthDiscontinuity(uv);
+    vec2 velocity = texture(Velocity, uv).xy;
+    if (depthDiscontinuity > 1e-4f)
+        velocity = FindClosestVelocity(uv);
 
     float postTemporalCenterMask;
     float postTemporalCoverage;
@@ -269,7 +275,7 @@ void main()
     float historyLuma = clippedHistory.x;
 
     float motionMask = ComputeMotionMask(velocity);
-    float geometryInstability = clamp(EvaluateDepthDiscontinuity(uv) * mix(0.2f, 1.0f, motionMask), 0.0f, 1.0f);
+    float geometryInstability = clamp(depthDiscontinuity * mix(0.2f, 1.0f, motionMask), 0.0f, 1.0f);
 
     // Reactive mask
     vec4 currentSample = texture(PostProcessOutputTexture, uv);

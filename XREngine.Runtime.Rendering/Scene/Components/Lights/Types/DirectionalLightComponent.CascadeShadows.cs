@@ -1773,9 +1773,21 @@ namespace XREngine.Components.Lights
         }
 
         private bool ShouldPrepareAtlasGroupedCascadeCollection(int cascadeCount)
+            => UsesDirectionalShadowAtlasForCurrentEncoding &&
+                cascadeCount > 1 &&
+                SupportsDirectionalCascadeAtlasGroupedRendering(cascadeCount);
+
+        internal bool CanUseDirectionalCascadeShadowAtlasForCurrentBackend(int cascadeCount)
         {
-            if (!UsesDirectionalShadowAtlasForCurrentEncoding ||
-                cascadeCount <= 1 ||
+            if (!UsesDirectionalShadowAtlasForCurrentEncoding)
+                return false;
+
+            return cascadeCount <= 1 || SupportsDirectionalCascadeAtlasGroupedRendering(cascadeCount);
+        }
+
+        private bool SupportsDirectionalCascadeAtlasGroupedRendering(int cascadeCount)
+        {
+            if (cascadeCount <= 1 ||
                 _cascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential ||
                 !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
                 cascadeCount > RuntimeEngine.Rendering.State.MaxOpenGLViewports)

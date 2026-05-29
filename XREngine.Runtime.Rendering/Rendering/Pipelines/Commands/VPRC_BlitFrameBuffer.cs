@@ -19,6 +19,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool BlitStencil { get; set; } = false;
         public bool LinearFilter { get; set; } = false;
 
+        public override string GpuProfilingName
+            => SourceFBOName is null || DestinationFBOName is null
+                ? base.GpuProfilingName
+                : $"{base.GpuProfilingName}[{SourceFBOName}->{DestinationFBOName}; {GetAttachmentLabel()}; filter={(LinearFilter ? "linear" : "nearest")}]";
+
         public VPRC_BlitFrameBuffer SetOptions(
             string sourceName,
             string destinationName,
@@ -36,6 +41,25 @@ namespace XREngine.Rendering.Pipelines.Commands
             BlitStencil = blitStencil;
             LinearFilter = linearFilter;
             return this;
+        }
+
+        private string GetAttachmentLabel()
+        {
+            if (BlitColor && !BlitDepth && !BlitStencil)
+                return "color";
+            if (!BlitColor && BlitDepth && !BlitStencil)
+                return "depth";
+            if (!BlitColor && !BlitDepth && BlitStencil)
+                return "stencil";
+            if (!BlitColor && !BlitDepth && !BlitStencil)
+                return "none";
+
+            return string.Concat(
+                BlitColor ? "color" : string.Empty,
+                BlitColor && (BlitDepth || BlitStencil) ? "+" : string.Empty,
+                BlitDepth ? "depth" : string.Empty,
+                BlitDepth && BlitStencil ? "+" : string.Empty,
+                BlitStencil ? "stencil" : string.Empty);
         }
 
         protected override void Execute()

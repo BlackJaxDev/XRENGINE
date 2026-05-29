@@ -60,6 +60,7 @@
 #pragma snippet "AmbientOcclusionSampling"
 #endif
 #pragma snippet "NormalEncoding"
+#pragma snippet "ShadowMomentEncoding"
 
 // Transparency algorithm snippets. These are mutually exclusive with each
 // other and with the weighted-blended path which is inlined below.
@@ -1481,7 +1482,7 @@ void main() {
     // Cheap outputs for non-color passes. Done *after* cutout/dissolve so
     // shadow maps and the depth/normal prepass respect those discards.
 #if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    Depth = vec4(length(FragPos - LightPos) / FarPlaneDist, 0.0, 0.0, 0.0);
+    XRENGINE_WritePointShadowCasterDepth(Depth, FragPos, LightPos, FarPlaneDist);
     return;
 #elif defined(XRENGINE_SHADOW_CASTER_PASS)
     XRENGINE_WriteShadowCasterDepth(Depth, gl_FragCoord.z);

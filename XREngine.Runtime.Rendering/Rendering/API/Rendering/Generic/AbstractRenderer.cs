@@ -4,6 +4,7 @@ using Silk.NET.Core.Native;
 using Silk.NET.Windowing;
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Components;
@@ -154,6 +155,18 @@ namespace XREngine.Rendering
         protected void ResetImGuiFrameMarker()
             => _lastImGuiTimestampTicks = long.MinValue;
 
+        private static long BeginImGuiCpuPhase(bool profilingActive)
+            => profilingActive ? Stopwatch.GetTimestamp() : 0L;
+
+        private static void RecordImGuiCpuPhase(bool profilingActive, ulong frameId, string name, long startTicks)
+        {
+            if (!profilingActive || startTicks == 0L)
+                return;
+
+            double milliseconds = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+            RenderPipelineGpuProfiler.Instance.RecordRenderThreadCpuTiming(frameId, name, milliseconds);
+        }
+
         protected static void ConfigureImGuiDisplay(IRuntimeScreenSpaceUserInterface? canvas, XRViewport? viewport, XRCamera? camera)
         {
             var io = ImGui.GetIO();
@@ -249,12 +262,33 @@ namespace XREngine.Rendering
 
                     try
                     {
+                        RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
+                        bool profilingActive = profiler.IsProfilingActive;
+                        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+
+                        long phaseStart = BeginImGuiCpuPhase(profilingActive);
                         ConfigureImGuiDisplay(canvas, viewport, camera);
+                        RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.ConfigureDisplay", phaseStart);
+
+                        phaseStart = BeginImGuiCpuPhase(profilingActive);
                         backend.Update((float)RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
+                        RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.Backend.Update", phaseStart);
                         frameStarted = true;
+
+                        phaseStart = BeginImGuiCpuPhase(profilingActive);
                         draw();
-                        backend.Render();
-                        backend.RenderPlatformWindows();
+                        RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.DrawCallback", phaseStart);
+
+                        phaseStart = BeginImGuiCpuPhase(profilingActive);
+                        using (profilingActive ? profiler.StartScope("ImGui.Backend.Render") : default)
+                            backend.Render();
+                        RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.Backend.Render", phaseStart);
+
+                        phaseStart = BeginImGuiCpuPhase(profilingActive);
+                        using (profilingActive ? profiler.StartScope("ImGui.PlatformWindows") : default)
+                            backend.RenderPlatformWindows();
+                        RecordImGuiCpuPhase(profilingActive, frameId, "ImGui.PlatformWindows", phaseStart);
+
                         frameStarted = false;
                     }
                     catch
