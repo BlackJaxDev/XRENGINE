@@ -97,6 +97,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
     public AtmosphericScatteringComponent()
     {
         _renderCommand = new RenderCommandMesh3D(EDefaultRenderPass.Background);
+        _renderCommand.GpuProfilingLabel = nameof(AtmosphericScatteringComponent);
         _renderInfo = RenderInfo3D.New(this, _renderCommand);
         RenderedObjects = [_renderInfo];
         UpdateRenderVisibility();
@@ -435,6 +436,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
             new Vertex(new Vector3(-1, 3, 0)));
 
         _mesh = XRMesh.Create(triangle);
+        _mesh.Name = "AtmosphereSky.FullscreenTriangle";
         _meshRenderer?.Mesh = _mesh;
     }
 
@@ -460,6 +462,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
 
         _material = new XRMaterial(vertexShader, fragmentShader)
         {
+            Name = "AtmosphereSky",
             RenderPass = (int)EDefaultRenderPass.Background,
             RenderOptions = renderParams,
         };
@@ -467,9 +470,15 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
         _renderCommand.RenderPass = _material.RenderPass;
 
         if (_meshRenderer is null)
+        {
             _meshRenderer = new XRMeshRenderer(_mesh, _material);
+            _meshRenderer.Name = "AtmosphereSky.Renderer";
+        }
         else
+        {
             _meshRenderer.Material = _material;
+            _meshRenderer.Name ??= "AtmosphereSky.Renderer";
+        }
     }
 
     private void SetSkyUniforms(XRMaterialBase material, XRRenderProgram program)

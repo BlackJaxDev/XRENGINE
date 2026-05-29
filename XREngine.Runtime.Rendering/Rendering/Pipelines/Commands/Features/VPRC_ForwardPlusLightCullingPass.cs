@@ -213,7 +213,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     continue;
 
                 int shadowRecordIndex = -1;
-                if (RuntimeEngine.Rendering.Settings.UsePointShadowAtlas)
+                if (p.UsesPointShadowAtlasForCurrentEncoding)
                     lights.TryGetPointShadowAtlasFaceAllocation(p, 0, out _, out shadowRecordIndex);
 
                 result.Add(new ForwardPlusLocalLight

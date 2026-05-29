@@ -1,4 +1,5 @@
 using XREngine.Core.Files;
+using System.IO;
 using static XREngine.Rendering.XRRenderProgram;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -22,6 +23,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         public List<ComputeTextureBinding>? Textures { get; set; }
+
+        public override string GpuProfilingName
+        {
+            get
+            {
+                string? path = ComputeShaderCode?.FilePath;
+                return string.IsNullOrWhiteSpace(path)
+                    ? base.GpuProfilingName
+                    : $"{base.GpuProfilingName}[{Path.GetFileName(path)}]";
+            }
+        }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {

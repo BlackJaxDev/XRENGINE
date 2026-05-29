@@ -18,7 +18,9 @@ namespace XREngine.Scene.Components.Misc
         public AdvancedForwardMirrorComponent()
         {
             XRMesh mesh = XRMesh.Create(VertexQuad.PosZ(1.0f));
+            mesh.Name = "AdvancedForwardMirror.Quad";
             XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward();
+            mat.Name = "AdvancedForwardMirror.StencilMaterial";
             mat.RenderPass = (int)EDefaultRenderPass.Background;
             //Mirrors will increase the stencil buffer by 1
             mat.RenderOptions = new()
@@ -46,7 +48,9 @@ namespace XREngine.Scene.Components.Misc
                 WriteRed = false,
             };
             XRMeshRenderer rend = new(mesh, mat);
+            rend.Name = "AdvancedForwardMirror.Renderer";
             _rcMirror = new RenderCommandMesh3D((int)EDefaultRenderPass.Background, rend, Matrix4x4.Identity);
+            _rcMirror.GpuProfilingLabel = nameof(AdvancedForwardMirrorComponent);
             RenderedObjects =
             [
                 RenderInfo3D.New(this, _rcMirror)

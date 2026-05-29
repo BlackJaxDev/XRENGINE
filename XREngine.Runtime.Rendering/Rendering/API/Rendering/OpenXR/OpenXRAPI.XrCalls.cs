@@ -147,7 +147,7 @@ public unsafe partial class OpenXRAPI
     private bool TryConvertPerformanceCounterToXrTime(long performanceCounter, out long xrTime)
     {
         xrTime = 0;
-        if (!TryGetWin32PerformanceCounterTimeExtension(out var timeExtension))
+        if (!TryGetWin32PerformanceCounterTimeExtension(out var timeExtension) || timeExtension is null)
             return false;
 
         long counter = performanceCounter;

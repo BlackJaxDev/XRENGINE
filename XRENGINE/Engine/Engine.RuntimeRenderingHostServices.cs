@@ -82,6 +82,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool RenderCullingVolumesEnabled => Engine.EditorPreferences.Debug.RenderCullingVolumes;
     public bool Preview3DWorldOctree => Engine.EditorPreferences.Debug.Preview3DWorldOctree;
     public bool Preview2DWorldQuadtree => Engine.EditorPreferences.Debug.Preview2DWorldQuadtree;
+    public bool HoverOutlineEnabled => Engine.EditorPreferences.HoverOutlineEnabled;
+    public bool SelectionOutlineEnabled => Engine.EditorPreferences.SelectionOutlineEnabled;
     public ColorF4 OctreeIntersectedBoundsColor => Engine.EditorPreferences.Theme.OctreeIntersectedBoundsColor;
     public ColorF4 OctreeContainedBoundsColor => Engine.EditorPreferences.Theme.OctreeContainedBoundsColor;
     public ColorF4 QuadtreeIntersectedBoundsColor => Engine.EditorPreferences.Theme.QuadtreeIntersectedBoundsColor;

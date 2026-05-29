@@ -115,6 +115,17 @@ void XRENGINE_WriteShadowCasterDepth(out vec4 outputDepth, float projectedDepth)
         false);
 }
 
+void XRENGINE_WritePointShadowCasterDepth(out vec4 outputDepth, vec3 fragPos, vec3 lightPos, float farPlaneDist)
+{
+    float normalizedDepth = clamp(length(fragPos - lightPos) / max(farPlaneDist, 0.0001), 0.0, 1.0);
+    outputDepth = XRENGINE_EncodeShadowMoments(
+        ShadowMapEncoding,
+        normalizedDepth,
+        ShadowMomentPositiveExponent,
+        ShadowMomentNegativeExponent,
+        false);
+}
+
 float XRENGINE_ReduceLightBleeding(float probability, float lightBleedReduction)
 {
     float amount = clamp(lightBleedReduction, 0.0, 0.999);

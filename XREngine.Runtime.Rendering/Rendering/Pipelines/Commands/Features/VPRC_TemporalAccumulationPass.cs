@@ -17,6 +17,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 {
     private const float TaaJitterScaleInTexels = 0.35f;
     private const float TsrJitterScaleInTexels = 0.20f;
+    private const string TemporalInputCopyScopeName = "Temporal Copy Forward->Input";
+    private const string TemporalAccumulationScopeName = "Temporal Accumulation shader=TemporalAccumulation.fs";
+    private const string TemporalHistoryColorScopeName = "Temporal History Color";
+    private const string TemporalHistoryDepthScopeName = "Temporal History Depth";
+    private const string TemporalHistoryExposureScopeName = "Temporal History Exposure";
+    private const string TemporalHistoryPassthroughScopeName = "Temporal History Passthrough Color+Depth";
+
     private static readonly Vector2[] TemporalJitterSequence =
     [
         new(0.125f, -0.375f),
@@ -95,6 +102,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     public string HistoryColorFBOName { get; set; } = DefaultRenderPipeline.HistoryCaptureFBOName;
     public string HistoryExposureFBOName { get; set; } = DefaultRenderPipeline.HistoryExposureFBOName;
 
+    public override string GpuProfilingName
+        => $"{base.GpuProfilingName}[{Phase}]";
+
     public VPRC_TemporalAccumulationPass ConfigureAccumulationTargets(
         string forwardFboName,
         string temporalInputFboName,
@@ -145,83 +155,105 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
 
         var forwardFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(ForwardFBOName);
-        var temporalInputFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(TemporalInputFBOName);
-        var accumulationFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(TemporalAccumulationFBOName);
         var historyColorFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(HistoryColorFBOName);
-        var historyExposureFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(HistoryExposureFBOName);
 
-        if (forwardFBO is null || temporalInputFBO is null || accumulationFBO is null || historyColorFBO is null || historyExposureFBO is null)
+        if (forwardFBO is null || historyColorFBO is null)
         {
             Debug.Rendering("[Temporal] Accumulate skipped: missing FBO(s)." +
-                $" forward={(forwardFBO!=null)} temporalInput={(temporalInputFBO!=null)} accumulation={(accumulationFBO!=null)}" +
-                $" historyColor={(historyColorFBO!=null)} historyExposure={(historyExposureFBO!=null)}");
+                $" forward={(forwardFBO!=null)} historyColor={(historyColorFBO!=null)}");
+            SetHistoryExposureReady(false);
             return;
         }
 
-        // Always keep the history buffers in sync with the latest color/depth, even if temporal AA is disabled.
-        renderer.BlitFBOToFBO(
-            forwardFBO,
-            temporalInputFBO,
-            EReadBufferMode.ColorAttachment0,
-            true,
-            false,
-            false,
-            false);
-
         EAntiAliasingMode antiAliasingMode = ResolveAntiAliasingMode();
         bool shouldAccumulate = ShouldRunInternalAccumulation(antiAliasingMode);
-        //Debug.Out($"[Temporal] shouldAccumulate={shouldAccumulate}");
-        SetHistoryExposureReady(shouldAccumulate);
         if (shouldAccumulate)
         {
-            //Debug.Out("[Temporal] Rendering accumulation FBO.");
-            accumulationFBO.Render(accumulationFBO);
-        }
+            var temporalInputFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(TemporalInputFBOName);
+            var accumulationFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(TemporalAccumulationFBOName);
+            var historyExposureFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(HistoryExposureFBOName);
+            if (temporalInputFBO is null || accumulationFBO is null || historyExposureFBO is null)
+            {
+                Debug.Rendering("[Temporal] Accumulate skipped: missing accumulation FBO(s)." +
+                    $" temporalInput={(temporalInputFBO!=null)} accumulation={(accumulationFBO!=null)} historyExposure={(historyExposureFBO!=null)}");
+                SetHistoryExposureReady(false);
+                return;
+            }
 
-        if (shouldAccumulate)
-        {
+            SetHistoryExposureReady(true);
+
+            using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalInputCopyScopeName))
+            {
+                renderer.BlitFBOToFBO(
+                    forwardFBO,
+                    temporalInputFBO,
+                    EReadBufferMode.ColorAttachment0,
+                    true,
+                    false,
+                    false,
+                    false);
+            }
+
+            //Debug.Out("[Temporal] Rendering accumulation FBO.");
+            using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalAccumulationScopeName))
+                accumulationFBO.Render(accumulationFBO);
+
             // TAA history must store the resolved color, not the raw forward pass,
             // otherwise accumulation never becomes recursive and tuning the temporal
             // weights has only a weak one-frame effect.
-            renderer.BlitFBOToFBO(
-                accumulationFBO,
-                historyColorFBO,
-                EReadBufferMode.ColorAttachment0,
-                true,
-                false,
-                false,
-                false);
+            using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryColorScopeName))
+            {
+                renderer.BlitFBOToFBO(
+                    accumulationFBO,
+                    historyColorFBO,
+                    EReadBufferMode.ColorAttachment0,
+                    true,
+                    false,
+                    false,
+                    false);
+            }
 
             // Preserve the latest scene depth from the forward pass for depth-based
             // reprojection rejection next frame.
-            renderer.BlitFBOToFBO(
-                forwardFBO,
-                historyColorFBO,
-                EReadBufferMode.ColorAttachment0,
-                false,
-                true,
-                false,
-                false);
+            using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryDepthScopeName))
+            {
+                renderer.BlitFBOToFBO(
+                    forwardFBO,
+                    historyColorFBO,
+                    EReadBufferMode.ColorAttachment0,
+                    false,
+                    true,
+                    false,
+                    false);
+            }
 
-            renderer.BlitFBOToFBO(
-                accumulationFBO,
-                historyExposureFBO,
-                EReadBufferMode.ColorAttachment1,
-                true,
-                false,
-                false,
-                false);
+            using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryExposureScopeName))
+            {
+                renderer.BlitFBOToFBO(
+                    accumulationFBO,
+                    historyExposureFBO,
+                    EReadBufferMode.ColorAttachment1,
+                    true,
+                    false,
+                    false,
+                    false);
+            }
         }
         else
         {
-            renderer.BlitFBOToFBO(
-                forwardFBO,
-                historyColorFBO,
-                EReadBufferMode.ColorAttachment0,
-                true,
-                true,
-                false,
-                false);
+            SetHistoryExposureReady(false);
+
+            using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryPassthroughScopeName))
+            {
+                renderer.BlitFBOToFBO(
+                    forwardFBO,
+                    historyColorFBO,
+                    EReadBufferMode.ColorAttachment0,
+                    true,
+                    true,
+                    false,
+                    false);
+            }
         }
 
         // Always flag history as captured - motion blur depends on view-projection tracking

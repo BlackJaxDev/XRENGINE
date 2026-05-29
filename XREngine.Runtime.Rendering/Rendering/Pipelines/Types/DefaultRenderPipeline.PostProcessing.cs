@@ -1864,8 +1864,11 @@ public partial class DefaultRenderPipeline
         var selectionOutlineColor = prefs is null
             ? DefaultSelectionOutlineColor
             : new Vector3((float)prefs.SelectionOutlineColor.R, (float)prefs.SelectionOutlineColor.G, (float)prefs.SelectionOutlineColor.B);
+        bool enableEditorOutline = RuntimeRenderingHostServices.Current.HoverOutlineEnabled ||
+            RuntimeRenderingHostServices.Current.SelectionOutlineEnabled;
         materialProgram.Uniform("HoverOutlineColor", hoverOutlineColor);
         materialProgram.Uniform("SelectionOutlineColor", selectionOutlineColor);
+        materialProgram.Uniform("EnableEditorOutline", enableEditorOutline);
 
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram);

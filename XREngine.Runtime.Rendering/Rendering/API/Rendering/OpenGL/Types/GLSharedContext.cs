@@ -24,7 +24,7 @@ namespace XREngine.Rendering.OpenGL
             private static readonly object GlfwSharedContextStartupLock = new();
             // Per-priority FIFO buckets (lower priority value drained first). Indexed by (byte)EProgramPriority.
             // Buckets cover the full enum range so callers can route work without bounds checks.
-            private const int PriorityBucketCount = (int)EProgramPriority.Compute + 1;
+            private const int PriorityBucketCount = (int)EProgramPriority.Deferred + 1;
             private readonly ConcurrentQueue<SharedContextJob>[] _jobs;
             private long _pendingCount;
             private readonly AutoResetEvent _signal = new(false);

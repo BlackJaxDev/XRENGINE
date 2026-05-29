@@ -15,6 +15,28 @@ namespace XREngine.Rendering.Commands
 
         public event Action? Rendered;
 
+        /// <summary>
+        /// Optional stable label used by GPU profiling dumps for callback-driven UI commands.
+        /// </summary>
+        public string? GpuProfilingLabel { get; set; }
+
+        public string GetGpuProfilingLabel()
+        {
+            if (!string.IsNullOrWhiteSpace(GpuProfilingLabel))
+                return GpuProfilingLabel!;
+
+            Delegate[]? delegates = Rendered?.GetInvocationList();
+            if (delegates is null || delegates.Length == 0)
+                return nameof(RenderCommandMethod2D);
+
+            Delegate callback = delegates[0];
+            string? targetName = callback.Target?.GetType().Name;
+            string methodName = callback.Method.Name;
+            return string.IsNullOrWhiteSpace(targetName)
+                ? methodName
+                : $"{targetName}.{methodName}";
+        }
+
         public override void Render()
         {
             var rendered = Rendered;

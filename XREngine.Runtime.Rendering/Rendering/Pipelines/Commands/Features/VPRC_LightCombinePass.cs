@@ -302,9 +302,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_currentLightComponent is DirectionalLightComponent directionalLight)
             {
                 ShadowMapFormatSelection directionalShadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
+                bool directionalMomentSingleMap = directionalShadowFormat.Encoding != EShadowMapEncoding.Depth;
                 useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;
                 var cameraComponent = ActivePipelineInstance.RenderState.WindowViewport?.CameraComponent;
                 useCascadedDirectionalShadows =
+                    !directionalMomentSingleMap &&
                     cameraComponent?.DirectionalShadowRenderingMode == global::XREngine.Components.EDirectionalShadowRenderingMode.Cascaded &&
                     directionalLight.EnableCascadedShadows &&
                     (useDirectionalShadowAtlas || directionalLight.CascadedShadowMapTexture is not null) &&

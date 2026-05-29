@@ -1283,7 +1283,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
-    public void PointShadowCasterVariants_PreserveAlphaDiscardsAndWriteRadialDepth()
+    public void PointShadowCasterVariants_PreserveAlphaDiscardsAndWriteRadialMomentDepth()
     {
         string shaderHelperSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Resources", "Shaders", "ShaderHelper.cs"));
         shaderHelperSource.ShouldContain("XRENGINE_POINT_SHADOW_CASTER_PASS");
@@ -1293,6 +1293,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string factorySource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Shaders", "ShadowCasterVariantFactory.cs"));
         factorySource.ShouldContain("CreatePointLightMaterialVariant");
         factorySource.ShouldContain("PointLightShadowDepth.gs");
+        factorySource.ShouldContain("CreatePointLightFragmentVariant(sourceMaterial)");
         factorySource.ShouldContain("ShadowBindingSourceMaterial = sourceMaterial");
 
         string meshRendererSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
@@ -1309,16 +1310,16 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         uberSource.ShouldContain("defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS)");
         uberSource.ShouldContain("uniform vec3 LightPos;");
         uberSource.ShouldContain("uniform float FarPlaneDist;");
-        uberSource.ShouldContain("Depth = length(FragPos - LightPos) / FarPlaneDist;");
+        uberSource.ShouldContain("XRENGINE_WritePointShadowCasterDepth(Depth, FragPos, LightPos, FarPlaneDist);");
 
         string alphaSource = LoadShaderSource("Common/LitTexturedAlphaForward.fs");
         alphaSource.ShouldContain("if (alphaMask < AlphaCutoff)");
-        alphaSource.ShouldContain("Depth = length(FragPos - LightPos) / FarPlaneDist;");
+        alphaSource.ShouldContain("XRENGINE_WritePointShadowCasterDepth(Depth, FragPos, LightPos, FarPlaneDist);");
 
         string normalAlphaSource = LoadShaderSource("Common/LitTexturedNormalAlphaForward.fs");
         normalAlphaSource.ShouldContain("#if !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)");
         normalAlphaSource.ShouldContain("layout (location = 3) in vec3 FragBinorm;");
-        normalAlphaSource.ShouldContain("Depth = vec4(length(FragPos - LightPos) / FarPlaneDist, 0.0, 0.0, 0.0);");
+        normalAlphaSource.ShouldContain("XRENGINE_WritePointShadowCasterDepth(Depth, FragPos, LightPos, FarPlaneDist);");
     }
 
     [Test]

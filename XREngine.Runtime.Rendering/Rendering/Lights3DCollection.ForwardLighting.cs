@@ -756,6 +756,8 @@ namespace XREngine.Scene
 
                 if (firstDirLight.CastsShadows)
                 {
+                    bool firstMomentSingleMap = firstShadowFormat.Encoding != EShadowMapEncoding.Depth;
+
                     // 2D shadow map (non-cascaded / fallback path).
                     forwardShadowTex = FindShadowMapTexture(firstDirLight);
 
@@ -766,6 +768,7 @@ namespace XREngine.Scene
                     // all directional shadows (including the volumetric fog scatter pass).
                     var cameraComponent = currentPipeline?.RenderState.WindowViewport?.CameraComponent;
                     useCascadedDirectionalShadows =
+                        !firstMomentSingleMap &&
                         cameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
                         firstDirLight.EnableCascadedShadows &&
                         (firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding || firstDirLight.CascadedShadowMapTexture is not null) &&
@@ -866,6 +869,7 @@ namespace XREngine.Scene
                 {
                     DirectionalLightComponent dirLight = DynamicDirectionalLights[i];
                     ShadowMapFormatSelection dirShadowFormat = dirLight.ResolveShadowMapFormat(preferredStorageFormat: null);
+                    bool perLightMomentSingleMap = dirShadowFormat.Encoding != EShadowMapEncoding.Depth;
                     bool perLightUseAtlas = dirLight.UsesDirectionalShadowAtlasForCurrentEncoding;
                     useDirectionalShadowAtlas |= perLightUseAtlas;
                     _directionalShadowBiasProjectionParams[i] = dirLight.GetPrimaryShadowBiasProjectionParameters();
@@ -886,6 +890,7 @@ namespace XREngine.Scene
                         if (!perLightUseAtlas)
                             perLightShadowTex = FindShadowMapTexture(dirLight);
                         perLightUseCascades =
+                            !perLightMomentSingleMap &&
                             directionalShadowCameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
                             dirLight.EnableCascadedShadows &&
                             (perLightUseAtlas || dirLight.CascadedShadowMapTexture is not null) &&

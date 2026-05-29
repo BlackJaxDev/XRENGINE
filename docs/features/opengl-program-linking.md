@@ -60,10 +60,12 @@ Related settings:
   startup stability; values above one require
   `XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1`.
 - Shader program priorities drain in this order: `Interactive`, `Main`,
-  `Forward`, `DepthPrepass`, `Shadow`, `VR`, `Compute`. `Interactive` is for
-  editor/user-interaction overlays such as transform gizmos and has a small
-  reserve in the shared-context source queue so Sponza-scale cold material
-  floods cannot keep gizmo shaders out of the queue.
+  `Forward`, `DepthPrepass`, `Shadow`, `VR`, `Compute`, `Deferred`.
+  `Interactive` is for editor/user-interaction overlays such as transform
+  gizmos and has a small reserve in the shared-context source queue so
+  Sponza-scale cold material floods cannot keep gizmo shaders out of the queue.
+  Stereo variants created while VR is not active are tagged `Deferred` so they
+  do not preempt default scene, shadow, or compute programs.
 - `XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1` opts back into the older
   render-thread driver-parallel source lane for local driver experiments. Leave
   it unset for editor/runtime work.

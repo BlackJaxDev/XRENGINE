@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Rendering;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -188,6 +189,36 @@ public sealed class GLMeshRendererLifecycleContractTests
         linkSource.ShouldContain("shared-context source link stalled; leaving fallback material active");
         linkSource.ShouldNotContain("RenderThreadDriverParallelRetryHashes");
         linkSource.ShouldNotContain("DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, abandonedProgramId, []));");
+    }
+
+    [Test]
+    public void XRMeshRenderer_DefersInactiveVrVariantsBehindOtherProgramWork()
+    {
+        XRMeshRenderer meshRenderer = new();
+
+        meshRenderer.GetDefaultVersion().ProgramPriority.ShouldBe(EProgramPriority.Main);
+        meshRenderer.GetOVRMultiViewVersion().ProgramPriority.ShouldBe(EProgramPriority.Deferred);
+        meshRenderer.GetNVStereoVersion().ProgramPriority.ShouldBe(EProgramPriority.Deferred);
+        meshRenderer.GetMeshDeformOVRMultiViewVersion().ProgramPriority.ShouldBe(EProgramPriority.Deferred);
+        meshRenderer.GetMeshDeformNVStereoVersion().ProgramPriority.ShouldBe(EProgramPriority.Deferred);
+    }
+
+    [Test]
+    public void XRMeshRenderer_ShaderPipelineOverrideDoesNotMaterializeStereoVersions()
+    {
+        XRMeshRenderer meshRenderer = new();
+
+        meshRenderer.SetShaderPipelinesAllowedForAllVersions(false);
+
+        meshRenderer.GeneratedVertexShaderVersions.ShouldBeEmpty();
+
+        XRMeshRenderer.BaseVersion defaultVersion = meshRenderer.GetDefaultVersion();
+
+        defaultVersion.AllowShaderPipelines.ShouldBeFalse();
+        meshRenderer.GeneratedVertexShaderVersions.Count.ShouldBe(1);
+        meshRenderer.GeneratedVertexShaderVersions.ContainsKey(0).ShouldBeTrue();
+        meshRenderer.GeneratedVertexShaderVersions.ContainsKey(1).ShouldBeFalse();
+        meshRenderer.GeneratedVertexShaderVersions.ContainsKey(2).ShouldBeFalse();
     }
 
     [Test]

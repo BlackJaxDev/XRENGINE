@@ -1,6 +1,7 @@
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.UI;
 using XREngine.Data.Rendering;
+using System;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -21,6 +22,9 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
         get => _renderPass;
         set => SetField(ref _renderPass, value);
     }
+
+    public override string GpuProfilingName
+        => $"{base.GpuProfilingName}[{GetRenderPassDisplayName(_renderPass)}]";
 
     protected override void Execute()
     {
@@ -60,4 +64,9 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
                 target.GetDepthStoreOp());
         }
     }
+
+    private static string GetRenderPassDisplayName(int renderPass)
+        => Enum.IsDefined(typeof(EDefaultRenderPass), renderPass)
+            ? ((EDefaultRenderPass)renderPass).ToString()
+            : renderPass.ToString();
 }

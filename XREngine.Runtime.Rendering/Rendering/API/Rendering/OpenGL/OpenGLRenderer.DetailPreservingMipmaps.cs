@@ -53,7 +53,7 @@ public partial class OpenGLRenderer
         }
     }
 
-    private static string InjectDetailPreservingMipmapImageFormat(string templateSource, string imageFormatToken)
+    private static string InjectDetailPreservingMipmapImageFormat(string? templateSource, string imageFormatToken)
     {
         const string versionDirective = "#version";
 

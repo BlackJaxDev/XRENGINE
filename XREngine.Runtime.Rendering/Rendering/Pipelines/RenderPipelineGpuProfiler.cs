@@ -242,6 +242,8 @@ internal sealed class RenderPipelineGpuProfiler
     [ThreadStatic]
     private static List<string>? _commandScopeStack;
     [ThreadStatic]
+    private static List<string>? _commandRootPipelineStack;
+    [ThreadStatic]
     private static List<string>? _userScopeStack;
     [ThreadStatic]
     private static Stack<UserScopeHandle>? _openUserScopes;
@@ -273,6 +275,9 @@ internal sealed class RenderPipelineGpuProfiler
         var host = RuntimeRenderingHostServices.Current;
         return host.EnableRenderStatisticsTracking && host.EnableGpuRenderPipelineProfiling;
     }
+
+    public bool IsProfilingActive
+        => Volatile.Read(ref _enabled) != 0 || IsProfilingRequested();
 
     private readonly struct UserScopeHandle(ulong frameId, string[] path, GLRenderQuery startQuery)
     {
@@ -445,6 +450,17 @@ internal sealed class RenderPipelineGpuProfiler
         if (Volatile.Read(ref _enabled) == 0 && !IsProfilingRequested())
             return default;
 
+        return StartScope(command.GpuProfilingName);
+    }
+
+    public Scope StartScope(string scopeName)
+    {
+        if (string.IsNullOrWhiteSpace(scopeName))
+            return default;
+
+        if (Volatile.Read(ref _enabled) == 0 && !IsProfilingRequested())
+            return default;
+
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
         {
             lock (_lock)
@@ -454,11 +470,12 @@ internal sealed class RenderPipelineGpuProfiler
 
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        string pipelineName = instance.ProfilerKey;
-        string commandName = command.GpuProfilingName;
-
         List<string> commandStack = _commandScopeStack ??= [];
+        List<string> pipelineStack = _commandRootPipelineStack ??= [];
         List<string> userStack = _userScopeStack ??= [];
+        string currentPipelineName = instance.ProfilerKey;
+        string pipelineName = pipelineStack.Count > 0 ? pipelineStack[0] : currentPipelineName;
+
         string[] path = new string[userStack.Count + commandStack.Count + 2];
         path[0] = pipelineName;
         int pathIndex = 1;
@@ -466,13 +483,14 @@ internal sealed class RenderPipelineGpuProfiler
             path[pathIndex++] = userStack[i];
         for (int i = 0; i < commandStack.Count; i++)
             path[pathIndex++] = commandStack[i];
-        path[^1] = commandName;
+        path[^1] = scopeName;
 
         GLRenderQuery startQuery = AcquireTimestampQuery(renderer);
         startQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
         startQuery.QueryCounter();
 
-        commandStack.Add(commandName);
+        commandStack.Add(scopeName);
+        pipelineStack.Add(pipelineName);
 
         lock (_lock)
         {
@@ -581,6 +599,10 @@ internal sealed class RenderPipelineGpuProfiler
             List<string>? stack = _commandScopeStack;
             if (stack is { Count: > 0 })
                 stack.RemoveAt(stack.Count - 1);
+
+            List<string>? pipelineStack = _commandRootPipelineStack;
+            if (pipelineStack is { Count: > 0 })
+                pipelineStack.RemoveAt(pipelineStack.Count - 1);
         }
 
         if (path is null || startQuery is null)
@@ -767,6 +789,8 @@ internal sealed class RenderPipelineGpuProfiler
                 commandStack.Count);
             commandStack.Clear();
         }
+
+        _commandRootPipelineStack?.Clear();
     }
 
     private void ResolveOrphanedQueriesNoLock(ulong currentFrameId)

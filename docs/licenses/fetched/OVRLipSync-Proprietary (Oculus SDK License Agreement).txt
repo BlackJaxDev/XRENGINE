@@ -6,8 +6,6 @@ Design
 
 Develop
 
-API reference
-
 Distribute and grow
 
 Blog

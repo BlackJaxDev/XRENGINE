@@ -111,6 +111,13 @@ namespace XREngine.Components.Scene.Mesh
         private float _horizonHaze = 1.0f;
         private float _sunDiscSize = 0.9994f;
         private float _moonDiscSize = 0.99965f;
+        private XRCamera? _lastSkyTwinkleCamera;
+        private Vector3 _lastSkyTwinkleCameraPosition;
+        private Vector3 _lastSkyTwinkleCameraForward = Vector3.UnitZ;
+        private bool _hasLastSkyTwinkleCamera;
+        private long _lastSkyTwinkleFrameTicks = long.MinValue;
+        private float _skyCameraTwinkle;
+        private float _skyTwinklePhase;
 
         private bool _syncDirectionalLightWithSun = false;
         private DirectionalLightComponent? _sunDirectionalLight;
@@ -156,6 +163,7 @@ namespace XREngine.Components.Scene.Mesh
         public SkyboxComponent()
         {
             _renderCommand = new RenderCommandMesh3D(EDefaultRenderPass.Background);
+            _renderCommand.GpuProfilingLabel = nameof(SkyboxComponent);
             _renderInfo = RenderInfo3D.New(this, _renderCommand);
             RenderedObjects = [_renderInfo];
         }
@@ -1077,6 +1085,7 @@ namespace XREngine.Components.Scene.Mesh
                 new Vertex(new Vector3(-1, 3, 0)));
 
             _mesh = XRMesh.Create(triangle);
+            _mesh.Name = "Skybox.FullscreenTriangle";
 
             _meshRenderer?.Mesh = _mesh;
         }
@@ -1100,6 +1109,9 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             XRTexture? tex = _mode == ESkyboxMode.Texture ? (_texture ?? CreateDefaultTexture(_projection)) : null;
+            string materialName = _mode == ESkyboxMode.Texture
+                ? $"Skybox.{_projection}"
+                : $"Skybox.{_mode}";
 
             RenderingParameters renderParams = new()
             {
@@ -1119,6 +1131,7 @@ namespace XREngine.Components.Scene.Mesh
 
             _material = new XRMaterial(tex is not null ? [tex] : [], vertexShader, fragmentShader)
             {
+                Name = materialName,
                 RenderPass = (int)EDefaultRenderPass.Background,
                 RenderOptions = renderParams,
             };
@@ -1132,10 +1145,12 @@ namespace XREngine.Components.Scene.Mesh
             if (_meshRenderer is null)
             {
                 _meshRenderer = new XRMeshRenderer(_mesh, _material);
+                _meshRenderer.Name = "Skybox.Renderer";
             }
             else
             {
                 _meshRenderer.Material = _material;
+                _meshRenderer.Name ??= "Skybox.Renderer";
             }
 
             UpdateRenderCommand();
@@ -1165,11 +1180,103 @@ namespace XREngine.Components.Scene.Mesh
                 program.Uniform("SkyHorizonHaze", _horizonHaze);
                 program.Uniform("SkySunDiscSize", _sunDiscSize);
                 program.Uniform("SkyMoonDiscSize", _moonDiscSize);
+                GetSkyTwinkleUniforms(out float cameraTwinkle, out float twinklePhase);
+                program.Uniform("SkyCameraTwinkle", cameraTwinkle);
+                program.Uniform("SkyTwinklePhase", twinklePhase);
             }
             
             if (_projection == ESkyboxProjection.CubemapArray)
                 program.Uniform("CubemapLayer", _cubemapArrayLayer);
         }
+
+        private void GetSkyTwinkleUniforms(out float cameraTwinkle, out float twinklePhase)
+        {
+            cameraTwinkle = _skyCameraTwinkle;
+            twinklePhase = _skyTwinklePhase;
+
+            if (RuntimeEngine.Rendering.State.IsShadowPass ||
+                RuntimeEngine.Rendering.State.IsSceneCapturePass ||
+                RuntimeEngine.Rendering.State.IsLightProbePass)
+            {
+                cameraTwinkle = 0.0f;
+                return;
+            }
+
+            long frameTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
+            if (frameTicks != 0L && frameTicks == _lastSkyTwinkleFrameTicks)
+                return;
+
+            _lastSkyTwinkleFrameTicks = frameTicks;
+
+            XRCamera? camera = ResolveSkyTwinkleCamera();
+            if (camera is null)
+            {
+                FadeSkyTwinkle(0.0f);
+                cameraTwinkle = _skyCameraTwinkle;
+                twinklePhase = _skyTwinklePhase;
+                return;
+            }
+
+            Vector3 position = camera.Transform.RenderTranslation;
+            Vector3 forward = NormalizeOrDefault(camera.Transform.RenderForward, _lastSkyTwinkleCameraForward);
+
+            if (!_hasLastSkyTwinkleCamera || !ReferenceEquals(camera, _lastSkyTwinkleCamera))
+            {
+                _lastSkyTwinkleCamera = camera;
+                _lastSkyTwinkleCameraPosition = position;
+                _lastSkyTwinkleCameraForward = forward;
+                _hasLastSkyTwinkleCamera = true;
+                _skyCameraTwinkle = 0.0f;
+                cameraTwinkle = 0.0f;
+                twinklePhase = _skyTwinklePhase;
+                return;
+            }
+
+            float translationDelta = Vector3.Distance(position, _lastSkyTwinkleCameraPosition);
+            float forwardDot = Math.Clamp(Vector3.Dot(forward, _lastSkyTwinkleCameraForward), -1.0f, 1.0f);
+            float rotationDelta = MathF.Acos(forwardDot);
+            float rawMotion = rotationDelta * 7.0f + translationDelta * 0.35f;
+            float targetTwinkle = Math.Clamp((rawMotion - 0.0008f) * 1.4f, 0.0f, 1.0f);
+
+            if (targetTwinkle > 0.0f)
+                _skyTwinklePhase = WrapSkyTwinklePhase(_skyTwinklePhase + rotationDelta * 24.0f + translationDelta * 0.6f);
+
+            FadeSkyTwinkle(targetTwinkle);
+
+            _lastSkyTwinkleCameraPosition = position;
+            _lastSkyTwinkleCameraForward = forward;
+            cameraTwinkle = _skyCameraTwinkle;
+            twinklePhase = _skyTwinklePhase;
+        }
+
+        private static XRCamera? ResolveSkyTwinkleCamera()
+            => RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera
+                ?? RuntimeEngine.Rendering.State.RenderingCamera
+                ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastSceneCamera
+                ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastRenderingCamera;
+
+        private void FadeSkyTwinkle(float targetTwinkle)
+        {
+            float dt = Math.Clamp((float)RuntimeRenderingHostServices.Current.RenderDeltaSeconds, 1.0f / 240.0f, 1.0f / 20.0f);
+            float response = targetTwinkle > _skyCameraTwinkle
+                ? 1.0f - MathF.Exp(-dt * 18.0f)
+                : 1.0f - MathF.Exp(-dt * 6.0f);
+
+            _skyCameraTwinkle += (targetTwinkle - _skyCameraTwinkle) * response;
+            if (_skyCameraTwinkle < 0.001f)
+                _skyCameraTwinkle = 0.0f;
+        }
+
+        private static Vector3 NormalizeOrDefault(Vector3 value, Vector3 fallback)
+        {
+            float lengthSquared = value.LengthSquared();
+            return lengthSquared > 1e-8f
+                ? value / MathF.Sqrt(lengthSquared)
+                : fallback;
+        }
+
+        private static float WrapSkyTwinklePhase(float phase)
+            => phase > 4096.0f ? phase - 4096.0f : phase;
 
         private void UpdateRenderCommand()
         {
@@ -1479,6 +1586,8 @@ uniform float SkyStarIntensity = 1.0;
 uniform float SkyHorizonHaze = 1.0;
 uniform float SkySunDiscSize = 0.9994;
 uniform float SkyMoonDiscSize = 0.99965;
+uniform float SkyCameraTwinkle = 0.0;
+uniform float SkyTwinklePhase = 0.0;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -1520,6 +1629,21 @@ float Hash3(vec3 p)
     p = fract(p * vec3(443.8975, 397.2973, 491.1871));
     p += dot(p, p.yzx + 19.19);
     return fract((p.x + p.y) * p.z);
+}
+
+float MotionStarTwinkle(vec3 cell, float seed, float amount, float speed)
+{
+    float motion = clamp(SkyCameraTwinkle, 0.0, 1.0);
+    if (motion <= 0.001)
+        return 1.0;
+
+    float phase = SkyTwinklePhase * speed + seed * 13.37;
+    float phaseBase = floor(phase);
+    float phaseBlend = smoothstep(0.0, 1.0, fract(phase));
+    vec3 phaseSeed = vec3(seed * 31.0 + 7.0, seed * 17.0 + 3.0, phaseBase);
+    float a = Hash3(cell + phaseSeed);
+    float b = Hash3(cell + phaseSeed + vec3(0.0, 0.0, 1.0));
+    return 1.0 + (mix(a, b, phaseBlend) - 0.5) * amount * motion;
 }
 
 float Noise(vec2 p)
@@ -1698,33 +1822,38 @@ void main()
     vec3 color = skyBase + horizonGlow + beltOfVenus;
     color *= mix(vec3(1.0), vec3(1.20, 0.88, 0.78), duskFactor * 0.55);
 
-    float starDensity = 256.0;
-    vec3 starP = dir * starDensity;
-    vec3 starCell = floor(starP);
-    float starHash = Hash3(starCell);
-    float twinkle = 0.65 + 0.35 * sin(TAU * (SkyTimeOfDay * 360.0 + starHash * 53.0));
-    float smallStar = step(0.9975, starHash) * (0.55 + 0.45 * fract(starHash * 17.3)) * twinkle;
+    vec3 starField = vec3(0.0);
+    if (nightFactor > 0.001 && SkyStarIntensity > 0.001)
+    {
+        float starDensity = 256.0;
+        vec3 starP = dir * starDensity;
+        vec3 starCell = floor(starP);
+        float starHash = Hash3(starCell);
+        float twinkle = MotionStarTwinkle(starCell, starHash, 0.16, 1.0);
+        float smallStar = step(0.9975, starHash) * (0.55 + 0.45 * fract(starHash * 17.3)) * twinkle;
 
-    float bigDensity = 64.0;
-    vec3 bigP = dir * bigDensity;
-    vec3 bigCell = floor(bigP);
-    float bigHash = Hash3(bigCell);
-    vec3 bigOffset = fract(bigP) - 0.5;
-    float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 60.0);
-    bigStar *= 0.6 + 0.4 * sin(TAU * (SkyTimeOfDay * 180.0 + bigHash * 91.0));
-    float hueSeed = Hash3(starCell + vec3(11.0, 23.0, 7.0));
-    vec3 starColor = mix(vec3(0.85, 0.90, 1.10), vec3(1.10, 0.95, 0.78), hueSeed);
+        float bigDensity = 64.0;
+        vec3 bigP = dir * bigDensity;
+        vec3 bigCell = floor(bigP);
+        float bigHash = Hash3(bigCell);
+        vec3 bigOffset = fract(bigP) - 0.5;
+        float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 60.0);
+        bigStar *= MotionStarTwinkle(bigCell, bigHash, 0.10, 0.73);
+        float hueSeed = Hash3(starCell + vec3(11.0, 23.0, 7.0));
+        vec3 starColor = mix(vec3(0.85, 0.90, 1.10), vec3(1.10, 0.95, 0.78), hueSeed);
 
-    vec3 stars = (smallStar + bigStar * 2.4) * starColor;
+        vec3 stars = (smallStar + bigStar * 2.4) * starColor;
 
-    vec3 galacticUp = SafeNormalize3(vec3(0.35, 0.22, 0.91));
-    float bandCoord = dot(dir, galacticUp);
-    float band = exp(-bandCoord * bandCoord * 38.0);
-    float mwDetail = smoothstep(0.35, 0.95, Fbm3_6(dir * 6.2));
-    vec3 milkyWay = mix(vec3(0.06, 0.08, 0.15), vec3(0.22, 0.18, 0.28), mwDetail) * band * mwDetail * 0.35;
+        vec3 galacticUp = SafeNormalize3(vec3(0.35, 0.22, 0.91));
+        float bandCoord = dot(dir, galacticUp);
+        float band = exp(-bandCoord * bandCoord * 38.0);
+        vec2 galaxyUv = DirectionToOctahedralPlane(dir) * 5.2 + vec2(3.1, 7.4);
+        float mwDetail = smoothstep(0.35, 0.95, Fbm(galaxyUv));
+        vec3 milkyWay = mix(vec3(0.06, 0.08, 0.15), vec3(0.22, 0.18, 0.28), mwDetail) * band * mwDetail * 0.35;
 
-    float starHorizonFade = smoothstep(-0.05, 0.22, dir.y);
-    vec3 starField = (stars + milkyWay) * SkyStarIntensity * starHorizonFade;
+        float starHorizonFade = smoothstep(-0.05, 0.22, dir.y);
+        starField = (stars + milkyWay) * SkyStarIntensity * starHorizonFade;
+    }
 
     vec3 nightBase = vec3(0.006, 0.009, 0.022) * (0.4 + 0.6 * smoothstep(-0.12, 0.4, dir.y));
 
@@ -1733,17 +1862,11 @@ void main()
 
     float timeAdvect = SkyCloudSpeed * SkyTimeOfDay * 240.0;
     float flowAngle = SkyTimeOfDay * 0.35;
-    vec3 flow = vec3(cos(flowAngle), 0.0, sin(flowAngle)) * timeAdvect * 0.25;
-    vec3 cloudP = dir * SkyCloudScale * 3.0 + flow;
-
-    vec3 warp = vec3(Fbm3(cloudP * 1.3 + vec3(3.2, 7.1, 0.5)),
-                     Fbm3(cloudP * 1.3 + vec3(1.7, 9.3, 4.2)),
-                     Fbm3(cloudP * 1.3 + vec3(6.1, 2.8, 8.4))) - 0.5;
-    vec3 warped = cloudP + warp * 1.2;
-    float cloudBase = Fbm3_6(warped);
-    float cloudDetail = Fbm3(warped * 3.7 - flow * 0.3);
-    float cloudShape = cloudBase * 0.75 + cloudDetail * 0.25;
-
+    vec2 flow = vec2(cos(flowAngle), sin(flowAngle)) * timeAdvect * 0.25;
+    vec2 cloudP = DirectionToOctahedralPlane(dir) * SkyCloudScale * 3.0 + flow;
+    float cloudBase = Fbm(cloudP);
+    float cloudDetail = Noise(cloudP * 6.5 - flow * 0.35);
+    float cloudShape = cloudBase * 0.82 + cloudDetail * 0.18;
     float cloudMask = smoothstep(-0.08, 0.12, dir.y);
     float cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloudShape, SkyCloudSharpness)) * cloudMask;
 

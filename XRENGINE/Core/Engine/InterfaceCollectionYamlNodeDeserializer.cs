@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
@@ -26,7 +27,7 @@ internal sealed class InterfaceCollectionYamlNodeDeserializer : INodeDeserialize
         return true;
     }
 
-    private static bool TryResolveConcreteCollectionType(IParser reader, Type expectedType, out Type? concreteType)
+    private static bool TryResolveConcreteCollectionType(IParser reader, Type expectedType, [NotNullWhen(true)] out Type? concreteType)
     {
         concreteType = null;
 
@@ -42,7 +43,7 @@ internal sealed class InterfaceCollectionYamlNodeDeserializer : INodeDeserialize
         return false;
     }
 
-    private static bool TryResolveSequenceCollectionType(Type expectedType, out Type? concreteType)
+    private static bool TryResolveSequenceCollectionType(Type expectedType, [NotNullWhen(true)] out Type? concreteType)
     {
         concreteType = null;
 
@@ -74,7 +75,7 @@ internal sealed class InterfaceCollectionYamlNodeDeserializer : INodeDeserialize
         return false;
     }
 
-    private static bool TryResolveMappingCollectionType(Type expectedType, out Type? concreteType)
+    private static bool TryResolveMappingCollectionType(Type expectedType, [NotNullWhen(true)] out Type? concreteType)
     {
         concreteType = null;
 
@@ -94,7 +95,7 @@ internal sealed class InterfaceCollectionYamlNodeDeserializer : INodeDeserialize
         return false;
     }
 
-    private static bool TryGetGenericInterface(Type expectedType, Type interfaceTypeDefinition, out Type[]? genericArguments)
+    private static bool TryGetGenericInterface(Type expectedType, Type interfaceTypeDefinition, [NotNullWhen(true)] out Type[]? genericArguments)
     {
         if (expectedType.IsGenericType
             && expectedType.GetGenericTypeDefinition() == interfaceTypeDefinition)

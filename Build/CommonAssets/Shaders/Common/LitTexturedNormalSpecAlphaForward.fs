@@ -87,6 +87,7 @@ layout (location = 4) in vec2 FragUV0;
 #pragma snippet "SurfaceDetailNormalMapping"
 #endif
 #pragma snippet "NormalEncoding"
+#pragma snippet "ShadowMomentEncoding"
 
 #if !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
 vec3 getNormalFromMap()
@@ -106,7 +107,7 @@ void main()
         discard;
 
 #if defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    Depth = vec4(length(FragPos - LightPos) / FarPlaneDist, 0.0, 0.0, 0.0);
+    XRENGINE_WritePointShadowCasterDepth(Depth, FragPos, LightPos, FarPlaneDist);
 #elif defined(XRENGINE_SHADOW_CASTER_PASS)
     XRENGINE_WriteShadowCasterDepth(Depth, gl_FragCoord.z);
 #else

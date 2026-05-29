@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
@@ -591,9 +592,8 @@ public sealed class UIBatchCollector : IDisposable
             GenerationPriority = EMeshGenerationPriority.RenderPipeline
         };
 
-        _matQuadMesh.EnsureRenderPipelineVersionsCreated();
-
         DisableShaderPipelines(_matQuadMesh);
+        _matQuadMesh.EnsureRenderPipelineVersionsCreated();
 
         // Create initial SSBOs with a reasonable starting capacity
         _matQuadCapacity = 64;
@@ -746,9 +746,8 @@ public sealed class UIBatchCollector : IDisposable
         if (gpu.Mesh.Mesh is not null)
             gpu.Mesh.Mesh.Name = "UIBatchTextQuadMesh";
         gpu.Mesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
-        gpu.Mesh.EnsureRenderPipelineVersionsCreated();
-
         DisableShaderPipelines(gpu.Mesh);
+        gpu.Mesh.EnsureRenderPipelineVersionsCreated();
 
         gpu.GlyphCapacity = 256;
         gpu.TextCapacity = 32;
@@ -774,14 +773,7 @@ public sealed class UIBatchCollector : IDisposable
     }
 
     private static void DisableShaderPipelines(XRMeshRenderer mesh)
-    {
-        mesh.GetDefaultVersion().AllowShaderPipelines = false;
-        mesh.GetOVRMultiViewVersion().AllowShaderPipelines = false;
-        mesh.GetNVStereoVersion().AllowShaderPipelines = false;
-        mesh.GetMeshDeformDefaultVersion().AllowShaderPipelines = false;
-        mesh.GetMeshDeformOVRMultiViewVersion().AllowShaderPipelines = false;
-        mesh.GetMeshDeformNVStereoVersion().AllowShaderPipelines = false;
-    }
+        => mesh.SetShaderPipelinesAllowedForAllVersions(false);
 
     private static void CreateTextBuffers(TextGPUResources gpu)
     {
@@ -893,14 +885,42 @@ public sealed class UIBatchCollector : IDisposable
         }
 
         using var sample = RuntimeEngine.Profiler.Start();
+        RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
+        bool profileGpu = profiler.IsProfilingActive;
 
-        EnsureMaterialQuadMesh();
-        UploadMaterialQuadData(batch.Entries);
+        if (profileGpu)
+        {
+            using (profiler.StartScope($"UIBatchMaterialUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
+            {
+                EnsureMaterialQuadMesh();
+                UploadMaterialQuadData(batch.Entries);
+            }
+        }
+        else
+        {
+            EnsureMaterialQuadMesh();
+            UploadMaterialQuadData(batch.Entries);
+        }
+
         XRMeshRenderer materialQuadMesh = _matQuadMesh!;
 
         var version = GetImmediateRenderVersion(materialQuadMesh);
-        version.Generate();
-        if (!materialQuadMesh.TryPrepareForRendering())
+        bool prepared;
+        if (profileGpu)
+        {
+            using (profiler.StartScope($"UIBatchMaterialPrepare[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
+            {
+                version.Generate();
+                prepared = materialQuadMesh.TryPrepareForRendering();
+            }
+        }
+        else
+        {
+            version.Generate();
+            prepared = materialQuadMesh.TryPrepareForRendering();
+        }
+
+        if (!prepared)
             return;
 
         Debug.UIEvery(
@@ -915,7 +935,15 @@ public sealed class UIBatchCollector : IDisposable
         DisableBatchCropping();
         try
         {
-            materialQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+            if (profileGpu)
+            {
+                using (profiler.StartScope($"UIBatchMaterialDraw[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
+                    materialQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+            }
+            else
+            {
+                materialQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+            }
         }
         finally
         {
@@ -936,7 +964,19 @@ public sealed class UIBatchCollector : IDisposable
 
         using var sample = RuntimeEngine.Profiler.Start();
 
-        var gpu = EnsureTextGPUResources(batchData.Atlas);
+        RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
+        bool profileGpu = profiler.IsProfilingActive;
+        TextGPUResources gpu;
+        if (profileGpu)
+        {
+            using (profiler.StartScope($"UIBatchTextEnsureResources[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
+                gpu = EnsureTextGPUResources(batchData.Atlas);
+        }
+        else
+        {
+            gpu = EnsureTextGPUResources(batchData.Atlas);
+        }
+
         XRMeshRenderer textMesh = gpu.Mesh!;
         var material = textMesh.Material;
         if (material is not null && material.RenderPass != renderPass)
@@ -992,12 +1032,34 @@ public sealed class UIBatchCollector : IDisposable
                 projectedGlyph);
         }
 
-        FinalizeAndUploadTextData(batchData, gpu, batchData.Atlas);
+        if (profileGpu)
+        {
+            using (profiler.StartScope($"UIBatchTextUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
+                FinalizeAndUploadTextData(batchData, gpu, batchData.Atlas);
+        }
+        else
+        {
+            FinalizeAndUploadTextData(batchData, gpu, batchData.Atlas);
+        }
 
         var version = GetImmediateRenderVersion(gpu.Mesh!);
-        version.Generate();
         s_textPrepareTotalCalls++;
-        bool prepared = textMesh.TryPrepareForRendering(out string prepareReason);
+        bool prepared;
+        string prepareReason;
+        if (profileGpu)
+        {
+            using (profiler.StartScope($"UIBatchTextPrepare[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
+            {
+                version.Generate();
+                prepared = textMesh.TryPrepareForRendering(out prepareReason);
+            }
+        }
+        else
+        {
+            version.Generate();
+            prepared = textMesh.TryPrepareForRendering(out prepareReason);
+        }
+
         if (!prepared)
         {
             s_textPrepareFailureCount++;
@@ -1032,7 +1094,15 @@ public sealed class UIBatchCollector : IDisposable
         DisableBatchCropping();
         try
         {
-            textMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
+            if (profileGpu)
+            {
+                using (profiler.StartScope($"UIBatchTextDraw[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
+                    textMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
+            }
+            else
+            {
+                textMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
+            }
         }
         finally
         {
@@ -1184,6 +1254,11 @@ public sealed class UIBatchCollector : IDisposable
 
     private static void DisableBatchCropping()
         => AbstractRenderer.Current?.SetCroppingEnabled(false);
+
+    private static string GetRenderPassDisplayName(int renderPass)
+        => Enum.IsDefined(typeof(EDefaultRenderPass), renderPass)
+            ? ((EDefaultRenderPass)renderPass).ToString()
+            : renderPass.ToString();
 
     private static string GetProjectedGlyphSummary(in Matrix4x4 worldMatrix, in Vector4 glyphTransform)
     {

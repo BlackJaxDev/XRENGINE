@@ -512,15 +512,21 @@ public sealed class ShadowAtlasManager
             ShadowMapRequest seed = _requests[i];
             if (seed.ProjectionType != EShadowProjectionType.DirectionalCascade ||
                 GetAtlasKind(seed.ProjectionType) != EShadowAtlasKind.Directional ||
-                HasDirectionalCascadeGroup(seed.Key.LightId, seed.Key.Domain, seed.Encoding))
+                !_currentAllocations.TryGetValue(seed.Key, out ShadowAtlasAllocation seedAllocation) ||
+                !CanDirectionalCascadeJoinGroup(seedAllocation) ||
+                HasDirectionalCascadeGroup(
+                    seed.Key.LightId,
+                    seed.Key.Domain,
+                    seed.Encoding,
+                    seedAllocation.AtlasId,
+                    seedAllocation.PageIndex))
             {
                 continue;
             }
 
             _directionalCascadeGroupMemberScratch.Clear();
-            bool coherent = true;
-            int pageIndex = -1;
-            int atlasId = -1;
+            int pageIndex = seedAllocation.PageIndex;
+            int atlasId = seedAllocation.AtlasId;
 
             for (int j = 0; j < _requests.Count; j++)
             {
@@ -535,25 +541,11 @@ public sealed class ShadowAtlasManager
 
                 if (!_currentAllocations.TryGetValue(candidate.Key, out ShadowAtlasAllocation allocation) ||
                     !_currentAllocationIndices.TryGetValue(candidate.Key, out int recordIndex) ||
-                    !allocation.IsResident ||
-                    allocation.SkipReason != SkipReason.None ||
-                    allocation.AtlasKind != EShadowAtlasKind.Directional ||
-                    allocation.InnerPixelRect.Width <= 0 ||
-                    allocation.InnerPixelRect.Height <= 0)
+                    !CanDirectionalCascadeJoinGroup(allocation) ||
+                    pageIndex != allocation.PageIndex ||
+                    atlasId != allocation.AtlasId)
                 {
-                    coherent = false;
-                    break;
-                }
-
-                if (pageIndex < 0)
-                {
-                    pageIndex = allocation.PageIndex;
-                    atlasId = allocation.AtlasId;
-                }
-                else if (pageIndex != allocation.PageIndex || atlasId != allocation.AtlasId)
-                {
-                    coherent = false;
-                    break;
+                    continue;
                 }
 
                 InsertDirectionalCascadeGroupMemberSorted(new ShadowAtlasGroupedAllocationMember(
@@ -565,7 +557,7 @@ public sealed class ShadowAtlasManager
                     allocation.UvScaleBias));
             }
 
-            if (!coherent || pageIndex < 0 || _directionalCascadeGroupMemberScratch.Count <= 1)
+            if (_directionalCascadeGroupMemberScratch.Count <= 1)
                 continue;
 
             ShadowAtlasGroupedAllocationMember[] members = new ShadowAtlasGroupedAllocationMember[_directionalCascadeGroupMemberScratch.Count];
@@ -587,13 +579,31 @@ public sealed class ShadowAtlasManager
         }
     }
 
-    private bool HasDirectionalCascadeGroup(Guid lightId, ShadowRequestDomain domain, EShadowMapEncoding encoding)
+    private static bool CanDirectionalCascadeJoinGroup(ShadowAtlasAllocation allocation)
+        => allocation.IsResident &&
+            allocation.SkipReason == SkipReason.None &&
+            allocation.AtlasKind == EShadowAtlasKind.Directional &&
+            allocation.InnerPixelRect.Width > 0 &&
+            allocation.InnerPixelRect.Height > 0;
+
+    private bool HasDirectionalCascadeGroup(
+        Guid lightId,
+        ShadowRequestDomain domain,
+        EShadowMapEncoding encoding,
+        int atlasId,
+        int pageIndex)
     {
         for (int i = 0; i < _directionalCascadeGroups.Count; i++)
         {
             ShadowAtlasGroupedDirectionalCascadeAllocation group = _directionalCascadeGroups[i];
-            if (group.LightId == lightId && group.Domain == domain && group.Encoding == encoding)
+            if (group.LightId == lightId &&
+                group.Domain == domain &&
+                group.Encoding == encoding &&
+                group.AtlasId == atlasId &&
+                group.PageIndex == pageIndex)
+            {
                 return true;
+            }
         }
 
         return false;
@@ -1185,6 +1195,18 @@ public sealed class ShadowAtlasManager
         return HasCriticalDirtyReason(request);
     }
 
+    private static bool ShouldRenderFreshTileBeforeStale(ShadowMapRequest request)
+    {
+        if (!request.IsDirty)
+            return false;
+
+        if (IsDirectionalRequest(request))
+            return HasCriticalDirtyReason(request);
+
+        return request.ProjectionType is EShadowProjectionType.PointFace or EShadowProjectionType.SpotPrimary &&
+            (request.DirtyReason & ShadowDirtyReason.ProjectionOrCameraFitChanged) != 0;
+    }
+
     /// <summary>
     /// Local lights (spot/point face) get the same soft-time-budget bypass as directional
     /// when they are dirty for an interactive reason: this prevents single-frame editor
@@ -1549,7 +1571,7 @@ public sealed class ShadowAtlasManager
 
         bool requiresFreshRender = request.IsDirty || !request.CanReusePreviousFrame;
         bool hasRenderedTile = lastRendered != 0u;
-        bool allowStaleTile = request.Fallback == ShadowFallbackMode.StaleTile && !ShouldRenderDirectionalRefreshPastBudget(request);
+        bool allowStaleTile = request.Fallback == ShadowFallbackMode.StaleTile && !ShouldRenderFreshTileBeforeStale(request);
         bool reuseStaleTile = hasRenderedTile && requiresFreshRender && allowStaleTile;
         ShadowFallbackMode activeFallback = ShadowFallbackMode.None;
         SkipReason skipReason = SkipReason.None;

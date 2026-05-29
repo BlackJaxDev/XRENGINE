@@ -21,6 +21,30 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool CopyStencil { get; set; }
         public bool LinearFilter { get; set; }
 
+        public override string GpuProfilingName
+            => SourceTextureName is null || DestinationTextureName is null
+                ? base.GpuProfilingName
+                : $"{base.GpuProfilingName}[{SourceTextureName} mip{SourceMipLevel} layer{SourceLayerIndex}->{DestinationTextureName} mip{DestinationMipLevel} layer{DestinationLayerIndex}; {GetAttachmentLabel()}; filter={(LinearFilter ? "linear" : "nearest")}]";
+
+        private string GetAttachmentLabel()
+        {
+            if (CopyColor && !CopyDepth && !CopyStencil)
+                return "color";
+            if (!CopyColor && CopyDepth && !CopyStencil)
+                return "depth";
+            if (!CopyColor && !CopyDepth && CopyStencil)
+                return "stencil";
+            if (!CopyColor && !CopyDepth && !CopyStencil)
+                return "none";
+
+            return string.Concat(
+                CopyColor ? "color" : string.Empty,
+                CopyColor && (CopyDepth || CopyStencil) ? "+" : string.Empty,
+                CopyDepth ? "depth" : string.Empty,
+                CopyDepth && CopyStencil ? "+" : string.Empty,
+                CopyStencil ? "stencil" : string.Empty);
+        }
+
         protected override void Execute()
         {
             if (SourceTextureName is null || DestinationTextureName is null)

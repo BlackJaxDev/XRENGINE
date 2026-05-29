@@ -29,6 +29,7 @@ public class DearImGuiComponent : UIComponent, IRenderable
                 this,
                 _renderCommand = new RenderCommandMethod2D((int)EDefaultRenderPass.OnTopForward, RenderImGui))
         ];
+        _renderCommand.GpuProfilingLabel = "DearImGuiComponent.RenderImGui";
         _renderInfo.CullingVolume = null;
     }
 

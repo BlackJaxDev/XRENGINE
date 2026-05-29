@@ -335,6 +335,8 @@ public static class RuntimeRenderingHostServices
 
         public bool Preview3DWorldOctree => RuntimeEngine.EditorPreferences.Debug.Preview3DWorldOctree;
         public bool Preview2DWorldQuadtree => RuntimeEngine.EditorPreferences.Debug.Preview2DWorldQuadtree;
+        public bool HoverOutlineEnabled => RuntimeEngine.EditorPreferences.HoverOutlineEnabled;
+        public bool SelectionOutlineEnabled => RuntimeEngine.EditorPreferences.SelectionOutlineEnabled;
         public ColorF4 OctreeIntersectedBoundsColor => RuntimeEngine.EditorPreferences.Theme.OctreeIntersectedBoundsColor;
         public ColorF4 OctreeContainedBoundsColor => RuntimeEngine.EditorPreferences.Theme.OctreeContainedBoundsColor;
         public ColorF4 QuadtreeIntersectedBoundsColor => RuntimeEngine.EditorPreferences.Theme.QuadtreeIntersectedBoundsColor;

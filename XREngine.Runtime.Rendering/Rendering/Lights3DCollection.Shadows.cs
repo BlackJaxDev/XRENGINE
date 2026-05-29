@@ -18,6 +18,8 @@ namespace XREngine.Scene
     {
         #region Shadow Collection & Culling
 
+        private const float LocalShadowMovementFreshSeconds = 0.25f;
+
         public void CollectVisibleItems()
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
@@ -477,7 +479,9 @@ namespace XREngine.Scene
                     continue;
 
                 int activeCascadeCount = light.ActiveCascadeCount;
-                if (light.EnableCascadedShadows)
+                bool useCascadeAtlas = light.EnableCascadedShadows &&
+                    light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
+                if (useCascadeAtlas)
                 {
                     for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
                     {
@@ -658,7 +662,7 @@ namespace XREngine.Scene
                 if (previous.ContentVersion != contentHash)
                 {
                     reason |= ShadowDirtyReason.ContentChanged;
-                    reason |= projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary
+                    reason |= IsProjectionOrCameraFitChange(light, projectionType)
                         ? ShadowDirtyReason.ProjectionOrCameraFitChanged
                         : ShadowDirtyReason.LightOrSettingsChanged;
                 }
@@ -674,6 +678,16 @@ namespace XREngine.Scene
             }
 
             return reason;
+        }
+
+        private static bool IsProjectionOrCameraFitChange(LightComponent light, EShadowProjectionType projectionType)
+        {
+            if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
+                return true;
+
+            return projectionType is EShadowProjectionType.PointFace or EShadowProjectionType.SpotPrimary &&
+                light.MovementVersion != 0u &&
+                light.TimeSinceLastMovement <= LocalShadowMovementFreshSeconds;
         }
 
         private static EShadowAtlasKind ResolveAtlasKind(EShadowProjectionType projectionType)
@@ -721,21 +735,29 @@ namespace XREngine.Scene
             renderCascades = true;
             ShadowMapFormatSelection selection = light.ResolveShadowMapFormat(preferredStorageFormat: null);
             bool momentSingleMap = selection.Encoding != EShadowMapEncoding.Depth;
-            if (!light.UsesDirectionalShadowAtlasForCurrentEncoding)
+            int activeCascadeCount = light.ActiveCascadeCount;
+            bool needsCascadeAtlas = light.EnableCascadedShadows && activeCascadeCount > 0;
+            bool cascadeAtlasUnsupported = light.UsesDirectionalShadowAtlasForCurrentEncoding &&
+                needsCascadeAtlas &&
+                !light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
+            if (!light.UsesDirectionalShadowAtlasForCurrentEncoding || cascadeAtlasUnsupported)
             {
                 renderCascades = !momentSingleMap;
                 LogDirectionalLegacyDecision(
                     light,
-                    momentSingleMap ? "MomentSingleMap" : "AtlasDisabled",
+                    momentSingleMap
+                        ? "MomentSingleMap"
+                        : cascadeAtlasUnsupported
+                            ? "AtlasGroupedCascadeBackendUnavailable"
+                            : "AtlasDisabled",
                     legacyRender: true,
                     renderCascades,
                     needsLegacyCascades: renderCascades,
                     needsLegacyPrimary: light.ShadowMap is not null,
-                    activeCascadeCount: light.ActiveCascadeCount);
+                    activeCascadeCount);
                 return true;
             }
 
-            int activeCascadeCount = light.ActiveCascadeCount;
             LogDirectionalLegacyDecision(
                 light,
                 "AtlasEnabledNoLegacyFallback",

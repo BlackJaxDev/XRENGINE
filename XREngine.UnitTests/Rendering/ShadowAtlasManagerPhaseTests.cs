@@ -1,16 +1,49 @@
 using System.Numerics;
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
+using XREngine;
+using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Shadows;
+using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
+[NonParallelizable]
 public sealed class ShadowAtlasManagerPhaseTests
 {
+    private static readonly FieldInfo WorldField = typeof(RuntimeWorldObjectBase).GetField(
+        "_world",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("RuntimeWorldObjectBase._world field was not found.");
+    private static readonly FieldInfo CurrentAllocationsField = typeof(ShadowAtlasManager).GetField(
+        "_currentAllocations",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("ShadowAtlasManager._currentAllocations field was not found.");
+    private static readonly MethodInfo MarkTileRenderedMethod = typeof(ShadowAtlasManager).GetMethod(
+        "MarkTileRendered",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("ShadowAtlasManager.MarkTileRendered method was not found.");
+    private static readonly IRuntimeWorldContext ActiveWorld = new TestWorldContext();
+
+    private IRuntimeShaderServices? _previousShaderServices;
+
+    [OneTimeSetUp]
+    public void OneTimeSetUp()
+    {
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+    }
+
+    [OneTimeTearDown]
+    public void OneTimeTearDown()
+        => RuntimeShaderServices.Current = _previousShaderServices;
+
     [Test]
     public void ShadowRequestKey_IncludesProjectionFaceAndEncoding()
     {
@@ -28,6 +61,33 @@ public sealed class ShadowAtlasManagerPhaseTests
         cascadeOne.ShouldNotBe(spot);
         cascadeOneEvsm.ShouldNotBe(cascadeOne);
         spot.LightId.ShouldBe(light.ID);
+    }
+
+    [Test]
+    public void DirectionalAtlas_IsDepthOnlyForCurrentEncoding()
+    {
+        bool previousUseDirectionalShadowAtlas = RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas;
+        RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas = true;
+        try
+        {
+            DirectionalLightComponent light = CreateDirectionalLight(512u);
+
+            light.ShadowMapEncoding = EShadowMapEncoding.Depth;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
+
+            light.ShadowMapEncoding = EShadowMapEncoding.Variance2;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+
+            light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance2;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+
+            light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance4;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+        }
+        finally
+        {
+            RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas = previousUseDirectionalShadowAtlas;
+        }
     }
 
     [Test]
@@ -169,6 +229,29 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
+    public void SolveAllocations_PublishesGroupedDirectionalCascadeRecordForResidentSubset()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1);
+        DirectionalLightComponent light = CreateDirectionalLight(2048u);
+        ShadowMapRequest[] requests =
+        [
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 0, 1024u, 128u, 10000.0f, 1u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 1, 1024u, 128u, 9900.0f, 2u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 2, 1024u, 128u, 9800.0f, 3u, SkipReason.NotRelevant),
+        ];
+
+        ShadowAtlasFrameData frameData = RunFrame(manager, 1u, requests);
+
+        frameData.DirectionalCascadeGroupCount.ShouldBe(1);
+        frameData.TryGetDirectionalCascadeGroup(light.ID, out ShadowAtlasGroupedDirectionalCascadeAllocation group).ShouldBeTrue();
+        group.CascadeCount.ShouldBe(2);
+        group.Members[0].CascadeIndex.ShouldBe(0);
+        group.Members[0].ViewportScissorIndex.ShouldBe(0);
+        group.Members[1].CascadeIndex.ShouldBe(1);
+        group.Members[1].ViewportScissorIndex.ShouldBe(1);
+    }
+
+    [Test]
     public void RenderScheduledTiles_RendersDirtyDirectionalCascadeGroupPastTileBudget()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1, maxTiles: 1);
@@ -204,7 +287,7 @@ public sealed class ShadowAtlasManagerPhaseTests
             128u,
             10000.0f,
             1u);
-        RunFrame(manager, 1u, firstRequest)
+        RunFrameAndMarkRendered(manager, 1u, firstRequest)
             .TryGetAllocation(firstRequest.Key, out ShadowAtlasAllocation firstAllocation)
             .ShouldBeTrue();
         firstAllocation.LastRenderedFrame.ShouldBe(1u);
@@ -217,6 +300,45 @@ public sealed class ShadowAtlasManagerPhaseTests
             128u,
             10000.0f,
             2u);
+        manager.BeginFrame(2u, activeCameraCount: 1);
+        manager.Submit(movedRequest).ShouldBeTrue();
+        manager.SolveAllocations();
+        manager.PublishFrameData();
+
+        ShadowAtlasFrameData frameData = manager.PublishedFrameData;
+        frameData.TryGetAllocation(movedRequest.Key, out ShadowAtlasAllocation movedAllocation).ShouldBeTrue();
+        movedAllocation.LastRenderedFrame.ShouldBe(1u);
+        movedAllocation.ActiveFallback.ShouldBe(ShadowFallbackMode.Lit);
+        movedAllocation.SkipReason.ShouldBe(SkipReason.None);
+    }
+
+    [Test]
+    public void SolveAllocations_DirtyLocalProjectionRefreshDoesNotPublishStaleFallbackBeforeRender()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 1024u, maxPages: 1);
+        SpotLightComponent light = CreateSpotLight(1024u);
+        ShadowMapRequest firstRequest = CreateRequest(
+            light,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            512u,
+            128u,
+            10000.0f,
+            1u);
+        RunFrameAndMarkRendered(manager, 1u, firstRequest)
+            .TryGetAllocation(firstRequest.Key, out ShadowAtlasAllocation firstAllocation)
+            .ShouldBeTrue();
+        firstAllocation.LastRenderedFrame.ShouldBe(1u);
+
+        ShadowMapRequest movedRequest = CreateRequest(
+            light,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            512u,
+            128u,
+            10000.0f,
+            2u,
+            dirtyReason: ShadowDirtyReason.ContentChanged | ShadowDirtyReason.ProjectionOrCameraFitChanged);
         manager.BeginFrame(2u, activeCameraCount: 1);
         manager.Submit(movedRequest).ShouldBeTrue();
         manager.SolveAllocations();
@@ -642,24 +764,31 @@ public sealed class ShadowAtlasManagerPhaseTests
             MaxRequestsPerFrame: maxRequests));
 
     private static SpotLightComponent CreateSpotLight(uint resolution)
-    {
-        SpotLightComponent light = new();
-        light.SetShadowMapResolution(resolution, resolution);
-        return light;
-    }
+        => CreateActiveLight<SpotLightComponent>(resolution);
 
     private static PointLightComponent CreatePointLight(uint resolution)
+        => CreateActiveLight<PointLightComponent>(resolution);
+
+    private static DirectionalLightComponent CreateDirectionalLight(uint resolution)
+        => CreateActiveLight<DirectionalLightComponent>(resolution);
+
+    private static T CreateActiveLight<T>(uint resolution) where T : LightComponent
     {
-        PointLightComponent light = new();
+        SceneNode node = new(typeof(T).Name);
+        T light = node.AddComponent<T>()!;
+        WorldField.SetValue(node, ActiveWorld);
+        WorldField.SetValue(light, ActiveWorld);
         light.SetShadowMapResolution(resolution, resolution);
         return light;
     }
 
-    private static DirectionalLightComponent CreateDirectionalLight(uint resolution)
+    private sealed class TestWorldContext : IRuntimeWorldContext
     {
-        DirectionalLightComponent light = new();
-        light.SetShadowMapResolution(resolution, resolution);
-        return light;
+        public bool IsPlaySessionActive => false;
+        public void RegisterTick(ETickGroup group, int order, WorldTick tick) { }
+        public void UnregisterTick(ETickGroup group, int order, WorldTick tick) { }
+        public void AddDirtyRuntimeObject(RuntimeWorldObjectBase worldObject) { }
+        public void EnqueueRuntimeWorldMatrixChange(RuntimeWorldObjectBase worldObject, Matrix4x4 worldMatrix) { }
     }
 
     private static ShadowAtlasFrameData RunFrame(ShadowAtlasManager manager, ulong frameId, params ShadowMapRequest[] requests)
@@ -674,6 +803,31 @@ public sealed class ShadowAtlasManagerPhaseTests
         return manager.PublishedFrameData;
     }
 
+    private static ShadowAtlasFrameData RunFrameAndMarkRendered(ShadowAtlasManager manager, ulong frameId, params ShadowMapRequest[] requests)
+    {
+        manager.BeginFrame(frameId, activeCameraCount: 1);
+        for (int i = 0; i < requests.Length; i++)
+            manager.Submit(requests[i]).ShouldBeTrue();
+
+        manager.SolveAllocations();
+        MarkResidentRequestsRendered(manager, requests);
+        manager.PublishFrameData();
+        return manager.PublishedFrameData;
+    }
+
+    private static void MarkResidentRequestsRendered(ShadowAtlasManager manager, ReadOnlySpan<ShadowMapRequest> requests)
+    {
+        var currentAllocations = (Dictionary<ShadowRequestKey, ShadowAtlasAllocation>)CurrentAllocationsField.GetValue(manager)!;
+        for (int i = 0; i < requests.Length; i++)
+        {
+            ShadowMapRequest request = requests[i];
+            if (!currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation allocation) || !allocation.IsResident)
+                continue;
+
+            MarkTileRenderedMethod.Invoke(manager, new object[] { request, allocation });
+        }
+    }
+
     private static ShadowMapRequest CreateRequest(
         LightComponent light,
         EShadowProjectionType projectionType,
@@ -682,7 +836,8 @@ public sealed class ShadowAtlasManagerPhaseTests
         uint minimumResolution,
         float priority,
         ulong contentHash,
-        SkipReason forcedSkipReason = SkipReason.None)
+        SkipReason forcedSkipReason = SkipReason.None,
+        ShadowDirtyReason dirtyReason = ShadowDirtyReason.ContentChanged)
     {
         ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, faceOrCascadeIndex);
         return new ShadowMapRequest(
@@ -702,7 +857,7 @@ public sealed class ShadowAtlasManagerPhaseTests
             priority,
             contentHash,
             IsDirty: true,
-            DirtyReason: ShadowDirtyReason.ContentChanged,
+            DirtyReason: dirtyReason,
             CanReusePreviousFrame: true,
             EditorPinned: false,
             StereoVis: StereoVisibility.Mono,

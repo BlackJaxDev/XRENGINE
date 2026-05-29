@@ -13,6 +13,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool PreferGpuReadback { get; set; } = true;
         public bool UploadToGpuBuffer { get; set; } = true;
 
+        public override string GpuProfilingName
+            => SourceTextureName is null || DestinationBufferName is null
+                ? base.GpuProfilingName
+                : $"{base.GpuProfilingName}[{SourceTextureName} mip{SourceMipLevel} layer{SourceLayerIndex}->{DestinationBufferName}]";
+
         protected override void Execute()
         {
             if (SourceTextureName is null || DestinationBufferName is null)

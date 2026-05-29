@@ -114,7 +114,8 @@ namespace XREngine.Rendering
             /// Priority bucket assigned to programs built for this version. Set by
             /// <see cref="GetOrCreateVersion"/> based on the version key (main passes get
             /// <see cref="EProgramPriority.Main"/>, interactive meshes get <see cref="EProgramPriority.Interactive"/>,
-            /// shadow variants get <see cref="EProgramPriority.Shadow"/>, VR stereo variants get <see cref="EProgramPriority.VR"/>)
+            /// shadow variants get <see cref="EProgramPriority.Shadow"/>, active VR stereo variants get
+            /// <see cref="EProgramPriority.VR"/>, inactive VR stereo variants get <see cref="EProgramPriority.Deferred"/>)
             /// and propagated onto every
             /// <see cref="XRRenderProgram"/> the GL mesh renderer creates from this version.
             /// </summary>
@@ -183,6 +184,20 @@ namespace XREngine.Rendering
 
         [MemoryPackIgnore]
         public Dictionary<int, BaseVersion> GeneratedVertexShaderVersions { get; set; } = [];
+
+        private bool? _shaderPipelinesAllowedForAllVersions;
+
+        /// <summary>
+        /// Overrides the shader-pipeline allowance for existing and future generated
+        /// vertex-shader versions without forcing those versions to be materialized.
+        /// </summary>
+        public void SetShaderPipelinesAllowedForAllVersions(bool allow)
+        {
+            SetField(ref _shaderPipelinesAllowedForAllVersions, allow, nameof(SetShaderPipelinesAllowedForAllVersions));
+
+            foreach (BaseVersion version in GeneratedVertexShaderVersions.Values)
+                version.AllowShaderPipelines = allow;
+        }
 
         /// <summary>
         /// Automatically selects the correct version of this mesh to render based on the current rendering state.
@@ -333,18 +348,19 @@ namespace XREngine.Rendering
                 return existing;
             }
 
+            bool allowShaderPipelines = ResolveShaderPipelinesAllowedForVersion(versionKey);
             BaseVersion created = versionKey switch
             {
-                0 => new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true),
-                1 => new Version<OVRMultiViewVertexShaderGenerator>(this, HasMultiViewExtension, false),
-                2 => new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false),
-                3 => new MeshDeformVersion(this, NoSpecialExtensions, true),
-                4 => new MeshDeformVersion(this, HasMultiViewExtension, false) { UseOVRMultiView = true },
-                5 => new MeshDeformVersion(this, HasNVStereoViewRendering, false) { UseNVStereo = true },
-                6 => new Version<DirectionalCascadeInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
-                7 => new Version<PointLightInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
-                8 => new Version<DirectionalCascadeAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
-                9 => new Version<PointLightAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, true),
+                0 => new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
+                1 => new Version<OVRMultiViewVertexShaderGenerator>(this, HasMultiViewExtension, allowShaderPipelines),
+                2 => new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, allowShaderPipelines),
+                3 => new MeshDeformVersion(this, NoSpecialExtensions, allowShaderPipelines),
+                4 => new MeshDeformVersion(this, HasMultiViewExtension, allowShaderPipelines) { UseOVRMultiView = true },
+                5 => new MeshDeformVersion(this, HasNVStereoViewRendering, allowShaderPipelines) { UseNVStereo = true },
+                6 => new Version<DirectionalCascadeInstancedVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
+                7 => new Version<PointLightInstancedVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
+                8 => new Version<DirectionalCascadeAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
+                9 => new Version<PointLightAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
                 _ => throw new ArgumentOutOfRangeException(nameof(versionKey), versionKey, "Unknown mesh renderer shader version."),
             };
 
@@ -356,23 +372,54 @@ namespace XREngine.Rendering
             return created;
         }
 
+        /// <summary>
+        /// Resolves the program priority for a given shader version key.
+        /// </summary>
+        /// <param name="versionKey">The version key of the shader.</param>
+        /// <returns>The program priority for the specified shader version.</returns>
         private EProgramPriority ResolveProgramPriority(int versionKey)
         {
+            if (IsVrVersionKey(versionKey))
+            {
+                if (!RuntimeEngine.VRState.IsInVR)
+                    return EProgramPriority.Deferred;
+
+                return GenerationPriority == EMeshGenerationPriority.Interactive
+                    ? EProgramPriority.Interactive
+                    : EProgramPriority.VR;
+            }
+
             if (GenerationPriority == EMeshGenerationPriority.Interactive)
                 return EProgramPriority.Interactive;
 
             return versionKey switch
             {
                 0 or 3 => EProgramPriority.Main,
-                1 or 2 or 4 or 5 => EProgramPriority.VR,
                 6 or 7 or 8 or 9 => EProgramPriority.Shadow,
                 _ => EProgramPriority.Main,
             };
         }
 
         /// <summary>
+        /// Resolves whether shader pipelines are allowed for a given shader version key.
+        /// </summary>
+        /// <param name="versionKey">The version key of the shader.</param>
+        /// <returns>True if shader pipelines are allowed for the specified shader version; otherwise, false.</returns>
+        private bool ResolveShaderPipelinesAllowedForVersion(int versionKey)
+            => _shaderPipelinesAllowedForAllVersions ?? DefaultShaderPipelinesAllowedForVersion(versionKey);
+
+        private static bool DefaultShaderPipelinesAllowedForVersion(int versionKey)
+            => !IsVrVersionKey(versionKey);
+
+        private static bool IsVrVersionKey(int versionKey)
+            => versionKey is 1 or 2 or 4 or 5;
+
+        /// <summary>
         /// Specialized version for mesh deformation that passes deform parameters to the generator.
         /// </summary>
+        /// <param name="parent">The parent XRMeshRenderer instance.</param>
+        /// <param name="vertexShaderSelector">A function to select the appropriate vertex shader.</param>
+        /// <param name="allowShaderPipelines">Indicates whether shader pipelines are allowed.</param>
         public class MeshDeformVersion(XRMeshRenderer parent, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) : BaseVersion(parent, vertexShaderSelector, allowShaderPipelines)
         {
             public bool UseOVRMultiView { get; set; }

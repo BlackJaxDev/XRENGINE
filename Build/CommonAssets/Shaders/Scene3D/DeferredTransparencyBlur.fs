@@ -7,7 +7,7 @@ uniform sampler2D TransparentSceneCopyTex;
 uniform sampler2D AlbedoOpacity;
 uniform sampler2D DepthView;
 
-const int BlurRadius = 2;
+const int BlurRadius = 1;
 const float FarDepthThreshold = 0.99999;
 const float NearOpaqueThreshold = 0.999;
 const float DepthWeightScale = 96.0;
@@ -24,7 +24,12 @@ bool IsDeferredTranslucent(float opacity, float depth)
 
 float SpatialWeight(ivec2 offset)
 {
-    return exp(-0.65 * float(dot(offset, offset)));
+    int distanceSquared = offset.x * offset.x + offset.y * offset.y;
+    if (distanceSquared == 0)
+        return 1.0;
+    if (distanceSquared == 1)
+        return 0.5220458;
+    return 0.2725318;
 }
 
 void main()
@@ -86,7 +91,7 @@ void main()
                 if (sampleDepth >= FarDepthThreshold || referenceDepth >= FarDepthThreshold)
                     depthWeight = 0.35;
                 else
-                    depthWeight = exp(-abs(sampleDepth - referenceDepth) * DepthWeightScale);
+                    depthWeight = 1.0 / (1.0 + abs(sampleDepth - referenceDepth) * DepthWeightScale);
             }
 
             float weight = spatialWeight * depthWeight;

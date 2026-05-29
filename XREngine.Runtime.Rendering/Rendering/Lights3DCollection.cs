@@ -72,10 +72,6 @@ namespace XREngine.Scene
         private static bool _loggedForwardLightingOnce = false;
         private static bool _loggedShadowMapEnabledOnce = false;
 
-        // Last state-key logged by the ForwardShadowDiag line. Bumped every time a watched uniform
-        // transitions so we get exactly one log line per toggle rather than per frame.
-        private static ulong _lastForwardShadowDiagKey = ulong.MaxValue;
-
         // Last reason logged by the "No shadow tex" diagnostic in SetForwardLightingUniforms.
         // Logged exactly once per distinct reason so we don't spam the log every frame.
         private static string? _lastForwardShadowNoTexReason = null;

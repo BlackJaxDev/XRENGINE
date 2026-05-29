@@ -267,9 +267,7 @@ namespace XREngine.Components.Capture.Lights
 
         private static void ConfigureProbeFullscreenFramebuffer(XRQuadFrameBuffer fbo)
         {
-            fbo.FullScreenMesh.GetDefaultVersion().AllowShaderPipelines = false;
-            fbo.FullScreenMesh.GetOVRMultiViewVersion().AllowShaderPipelines = false;
-            fbo.FullScreenMesh.GetNVStereoVersion().AllowShaderPipelines = false;
+            fbo.FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
         }
 
         private void ConfigureIrradianceFramebufferTarget()

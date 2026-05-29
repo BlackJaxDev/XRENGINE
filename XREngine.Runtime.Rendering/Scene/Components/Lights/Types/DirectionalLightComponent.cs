@@ -77,7 +77,7 @@ namespace XREngine.Components.Lights
                 if (!RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
                     return false;
 
-                return ResolveDirectionalSamplingShadowMapFormat().DemotionReason != SkipReason.UnsupportedEncoding;
+                return ResolveDirectionalSamplingShadowMapFormat().Encoding == EShadowMapEncoding.Depth;
             }
         }
 

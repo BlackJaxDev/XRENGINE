@@ -6,20 +6,6 @@ namespace XREngine.Rendering.Shaders;
 
 public static class ShadowCasterVariantFactory
 {
-    private const string PointShadowDepthFragmentShader = """
-        #version 450
-        layout(location = 0) in vec3 FragPos;
-        layout(location = 0) out vec4 Depth;
-
-        uniform vec3 LightPos;
-        uniform float FarPlaneDist;
-
-        void main()
-        {
-            Depth = vec4(length(FragPos - LightPos) / max(FarPlaneDist, 0.0001), 0.0, 0.0, 0.0);
-        }
-        """;
-
     public static XRMaterial? CreateMaterialVariant(XRMaterial sourceMaterial)
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
@@ -69,12 +55,12 @@ public static class ShadowCasterVariantFactory
         if (kind == EPointShadowMaterialKind.GeometryShader)
         {
             shaders.Add(XRShader.EngineShader("PointLightShadowDepth.gs", EShaderType.Geometry));
-            shaders.Add(new XRShader(EShaderType.Fragment, PointShadowDepthFragmentShader));
+            shaders.Add(CreatePointLightFragmentVariant(sourceMaterial));
         }
         else if (kind == EPointShadowMaterialKind.AtlasGeometryShader)
         {
             shaders.Add(XRShader.EngineShader("PointLightAtlasShadowDepth.gs", EShaderType.Geometry));
-            shaders.Add(new XRShader(EShaderType.Fragment, PointShadowDepthFragmentShader));
+            shaders.Add(CreatePointLightFragmentVariant(sourceMaterial));
         }
         else
         {
@@ -104,6 +90,13 @@ public static class ShadowCasterVariantFactory
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };
         return variant;
+    }
+
+    private static XRShader CreatePointLightFragmentVariant(XRMaterial sourceMaterial)
+    {
+        XRShader? fragmentShader = sourceMaterial.FragmentShaders.FirstOrDefault();
+        XRShader? fragmentVariantShader = ShaderHelper.GetPointShadowCasterForwardVariant(fragmentShader);
+        return fragmentVariantShader ?? XRShader.EngineShader("PointLightShadowDepth.fs", EShaderType.Fragment);
     }
 
     public static XRMaterial CreateDirectionalCascadeMaterialVariant(XRMaterial sourceMaterial, bool useGeometryShader)

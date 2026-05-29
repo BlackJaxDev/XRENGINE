@@ -583,9 +583,7 @@ namespace XREngine.Components.Lights
             _octahedralFBO!.SettingUniforms -= BindOctahedralSampler;
             _octahedralFBO!.SettingUniforms += BindOctahedralSampler;
 
-            _octahedralFBO.FullScreenMesh.GetDefaultVersion().AllowShaderPipelines = false;
-            _octahedralFBO.FullScreenMesh.GetOVRMultiViewVersion().AllowShaderPipelines = false;
-            _octahedralFBO.FullScreenMesh.GetNVStereoVersion().AllowShaderPipelines = false;
+            _octahedralFBO.FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
 
             _octahedralFBO!.SetRenderTargets((_environmentTextureOctahedral!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         }

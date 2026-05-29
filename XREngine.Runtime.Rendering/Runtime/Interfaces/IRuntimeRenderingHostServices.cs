@@ -733,6 +733,16 @@ public interface IRuntimeRenderingHostServices
     bool Preview2DWorldQuadtree { get; }
 
     /// <summary>
+    /// Gets whether hover outlines are enabled by host editor preferences.
+    /// </summary>
+    bool HoverOutlineEnabled { get; }
+
+    /// <summary>
+    /// Gets whether selection outlines are enabled by host editor preferences.
+    /// </summary>
+    bool SelectionOutlineEnabled { get; }
+
+    /// <summary>
     /// Gets the host theme color for octree or BVH nodes intersecting the active culling volume.
     /// </summary>
     ColorF4 OctreeIntersectedBoundsColor { get; }

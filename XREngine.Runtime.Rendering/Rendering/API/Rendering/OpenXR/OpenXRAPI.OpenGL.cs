@@ -20,6 +20,10 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
+    private const string VrEyeTransformFullName = "XREngine.Scene.Transforms.VREyeTransform";
+    private static RuntimeTypeHandle _vrEyeTransformTypeHandle;
+    private static bool _hasVrEyeTransformTypeHandle;
+
     /// <summary>
     /// Delegate for rendering to a framebuffer texture.
     /// </summary>
@@ -807,7 +811,7 @@ public unsafe partial class OpenXRAPI
         // avoids timewarp/reprojection artifacts from pose-space mismatches.
         // Only directly drive the transform when the camera isn't part of an app-provided VR rig.
         // (Rig eye cameras use VREyeTransform + VRHeadsetTransform and are updated via InvokeRecalcMatrixOnDraw.)
-        if (camera.Transform is not XREngine.Scene.Transforms.VREyeTransform)
+        if (!IsAppVrRigEyeTransform(camera.Transform))
             camera.Transform.DeriveLocalMatrix(eyeLocalMatrix, networkSmoothed: false);
 
         float paddingDegrees = 0.0f;
@@ -825,6 +829,25 @@ public unsafe partial class OpenXRAPI
             openxrParams.SetAngles(fov.Left, fov.Right, fov.Up, fov.Down);
 
         return paddingDegrees;
+    }
+
+    private static bool IsAppVrRigEyeTransform(TransformBase transform)
+    {
+        Type transformType = transform.GetType();
+        if (_hasVrEyeTransformTypeHandle)
+            return transformType.TypeHandle.Equals(_vrEyeTransformTypeHandle);
+
+        for (Type? type = transformType; type is not null; type = type.BaseType)
+        {
+            if (type.FullName != VrEyeTransformFullName)
+                continue;
+
+            _vrEyeTransformTypeHandle = transformType.TypeHandle;
+            _hasVrEyeTransformTypeHandle = true;
+            return true;
+        }
+
+        return false;
     }
 
     private void ApplyOpenXrEyePoseForRenderThread(uint viewIndex)

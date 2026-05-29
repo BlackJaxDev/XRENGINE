@@ -28,6 +28,7 @@ uniform float RenderTime;
 
 uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f);
 uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f);
+uniform bool EnableEditorOutline = true;
 uniform bool OutputHDR;
 
 struct VignetteStruct
@@ -164,9 +165,9 @@ vec2 SceneSourceUv(vec2 uv)
   return ApplyLensDistortionByMode(uv);
 }
 
-uint SampleSceneStencil(vec2 uv)
+uint SampleSceneStencilSource(vec2 sourceUv)
 {
-  return texture(StencilView, SceneSourceUv(uv)).r;
+  return texture(StencilView, clamp(sourceUv, vec2(0.0f), vec2(1.0f))).r;
 }
 
 float GetStencilMaskBit(uint stencilValue, uint bit)
@@ -174,7 +175,7 @@ float GetStencilMaskBit(uint stencilValue, uint bit)
   return (stencilValue & bit) != 0u ? 1.0f : 0.0f;
 }
 
-vec2 GetStencilOutlineIntensity(vec2 uv)
+vec2 GetStencilOutlineIntensity(vec2 sourceUv)
 {
   int outlineSize = 3;
   ivec2 texSize = textureSize(StencilView, 0);
@@ -182,7 +183,7 @@ vec2 GetStencilOutlineIntensity(vec2 uv)
     vec2 texelX = vec2(texelSize.x, 0.0f);
     vec2 texelY = vec2(0.0f, texelSize.y);
 
-    uint stencilCurrent = SampleSceneStencil(uv);
+    uint stencilCurrent = SampleSceneStencilSource(sourceUv);
   float currentHover = GetStencilMaskBit(stencilCurrent, 1u);
   float currentSelection = GetStencilMaskBit(stencilCurrent, 2u);
 
@@ -195,15 +196,15 @@ vec2 GetStencilOutlineIntensity(vec2 uv)
     for (int i = 1; i <= outlineSize; ++i)
     {
       float step = float(i);
-      vec2 yPos = clamp(uv + texelY * step, zero, one);
-      vec2 yNeg = clamp(uv - texelY * step, zero, one);
-      vec2 xPos = clamp(uv + texelX * step, zero, one);
-      vec2 xNeg = clamp(uv - texelX * step, zero, one);
+      vec2 yPos = clamp(sourceUv + texelY * step, zero, one);
+      vec2 yNeg = clamp(sourceUv - texelY * step, zero, one);
+      vec2 xPos = clamp(sourceUv + texelX * step, zero, one);
+      vec2 xNeg = clamp(sourceUv - texelX * step, zero, one);
 
-      uint sYPos = SampleSceneStencil(yPos);
-      uint sYNeg = SampleSceneStencil(yNeg);
-      uint sXPos = SampleSceneStencil(xPos);
-      uint sXNeg = SampleSceneStencil(xNeg);
+      uint sYPos = SampleSceneStencilSource(yPos);
+      uint sYNeg = SampleSceneStencilSource(yNeg);
+      uint sXPos = SampleSceneStencilSource(xPos);
+      uint sXNeg = SampleSceneStencilSource(xNeg);
 
       if (currentHover == 0.0f)
       {
@@ -342,7 +343,7 @@ void main()
   // Gizmo bypass: pixels tagged with the gizmo stencil bit (0x80) skip tonemap,
   // color grading, vignette, exposure, atmosphere, fog, and bloom add. They are
   // emitted as raw HDR scene color so editor gizmos look unprocessed.
-  if ((SampleSceneStencil(uv) & 0x80u) != 0u)
+  if ((SampleSceneStencilSource(sceneUv) & 0x80u) != 0u)
   {
       OutColor = vec4(texture(HDRSceneTex, sceneUv).rgb, 1.0f);
       return;
@@ -417,11 +418,19 @@ void main()
   {
     int startMip = clamp(BloomStartMip, 0, 4);
     int endMip = clamp(BloomEndMip, startMip, 4);
-    for (int lod = startMip; lod <= endMip; ++lod)
+
+    if (startMip == 1 && endMip == 4)
     {
-      float w = BloomLodWeights[lod];
-      if (w > 0.0f)
-        hdrSceneColor += SampleBloom(uv, float(lod)) * w * BloomStrength;
+      hdrSceneColor += SampleBloom(uv, 1.0f) * BloomStrength;
+    }
+    else
+    {
+      for (int lod = startMip; lod <= endMip; ++lod)
+      {
+        float w = BloomLodWeights[lod];
+        if (w > 0.0f)
+          hdrSceneColor += SampleBloom(uv, float(lod)) * w * BloomStrength;
+      }
     }
   }
 
@@ -472,7 +481,7 @@ void main()
 	sceneColor = ApplyHsvColorGrade(sceneColor);
 	sceneColor = (sceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
-  vec2 outline = GetStencilOutlineIntensity(uv);
+  vec2 outline = EnableEditorOutline ? GetStencilOutlineIntensity(sceneUv) : vec2(0.0f);
   float hoverOutline = outline.x;
   float selectionOutline = outline.y;
   float outlineWeight = max(hoverOutline, selectionOutline);
@@ -494,7 +503,7 @@ void main()
     // wash out the image.
     //
     // Fix subtle banding by applying fine noise in linear space.
-    sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, rand(uv));
+    sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, interleavedGradientNoise(gl_FragCoord.xy));
   }
 
 	OutColor = vec4(sceneColor, 1.0f);
