@@ -30,6 +30,10 @@ Current limitations:
 
 For Unity-specific conversion behavior, including `.anim` caveats and Poiyomi/lilToon material mapping, see [Unity Conversion Integrations](unity-conversion-integrations.md).
 
+## Model debug overlays
+
+`ModelComponent.RenderUtilizedBoneDiamonds` draws a semi-transparent, camera-view-lit diamond mesh overlay for every transform referenced by the component's mesh bone bindings. The overlay is per model component and reuses one shared gray diamond mesh/material rather than changing global transform debug rendering.
+
 Compatibility overrides stay explicit and per format:
 
 - `ModelImportOptions.FbxBackend = Assimp` forces the older FBX path. Legacy YAML may still spell this as `AssimpLegacy`.

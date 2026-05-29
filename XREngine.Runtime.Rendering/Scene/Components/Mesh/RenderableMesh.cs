@@ -296,6 +296,46 @@ namespace XREngine.Components.Scene.Mesh
                 return _currentLOD?.Value?.Renderer ?? LODs.First?.Value?.Renderer;
         }
 
+        internal void AppendUtilizedBoneDiamondLinks(List<(TransformBase bone, Vector3? fallbackTip)> links)
+        {
+            Vector3? fallbackTip = ((IOctreeItem)RenderInfo).WorldCullingVolume?.WorldCenter;
+
+            lock (_lodsLock)
+            {
+                for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null; node = node.Next)
+                {
+                    (TransformBase tfm, Matrix4x4 invBindWorldMtx)[]? utilized = node.Value.Renderer.Mesh?.UtilizedBones;
+                    if (utilized is not { Length: > 0 })
+                        continue;
+
+                    for (int i = 0; i < utilized.Length; i++)
+                    {
+                        TransformBase bone = utilized[i].tfm;
+                        if (bone is null)
+                            continue;
+
+                        AddOrUpdateBoneDiamondLink(links, bone, fallbackTip);
+                    }
+                }
+            }
+        }
+
+        private static void AddOrUpdateBoneDiamondLink(List<(TransformBase bone, Vector3? fallbackTip)> links, TransformBase bone, Vector3? fallbackTip)
+        {
+            for (int i = 0; i < links.Count; i++)
+            {
+                if (!ReferenceEquals(links[i].bone, bone))
+                    continue;
+
+                if (!links[i].fallbackTip.HasValue && fallbackTip.HasValue)
+                    links[i] = (bone, fallbackTip);
+
+                return;
+            }
+
+            links.Add((bone, fallbackTip));
+        }
+
         public void SetHighlightStencilBit(int stencilBit, bool enabled)
         {
             lock (_highlightStateLock)

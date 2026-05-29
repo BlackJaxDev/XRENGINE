@@ -200,6 +200,16 @@ The originally planned P2c file-relocation work was pulled forward to unblock th
 - [ ] Move `Models/` (~38: Model, SubMesh, ModelImportOptions, material/texture definitions) → `Runtime.Rendering`.
 - [ ] Validate builds.
 
+#### P2f - Runtime rendering host-service cleanup
+
+`RuntimeRenderingHostServices` and `IRuntimeRenderingHostServices` are intentionally broad transitional seams from the rendering move. The default implementation in `Runtime.Rendering` acts as a safe null-object host for optional capabilities, while `Engine.RuntimeRenderingHostServices` supplies the concrete editor/runtime behavior during startup. This is acceptable during migration, but it should not be the final long-term contract shape.
+
+- [ ] Split `IRuntimeRenderingHostServices` into smaller capability-focused services, starting with the noisiest optional surfaces: diagnostics/logging, render statistics, debug drawing, and profiling.
+- [ ] Split required host capabilities such as renderer creation, default pipeline creation, window/panel presentation, render-thread scheduling, asset/texture IO, VR/OpenXR presentation, and backend interop into narrow contracts.
+- [ ] Keep `RuntimeRenderingHostServices.Current` temporarily as a compatibility facade or composite while call sites migrate to narrower services.
+- [ ] Preserve no-op defaults only for optional telemetry/debug hooks; keep fail-fast behavior for capabilities that cannot safely operate without a concrete host.
+- [ ] Add or update source-contract tests so new runtime rendering code does not add unrelated responsibilities back to the monolithic host interface.
+
 ### P3 — Runtime.Core Gameplay & Scene Moves
 
 #### P3a — Physics

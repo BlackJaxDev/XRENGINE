@@ -19,7 +19,7 @@ namespace XREngine.Components.Scene.Mesh
     [DisplayName("Model Renderer")]
     [Description("Draws complex 3D model assets with material and sub-mesh support.")]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.ModelComponentEditor")]
-    public class ModelComponent : RenderableComponent
+    public partial class ModelComponent : RenderableComponent
     {
         private readonly ConcurrentDictionary<SubMesh, RenderableMesh> _meshLinks = new();
         private readonly List<RenderableMesh> _batchedRenderableAdds = [];
@@ -103,6 +103,12 @@ namespace XREngine.Components.Scene.Mesh
                 case nameof(RenderBounds):
                     foreach (RenderableMesh mesh in Meshes)
                         mesh.RenderBounds = RenderBounds;
+                    break;
+                case nameof(RenderUtilizedBoneDiamonds):
+                    SyncBoneDiamondRenderInfoWithWorld();
+                    break;
+                case nameof(World):
+                    SyncBoneDiamondRenderInfoWithWorld();
                     break;
             }
         }
@@ -194,6 +200,7 @@ namespace XREngine.Components.Scene.Mesh
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            SyncBoneDiamondRenderInfoWithWorld();
             ModelRenderDiagnostics.LogComponentActivated(this);
         }
 
