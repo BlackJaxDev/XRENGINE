@@ -66,7 +66,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool ForwardDepthPrePassEnabled = true;
     public const bool ForwardPrePassSharesGBufferTargets = true;
     public const bool EnableRenderStatisticsTracking = true;
-    public const bool EnableGpuRenderPipelineProfiling = true;
+    public const bool EnableGpuRenderPipelineProfiling = false;
     public const ulong CurrentRenderFrameId = 0UL;
     public const ETwoPlayerPreference TwoPlayerViewportPreference = ETwoPlayerPreference.SplitHorizontally;
     public const EThreePlayerPreference ThreePlayerViewportPreference = EThreePlayerPreference.PreferFirstPlayer;

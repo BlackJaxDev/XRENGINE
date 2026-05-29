@@ -1,0 +1,194 @@
+# CPU Direct Fast Path TODO
+
+Last Updated: 2026-05-29
+Owner: Rendering
+Status: Active
+Target Branch: `rendering-cpu-direct-fast-path`
+
+Design source:
+
+- [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
+- [Engine Rendering Optimization Roadmap](engine-rendering-optimization-roadmap.md)
+- [Render Submission Performance Debug Plan](../../../design/rendering/render-submission-perf-debug-plan.md)
+- [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
+
+## Goal
+
+Make CPU direct rendering a fast, allocation-free, easy-to-debug baseline. It
+should stay useful for small and medium scenes, editor diagnostics, unsupported
+backend cases, and performance comparisons against GPU-driven strategies.
+
+## Scope
+
+- Render command collection handoff.
+- Per-object constant data upload.
+- Persistent mapped or ring-buffered uploads.
+- State caching and state-change counters.
+- Pass-local sorting where semantics allow it.
+- Shader/material/texture prewarm boundaries.
+- Hot-path allocation elimination.
+
+## Non-Goals
+
+- Do not replace zero-readback GPU-driven rendering.
+- Do not remove diagnostic or editor-only paths.
+- Do not reorder transparent draws in a way that changes blending behavior.
+- Do not add per-frame shader parsing, material layout synthesis, or asset
+  deserialization to render submission.
+
+## Phase 0 - Branch, Baseline, And Audit
+
+- [ ] Create dedicated branch `rendering-cpu-direct-fast-path`.
+- [ ] Capture Release CPU direct baseline for the unit-testing avatar scene,
+  Sponza/static high-object scene, and a material-diverse scene.
+- [ ] Capture current counters: draw calls, program switches, VAO binds, buffer
+  binds, SSBO/UBO binds, texture binds, uniform calls, buffer upload bytes,
+  barriers, and readback bytes.
+- [ ] Capture a sampled CPU profile with ETW, Superluminal, or `dotnet-trace`.
+- [ ] Inventory render-submission hot paths for `new`, LINQ, captured
+  closures, boxing, string concatenation, and `foreach` over class enumerators.
+- [ ] Inventory places where shader linking, asset deserialization, texture
+  upload, or meshlet generation can occur during visible render frames.
+
+Acceptance criteria:
+
+- [ ] Baseline captures include build configuration, backend, GPU, driver,
+  scene, camera, lights, stereo mode, shader-cache state, and texture-cache
+  state.
+- [ ] Hot-path allocation and late-work inventory is recorded in this TODO or a
+  linked audit note.
+
+## Phase 1 - Command Handoff And Hot-Path Allocation Cleanup
+
+- [ ] Ensure visible collection builds stable command buffers that can be
+  handed to rendering without copying full command payloads.
+- [ ] Preallocate per-frame command, state-key, and pass scratch storage.
+- [ ] Replace LINQ in render submission with explicit loops.
+- [ ] Replace captured callbacks or closures with cached delegates or static
+  helpers.
+- [ ] Replace boxing-prone counters/enums/log payloads with typed structs or
+  pooled event records.
+- [ ] Replace `foreach` over class enumerators in hot paths with index loops or
+  struct enumerators.
+- [ ] Ensure profiler labels are stable strings or interned/static identifiers,
+  not per-frame concatenations.
+- [ ] Add source-contract tests for known no-allocation hot-path methods where
+  practical.
+
+Acceptance criteria:
+
+- [ ] CPU direct steady-state render submission allocates zero managed bytes on
+  representative static and skinned-avatar scenes, excluding explicitly opted
+  diagnostic modes.
+
+## Phase 2 - SRP-Batcher-Equivalent Constant Fast Path
+
+- [ ] Define a stable per-object constant block layout for transform ID, material
+  ID, previous transform ID, skin ID, flags, layer/pass masks, and editor ID.
+- [ ] Separate per-object, per-material, per-camera, and per-pass data so
+  per-draw uploads are minimized.
+- [ ] Upload object constants through dirty ranges, not full-scene rebuilds.
+- [ ] Bind per-pass object constant buffers once where possible.
+- [ ] Keep per-material state in material tables or stable material buffers,
+  even for CPU direct where backend support allows it.
+- [ ] Add counters for object constant bytes uploaded, dirty ranges merged, and
+  constant-buffer bind count.
+- [ ] Validate static, skinned, blendshape, instanced, shadow, velocity, editor
+  ID, and override pass consumers.
+
+Acceptance criteria:
+
+- [ ] A scene with many unchanged objects does not upload unchanged object
+  constants every frame.
+- [ ] CPU direct object constant upload bytes scale with dirty objects, not
+  visible objects.
+
+## Phase 3 - Persistent-Mapped Ring Buffer Uploads
+
+- [ ] Implement or verify an OpenGL persistent-mapped ring buffer path for
+  per-frame dynamic uploads.
+- [ ] Use fence sync to prevent overwriting GPU-visible ranges.
+- [ ] Provide a safe fallback path for drivers without persistent mapping.
+- [ ] Route transforms, previous transforms, bone matrices, blendshape weights,
+  object constants, and small pass constants through the upload allocator where
+  appropriate.
+- [ ] Avoid `glBufferSubData` in steady-state production submission except for
+  explicitly documented fallback paths.
+- [ ] Add upload allocator counters: bytes reserved, bytes committed, wraps,
+  stalls, fence waits, orphan/fallback events, and high-water mark.
+- [ ] Fail loud in diagnostics if the upload ring is undersized and would block
+  repeatedly.
+
+Acceptance criteria:
+
+- [ ] Upload stalls are visible and rare under representative scenes.
+- [ ] Persistent upload ranges are not overwritten before the GPU has consumed
+  them.
+
+## Phase 4 - State Cache And Sorting
+
+- [ ] Build a compact state key for pass, state class, shader program, material
+  table layout, texture-binding rung, VAO/mesh format, blend/depth/cull state,
+  and instancing/skinning flags.
+- [ ] Sort opaque CPU-direct commands by expensive state where pass semantics
+  allow it.
+- [ ] Preserve explicit ordering for transparent, UI, editor overlay, and
+  ordered diagnostic passes.
+- [ ] Add state caches for shader program, VAO, buffer binding, texture binding,
+  SSBO/UBO binding, and render state.
+- [ ] Skip redundant `glUseProgram`, `glBindVertexArray`, `glBindBufferBase`,
+  texture bind, and uniform calls.
+- [ ] Add counters for avoided redundant binds and unavoidable state changes.
+- [ ] Add tests or source-contract checks for transparent order preservation.
+
+Acceptance criteria:
+
+- [ ] Opaque CPU direct state changes scale with state groups, not raw draw
+  count.
+- [ ] Transparent and ordered passes preserve visual ordering.
+
+## Phase 5 - Warmup And Late-Work Boundaries
+
+- [ ] Ensure world shader prewarm includes all CPU direct variants needed by
+  visible static, skinned, blendshape, instanced, shadow, depth, velocity,
+  editor, forward, deferred, and override passes.
+- [ ] Ensure material table rows and texture residency are prepared before
+  measured interactive frames where possible.
+- [ ] Ensure model import/cooked-cache work does not run from render submission.
+- [ ] Ensure texture upload budgets cannot consume the entire frame.
+- [ ] Surface missing warmup variants in editor diagnostics instead of silently
+  compiling/linking during render.
+- [ ] Add profiler events that separate startup, warmup, steady-state, and
+  streaming phases.
+
+Acceptance criteria:
+
+- [ ] Warm-start frame 0 does not link shader programs for the measured scene.
+- [ ] Late asset or texture work is visible as asset-streaming-bound, not
+  mistaken for CPU direct submission cost.
+
+## Phase 6 - Validation
+
+- [ ] Run targeted unit/source-contract tests for render command collection,
+  material table bindings, shader prewarm, and upload allocator behavior.
+- [ ] Run Release CPU direct baseline after each major phase.
+- [ ] Compare before/after p50, p90, p99 frame time and state counters.
+- [ ] Capture at least one CPU sampled profile after optimization.
+- [ ] Validate unit-testing avatar scene with lights disabled and enabled.
+- [ ] Validate a high-object-count static scene.
+- [ ] Validate a material-diverse scene.
+- [ ] Validate editor overlays and selection IDs.
+
+Acceptance criteria:
+
+- [ ] CPU direct is stable, allocation-free in steady-state submission, and no
+  longer performs render-thread shader linking or asset deserialization during
+  measured frames.
+
+## Final Validation And Merge
+
+- [ ] Update linked design or architecture docs if the CPU direct contract
+  changes.
+- [ ] Record final before/after results in this TODO.
+- [ ] Merge branch `rendering-cpu-direct-fast-path` back into `main` after
+  implementation, validation, and documentation updates are complete.

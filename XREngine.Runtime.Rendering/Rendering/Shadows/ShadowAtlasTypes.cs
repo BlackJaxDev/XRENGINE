@@ -215,7 +215,24 @@ public readonly record struct ShadowAtlasMetrics(
     int QueueOverflowCount,
     int NotRelevantSkipCount,
     int LargestFreeRect,
-    long FreeTexelCount);
+    long FreeTexelCount,
+    int DirectionalGroupedFrameCount,
+    int DirectionalSequentialFallbackFrameCount);
+
+public readonly record struct ShadowDirectionalAtlasLightDiagnostic(
+    Guid LightId,
+    ulong FrameId,
+    int RequestedCascades,
+    int ResidentCascades,
+    int DirtyCascades,
+    int RenderedCascades,
+    bool GroupedRenderAttempted,
+    bool GroupedRenderSucceeded,
+    bool CriticalBudgetBypassUsed,
+    string SelectedCascadeBackend,
+    string FallbackReason,
+    string GroupReservationFailureReason,
+    double ElapsedShadowMilliseconds);
 
 public readonly record struct ShadowRequestDiagnostic(
     int RequestCount,

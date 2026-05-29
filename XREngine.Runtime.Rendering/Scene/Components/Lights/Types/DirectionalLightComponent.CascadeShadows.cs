@@ -1785,6 +1785,15 @@ namespace XREngine.Components.Lights
             return cascadeCount <= 1 || SupportsDirectionalCascadeAtlasGroupedRendering(cascadeCount);
         }
 
+        internal bool CanUseLegacyLayeredDirectionalCascadeShadowRendering(int cascadeCount)
+        {
+            if (cascadeCount <= 1)
+                return false;
+
+            DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(cascadeCount);
+            return plan.IsLayered;
+        }
+
         private bool SupportsDirectionalCascadeAtlasGroupedRendering(int cascadeCount)
         {
             if (cascadeCount <= 1 ||

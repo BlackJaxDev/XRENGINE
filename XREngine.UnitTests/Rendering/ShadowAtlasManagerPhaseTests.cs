@@ -29,6 +29,18 @@ public sealed class ShadowAtlasManagerPhaseTests
         "MarkTileRendered",
         BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ShadowAtlasManager.MarkTileRendered method was not found.");
+    private static readonly MethodInfo ResolveShadowDirtyReasonMethod = typeof(Lights3DCollection).GetMethod(
+        "ResolveShadowDirtyReason",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Lights3DCollection.ResolveShadowDirtyReason method was not found.");
+    private static readonly FieldInfo LightLastMovedTicksField = typeof(LightComponent).GetField(
+        "_lastMovedTicks",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("LightComponent._lastMovedTicks field was not found.");
+    private static readonly FieldInfo LightMovementVersionField = typeof(LightComponent).GetField(
+        "_movementVersion",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("LightComponent._movementVersion field was not found.");
     private static readonly IRuntimeWorldContext ActiveWorld = new TestWorldContext();
 
     private IRuntimeShaderServices? _previousShaderServices;
@@ -183,6 +195,10 @@ public sealed class ShadowAtlasManagerPhaseTests
         frameData.Metrics.ResidentTileCount.ShouldBe(4);
         frameData.Metrics.SkippedRequestCount.ShouldBe(0);
         AssertNoResidentOverlaps(frameData);
+        frameData.DirectionalCascadeGroupCount.ShouldBe(1);
+        frameData.TryGetDirectionalCascadeGroup(light.ID, out ShadowAtlasGroupedDirectionalCascadeAllocation group).ShouldBeTrue();
+        group.CascadeCount.ShouldBe(4);
+        group.Members.Length.ShouldBe(4);
 
         for (int i = 0; i < requests.Length; i++)
         {
@@ -193,6 +209,15 @@ public sealed class ShadowAtlasManagerPhaseTests
             allocation.IsResident.ShouldBeTrue();
             allocation.SkipReason.ShouldBe(SkipReason.None);
         }
+
+        group.Members[0].PixelRect.X.ShouldBe(0);
+        group.Members[0].PixelRect.Y.ShouldBe(0);
+        group.Members[1].PixelRect.X.ShouldBe(2048);
+        group.Members[1].PixelRect.Y.ShouldBe(0);
+        group.Members[2].PixelRect.X.ShouldBe(0);
+        group.Members[2].PixelRect.Y.ShouldBe(2048);
+        group.Members[3].PixelRect.X.ShouldBe(2048);
+        group.Members[3].PixelRect.Y.ShouldBe(2048);
     }
 
     [Test]
@@ -349,6 +374,39 @@ public sealed class ShadowAtlasManagerPhaseTests
         movedAllocation.LastRenderedFrame.ShouldBe(1u);
         movedAllocation.ActiveFallback.ShouldBe(ShadowFallbackMode.Lit);
         movedAllocation.SkipReason.ShouldBe(SkipReason.None);
+    }
+
+    [Test]
+    public void ResolveShadowDirtyReason_RecentLocalMovementUsesProjectionOrCameraFitReason()
+    {
+        SpotLightComponent movedSpot = CreateSpotLight(512u);
+        MarkLightMovedNow(movedSpot);
+        ShadowDirtyReason movedSpotReason = ResolveDirtyReasonForContentChange(
+            movedSpot,
+            EShadowProjectionType.SpotPrimary);
+
+        (movedSpotReason & ShadowDirtyReason.ContentChanged).ShouldBe(ShadowDirtyReason.ContentChanged);
+        (movedSpotReason & ShadowDirtyReason.ProjectionOrCameraFitChanged).ShouldBe(ShadowDirtyReason.ProjectionOrCameraFitChanged);
+        (movedSpotReason & ShadowDirtyReason.LightOrSettingsChanged).ShouldBe(ShadowDirtyReason.None);
+
+        PointLightComponent movedPoint = CreatePointLight(512u);
+        MarkLightMovedNow(movedPoint);
+        ShadowDirtyReason movedPointReason = ResolveDirtyReasonForContentChange(
+            movedPoint,
+            EShadowProjectionType.PointFace);
+
+        (movedPointReason & ShadowDirtyReason.ContentChanged).ShouldBe(ShadowDirtyReason.ContentChanged);
+        (movedPointReason & ShadowDirtyReason.ProjectionOrCameraFitChanged).ShouldBe(ShadowDirtyReason.ProjectionOrCameraFitChanged);
+        (movedPointReason & ShadowDirtyReason.LightOrSettingsChanged).ShouldBe(ShadowDirtyReason.None);
+
+        SpotLightComponent steadySpot = CreateSpotLight(512u);
+        ClearLightMovement(steadySpot);
+        ShadowDirtyReason steadySpotReason = ResolveDirtyReasonForContentChange(
+            steadySpot,
+            EShadowProjectionType.SpotPrimary);
+
+        (steadySpotReason & ShadowDirtyReason.ProjectionOrCameraFitChanged).ShouldBe(ShadowDirtyReason.None);
+        (steadySpotReason & ShadowDirtyReason.LightOrSettingsChanged).ShouldBe(ShadowDirtyReason.LightOrSettingsChanged);
     }
 
     [Test]
@@ -826,6 +884,73 @@ public sealed class ShadowAtlasManagerPhaseTests
 
             MarkTileRenderedMethod.Invoke(manager, new object[] { request, allocation });
         }
+    }
+
+    private static ShadowDirtyReason ResolveDirtyReasonForContentChange(
+        LightComponent light,
+        EShadowProjectionType projectionType)
+    {
+        const EShadowMapEncoding encoding = EShadowMapEncoding.Depth;
+        ShadowAtlasAllocation previous = CreatePreviousRenderedAllocation(light, projectionType, encoding);
+        object? result = ResolveShadowDirtyReasonMethod.Invoke(
+            null,
+            [
+                light,
+                projectionType,
+                encoding,
+                previous.ContentVersion + 1UL,
+                true,
+                true,
+                previous,
+            ]);
+
+        return (ShadowDirtyReason)result!;
+    }
+
+    private static ShadowAtlasAllocation CreatePreviousRenderedAllocation(
+        LightComponent light,
+        EShadowProjectionType projectionType,
+        EShadowMapEncoding encoding)
+    {
+        EShadowAtlasKind atlasKind = ResolveAtlasKind(projectionType);
+        ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, 0, encoding);
+        return new ShadowAtlasAllocation(
+            key,
+            atlasKind,
+            ((int)atlasKind << 8) | (int)encoding,
+            0,
+            default,
+            default,
+            Vector4.Zero,
+            512u,
+            0,
+            1UL,
+            1UL,
+            IsResident: true,
+            IsStaticCacheBacked: false,
+            ShadowFallbackMode.None,
+            SkipReason.None);
+    }
+
+    private static EShadowAtlasKind ResolveAtlasKind(EShadowProjectionType projectionType)
+        => projectionType switch
+        {
+            EShadowProjectionType.DirectionalPrimary or EShadowProjectionType.DirectionalCascade => EShadowAtlasKind.Directional,
+            EShadowProjectionType.PointFace => EShadowAtlasKind.Point,
+            EShadowProjectionType.SpotPrimary => EShadowAtlasKind.Spot,
+            _ => EShadowAtlasKind.Directional,
+        };
+
+    private static void MarkLightMovedNow(LightComponent light)
+    {
+        LightLastMovedTicksField.SetValue(light, RuntimeEngine.ElapsedTicks);
+        LightMovementVersionField.SetValue(light, 1u);
+    }
+
+    private static void ClearLightMovement(LightComponent light)
+    {
+        LightLastMovedTicksField.SetValue(light, 0L);
+        LightMovementVersionField.SetValue(light, 0u);
     }
 
     private static ShadowMapRequest CreateRequest(

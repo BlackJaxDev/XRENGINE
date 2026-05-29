@@ -705,20 +705,32 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
 
         string atlasManagerSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasManager.cs"));
         atlasManagerSource.ShouldContain("BuildDirectionalCascadeGroups");
+        atlasManagerSource.ShouldContain("BuildDirectionalAtlasLightDiagnostics");
+        atlasManagerSource.ShouldContain("TryAllocateDirectionalCascadeGroups");
+        atlasManagerSource.ShouldContain("TryAllocateContiguousGrid");
+        atlasManagerSource.ShouldContain("ShadowAtlas.Directional.GroupedFrames");
+        atlasManagerSource.ShouldContain("ShadowAtlas.Directional.SequentialFallbackFrames");
         atlasManagerSource.ShouldContain("ShadowAtlasGroupedDirectionalCascadeAllocation");
+        atlasManagerSource.ShouldContain("ShadowDirectionalAtlasLightDiagnostic");
+        atlasManagerSource.ShouldContain("GroupReservationFailureReason");
         atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroup");
+        atlasManagerSource.ShouldContain("CanUseLegacyLayeredDirectionalCascadeShadowRendering");
         atlasManagerSource.ShouldContain("RenderGroupedCascadeShadowAtlasTiles(group, page.FrameBuffer");
 
         string frameDataSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasFrameData.cs"));
         frameDataSource.ShouldContain("DirectionalCascadeGroups");
+        frameDataSource.ShouldContain("DirectionalLightDiagnostics");
+        frameDataSource.ShouldContain("TryGetDirectionalLightDiagnostic");
         frameDataSource.ShouldContain("TryGetDirectionalCascadeGroup");
 
-        string rendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "OpenGLRenderer.cs"));
-        rendererSource.ShouldContain("SupportsOpenGLViewportScissorArray");
-        rendererSource.ShouldContain("SupportsOpenGLVertexShaderViewportIndex");
-        rendererSource.ShouldContain("SupportsOpenGLGeometryShaderViewportIndex");
-        rendererSource.ShouldContain("ViewportIndexed");
-        rendererSource.ShouldContain("ScissorIndexed");
+        string rendererInitializationSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "OpenGLRenderer.Initialization.cs"));
+        rendererInitializationSource.ShouldContain("SupportsOpenGLViewportScissorArray");
+        rendererInitializationSource.ShouldContain("SupportsOpenGLVertexShaderViewportIndex");
+        rendererInitializationSource.ShouldContain("SupportsOpenGLGeometryShaderViewportIndex");
+
+        string rendererFramebufferSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "OpenGLRenderer.Framebuffer.cs"));
+        rendererFramebufferSource.ShouldContain("ViewportIndexed");
+        rendererFramebufferSource.ShouldContain("ScissorIndexed");
     }
 
     [Test]
@@ -1296,11 +1308,11 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         factorySource.ShouldContain("CreatePointLightFragmentVariant(sourceMaterial)");
         factorySource.ShouldContain("ShadowBindingSourceMaterial = sourceMaterial");
 
-        string meshRendererSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
+        string meshRendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
         meshRendererSource.ShouldContain("GetPointShadowCasterVariant(");
         meshRendererSource.ShouldContain("pointShadowVariant.ShadowUniformSourceMaterial = globalMaterialOverride;");
 
-        string glMaterialSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
+        string glMaterialSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
         glMaterialSource.ShouldContain("Data.ShadowUniformSourceMaterial");
         glMaterialSource.ShouldContain("shadowUniformSource.OnSettingShadowUniforms(materialProgram.Data);");
         glMaterialSource.ShouldContain("Engine.Rendering.State.IsShadowPass && Data.HasSettingShadowUniformHandlers");

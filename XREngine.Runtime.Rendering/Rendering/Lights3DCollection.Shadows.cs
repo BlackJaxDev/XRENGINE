@@ -987,7 +987,7 @@ namespace XREngine.Scene
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][AtlasFrame] frame={0} generation={1} useDirAtlas={2} useSpotAtlas={3} collectVisibleNow={4} activeAtlasCameras={5} requests={6} allocations={7} resident={8} skipped={9} notRelevant={10} pages={11} renderedThisFrame={12} queueOverflow={13} budgetTiles={14} budgetMs={15:F2}",
+                "[DirectionalShadowAudit][AtlasFrame] frame={0} generation={1} useDirAtlas={2} useSpotAtlas={3} collectVisibleNow={4} activeAtlasCameras={5} requests={6} allocations={7} resident={8} skipped={9} notRelevant={10} pages={11} renderedThisFrame={12} queueOverflow={13} budgetTiles={14} budgetMs={15:F2} directionalGroupedFrames={16} directionalSequentialFallbackFrames={17} directionalLightDiagnostics={18}",
                 frameData.FrameId,
                 frameData.Generation,
                 RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
@@ -1003,7 +1003,10 @@ namespace XREngine.Scene
                 metrics.TilesScheduledThisFrame,
                 metrics.QueueOverflowCount,
                 ShadowAtlas.Settings.MaxTilesRenderedPerFrame,
-                ShadowAtlas.Settings.MaxRenderMilliseconds);
+                ShadowAtlas.Settings.MaxRenderMilliseconds,
+                metrics.DirectionalGroupedFrameCount,
+                metrics.DirectionalSequentialFallbackFrameCount,
+                frameData.DirectionalLightDiagnosticCount);
         }
 
         private static void LogDirectionalAtlasSubmit(

@@ -201,6 +201,25 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
     }
 
     [Test]
+    public void DirectionalMomentAtlasBypass_UsesLegacyPrimaryMapAndDisablesCascades()
+    {
+        string directionalSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
+        string shadowCollectionSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.Shadows.cs"));
+        string deferredBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
+
+        directionalSource.ShouldContain("ResolveDirectionalSamplingShadowMapFormat().Encoding == EShadowMapEncoding.Depth");
+        shadowCollectionSource.ShouldContain("bool momentSingleMap = selection.Encoding != EShadowMapEncoding.Depth;");
+        shadowCollectionSource.ShouldContain("renderCascades = !momentSingleMap;");
+        shadowCollectionSource.ShouldContain("\"MomentSingleMap\"");
+
+        deferredBindings.ShouldContain("bool directionalMomentSingleMap = directionalShadowFormat.Encoding != EShadowMapEncoding.Depth;");
+        deferredBindings.ShouldContain("useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;");
+        deferredBindings.ShouldContain("!directionalMomentSingleMap &&");
+        deferredBindings.ShouldContain("directionalHasShadowMap |= !useDirectionalShadowAtlas && hasShadowMap;");
+        deferredBindings.ShouldContain("materialProgram.Sampler(\"ShadowMap\", !useDirectionalShadowAtlas && selectedShadowMap is XRTexture2D shadow2D ? shadow2D : DummyShadowMap, 4);");
+    }
+
+    [Test]
     public void ShadowAtlasMomentPath_UsesEncodingSpecificPagesAndMomentArraySampling()
     {
         string atlasManager = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasManager.cs"));
