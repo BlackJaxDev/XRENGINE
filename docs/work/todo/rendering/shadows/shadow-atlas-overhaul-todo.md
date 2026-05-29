@@ -2,11 +2,10 @@
 
 Status: active master plan, refreshed 2026-05-28.
 
-This document is the single source of truth for the shadow-system overhaul.
-It absorbs the previously separate atlas/LOD allocation, VSM/EVSM filtering,
-and contact-shadow optimization TODOs. The workstreams below are intended to
-be worked in parallel where dependencies allow; cross-cutting design rules and
-the immediate atlas bugs are at the top because everything else assumes them.
+This is the single source of truth for the shadow-system overhaul. It replaces
+the separate atlas/LOD allocation, VSM/EVSM filtering, and contact-shadow TODOs.
+Workstreams may proceed in parallel, but the critical issues and cross-cutting
+rules here define the contract every stream must preserve.
 
 Primary files:
 
@@ -39,9 +38,9 @@ Related docs:
 ## Workstream Index
 
 1. [Current Runtime Snapshot](#current-runtime-snapshot)
-2. [Immediate Bugs](#immediate-bugs)
+2. [Critical Issues And Recent Fixes](#critical-issues-and-recent-fixes)
 3. [Workstream A: Atlas Allocator And Relevance Overhaul](#workstream-a-atlas-allocator-and-relevance-overhaul)
-4. [Workstream B: Dynamic Atlas And LOD Allocation (Remaining Phases)](#workstream-b-dynamic-atlas-and-lod-allocation-remaining-phases)
+4. [Workstream B: Dynamic Atlas And LOD Allocation](#workstream-b-dynamic-atlas-and-lod-allocation)
 5. [Workstream C: VSM And EVSM Shadow Filtering](#workstream-c-vsm-and-evsm-shadow-filtering)
 6. [Workstream D: Contact Shadow Optimizations](#workstream-d-contact-shadow-optimizations)
 7. [Cross-Cutting Policy Decisions](#cross-cutting-policy-decisions)
@@ -79,8 +78,9 @@ Not complete:
 
 - Directional atlas performance is not equivalent to the legacy layered cascade
   path.
-- Directional VSM/EVSM selection is internally inconsistent and can disable
-  directional shadows (see [Immediate Bugs](#immediate-bugs)).
+- Directional VSM/EVSM now bypasses the depth-only atlas path, but directional
+  moment quality is still incomplete until cascaded moment maps and/or moment
+  atlases are implemented.
 - Broad receiver-aware relevance scoring is still missing. The allocator's
   `ResolveRelevanceScore` currently derives score from request priority.
 - Directional cascade relevance is not independent. Cascades are always
@@ -96,22 +96,22 @@ Not complete:
 - Unified GPU `ShadowAtlasTile` SSBO publish, tile-aware separable blur for
   atlas tiles, atlas moment-tile mip generation, and warmup-free allocation in
   submit/solve/publish remain open.
-- Moment encodings currently use standalone shadow maps for local lights and
-  the directional legacy path. Full VSM/EVSM atlas and cascaded-atlas support
-  is intentionally tracked as future work under Workstream C.
+- Moment encodings currently use standalone shadow maps for local lights and the
+  directional legacy path. Full VSM/EVSM atlas and cascaded-moment support are
+  tracked under Workstream C.
 - The focused shadow-atlas tests are not currently green in this worktree.
   Several failures are caused by `RuntimeShaderServices.Current` not being
   configured in test setup; several are direct atlas assertion failures and
   need triage.
 
-## Immediate Bugs
+## Critical Issues And Recent Fixes
 
 ### Directional Atlas Halves Framerate
 
-Observed question: directional lights can roughly halve framerate when
+Observed issue: directional lights can roughly halve framerate when
 `UseDirectionalShadowAtlas` is enabled.
 
-Current likely causes:
+Likely causes:
 
 - Legacy directional cascades can render all cascades through one layered
   texture-array pass when the selected backend is instanced or geometry
@@ -134,14 +134,14 @@ Current likely causes:
 
 Fix plan:
 
-- [ ] Add a directional atlas frame diagnostic that records, per light:
+- [x] Add a directional atlas frame diagnostic that records, per light:
   requested cascades, resident cascades, dirty cascades, rendered cascades,
   grouped render attempted, grouped render succeeded, selected cascade backend,
   fallback reason, elapsed shadow time, and whether critical budget bypass was
   used.
-- [ ] Add a warning when directional atlas mode falls back to sequential
+- [x] Add a warning when directional atlas mode falls back to sequential
   cascade rendering while legacy layered rendering is available.
-- [ ] Make a same-page 2x2 cascade reservation path for equal-resolution
+- [x] Make a same-page 2x2 cascade reservation path for equal-resolution
   directional cascades before independent allocation. Do not rely on
   post-allocation group discovery for performance-critical directional lights.
 - [ ] Ensure grouped atlas rendering remains the default on GL 4.6 hardware
@@ -149,7 +149,7 @@ Fix plan:
 - [ ] Revisit directional critical-refresh bypass. First render may bypass the
   budget; steady-state projection jitter should not force all cascades every
   frame.
-- [ ] Add profiler counters
+- [x] Add profiler counters
   `ShadowAtlas.Directional.SequentialFallbackFrames` and
   `ShadowAtlas.Directional.GroupedFrames`.
 - [ ] Acceptance: with a static camera and one 4-cascade directional light,
@@ -159,11 +159,12 @@ Fix plan:
   within 10 percent of atlas-off legacy layered cascades for the Unit Testing
   World.
 
-### Directional VSM/EVSM Does Not Work
+### Directional VSM/EVSM Atlas Bypass
 
-Observed question: VSM and EVSM directional shadows do not work.
+Observed issue: VSM and EVSM directional shadows could fail or sample dummy
+textures when the directional atlas was enabled.
 
-There are two current contract mismatches.
+The bug came from two contract mismatches.
 
 Atlas-on mismatch:
 
@@ -203,7 +204,7 @@ Atlas-off or legacy mismatch:
   rendered for that frame, and the dummy texture is bound. Result: stale,
   empty, or invalid cascade moment sampling instead of the primary moment map.
 
-Near-term fix plan:
+Fix status:
 
 - [x] Decide the v1 contract: directional atlas is depth-only until a moment
   atlas is implemented.
@@ -221,7 +222,7 @@ Near-term fix plan:
   sampling is disabled and the primary map is sampled, or every cascade
   moment layer is rendered and sampled intentionally.
 
-Longer-term option (tracked under [Workstream C](#workstream-c-vsm-and-evsm-shadow-filtering)):
+Remaining work (tracked under [Workstream C](#workstream-c-vsm-and-evsm-shadow-filtering)):
 
 - [ ] Implement moment-encoded directional atlases end to end: submit
   requests with the resolved encoding, allocate moment atlas pages, render
@@ -230,13 +231,13 @@ Longer-term option (tracked under [Workstream C](#workstream-c-vsm-and-evsm-shad
   same encoding in receivers, and validate VSM/EVSM bias/moment depth against
   atlas UVs.
 
-### Point VSM/EVSM Does Not Work
+### Point VSM/EVSM Caster Contract
 
 Observed issue: point lights using `Variance2`, `ExponentialVariance2`, or
 `ExponentialVariance4` can fail even though spot and directional standalone
 moment maps work.
 
-Current cause:
+The bug came from inconsistent point shadow caster output:
 
 - Point-light receivers compare normalized radial light distance.
 - The shared `PointLightShadowDepth.fs` shader writes radial moments correctly,
@@ -299,7 +300,7 @@ Fix status:
   - `Submit_WhenQueueIsFullPublishesQueueOverflowDiagnostic`
 - [ ] Split pure solver tests from render-path tests. Solver tests should not
   need shader or renderer services.
-- [ ] Add regression tests for directional VSM/EVSM atlas bypass.
+- [x] Add regression tests for directional VSM/EVSM atlas bypass.
 - [ ] Add regression tests for directional grouped atlas render selection.
 
 Validation targets:
@@ -353,12 +354,12 @@ Acceptance:
 Current grouping is discovered after allocation. That is not strong enough for
 directional performance.
 
-- [ ] Add a pre-allocation path for active cascades of one directional light.
-- [ ] Prefer a deterministic 2x2 pack when four cascades share a resolution.
+- [x] Add a pre-allocation path for active cascades of one directional light.
+- [x] Prefer a deterministic 2x2 pack when four cascades share a resolution.
 - [ ] Support partial groups when fewer cascades are active or relevant.
 - [ ] If a grouped pack cannot fit, demote lower-relevance cascades before
   falling back to independent sequential tiles.
-- [ ] Publish a reason when grouped allocation is not possible.
+- [x] Publish a reason when grouped allocation is not possible.
 - [ ] Keep receiver binding conservative: enable atlas sampling only when
   every required cascade tile is sampleable or has an explicit fallback.
 
@@ -454,7 +455,7 @@ directional allocation are stable.
 - [ ] Avoid per-frame string formatting unless logging is enabled and
   rate-limited.
 
-## Workstream B: Dynamic Atlas And LOD Allocation (Remaining Phases)
+## Workstream B: Dynamic Atlas And LOD Allocation
 
 This workstream tracks the original allocator-plan items that are still open
 after the 2026-05 bring-up. Items already shipped (request bucketing, buddy
@@ -707,12 +708,35 @@ Validation:
   differences.
 - [ ] Face seams are no worse than depth mode.
 
+Point VSM/EVSM quality work:
+
+- [ ] Enforce one radial-depth invariant across every point caster variant:
+  `length(worldPos - lightPos) / radius`. Add a shader-source scan test that
+  catches projected depth, raw `gl_FragCoord.z`, and unnormalized radial
+  writes.
+- [ ] Prefer EVSM4 for production point-light moment presets. Plain VSM light
+  bleeding is most visible with omnidirectional overlapping blockers.
+- [ ] Tighten point shadow radius / far-plane defaults. Moment quality drops
+  when a large radius is compressed into `[0,1]`.
+- [ ] Scale `ShadowMomentMinVariance` per point light, using radius or atlas
+  radius bucket. One global value is wrong for both near and far point lights.
+- [ ] Add seam-aware cubemap sampling. Taps that cross a face edge must
+  reselect the neighbor face instead of clamping to the original face UV.
+- [ ] Carry seam-aware sampling into the planned point-atlas 2D-face path
+  using per-face `UvScaleBias` and adjacency metadata.
+- [ ] Disable or clamp derivative-based moment variance for cube, atlas, and
+  masked paths; fall back to a bounded per-texel variance floor.
+- [ ] Use EVSM4 with RGBA32F for point lights that need high exponents or
+  large dynamic range; fp16 EVSM2 is a known quality cliff.
+
 Validation:
 
 - [ ] Point light near shadow casters.
 - [ ] Moving receiver crossing cube face boundaries.
 - [ ] Masked point-shadow caster.
 - [ ] EVSM overflow/clamp test for point lights.
+- [ ] Seam-crossing receiver under EVSM4 with neighboring blockers on two
+  cube faces.
 
 ### C.7 Directional Single-Map Remainder
 
@@ -731,13 +755,45 @@ Validation:
 - [ ] Validate cascade debug colors and blend widths.
 - [ ] Moment maps do not amplify cascade jitter beyond acceptable tolerance.
 
+Directional VSM/EVSM quality work, in dependency order:
+
+- [ ] Make directional VSM/EVSM cascaded by default rather than falling back
+  to a single primary moment map. The depth path already supports cascades;
+  moment mode must reach parity before quality can be judged fairly.
+- [ ] Apply texel snapping per cascade before moment-quality comparison.
+  Filtered moments amplify tiny temporal cascade jitter.
+- [ ] Compute Chebyshev / EVSM visibility per cascade first, then blend the
+  resulting scalar in the cascade overlap band. Never blend raw moment
+  vectors.
+- [ ] Add a receiver test covering both legacy arrays and atlas tiles for the
+  "visibility blend, never moment blend" rule.
+- [ ] Author moment-specific tuning presets: lower receiver bias than depth
+  PCSS, stronger bleed reduction, cascade-scaled min variance, and EVSM4 as
+  the directional quality preset.
+- [ ] Allow or prefer RGBA32F for EVSM4 directional cascades when high
+  exponents or large depth ranges are requested. Document memory cost and
+  demotion back to fp16 EVSM2.
+- [ ] Add per-cascade moment blur and/or mip validation. Wide soft shadows
+  must come from filtered moments, not reused PCSS kernel radii.
+
 Validation:
 
 - [ ] Directional cascaded scene with camera movement.
 - [ ] Cascade transition-band scene.
 - [ ] Mixed depth and moment encoding preset checks.
+- [ ] EVSM4 directional cascades with `MomentMinVariance` scaled per cascade
+  vs. a single global value; confirm near-cascade contact and far-cascade
+  stability.
+- [ ] Cascade overlap band visibility-blend vs (incorrect) moment-blend
+  reference, confirming the visibility-blend path matches per-cascade
+  ground truth.
 
 ### C.9 Blur, Mip Filtering, And MSAA
+
+Moments are linear in depth, so separable Gaussian blur and mip generation
+with linear filtering are valid VSM/EVSM prefilters. Blur and mips are moment
+features, not raw-depth features; keep that contract explicit in helper
+comments and UI labels.
 
 - [ ] Keep Phase 2 per-resource blur for non-atlas resources until atlas blur
   is ready.
@@ -894,7 +950,43 @@ Performance tests:
 - [ ] Derivative-derived moment variance disabled or clamped where
   derivatives are unreliable.
 
-### C.15 Filtering Out Of Scope For v1
+### C.15 PCSS / Vogel / Poisson vs Moment Encodings Contract
+
+PCSS, Poisson, and Vogel-disk are depth-compare sampling modes. VSM and EVSM
+are moment-filtering encodings. They are orthogonal and cannot be combined
+directly in the v1 receiver path. The intended pairing is:
+
+- `Depth` encoding pairs with `Hard`, `FixedPoisson`, `VogelDisk`, and
+  `ContactHardeningPcss` on the current `SoftShadowMode` property. After C.2,
+  the same modes move to `EShadowDepthFilterMode`.
+- `Variance2`, `ExponentialVariance2`, and `ExponentialVariance4` ignore
+  `SoftShadowMode` for main-map visibility and use moment-filter parameters
+  (`ShadowMomentMinVariance`, `ShadowMomentLightBleedReduction`, EVSM
+  exponents, moment blur strength, mip bias) instead.
+- Contact shadows multiply on top of both, independently of encoding.
+
+Required work to make this contract explicit and enforced:
+
+- [ ] Document the pairing in editor help text for both the encoding and the
+  depth-filter-mode selectors.
+- [ ] In the receiver dispatcher, ignore the depth-filter mode when the
+  resolved encoding is a moment encoding; do not silently reuse PCSS
+  kernel sizes as moment blur radii.
+- [ ] Add a unit test that flips a light between depth + PCSS and EVSM4 and
+  asserts the depth-filter-mode does not change the moment receiver path.
+- [ ] When users request a soft-shadow look with moment encodings, route
+  them to moment blur / mip bias / EVSM-parameter controls, not to
+  PCSS/Vogel parameters.
+
+Post-v1 moment-aware sampling (tracked, not v1):
+
+- Variance-based PCSS / VSSM (variance-driven blocker search).
+- Vogel-distributed moment taps with a moment-aware blocker estimate.
+- These are new algorithms, not extensions of the existing PCSS/Vogel depth
+  paths, and remain in
+  [Post-v1 Advanced Shadow Features Plan](../design/post-v1-advanced-shadow-features-plan.md).
+
+### C.16 Filtering Out Of Scope For v1
 
 - Variance-based PCSS / VSSM.
 - Tile-aware MSAA resolve for atlas resources.
@@ -914,19 +1006,19 @@ Today, `XRENGINE_SampleContactShadowScreenSpace` in
 `Build/CommonAssets/Shaders/Snippets/ShadowSampling.glsl` runs a world-space
 ray march. Per sample it executes roughly four `mat4 * vec4` reconstructions:
 
-- `viewProjectionMatrix * worldPos` — project current sample to clip
-- `inverseProjMatrix * clipPos` — reconstruct view-space from sampled depth
-- `inverseViewMatrix * viewPos` — back to world to compare distances
-- `viewMatrix * samplePosWS` — recompute the sample's view depth
+- `viewProjectionMatrix * worldPos`: project current sample to clip.
+- `inverseProjMatrix * clipPos`: reconstruct view-space from sampled depth.
+- `inverseViewMatrix * viewPos`: back to world to compare distances.
+- `viewMatrix * samplePosWS`: recompute the sample's view depth.
 
 Default sample counts:
 `DirectionalLightComponent.ContactShadowSamples = 16`,
 `SpotLightComponent.ContactShadowSamples = 16`,
 `LightComponent` base (point inherits) `= 4`.
 
-Worst-case per-pixel-per-light is ~16 samples × ~4 mat4×vec4 + a depth fetch
-+ a few dot products, which compounds quickly across multiple shadow-casting
-lights.
+Worst-case per-pixel-per-light cost is roughly 16 samples x 4 matrix-vector
+multiplies, plus a depth fetch and dot products. That compounds quickly across
+multiple shadow-casting lights.
 
 ### D.0 Branch Setup
 
@@ -960,9 +1052,9 @@ lights.
 
 ### D.3 Lower Default Sample Counts
 
-- [ ] `DirectionalLightComponent.ContactShadowSamples` 16 → 8.
-- [ ] `SpotLightComponent.ContactShadowSamples` 16 → 8.
-- [ ] `LightComponent` base 4 → 6 (point lights gain a bit; cost still capped
+- [ ] `DirectionalLightComponent.ContactShadowSamples`: 16 -> 8.
+- [ ] `SpotLightComponent.ContactShadowSamples`: 16 -> 8.
+- [ ] `LightComponent` base: 4 -> 6 (point lights gain a bit; cost still capped
   by short `ContactShadowDistance` defaults).
 - [ ] Update
   `XREngine.UnitTests/Rendering/CascadedShadowDefaultsAndForwardShaderTests.cs`
@@ -974,19 +1066,19 @@ lights.
 ### D.4 Tighter Early-Outs
 
 - [ ] Skip the sample loop when `dot(N, L) <= 0` (already partially done in
-  some paths — audit all four overloads).
+  some paths; audit all four overloads).
 - [ ] Skip the loop when `viewDepth > contactFadeEnd` before computing the
   ray start/delta.
 - [ ] Add a per-light tile-size early-out: if the light's clip-space bound
   does not overlap the fragment's screen tile, skip contact shadow entirely.
-  (Optional; revisit after D.1–D.3.)
+  (Optional; revisit after D.1-D.3.)
 
 ### D.5 (Optional Follow-Up) Per-Light Screen-Space Contact-Shadow Pass
 
 - [ ] Evaluate moving contact shadows to a half-res compute pass that writes
   a per-light occlusion texture, sampled as a single texture fetch in
   lighting. Useful when many shadow-casters overlap on screen.
-- [ ] Out of scope until D.1–D.4 land and are profiled.
+- [ ] Out of scope until D.1-D.4 land and are profiled.
 
 ### D.6 Final Merge
 
@@ -1011,8 +1103,7 @@ lights.
 ### D.8 Contact Shadow Risks / Notes
 
 - The four `XRENGINE_SampleContactShadowScreenSpace` overloads must stay in
-  sync — refactor one, port the same pattern to the others in the same
-  commit.
+  sync; refactor one, port the same pattern to the others in the same commit.
 - View-space vs world-space switch can subtly change thickness behavior for
   long rays (`ContactShadowDistance > ~5m`); keep the fade parameters in the
   same units and visually compare at distance.

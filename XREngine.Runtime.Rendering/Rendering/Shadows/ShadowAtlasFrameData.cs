@@ -8,11 +8,13 @@ public sealed class ShadowAtlasFrameData
     private ShadowAtlasAllocation[] _allocations = [];
     private ShadowAtlasGroupedDirectionalCascadeAllocation[] _directionalCascadeGroups = [];
     private ShadowAtlasGroupedPointFaceAllocation[] _pointFaceGroups = [];
+    private ShadowDirectionalAtlasLightDiagnostic[] _directionalLightDiagnostics = [];
     private ShadowAtlasPageDescriptor[] _pages = [];
     private readonly Dictionary<ShadowRequestKey, int> _allocationIndexByKey = new();
     private int _allocationCount;
     private int _directionalCascadeGroupCount;
     private int _pointFaceGroupCount;
+    private int _directionalLightDiagnosticCount;
     private int _pageCount;
 
     public ulong FrameId { get; private set; }
@@ -21,10 +23,12 @@ public sealed class ShadowAtlasFrameData
     public int AllocationCount => _allocationCount;
     public int DirectionalCascadeGroupCount => _directionalCascadeGroupCount;
     public int PointFaceGroupCount => _pointFaceGroupCount;
+    public int DirectionalLightDiagnosticCount => _directionalLightDiagnosticCount;
     public int PageCount => _pageCount;
     public ReadOnlySpan<ShadowAtlasAllocation> Allocations => _allocations.AsSpan(0, _allocationCount);
     public ReadOnlySpan<ShadowAtlasGroupedDirectionalCascadeAllocation> DirectionalCascadeGroups => _directionalCascadeGroups.AsSpan(0, _directionalCascadeGroupCount);
     public ReadOnlySpan<ShadowAtlasGroupedPointFaceAllocation> PointFaceGroups => _pointFaceGroups.AsSpan(0, _pointFaceGroupCount);
+    public ReadOnlySpan<ShadowDirectionalAtlasLightDiagnostic> DirectionalLightDiagnostics => _directionalLightDiagnostics.AsSpan(0, _directionalLightDiagnosticCount);
     public ReadOnlySpan<ShadowAtlasPageDescriptor> Pages => _pages.AsSpan(0, _pageCount);
 
     public ShadowAtlasAllocation GetAllocation(int index)
@@ -57,6 +61,14 @@ public sealed class ShadowAtlasFrameData
             throw new ArgumentOutOfRangeException(nameof(index));
 
         return _pointFaceGroups[index];
+    }
+
+    public ShadowDirectionalAtlasLightDiagnostic GetDirectionalLightDiagnostic(int index)
+    {
+        if ((uint)index >= (uint)_directionalLightDiagnosticCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        return _directionalLightDiagnostics[index];
     }
 
     public bool TryGetAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
@@ -100,6 +112,22 @@ public sealed class ShadowAtlasFrameData
         return false;
     }
 
+    public bool TryGetDirectionalLightDiagnostic(Guid lightId, out ShadowDirectionalAtlasLightDiagnostic diagnostic)
+    {
+        for (int i = 0; i < _directionalLightDiagnosticCount; i++)
+        {
+            ShadowDirectionalAtlasLightDiagnostic candidate = _directionalLightDiagnostics[i];
+            if (candidate.LightId == lightId)
+            {
+                diagnostic = candidate;
+                return true;
+            }
+        }
+
+        diagnostic = default;
+        return false;
+    }
+
     public bool TryGetPointFaceGroup(Guid lightId, out ShadowAtlasGroupedPointFaceAllocation group)
     {
         for (int i = 0; i < _pointFaceGroupCount; i++)
@@ -122,12 +150,14 @@ public sealed class ShadowAtlasFrameData
         IReadOnlyList<ShadowAtlasAllocation> allocations,
         IReadOnlyList<ShadowAtlasGroupedDirectionalCascadeAllocation> directionalCascadeGroups,
         IReadOnlyList<ShadowAtlasGroupedPointFaceAllocation> pointFaceGroups,
+        IReadOnlyList<ShadowDirectionalAtlasLightDiagnostic> directionalLightDiagnostics,
         IReadOnlyList<ShadowAtlasPageDescriptor> pages,
         ShadowAtlasMetrics metrics)
     {
         EnsureAllocationCapacity(allocations.Count);
         EnsureDirectionalCascadeGroupCapacity(directionalCascadeGroups.Count);
         EnsurePointFaceGroupCapacity(pointFaceGroups.Count);
+        EnsureDirectionalLightDiagnosticCapacity(directionalLightDiagnostics.Count);
         EnsurePageCapacity(pages.Count);
         _allocationIndexByKey.EnsureCapacity(allocations.Count);
         _allocationIndexByKey.Clear();
@@ -150,6 +180,11 @@ public sealed class ShadowAtlasFrameData
         for (int i = pointFaceGroups.Count; i < _pointFaceGroupCount; i++)
             _pointFaceGroups[i] = default;
 
+        for (int i = 0; i < directionalLightDiagnostics.Count; i++)
+            _directionalLightDiagnostics[i] = directionalLightDiagnostics[i];
+        for (int i = directionalLightDiagnostics.Count; i < _directionalLightDiagnosticCount; i++)
+            _directionalLightDiagnostics[i] = default;
+
         for (int i = 0; i < pages.Count; i++)
             _pages[i] = pages[i];
         for (int i = pages.Count; i < _pageCount; i++)
@@ -158,6 +193,7 @@ public sealed class ShadowAtlasFrameData
         _allocationCount = allocations.Count;
         _directionalCascadeGroupCount = directionalCascadeGroups.Count;
         _pointFaceGroupCount = pointFaceGroups.Count;
+        _directionalLightDiagnosticCount = directionalLightDiagnostics.Count;
         _pageCount = pages.Count;
         FrameId = frameId;
         Generation = generation;
@@ -198,6 +234,18 @@ public sealed class ShadowAtlasFrameData
             next *= 2;
 
         Array.Resize(ref _pointFaceGroups, next);
+    }
+
+    private void EnsureDirectionalLightDiagnosticCapacity(int count)
+    {
+        if (_directionalLightDiagnostics.Length >= count)
+            return;
+
+        int next = Math.Max(4, _directionalLightDiagnostics.Length);
+        while (next < count)
+            next *= 2;
+
+        Array.Resize(ref _directionalLightDiagnostics, next);
     }
 
     private void EnsurePageCapacity(int count)

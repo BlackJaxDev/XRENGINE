@@ -1410,7 +1410,7 @@ namespace XREngine
         private bool _enableProfilerFrameLogging = true;
         private bool _enableProfilerComponentTiming = true;
         private bool _enableRenderStatisticsTracking = true;
-        private bool _enableGpuRenderPipelineProfiling = true;
+        private bool _enableGpuRenderPipelineProfiling = false;
         private bool _enableMainThreadInvokeDiagnostics = false;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
@@ -2294,7 +2294,7 @@ namespace XREngine
         [Category("Profiling")]
         [DisplayName("Enable GPU Render-Pipeline Profiling")]
         [Description("When enabled, records GPU timestamp timings for render-pipeline commands on the OpenGL backend for the Profiler panel.")]
-        [DefaultValue(true)]
+        [DefaultValue(false)]
         public bool EnableGpuRenderPipelineProfiling
         {
             get

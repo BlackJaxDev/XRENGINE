@@ -15,6 +15,9 @@ internal sealed class RenderPipelineGpuProfiler
     public static RenderPipelineGpuProfiler Instance { get; } = new();
     private const ulong PartialPublishDelayFrames = 3;
     private const ulong StalePendingQueryFrames = 120;
+    private const int MaxTimestampScopesPerFrame = 512;
+    private const double SlowTimestampQuerySuspendMilliseconds = 12.0;
+    private const ulong SlowTimestampQuerySuspendFrames = 120;
     private const int TimingDumpWorstFrameLimit = 24;
     private const int TimingDumpTopNodeLimit = 64;
     private const int TimingDumpTopShaderNodeLimit = 40;
@@ -65,6 +68,7 @@ internal sealed class RenderPipelineGpuProfiler
 
         public ulong FrameId { get; }
         public int PendingSamples { get; set; }
+        public int SkippedSamples { get; set; }
         public bool HasSamples { get; private set; }
         public bool Supported { get; set; }
         public string BackendName { get; set; } = string.Empty;
@@ -258,6 +262,9 @@ internal sealed class RenderPipelineGpuProfiler
     private ulong _lastPublishedFrameId;
     private bool _hasPublishedFrame;
     private string _lastBackendName = string.Empty;
+    private ulong _timestampBudgetFrameId;
+    private int _timestampScopesIssuedThisFrame;
+    private ulong _timestampQueriesSuspendedUntilFrameId;
     private int _enabled;
 
     private RenderPipelineGpuProfiler()
@@ -428,6 +435,9 @@ internal sealed class RenderPipelineGpuProfiler
                 _pipelineTimingHistories.Clear();
                 _hasPublishedFrame = false;
                 _lastPublishedFrameId = 0UL;
+                _timestampBudgetFrameId = 0UL;
+                _timestampScopesIssuedThisFrame = 0;
+                _timestampQueriesSuspendedUntilFrameId = 0UL;
                 _latestSnapshot = RenderStatsGpuPipelineSnapshot.Disabled();
                 return;
             }
@@ -485,9 +495,8 @@ internal sealed class RenderPipelineGpuProfiler
             path[pathIndex++] = commandStack[i];
         path[^1] = scopeName;
 
-        GLRenderQuery startQuery = AcquireTimestampQuery(renderer);
-        startQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
-        startQuery.QueryCounter();
+        if (!TryBeginTimestampScope(renderer, frameId, out GLRenderQuery? startQuery))
+            return default;
 
         commandStack.Add(scopeName);
         pipelineStack.Add(pipelineName);
@@ -504,7 +513,7 @@ internal sealed class RenderPipelineGpuProfiler
                 _latestSnapshot = RenderStatsGpuPipelineSnapshot.Pending(GetLastBackendNameNoLock(), "Waiting for the first resolved GPU command frame.");
         }
 
-        return new Scope(this, frameId, path, startQuery, popScope: true);
+        return new Scope(this, frameId, path, startQuery!, popScope: true);
     }
 
     public bool PushUserScope(string scopeName)
@@ -532,12 +541,11 @@ internal sealed class RenderPipelineGpuProfiler
             path[i + 1] = userStack[i];
         path[^1] = scopeName;
 
-        GLRenderQuery startQuery = AcquireTimestampQuery(renderer);
-        startQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
-        startQuery.QueryCounter();
+        if (!TryBeginTimestampScope(renderer, frameId, out GLRenderQuery? startQuery))
+            return false;
 
         userStack.Add(scopeName);
-        openScopes.Push(new UserScopeHandle(frameId, path, startQuery));
+        openScopes.Push(new UserScopeHandle(frameId, path, startQuery!));
 
         lock (_lock)
         {
@@ -584,12 +592,18 @@ internal sealed class RenderPipelineGpuProfiler
             return;
         }
 
-        GLRenderQuery endQuery = AcquireTimestampQuery(renderer);
-        endQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
-        endQuery.QueryCounter();
+        if (!TryBeginTimestampScope(renderer, scope.FrameId, out GLRenderQuery? endQuery))
+        {
+            lock (_lock)
+            {
+                RetireQueryWhenReadyNoLock(scope.FrameId, scope.StartQuery);
+                CancelPendingSampleNoLock(scope.FrameId);
+            }
+            return;
+        }
 
         lock (_lock)
-            _pendingScopes.Add(new PendingScope(scope.FrameId, scope.Path, scope.StartQuery, endQuery));
+            _pendingScopes.Add(new PendingScope(scope.FrameId, scope.Path, scope.StartQuery, endQuery!));
     }
 
     private void EndScope(ulong frameId, string[]? path, GLRenderQuery? startQuery, bool popScope)
@@ -618,13 +632,19 @@ internal sealed class RenderPipelineGpuProfiler
             return;
         }
 
-        GLRenderQuery endQuery = AcquireTimestampQuery(renderer);
-        endQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
-        endQuery.QueryCounter();
+        if (!TryBeginTimestampScope(renderer, frameId, out GLRenderQuery? endQuery))
+        {
+            lock (_lock)
+            {
+                RetireQueryWhenReadyNoLock(frameId, startQuery);
+                CancelPendingSampleNoLock(frameId);
+            }
+            return;
+        }
 
         lock (_lock)
         {
-            _pendingScopes.Add(new PendingScope(frameId, path, startQuery, endQuery));
+            _pendingScopes.Add(new PendingScope(frameId, path, startQuery, endQuery!));
         }
     }
 
@@ -690,6 +710,94 @@ internal sealed class RenderPipelineGpuProfiler
     {
         if (_frames.TryGetValue(frameId, out FrameCapture? frame) && frame.PendingSamples > 0)
             frame.PendingSamples--;
+    }
+
+    private bool TryBeginTimestampScope(OpenGLRenderer renderer, ulong frameId, out GLRenderQuery? query)
+    {
+        query = null;
+        if (!TryReserveTimestampScope(frameId))
+            return false;
+
+        GLRenderQuery candidate = AcquireTimestampQuery(renderer);
+        long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            candidate.QueryCounter();
+        }
+        catch (Exception ex)
+        {
+            candidate.Data.CurrentQuery = null;
+            candidate.Destroy();
+
+            lock (_lock)
+                RecordSkippedSampleNoLock(frameId, $"OpenGL timestamp query failed; GPU pipeline timing skipped. {ex.Message}");
+            return false;
+        }
+
+        double elapsedMilliseconds = StopwatchTicksToMilliseconds(System.Diagnostics.Stopwatch.GetTimestamp() - startTicks);
+        if (elapsedMilliseconds >= SlowTimestampQuerySuspendMilliseconds)
+        {
+            lock (_lock)
+            {
+                _timestampQueriesSuspendedUntilFrameId = Math.Max(
+                    _timestampQueriesSuspendedUntilFrameId,
+                    frameId + SlowTimestampQuerySuspendFrames);
+
+                RecordSkippedSampleNoLock(
+                    frameId,
+                    $"OpenGL timestamp queries are stalling ({elapsedMilliseconds:0.0} ms); GPU pipeline timing is temporarily throttled.");
+            }
+        }
+
+        query = candidate;
+        return true;
+    }
+
+    private bool TryReserveTimestampScope(ulong frameId)
+    {
+        lock (_lock)
+        {
+            if (_timestampBudgetFrameId != frameId)
+            {
+                _timestampBudgetFrameId = frameId;
+                _timestampScopesIssuedThisFrame = 0;
+            }
+
+            if (_timestampQueriesSuspendedUntilFrameId != 0UL)
+            {
+                if (frameId <= _timestampQueriesSuspendedUntilFrameId)
+                {
+                    RecordSkippedSampleNoLock(frameId, "OpenGL timestamp queries are temporarily throttled after a slow driver call.");
+                    return false;
+                }
+
+                _timestampQueriesSuspendedUntilFrameId = 0UL;
+            }
+
+            if (_timestampScopesIssuedThisFrame >= MaxTimestampScopesPerFrame)
+            {
+                RecordSkippedSampleNoLock(
+                    frameId,
+                    $"GPU pipeline timing reached the per-frame timestamp scope budget ({MaxTimestampScopesPerFrame}); later scopes were skipped.");
+                return false;
+            }
+
+            _timestampScopesIssuedThisFrame++;
+            return true;
+        }
+    }
+
+    private void RecordSkippedSampleNoLock(ulong frameId, string statusMessage)
+    {
+        _lastBackendName = "OpenGL";
+        FrameCapture frame = GetOrCreateFrameNoLock(frameId);
+        frame.Supported = true;
+        frame.BackendName = "OpenGL";
+        frame.SkippedSamples++;
+        if (string.IsNullOrWhiteSpace(frame.StatusMessage))
+            frame.StatusMessage = statusMessage;
+        if (!_latestSnapshot.Enabled)
+            _latestSnapshot = RenderStatsGpuPipelineSnapshot.Pending(GetLastBackendNameNoLock(), statusMessage);
     }
 
     private void PublishLatestResolvedFrameNoLock(ulong currentFrameId)
@@ -1540,6 +1648,9 @@ internal sealed class RenderPipelineGpuProfiler
     private static string FormatMilliseconds(double milliseconds)
         => milliseconds.ToString("0.000", CultureInfo.InvariantCulture);
 
+    private static double StopwatchTicksToMilliseconds(long ticks)
+        => ticks <= 0L ? 0.0 : (double)ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
     private static string FormatTimestamp(DateTimeOffset timestamp)
         => timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff zzz", CultureInfo.InvariantCulture);
 
@@ -1626,9 +1737,15 @@ internal sealed class RenderPipelineGpuProfiler
                 frameMilliseconds += node.ElapsedMs;
         }
 
-        string statusMessage = frame.PendingSamples > 0
-            ? $"{frame.PendingSamples} GPU timer sample(s) were still pending; showing resolved commands."
-            : frame.StatusMessage;
+        string statusMessage = frame.PendingSamples switch
+        {
+            > 0 when frame.SkippedSamples > 0 => $"{frame.PendingSamples} GPU timer sample(s) were still pending and {frame.SkippedSamples} were skipped; showing resolved commands.",
+            > 0 => $"{frame.PendingSamples} GPU timer sample(s) were still pending; showing resolved commands.",
+            _ when frame.SkippedSamples > 0 => string.IsNullOrWhiteSpace(frame.StatusMessage)
+                ? $"{frame.SkippedSamples} GPU timer sample(s) were skipped."
+                : $"{frame.StatusMessage} ({frame.SkippedSamples} skipped)",
+            _ => frame.StatusMessage,
+        };
 
         return new RenderStatsGpuPipelineSnapshot(true, frame.Supported, rootCount > 0, frame.BackendName, statusMessage, frameMilliseconds, roots);
     }

@@ -31,6 +31,8 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Ambient occlusion | Stable doc + testing | [../features/gi/ambient-occlusion.md](../features/gi/ambient-occlusion.md) | HBAO+ and non-HBAO implementation trackers are complete; remaining validation lives in [testing/ambient-occlusion.md](testing/ambient-occlusion.md). |
 | Transparency and OIT | Active | [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md) | Active implementation tracker. |
 | GPU rendering roadmap | Active | [todo/rendering/gpu/production-rendering-pipeline-roadmap.md](todo/rendering/gpu/production-rendering-pipeline-roadmap.md) | Canonical GPU-driven rendering roadmap. The old broad `gpu-rendering.md` checklist is now a redirect. |
+| Engine rendering optimization | Active | [todo/rendering/optimization/engine-rendering-optimization-roadmap.md](todo/rendering/optimization/engine-rendering-optimization-roadmap.md), [design/rendering/engine-optimization-and-avatar-optimizer-design.md](design/rendering/engine-optimization-and-avatar-optimizer-design.md) | Renderer performance strategy covering CPU direct, zero-readback GPU-driven rendering, meshlets, visibility-buffer rendering, stereo paths, and profiling. |
+| Avatar optimization and virtualized rendering | Active | [todo/avatar/avatar-optimization-roadmap.md](todo/avatar/avatar-optimization-roadmap.md), [design/rendering/avatar-optimization-and-virtualized-rendering-design.md](design/rendering/avatar-optimization-and-virtualized-rendering-design.md) | In-editor automatic avatar optimization, material consolidation, atlasing, simplification, skin/blendshape reduction, LODs, cluster-virtualized avatars, and Gaussian-splat distant crowds. |
 | GPU meshlet zero-readback rendering | Active | [design/rendering/gpu-meshlet-zero-readback-rendering-design.md](design/rendering/gpu-meshlet-zero-readback-rendering-design.md), [todo/rendering/gpu/gpu-meshlet-zero-readback-rendering-todo.md](todo/rendering/gpu/gpu-meshlet-zero-readback-rendering-todo.md), [todo/rendering/gpu/production-rendering-pipeline-roadmap.md](todo/rendering/gpu/production-rendering-pipeline-roadmap.md) | Production meshlet renderer design covering GPUScene meshlet storage, GPU expansion, mesh-shader dispatch, culling, material-table shading, and zero-readback invariants. |
 | OpenXR no-HMD testing | Active | [design/VR/openxr-monado-testing-pipeline.md](design/VR/openxr-monado-testing-pipeline.md), [todo/tests/openxr-timing-tests-todo.md](todo/tests/openxr-timing-tests-todo.md), [todo/rendering/vr/openxr-future-work-todo.md](todo/rendering/vr/openxr-future-work-todo.md) | Testing architecture that keeps the existing non-API emulated VR lane while adding a Monado-backed OpenXR runtime smoke lane through `XR_RUNTIME_JSON`. |
 | Model import cooked asset cache | Active | [todo/assets/model-import-binary-cache-todo.md](todo/assets/model-import-binary-cache-todo.md), [design/assets/model-import-binary-cache-design.md](design/assets/model-import-binary-cache-design.md), [../features/model-import.md](../features/model-import.md) | Engine-native cooked `.asset` cache authority for warm model imports, including cached LOD and meshlet payloads plus manual source reimport. |
@@ -60,11 +62,22 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 
 ## Active TODOs
 
+- [todo/avatar/avatar-analyzer-reporting-and-ux-todo.md](todo/avatar/avatar-analyzer-reporting-and-ux-todo.md)
+- [todo/avatar/avatar-lod-meshlet-cooked-variant-todo.md](todo/avatar/avatar-lod-meshlet-cooked-variant-todo.md)
+- [todo/avatar/avatar-material-texture-consolidation-todo.md](todo/avatar/avatar-material-texture-consolidation-todo.md)
+- [todo/avatar/avatar-mesh-submesh-geometry-optimization-todo.md](todo/avatar/avatar-mesh-submesh-geometry-optimization-todo.md)
+- [todo/avatar/avatar-optimization-roadmap.md](todo/avatar/avatar-optimization-roadmap.md)
+- [todo/avatar/avatar-skin-skeleton-blendshape-optimization-todo.md](todo/avatar/avatar-skin-skeleton-blendshape-optimization-todo.md)
+- [todo/avatar/cluster-virtualized-avatar-rendering-todo.md](todo/avatar/cluster-virtualized-avatar-rendering-todo.md)
+- [todo/avatar/gaussian-splat-distant-crowd-lod-todo.md](todo/avatar/gaussian-splat-distant-crowd-lod-todo.md)
 - [todo/aot-final-game-builds.md](todo/aot-final-game-builds.md)
 - [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md)
 - [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md)
+- [todo/rendering/optimization/compact-zero-readback-rendering-todo.md](todo/rendering/optimization/compact-zero-readback-rendering-todo.md)
+- [todo/rendering/optimization/cpu-direct-fast-path-todo.md](todo/rendering/optimization/cpu-direct-fast-path-todo.md)
 - [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
 - [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)
+- [todo/rendering/optimization/engine-rendering-optimization-roadmap.md](todo/rendering/optimization/engine-rendering-optimization-roadmap.md)
 - [todo/rendering/dynamic-indirect-material-bindings-todo.md](todo/rendering/dynamic-indirect-material-bindings-todo.md)
 - [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md)
 - [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md)
@@ -76,7 +89,9 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/openvr-vrclient-gpu-handoff-todo.md](todo/openvr-vrclient-gpu-handoff-todo.md)
 - [todo/rendering/opengl-shader-program-deduplication-todo.md](todo/rendering/opengl-shader-program-deduplication-todo.md)
 - [todo/physics-finalization.md](todo/physics-finalization.md)
+- [todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md](todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md)
 - [todo/rendering/resolved-shader-source-optimization-todo.md](todo/rendering/resolved-shader-source-optimization-todo.md)
+- [todo/rendering/optimization/rendering-profiler-and-benchmarking-todo.md](todo/rendering/optimization/rendering-profiler-and-benchmarking-todo.md)
 - [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md)
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
 - [todo/rendering/shadows/shadow-atlas-overhaul-todo.md](todo/rendering/shadows/shadow-atlas-overhaul-todo.md)
@@ -84,6 +99,8 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md](todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 - [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md)
 - [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
+- [todo/rendering/optimization/visibility-buffer-rendering-todo.md](todo/rendering/optimization/visibility-buffer-rendering-todo.md)
+- [todo/rendering/optimization/vr-rendering-performance-contract-todo.md](todo/rendering/optimization/vr-rendering-performance-contract-todo.md)
 - [todo/vulkan.md](todo/vulkan.md)
 - [todo/xrmesh-vertex-remapper-optimizations.md](todo/xrmesh-vertex-remapper-optimizations.md)
 
@@ -95,6 +112,8 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
 - [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)
 - [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
+- [design/rendering/engine-optimization-and-avatar-optimizer-design.md](design/rendering/engine-optimization-and-avatar-optimizer-design.md)
+- [design/rendering/avatar-optimization-and-virtualized-rendering-design.md](design/rendering/avatar-optimization-and-virtualized-rendering-design.md)
 - [design/rendering/dynamic-indirect-material-bindings.md](design/rendering/dynamic-indirect-material-bindings.md)
 - [design/rendering/gpu-meshlet-zero-readback-rendering-design.md](design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [design/rendering/volumetric-fog-production-design.md](design/rendering/volumetric-fog-production-design.md)

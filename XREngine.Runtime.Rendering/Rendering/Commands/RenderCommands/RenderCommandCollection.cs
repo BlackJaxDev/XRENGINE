@@ -765,7 +765,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
-            if (!profiler.IsProfilingActive)
+            if (!profiler.IsProfilingActive || ShouldSkipGpuScope(command))
             {
                 command.Render();
                 return;
@@ -774,6 +774,9 @@ namespace XREngine.Rendering.Commands
             using (profiler.StartScope(BuildRenderCommandGpuScopeName(renderPass, command)))
                 command.Render();
         }
+
+        private static bool ShouldSkipGpuScope(RenderCommand command)
+            => RuntimeRenderingHostServices.Current.IsShadowPass && command is IRenderCommandMesh;
 
         private static string BuildRenderCommandGpuScopeName(int renderPass, RenderCommand command)
         {
