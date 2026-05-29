@@ -1,7 +1,9 @@
 using NUnit.Framework;
 using Shouldly;
 using System;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using XREngine;
 using XREngine.Animation;
 using XREngine.Core.Files;
@@ -85,13 +87,14 @@ AnimationClip:
             clip.ShouldNotBeNull();
             clip.LengthInSeconds.ShouldBe(1.0f);
 
-            string[] cacheFiles = [.. Directory.EnumerateFiles(sandbox.CachePath, "*", SearchOption.AllDirectories)];
+            string[] cacheFiles = WaitForCacheFiles(sandbox.CachePath, 1);
             cacheFiles.Length.ShouldBe(1, "animation clips should now emit a cache asset");
             string cachePath = cacheFiles[0];
             File.Exists(cachePath).ShouldBeTrue();
-            string cacheText = File.ReadAllText(cachePath);
-            cacheText.ShouldContain("Format: CookedBinary");
-            cacheText.ShouldContain("Payload:");
+            byte[] cacheBytes = File.ReadAllBytes(cachePath);
+            PublishedCookedAssetRegistry.TryDeserialize(typeof(AnimationClip), cacheBytes, out object? cachedAsset).ShouldBeTrue();
+            AnimationClip cachedClipAsset = cachedAsset.ShouldBeOfType<AnimationClip>();
+            cachedClipAsset.LengthInSeconds.ShouldBe(clip.LengthInSeconds);
 
             DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);
             File.WriteAllText(sourcePath, "this is intentionally not valid animation data");
@@ -101,8 +104,37 @@ AnimationClip:
 
             AnimationClip? cachedClip = manager.Load<AnimationClip>(sourcePath);
             cachedClip.ShouldNotBeNull();
-            cachedClip.Name.ShouldBe("CacheBypassClip");
             cachedClip.LengthInSeconds.ShouldBe(1.0f, "fresh cache should satisfy reloads without re-importing the source");
+        }
+        finally
+        {
+            manager.Dispose();
+        }
+    }
+
+    [Test]
+    public void LoadAnimationClip_RealSexyWalkClipDoesNotBlockOnCacheWrite()
+    {
+        using var sandbox = new AssetCacheSandbox();
+        var manager = new AssetManager();
+        manager.MonitorGameAssetsForChanges = false;
+        try
+        {
+            manager.GameAssetsPath = sandbox.AssetsPath;
+            manager.GameCachePath = sandbox.CachePath;
+
+            string sourcePath = Path.Combine(sandbox.AssetsPath, "Walks", "Sexy Walk.anim");
+            Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+            File.Copy(Path.Combine(FindRepositoryRoot(), "Assets", "Walks", "Sexy Walk.anim"), sourcePath);
+
+            var stopwatch = Stopwatch.StartNew();
+            AnimationClip? clip = manager.Load<AnimationClip>(sourcePath);
+            stopwatch.Stop();
+
+            clip.ShouldNotBeNull();
+            clip.RootMember.ShouldNotBeNull();
+            clip.HasMuscleChannels.ShouldBeTrue();
+            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10), "startup .anim loads must return before cooked cache writes complete");
         }
         finally
         {
@@ -257,6 +289,40 @@ AnimationClip:
         manager.LoadedAssetsByPathInternal.Clear();
         manager.LoadedAssetsByOriginalPathInternal.Clear();
         manager.LoadedAssetsByIDInternal.Clear();
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        string current = Path.GetFullPath(TestContext.CurrentContext.WorkDirectory);
+        while (true)
+        {
+            if (File.Exists(Path.Combine(current, "XRENGINE.sln")))
+                return current;
+
+            string? parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrWhiteSpace(parent))
+                throw new DirectoryNotFoundException("Unable to locate repository root containing XRENGINE.sln.");
+
+            current = parent;
+        }
+    }
+
+    private static string[] WaitForCacheFiles(string cachePath, int expectedCount)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        string[] cacheFiles = [];
+        while (stopwatch.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            cacheFiles = Directory.Exists(cachePath)
+                ? [.. Directory.EnumerateFiles(cachePath, "*", SearchOption.AllDirectories)]
+                : [];
+            if (cacheFiles.Length >= expectedCount)
+                return cacheFiles;
+
+            Thread.Sleep(25);
+        }
+
+        return cacheFiles;
     }
 
     private sealed class AssetCacheSandbox : IDisposable

@@ -573,17 +573,8 @@ namespace XREngine
 
         private static string? ResolveDefaultCacheVariantKey(Type assetType, string? explicitVariantKey)
         {
-            if (assetType != typeof(XRTexture2D))
-                return explicitVariantKey;
-
-            // v3 = pure binary XRTS streaming payload (no YAML envelope, no hex/base64). Bumped from v2
-            // so existing YAML cache files are orphaned and rewritten on next import; the old YAML
-            // wrapper was producing 50-100 MB cache files for 4K textures and OOM-killing the editor.
-            string texturePayloadKey = $"TextureStreaming_v3_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary";
-            if (string.IsNullOrWhiteSpace(explicitVariantKey))
-                return texturePayloadKey;
-
-            return Path.Combine(texturePayloadKey, explicitVariantKey);
+            IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(assetType);
+            return codec?.ResolveDefaultVariantKey(explicitVariantKey) ?? explicitVariantKey;
         }
 
         /// <summary>
@@ -731,14 +722,11 @@ namespace XREngine
             if (!File.Exists(cachePath))
                 return false;
 
-            if (typeof(T) == typeof(XRTexture2D))
+            if (TryReadRegisteredCachePayload(cachePath, originalPath, sourceTimestampUtc, typeof(T), out XRAsset? registeredAsset)
+                && registeredAsset is T typedRegisteredAsset)
             {
-                XRTexture2D? binaryTexture = TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
-                if (binaryTexture is not null)
-                {
-                    asset = (T)(object)binaryTexture;
-                    return true;
-                }
+                asset = typedRegisteredAsset;
+                return true;
             }
 
             try
@@ -784,14 +772,10 @@ namespace XREngine
             if (!File.Exists(cachePath))
                 return false;
 
-            if (type == typeof(XRTexture2D))
+            if (TryReadRegisteredCachePayload(cachePath, originalPath, sourceTimestampUtc, type, out XRAsset? registeredAsset))
             {
-                XRTexture2D? binaryTexture = TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
-                if (binaryTexture is not null)
-                {
-                    asset = binaryTexture;
-                    return true;
-                }
+                asset = registeredAsset;
+                return true;
             }
 
             try
@@ -829,11 +813,12 @@ namespace XREngine
             if (!File.Exists(cachePath))
                 return null;
 
-            if (typeof(T) == typeof(XRTexture2D))
+            XRAsset? registeredAsset = await Task
+                .Run(() => TryReadRegisteredCachePayload(cachePath, originalPath, sourceTimestampUtc, typeof(T), out XRAsset? asset) ? asset : null)
+                .ConfigureAwait(false);
+            if (registeredAsset is not null)
             {
-                XRTexture2D? binaryTexture = await Task.Run(() => TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc)).ConfigureAwait(false);
-                if (binaryTexture is not null)
-                    return (T)(object)binaryTexture;
+                return (T)registeredAsset;
             }
 
             try
@@ -876,9 +861,9 @@ namespace XREngine
                     Directory.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
-                if (TryWriteTextureBinaryStreamingCache(cachePath, cacheAsset, asset))
+                if (TryWriteRegisteredCachePayload(cachePath, cacheAsset, asset))
                 {
-                    // binary streaming cache written; legacy YAML path skipped.
+                    // registered binary cache written; legacy YAML path skipped.
                 }
                 else
                 {
@@ -914,9 +899,9 @@ namespace XREngine
                     Directory.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
-                if (TryWriteTextureBinaryStreamingCache(cachePath, cacheAsset, asset))
+                if (TryWriteRegisteredCachePayload(cachePath, cacheAsset, asset))
                 {
-                    // binary streaming cache written; legacy YAML path skipped.
+                    // registered binary cache written; legacy YAML path skipped.
                 }
                 else
                 {
@@ -931,6 +916,194 @@ namespace XREngine
                     LogTextureCacheEvent("Texture.CacheFallbackToSource", asset.OriginalPath ?? asset.FilePath ?? string.Empty, cachePath, ex.Message);
 
                 Debug.LogWarning($"Failed to write cached asset '{cachePath}'. {ex.Message}");
+            }
+        }
+
+        private static readonly IThirdPartyCacheCodec[] ThirdPartyCacheCodecs =
+        [
+            new AnimationClipBinaryCacheCodec(),
+            new TextureStreamingCacheCodec(),
+        ];
+
+        private interface IThirdPartyCacheCodec
+        {
+            bool CanHandle(Type assetType);
+            bool WriteBlocksAssetLoad { get; }
+            string? ResolveDefaultVariantKey(string? explicitVariantKey);
+            XRAsset PrepareForWrite(string cachePath, XRAsset asset);
+            bool TryRead(string cachePath, string originalPath, DateTime sourceTimestampUtc, out XRAsset? asset);
+            bool TryWrite(string cachePath, XRAsset cacheAsset, XRAsset originalAsset);
+        }
+
+        private static IThirdPartyCacheCodec? FindThirdPartyCacheCodec(Type assetType)
+        {
+            foreach (IThirdPartyCacheCodec codec in ThirdPartyCacheCodecs)
+            {
+                if (codec.CanHandle(assetType))
+                    return codec;
+            }
+
+            return null;
+        }
+
+        private static XRAsset PrepareCacheAssetForWrite(string cachePath, XRAsset asset)
+        {
+            IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(asset.GetType());
+            return codec?.PrepareForWrite(cachePath, asset) ?? asset;
+        }
+
+        private static bool TryReadRegisteredCachePayload(
+            string cachePath,
+            string originalPath,
+            DateTime sourceTimestampUtc,
+            Type assetType,
+            out XRAsset? asset)
+        {
+            asset = null;
+            IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(assetType);
+            return codec is not null && codec.TryRead(cachePath, originalPath, sourceTimestampUtc, out asset);
+        }
+
+        private static bool TryWriteRegisteredCachePayload(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
+        {
+            IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(cacheAsset.GetType());
+            if (codec is null)
+                return false;
+
+            if (codec.WriteBlocksAssetLoad)
+                return codec.TryWrite(cachePath, cacheAsset, originalAsset);
+
+            QueueRegisteredCachePayloadWrite(codec, cachePath, cacheAsset, originalAsset);
+            return true;
+        }
+
+        private static void QueueRegisteredCachePayloadWrite(
+            IThirdPartyCacheCodec codec,
+            string cachePath,
+            XRAsset cacheAsset,
+            XRAsset originalAsset)
+        {
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    codec.TryWrite(cachePath, cacheAsset, originalAsset);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to write cached asset '{cachePath}'. {ex.Message}");
+                }
+            });
+        }
+
+        private sealed class AnimationClipBinaryCacheCodec : IThirdPartyCacheCodec
+        {
+            public bool CanHandle(Type assetType)
+                => assetType == typeof(AnimationClip);
+
+            public bool WriteBlocksAssetLoad => false;
+
+            public string? ResolveDefaultVariantKey(string? explicitVariantKey)
+                => explicitVariantKey;
+
+            public XRAsset PrepareForWrite(string cachePath, XRAsset asset)
+                => asset;
+
+            public bool TryRead(string cachePath, string originalPath, DateTime sourceTimestampUtc, out XRAsset? asset)
+            {
+                asset = TryReadAnimationClipBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
+                return asset is not null;
+            }
+
+            public bool TryWrite(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
+                => TryWriteAnimationClipBinaryCache(cachePath, cacheAsset);
+        }
+
+        private sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
+        {
+            public bool CanHandle(Type assetType)
+                => assetType == typeof(XRTexture2D);
+
+            public bool WriteBlocksAssetLoad => true;
+
+            public string? ResolveDefaultVariantKey(string? explicitVariantKey)
+            {
+                // v3 = pure binary XRTS streaming payload (no YAML envelope, no hex/base64). Bumped from v2
+                // so existing YAML cache files are orphaned and rewritten on next import; the old YAML
+                // wrapper was producing 50-100 MB cache files for 4K textures and OOM-killing the editor.
+                string texturePayloadKey = $"TextureStreaming_v3_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary";
+                return string.IsNullOrWhiteSpace(explicitVariantKey)
+                    ? texturePayloadKey
+                    : Path.Combine(texturePayloadKey, explicitVariantKey);
+            }
+
+            public XRAsset PrepareForWrite(string cachePath, XRAsset asset)
+                => TryPrepareTextureStreamingCacheAsset(cachePath, asset, out XRAsset cacheAsset)
+                    ? cacheAsset
+                    : asset;
+
+            public bool TryRead(string cachePath, string originalPath, DateTime sourceTimestampUtc, out XRAsset? asset)
+            {
+                asset = TryReadTextureBinaryCacheFile(cachePath, originalPath, sourceTimestampUtc);
+                return asset is not null;
+            }
+
+            public bool TryWrite(string cachePath, XRAsset cacheAsset, XRAsset originalAsset)
+                => TryWriteTextureBinaryStreamingCache(cachePath, cacheAsset, originalAsset);
+        }
+
+        private static bool TryWriteAnimationClipBinaryCache(string cachePath, XRAsset cacheAsset)
+        {
+            if (cacheAsset is not AnimationClip clip)
+                return false;
+
+            if (!PublishedCookedAssetRegistry.TrySerialize(clip, out byte[] payload))
+                return false;
+
+            WriteAllBytesAtomic(cachePath, payload);
+            return true;
+        }
+
+        private static AnimationClip? TryReadAnimationClipBinaryCacheFile(string cachePath, string originalPath, DateTime sourceTimestampUtc)
+        {
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(cachePath);
+                if (!PublishedCookedAssetRegistry.TryDeserialize(typeof(AnimationClip), bytes, out object? asset) || asset is not AnimationClip clip)
+                    return null;
+
+                if (clip.OriginalLastWriteTimeUtc is null || clip.OriginalLastWriteTimeUtc.Value < sourceTimestampUtc)
+                    return null;
+
+                clip.OriginalPath = originalPath;
+                return clip;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void WriteAllBytesAtomic(string filePath, byte[] bytes)
+        {
+            string tempPath = $"{filePath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                File.WriteAllBytes(tempPath, bytes);
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
+                File.Move(tempPath, filePath);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
+                }
             }
         }
 
@@ -1018,26 +1191,32 @@ namespace XREngine
             }
         }
 
-        private static XRAsset PrepareCacheAssetForWrite(string cachePath, XRAsset asset)
+        private static bool TryPrepareTextureStreamingCacheAsset(string cachePath, XRAsset asset, out XRAsset cacheAsset)
         {
+            cacheAsset = asset;
+
             if (asset is not XRTexture2D texture || HasStreamableTextureCacheShape(texture))
-                return asset;
+                return false;
 
             if (!TryResolveTextureCacheSourcePath(texture, out string sourcePath))
-                return asset;
+                return false;
 
             DateTime sourceTimestampUtc = texture.OriginalLastWriteTimeUtc ?? File.GetLastWriteTimeUtc(sourcePath);
             if (sourceTimestampUtc == DateTime.MinValue)
-                return asset;
+                return false;
 
-            return XRTexture2D.TryCreateTextureStreamingCacheAsset(
+            if (!XRTexture2D.TryCreateTextureStreamingCacheAsset(
                 texture,
                 sourcePath,
                 cachePath,
                 sourceTimestampUtc,
-                out XRTexture2D streamingTexture)
-                ? streamingTexture
-                : asset;
+                out XRTexture2D streamingTexture))
+            {
+                return false;
+            }
+
+            cacheAsset = streamingTexture;
+            return true;
         }
 
         private static bool HasStreamableTextureCacheShape(XRTexture2D texture)

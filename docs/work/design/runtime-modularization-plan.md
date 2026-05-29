@@ -551,6 +551,8 @@ Move rendering code into `XREngine.Runtime.Rendering`.
 
 During this phase, any type that currently forces `Engine` core code to know concrete rendering types should be inverted behind interfaces or moved wholly into the rendering assembly.
 
+The current `RuntimeRenderingHostServices` facade is a transitional bridge, not the desired final contract shape. It may remain as a compatibility/composition entry point while code moves, but the broad `IRuntimeRenderingHostServices` surface should be split into smaller capability-focused services as the rendering host settles. Preferred slices include render settings, frame timing, scheduling, diagnostics/logging, render statistics, debug drawing, asset and texture IO, renderer/window factories, VR/OpenXR presentation, and backend interop. Optional telemetry and debug capabilities should have explicit no-op defaults; required capabilities such as renderer creation should remain fail-fast when no concrete host is installed.
+
 Important rule:
 
 - `Runtime.Core` may know about render contracts defined in `Data` or a narrow shared contract surface,
@@ -595,6 +597,7 @@ Needed change:
 
 - move concrete rendering implementation to `Runtime.Rendering`,
 - keep only narrow runtime contracts in `Data` or `Runtime.Core`-owned abstractions.
+- treat any large host-service facade as a temporary migration adapter and split it into smaller contracts before the final `XRENGINE` removal.
 
 ### Runtime.Core <-> InputIntegration
 
