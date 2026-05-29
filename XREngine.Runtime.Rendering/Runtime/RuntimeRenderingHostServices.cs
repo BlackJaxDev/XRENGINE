@@ -482,6 +482,67 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderRendererStateCounter(ERendererProfilerCounter counter, long count = 1)
+        {
+        }
+
+        public void RecordRenderMemoryBarrier(EMemoryBarrierMask mask)
+        {
+        }
+
+        public void RecordRenderSceneAssetVisible(
+            string? sourceAssetIdentity,
+            string? cookedVariantIdentity,
+            string? meshName,
+            string? materialName,
+            int materialSlots,
+            int textureCount,
+            long triangleCount,
+            bool skinned,
+            string? representation)
+        {
+        }
+
+        public void RecordRenderTextureUpload(long bytes, TimeSpan elapsed)
+        {
+        }
+
+        public void RecordRenderSkinningUpload(long boneMatrixBytes, long blendshapeWeightBytes, int skinningDispatches = 0, int blendshapeDispatches = 0)
+        {
+        }
+
+        public void RecordRenderShaderVariant(bool requested, bool warming, bool linked, bool failed, bool loadedFromDiskCache, bool generatedThisRun)
+        {
+        }
+
+        public void RecordRenderGpuDrivenBucketWork(int activeBuckets, int emptyBucketSkips, int fullBucketScans, int materialScatterDispatches)
+        {
+        }
+
+        public void RecordRenderGpuDrivenCommandCompaction(long culledCommands, long delayedDrawCountValue, long gpuCompactionOverflow, long activeListOverflow, long bucketOverflow, long meshletOverflow)
+        {
+        }
+
+        public void RecordRenderGpuDrivenStageTiming(TimeSpan indirectGeneration, TimeSpan gpuCull, TimeSpan sortCompact)
+        {
+        }
+
+        public void RecordRenderGpuDrivenDelayedDiagnosticReadback(long bytes)
+        {
+        }
+
+        public void RecordRenderGpuDrivenHiZMode(string? mode)
+        {
+        }
+
+        public void RecordRenderGpuDrivenHiZPhase(bool twoPhase, long phaseOneDraws, long phaseTwoDraws)
+        {
+        }
+
+        public void RecordRenderVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading)
+        {
+        }
+
         public void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands)
         {
         }

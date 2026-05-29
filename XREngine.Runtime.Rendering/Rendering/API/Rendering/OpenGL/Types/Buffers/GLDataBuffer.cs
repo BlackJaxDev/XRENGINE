@@ -425,6 +425,7 @@ namespace XREngine.Rendering.OpenGL
                         else
                         {
                             Api.NamedBufferSubData(BindingId, 0, Data.Length, addr);
+                            RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, Data.Length);
                         }
 
                         _lastPushedLength = Data.Length;
@@ -466,6 +467,7 @@ namespace XREngine.Rendering.OpenGL
                     RecreateBufferAsMutable();
 
                 Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
+                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, Data.Length);
                 _lastPushedLength = Data.Length;
 
                 // Track VRAM allocation
@@ -866,6 +868,7 @@ namespace XREngine.Rendering.OpenGL
                     if (_pushSubDataTraceEnabled)
                         TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "NamedBufferSubData");
                     Api.NamedBufferSubData(BindingId, offset, length, addr);
+                    RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, length);
                     if (_pushSubDataTraceEnabled)
                         TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "NamedBufferSubData-done");
                 }
@@ -1020,7 +1023,10 @@ namespace XREngine.Rendering.OpenGL
                 if (IsGpuBufferLoggingEnabled())
                     Debug.OpenGL($"[GLBuffer/Storage] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
                 if (existingSource is not null)
+                {
                     Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, glStorage);
+                    RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, length);
+                }
                 else
                     Api.NamedBufferStorage(id, length = Data.Length, null, glStorage);
 

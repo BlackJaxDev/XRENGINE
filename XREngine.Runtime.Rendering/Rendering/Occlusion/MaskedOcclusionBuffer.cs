@@ -7,6 +7,8 @@ namespace XREngine.Rendering.Occlusion
         internal const int TileWidth = 8;
         internal const int TileHeight = 4;
 
+        private static readonly uint[] s_xMasks = BuildXMasks();
+
         private float[] _depths = [];
         private Tile[] _tiles = [];
 
@@ -53,6 +55,16 @@ namespace XREngine.Rendering.Occlusion
             _depths[pixelIndex] = reciprocalDepth;
             UpdateTile(x, y, reciprocalDepth);
             return true;
+        }
+
+        public void WritePixelUnchecked(int x, int y, float reciprocalDepth)
+        {
+            int pixelIndex = y * Width + x;
+            if (reciprocalDepth <= _depths[pixelIndex])
+                return;
+
+            _depths[pixelIndex] = reciprocalDepth;
+            UpdateTile(x, y, reciprocalDepth);
         }
 
         public bool IsRectOccluded(int minX, int minY, int maxXExclusive, int maxYExclusive, float queryNearestReciprocalDepth)
@@ -160,14 +172,28 @@ namespace XREngine.Rendering.Occlusion
         private static uint BuildRequiredMask(int minX, int minY, int maxXExclusive, int maxYExclusive)
         {
             uint mask = 0u;
+            uint xMask = s_xMasks[(minX << 4) | maxXExclusive];
             for (int y = minY; y < maxYExclusive; y++)
-            {
-                int rowBit = y * TileWidth;
-                for (int x = minX; x < maxXExclusive; x++)
-                    mask |= 1u << (rowBit + x);
-            }
+                mask |= xMask << (y * TileWidth);
 
             return mask;
+        }
+
+        private static uint[] BuildXMasks()
+        {
+            uint[] masks = new uint[16 * 16];
+            for (int min = 0; min <= TileWidth; min++)
+            {
+                for (int max = min; max <= TileWidth; max++)
+                {
+                    uint mask = 0u;
+                    for (int x = min; x < max; x++)
+                        mask |= 1u << x;
+                    masks[(min << 4) | max] = mask;
+                }
+            }
+
+            return masks;
         }
 
         private static int AlignUp(int value, int alignment)

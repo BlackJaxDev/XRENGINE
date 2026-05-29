@@ -219,6 +219,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
                 uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
                 activeProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
+                RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
+                    0L,
+                    0L,
+                    doSkinning ? 1 : 0,
+                    doBlendshapes ? 1 : 0);
             }
             finally
             {

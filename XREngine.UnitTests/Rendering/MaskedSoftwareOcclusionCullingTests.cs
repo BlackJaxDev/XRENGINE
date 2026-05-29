@@ -215,6 +215,54 @@ public sealed class MaskedSoftwareOcclusionCullingTests
         }).ShouldBeFalse();
     }
 
+    [Test]
+    public void MaskedAndAlphaToCoverageMaterialsAreRejectedAsOccluders()
+    {
+        CpuSoftwareOcclusionCuller.IsMaterialOccluderSafe(new XRMaterial
+        {
+            TransparencyMode = ETransparencyMode.Masked
+        }).ShouldBeFalse();
+
+        CpuSoftwareOcclusionCuller.IsMaterialOccluderSafe(new XRMaterial
+        {
+            TransparencyMode = ETransparencyMode.AlphaToCoverage
+        }).ShouldBeFalse();
+
+        CpuSoftwareOcclusionCuller.IsMaterialOccluderSafe(new XRMaterial
+        {
+            TransparencyMode = ETransparencyMode.Opaque
+        }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void OccluderScorePenalizesTriangleCost()
+    {
+        float simpleWall = MaskedOcclusionRasterizer.ComputeOccluderScore(0.25f, 4);
+        float denseWall = MaskedOcclusionRasterizer.ComputeOccluderScore(0.25f, 400);
+
+        simpleWall.ShouldBeGreaterThan(denseWall);
+    }
+
+    [Test]
+    public void StereoVisibilityKeepsObjectVisibleWhenEitherEyeSeesIt()
+    {
+        MaskedOcclusionBuffer left = CreateFilledBuffer(8, 4, 0.5f);
+        MaskedOcclusionBuffer right = new();
+        right.Resize(8, 4);
+        right.Clear();
+
+        MaskedOcclusionAabbTester tester = new();
+        Matrix4x4 projection = MakeReciprocalZProjection();
+        AABB query = new(new Vector3(-0.5f, -0.5f, 2.0f), new Vector3(0.5f, 0.5f, 2.0f));
+
+        bool leftVisible = tester.TestVisible(left, projection, query);
+        bool rightVisible = tester.TestVisible(right, projection, query);
+
+        leftVisible.ShouldBeFalse();
+        rightVisible.ShouldBeTrue();
+        (leftVisible || rightVisible).ShouldBeTrue();
+    }
+
     private static Matrix4x4 MakeReciprocalZProjection()
     {
         Matrix4x4 projection = Matrix4x4.Identity;

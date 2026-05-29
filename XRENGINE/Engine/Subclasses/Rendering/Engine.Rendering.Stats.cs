@@ -1,4 +1,6 @@
+using System;
 using System.Threading;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 
 namespace XREngine
@@ -29,12 +31,27 @@ namespace XREngine
                 public static void BeginFrame()
                 {
                     bool gpuPipelineProfilingEnabled = EnableTracking && Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+                    bool gpuTimestampsDenseMode = gpuPipelineProfilingEnabled && IsGpuTimestampDenseModeEnabled();
+                    string activeStrategy = CaptureActiveSubmissionStrategy();
+                    RendererState.UpdateFrameContext(
+                        activeStrategy,
+                        CaptureActiveTextureBindingRung(),
+                        CaptureActiveStereoMode(),
+                        CaptureActiveRenderBackend(),
+                        Engine.EffectiveSettings.EnableGpuIndirectValidationLogging || Vulkan.VulkanValidationMessageCountCurrentFrame > 0,
+                        IsDebugOutputEnabled(),
+                        gpuTimestampsDenseMode);
+                    if (gpuTimestampsDenseMode)
+                        RendererState.RecordCounter(ERendererProfilerCounter.TimestampDenseModeFrames);
                     RenderPipelineGpuProfiler.Instance.BeginFrame(State.RenderFrameId, gpuPipelineProfilingEnabled);
 
                     GpuDispatchLogger.BeginFrame();
                     XREngine.Rendering.Occlusion.OcclusionTelemetry.BeginFrame();
 
                     Frame.SnapshotAndReset();
+                    RendererState.SnapshotAndReset();
+                    SceneAssets.SnapshotAndReset();
+                    GpuDriven.SnapshotAndReset();
                     GpuFallback.SnapshotAndReset();
                     GpuTransparency.SnapshotAndReset();
                     GpuMeshlets.SnapshotAndReset();
@@ -49,6 +66,74 @@ namespace XREngine
 #endif
 
                     // Render-matrix, skinned-bounds, and octree stats are swapped separately during SwapBuffers.
+                }
+
+                private static string CaptureActiveSubmissionStrategy()
+                {
+                    try
+                    {
+                        return Engine.Rendering.ResolveMeshSubmissionStrategy().ToString();
+                    }
+                    catch
+                    {
+                        return "unknown";
+                    }
+                }
+
+                private static string CaptureActiveTextureBindingRung()
+                {
+                    try
+                    {
+                        return Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath.ToString();
+                    }
+                    catch
+                    {
+                        return "unknown";
+                    }
+                }
+
+                private static string CaptureActiveStereoMode()
+                {
+                    if (!Engine.VRState.IsInVR && !RuntimeEngine.Rendering.State.IsStereoPass)
+                        return "mono";
+
+                    if (Engine.Rendering.Settings.RenderVRSinglePassStereo)
+                    {
+                        if (RuntimeEngine.Rendering.State.HasVulkanMultiView)
+                            return "single-pass-vulkan-multiview";
+                        if (RuntimeEngine.Rendering.State.HasOvrMultiViewExtension)
+                            return "single-pass-opengl-multiview";
+                        return "single-pass-requested";
+                    }
+
+                    return RuntimeEngine.Rendering.State.IsStereoPass ? "two-pass-stereo" : "vr-desktop-mirror";
+                }
+
+                private static string CaptureActiveRenderBackend()
+                {
+                    if (RuntimeEngine.Rendering.State.IsVulkan)
+                        return "Vulkan";
+                    if (!string.IsNullOrWhiteSpace(RuntimeEngine.Rendering.State.OpenGLRendererName))
+                        return "OpenGL";
+                    return "unknown";
+                }
+
+                private static bool IsDebugOutputEnabled()
+                    => XREngine.Rendering.RenderDiagnosticsFlags.GLDebug ||
+                       Engine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
+                       Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+
+                private static bool IsGpuTimestampDenseModeEnabled()
+                {
+                    string? value = Environment.GetEnvironmentVariable("XRE_GPU_TIMESTAMP_DENSE");
+                    if (string.IsNullOrWhiteSpace(value))
+                        return false;
+
+                    value = value.Trim();
+                    return value == "1" ||
+                           value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                           value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+                           value.Equals("on", StringComparison.OrdinalIgnoreCase);
                 }
 
                 public static class Frame
@@ -89,6 +174,7 @@ namespace XREngine
                     {
                         if (!EnableTracking) return;
                         Interlocked.Increment(ref _drawCalls);
+                        RendererState.RecordDrawCallsForStrategy(1, RendererState.ActiveSubmissionStrategy);
                     }
 
                     /// <summary>
@@ -98,6 +184,7 @@ namespace XREngine
                     {
                         if (!EnableTracking) return;
                         Interlocked.Add(ref _drawCalls, count);
+                        RendererState.RecordDrawCallsForStrategy(count, RendererState.ActiveSubmissionStrategy);
                     }
 
                     /// <summary>

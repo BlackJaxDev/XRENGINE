@@ -6,6 +6,18 @@ param(
     [string[]]$Strategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshletInstrumented', 'GpuMeshletZeroReadback'),
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
+    [ValidateSet('Cold', 'Warm')]
+    [string]$CacheMode = 'Cold',
+    [ValidateSet('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')]
+    [string]$ZeroReadbackMaterialDrawPath = 'FullBucketScan',
+    [string]$ProfileScene = '',
+    [string]$ProfileCamera = '',
+    [string]$ProfileLights = '',
+    [string]$ProfileViewport = '',
+    [string]$RenderScale = '',
+    [string]$GpuClockPolicy = 'Unspecified',
+    [double]$TargetRefreshHz = 0,
+    [switch]$GpuTimestampDense,
     [switch]$NoClearCachesBetweenVariants,
     [switch]$NoP3Logging,
     [int]$ShutdownGraceSec = 20,
@@ -21,6 +33,14 @@ if (-not (Test-Path -LiteralPath $exe)) {
     throw "Editor executable not found for $Configuration. Build XREngine.Editor first: $exe"
 }
 $exe = (Resolve-Path -LiteralPath $exe).Path
+
+$Strategies = @($Strategies | ForEach-Object {
+    [string]$_ -split ','
+} | ForEach-Object {
+    $_.Trim()
+} | Where-Object {
+    -not [string]::IsNullOrWhiteSpace($_)
+})
 
 $validStrategies = @('CpuDirect', 'GpuIndirectInstrumented', 'GpuIndirectZeroReadback', 'GpuMeshletInstrumented', 'GpuMeshletZeroReadback')
 $invalidStrategies = @($Strategies | Where-Object { $validStrategies -notcontains $_ })
@@ -82,7 +102,7 @@ function Enforce-SpeedProfileRetention {
 function Clear-VariantCaches {
     param([string]$Name)
 
-    if ($NoClearCachesBetweenVariants) {
+    if ($NoClearCachesBetweenVariants -or $CacheMode -ne 'Cold') {
         return
     }
 
@@ -135,6 +155,52 @@ function Get-RunLogDir {
 function Set-EnvValue {
     param([string]$Name, [string]$Value)
     Set-Item -Path "Env:$Name" -Value $Value
+}
+
+function Assert-EnvOverride {
+    param(
+        [string]$Name,
+        [AllowNull()]
+        [string]$Value,
+        [string[]]$AllowedValues = @(),
+        [switch]$Boolean,
+        [switch]$PositiveNumber
+    )
+
+    if ($null -eq $Value) {
+        $Value = ''
+    }
+
+    if ($Boolean) {
+        $allowedBooleans = @('0', '1', 'true', 'false', 'yes', 'no', 'on', 'off')
+        if ($allowedBooleans -notcontains $Value.ToLowerInvariant()) {
+            throw "Invalid $Name='$Value'. Expected a boolean flag: $($allowedBooleans -join ', ')"
+        }
+    }
+
+    if ($PositiveNumber) {
+        [double]$parsed = 0
+        if (-not [double]::TryParse($Value, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -or $parsed -le 0) {
+            throw "Invalid $Name='$Value'. Expected a positive number."
+        }
+    }
+
+    if ($AllowedValues.Count -gt 0 -and -not ($AllowedValues | Where-Object { $_ -ieq $Value })) {
+        throw "Invalid $Name='$Value'. Allowed: $($AllowedValues -join ', ')"
+    }
+}
+
+function Set-BenchmarkEnvValue {
+    param(
+        [string]$Name,
+        [string]$Value,
+        [string[]]$AllowedValues = @(),
+        [switch]$Boolean,
+        [switch]$PositiveNumber
+    )
+
+    Assert-EnvOverride -Name $Name -Value $Value -AllowedValues $AllowedValues -Boolean:$Boolean -PositiveNumber:$PositiveNumber
+    Set-EnvValue -Name $Name -Value $Value
 }
 
 function Clear-EnvValue {
@@ -392,7 +458,7 @@ function Measure-Variant {
     param([string]$Strategy, [int]$Repetition)
 
     $labelPrefix = if ([string]::IsNullOrWhiteSpace($RunLabel)) { 'game-loop-render-pipeline' } else { $RunLabel }
-    $runName = "$labelPrefix-$Configuration-$Strategy-r$Repetition"
+    $runName = "$labelPrefix-$Configuration-$CacheMode-$Strategy-r$Repetition"
     Clear-VariantCaches -Name $runName
 
     $envNames = @(
@@ -403,6 +469,20 @@ function Measure-Variant {
         'XRE_PROFILE_RUN_LABEL',
         'XRE_FORCE_MESH_SUBMISSION_STRATEGY',
         'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH',
+        'XRE_PROFILE_CACHE_MODE',
+        'XRE_SHADER_CACHE_MODE',
+        'XRE_TEXTURE_CACHE_MODE',
+        'XRE_PROFILE_SCENE',
+        'XRE_PROFILE_CAMERA',
+        'XRE_PROFILE_LIGHTS',
+        'XRE_PROFILE_VIEWPORT',
+        'XRE_PROFILE_RENDER_SCALE',
+        'XRE_PROFILE_WARMUP_SEC',
+        'XRE_PROFILE_CAPTURE_SEC',
+        'XRE_PROFILE_PHASE',
+        'XRE_GPU_CLOCK_POLICY',
+        'XRE_TARGET_REFRESH_HZ',
+        'XRE_GPU_TIMESTAMP_DENSE',
         'XRE_P3_LOGGING',
         'XRE_WINDOW_TITLE',
         'XRE_BUCKET_LOOP_DRY_RUN',
@@ -433,19 +513,52 @@ function Measure-Variant {
     $lastStatsProgressUtc = [datetime]::UtcNow
 
     try {
-        Set-EnvValue 'XRE_WORLD_MODE' 'UnitTesting'
-        Set-EnvValue 'XRE_PROFILER_ENABLED' '1'
-        Set-EnvValue 'XRE_PROFILE_CAPTURE' '1'
-        Set-EnvValue 'XRE_PROFILE_AUTO_DUMP' '1'
+        Set-BenchmarkEnvValue 'XRE_WORLD_MODE' 'UnitTesting' -AllowedValues @('UnitTesting')
+        Set-BenchmarkEnvValue 'XRE_PROFILER_ENABLED' '1' -Boolean
+        Set-BenchmarkEnvValue 'XRE_PROFILE_CAPTURE' '1' -Boolean
+        Set-BenchmarkEnvValue 'XRE_PROFILE_AUTO_DUMP' '1' -Boolean
         Set-EnvValue 'XRE_PROFILE_RUN_LABEL' $runName
-        Set-EnvValue 'XRE_FORCE_MESH_SUBMISSION_STRATEGY' $Strategy
-        Set-EnvValue 'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH' 'FullBucketScan'
+        Set-BenchmarkEnvValue 'XRE_FORCE_MESH_SUBMISSION_STRATEGY' $Strategy -AllowedValues $validStrategies
+        Set-BenchmarkEnvValue 'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH' $ZeroReadbackMaterialDrawPath -AllowedValues @('FullBucketScan', 'ActiveBucketList', 'MaterialTable', 'BindlessMaterialTable')
+        Set-BenchmarkEnvValue 'XRE_PROFILE_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
+        Set-BenchmarkEnvValue 'XRE_SHADER_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
+        Set-BenchmarkEnvValue 'XRE_TEXTURE_CACHE_MODE' $CacheMode -AllowedValues @('Cold', 'Warm')
+        if ($WarmupSec -gt 0) {
+            Set-BenchmarkEnvValue 'XRE_PROFILE_WARMUP_SEC' ([string]$WarmupSec) -PositiveNumber
+        } else {
+            Clear-EnvValue 'XRE_PROFILE_WARMUP_SEC'
+        }
+        Set-BenchmarkEnvValue 'XRE_PROFILE_CAPTURE_SEC' ([string]$CaptureSec) -PositiveNumber
+        Set-EnvValue 'XRE_PROFILE_PHASE' 'startup-warmup-steady-state'
+        Set-EnvValue 'XRE_GPU_CLOCK_POLICY' $GpuClockPolicy
+        if ($TargetRefreshHz -gt 0) {
+            Set-BenchmarkEnvValue 'XRE_TARGET_REFRESH_HZ' ($TargetRefreshHz.ToString([System.Globalization.CultureInfo]::InvariantCulture)) -PositiveNumber
+        } else {
+            Clear-EnvValue 'XRE_TARGET_REFRESH_HZ'
+        }
+
+        if ($GpuTimestampDense) {
+            Set-BenchmarkEnvValue 'XRE_GPU_TIMESTAMP_DENSE' '1' -Boolean
+        } else {
+            Clear-EnvValue 'XRE_GPU_TIMESTAMP_DENSE'
+        }
+
+        if ([string]::IsNullOrWhiteSpace($ProfileScene)) { Clear-EnvValue 'XRE_PROFILE_SCENE' } else { Set-EnvValue 'XRE_PROFILE_SCENE' $ProfileScene }
+        if ([string]::IsNullOrWhiteSpace($ProfileCamera)) { Clear-EnvValue 'XRE_PROFILE_CAMERA' } else { Set-EnvValue 'XRE_PROFILE_CAMERA' $ProfileCamera }
+        if ([string]::IsNullOrWhiteSpace($ProfileLights)) { Clear-EnvValue 'XRE_PROFILE_LIGHTS' } else { Set-EnvValue 'XRE_PROFILE_LIGHTS' $ProfileLights }
+        if ([string]::IsNullOrWhiteSpace($ProfileViewport)) { Clear-EnvValue 'XRE_PROFILE_VIEWPORT' } else { Set-EnvValue 'XRE_PROFILE_VIEWPORT' $ProfileViewport }
+        if ([string]::IsNullOrWhiteSpace($RenderScale)) {
+            Clear-EnvValue 'XRE_PROFILE_RENDER_SCALE'
+        } else {
+            Set-BenchmarkEnvValue 'XRE_PROFILE_RENDER_SCALE' $RenderScale -PositiveNumber
+        }
+
         Set-EnvValue 'XRE_WINDOW_TITLE' "XRE Editor (Profile $Strategy r$Repetition)"
 
         if ($NoP3Logging) {
             Clear-EnvValue 'XRE_P3_LOGGING'
         } else {
-            Set-EnvValue 'XRE_P3_LOGGING' '1'
+            Set-BenchmarkEnvValue 'XRE_P3_LOGGING' '1' -Boolean
         }
 
         Clear-EnvValue 'XRE_BUCKET_LOOP_DRY_RUN'
@@ -581,6 +694,20 @@ function Measure-Variant {
         Strategy = $Strategy
         Repetition = $Repetition
         Configuration = $Configuration
+        CacheMode = $CacheMode
+        ZeroReadbackMaterialDrawPath = $ZeroReadbackMaterialDrawPath
+        ProfileScene = $ProfileScene
+        ProfileCamera = $ProfileCamera
+        ProfileLights = $ProfileLights
+        ProfileViewport = $ProfileViewport
+        RenderScale = $RenderScale
+        GpuClockPolicy = $GpuClockPolicy
+        TargetRefreshHz = if ($TargetRefreshHz -gt 0) { $TargetRefreshHz } else { $null }
+        GpuTimestampDense = [bool]$GpuTimestampDense
+        StartupPhase = 'process-launch-to-first-sample'
+        WarmupPhaseSec = $WarmupSec
+        SteadyStatePhaseSec = $CaptureSec
+        StreamingPhase = 'included-in-startup-and-warmup-until asset counters stabilize'
         Samples = $samples.Count
         AllSamples = $allSamples.Count
         CaptureStartUtc = $captureStartUtc.ToString('O')
@@ -599,6 +726,36 @@ function Measure-Variant {
         DrawCallsP50 = (Get-NumericStats -Samples $samples -Property 'draw_calls').P50
         MultiDrawCallsP50 = (Get-NumericStats -Samples $samples -Property 'multi_draw_calls').P50
         TrianglesP50 = (Get-NumericStats -Samples $samples -Property 'triangles_rendered').P50
+        ShaderProgramSwitchesTotal = Sum-NumericProperty -Samples $samples -Property 'shader_program_switches'
+        ProgramPipelineSwitchesTotal = Sum-NumericProperty -Samples $samples -Property 'program_pipeline_switches'
+        VaoBindsTotal = Sum-NumericProperty -Samples $samples -Property 'vao_binds'
+        TextureBindsTotal = Sum-NumericProperty -Samples $samples -Property 'texture_binds'
+        TextureBindSkipsTotal = Sum-NumericProperty -Samples $samples -Property 'texture_bind_skips'
+        UniformCallsTotal = Sum-NumericProperty -Samples $samples -Property 'uniform_calls'
+        BarrierCallsTotal = Sum-NumericProperty -Samples $samples -Property 'barrier_calls'
+        BufferUploadBytesTotal = Sum-NumericProperty -Samples $samples -Property 'buffer_upload_bytes'
+        TimestampQueriesTotal = Sum-NumericProperty -Samples $samples -Property 'timestamp_query_count'
+        TimestampQueryReadbackBytesTotal = Sum-NumericProperty -Samples $samples -Property 'timestamp_query_readback_bytes'
+        VisibleRenderersP50 = (Get-NumericStats -Samples $samples -Property 'visible_renderer_count').P50
+        VisibleSubmeshesP50 = (Get-NumericStats -Samples $samples -Property 'visible_submesh_count').P50
+        VisibleTrianglesP50 = (Get-NumericStats -Samples $samples -Property 'visible_triangle_count').P50
+        MaterialSlotsP50 = (Get-NumericStats -Samples $samples -Property 'material_slot_count').P50
+        TextureCountP50 = (Get-NumericStats -Samples $samples -Property 'texture_count').P50
+        SkinnedRenderersP50 = (Get-NumericStats -Samples $samples -Property 'skinned_renderer_count').P50
+        BoneMatrixUploadBytesTotal = Sum-NumericProperty -Samples $samples -Property 'bone_matrix_upload_bytes'
+        BlendshapeWeightUploadBytesTotal = Sum-NumericProperty -Samples $samples -Property 'blendshape_weight_upload_bytes'
+        SkinningComputeDispatchTotal = Sum-NumericProperty -Samples $samples -Property 'skinning_compute_dispatch_count'
+        BlendshapeComputeDispatchTotal = Sum-NumericProperty -Samples $samples -Property 'blendshape_compute_dispatch_count'
+        ShaderVariantsRequestedTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_requested'
+        ShaderVariantsLinkedTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_linked'
+        ShaderVariantsFailedTotal = Sum-NumericProperty -Samples $allSamples -Property 'shader_variants_failed'
+        GpuDrivenActiveBucketsP50 = (Get-NumericStats -Samples $samples -Property 'gpu_driven_active_bucket_count').P50
+        GpuDrivenEmptyBucketSkipsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_empty_bucket_skips'
+        GpuDrivenFullBucketScansTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_full_bucket_scans'
+        GpuDrivenDelayedDiagnosticReadbackBytesTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_driven_delayed_diagnostic_readback_bytes'
+        GpuCompactionOverflowTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_compaction_overflow'
+        GpuHiZPhaseOneDrawsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_hiz_phase_one_draws'
+        GpuHiZPhaseTwoDrawsTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_hiz_phase_two_draws'
         GpuReadbackBytesTotal = $captureReadbackTotal
         GpuReadbackBytesMaxFrame = Max-NumericProperty -Samples $samples -Property 'gpu_readback_bytes'
         GpuMappedBuffersTotal = $captureMappedTotal
@@ -634,7 +791,7 @@ foreach ($strategy in $Strategies) {
 }
 
 Write-Host '=== GAME LOOP / DEFAULT RENDER PIPELINE SUMMARY ===' -ForegroundColor Green
-$results | Format-Table -AutoSize Strategy, Repetition, Samples, AllSamples, RenderP50Ms, RenderP95Ms, RenderP99Ms, GpuP50Ms, GpuP95Ms, GpuReadbackBytesTotal, AllGpuReadbackBytesTotal, FallbackEventsTotal, AllFallbackEventsTotal, LastRenderMs, GpuTimingDumpFiles, Note
+$results | Format-Table -AutoSize Strategy, Repetition, CacheMode, Samples, AllSamples, RenderP50Ms, RenderP95Ms, RenderP99Ms, GpuP50Ms, GpuP95Ms, DrawCallsP50, VisibleRenderersP50, SkinnedRenderersP50, TextureBindsTotal, GpuReadbackBytesTotal, AllGpuReadbackBytesTotal, GpuDrivenFullBucketScansTotal, FallbackEventsTotal, AllFallbackEventsTotal, LastRenderMs, GpuTimingDumpFiles, Note
 
 $stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
 $profileRunDir = New-SpeedProfileRunDirectory -Stamp $stamp
@@ -647,8 +804,19 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "Created: $(Get-Date -Format o)"
     "ProfileRunDir: $profileRunDir"
     "Configuration: $Configuration"
+    "CacheMode: $CacheMode"
+    "ZeroReadbackMaterialDrawPath: $ZeroReadbackMaterialDrawPath"
+    "Scene: $ProfileScene"
+    "Camera: $ProfileCamera"
+    "Lights: $ProfileLights"
+    "Viewport: $ProfileViewport"
+    "RenderScale: $RenderScale"
+    "GpuClockPolicy: $GpuClockPolicy"
+    "TargetRefreshHz: $TargetRefreshHz"
+    "GpuTimestampDense: $([bool]$GpuTimestampDense)"
     "WarmupSec: $WarmupSec"
     "CaptureSec: $CaptureSec"
+    "Phases: startup=process launch to first sample; warmup=$WarmupSec sec; steady-state capture=$CaptureSec sec; streaming is identified by asset upload/shader-variant counters during startup/warmup."
     "Repetitions: $Repetitions"
     "RetainedRunCount: $RetainedRunCount"
     ''

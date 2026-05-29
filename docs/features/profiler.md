@@ -226,6 +226,101 @@ at least one sample has been written. Harness summaries are written under
 `summary.json`, `summary.txt`, and `run-logdirs.txt`; by default the harness keeps
 only the latest three summary runs, configurable with `-RetainedRunCount`.
 
+### Render Stats Capture Schema v2
+
+`profiler-capture-manifest.json` now records
+`xrengine.profile_capture.render_stats.v2` with `schema_version = 2`. The
+manifest makes benchmark context explicit: build configuration, world mode,
+forced and effective mesh submission strategy, zero-readback material draw path,
+render backend, GPU/vendor, scene, camera, lights, viewport, render scale,
+stereo mode, validation/debug state, shader and texture cache mode, GPU clock
+policy, target refresh rate, frame budget, warmup/capture durations, and any
+invalid benchmark environment overrides detected at launch.
+
+Each `profiler-render-stats.ndjson` sample includes the old frame timing fields
+plus renderer-state churn counters: indirect-count and multi-draw calls, shader
+program and pipeline switches, VAO/buffer/SSBO/UBO binds, texture binds and
+redundant bind skips, active texture-binding rung, uniform calls, upload bytes,
+barriers by kind, readback bytes, mapped-buffer reads, active stereo mode,
+active backend, validation/debug flags, and timestamp query/readback counts.
+
+Scene and asset counters identify whether a slowdown is global or asset-local:
+visible renderer/submesh/triangle counts, material slots, active materials,
+texture count, resident texture memory, texture upload jobs/bytes/time, shader
+variant request/warm/link/fail/cache counters, skinned renderer count, bone and
+blendshape upload bytes, skinning and blendshape compute dispatches, avatar
+representation counts, and per-asset rows with source identity, cooked variant,
+mesh, material, representation, draw count, triangles, material slots, texture
+count, and skinned draw count.
+
+GPU-driven captures now expose compactness and readback discipline: culled
+commands, active buckets, empty bucket skips, full bucket scans, material
+scatter dispatches, indirect generation/cull/compact timings, delayed
+diagnostic draw-count values, compaction/list/bucket/meshlet overflow counters,
+one-phase vs. two-phase Hi-Z mode and phase draw counts, meshlet task counters,
+and visibility-buffer counters. Zero-readback variants should keep current-frame
+`gpu_readback_bytes` and `gpu_mapped_buffers` at zero; delayed diagnostic
+readbacks are reported separately.
+
+### Benchmark Harness
+
+Use `Tools/Measure-GameLoopRenderPipeline.ps1` for reproducible run-to-run
+rendering comparisons. It validates environment overrides before launch and
+fails loud for invalid mesh-submission strategies, zero-readback material paths,
+cache modes, booleans, and positive numeric fields. Important options:
+
+```powershell
+pwsh Tools/Measure-GameLoopRenderPipeline.ps1 `
+  -Configuration Release `
+  -CacheMode Warm `
+  -Strategies CpuDirect,GpuIndirectZeroReadback,GpuMeshletZeroReadback `
+  -WarmupSec 25 `
+  -CaptureSec 60 `
+  -ProfileScene "AvatarDeferred" `
+  -ProfileLights "None" `
+  -GpuClockPolicy "Pinned manually in vendor control panel"
+```
+
+Use `-CacheMode Cold` for startup/cache-miss measurements; the harness clears
+OpenGL shader-program caches only in cold mode unless
+`-NoClearCachesBetweenVariants` is supplied. Use `-CacheMode Warm` for steady
+renderer comparisons. Reports separate startup, warmup, steady-state capture,
+and streaming interpretation and include p50/p90/p95/p99 frame timings, dropped
+sample notes, state churn totals, asset counters, readback totals, fallback
+events, and GPU-driven compactness counters.
+
+Do not compare Debug and Release numbers as architectural evidence. Disable
+validation layers and verbose GL debug output for benchmark captures unless the
+test explicitly measures validation cost. Pin GPU clocks manually through the
+vendor tool when possible and record that policy in `-GpuClockPolicy`; the
+harness documents the policy but does not change driver power settings.
+
+### Sampling CPU Profilers
+
+Counter streams explain what changed; sampled CPU profilers explain where the
+time went. Capture a run with `XRE_PROFILE_CAPTURE=1` and record the engine
+frame id, then collect CPU samples from the same window:
+
+- PerfView or Windows Performance Recorder/Analyzer for ETW CPU stacks.
+- `dotnet-trace collect --process-id <pid> --profile cpu-sampling` for portable
+  .NET sampling, then open the result in SpeedScope if desired.
+- Superluminal for native and managed mixed stacks on Windows.
+- VTune or Nsight Systems when correlating CPU submission with GPU queue work.
+
+Match samples back to `render_frame_id`, profiler scope names, and the
+`profiler-render-stats.ndjson` timestamp. Hot render scopes should keep stable,
+allocation-free names that match the engine profiler rows; marker creation in
+per-frame paths must not allocate.
+
+### GPU Timestamp Policy
+
+GPU timestamp instrumentation is opt-in diagnostic work, not a hidden benchmark
+variable. Production frames keep GPU pipeline profiling disabled by default.
+Profile captures issue coarse begin/end timestamps per render command by
+default and read results with a delayed, non-blocking policy. Dense timestamp
+mode is reserved for diagnostics, is marked in manifests and samples via
+`gpu_timestamps_dense_mode`, and can perturb very small passes.
+
 The in-editor profiler window also exposes **Enable Profiler Component Timing**,
 which independently controls per-component tick timing capture for the
 Components panel without affecting frame logging or render statistics.

@@ -114,6 +114,128 @@ public sealed class ProfilerProtocolTests
             ForbiddenGpuFallbackEvents = 1,
             GpuMappedBuffers = 3,
             GpuReadbackBytes = 4096,
+            RenderProfilerV2 = new RenderProfilerV2Data
+            {
+                RendererState = new RenderProfilerRendererStateData
+                {
+                    IndirectCountCalls = 6,
+                    ShaderProgramSwitches = 7,
+                    ProgramPipelineSwitches = 8,
+                    VaoBinds = 9,
+                    VaoBindSkips = 10,
+                    ArrayBufferBinds = 11,
+                    ElementArrayBufferBinds = 12,
+                    DrawIndirectBufferBinds = 13,
+                    ParameterBufferBinds = 14,
+                    SsboBinds = 15,
+                    UboBinds = 16,
+                    TextureBinds = 17,
+                    TextureBindSkips = 18,
+                    TextureUnitSwitches = 19,
+                    UniformCalls = 20,
+                    SamplerUniformCalls = 21,
+                    BufferUploadBytes = 22_000,
+                    BarrierCalls = 23,
+                    BarrierAll = 24,
+                    BarrierCommand = 25,
+                    BarrierBufferUpdate = 26,
+                    BarrierShaderStorage = 27,
+                    BarrierTextureFetch = 28,
+                    BarrierTextureUpdate = 29,
+                    BarrierFramebuffer = 30,
+                    TimestampQueryCount = 31,
+                    TimestampQueryReadbackBytes = 32_000,
+                    TimestampDenseModeFrames = 1,
+                    RedundantStateSkips = 33,
+                    CpuDirectDrawCalls = 34,
+                    GpuIndirectDrawCalls = 35,
+                    GpuMeshletDrawCalls = 36,
+                    UnknownStrategyDrawCalls = 37,
+                    ActiveTextureBindingRung = "bindless-material-table",
+                    ActiveStereoMode = "multiview",
+                    ActiveSubmissionStrategy = "GpuIndirectZeroReadback",
+                    ActiveRenderBackend = "OpenGL",
+                    ValidationLayersEnabled = false,
+                    DebugOutputEnabled = true,
+                    GpuTimestampsDenseMode = true,
+                },
+                SceneAssets = new RenderProfilerSceneAssetData
+                {
+                    VisibleRendererCount = 38,
+                    VisibleSubmeshCount = 39,
+                    VisibleTriangleCount = 40_000,
+                    MaterialSlotCount = 41,
+                    ActiveMaterialCount = 42,
+                    TextureCount = 43,
+                    ResidentTextureMemoryBytes = 44_000,
+                    TextureUploadJobs = 45,
+                    TextureUploadBytes = 46_000,
+                    TextureUploadMs = 0.46,
+                    ShaderVariantsRequested = 47,
+                    ShaderVariantsWarming = 48,
+                    ShaderVariantsLinked = 49,
+                    ShaderVariantsFailed = 1,
+                    ShaderVariantsLoadedFromDiskCache = 50,
+                    ShaderVariantsGeneratedThisRun = 51,
+                    SkinnedRendererCount = 52,
+                    BoneMatrixUploadBytes = 53_000,
+                    BlendshapeWeightUploadBytes = 54_000,
+                    SkinningComputeDispatchCount = 55,
+                    BlendshapeComputeDispatchCount = 56,
+                    AvatarSourceMeshCount = 57,
+                    AvatarOptimizedLodCount = 58,
+                    AvatarMeshletCount = 59,
+                    AvatarVisibilityBufferCount = 60,
+                    AvatarClusterVirtualizedCount = 61,
+                    AvatarOctahedralImpostorCount = 62,
+                    AvatarGaussianSplatCount = 63,
+                    RenderAssetCostRows =
+                    [
+                        new RenderAssetCostRowData
+                        {
+                            SourceAssetIdentity = "Assets/Models/avatar.fbx",
+                            CookedVariantIdentity = "avatar:lod0:deferred",
+                            MeshName = "AvatarBody",
+                            MaterialName = "Skin",
+                            Representation = "source_mesh",
+                            DrawCalls = 64,
+                            Triangles = 65_000,
+                            MaterialSlots = 66,
+                            TextureCount = 67,
+                            SkinnedDraws = 68
+                        }
+                    ],
+                },
+                GpuDriven = new RenderProfilerGpuDrivenData
+                {
+                    GpuDrivenCulledCommandCount = 69,
+                    GpuDrivenActiveBucketCount = 70,
+                    GpuDrivenEmptyBucketSkips = 71,
+                    GpuDrivenFullBucketScans = 72,
+                    GpuDrivenMaterialScatterDispatches = 73,
+                    GpuDrivenIndirectCommandGenerationMs = 0.74,
+                    GpuDrivenGpuCullMs = 0.75,
+                    GpuDrivenGpuSortCompactMs = 0.76,
+                    GpuDrivenDelayedDrawCountBufferValue = 77,
+                    GpuDrivenDelayedDiagnosticReadbackBytes = 78,
+                    GpuDrivenDelayedDiagnosticReadbackCount = 79,
+                    GpuCompactionOverflow = 80,
+                    GpuActiveListOverflow = 81,
+                    GpuBucketOverflow = 82,
+                    GpuMeshletOverflow = 83,
+                    GpuHiZMode = "two-phase-history-depth",
+                    GpuHiZOnePhaseFrames = 84,
+                    GpuHiZTwoPhaseFrames = 85,
+                    GpuHiZPhaseOneDraws = 86,
+                    GpuHiZPhaseTwoDraws = 87,
+                    VisibilityPassDraws = 88,
+                    VisibilityClassifiedPixels = 89,
+                    VisibilityActiveMaterialTiles = 90,
+                    VisibilityClassificationOverflow = 91,
+                    VisibilityReconstructionMs = 0.92,
+                    VisibilityMaterialShadingMs = 0.93,
+                },
+            },
             GpuMeshletRequestedFrames = 5,
             GpuMeshletProductionFrames = 4,
             GpuMeshletFallbackFrames = 1,
@@ -295,6 +417,111 @@ public sealed class ProfilerProtocolTests
         clone.ForbiddenGpuFallbackEvents.ShouldBe(1);
         clone.GpuMappedBuffers.ShouldBe(3);
         clone.GpuReadbackBytes.ShouldBe(4096);
+        clone.RenderProfilerV2.ProfileCaptureSchemaVersion.ShouldBe(2);
+        var rendererState = clone.RenderProfilerV2.RendererState;
+        rendererState.IndirectCountCalls.ShouldBe(6);
+        rendererState.ShaderProgramSwitches.ShouldBe(7);
+        rendererState.ProgramPipelineSwitches.ShouldBe(8);
+        rendererState.VaoBinds.ShouldBe(9);
+        rendererState.VaoBindSkips.ShouldBe(10);
+        rendererState.ArrayBufferBinds.ShouldBe(11);
+        rendererState.ElementArrayBufferBinds.ShouldBe(12);
+        rendererState.DrawIndirectBufferBinds.ShouldBe(13);
+        rendererState.ParameterBufferBinds.ShouldBe(14);
+        rendererState.SsboBinds.ShouldBe(15);
+        rendererState.UboBinds.ShouldBe(16);
+        rendererState.TextureBinds.ShouldBe(17);
+        rendererState.TextureBindSkips.ShouldBe(18);
+        rendererState.TextureUnitSwitches.ShouldBe(19);
+        rendererState.UniformCalls.ShouldBe(20);
+        rendererState.SamplerUniformCalls.ShouldBe(21);
+        rendererState.BufferUploadBytes.ShouldBe(22_000);
+        rendererState.BarrierCalls.ShouldBe(23);
+        rendererState.BarrierAll.ShouldBe(24);
+        rendererState.BarrierCommand.ShouldBe(25);
+        rendererState.BarrierBufferUpdate.ShouldBe(26);
+        rendererState.BarrierShaderStorage.ShouldBe(27);
+        rendererState.BarrierTextureFetch.ShouldBe(28);
+        rendererState.BarrierTextureUpdate.ShouldBe(29);
+        rendererState.BarrierFramebuffer.ShouldBe(30);
+        rendererState.TimestampQueryCount.ShouldBe(31);
+        rendererState.TimestampQueryReadbackBytes.ShouldBe(32_000);
+        rendererState.TimestampDenseModeFrames.ShouldBe(1);
+        rendererState.RedundantStateSkips.ShouldBe(33);
+        rendererState.CpuDirectDrawCalls.ShouldBe(34);
+        rendererState.GpuIndirectDrawCalls.ShouldBe(35);
+        rendererState.GpuMeshletDrawCalls.ShouldBe(36);
+        rendererState.UnknownStrategyDrawCalls.ShouldBe(37);
+        rendererState.ActiveTextureBindingRung.ShouldBe("bindless-material-table");
+        rendererState.ActiveStereoMode.ShouldBe("multiview");
+        rendererState.ActiveSubmissionStrategy.ShouldBe("GpuIndirectZeroReadback");
+        rendererState.ActiveRenderBackend.ShouldBe("OpenGL");
+        rendererState.ValidationLayersEnabled.ShouldBeFalse();
+        rendererState.DebugOutputEnabled.ShouldBeTrue();
+        rendererState.GpuTimestampsDenseMode.ShouldBeTrue();
+
+        var sceneAssets = clone.RenderProfilerV2.SceneAssets;
+        sceneAssets.VisibleRendererCount.ShouldBe(38);
+        sceneAssets.VisibleSubmeshCount.ShouldBe(39);
+        sceneAssets.VisibleTriangleCount.ShouldBe(40_000);
+        sceneAssets.MaterialSlotCount.ShouldBe(41);
+        sceneAssets.ActiveMaterialCount.ShouldBe(42);
+        sceneAssets.TextureCount.ShouldBe(43);
+        sceneAssets.ResidentTextureMemoryBytes.ShouldBe(44_000);
+        sceneAssets.TextureUploadJobs.ShouldBe(45);
+        sceneAssets.TextureUploadBytes.ShouldBe(46_000);
+        sceneAssets.TextureUploadMs.ShouldBe(0.46);
+        sceneAssets.ShaderVariantsRequested.ShouldBe(47);
+        sceneAssets.ShaderVariantsWarming.ShouldBe(48);
+        sceneAssets.ShaderVariantsLinked.ShouldBe(49);
+        sceneAssets.ShaderVariantsFailed.ShouldBe(1);
+        sceneAssets.ShaderVariantsLoadedFromDiskCache.ShouldBe(50);
+        sceneAssets.ShaderVariantsGeneratedThisRun.ShouldBe(51);
+        sceneAssets.SkinnedRendererCount.ShouldBe(52);
+        sceneAssets.BoneMatrixUploadBytes.ShouldBe(53_000);
+        sceneAssets.BlendshapeWeightUploadBytes.ShouldBe(54_000);
+        sceneAssets.SkinningComputeDispatchCount.ShouldBe(55);
+        sceneAssets.BlendshapeComputeDispatchCount.ShouldBe(56);
+        sceneAssets.AvatarSourceMeshCount.ShouldBe(57);
+        sceneAssets.AvatarOptimizedLodCount.ShouldBe(58);
+        sceneAssets.AvatarMeshletCount.ShouldBe(59);
+        sceneAssets.AvatarVisibilityBufferCount.ShouldBe(60);
+        sceneAssets.AvatarClusterVirtualizedCount.ShouldBe(61);
+        sceneAssets.AvatarOctahedralImpostorCount.ShouldBe(62);
+        sceneAssets.AvatarGaussianSplatCount.ShouldBe(63);
+        sceneAssets.RenderAssetCostRows.Length.ShouldBe(1);
+        sceneAssets.RenderAssetCostRows[0].SourceAssetIdentity.ShouldBe("Assets/Models/avatar.fbx");
+        sceneAssets.RenderAssetCostRows[0].CookedVariantIdentity.ShouldBe("avatar:lod0:deferred");
+        sceneAssets.RenderAssetCostRows[0].Triangles.ShouldBe(65_000);
+        sceneAssets.RenderAssetCostRows[0].SkinnedDraws.ShouldBe(68);
+
+        var gpuDriven = clone.RenderProfilerV2.GpuDriven;
+        gpuDriven.GpuDrivenCulledCommandCount.ShouldBe(69);
+        gpuDriven.GpuDrivenActiveBucketCount.ShouldBe(70);
+        gpuDriven.GpuDrivenEmptyBucketSkips.ShouldBe(71);
+        gpuDriven.GpuDrivenFullBucketScans.ShouldBe(72);
+        gpuDriven.GpuDrivenMaterialScatterDispatches.ShouldBe(73);
+        gpuDriven.GpuDrivenIndirectCommandGenerationMs.ShouldBe(0.74);
+        gpuDriven.GpuDrivenGpuCullMs.ShouldBe(0.75);
+        gpuDriven.GpuDrivenGpuSortCompactMs.ShouldBe(0.76);
+        gpuDriven.GpuDrivenDelayedDrawCountBufferValue.ShouldBe(77);
+        gpuDriven.GpuDrivenDelayedDiagnosticReadbackBytes.ShouldBe(78);
+        gpuDriven.GpuDrivenDelayedDiagnosticReadbackCount.ShouldBe(79);
+        gpuDriven.GpuCompactionOverflow.ShouldBe(80);
+        gpuDriven.GpuActiveListOverflow.ShouldBe(81);
+        gpuDriven.GpuBucketOverflow.ShouldBe(82);
+        gpuDriven.GpuMeshletOverflow.ShouldBe(83);
+        gpuDriven.GpuHiZMode.ShouldBe("two-phase-history-depth");
+        gpuDriven.GpuHiZOnePhaseFrames.ShouldBe(84);
+        gpuDriven.GpuHiZTwoPhaseFrames.ShouldBe(85);
+        gpuDriven.GpuHiZPhaseOneDraws.ShouldBe(86);
+        gpuDriven.GpuHiZPhaseTwoDraws.ShouldBe(87);
+        gpuDriven.VisibilityPassDraws.ShouldBe(88);
+        gpuDriven.VisibilityClassifiedPixels.ShouldBe(89);
+        gpuDriven.VisibilityActiveMaterialTiles.ShouldBe(90);
+        gpuDriven.VisibilityClassificationOverflow.ShouldBe(91);
+        gpuDriven.VisibilityReconstructionMs.ShouldBe(0.92);
+        gpuDriven.VisibilityMaterialShadingMs.ShouldBe(0.93);
         clone.GpuMeshletRequestedFrames.ShouldBe(5);
         clone.GpuMeshletProductionFrames.ShouldBe(4);
         clone.GpuMeshletFallbackFrames.ShouldBe(1);

@@ -257,6 +257,10 @@ public partial class OpenGLRenderer
     /// <param name="unit">The texture unit to activate (0-based index).</param>
     public void SetActiveTextureUnit(int unit)
     {
+        if (ActiveTextureUnit == unit)
+            RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.RedundantStateSkips);
+        else
+            RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.TextureUnitSwitches);
         ActiveTextureUnit = unit;
         Api.ActiveTexture(GLEnum.Texture0 + unit);
     }

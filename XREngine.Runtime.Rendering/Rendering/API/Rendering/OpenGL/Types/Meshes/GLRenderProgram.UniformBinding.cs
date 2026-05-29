@@ -335,6 +335,7 @@ namespace XREngine.Rendering.OpenGL
 
                 _uniformBindingAttempts++;
                 _uniformBindings++;
+                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.UniformCalls);
                 
                 return true;
             }
@@ -346,6 +347,7 @@ namespace XREngine.Rendering.OpenGL
 
                 _samplerBindingAttempts++;
                 _samplerBindings++;
+                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.SamplerUniformCalls);
                 
                 return true;
             }

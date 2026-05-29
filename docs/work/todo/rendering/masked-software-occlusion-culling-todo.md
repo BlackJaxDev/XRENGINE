@@ -2,9 +2,10 @@
 
 Last Updated: 2026-05-29
 Owner: Rendering
-Status: Scalar implementation is in place and opt-in. Remaining work is
-selector coverage, viewport visualization, smoke/scene validation, SIMD,
-stereo, and promotion.
+Status: Scalar implementation is in place and opt-in. Selector/budget
+hardening, stereo-safe buffers, material rejection coverage, and scalar hot-loop
+cleanup are implemented. Remaining work is viewport texture presentation,
+runtime smoke/scene validation, optional AVX2 specialization, and promotion.
 Target Branch: `rendering-masked-software-occlusion`
 
 Design sources:
@@ -32,6 +33,9 @@ and launch-flow validation are complete.
   rectangle queries.
 - Scalar `MaskedOcclusionRasterizer` and `MaskedOcclusionAabbTester` exist for
   rigid triangle-list occluders and projected AABB visibility tests.
+- The scalar rasterizer uses incremental edge/depth evaluation in the inner
+  loop and writes through the buffer's bounds-checked setup path only at the
+  triangle level, keeping per-pixel work allocation-free.
 - Conservative-visible behavior is in place for invalid bounds, NaN/Inf
   transforms, near-plane straddles, unsupported geometry, stereo without per-eye
   buffers, and debug force-visible mode.
@@ -42,6 +46,9 @@ and launch-flow validation are complete.
   candidates.
 - `CpuSocOccluderTriangleBudget`, `CpuSocMaxOccluders`, and
   `CpuSocMinOccluderScreenArea` are honored.
+- Occluder selection now uses area divided by triangle-cost scoring, enforces
+  the triangle budget before rasterization, and keeps deterministic
+  `StableQueryKey` tie-breaking.
 - Selected occluder `StableQueryKey`s are tracked so occluders do not
   self-occlude.
 - `CpuSoftwareOcclusionCuller` is integrated before
@@ -56,6 +63,9 @@ and launch-flow validation are complete.
 - Meshlet rendering has a per-source-command visibility overload, visibility
   SSBO upload/binding, and `MeshletCulling.task` support through
   `UseCpuCommandVisibility` and `commandVisibility[]`.
+- Stereo render passes build left/right SOC buffers when the active render
+  state exposes a concrete right-eye `XRCamera`; visibility is OR-combined so
+  a command visible to either eye remains visible.
 - Non-meshlet GPU indirect zero-readback is explicitly scoped out of SOC v1.
 - `EOcclusionCullingMode.CpuSoftwareOcclusion` is the preferred opt-in mode.
   `EnableCpuSoftwareOcclusionCulling` remains as a legacy side toggle.
@@ -64,9 +74,10 @@ and launch-flow validation are complete.
   timings, tiles closed, and force-visible state.
 - The ImGui Occlusion panel has a CPU SOC subsection.
 - Visualization-disabled frames avoid SOC debug readback allocation.
-- Targeted buffer, rasterizer, AABB, render-option selector, meshlet shader,
-  invalid/near-clipped/frustum-culled, tile-boundary, tile merge/depth ordering,
-  and meshoptimizer interop tests exist.
+- Targeted buffer, rasterizer, AABB, render-option/material selector, scoring,
+  stereo OR, meshlet shader, invalid/near-clipped/frustum-culled,
+  tile-boundary, tile merge/depth ordering, and meshoptimizer interop tests
+  exist.
 
 ## Current Validation
 
@@ -79,14 +90,30 @@ dotnet build .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore /p:UseS
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~MaskedSoftwareOcclusionCullingTests|FullyQualifiedName~MeshOptimizerInteropTests" --no-restore /p:UseSharedCompilation=false
 ```
 
+Validated on 2026-05-29:
+
+```powershell
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~MaskedSoftwareOcclusionCullingTests" --no-restore /p:UseSharedCompilation=false
+```
+
+Result: runtime/editor dependencies built through `XREngine.Runtime.Rendering`,
+`XREngine`, and `XREngine.Editor`; the targeted test run is currently blocked
+before execution by an unrelated `MemoryPack` source-generator limit:
+`RenderStatsPacket` has 294 members while the generator limit is 249. Two
+nearby pre-existing compile blockers were repaired during the validation pass:
+a duplicate `uploadStart` local in `GLTexture2D.Upload.cs`, and missing
+rendering-stat namespace imports in `Engine.Rendering.Stats*.cs`.
+
 ## Remaining Work
 
 1. Finish selector and budget coverage.
-   - Add command-selector tests for mesh rejection filters.
-   - Add command-selector tests for instance rejection filters.
-   - Add budget enforcement tests for triangle budget, max occluders, and
-     minimum screen area.
-   - Add deterministic ordering tests for equal-score occluder candidates.
+   - [x] Add command-selector tests for material rejection filters.
+   - [ ] Add command-selector tests for mesh rejection filters.
+   - [ ] Add command-selector tests for instance rejection filters.
+   - [x] Add budget enforcement in selection for triangle budget, max
+     occluders, and minimum screen area.
+   - [x] Add deterministic ordering by equal-score `StableQueryKey`
+     tie-breaker.
 
 2. Add real debug visualization.
    - Implement the viewport inset or overlay for `CpuSocDebugVisualization`.
@@ -132,9 +159,9 @@ dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualif
    - Avoid adding SSE 4.1 unless profiling shows a real target-machine need.
 
 6. Add stereo and OpenVR support.
-   - Add per-eye SOC buffers.
-   - Rasterize selected occluders into each eye buffer.
-   - OR-combine AABB visibility across eyes.
+   - [x] Add per-eye SOC buffers for active stereo render state.
+   - [x] Rasterize selected occluders into each eye buffer.
+   - [x] OR-combine AABB visibility across eyes.
    - Verify mono, editor stereo, and OpenVR paths do not share stale camera
      state.
    - Add at least one stereo/OpenVR smoke capture before any default-enable

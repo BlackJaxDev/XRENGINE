@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -74,6 +75,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
+        private const int ProfileCaptureSchemaVersion = 2;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -337,7 +339,15 @@ public static partial class Engine
                 ? s_runtimeRunLabel
                 : Environment.GetEnvironmentVariable("XRE_PROFILE_RUN_LABEL") ?? string.Empty;
 
+            string targetRefreshHzEnv = Environment.GetEnvironmentVariable("XRE_TARGET_REFRESH_HZ") ??
+                Environment.GetEnvironmentVariable("XRE_UPDATE_FPS") ??
+                string.Empty;
+            double? targetRefreshHz = TryParsePositiveDouble(targetRefreshHzEnv);
+            double? xrFrameBudgetMs = targetRefreshHz is > 0.0 ? 1000.0 / targetRefreshHz.Value : null;
+            string benchmarkErrors = CaptureBenchmarkEnvironmentErrors();
+
             s_metadata = new RunMetadata(
+                SchemaVersion: ProfileCaptureSchemaVersion,
                 CaptureMode: runtimeCapture ? "runtime" : "launch",
                 RunLabel: runLabel,
                 WorldMode: Environment.GetEnvironmentVariable("XRE_WORLD_MODE") ?? string.Empty,
@@ -345,6 +355,32 @@ public static partial class Engine
                 EffectiveStrategy: CaptureString(() => Engine.Rendering.ResolveMeshSubmissionStrategy().ToString()),
                 ZeroReadbackMaterialDrawPath: CaptureString(() => Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath.ToString()),
                 ZeroReadbackMaterialDrawPathEnv: Environment.GetEnvironmentVariable("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH") ?? string.Empty,
+                Backend: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveRenderBackend),
+                GpuName: CaptureString(() => RuntimeEngine.Rendering.State.OpenGLRendererName ?? RuntimeEngine.Rendering.State.VulkanDeviceName ?? string.Empty),
+                GpuVendor: CaptureString(() => RuntimeEngine.Rendering.State.OpenGLVendor ?? string.Empty),
+                GpuDeviceId: Environment.GetEnvironmentVariable("XRE_GPU_DEVICE_ID") ?? string.Empty,
+                Driver: Environment.GetEnvironmentVariable("XRE_GPU_DRIVER") ?? string.Empty,
+                Scene: Environment.GetEnvironmentVariable("XRE_PROFILE_SCENE") ?? string.Empty,
+                Camera: Environment.GetEnvironmentVariable("XRE_PROFILE_CAMERA") ?? string.Empty,
+                Lights: Environment.GetEnvironmentVariable("XRE_PROFILE_LIGHTS") ?? string.Empty,
+                Viewport: Environment.GetEnvironmentVariable("XRE_PROFILE_VIEWPORT") ?? string.Empty,
+                RenderScale: Environment.GetEnvironmentVariable("XRE_PROFILE_RENDER_SCALE") ??
+                    CaptureString(() => Engine.Rendering.Settings.TsrRenderScale.ToString(CultureInfo.InvariantCulture)),
+                StereoMode: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveStereoMode),
+                ValidationLayersEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.ValidationLayersEnabled ? "true" : "false"),
+                DebugOutputEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.DebugOutputEnabled ? "true" : "false"),
+                ShaderCacheState: Environment.GetEnvironmentVariable("XRE_SHADER_CACHE_MODE") ?? string.Empty,
+                TextureCacheState: Environment.GetEnvironmentVariable("XRE_TEXTURE_CACHE_MODE") ?? string.Empty,
+                CacheMode: Environment.GetEnvironmentVariable("XRE_PROFILE_CACHE_MODE") ?? string.Empty,
+                GpuClockPolicy: Environment.GetEnvironmentVariable("XRE_GPU_CLOCK_POLICY") ?? string.Empty,
+                TargetRefreshHz: targetRefreshHz,
+                XrFrameBudgetMs: xrFrameBudgetMs,
+                BenchmarkPhase: Environment.GetEnvironmentVariable("XRE_PROFILE_PHASE") ?? string.Empty,
+                WarmupSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable("XRE_PROFILE_WARMUP_SEC")),
+                CaptureSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable("XRE_PROFILE_CAPTURE_SEC")),
+                BenchmarkEnvironmentValid: string.IsNullOrWhiteSpace(benchmarkErrors),
+                BenchmarkEnvironmentErrors: benchmarkErrors,
+                GpuTimestampDenseMode: IsEnvFlagEnabled("XRE_GPU_TIMESTAMP_DENSE"),
                 P3Logging: Environment.GetEnvironmentVariable("XRE_P3_LOGGING") ?? string.Empty,
                 BucketLoopDryRun: Environment.GetEnvironmentVariable("XRE_BUCKET_LOOP_DRY_RUN") ?? string.Empty,
                 SkipCommandSwapIfClean: Environment.GetEnvironmentVariable("XRE_SKIP_COMMAND_SWAP_IF_CLEAN") ?? string.Empty,
@@ -365,7 +401,8 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v1",
+                schema = "xrengine.profile_capture.render_stats.v2",
+                schema_version = ProfileCaptureSchemaVersion,
                 fields_note = "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are OpenGL timestamp-query snapshots when ready.",
                 run = metadata,
             };
@@ -390,6 +427,7 @@ public static partial class Engine
             bool first = true;
 
             AppendStringField(s_lineBuilder, "ts_utc", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture), ref first);
+            AppendNumberField(s_lineBuilder, "profile_schema_version", ProfileCaptureSchemaVersion, ref first);
             AppendNumberField(s_lineBuilder, "elapsed_ms", elapsedMs, ref first);
             AppendNumberField(s_lineBuilder, "process_id", Environment.ProcessId, ref first);
             ulong renderFrameId = Engine.Rendering.State.RenderFrameId;
@@ -403,6 +441,12 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "zero_readback_material_draw_path", metadata.ZeroReadbackMaterialDrawPath, ref first);
             AppendStringField(s_lineBuilder, "zero_readback_material_draw_path_env", metadata.ZeroReadbackMaterialDrawPathEnv, ref first);
             AppendStringField(s_lineBuilder, "p3_logging", metadata.P3Logging, ref first);
+            AppendStringField(s_lineBuilder, "active_texture_binding_rung", Engine.Rendering.Stats.RendererState.ActiveTextureBindingRung, ref first);
+            AppendStringField(s_lineBuilder, "active_stereo_mode", Engine.Rendering.Stats.RendererState.ActiveStereoMode, ref first);
+            AppendStringField(s_lineBuilder, "active_render_backend", Engine.Rendering.Stats.RendererState.ActiveRenderBackend, ref first);
+            AppendBoolField(s_lineBuilder, "validation_layers_enabled", Engine.Rendering.Stats.RendererState.ValidationLayersEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "debug_output_enabled", Engine.Rendering.Stats.RendererState.DebugOutputEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "gpu_timestamps_dense_mode", Engine.Rendering.Stats.RendererState.GpuTimestampsDenseMode, ref first);
 
             AppendNumberField(s_lineBuilder, "render_dispatch_ms", renderMs, ref first);
             AppendNumberField(s_lineBuilder, "update_ms", updateMs, ref first);
@@ -419,6 +463,94 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "triangles_rendered", Engine.Rendering.Stats.Frame.TrianglesRendered, ref first);
             AppendNumberField(s_lineBuilder, "gpu_mapped_buffers", Engine.Rendering.Stats.GpuReadback.GpuMappedBuffers, ref first);
             AppendNumberField(s_lineBuilder, "gpu_readback_bytes", Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes, ref first);
+            AppendNumberField(s_lineBuilder, "indirect_count_calls", Engine.Rendering.Stats.RendererState.IndirectCountCalls, ref first);
+            AppendNumberField(s_lineBuilder, "shader_program_switches", Engine.Rendering.Stats.RendererState.ShaderProgramSwitches, ref first);
+            AppendNumberField(s_lineBuilder, "program_pipeline_switches", Engine.Rendering.Stats.RendererState.ProgramPipelineSwitches, ref first);
+            AppendNumberField(s_lineBuilder, "vao_binds", Engine.Rendering.Stats.RendererState.VaoBinds, ref first);
+            AppendNumberField(s_lineBuilder, "vao_bind_skips", Engine.Rendering.Stats.RendererState.VaoBindSkips, ref first);
+            AppendNumberField(s_lineBuilder, "array_buffer_binds", Engine.Rendering.Stats.RendererState.ArrayBufferBinds, ref first);
+            AppendNumberField(s_lineBuilder, "element_array_buffer_binds", Engine.Rendering.Stats.RendererState.ElementArrayBufferBinds, ref first);
+            AppendNumberField(s_lineBuilder, "draw_indirect_buffer_binds", Engine.Rendering.Stats.RendererState.DrawIndirectBufferBinds, ref first);
+            AppendNumberField(s_lineBuilder, "parameter_buffer_binds", Engine.Rendering.Stats.RendererState.ParameterBufferBinds, ref first);
+            AppendNumberField(s_lineBuilder, "ssbo_binds", Engine.Rendering.Stats.RendererState.SsboBinds, ref first);
+            AppendNumberField(s_lineBuilder, "ubo_binds", Engine.Rendering.Stats.RendererState.UboBinds, ref first);
+            AppendNumberField(s_lineBuilder, "texture_binds", Engine.Rendering.Stats.RendererState.TextureBinds, ref first);
+            AppendNumberField(s_lineBuilder, "texture_bind_skips", Engine.Rendering.Stats.RendererState.TextureBindSkips, ref first);
+            AppendNumberField(s_lineBuilder, "texture_unit_switches", Engine.Rendering.Stats.RendererState.TextureUnitSwitches, ref first);
+            AppendNumberField(s_lineBuilder, "uniform_calls", Engine.Rendering.Stats.RendererState.UniformCalls, ref first);
+            AppendNumberField(s_lineBuilder, "sampler_uniform_calls", Engine.Rendering.Stats.RendererState.SamplerUniformCalls, ref first);
+            AppendNumberField(s_lineBuilder, "buffer_upload_bytes", Engine.Rendering.Stats.RendererState.BufferUploadBytes, ref first);
+            AppendNumberField(s_lineBuilder, "barrier_calls", Engine.Rendering.Stats.RendererState.BarrierCalls, ref first);
+            AppendNumberField(s_lineBuilder, "barrier_all", Engine.Rendering.Stats.RendererState.BarrierAll, ref first);
+            AppendNumberField(s_lineBuilder, "barrier_command", Engine.Rendering.Stats.RendererState.BarrierCommand, ref first);
+            AppendNumberField(s_lineBuilder, "barrier_buffer_update", Engine.Rendering.Stats.RendererState.BarrierBufferUpdate, ref first);
+            AppendNumberField(s_lineBuilder, "barrier_shader_storage", Engine.Rendering.Stats.RendererState.BarrierShaderStorage, ref first);
+            AppendNumberField(s_lineBuilder, "barrier_texture_fetch", Engine.Rendering.Stats.RendererState.BarrierTextureFetch, ref first);
+            AppendNumberField(s_lineBuilder, "barrier_texture_update", Engine.Rendering.Stats.RendererState.BarrierTextureUpdate, ref first);
+            AppendNumberField(s_lineBuilder, "barrier_framebuffer", Engine.Rendering.Stats.RendererState.BarrierFramebuffer, ref first);
+            AppendNumberField(s_lineBuilder, "timestamp_query_count", Engine.Rendering.Stats.RendererState.TimestampQueryCount, ref first);
+            AppendNumberField(s_lineBuilder, "timestamp_query_readback_bytes", Engine.Rendering.Stats.RendererState.TimestampQueryReadbackBytes, ref first);
+            AppendNumberField(s_lineBuilder, "timestamp_dense_mode_frames", Engine.Rendering.Stats.RendererState.TimestampDenseModeFrames, ref first);
+            AppendNumberField(s_lineBuilder, "redundant_state_skips", Engine.Rendering.Stats.RendererState.RedundantStateSkips, ref first);
+            AppendNumberField(s_lineBuilder, "cpu_direct_draw_calls", Engine.Rendering.Stats.RendererState.CpuDirectDrawCalls, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_indirect_draw_calls", Engine.Rendering.Stats.RendererState.GpuIndirectDrawCalls, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_draw_calls", Engine.Rendering.Stats.RendererState.GpuMeshletDrawCalls, ref first);
+            AppendNumberField(s_lineBuilder, "unknown_strategy_draw_calls", Engine.Rendering.Stats.RendererState.UnknownStrategyDrawCalls, ref first);
+            AppendNumberField(s_lineBuilder, "visible_renderer_count", Engine.Rendering.Stats.SceneAssets.VisibleRendererCount, ref first);
+            AppendNumberField(s_lineBuilder, "visible_submesh_count", Engine.Rendering.Stats.SceneAssets.VisibleSubmeshCount, ref first);
+            AppendNumberField(s_lineBuilder, "visible_triangle_count", Engine.Rendering.Stats.SceneAssets.VisibleTriangleCount, ref first);
+            AppendNumberField(s_lineBuilder, "material_slot_count", Engine.Rendering.Stats.SceneAssets.MaterialSlotCount, ref first);
+            AppendNumberField(s_lineBuilder, "active_material_count", Engine.Rendering.Stats.SceneAssets.ActiveMaterialCount, ref first);
+            AppendNumberField(s_lineBuilder, "texture_count", Engine.Rendering.Stats.SceneAssets.TextureCount, ref first);
+            AppendNumberField(s_lineBuilder, "resident_texture_memory_bytes", Engine.Rendering.Stats.SceneAssets.ResidentTextureMemoryBytes, ref first);
+            AppendNumberField(s_lineBuilder, "texture_upload_jobs", Engine.Rendering.Stats.SceneAssets.TextureUploadJobs, ref first);
+            AppendNumberField(s_lineBuilder, "texture_upload_bytes", Engine.Rendering.Stats.SceneAssets.TextureUploadBytes, ref first);
+            AppendNumberField(s_lineBuilder, "texture_upload_ms", Engine.Rendering.Stats.SceneAssets.TextureUploadMs, ref first);
+            AppendNumberField(s_lineBuilder, "shader_variants_requested", Engine.Rendering.Stats.SceneAssets.ShaderVariantsRequested, ref first);
+            AppendNumberField(s_lineBuilder, "shader_variants_warming", Engine.Rendering.Stats.SceneAssets.ShaderVariantsWarming, ref first);
+            AppendNumberField(s_lineBuilder, "shader_variants_linked", Engine.Rendering.Stats.SceneAssets.ShaderVariantsLinked, ref first);
+            AppendNumberField(s_lineBuilder, "shader_variants_failed", Engine.Rendering.Stats.SceneAssets.ShaderVariantsFailed, ref first);
+            AppendNumberField(s_lineBuilder, "shader_variants_loaded_from_disk_cache", Engine.Rendering.Stats.SceneAssets.ShaderVariantsLoadedFromDiskCache, ref first);
+            AppendNumberField(s_lineBuilder, "shader_variants_generated_this_run", Engine.Rendering.Stats.SceneAssets.ShaderVariantsGeneratedThisRun, ref first);
+            AppendNumberField(s_lineBuilder, "skinned_renderer_count", Engine.Rendering.Stats.SceneAssets.SkinnedRendererCount, ref first);
+            AppendNumberField(s_lineBuilder, "bone_matrix_upload_bytes", Engine.Rendering.Stats.SceneAssets.BoneMatrixUploadBytes, ref first);
+            AppendNumberField(s_lineBuilder, "blendshape_weight_upload_bytes", Engine.Rendering.Stats.SceneAssets.BlendshapeWeightUploadBytes, ref first);
+            AppendNumberField(s_lineBuilder, "skinning_compute_dispatch_count", Engine.Rendering.Stats.SceneAssets.SkinningComputeDispatchCount, ref first);
+            AppendNumberField(s_lineBuilder, "blendshape_compute_dispatch_count", Engine.Rendering.Stats.SceneAssets.BlendshapeComputeDispatchCount, ref first);
+            AppendNumberField(s_lineBuilder, "avatar_source_mesh_count", Engine.Rendering.Stats.SceneAssets.AvatarSourceMeshCount, ref first);
+            AppendNumberField(s_lineBuilder, "avatar_optimized_lod_count", Engine.Rendering.Stats.SceneAssets.AvatarOptimizedLodCount, ref first);
+            AppendNumberField(s_lineBuilder, "avatar_meshlet_count", Engine.Rendering.Stats.SceneAssets.AvatarMeshletCount, ref first);
+            AppendNumberField(s_lineBuilder, "avatar_visibility_buffer_count", Engine.Rendering.Stats.SceneAssets.AvatarVisibilityBufferCount, ref first);
+            AppendNumberField(s_lineBuilder, "avatar_cluster_virtualized_count", Engine.Rendering.Stats.SceneAssets.AvatarClusterVirtualizedCount, ref first);
+            AppendNumberField(s_lineBuilder, "avatar_octahedral_impostor_count", Engine.Rendering.Stats.SceneAssets.AvatarOctahedralImpostorCount, ref first);
+            AppendNumberField(s_lineBuilder, "avatar_gaussian_splat_count", Engine.Rendering.Stats.SceneAssets.AvatarGaussianSplatCount, ref first);
+            AppendRawJsonField(s_lineBuilder, "render_asset_cost_rows", JsonSerializer.Serialize(Engine.Rendering.Stats.SceneAssets.GetAssetCostRows()), ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_culled_command_count", Engine.Rendering.Stats.GpuDriven.CulledCommandCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_active_bucket_count", Engine.Rendering.Stats.GpuDriven.ActiveBucketCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_empty_bucket_skips", Engine.Rendering.Stats.GpuDriven.EmptyBucketSkips, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_full_bucket_scans", Engine.Rendering.Stats.GpuDriven.FullBucketScans, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_material_scatter_dispatches", Engine.Rendering.Stats.GpuDriven.MaterialScatterDispatches, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_indirect_command_generation_ms", Engine.Rendering.Stats.GpuDriven.IndirectCommandGenerationMs, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_gpu_cull_ms", Engine.Rendering.Stats.GpuDriven.GpuCullMs, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_gpu_sort_compact_ms", Engine.Rendering.Stats.GpuDriven.GpuSortCompactMs, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_delayed_draw_count_buffer_value", Engine.Rendering.Stats.GpuDriven.DelayedDrawCountBufferValue, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_delayed_diagnostic_readback_bytes", Engine.Rendering.Stats.GpuDriven.DelayedDiagnosticReadbackBytes, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_driven_delayed_diagnostic_readback_count", Engine.Rendering.Stats.GpuDriven.DelayedDiagnosticReadbackCount, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_compaction_overflow", Engine.Rendering.Stats.GpuDriven.GpuCompactionOverflow, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_active_list_overflow", Engine.Rendering.Stats.GpuDriven.ActiveListOverflow, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_bucket_overflow", Engine.Rendering.Stats.GpuDriven.BucketOverflow, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_meshlet_overflow", Engine.Rendering.Stats.GpuDriven.MeshletOverflow, ref first);
+            AppendStringField(s_lineBuilder, "gpu_hiz_mode", Engine.Rendering.Stats.GpuDriven.HiZMode, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_hiz_one_phase_frames", Engine.Rendering.Stats.GpuDriven.HiZOnePhaseFrames, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_hiz_two_phase_frames", Engine.Rendering.Stats.GpuDriven.HiZTwoPhaseFrames, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_hiz_phase_one_draws", Engine.Rendering.Stats.GpuDriven.HiZPhaseOneDraws, ref first);
+            AppendNumberField(s_lineBuilder, "gpu_hiz_phase_two_draws", Engine.Rendering.Stats.GpuDriven.HiZPhaseTwoDraws, ref first);
+            AppendNumberField(s_lineBuilder, "visibility_pass_draws", Engine.Rendering.Stats.GpuDriven.VisibilityPassDraws, ref first);
+            AppendNumberField(s_lineBuilder, "visibility_classified_pixels", Engine.Rendering.Stats.GpuDriven.VisibilityClassifiedPixels, ref first);
+            AppendNumberField(s_lineBuilder, "visibility_active_material_tiles", Engine.Rendering.Stats.GpuDriven.VisibilityActiveMaterialTiles, ref first);
+            AppendNumberField(s_lineBuilder, "visibility_classification_overflow", Engine.Rendering.Stats.GpuDriven.VisibilityClassificationOverflow, ref first);
+            AppendNumberField(s_lineBuilder, "visibility_reconstruction_ms", Engine.Rendering.Stats.GpuDriven.VisibilityReconstructionMs, ref first);
+            AppendNumberField(s_lineBuilder, "visibility_material_shading_ms", Engine.Rendering.Stats.GpuDriven.VisibilityMaterialShadingMs, ref first);
             AppendNumberField(s_lineBuilder, "gpu_cpu_fallback_events", Engine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents, ref first);
             AppendNumberField(s_lineBuilder, "gpu_cpu_fallback_recovered_commands", Engine.Rendering.Stats.GpuFallback.GpuCpuFallbackRecoveredCommands, ref first);
             AppendNumberField(s_lineBuilder, "forbidden_gpu_fallback_events", Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents, ref first);
@@ -648,6 +780,15 @@ public static partial class Engine
                 builder.Append("null");
         }
 
+        private static void AppendRawJsonField(StringBuilder builder, string name, string json, ref bool first)
+        {
+            AppendFieldPrefix(builder, name, ref first);
+            if (string.IsNullOrWhiteSpace(json))
+                builder.Append("null");
+            else
+                builder.Append(json);
+        }
+
         private static void AppendFieldPrefix(StringBuilder builder, string name, ref bool first)
         {
             if (!first)
@@ -688,6 +829,105 @@ public static partial class Engine
             }
         }
 
+        private static double? TryParsePositiveDouble(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            return double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && value > 0.0
+                ? value
+                : null;
+        }
+
+        private static string CaptureBenchmarkEnvironmentErrors()
+        {
+            List<string> errors = [];
+
+            ValidateEnvFlag(errors, "XRE_PROFILER_ENABLED");
+            ValidateEnvFlag(errors, "XRE_PROFILE_CAPTURE");
+            ValidateEnvFlag(errors, "XRE_PROFILE_AUTO_DUMP");
+            ValidateEnvFlag(errors, "XRE_P3_LOGGING");
+            ValidateEnvFlag(errors, "XRE_BUCKET_LOOP_DRY_RUN");
+            ValidateEnvFlag(errors, "XRE_SKIP_COMMAND_SWAP_IF_CLEAN");
+            ValidateEnvFlag(errors, "XRE_BUCKET_LOOP_SKIP_EMPTY");
+            ValidateEnvFlag(errors, "XRE_FORCE_SINGLE_BUCKET");
+            ValidateEnvFlag(errors, "XRE_HIZ_CULL_TRACE");
+            ValidateEnvFlag(errors, "XRE_GPU_TIMESTAMP_DENSE");
+
+            ValidateEnvEnum(
+                errors,
+                "XRE_FORCE_MESH_SUBMISSION_STRATEGY",
+                "CpuDirect",
+                "GpuIndirectInstrumented",
+                "GpuIndirectZeroReadback",
+                "GpuMeshletInstrumented",
+                "GpuMeshletZeroReadback");
+            ValidateEnvEnum(
+                errors,
+                "XRE_ZERO_READBACK_MATERIAL_DRAW_PATH",
+                "FullBucketScan",
+                "ActiveBucketList",
+                "MaterialTable",
+                "BindlessMaterialTable");
+            ValidateEnvEnum(errors, "XRE_PROFILE_CACHE_MODE", "Cold", "Warm");
+            ValidateEnvEnum(errors, "XRE_SHADER_CACHE_MODE", "Cold", "Warm");
+            ValidateEnvEnum(errors, "XRE_TEXTURE_CACHE_MODE", "Cold", "Warm");
+
+            ValidateEnvPositiveDouble(errors, "XRE_TARGET_REFRESH_HZ");
+            ValidateEnvPositiveDouble(errors, "XRE_UPDATE_FPS");
+            ValidateEnvPositiveDouble(errors, "XRE_PROFILE_RENDER_SCALE");
+            ValidateEnvPositiveDouble(errors, "XRE_PROFILE_WARMUP_SEC");
+            ValidateEnvPositiveDouble(errors, "XRE_PROFILE_CAPTURE_SEC");
+
+            return errors.Count == 0 ? string.Empty : string.Join("; ", errors);
+        }
+
+        private static void ValidateEnvFlag(List<string> errors, string name)
+        {
+            string? raw = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+
+            string value = raw.Trim();
+            if (value is "0" or "1" ||
+                value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("no", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("on", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("off", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            errors.Add(name + " must be a boolean flag, got '" + value + "'");
+        }
+
+        private static void ValidateEnvEnum(List<string> errors, string name, params string[] allowed)
+        {
+            string? raw = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+
+            string value = raw.Trim();
+            if (allowed.Any(allowedValue => string.Equals(allowedValue, value, StringComparison.OrdinalIgnoreCase)))
+                return;
+
+            errors.Add(name + " must be one of [" + string.Join(", ", allowed) + "], got '" + value + "'");
+        }
+
+        private static void ValidateEnvPositiveDouble(List<string> errors, string name)
+        {
+            string? raw = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+
+            if (TryParsePositiveDouble(raw) is not null)
+                return;
+
+            errors.Add(name + " must be a positive number, got '" + raw.Trim() + "'");
+        }
+
         private static bool IsEnvFlagEnabled(string name)
         {
             string? raw = Environment.GetEnvironmentVariable(name);
@@ -702,6 +942,7 @@ public static partial class Engine
         }
 
         private sealed record RunMetadata(
+            int SchemaVersion,
             string CaptureMode,
             string RunLabel,
             string WorldMode,
@@ -709,6 +950,31 @@ public static partial class Engine
             string EffectiveStrategy,
             string ZeroReadbackMaterialDrawPath,
             string ZeroReadbackMaterialDrawPathEnv,
+            string Backend,
+            string GpuName,
+            string GpuVendor,
+            string GpuDeviceId,
+            string Driver,
+            string Scene,
+            string Camera,
+            string Lights,
+            string Viewport,
+            string RenderScale,
+            string StereoMode,
+            string ValidationLayersEnabled,
+            string DebugOutputEnabled,
+            string ShaderCacheState,
+            string TextureCacheState,
+            string CacheMode,
+            string GpuClockPolicy,
+            double? TargetRefreshHz,
+            double? XrFrameBudgetMs,
+            string BenchmarkPhase,
+            double? WarmupSeconds,
+            double? CaptureSeconds,
+            bool BenchmarkEnvironmentValid,
+            string BenchmarkEnvironmentErrors,
+            bool GpuTimestampDenseMode,
             string P3Logging,
             string BucketLoopDryRun,
             string SkipCommandSwapIfClean,

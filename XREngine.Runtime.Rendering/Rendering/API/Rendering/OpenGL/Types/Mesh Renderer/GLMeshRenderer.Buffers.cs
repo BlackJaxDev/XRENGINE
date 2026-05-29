@@ -232,6 +232,7 @@ namespace XREngine.Rendering.OpenGL
                 int count = _ssboBufferCache.Count;
                 for (int i = 0; i < count; i++)
                     _ssboBufferCache[i].BindSSBO(program);
+                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.SsboBinds, count);
 
                 if (IsBatchedTextDiagnosticMesh() && s_batchedTextSsboBindDiagCount++ < 40)
                 {
@@ -434,6 +435,7 @@ namespace XREngine.Rendering.OpenGL
                     if (ReferenceEquals(_boundVertexProgram, program) && !VertexArrayBindingsStale())
                     {
                         Dbg("BindBuffers early-out: already bound", "Buffers");
+                        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.VaoBindSkips);
                         return;
                     }
 
@@ -450,6 +452,7 @@ namespace XREngine.Rendering.OpenGL
                 using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.BindVAO", ProfilerScopeKind.ConditionalLoop))
                 {
                     Renderer.BindMeshRenderer(this);
+                    RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.VaoBinds);
                 }
                 ResetVertexArrayBindings();
                 Dbg(mesh is null ? "BindBuffers: binding renderer buffers (mesh=null)" : "BindBuffers: binding attribute & index buffers", "Buffers");
@@ -467,6 +470,12 @@ namespace XREngine.Rendering.OpenGL
                             if (buffer.TryGetAttributeLocation(program, out _))
                                 attributesBound++;
                             buffer.BindToRenderer(program, this);
+                            if (buffer.Data.Target == EBufferTarget.ArrayBuffer)
+                                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.ArrayBufferBinds);
+                            else if (buffer.Data.Target == EBufferTarget.UniformBuffer)
+                                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.UboBinds);
+                            else if (buffer.Data.Target == EBufferTarget.ShaderStorageBuffer)
+                                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.SsboBinds);
                         }
                     }
                 }
@@ -483,11 +492,20 @@ namespace XREngine.Rendering.OpenGL
                 using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.BindIndexBuffers", ProfilerScopeKind.ConditionalLoop))
                 {
                     if (TriangleIndicesBuffer is not null)
+                    {
                         Api.VertexArrayElementBuffer(BindingId, TriangleIndicesBuffer.BindingId);
+                        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.ElementArrayBufferBinds);
+                    }
                     if (LineIndicesBuffer is not null)
+                    {
                         Api.VertexArrayElementBuffer(BindingId, LineIndicesBuffer.BindingId);
+                        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.ElementArrayBufferBinds);
+                    }
                     if (PointIndicesBuffer is not null)
+                    {
                         Api.VertexArrayElementBuffer(BindingId, PointIndicesBuffer.BindingId);
+                        RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.ElementArrayBufferBinds);
+                    }
                 }
                 CaptureVertexArrayBindingSnapshot();
 

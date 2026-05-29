@@ -531,6 +531,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
                         LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{material.Data.Name}'");
+                        RecordSceneAssetCost(material.Data, drawInstances);
                         Renderer.RenderMesh(this, false, drawInstances);
                     }
                 }
@@ -541,6 +542,35 @@ namespace XREngine.Rendering.OpenGL
 
                 Dbg("Render mesh submitted", "Render");
                 return true;
+            }
+
+            private void RecordSceneAssetCost(XRMaterial material, uint instances)
+            {
+                XRMesh? mesh = Mesh;
+                long triangles = (TriangleIndicesBuffer?.Data?.ElementCount ?? 0u) / 3u;
+                if (instances > 1u)
+                    triangles *= instances;
+
+                string? sourceIdentity = !string.IsNullOrWhiteSpace(mesh?.OriginalPath)
+                    ? mesh!.OriginalPath
+                    : !string.IsNullOrWhiteSpace(mesh?.FilePath)
+                        ? mesh!.FilePath
+                        : MeshRenderer.SourceSubMeshAsset?.Name;
+
+                string? cookedIdentity = !string.IsNullOrWhiteSpace(mesh?.FilePath)
+                    ? mesh!.FilePath
+                    : mesh?.Name;
+
+                RuntimeEngine.Rendering.Stats.RecordSceneAssetVisible(
+                    sourceIdentity,
+                    cookedIdentity,
+                    mesh?.Name ?? MeshRenderer.SourceSubMeshAsset?.Name ?? MeshRenderer.Name,
+                    material.Name,
+                    materialSlots: 1,
+                    textureCount: material.Textures?.Count ?? 0,
+                    triangleCount: triangles,
+                    skinned: mesh?.HasSkinning == true || mesh?.BlendshapeCount > 0,
+                    representation: "source_mesh");
             }
 
             private bool TryResolvePendingUberFallbackMaterial(GLMaterial blockedMaterial, out GLMaterial? fallbackMaterial)

@@ -1296,6 +1296,7 @@ namespace XREngine.Rendering.OpenGL
                                 "driver-parallel link completed",
                                 compileMilliseconds: _uberCompileMilliseconds,
                                 linkMilliseconds: linkMilliseconds);
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(linked: true, generatedThisRun: true);
                             CompleteBuildTelemetry(true, _uberCompileMilliseconds, linkMilliseconds, reflectionMilliseconds: reflectionMilliseconds);
                         }
                         else
@@ -1401,6 +1402,7 @@ namespace XREngine.Rendering.OpenGL
                         ? "driver never reported completion; retrying with synchronous source link"
                         : "driver never reported completion; leaving source build pending with fallback material",
                     "Async link timed out.");
+                RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                 CompleteBuildTelemetry(false, failureReason: "Async link timed out.");
 
                 InFlightCompilations.TryRemove(Hash, out _);
@@ -1479,6 +1481,7 @@ namespace XREngine.Rendering.OpenGL
                         linkError,
                         compileMilliseconds,
                         linkMilliseconds);
+                    RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                     CompleteBuildTelemetry(false, compileMilliseconds, linkMilliseconds, failureReason: linkError);
                     MarkHashFailed(linkError);
                 }
@@ -2449,6 +2452,7 @@ namespace XREngine.Rendering.OpenGL
                     sharedProgram.ProgramId,
                     binaryBytes: binProg.Length,
                     binaryFormat: binProg.Format.ToString());
+                RuntimeEngine.Rendering.Stats.RecordShaderVariant(linked: true, loadedFromDiskCache: true);
                 CompleteBuildTelemetry(true, binaryLoadMilliseconds: 0.0, reflectionMilliseconds: reflectionMilliseconds);
                 ClearCompletedBuildPendingState();
                 return true;
@@ -2794,8 +2798,13 @@ namespace XREngine.Rendering.OpenGL
                     return true;
                 }
 
+                RuntimeEngine.Rendering.Stats.RecordShaderVariant(requested: true);
+
                 if (IsLinkPreparationPending)
+                {
+                    RuntimeEngine.Rendering.Stats.RecordShaderVariant(warming: true);
                     return ReturnPendingBuildResult();
+                }
 
                 if (_asyncBinaryUploadQueueWaitPending && _cachedProgram is { } sharedCandidate)
                 {
@@ -2870,6 +2879,7 @@ namespace XREngine.Rendering.OpenGL
                                 pendingId,
                                 binaryBytes: _cachedProgram?.Length ?? 0,
                                 binaryFormat: asyncResult.Format.ToString());
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(linked: true, loadedFromDiskCache: true);
                             CompleteBuildTelemetry(true, binaryLoadMilliseconds: asyncResult.LoadMilliseconds, reflectionMilliseconds: reflectionMilliseconds);
                             ClearCompletedBuildPendingState();
                             return true;
@@ -2891,6 +2901,7 @@ namespace XREngine.Rendering.OpenGL
                                 pendingId,
                                 binaryBytes: _cachedProgram?.Length ?? 0,
                                 binaryFormat: asyncResult.Format.ToString());
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                             CompleteBuildTelemetry(false, binaryLoadMilliseconds: asyncResult.LoadMilliseconds, failureReason: asyncResult.ErrorLog);
                             DeleteFromBinaryShaderCache(_cachedProgram?.CacheKey ?? asyncResult.CacheKey, asyncResult.Format);
                             // Fall through to compile from source below.
@@ -2936,6 +2947,7 @@ namespace XREngine.Rendering.OpenGL
                                 _activeBuildFingerprint,
                                 pendingId2,
                                 _preparedCompileInputs);
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(linked: true, generatedThisRun: true);
                             CompleteBuildTelemetry(
                                 true,
                                 compileResult.CompileMilliseconds,
@@ -2969,6 +2981,7 @@ namespace XREngine.Rendering.OpenGL
                                 _activeBuildFingerprint,
                                 pendingId2,
                                 _preparedCompileInputs);
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                             CompleteBuildTelemetry(
                                 false,
                                 compileResult.CompileMilliseconds,
@@ -3074,6 +3087,7 @@ namespace XREngine.Rendering.OpenGL
                     _cachedProgram = binProg;
                     GLEnum format = binProg.Format;
                     ShaderProgramLifecycleDiagnostics.RecordBinaryCacheHit();
+                    RuntimeEngine.Rendering.Stats.RecordShaderVariant(warming: true, loadedFromDiskCache: true);
                     PublishBackendStatus(
                         EShaderProgramBackendStage.CacheHit,
                         "BinaryCache",
@@ -3243,6 +3257,7 @@ namespace XREngine.Rendering.OpenGL
                                 bindingId,
                                 binaryBytes: binProg.Length,
                                 binaryFormat: format.ToString());
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                             CompleteBuildTelemetry(false, binaryLoadMilliseconds: binaryLoadMilliseconds, failureReason: error.ToString());
                             DeleteFromBinaryShaderCache(binProg.CacheKey, format);
                         }
@@ -3263,6 +3278,7 @@ namespace XREngine.Rendering.OpenGL
                                 bindingId,
                                 binaryBytes: binProg.Length,
                                 binaryFormat: format.ToString());
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                             CompleteBuildTelemetry(false, binaryLoadMilliseconds: binaryLoadMilliseconds, failureReason: binaryFailureReason);
                             DeleteFromBinaryShaderCache(binProg.CacheKey, format);
                         }
@@ -3285,6 +3301,7 @@ namespace XREngine.Rendering.OpenGL
                                 bindingId,
                                 binaryBytes: binProg.Length,
                                 binaryFormat: format.ToString());
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(linked: true, loadedFromDiskCache: true);
                             CompleteBuildTelemetry(true, binaryLoadMilliseconds: binaryLoadMilliseconds, reflectionMilliseconds: reflectionMilliseconds);
                             ClearCompletedBuildPendingState();
                             return true;
@@ -3365,6 +3382,7 @@ namespace XREngine.Rendering.OpenGL
                         CaptureLinkRequestStackTrace();
                         ShaderProgramLifecycleDiagnostics.RecordBinaryCacheMiss();
                         ShaderProgramLifecycleDiagnostics.RecordSourceBuild();
+                        RuntimeEngine.Rendering.Stats.RecordShaderVariant(warming: true);
                         if (ShouldLogRenderingShaderLinkVerbose())
                             Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
                     }
@@ -3689,6 +3707,7 @@ namespace XREngine.Rendering.OpenGL
                             "Backend shader compile failed.",
                             compileMilliseconds,
                             0.0);
+                        RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                         CompleteBuildTelemetry(false, compileMilliseconds, failureReason: "Backend shader compile failed.");
                         MarkHashFailed("Backend shader compile failed.");
                         InFlightCompilations.TryRemove(Hash, out _);
@@ -3789,6 +3808,7 @@ namespace XREngine.Rendering.OpenGL
                                 linkError,
                                 compileMilliseconds,
                                 linkMilliseconds);
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                             CompleteBuildTelemetry(false, compileMilliseconds, linkMilliseconds, failureReason: linkError);
                             MarkHashFailed(linkError);
                             sourceBuildFailed = true;
@@ -3812,6 +3832,7 @@ namespace XREngine.Rendering.OpenGL
                                 "source link completed",
                                 compileMilliseconds: compileMilliseconds,
                                 linkMilliseconds: linkMilliseconds);
+                            RuntimeEngine.Rendering.Stats.RecordShaderVariant(linked: true, generatedThisRun: true);
                             CompleteBuildTelemetry(true, compileMilliseconds, linkMilliseconds, reflectionMilliseconds: reflectionMilliseconds);
                             ClearCompletedBuildPendingState();
                         }
@@ -3825,6 +3846,7 @@ namespace XREngine.Rendering.OpenGL
                             "one or more shaders were not compiled",
                             "One or more shaders failed to compile.",
                             compileMilliseconds);
+                        RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                         CompleteBuildTelemetry(false, compileMilliseconds, failureReason: "One or more shaders failed to compile.");
                         MarkHashFailed("One or more shaders failed to compile.");
                         sourceBuildFailed = true;

@@ -18,6 +18,10 @@ public sealed partial class RenderStatsPacket
     public int ForbiddenGpuFallbackEvents { get; set; }
     public int GpuMappedBuffers { get; set; }
     public long GpuReadbackBytes { get; set; }
+
+    // Rendering profiler schema v2: nested to stay below MemoryPack's per-object member cap.
+    public RenderProfilerV2Data RenderProfilerV2 { get; set; } = new();
+
     public int GpuTransparencyOpaqueOrOtherVisible { get; set; }
     public int GpuTransparencyMaskedVisible { get; set; }
     public int GpuTransparencyApproximateVisible { get; set; }
@@ -229,12 +233,146 @@ public sealed partial class RenderStatsPacket
 }
 
 [MemoryPackable]
+public sealed partial class RenderProfilerV2Data
+{
+    public int ProfileCaptureSchemaVersion { get; set; } = 2;
+    public RenderProfilerRendererStateData RendererState { get; set; } = new();
+    public RenderProfilerSceneAssetData SceneAssets { get; set; } = new();
+    public RenderProfilerGpuDrivenData GpuDriven { get; set; } = new();
+}
+
+[MemoryPackable]
+public sealed partial class RenderProfilerRendererStateData
+{
+    public int IndirectCountCalls { get; set; }
+    public int ShaderProgramSwitches { get; set; }
+    public int ProgramPipelineSwitches { get; set; }
+    public int VaoBinds { get; set; }
+    public int VaoBindSkips { get; set; }
+    public int ArrayBufferBinds { get; set; }
+    public int ElementArrayBufferBinds { get; set; }
+    public int DrawIndirectBufferBinds { get; set; }
+    public int ParameterBufferBinds { get; set; }
+    public int SsboBinds { get; set; }
+    public int UboBinds { get; set; }
+    public int TextureBinds { get; set; }
+    public int TextureBindSkips { get; set; }
+    public int TextureUnitSwitches { get; set; }
+    public int UniformCalls { get; set; }
+    public int SamplerUniformCalls { get; set; }
+    public long BufferUploadBytes { get; set; }
+    public int BarrierCalls { get; set; }
+    public int BarrierAll { get; set; }
+    public int BarrierCommand { get; set; }
+    public int BarrierBufferUpdate { get; set; }
+    public int BarrierShaderStorage { get; set; }
+    public int BarrierTextureFetch { get; set; }
+    public int BarrierTextureUpdate { get; set; }
+    public int BarrierFramebuffer { get; set; }
+    public int TimestampQueryCount { get; set; }
+    public long TimestampQueryReadbackBytes { get; set; }
+    public int TimestampDenseModeFrames { get; set; }
+    public int RedundantStateSkips { get; set; }
+    public int CpuDirectDrawCalls { get; set; }
+    public int GpuIndirectDrawCalls { get; set; }
+    public int GpuMeshletDrawCalls { get; set; }
+    public int UnknownStrategyDrawCalls { get; set; }
+    public string ActiveTextureBindingRung { get; set; } = string.Empty;
+    public string ActiveStereoMode { get; set; } = string.Empty;
+    public string ActiveSubmissionStrategy { get; set; } = string.Empty;
+    public string ActiveRenderBackend { get; set; } = string.Empty;
+    public bool ValidationLayersEnabled { get; set; }
+    public bool DebugOutputEnabled { get; set; }
+    public bool GpuTimestampsDenseMode { get; set; }
+}
+
+[MemoryPackable]
+public sealed partial class RenderProfilerSceneAssetData
+{
+    public int VisibleRendererCount { get; set; }
+    public int VisibleSubmeshCount { get; set; }
+    public long VisibleTriangleCount { get; set; }
+    public int MaterialSlotCount { get; set; }
+    public int ActiveMaterialCount { get; set; }
+    public int TextureCount { get; set; }
+    public long ResidentTextureMemoryBytes { get; set; }
+    public int TextureUploadJobs { get; set; }
+    public long TextureUploadBytes { get; set; }
+    public double TextureUploadMs { get; set; }
+    public int ShaderVariantsRequested { get; set; }
+    public int ShaderVariantsWarming { get; set; }
+    public int ShaderVariantsLinked { get; set; }
+    public int ShaderVariantsFailed { get; set; }
+    public int ShaderVariantsLoadedFromDiskCache { get; set; }
+    public int ShaderVariantsGeneratedThisRun { get; set; }
+    public int SkinnedRendererCount { get; set; }
+    public long BoneMatrixUploadBytes { get; set; }
+    public long BlendshapeWeightUploadBytes { get; set; }
+    public int SkinningComputeDispatchCount { get; set; }
+    public int BlendshapeComputeDispatchCount { get; set; }
+    public int AvatarSourceMeshCount { get; set; }
+    public int AvatarOptimizedLodCount { get; set; }
+    public int AvatarMeshletCount { get; set; }
+    public int AvatarVisibilityBufferCount { get; set; }
+    public int AvatarClusterVirtualizedCount { get; set; }
+    public int AvatarOctahedralImpostorCount { get; set; }
+    public int AvatarGaussianSplatCount { get; set; }
+    public RenderAssetCostRowData[] RenderAssetCostRows { get; set; } = [];
+}
+
+[MemoryPackable]
+public sealed partial class RenderProfilerGpuDrivenData
+{
+    public long GpuDrivenCulledCommandCount { get; set; }
+    public int GpuDrivenActiveBucketCount { get; set; }
+    public int GpuDrivenEmptyBucketSkips { get; set; }
+    public int GpuDrivenFullBucketScans { get; set; }
+    public int GpuDrivenMaterialScatterDispatches { get; set; }
+    public double GpuDrivenIndirectCommandGenerationMs { get; set; }
+    public double GpuDrivenGpuCullMs { get; set; }
+    public double GpuDrivenGpuSortCompactMs { get; set; }
+    public long GpuDrivenDelayedDrawCountBufferValue { get; set; }
+    public long GpuDrivenDelayedDiagnosticReadbackBytes { get; set; }
+    public int GpuDrivenDelayedDiagnosticReadbackCount { get; set; }
+    public long GpuCompactionOverflow { get; set; }
+    public long GpuActiveListOverflow { get; set; }
+    public long GpuBucketOverflow { get; set; }
+    public long GpuMeshletOverflow { get; set; }
+    public string GpuHiZMode { get; set; } = string.Empty;
+    public int GpuHiZOnePhaseFrames { get; set; }
+    public int GpuHiZTwoPhaseFrames { get; set; }
+    public long GpuHiZPhaseOneDraws { get; set; }
+    public long GpuHiZPhaseTwoDraws { get; set; }
+    public int VisibilityPassDraws { get; set; }
+    public long VisibilityClassifiedPixels { get; set; }
+    public int VisibilityActiveMaterialTiles { get; set; }
+    public int VisibilityClassificationOverflow { get; set; }
+    public double VisibilityReconstructionMs { get; set; }
+    public double VisibilityMaterialShadingMs { get; set; }
+}
+
+[MemoryPackable]
 public sealed partial class GpuPipelineTimingNodeData
 {
     public string Name { get; set; } = string.Empty;
     public double ElapsedMs { get; set; }
     public int SampleCount { get; set; }
     public GpuPipelineTimingNodeData[] Children { get; set; } = [];
+}
+
+[MemoryPackable]
+public sealed partial class RenderAssetCostRowData
+{
+    public string SourceAssetIdentity { get; set; } = string.Empty;
+    public string CookedVariantIdentity { get; set; } = string.Empty;
+    public string MeshName { get; set; } = string.Empty;
+    public string MaterialName { get; set; } = string.Empty;
+    public string Representation { get; set; } = string.Empty;
+    public int DrawCalls { get; set; }
+    public long Triangles { get; set; }
+    public int MaterialSlots { get; set; }
+    public int TextureCount { get; set; }
+    public int SkinnedDraws { get; set; }
 }
 
 /// <summary>

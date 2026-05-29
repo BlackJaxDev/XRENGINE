@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Input;
@@ -1076,7 +1077,7 @@ namespace XREngine.Rendering
                 RuntimeEngine.PlayMode.State);
             */
             
-            //using (RuntimeEngine.Profiler.Start("XRViewport.Render"))
+            using (RuntimeEngine.Profiler.Start("XRViewport.Render", ProfilerScopeKind.AlwaysOnHotPathLoop))
             {
                 bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
 

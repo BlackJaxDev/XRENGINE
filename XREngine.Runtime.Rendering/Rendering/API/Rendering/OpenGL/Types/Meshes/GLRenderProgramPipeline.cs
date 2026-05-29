@@ -7,13 +7,18 @@ namespace XREngine.Rendering.OpenGL
     {
         public class GLRenderProgramPipeline(OpenGLRenderer renderer, XRRenderProgramPipeline data) : GLObject<XRRenderProgramPipeline>(renderer, data)
         {
+#if DEBUG || EDITOR
             private bool _validationLogged;
             private bool _validatedSuccessfully;
+#endif
 
             public override EGLObjectType Type => EGLObjectType.ProgramPipeline;
 
             public void Bind()
-                => Api.BindProgramPipeline(BindingId);
+            {
+                Api.BindProgramPipeline(BindingId);
+                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.ProgramPipelineSwitches);
+            }
             public void Set(EProgramStageMask mask, GLRenderProgram program)
                 => Api.UseProgramStages(BindingId, ToUseProgramStageMask(mask), program.BindingId);
             public void Clear(EProgramStageMask mask)

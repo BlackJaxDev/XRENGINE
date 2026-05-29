@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -267,6 +268,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     _renderer.Api.NamedBufferSubData(buffer.BindingId, offsetBytes, chunkLength, src + offsetBytes);
                 }
+                RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, chunkLength);
 
                 offset += chunkLength;
                 if (offset < dataLength)
