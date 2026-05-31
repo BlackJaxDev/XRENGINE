@@ -70,8 +70,16 @@ namespace XREngine.Rendering.OpenGL
             private bool UseShaderPipelinesForThisRenderer()
                 => RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;
 
+            private void ClearShaderProgramBindingsForRebuild()
+            {
+                Api.UseProgram(0);
+                Api.BindProgramPipeline(0);
+            }
+
             private void DestroyCombinedProgram()
             {
+                ClearShaderProgramBindingsForRebuild();
+
                 foreach (CombinedProgramCacheEntry entry in _combinedProgramCache.Values)
                     ReleaseCombinedProgramEntry(entry);
 
@@ -98,6 +106,8 @@ namespace XREngine.Rendering.OpenGL
 
             private void DestroySeparablePrograms()
             {
+                ClearShaderProgramBindingsForRebuild();
+
                 DestroyOwnedPipeline(ref _pipeline);
                 _pipeline = null;
 
@@ -528,8 +538,8 @@ namespace XREngine.Rendering.OpenGL
                 return false;
             }
 
-            private static bool ShouldUsePipelineForPendingUberFallbackMaterial(GLMaterial material)
-                => RuntimeEngine.Rendering.Settings.AllowShaderPipelines &&
+            private bool ShouldUsePipelineForPendingUberFallbackMaterial(GLMaterial material)
+                => UseShaderPipelinesForThisRenderer() &&
                    s_pendingUberFallbackMaterial is not null &&
                    ReferenceEquals(material.Data, s_pendingUberFallbackMaterial);
 

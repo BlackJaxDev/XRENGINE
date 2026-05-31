@@ -17,14 +17,15 @@ Scope: advanced quad-view foveated VR rendering for opaque geometry, shared ligh
 
 ## External References
 
-- OpenXR 1.1 `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO_WITH_FOVEATED_INSET`: <https://registry.khronos.org/OpenXR/specs/1.1/html/xrspec.html>
-- OpenXR `XR_VARJO_quad_views`: <https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_VARJO_quad_views.html>
-- OpenXR `XR_VARJO_foveated_rendering` view configuration sizing: <https://registry.khronos.org/OpenXR/specs/1.0/man/html/XrFoveatedViewConfigurationViewVARJO.html>
+- OpenXR quad-view config `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO` (from `XR_VARJO_quad_views`, promoted into OpenXR 1.1): <https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_VARJO_quad_views.html>
+- OpenXR `XR_VARJO_foveated_rendering` view configuration sizing and dual-swapchain recommendation: <https://registry.khronos.org/OpenXR/specs/1.0/man/html/XrFoveatedViewConfigurationViewVARJO.html>
 - Vulkan multiview: <https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_multiview.html>
 - Direct3D 12 variable rate shading: <https://microsoft.github.io/DirectX-Specs/d3d/VariableRateShading.html>
 - Vulkan fragment shading rate sample: <https://docs.vulkan.org/samples/latest/samples/extensions/fragment_shading_rate/README.html>
 - Visibility buffer rendering, Burns/Hunt: <https://jcgt.org/published/0002/02/04/>
 - Decoupled Sampling for Graphics Pipelines: <https://people.csail.mit.edu/jrk/decoupledsampling/ds.pdf>
+- Analytic texture gradients from barycentric partials (visibility-buffer material reconstruction): <https://momentsingraphics.de/ToyRenderer3RenderingBasics.html>
+- Texture Level of Detail Strategies for Real-Time Ray Tracing (ray cones), Akenine-Moller et al.: <https://www.jcgt.org/published/0010/01/01/>
 
 ## 1. Summary
 
@@ -74,7 +75,7 @@ left high-resolution inset view
 right high-resolution inset view
 ```
 
-The OpenXR `PRIMARY_STEREO_WITH_FOVEATED_INSET` view configuration formalizes this model. View indices 0 and 1 are the regular left and right stereo views; indices 2 and 3 are the left and right foveated inset views. The inset views are contained within their corresponding wide views, may be higher density for the same field of view, and the runtime may blend the inset and outer views at the edges. Therefore, the outer view still has to render the inner region, but the application can render that region at lower shading quality.
+The OpenXR quad-view configuration `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO` (defined by `XR_VARJO_quad_views` and promoted into OpenXR 1.1 under that name) formalizes this model. There is currently no vendor-neutral "stereo with foveated inset" view configuration token; the Varjo quad-view config is the authoritative path. View indices 0 and 1 are the regular left and right stereo (context/wide) views; indices 2 and 3 are the left and right foveated inset (focus) views. Each inset view shares its eye's pose with the corresponding wide view, may be higher density for the same or narrower field of view, and the runtime may composite the inset on top of the wide view and blend at the boundary. Therefore, the outer view should remain valid under the inner region, but the application can render that region at lower shading quality.
 
 The naive implementation is "render four cameras." That is correct but wasteful. RVC treats the four views as four visibility queries into one shared scene-lighting system.
 
@@ -185,14 +186,14 @@ Every renderer path then consumes a `RenderFrameViewSet` instead of assuming one
 
 OpenXR-driven quad-view rendering has several hard requirements:
 
-- The application must select the view configuration before `xrBeginSession`; it cannot switch from stereo to quad-view mid-session without ending and recreating the session.
+- The application must select the view configuration (`XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO`) before `xrBeginSession`; it cannot switch from stereo to quad-view mid-session without ending and recreating the session.
 - View count must be runtime-reported. Code must not hard-code 2.
-- View indices 0 and 1 are left and right wide views.
-- View indices 2 and 3 are left and right inset views.
-- Each inset view is contained in the corresponding wide eye projection when projected onto the same plane.
+- View indices 0 and 1 are left and right wide (context) views.
+- View indices 2 and 3 are left and right inset (focus) views.
+- The inset shares its eye's pose with the corresponding wide view. The runtime may composite the inset on top of the wide view and may blend at the inset boundary, so the inset is not guaranteed to be strictly contained in the wide projection in every runtime build; do not rely on geometric containment for correctness.
 - The inset and wide view poses for the same eye must match, but the inset FOV can change at runtime.
-- The runtime may blend the inset and wide views around the inset boundary.
-- The app must still render the wide view under the inset region.
+- The app should keep the wide view valid under the inset region because the runtime may sample it during edge blending.
+- Foveated and non-foveated `XrViewConfigurationView` sizes differ. Per the Varjo spec, applications should enumerate both a foveated-active and a non-foveated view set and maintain two sets of swapchains (or one oversized set with two viewport layouts), selecting the foveated set only when rendering gaze is available.
 
 Implications for XREngine:
 
@@ -254,7 +255,7 @@ LOD selection must be foveation-aware but stereo-stable:
 | Wide periphery | Lower LOD allowed, but shared across both eyes when possible. |
 | Near UI/hands/controllers | Force high quality regardless of gaze region. |
 
-LOD must not pop differently between eyes. Use a cyclopean/head-space metric for base LOD, then allow only conservative foveation refinements.
+LOD must not pop differently between eyes. Use a cyclopean/head-space metric for base LOD, then allow only conservative foveation refinements. Prefer continuous/cluster-based LOD (Nanite-style selection) where available, because discrete LOD swaps that fire on one eye before the other are visible as eye-dominance flicker. If only discrete LOD is available, bind LOD hysteresis to head-space distance and apply the same decision to both eyes of a stereo pair.
 
 ## 12. Pass 1: Quad-View Visibility
 
@@ -300,7 +301,7 @@ Visibility pass rules:
 
 Backend notes:
 
-- OpenGL 4.6 can prototype with layered FBOs, SSBOs, image load/store, and multi-draw indirect, but multiview availability is vendor/extension-sensitive.
+- OpenGL 4.6 can prototype with layered FBOs, SSBOs, image load/store, and multi-draw indirect, but true multiview (`OVR_multiview`/`OVR_multiview2`) is vendor/extension-sensitive and patchy on desktop NVIDIA. Do not commit the multiview visibility path to the OpenGL prototype; emulate with layered FBOs only for correctness and treat Vulkan as the multiview target.
 - Vulkan is the intended backend for true multiview, fragment shading rate, explicit barriers, and future async overlap.
 - DX12 is a future peer for VRS and view instancing if/when a backend exists.
 
@@ -329,6 +330,8 @@ Suggested shading rates:
 | Periphery | 1 per 4x4 or 1 per 8x8 | Aggregate lighting and simpler BRDF. |
 | Near UI/controllers | 1 per pixel | Overrides foveation region. |
 
+Where the GPU exposes Tier 2 variable rate shading (DX12 shading-rate image or `VK_KHR_fragment_shading_rate`), the periphery coarsening can be expressed directly as a per-tile shading-rate image instead of compute-side shadelet quantization. This is the recommended fast path for materials that are not yet ported to compute-side material reconstruction: it captures most of the peripheral shading win with no compute derivative work and lets Stage 3 ship before the full shadelet cache exists. Compute-side shadelet quantization remains the path for cross-view/stereo reuse and for backends without VRS.
+
 The shadelet key must be conservative enough to prevent visible reuse errors:
 
 ```c
@@ -340,6 +343,8 @@ struct ShadeletKey
     uint MaterialId;
     uint QuantizedBaryUv;
     uint LodBucket;
+    uint RoughnessBucket;        // gates stereo/broad-specular sharing (see Pass 4/5)
+    uint DeformationVersion;     // skinning/blendshape/instance deform id; invalidates stale reuse
     uint RegionQuality;
 };
 ```
@@ -349,14 +354,14 @@ Deduplication can be implemented in stages:
 1. No dedupe: one shadelet per requested sample group.
 2. Intra-view dedupe: coarse foveated blocks share one shadelet.
 3. Intra-eye dedupe: wide and inset samples for the same eye share stable surface work.
-4. Stereo dedupe: left/right samples share material and reusable lighting when barycentric and normal agreement pass thresholds.
+4. Stereo dedupe: left/right samples share material and reusable lighting when barycentric, normal, roughness-bucket, and deformation-version agreement pass thresholds.
 5. Temporal dedupe: persistent cache entries survive across frames when camera, gaze, material, and deformation allow it.
 
-The shipping rule is opportunistic reuse. If a sample cannot prove that a shadelet is safe to reuse, it shades locally.
+The shipping rule is opportunistic reuse. If a sample cannot prove that a shadelet is safe to reuse, it shades locally. Stereo dedupe (stage 4) is the most novel and most artifact-prone step and must be opt-in per material with an A/B validation harness; see Stage 5 in the implementation plan. Parallax-occlusion and virtual-displacement materials produce different surface hits per eye even at identical macro-triangle barycentrics, so they must either be excluded from stereo sharing or keyed on the displaced surface point rather than the macro-triangle barycentric.
 
 ## 14. Pass 3: Material Shadelet Cache
 
-This pass reconstructs material inputs for each unique shadelet.
+This pass reconstructs material inputs for each unique shadelet. Before reconstruction, run a material count/reorder step (count samples per material, sort shadelet work into per-material runs, shade coherently, scatter back). This is the standard visibility-buffer optimization and is required at scale to keep the bindless material access coherent; see the cross-domain extensions section.
 
 Inputs:
 
@@ -395,14 +400,13 @@ Material evaluation responsibilities:
 - Decode normal maps.
 - Apply material LOD and texture residency policy.
 
-Texture derivatives are the hardest material-cache issue. Compute shaders do not automatically provide pixel shader derivatives. RVC needs explicit footprints:
+Texture derivatives are the hardest material-cache issue. Compute shaders do not automatically provide pixel shader quad derivatives. The default, production-grade solution is analytic gradients, not neighbor sampling:
 
-- Derive gradients from neighboring visibility samples when available.
-- Store representative neighbor shadelets for 2x2 and 4x4 blocks.
-- Use explicit `textureGrad` or equivalent where the backend supports it.
-- Use ray cone or depth/normal footprint estimates for peripheral shadelets.
-- Bias mips in the periphery to avoid shimmer.
-- Force pixel shader fallback for materials whose procedural texture graph requires implicit derivatives.
+- Default: reconstruct UV gradients analytically from the barycentric partial derivatives of the visible triangle (screen-space ray-differential / barycentric-partials method). This produces correct `textureGrad` footprints for an isolated compute sample and does not depend on neighbor threads sharing a triangle or material.
+- Reflections and peripheral coarse shadelets: estimate footprints with ray cones (Akenine-Moller et al.) or depth/normal footprint estimates.
+- Quad-neighbor derivatives are only valid inside a 2x2 thread group that lies on the same triangle and material, which a coarse-shadelet pass cannot guarantee; do not rely on them as the primary source.
+- Bias mips in the periphery as a tuning knob to suppress shimmer, not as a substitute for correct gradients.
+- Force pixel shader fallback only for materials whose procedural texture graph genuinely requires implicit derivatives that cannot be expressed analytically.
 
 This pass should integrate with the dynamic material binding work. RVC-compatible materials need generated material reconstruction code, not hand-maintained duplicate shader structs.
 
@@ -467,9 +471,13 @@ struct SharedLighting
     half3 DiffuseIndirect;
     half3 BroadSpecular;
     half  ShadowMask;
+    half  Confidence;            // see cross-domain extensions: shading-cache confidence/age
+    uint  Age;                   // frames since last full evaluation
     uint  Validity;
 };
 ```
+
+For many-light scenes, the shared lighting record may store a small spatiotemporal reservoir per shadelet instead of (or alongside) a fixed top-K list. Reservoir resampling provides a principled invalidation and MIS story and combines gracefully across the stereo pair; see the cross-domain extensions section. Reservoirs may be adopted at this pass or deferred to the temporal stage.
 
 Reusable across eyes/layers:
 
@@ -491,6 +499,8 @@ Per-view or per-pixel correction:
 - Clearcoat and anisotropic highlights.
 
 Foveation affects lighting quality, not just pixel density:
+
+The shared-versus-per-view specular split is driven by material roughness, not foveation region alone. As a practical default, broad specular may be shared across eyes/layers when surface roughness exceeds roughly 0.35; below that threshold (glossy, clearcoat, mirror-like) specular must be evaluated per view, at least in the fovea and guard band. The `RoughnessBucket` in the shadelet key gates this decision so glints and sharp highlights are never shared across the stereo pair.
 
 | Region | Material | Lights | Shadows | Specular | Screen-Space Effects |
 | --- | --- | --- | --- | --- | --- |
@@ -525,6 +535,7 @@ Resolve responsibilities:
 - Blend or reject shadelet reuse at depth/normal/material discontinuities.
 - Generate per-view output for OpenXR composition.
 - Keep wide-view shading valid under inset regions because the runtime may blend there.
+- Shade disocclusion holes between the wide and inset views per view this frame. Never fill them from temporal history; stale history in a newly disoccluded region is visible as ghosting in VR.
 
 Specular policy:
 
@@ -617,7 +628,7 @@ That inequality comes from:
 - Optional temporal reuse.
 - Peripheral light aggregation.
 
-A practical first target is not theoretical perfection. The first target is to beat four-view Forward+ in opaque-heavy scenes while matching its quality in the fovea.
+A practical first target is not theoretical perfection. The first target is to beat four-view Forward+ in opaque-heavy scenes while matching its quality in the fovea. As a concrete, measurable gate, a typical scene with fovea at 1x1, mid-field at 2x2, periphery at 4x4 plus inset/wide and stereo reuse should land `S` in the range of roughly 20-35% of `sum(P_i)`. Stage 5 should adopt a measured `S < 0.5 * sum(P_i)` as an exit criterion rather than the vaguer "beats Forward+".
 
 ## 20. Resource Layout
 
@@ -665,6 +676,8 @@ fallback material count
 transparent Forward+ draw count
 ```
 
+All debug counters are written to GPU buffers and read back double-buffered, several frames late. They must never be read back synchronously inside the render loop, because that reintroduces the GPU stall the zero-readback design exists to avoid.
+
 ## 21. Gaze And Foveation Policy
 
 Inputs:
@@ -700,6 +713,8 @@ RvcForceFullResNearDistanceMeters
 RvcDebugOverlay
 ```
 
+`RvcStereoReuseEnabled` defaults to off and is enabled per scene/per material only after the A/B harness validates that stereo reuse is artifact-free for that content. Materials may also carry a `MaxSharedRoughness` override that feeds the `RoughnessBucket` decision and an opt-out flag for parallax/displacement materials.
+
 Existing `VrFoveationInnerRadius`, `VrFoveationOuterRadius`, `VrFoveationShadingRates`, and `VrFoveationFullResNearDistanceMeters` can inform early prototypes, but true quad-view should move toward runtime FOV/gaze-space units rather than only normalized viewport radii.
 
 ## 22. Scheduling And Synchronization
@@ -729,6 +744,7 @@ Important rules:
 - No CPU readback in the render loop.
 - Gaze/inset changes can update constants late, but must not require CPU-side command rebuilds where avoidable.
 - GPU barriers between visibility, shade request generation, material cache, lighting cache, and resolve must be explicit in Vulkan.
+- The eight passes, their resource lifetimes, aliasing, and barriers should be expressed through the frame graph described in the pipeline strategy section rather than hand-ordered. The barrier rules below assume that frame graph exists.
 - OpenGL prototype must isolate barriers and image/SSBO memory semantics behind render-pass helpers.
 - Async compute is future work. Do not require it for the first implementation.
 
@@ -802,7 +818,8 @@ Goal: make render code view-count agnostic.
 
 Goal: correctness path before invention.
 
-- Enumerate OpenXR view configurations and select `PRIMARY_STEREO_WITH_FOVEATED_INSET` when supported and enabled.
+- Enumerate OpenXR view configurations and select `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO` when supported and enabled.
+- Maintain both a foveated-active and a non-foveated `XrViewConfigurationView` set and allocate two sets of swapchains (or one oversized set with two viewport layouts), per the Varjo spec; pick the foveated set only when rendering gaze is available.
 - Allocate swapchains for all reported views.
 - Render all four views through Forward+.
 - Use existing foveation settings only as quality hints; the runtime view config owns actual view count and dimensions.
@@ -838,6 +855,7 @@ Goal: decouple visibility rate from shading rate.
 - Build shadelet keys from visibility.
 - Add pixel-to-shadelet maps.
 - Support 1x1, 2x2, 4x4, and 8x8 regions.
+- Add a VRS-only fast path (DX12 shading-rate image / `VK_KHR_fragment_shading_rate`) for materials not yet ported to the compute material cache, so most of the peripheral win lands before the full shadelet cache exists.
 - Add edge-aware rejection at depth/normal/material boundaries.
 - Add shadelet density overlay.
 
@@ -867,14 +885,19 @@ Acceptance:
 Goal: deduplicate material and stable lighting across views.
 
 - Share shadelets between wide and inset views for the same eye.
-- Share material shadelets between eyes when primitive, barycentric, material, normal, and LOD thresholds match.
+- Share material shadelets between eyes when primitive, barycentric, material, normal, roughness-bucket, deformation-version, and LOD thresholds match.
+- Exclude parallax-occlusion/virtual-displacement materials from stereo sharing, or key them on the displaced surface point.
 - Share stable lighting between eyes.
-- Keep per-view specular correction.
+- Keep per-view specular correction; never share specular below the roughness threshold.
+- Default `RvcStereoReuseEnabled` to off and gate it per scene/material.
+- Build an A/B validation harness (RVC stereo-reuse vs per-view shading) as a first-class deliverable of this stage.
 - Add counters for reuse hits and rejected attempts.
 
 Acceptance:
 
+- Measured `S < 0.5 * sum(P_i)` on opaque-heavy test scenes.
 - Reuse is measurable in real scenes.
+- A/B harness shows no perceptible difference versus per-view shading on the validated content set.
 - Specular highlights remain eye-correct in fovea.
 - Disocclusions and one-eye-only surfaces shade locally.
 
@@ -897,7 +920,7 @@ Acceptance:
 Goal: exploit frame-to-frame stability without hurting gaze latency.
 
 - Add persistent shadelet cache entries for static/diffuse-friendly surfaces.
-- Add invalidation for material changes, deformation, LOD changes, shadow changes, and gaze region changes.
+- Add invalidation for material parameter changes/animation, deformation, LOD changes, shadow caster set changes, and gaze region changes.
 - Investigate late foveal inset refresh for Vulkan.
 
 Acceptance:
@@ -905,7 +928,81 @@ Acceptance:
 - Static scenes show cache hit rate without ghosting.
 - Gaze movement does not expose stale low-quality shading in the fovea.
 
-## 25. Validation Plan
+## 25. Inventive Surface And Novelty Boundary
+
+Most of RVC is a synthesis of proven techniques: the visibility buffer (Burns/Hunt), decoupled sampling (Ragan-Kelley et al.), clustered/Forward+ lighting, foveation and variable rate shading, and analytic visibility-buffer derivatives. Combining these is engineering, not invention; Nanite-class visibility rendering, real-time GI, and foveation already coexist in shipping engines.
+
+The genuinely inventive surface is narrow and concentrated in three ideas. Validation effort, the A/B harness, and any future tech report should focus here:
+
+1. The shadelet as a first-class cross-view deduplication unit, keyed by `{primitive, quantized barycentric, roughness bucket, deformation version}` and shared across all four OpenXR views. In-frame decoupled sampling and texture-space shading reuse exist, but reusing lit surface records across stereo eyes and foveal insets through one explicit cache keyed this way is the novel contribution.
+2. Head-space (cyclopean) light clustering feeding four asymmetric-FOV views, with a per-cluster top-K-exact plus aggregate split. Culling once for stereo is established; promoting the cluster grid to a head-anchored 3D structure that all four views index is an uncommon generalization.
+3. Organizing the entire renderer around retinal need rather than per-camera frames. This is an architecture/framing invention more than an algorithm, and it is the bet that justifies the rest.
+
+Everything outside these three items should be treated as established art and implemented with off-the-shelf approaches rather than reinvented.
+
+## 26. Cross-Domain Extensions
+
+These techniques come from offline rendering, real-time GI, GPU compute, and ML rather than from VR specifically. Each replaces a hand-rolled, artifact-prone RVC mechanism with a more principled, better-tested one.
+
+### 26.1 Reyes-Style Decoupled Shading Grids
+
+The shadelet cache is conceptually a real-time Reyes shading cache. The Reyes literature already solved shading rate independent of visibility rate with stable derivatives via micropolygon grids and grid-space derivatives. Borrow grid quantization and grid-neighbor derivative computation instead of inventing shadelet-block neighbor logic from scratch. This reinforces the analytic-derivative path in Pass 3.
+
+### 26.2 Shading Cache Confidence And Age
+
+Add an explicit per-shadelet `Confidence` and `Age` field, as film GI irradiance caches do. This lets the resolve blend stale-but-cheap peripheral shadelets with fresh foveal ones smoothly, and it drives temporal invalidation more gracefully than a hard valid/invalid bit. These fields feed Stage 7.
+
+### 26.3 Reservoir-Based Shared Lighting (ReSTIR)
+
+The Stage 7 temporal cache is a weaker form of spatiotemporal reservoir resampling. Store a small reservoir per shadelet, especially for many-light scenes. This makes peripheral light aggregation (Pass 4) both cheaper and higher quality and provides a principled invalidation and MIS story. This is likely the largest quality-per-effort win available and should be evaluated before hand-rolling temporal accumulation.
+
+### 26.4 Stereo Reuse As Reservoir Combination
+
+Reframe stereo deduplication from a correctness-risky equality test into reservoir combination across the eye pair. Combining reservoirs degrades gracefully when the eyes disagree, directly mitigating the biggest artifact risk in Stage 5. Raw lit-record copy remains the fast path only when agreement thresholds are comfortably met.
+
+### 26.5 Material Sort/Bin Before Shading
+
+Before the material cache pass, run a compute pass that counts pixels/samples per material, reorders the visibility/shadelet work into per-material runs, shades coherently, then scatters back. This is the standard visibility-buffer optimization (material count plus reorder) and converts a divergent compute material pass into coherent per-material dispatches with cache-friendly bindless access. This is mandatory at scale, not optional, and belongs in Stage 3.
+
+### 26.6 World-Space Hash-Grid Temporal Store
+
+Back the temporal shadelet cache with a world-space spatial hash (position plus normal plus roughness), in the style of a world-space hash radiance cache, rather than relying on primitive plus barycentric identity. Primitive/barycentric identity breaks under LOD and topology change; a spatial hash persists shadelet identity across frames far more robustly. This becomes the storage backend for Stage 7.
+
+### 26.7 Learned Peripheral Reconstruction
+
+Replace the hand-tuned edge-aware upsample in Pass 5 with a DLSS/FSR-class or small learned foveal reconstruction from coarse shadelets plus depth/normal. This is exactly the regime where learned reconstruction wins, and VR vendors already ship the building blocks. Keep the hand-tuned path as the portable fallback.
+
+### 26.8 Gaze/Saccade Prediction
+
+Foveal latency is the dominant artifact source. Borrow Kalman or learned saccade prediction from the eye-tracking HCI literature to widen the guard band only in the predicted saccade direction rather than uniformly. This is cheaper and lower latency than a uniformly large guard band and feeds the foveation policy in the gaze section.
+
+### 26.9 Checkerboard/Quad Rotation In The Periphery
+
+Rotate hardware-quad/checkerboard sample patterns across frames in the periphery, fused with the temporal cache, for effective rate reduction beyond static VRS at near-zero cost.
+
+Priority recommendation: fold in material sort/bin (26.5), reservoir-based shared lighting (26.3/26.4), and the world-space hash-grid temporal store (26.6) first. Each replaces a hand-rolled, artifact-prone RVC piece with a more principled, better-tested mechanism.
+
+## 27. Pipeline Strategy And Frame Graph
+
+RVC should be built as a dedicated render pipeline, but staged as a parallel sibling, not a fork of the current pipeline, and not before the foundations exist.
+
+Rationale:
+
+- RVC violates core assumptions of the current Forward+/DefaultRenderPipeline that cannot be expressed as a toggle: shading is decoupled from rasterization, lighting is head-space rather than view-space, the frame is N views rather than one or two, and resolve is a separate compute stage. Expressing all of this as flags on the existing pipeline produces branchy, untestable code.
+- A premature full split is also wrong: the early stages need the existing renderer as a pixel-for-pixel correctness oracle.
+
+Recommended structure:
+
+- Stage 0-1: no new pipeline. Add `RenderFrameViewSet` and quad-view Forward+ inside the current pipeline. This is shared plumbing every future path needs.
+- Stage 2 onward: introduce a distinct `RvcRenderPipeline` as a sibling to `DefaultRenderPipeline`, selectable by setting, sharing scene/cull/material-table/light-buffer services but owning its own pass graph. Keep Forward+ as the in-pipeline transparency overlay and fallback, not a separate pipeline.
+- Do not fork the default pipeline, and do not build the RVC pipeline before the view-set foundation and visibility-buffer baseline exist.
+
+Frame graph requirement:
+
+- Make the pass graph data-driven via a render/frame graph with explicit resource lifetimes, aliasing, and barriers. RVC has eight passes with non-trivial dependencies and aliasing; a frame graph is effectively mandatory for the Vulkan target and makes the OpenGL prototype's barrier handling tractable.
+- Build the frame graph before Stage 2. Retrofitting it later is painful, and the explicit barriers in the scheduling section assume it.
+
+## 28. Validation Plan
 
 Unit and contract tests:
 
@@ -915,6 +1012,8 @@ Unit and contract tests:
 - Shadelet key hashing/deduplication is deterministic.
 - Material shadelet layout matches generated shader layout.
 - Cluster aggregate math conserves expected light energy for simple fixtures.
+- Reservoir combination is unbiased on simple many-light fixtures.
+- World-space hash-grid lookup is stable under LOD/topology change fixtures.
 
 GPU/debug validation:
 
@@ -925,6 +1024,8 @@ GPU/debug validation:
 - Per-view timing and pixel count logs.
 - Light cluster occupancy and aggregate contribution overlays.
 - Specular correction debug mode.
+- Material-bin occupancy and shading coherence overlay.
+- Shadelet confidence/age overlay.
 
 Runtime validation:
 
@@ -942,14 +1043,14 @@ Performance targets:
 - Stage 5 should show material/stable-light reuse across eyes/layers.
 - Stage 6 should cap many-light peripheral cost.
 
-## 26. Risks And Mitigations
+## 29. Risks And Mitigations
 
 | Risk | Mitigation |
 | --- | --- |
-| Sharp specular looks wrong when shared | Cache only broad specular; evaluate sharp specular per view in fovea/guard band. |
-| Compute material evaluation lacks derivatives | Use explicit gradients, neighbor shadelets, ray-cone estimates, mip bias, or shader fallback. |
-| Disocclusion breaks stereo reuse | Keep visibility per view and make sharing opportunistic. |
-| Inset FOV/gaze changes cause churn | Smooth gaze, use guard bands, and keep wide view valid under inset. |
+| Sharp specular looks wrong when shared | Cache only broad specular; evaluate sharp specular per view in fovea/guard band, gated by roughness bucket. |
+| Compute material evaluation lacks derivatives | Default to analytic barycentric-partial gradients; ray cones for reflections/periphery; shader fallback last. |
+| Disocclusion breaks stereo reuse | Keep visibility per view and make sharing opportunistic; shade disocclusion holes per view this frame. |
+| Inset FOV/gaze changes cause churn | Smooth gaze, use guard bands, predict saccades, and keep wide view valid under inset. |
 | Tiny triangles defeat shadelet reuse | Detect micro-primitive density and fall back to per-pixel or meshlet-level policy. |
 | Deformation invalidates cache | Include skinning/blendshape versioning and instance deformation IDs in cache keys. |
 | Alpha test becomes expensive in visibility pass | Allow only deterministic cheap alpha test; fallback otherwise. |
@@ -958,8 +1059,12 @@ Performance targets:
 | Debugging becomes opaque | Build visualizers and counters as part of each stage. |
 | Memory spikes from shadelet maps | Budget per-view maps explicitly; support compact formats and fallback caps. |
 | Runtime support is inconsistent | Quad-view is opt-in; stereo Forward+ remains the fallback. |
+| Divergent material shading on visibility buffer | Sort/bin shadelets by material before shading for coherent dispatches. |
+| Primitive/barycentric identity breaks under LOD change | Back the temporal store with a world-space spatial hash. |
+| Hand-rolled temporal accumulation is biased/noisy | Use spatiotemporal reservoirs with a principled MIS/invalidation story. |
+| Flag-based bolt-on becomes untestable | Build RVC as a sibling pipeline behind a frame graph, not a toggle on the default pipeline. |
 
-## 27. Open Questions
+## 30. Open Questions
 
 - Should `RenderFrameViewSet` live in runtime rendering abstractions or in the OpenXR layer with a renderer-facing adapter?
 - Should shadelet caches be keyed by primitive barycentrics, UVs, world-space position, or a hybrid?
@@ -970,8 +1075,12 @@ Performance targets:
 - Can late foveal inset updates be scheduled without violating OpenXR frame timing on SteamVR and Oculus runtimes?
 - How should TAA history be shared, if at all, between wide and inset views?
 - What parts of RVC should be exposed as editor quality settings versus backend-only renderer policy?
+- Should the shared lighting cache adopt reservoirs from Stage 4, or only at Stage 7?
+- Is a world-space hash-grid the right temporal store, or should it coexist with primitive/barycentric keys as a hybrid?
+- Which frame-graph implementation (engine-owned vs existing abstraction) should back the RVC pipeline?
+- Where should learned peripheral reconstruction sit relative to the portable hand-tuned upsample?
 
-## 28. Recommended First Branch
+## 31. Recommended First Branch
 
 Create a focused branch for Stage 0 and Stage 1:
 
@@ -989,7 +1098,8 @@ Initial deliverables:
 
 Only after that baseline is correct should the visibility cache work begin.
 
-## 29. Final Architecture Target
+## 32. Final Architecture Target
+
 
 RVC should become the high-end opaque VR renderer:
 

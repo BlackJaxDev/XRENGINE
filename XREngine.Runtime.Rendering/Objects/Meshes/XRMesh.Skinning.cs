@@ -25,6 +25,31 @@ public partial class XRMesh
             throw new InvalidOperationException(BuildInvalidComputeSkinningMessage(GetComputeSkinningValidationError()));
     }
 
+    /// <summary>
+    /// Ensures the mesh's <see cref="UtilizedBones"/> ordering is finalized to the same order the
+    /// per-vertex compressed core bone indices are (or will be) packed against.
+    /// <para>
+    /// <see cref="RebuildSkinningBuffersFromVertices"/> can reorder and extend <see cref="UtilizedBones"/>
+    /// while packing the core indices. If a renderer builds its bone palette from the pre-rebuild
+    /// ordering and the rebuild happens afterwards (e.g. lazily during the compute pre-pass), the
+    /// per-vertex indices will reference the wrong palette slots, corrupting skinning for that mesh.
+    /// Callers that read <see cref="UtilizedBones"/> to build a palette should call this first.
+    /// </para>
+    /// Unlike <see cref="EnsureComputeSkinningBuffers"/>, this never throws: meshes that cannot be
+    /// rebuilt (no source vertices) are assumed to already carry canonical, cooked buffers.
+    /// </summary>
+    public void EnsureSkinningBoneOrderFinalized()
+    {
+        if (!HasSkinning)
+            return;
+
+        if (HasCanonicalComputeSkinningBuffers())
+            return;
+
+        if (CanRebuildSkinningBuffersFromVertices())
+            RebuildSkinningBuffersFromVertices();
+    }
+
     private bool CanRebuildSkinningBuffersFromVertices()
         => Vertices is { Length: > 0 } vertices &&
            vertices.Length == VertexCount &&
@@ -470,6 +495,13 @@ public partial class XRMesh
         uint[] spillHeaders = new uint[vertexCount];
         List<uint> spillEntries = [];
 
+        // Diagnostic: vertices that carry skin weights but pack to zero usable core
+        // influence collapse to the origin on the GPU (transformSkinPosition accumulates
+        // nothing), which renders as missing/degenerate triangles. Counting them here
+        // distinguishes a CPU packing-drop from a GPU bind/decode fault.
+        int weightedVerticesDroppedToZeroInfluence = 0;
+        int firstDroppedVertexIndex = -1;
+
         for (int vi = 0; vi < vertexCount; vi++)
         {
             var group = weightsPerVertex[vi];
@@ -490,6 +522,13 @@ public partial class XRMesh
 
             List<PackedSkinningInfluence> influences = BuildPackedInfluences(boneToIndexTable, group, out int logicalInfluenceCount);
             _maxWeightCount = Math.Max(_maxWeightCount, logicalInfluenceCount);
+
+            if (influences.Count == 0)
+            {
+                weightedVerticesDroppedToZeroInfluence++;
+                if (firstDroppedVertexIndex < 0)
+                    firstDroppedVertexIndex = vi;
+            }
 
             int i = 0;
             for (; i < influences.Count && i < 4; i++)
@@ -535,6 +574,14 @@ public partial class XRMesh
                 PackedSkinningInfluence influence = influences[spillIndex];
                 spillEntries.Add(influence.BoneIndexPlusOne | ((uint)influence.WeightUNorm8 << 16));
             }
+        }
+
+        if (weightedVerticesDroppedToZeroInfluence > 0)
+        {
+            Debug.LogWarning(
+                $"[Skinning] Mesh '{Name ?? "<unnamed>"}': {weightedVerticesDroppedToZeroInfluence}/{vertexCount} weighted vertices packed to ZERO core influence " +
+                $"(first at vertex {firstDroppedVertexIndex}). These collapse to the origin on the GPU (missing/degenerate triangles). " +
+                $"UtilizedBones={UtilizedBones?.Length ?? 0}. Cause is CPU packing: referenced bones absent from the bone index table or all weights non-positive.");
         }
 
         if (!HasSpillInfluences)

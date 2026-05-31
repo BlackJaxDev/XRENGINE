@@ -77,6 +77,7 @@ namespace XREngine
                         _globalDefaultSettings = _settings;
 
                     ApplyEngineSettingChange(null);
+                    global::XREngine.Rendering.OpenGL.OpenGLRenderer.HandleShaderPipelineModeChanged(_settings.AllowShaderPipelines);
                     global::XREngine.Rendering.XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
                     SettingsChanged?.Invoke();
                 }
@@ -161,6 +162,12 @@ namespace XREngine
                 ApplyEngineSettingChange(e.PropertyName);
                 if (e.PropertyName == nameof(EngineSettings.AllowSkinning))
                     XREngine.Debug.Rendering($"[RenderSettings] AllowSkinning changed to {_settings.AllowSkinning}; ShaderConfigVersion={_settings.ShaderConfigVersion}");
+                if (e.PropertyName == nameof(EngineSettings.AllowShaderPipelines))
+                {
+                    global::XREngine.Rendering.OpenGL.OpenGLRenderer.HandleShaderPipelineModeChanged(_settings.AllowShaderPipelines);
+                    global::XREngine.Rendering.XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
+                    XREngine.Debug.Rendering($"[RenderSettings] AllowShaderPipelines changed to {_settings.AllowShaderPipelines}; ShaderConfigVersion={_settings.ShaderConfigVersion}");
+                }
                 SettingsChanged?.Invoke();
             }
 
@@ -953,7 +960,6 @@ namespace XREngine
                     set => SetField(ref _allowShaderPipelines, value, null, _ =>
                     {
                         BumpShaderConfigVersion();
-                        global::XREngine.Rendering.XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
                     });
                 }
 

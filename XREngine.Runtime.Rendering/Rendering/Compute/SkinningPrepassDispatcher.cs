@@ -115,6 +115,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
         if (doSkinning && !renderer.HasExternalSkinPaletteSource)
             renderer.EnsureSkinningBuffers(logWarnings: false);
+
+        if (doSkinning)
+            renderer.VerifyBonePaletteOrderMatchesMesh();
         if (doBlendshapes)
             renderer.EnsureBlendshapeBuffers(logWarnings: false);
 
@@ -170,6 +173,18 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
             resources.LastComputePrepassFrameId = frameId;
 
+            // One-shot: re-seed the per-renderer skin palette from the CURRENT bone render
+            // state before the first real dispatch. The palette is initially seeded in the
+            // renderer constructor (PopulateBoneMatrixBuffers), which can run before the bone
+            // transforms have published their render matrices. Bones seeded stale at that point
+            // are only corrected by RenderMatrixChanged events; a statically-posed skeleton with
+            // no animation never re-fires those events, so the stale dispatch would otherwise be
+            // cached and reused indefinitely (exploding a subset of meshes until a skinning
+            // toggle forces a rebuild). This runs on the render thread where render matrices are
+            // guaranteed valid, mirroring the toggle path (RefreshBoneMatricesFromRenderState).
+            if (doSkinning && !useExternalSkinPaletteSource)
+                resources.EnsureSeededFromRenderState();
+
             // Ensure this renderer's animation inputs are present in the global packed buffers (if enabled).
             // This may resize and/or re-upload global buffers.
             if (usePackedGlobalSkinPalette || useGlobalBlendWeights)
@@ -195,6 +210,16 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             uint blendBase = 0u;
             if (useGlobalBlendWeights && _globalInputs.TryGetBlendshapeWeightsSlice(renderer, out uint packedBlendBase, out _))
                 blendBase = packedBlendBase;
+
+            // Compute-skinning INPUT buffers (skin palette, core indices/weights, vertex positions,
+            // spill, blendshape source data) upload to the GPU asynchronously across frames via the
+            // upload queue. The compute dispatch binds them with SetBlockIndex, which does NOT force
+            // the pending upload to complete (unlike BindSSBO). So the very first dispatch can read
+            // not-yet-uploaded GPU memory (garbage bone indices and positions) and the corrupt result
+            // is then latched by the output cache (CanReuseOutput) until a bone moves. Force the
+            // read-only inputs fully resident here, synchronously, BEFORE binding/dispatching. Output
+            // buffers are intentionally excluded: they are GPU-written and must not be re-uploaded.
+            resources.EnsureSkinningInputsResident(mesh, activeSkinPalette, isInterleaved, doSkinning, doBlendshapes, useGlobalBlendWeights);
 
             try
             {
@@ -241,7 +266,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
                 uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
                 activeProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
-                resources.MarkOutputValid();
+                resources.MarkOutputValid(doSkinning, doBlendshapes);
                 RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
                     0L,
                     0L,
@@ -367,10 +392,124 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
     private sealed class RendererResources(XRMeshRenderer renderer)
     {
         private readonly XRMeshRenderer _renderer = renderer;
+        private bool _seededFromRenderState;
         private XRMesh? _lastMesh;
+
+        /// <summary>
+        /// Re-seeds the per-renderer skin palette from current bone render state exactly once,
+        /// before the first compute dispatch. See call site in <see cref="Run"/> for rationale.
+        /// </summary>
+        public void EnsureSeededFromRenderState()
+        {
+            if (_seededFromRenderState)
+                return;
+            _seededFromRenderState = true;
+            _renderer.LogBoneSeedStalenessDiagnostics("FirstDispatch");
+            _renderer.RefreshBoneMatricesFromRenderState();
+        }
+
+        private bool _residencyLogged;
+
+        /// <summary>
+        /// Forces every read-only compute-skinning INPUT buffer required for this dispatch to be
+        /// fully GPU-resident (generated, pending async upload flushed, storage allocated) before
+        /// the dispatch binds and reads them. This mirrors what <c>BindSSBO</c> already does, but
+        /// the skinning dispatcher binds via <c>SetBlockIndex</c>, which skips that guard. Output
+        /// buffers are deliberately NOT touched here: they are written by the compute shader and
+        /// re-uploading them would clobber the skinned results with stale client data.
+        /// </summary>
+        public void EnsureSkinningInputsResident(
+            XRMesh mesh,
+            XRDataBuffer? skinPalette,
+            bool isInterleaved,
+            bool doSkinning,
+            bool doBlendshapes,
+            bool useGlobalBlendWeights)
+        {
+            // Source vertex data (read-only inputs).
+            if (isInterleaved)
+                EnsureBufferResident(mesh.InterleavedVertexBuffer);
+            else
+            {
+                EnsureBufferResident(mesh.PositionsBuffer);
+                EnsureBufferResident(mesh.NormalsBuffer);
+                EnsureBufferResident(mesh.TangentsBuffer);
+            }
+
+            if (doSkinning)
+            {
+                EnsureBufferResident(skinPalette);
+                EnsureBufferResident(mesh.BoneInfluenceCoreIndices);
+                EnsureBufferResident(mesh.BoneInfluenceCoreWeights);
+                if (mesh.HasSpillInfluences)
+                {
+                    EnsureBufferResident(mesh.BoneInfluenceSpillHeaders);
+                    EnsureBufferResident(mesh.BoneInfluenceSpillEntries);
+                }
+            }
+
+            if (doBlendshapes)
+            {
+                EnsureBufferResident(mesh.BlendshapeCounts);
+                EnsureBufferResident(mesh.BlendshapeIndices);
+                EnsureBufferResident(mesh.BlendshapeDeltas);
+                if (!useGlobalBlendWeights)
+                    EnsureBufferResident(_renderer.BlendshapeWeights);
+            }
+
+            LogBufferResidencyOnce(mesh, skinPalette, isInterleaved);
+        }
+
+        /// <summary>
+        /// If the buffer's GPU wrapper has not finished uploading, force the upload to complete now
+        /// so the data is GPU-resident before the compute shader reads it. Null / already-resident
+        /// buffers are a no-op.
+        /// </summary>
+        private static void EnsureBufferResident(XRDataBuffer? buffer)
+        {
+            if (buffer is null)
+                return;
+            foreach (var wrapper in buffer.APIWrappers)
+            {
+                if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
+                    gl.EnsureStorageAllocatedForGpuCopy();
+            }
+        }
+
+        /// <summary>
+        /// One-shot diagnostic: logs whether the skinning compute INPUT buffers are GPU-resident
+        /// at the first dispatch (after <see cref="EnsureSkinningInputsResident"/> has run, so they
+        /// should all read 'ready' if the residency fix is working).
+        /// </summary>
+        public void LogBufferResidencyOnce(XRMesh mesh, XRDataBuffer? skinPalette, bool isInterleaved)
+        {
+            if (_residencyLogged)
+                return;
+            _residencyLogged = true;
+
+            XRDataBuffer? positions = isInterleaved ? mesh.InterleavedVertexBuffer : mesh.PositionsBuffer;
+            Debug.LogWarning(
+                $"[SkinResidency] Mesh='{mesh.Name ?? "<null>"}' verts={mesh.VertexCount} " +
+                $"palette={ResidencyState(skinPalette)} coreIdx={ResidencyState(mesh.BoneInfluenceCoreIndices)} " +
+                $"coreWt={ResidencyState(mesh.BoneInfluenceCoreWeights)} pos={ResidencyState(positions)} " +
+                $"spillHdr={ResidencyState(mesh.BoneInfluenceSpillHeaders)} spillEnt={ResidencyState(mesh.BoneInfluenceSpillEntries)} " +
+                $"hasSpill={mesh.HasSpillInfluences}");
+        }
+
+        private static string ResidencyState(XRDataBuffer? buffer)
+        {
+            if (buffer is null)
+                return "null";
+            foreach (var wrapper in buffer.APIWrappers)
+                if (wrapper is OpenGLRenderer.GLDataBuffer gl)
+                    return gl.IsReadyForRendering ? "ready" : "PENDING";
+            return "NOWRAP";
+        }
         private int _lastVertexCount;
         private bool _lastWasInterleaved;
         private bool _hasValidOutput;
+        private bool _lastDidSkinning;
+        private bool _lastDidBlendshapes;
         private ulong _lastOutputVersion;
 
         public ulong LastComputePrepassFrameId;
@@ -437,6 +576,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 return false;
             if (_renderer.SkinnedOutputDirty)
                 return false;
+            if (_lastDidSkinning != doSkinning || _lastDidBlendshapes != doBlendshapes)
+                return false;
             if (_renderer.HasPendingComputeSkinningInputChanges)
                 return false;
             if (_lastOutputVersion != _renderer.SkinnedOutputVersion)
@@ -446,9 +587,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             return doSkinning || doBlendshapes;
         }
 
-        public void MarkOutputValid()
+        public void MarkOutputValid(bool doSkinning, bool doBlendshapes)
         {
             _hasValidOutput = true;
+            _lastDidSkinning = doSkinning;
+            _lastDidBlendshapes = doBlendshapes;
             _lastOutputVersion = _renderer.SkinnedOutputVersion;
             _renderer.MarkSkinnedOutputClean();
         }
@@ -481,6 +624,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             _renderer.SkinnedTangentsBuffer = null;
             _renderer.SkinnedInterleavedBuffer = null;
             _hasValidOutput = false;
+            _seededFromRenderState = false;
             _renderer.MarkSkinnedOutputDirty();
 
             if (isInterleaved)
@@ -641,6 +785,9 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             _lastWasInterleaved = false;
             _lastMesh = null;
             _hasValidOutput = false;
+            _seededFromRenderState = false;
+            _lastDidSkinning = false;
+            _lastDidBlendshapes = false;
             _lastOutputVersion = 0;
         }
     }

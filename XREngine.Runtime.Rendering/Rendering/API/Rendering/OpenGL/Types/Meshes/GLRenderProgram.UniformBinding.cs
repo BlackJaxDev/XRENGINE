@@ -85,6 +85,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     _activeSamplerUniforms = [];
                     _activeEngineUniformRequirements = EUniformRequirements.None;
+                    RebuildUniformLocationCachesFromMetadata();
                     return;
                 }
 
@@ -100,6 +101,28 @@ namespace XREngine.Rendering.OpenGL
 
                 _activeSamplerUniforms = [.. samplerUniforms];
                 _activeEngineUniformRequirements = engineUniformRequirements;
+                RebuildUniformLocationCachesFromMetadata();
+            }
+
+            private void RebuildUniformLocationCachesFromMetadata()
+            {
+                _uniformCache.Clear();
+                _failedUniforms.Clear();
+                _locationNameCache.Clear();
+
+                if (!IsLinked || _uniformMetadata.Count == 0)
+                    return;
+
+                foreach (var pair in _uniformMetadata)
+                {
+                    int location = Api.GetUniformLocation(BindingId, pair.Key);
+                    _uniformCache[pair.Key] = location;
+
+                    if (location >= 0)
+                        _locationNameCache[location] = pair.Key;
+                    else
+                        _failedUniforms.TryAdd(pair.Key, 0);
+                }
             }
 
             private UniformMetadataEntry[] SnapshotUniformMetadata()
@@ -474,8 +497,21 @@ namespace XREngine.Rendering.OpenGL
                 if (_locationNameCache.TryGetValue(location, out string? name))
                     return ValidateUniformType(name, location, expectedTypes);
 
-                // No cached name (e.g. binding-only sampler arrays): trust the caller.
-                return true;
+                if (!RenderDiagnosticsFlags.GLDebug)
+                    return true;
+
+                RebuildUniformLocationCachesFromMetadata();
+                if (_locationNameCache.TryGetValue(location, out name))
+                    return ValidateUniformType(name, location, expectedTypes);
+
+                string key = $"location:{location}";
+                if (_loggedUniformMismatches.TryAdd(key, 0))
+                {
+                    string expectedDesc = string.Join(", ", expectedTypes);
+                    string programName = Data?.Name ?? BindingId.ToString();
+                    Debug.OpenGLWarning($"Uniform location {location} in program '{programName}' has no reflected active uniform while receiving upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
+                }
+                return false;
             }
 
             private bool ValidateUniformArrayType(int location, int uploadCount, params GLEnum[] expectedTypes)
@@ -489,13 +525,42 @@ namespace XREngine.Rendering.OpenGL
                 if (_locationNameCache.TryGetValue(location, out string? name))
                     return ValidateUniformArrayLength(name, location, uploadCount);
 
-                return true;
+                if (!RenderDiagnosticsFlags.GLDebug)
+                    return true;
+
+                RebuildUniformLocationCachesFromMetadata();
+                return _locationNameCache.TryGetValue(location, out name) &&
+                    ValidateUniformArrayLength(name, location, uploadCount);
             }
 
             private bool ValidateUniformType(string name, int? location, params GLEnum[] expectedTypes)
             {
-                if (!_uniformMetadata.TryGetValue(name, out var meta))
-                    return true;
+                if (location.HasValue &&
+                    RenderDiagnosticsFlags.GLDebug &&
+                    !ValidateUniformLocationStillMatchesName(name, location.Value))
+                {
+                    return false;
+                }
+
+                if (!TryGetUniformMetadata(name, out var meta))
+                {
+                    if (!RenderDiagnosticsFlags.GLDebug)
+                        return true;
+
+                    CacheActiveUniforms();
+                    if (!TryGetUniformMetadata(name, out meta))
+                    {
+                        string key = $"metadata:{name}";
+                        if (_loggedUniformMismatches.TryAdd(key, 0))
+                        {
+                            string expectedDesc = string.Join(", ", expectedTypes);
+                            string locDesc = location.HasValue ? location.Value.ToString() : "unknown";
+                            string programName = Data?.Name ?? BindingId.ToString();
+                            Debug.OpenGLWarning($"Uniform '{name}' (location {locDesc}) in program '{programName}' has no reflected active uniform metadata while receiving upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
+                        }
+                        return false;
+                    }
+                }
 
                 foreach (var expected in expectedTypes)
                     if (meta.Type == expected)
@@ -513,7 +578,7 @@ namespace XREngine.Rendering.OpenGL
 
             private bool ValidateUniformArrayLength(string name, int location, int uploadCount)
             {
-                if (!_uniformMetadata.TryGetValue(name, out var meta))
+                if (!TryGetUniformMetadata(name, out var meta))
                     return true;
 
                 if (uploadCount <= meta.Size)
@@ -527,6 +592,73 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 return false;
+            }
+
+            private bool ValidateUniformLocationStillMatchesName(string name, int location)
+            {
+                int currentLocation = Api.GetUniformLocation(BindingId, name);
+                if (currentLocation == location)
+                    return true;
+
+                _uniformCache.TryRemove(name, out _);
+                _locationNameCache.TryRemove(location, out _);
+
+                if (currentLocation >= 0)
+                {
+                    _uniformCache[name] = currentLocation;
+                    _locationNameCache[currentLocation] = name;
+                }
+                else
+                {
+                    _failedUniforms.TryAdd(name, 0);
+                }
+
+                string key = $"stale-location:{name}:{location}";
+                if (_loggedUniformMismatches.TryAdd(key, 0))
+                {
+                    string programName = Data?.Name ?? BindingId.ToString();
+                    Debug.OpenGLWarning($"Uniform '{name}' in program '{programName}' was cached at location {location}, but the current linked program reports location {currentLocation}. Skipping stale upload to avoid GL_INVALID_OPERATION.");
+                }
+                return false;
+            }
+
+            private bool TryGetUniformMetadata(string name, out UniformInfo meta)
+            {
+                if (_uniformMetadata.TryGetValue(name, out meta))
+                    return true;
+
+                if (TryGetArrayUniformAliases(name, out string firstElementName, out string baseName))
+                {
+                    if (_uniformMetadata.TryGetValue(firstElementName, out meta))
+                        return true;
+
+                    if (_uniformMetadata.TryGetValue(baseName, out meta))
+                        return true;
+                }
+
+                meta = default;
+                return false;
+            }
+
+            private static bool TryGetArrayUniformAliases(string name, out string firstElementName, out string baseName)
+            {
+                firstElementName = string.Empty;
+                baseName = string.Empty;
+
+                if (name.Length < 4 || name[^1] != ']')
+                    return false;
+
+                int openBracket = name.LastIndexOf('[');
+                if (openBracket <= 0 || openBracket == name.Length - 2)
+                    return false;
+
+                for (int i = openBracket + 1; i < name.Length - 1; i++)
+                    if (!char.IsDigit(name[i]))
+                        return false;
+
+                baseName = name[..openBracket];
+                firstElementName = string.Concat(baseName, "[0]");
+                return true;
             }
         }
     }

@@ -928,6 +928,80 @@ namespace XREngine.Rendering.OpenGL
                 UnregisterPendingAsyncProgram();
             }
 
+            internal static void CancelPendingAsyncProgramsForShaderPipelineModeChange(bool allowShaderPipelines)
+            {
+                if (PendingAsyncPrograms.IsEmpty)
+                    return;
+
+                if (!RuntimeEngine.IsRenderThread)
+                {
+                    RuntimeEngine.EnqueueMainThreadTask(
+                        () => CancelPendingAsyncProgramsForShaderPipelineModeChange(allowShaderPipelines));
+                    return;
+                }
+
+                int drained = DrainReadyPendingAsyncProgramResults();
+                GLRenderProgram[] snapshot = [.. PendingAsyncPrograms.Keys];
+                int cancelled = 0;
+
+                foreach (GLRenderProgram program in snapshot)
+                {
+                    if (!program.HasPendingAsyncWork)
+                    {
+                        program.UnregisterPendingAsyncProgram();
+                        continue;
+                    }
+
+                    program.CancelPendingAsyncBuildForShaderPipelineModeChange();
+                    cancelled++;
+                }
+
+                if (drained == 0 && cancelled == 0)
+                    return;
+
+                Debug.OpenGL(
+                    $"[ShaderPipelineToggle] AllowShaderPipelines={allowShaderPipelines}; " +
+                    $"drainedReadyPrograms={drained} cancelledPendingPrograms={cancelled}.");
+            }
+
+            private static int DrainReadyPendingAsyncProgramResults()
+            {
+                GLRenderProgram[] snapshot = [.. PendingAsyncPrograms.Keys];
+                int drained = 0;
+
+                foreach (GLRenderProgram program in snapshot)
+                {
+                    if (!program.HasPendingAsyncWork)
+                    {
+                        program.UnregisterPendingAsyncProgram();
+                        continue;
+                    }
+
+                    if (!program.CanCompleteFromSharedBinaryCache() &&
+                        !program.CanCompleteFromSharedContextCompileQueue())
+                    {
+                        continue;
+                    }
+
+                    program.Link(nonBlocking: true);
+                    if (!program.HasPendingAsyncWork)
+                    {
+                        program.UnregisterPendingAsyncProgram();
+                        drained++;
+                    }
+                }
+
+                return drained;
+            }
+
+            private void CancelPendingAsyncBuildForShaderPipelineModeChange()
+            {
+                ReleaseAsyncLinkState();
+                ResetProgramInterfaceCaches();
+                _linkDataPrepared = false;
+                _hashComputed = false;
+            }
+
             private void RestartAsyncPendingDiagnostics()
             {
                 _asyncPendingStartTimestamp = Stopwatch.GetTimestamp();

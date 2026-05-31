@@ -30,6 +30,9 @@ namespace XREngine.Rendering.OpenGL;
 
 public partial class OpenGLRenderer
 {
+    public static void HandleShaderPipelineModeChanged(bool allowShaderPipelines)
+        => GLRenderProgram.CancelPendingAsyncProgramsForShaderPipelineModeChange(allowShaderPipelines);
+
     private void LogShaderProgramLifecycleSummaryForShutdown()
     {
         if (Volatile.Read(ref _asyncShaderProgramShutdownDisposeRequested) != 0)
