@@ -416,10 +416,10 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 if (Mesh.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill && Mesh.HasSpillInfluences)
                 {
-                    using (StartShaderStorageBufferBlock(ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), binding++))
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInfluenceSpillHeaders}Buffer", binding++))
                         WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), true);
 
-                    using (StartShaderStorageBufferBlock(ECommonBufferType.BoneInfluenceSpillEntries.ToString(), binding++))
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInfluenceSpillEntries}Buffer", binding++))
                         WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillEntries.ToString(), true);
                 }
 

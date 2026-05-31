@@ -1487,6 +1487,15 @@ namespace XREngine.Rendering
         {
             //using var timer = RuntimeEngine.Profiler.Start();
 
+            // Finalize the mesh's skinning bone ordering BEFORE sizing/seeding the palette.
+            // RebuildSkinningBuffersFromVertices (invoked lazily for non-canonical meshes) can
+            // reorder/extend UtilizedBones while packing the per-vertex core bone indices. If we
+            // build the palette from a pre-rebuild ordering and that rebuild happens afterwards
+            // (e.g. during the compute pre-pass), the indices reference the wrong palette slots and
+            // the mesh explodes until a skinning toggle forces a palette rebuild. Finalizing here
+            // guarantees the palette and the core indices share the same bone order from frame one.
+            Mesh?.EnsureSkinningBoneOrderFinalized();
+
             uint boneCount = (uint)(Mesh?.UtilizedBones?.Length ?? 0);
 
             BoneMatricesBuffer = new($"{ECommonBufferType.BoneMatrices}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 16, false, false)
@@ -1532,15 +1541,80 @@ namespace XREngine.Rendering
                 tfm.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
                 _bones[i] = rb;
 
-                BoneMatricesBuffer.Set(boneIndex, tfm.WorldMatrix);
+                Matrix4x4 currentMatrix = GetCurrentBoneMatrix(tfm);
+                BoneMatricesBuffer.Set(boneIndex, currentMatrix);
                 Matrix4x4 adjustedInvBind = rootBindMtx * invBindWorldMtx;
                 BoneInvBindMatricesBuffer.Set(boneIndex, adjustedInvBind);
-                SkinPaletteBuffer.Set(boneIndex, SkinPaletteMatrix.FromRowVectorMatrix(adjustedInvBind * tfm.WorldMatrix));
+                SkinPaletteBuffer.Set(boneIndex, SkinPaletteMatrix.FromRowVectorMatrix(adjustedInvBind * currentMatrix));
+                MarkBoneMatrixDirty(boneIndex, currentMatrix);
             }
 
             Buffers.Add(BoneMatricesBuffer.AttributeName, BoneMatricesBuffer);
             Buffers.Add(BoneInvBindMatricesBuffer.AttributeName, BoneInvBindMatricesBuffer);
             Buffers.Add(SkinPaletteBuffer.AttributeName, SkinPaletteBuffer);
+
+            // Record the exact bone ordering this palette was built against. The per-vertex core
+            // bone indices index into this same ordering. If the mesh's UtilizedBones get reordered
+            // afterwards (e.g. a deferred RebuildSkinningBuffersFromVertices from meshlet/island
+            // processing) without rebuilding this palette, the indices point at the wrong slots and
+            // the mesh explodes. We snapshot the signature here to detect that drift at dispatch.
+            _paletteBoneOrderSignature = ComputeBoneOrderSignature(Mesh);
+            _bonePaletteOrderChecked = false;
+            MarkSkinnedOutputDirty();
+        }
+
+        private int _paletteBoneOrderSignature;
+        private bool _bonePaletteOrderChecked;
+
+        private static int ComputeBoneOrderSignature(XRMesh? mesh)
+        {
+            var bones = mesh?.UtilizedBones;
+            if (bones is null || bones.Length == 0)
+                return 0;
+            var hash = new HashCode();
+            hash.Add(bones.Length);
+            for (int i = 0; i < bones.Length; i++)
+                hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(bones[i].tfm));
+            return hash.ToHashCode();
+        }
+
+        /// <summary>
+        /// One-shot diagnostic: verifies the renderer's bone palette was built against the same
+        /// UtilizedBones ordering the mesh currently exposes (and that the per-vertex core indices
+        /// were packed against). A mismatch means the palette is stale relative to the indices and
+        /// the mesh will render corrupted/exploded until a full palette rebuild.
+        /// </summary>
+        internal void VerifyBonePaletteOrderMatchesMesh()
+        {
+            if (_bonePaletteOrderChecked || Mesh is null || _bones is null)
+                return;
+            _bonePaletteOrderChecked = true;
+
+            int current = ComputeBoneOrderSignature(Mesh);
+            int meshBones = Mesh.UtilizedBones?.Length ?? 0;
+            if (current != _paletteBoneOrderSignature || meshBones != _bones.Length)
+            {
+                Debug.LogWarning(
+                    $"[SkinPaletteStale] Palette bone order DIFFERS from current mesh order. " +
+                    $"Mesh='{Mesh.Name ?? "<null>"}' paletteBones={_bones.Length} meshBones={meshBones} " +
+                    $"paletteSig={_paletteBoneOrderSignature:X8} meshSig={current:X8}. Palette is stale -> skinning corruption.");
+            }
+            else
+            {
+                Debug.LogWarning(
+                    $"[SkinPaletteOk] Palette bone order matches mesh. Mesh='{Mesh.Name ?? "<null>"}' bones={_bones.Length} sig={current:X8}.");
+            }
+        }
+
+        private static Matrix4x4 GetCurrentBoneMatrix(TransformBase transform)
+        {
+            // Imported skeletons can be skinned before the first render snapshot is published.
+            Matrix4x4 renderMatrix = transform.RenderMatrix;
+            if (!renderMatrix.Equals(Matrix4x4.Identity))
+                return renderMatrix;
+
+            Matrix4x4 worldMatrix = transform.WorldMatrix;
+            return worldMatrix.Equals(Matrix4x4.Identity) ? renderMatrix : worldMatrix;
         }
 
         private bool _bonesInvalidated = false;
@@ -1564,18 +1638,107 @@ namespace XREngine.Rendering
             if (_dirtyBoneFlags is null || _dirtyBoneIndices is null || _dirtyBoneMatrices is null)
                 return;
 
-            int index = (int)bone.Index;
-            if (IsBoneGpuDriven(index))
+            if (!MarkBoneMatrixDirty(bone.Index, renderMatrix))
                 return;
+
+            MarkSkinnedOutputDirty();
+        }
+
+        /// <summary>
+        /// Diagnostic: logs how many utilized bones still have an identity (unpublished/stale)
+        /// render and world matrix. Used to confirm whether the skinning explosion is caused by
+        /// bones being seeded before their transforms publish a valid pose. One-shot per renderer.
+        /// </summary>
+        internal void LogBoneSeedStalenessDiagnostics(string context)
+        {
+            if (_boneSeedDiagnosticsLogged || _bones is null)
+                return;
+            _boneSeedDiagnosticsLogged = true;
+
+            int identityRender = 0;
+            int identityWorld = 0;
+            int divergent = 0;
+            int total = _bones.Length;
+            string? firstStaleBone = null;
+            string? firstDivergentBone = null;
+            float maxDelta = 0f;
+            foreach (RenderBone bone in _bones)
+            {
+                Matrix4x4 render = bone.Transform.RenderMatrix;
+                Matrix4x4 world = bone.Transform.WorldMatrix;
+                bool rIdentity = render.Equals(Matrix4x4.Identity);
+                bool wIdentity = world.Equals(Matrix4x4.Identity);
+                if (rIdentity)
+                {
+                    identityRender++;
+                    firstStaleBone ??= bone.Transform.Name;
+                }
+                if (wIdentity)
+                    identityWorld++;
+
+                // The render-thread snapshot (RenderMatrix) lags the authoritative app-thread
+                // WorldMatrix. If the palette is seeded from a stale-but-non-identity RenderMatrix,
+                // the mesh skins to the wrong pose and the cached compute output never refreshes for
+                // a static skeleton (no RenderMatrixChanged fires). Measure translation divergence.
+                if (!rIdentity && !wIdentity)
+                {
+                    float delta = Vector3.Distance(render.Translation, world.Translation);
+                    if (delta > 0.001f)
+                    {
+                        divergent++;
+                        firstDivergentBone ??= bone.Transform.Name;
+                        if (delta > maxDelta)
+                            maxDelta = delta;
+                    }
+                }
+            }
+
+            Debug.LogWarning($"[SkinSeed/{context}] Mesh '{Mesh?.Name ?? "<null>"}': {identityRender}/{total} IDENTITY RenderMatrix, {identityWorld}/{total} IDENTITY WorldMatrix, {divergent}/{total} RenderMatrix DIVERGES from WorldMatrix (maxDelta={maxDelta:F3}, firstDivergent={firstDivergentBone ?? "<none>"}). firstStaleBone={firstStaleBone ?? "<none>"}.");
+        }
+
+        private bool _boneSeedDiagnosticsLogged;
+
+        internal void RefreshBoneMatricesFromRenderState()
+        {
+            if (_bones is null || BoneMatricesBuffer is null || SkinPaletteBuffer is null)
+            {
+                MarkSkinnedOutputDirty();
+                return;
+            }
+
+            foreach (RenderBone bone in _bones)
+            {
+                uint index = bone.Index;
+                Matrix4x4 renderMatrix = GetCurrentBoneMatrix(bone.Transform);
+                BoneMatricesBuffer.Set(index, renderMatrix);
+                SkinPaletteBuffer.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(ComposeSkinPaletteMatrix(index, renderMatrix)));
+                MarkBoneMatrixDirty(index, renderMatrix);
+            }
+
+            MarkSkinnedOutputDirty();
+        }
+
+        private bool MarkBoneMatrixDirty(uint boneIndex, in Matrix4x4 renderMatrix)
+        {
+            int index = (int)boneIndex;
+            if (index <= 0 || IsBoneGpuDriven(index))
+                return false;
+
+            if (_dirtyBoneFlags is null || _dirtyBoneIndices is null || _dirtyBoneMatrices is null)
+                return false;
+
+            if (index >= _dirtyBoneFlags.Length || index >= _dirtyBoneMatrices.Length)
+                return false;
 
             _dirtyBoneMatrices[index] = renderMatrix;
             if (!_dirtyBoneFlags[index])
             {
                 _dirtyBoneFlags[index] = true;
-                _dirtyBoneIndices.Add(bone.Index);
+                _dirtyBoneIndices.Add(boneIndex);
             }
+
             _bonesInvalidated = true;
-            MarkSkinnedOutputDirty();
+            return true;
         }
 
         internal void SyncDirtyBoneMatricesToClientBuffer()

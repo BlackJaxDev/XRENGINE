@@ -2041,7 +2041,10 @@ internal sealed class RuntimeRenderSettings
             bool previous = AllowShaderPipelines;
             SetShaderSetting(ref _allowShaderPipelines, value);
             if (previous != AllowShaderPipelines)
+            {
+                global::XREngine.Rendering.OpenGL.OpenGLRenderer.HandleShaderPipelineModeChanged(AllowShaderPipelines);
                 XRMaterial.DisposeShaderPipelineProgramsWhenDisabled();
+            }
         }
     }
     public bool AllowSkinning
