@@ -1560,11 +1560,13 @@ namespace XREngine.Rendering
             // the mesh explodes. We snapshot the signature here to detect that drift at dispatch.
             _paletteBoneOrderSignature = ComputeBoneOrderSignature(Mesh);
             _bonePaletteOrderChecked = false;
+            _bonePaletteStaleReported = false;
             MarkSkinnedOutputDirty();
         }
 
         private int _paletteBoneOrderSignature;
         private bool _bonePaletteOrderChecked;
+        private bool _bonePaletteStaleReported;
 
         private static int ComputeBoneOrderSignature(XRMesh? mesh)
         {
@@ -1586,23 +1588,34 @@ namespace XREngine.Rendering
         /// </summary>
         internal void VerifyBonePaletteOrderMatchesMesh()
         {
-            if (_bonePaletteOrderChecked || Mesh is null || _bones is null)
+            if (Mesh is null || _bones is null)
                 return;
-            _bonePaletteOrderChecked = true;
 
             int current = ComputeBoneOrderSignature(Mesh);
             int meshBones = Mesh.UtilizedBones?.Length ?? 0;
-            if (current != _paletteBoneOrderSignature || meshBones != _bones.Length)
+            bool stale = current != _paletteBoneOrderSignature || meshBones != _bones.Length;
+
+            if (!_bonePaletteOrderChecked)
             {
+                _bonePaletteOrderChecked = true;
+                if (!stale)
+                {
+                    Debug.LogWarning(
+                        $"[SkinPaletteOk] Palette bone order matches mesh. Mesh='{Mesh.Name ?? "<null>"}' bones={_bones.Length} sig={current:X8}.");
+                }
+            }
+
+            // Re-check EVERY dispatch (not one-shot): a deferred RebuildSkinningBuffersFromVertices
+            // from meshlet/island/LOD processing can reorder UtilizedBones AFTER the first dispatch,
+            // desyncing this palette from the per-vertex core indices. Report the first transition
+            // into the stale state so we catch a late reorder in the act.
+            if (stale && !_bonePaletteStaleReported)
+            {
+                _bonePaletteStaleReported = true;
                 Debug.LogWarning(
-                    $"[SkinPaletteStale] Palette bone order DIFFERS from current mesh order. " +
+                    $"[SkinPaletteStale] Palette bone order DIFFERS from current mesh order at dispatch. " +
                     $"Mesh='{Mesh.Name ?? "<null>"}' paletteBones={_bones.Length} meshBones={meshBones} " +
                     $"paletteSig={_paletteBoneOrderSignature:X8} meshSig={current:X8}. Palette is stale -> skinning corruption.");
-            }
-            else
-            {
-                Debug.LogWarning(
-                    $"[SkinPaletteOk] Palette bone order matches mesh. Mesh='{Mesh.Name ?? "<null>"}' bones={_bones.Length} sig={current:X8}.");
             }
         }
 
@@ -1718,6 +1731,31 @@ namespace XREngine.Rendering
             MarkSkinnedOutputDirty();
         }
 
+        /// <summary>
+        /// Cheap hash of every utilized bone's CURRENT posed matrix (full 16 floats). Used by the
+        /// compute-skinning dispatcher to detect when the skeleton pose has stabilized: a runtime-
+        /// imported avatar publishes intermediate bone poses for several frames before settling,
+        /// and if the renderer subscribed to RenderMatrixChanged after the final pose was published
+        /// (init-order race) no further event fires, so a static mesh stays cached at the wrong
+        /// intermediate pose until a bone is manually moved. Re-seeding until this hash is stable
+        /// captures the final pose without permanently re-dispatching.
+        /// </summary>
+        internal int ComputeCurrentBonePoseHash()
+        {
+            if (_bones is null)
+                return 0;
+            var hash = new HashCode();
+            foreach (RenderBone bone in _bones)
+            {
+                Matrix4x4 m = GetCurrentBoneMatrix(bone.Transform);
+                hash.Add(m.M11); hash.Add(m.M12); hash.Add(m.M13); hash.Add(m.M14);
+                hash.Add(m.M21); hash.Add(m.M22); hash.Add(m.M23); hash.Add(m.M24);
+                hash.Add(m.M31); hash.Add(m.M32); hash.Add(m.M33); hash.Add(m.M34);
+                hash.Add(m.M41); hash.Add(m.M42); hash.Add(m.M43); hash.Add(m.M44);
+            }
+            return hash.ToHashCode();
+        }
+
         private bool MarkBoneMatrixDirty(uint boneIndex, in Matrix4x4 renderMatrix)
         {
             int index = (int)boneIndex;
@@ -1781,7 +1819,11 @@ namespace XREngine.Rendering
                 Matrix4x4 currentMatrix = _dirtyBoneMatrices[i];
                 BoneMatricesBuffer.Set(index, currentMatrix);
                 if (SkinPaletteBuffer is not null)
-                    SkinPaletteBuffer.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(ComposeSkinPaletteMatrix(index, currentMatrix)));
+                {
+                    Matrix4x4 composed = ComposeSkinPaletteMatrix(index, currentMatrix);
+                    DetectSkinPaletteExplosion(index, currentMatrix, composed);
+                    SkinPaletteBuffer.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(composed));
+                }
                 if (clearDirtyState)
                     _dirtyBoneFlags[i] = false;
             }
@@ -1803,6 +1845,58 @@ namespace XREngine.Rendering
             RenderBone bone = _bones[(int)boneIndex - 1];
             Matrix4x4 rootBindMtx = Mesh?.BindRootMatrix ?? Matrix4x4.Identity;
             return rootBindMtx * bone.InvBindMatrix * currentWorldMatrix;
+        }
+
+        // Evidence-gathering: the composed skin-palette matrix maps a vertex from root-local bind
+        // space into its posed position. Its translation must stay within model bounds. A huge
+        // translation or NaN here is the DIRECT cause of an exploded mesh. Always-on, globally
+        // rate-limited so it catches the offending bone the moment animation drives it bad.
+        private static int _skinPaletteExplosionLogged;
+        private const int SkinPaletteExplosionMaxLogs = 40;
+        private void DetectSkinPaletteExplosion(uint boneIndex, in Matrix4x4 currentMatrix, in Matrix4x4 composed)
+        {
+            if (_skinPaletteExplosionLogged >= SkinPaletteExplosionMaxLogs)
+                return;
+
+            Vector3 t = composed.Translation;
+            bool nan = float.IsNaN(t.X) || float.IsNaN(t.Y) || float.IsNaN(t.Z)
+                || float.IsNaN(composed.M11) || float.IsNaN(currentMatrix.M11);
+            bool huge = MathF.Abs(t.X) > 50f || MathF.Abs(t.Y) > 50f || MathF.Abs(t.Z) > 50f;
+            if (!nan && !huge)
+                return;
+
+            _skinPaletteExplosionLogged++;
+            RenderBone? rb = (boneIndex > 0 && boneIndex <= (uint)(_bones?.Length ?? 0)) ? _bones![(int)boneIndex - 1] : null;
+            Vector3 ct = currentMatrix.Translation;
+            Vector3 ib = rb?.InvBindMatrix.Translation ?? default;
+
+            // Decisive frame-mismatch probe: walk the offending bone up to the skeleton root and
+            // capture the root's CURRENT world translation. If composedT (== the constant residual G)
+            // equals this root world translation, then the skin palette is baking the avatar's root
+            // placement into every bone (because invBind was captured at a different/origin frame
+            // than current world matrices), and ModelMatrix (== that same root world) re-applies it
+            // at draw => the double-transform explosion. Also report BindRootMatrix so we can confirm
+            // it is null/identity for this mesh.
+            Vector3 rootWorldT = default;
+            string rootName = "<none>";
+            TransformBase? walk = rb?.Transform;
+            int guard = 0;
+            while (walk?.Parent is TransformBase p && guard++ < 256)
+                walk = p;
+            if (walk is not null)
+            {
+                rootWorldT = walk.WorldMatrix.Translation;
+                rootName = walk.SceneNode?.Name ?? "<unnamed>";
+            }
+            Vector3 brT = (Mesh?.BindRootMatrix ?? Matrix4x4.Identity).Translation;
+            bool brIsIdentity = (Mesh?.BindRootMatrix ?? Matrix4x4.Identity).Equals(Matrix4x4.Identity);
+            float gVsRoot = Vector3.Distance(t, rootWorldT);
+            Debug.LogWarning(
+                $"[SkinExplode] {(nan ? "NaN" : "HUGE")} palette bone idx={boneIndex} " +
+                $"name='{rb?.Transform.SceneNode?.Name ?? "?"}' mesh='{Mesh?.Name ?? "<null>"}' verts={Mesh?.VertexCount ?? 0} " +
+                $"composedT=({t.X:F2},{t.Y:F2},{t.Z:F2}) currentT=({ct.X:F2},{ct.Y:F2},{ct.Z:F2}) invBindT=({ib.X:F2},{ib.Y:F2},{ib.Z:F2}) " +
+                $"rootName='{rootName}' rootWorldT=({rootWorldT.X:F2},{rootWorldT.Y:F2},{rootWorldT.Z:F2}) " +
+                $"|composedT-rootWorldT|={gVsRoot:F2} BindRootMatrix={(brIsIdentity ? "IDENTITY/null" : $"T=({brT.X:F2},{brT.Y:F2},{brT.Z:F2})")}.");
         }
 
         /// <summary>

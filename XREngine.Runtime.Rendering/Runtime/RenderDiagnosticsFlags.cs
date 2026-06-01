@@ -149,6 +149,14 @@ public static class RenderDiagnosticsFlags
     /// <summary>Skip the Vulkan ImGui overlay draw entirely. Seed: <c>XRE_SKIP_IMGUI=1</c>.</summary>
     public static volatile bool VkSkipImGui;
 
+    /// <summary>
+    /// Compute skinning pre-pass diagnostics: per-dispatch GPU output/palette readbacks
+    /// (<c>[SkinReadback]</c>, <c>[SkinPaletteGpu]</c>), settle/seed/residency traces
+    /// (<c>[SkinSettle]</c>, <c>[SkinResidency]</c>), and bone-palette order verification. Heavy
+    /// (issues blocking GPU readbacks each dispatch) &mdash; diagnostic only.
+    /// </summary>
+    public static volatile bool SkinningPrepassDiag;
+
     static RenderDiagnosticsFlags()
     {
         SeedFromEnvironment();
@@ -252,6 +260,20 @@ public static class RenderDiagnosticsFlags
         VkSkipUiPipeline = ReadBool("XRE_SKIP_UI_PIPELINE");
         VkForceSwapchainMagenta = ReadBool("XRE_FORCE_SWAPCHAIN_MAGENTA");
         VkSkipImGui = ReadBool("XRE_SKIP_IMGUI");
+
+        // SkinningPrepassDiag legacy-style contract: default ON, env="0"/"false" disables.
+        try
+        {
+            string? raw = Environment.GetEnvironmentVariable("XRE_SKINNING_PREPASS_DIAG");
+            if (string.Equals(raw, "0", StringComparison.Ordinal) ||
+                string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase))
+            {
+                SkinningPrepassDiag = false;
+            }
+        }
+        catch
+        {
+        }
     }
 
     private static bool ReadBool(string name)
@@ -311,4 +333,5 @@ public static class RenderDiagnosticsFlags
     public static void SetVkSkipUiPipeline(bool value) => VkSkipUiPipeline = value;
     public static void SetVkForceSwapchainMagenta(bool value) => VkForceSwapchainMagenta = value;
     public static void SetVkSkipImGui(bool value) => VkSkipImGui = value;
+    public static void SetSkinningPrepassDiag(bool value) => SkinningPrepassDiag = value;
 }
