@@ -25,6 +25,8 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
 
     private bool _globalSkinPaletteDirty;
     private bool _globalBlendDirty;
+    private uint _globalBlendDirtyStartElement = uint.MaxValue;
+    private uint _globalBlendDirtyEndElement;
 
     public XRDataBuffer? GlobalSkinPalette => _globalSkinPalette;
     public XRDataBuffer? GlobalBlendshapeWeights => _globalBlendshapeWeights;
@@ -44,6 +46,8 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         _blendCursorElements = 0;
         _globalSkinPaletteDirty = false;
         _globalBlendDirty = false;
+        _globalBlendDirtyStartElement = uint.MaxValue;
+        _globalBlendDirtyEndElement = 0u;
     }
 
     public void BeginFrame(ulong frameId)
@@ -52,12 +56,19 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
             return;
 
         _frameId = frameId;
-        _entries.Clear();
         _paletteDedupe.Clear();
         _skinPaletteCursorElements = 0;
-        _blendCursorElements = 0;
         _globalSkinPaletteDirty = false;
         _globalBlendDirty = false;
+        _globalBlendDirtyStartElement = uint.MaxValue;
+        _globalBlendDirtyEndElement = 0u;
+
+        foreach (Entry entry in _entries.Values)
+        {
+            entry.HasSkinPalette = false;
+            entry.SkinPaletteBase = 0u;
+            entry.SkinPaletteCount = 0u;
+        }
     }
 
     public bool EnsurePackedForRenderer(XRMeshRenderer renderer, bool includeSkinPalette, bool includeBlendshapeWeights)
@@ -68,19 +79,18 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         if (!includeSkinPalette && !includeBlendshapeWeights)
             return false;
 
-        if (_entries.TryGetValue(renderer, out var existing))
-        {
-            if ((!includeSkinPalette || existing.HasSkinPalette) && (!includeBlendshapeWeights || existing.HasBlendshapeWeights))
-                return false;
-        }
-
         bool anyChange = false;
 
-        if (!_entries.TryGetValue(renderer, out var entry))
+        if (!_entries.TryGetValue(renderer, out Entry? entry))
             entry = new Entry();
 
         XRMesh? mesh = renderer.Mesh;
         if (mesh is null)
+            return false;
+
+        uint requiredBlendElements = includeBlendshapeWeights ? mesh.BlendshapeCount.Align(4u) : 0u;
+        if ((!includeSkinPalette || entry.HasSkinPalette) &&
+            (!includeBlendshapeWeights || IsCurrentBlendshapeWeightSlice(renderer, entry, requiredBlendElements)))
             return false;
 
         if (includeSkinPalette && !entry.HasSkinPalette)
@@ -121,23 +131,31 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
             }
         }
 
-        if (includeBlendshapeWeights && !entry.HasBlendshapeWeights)
+        if (includeBlendshapeWeights)
         {
-            uint blendCount = mesh.BlendshapeCount;
-            uint requiredElements = blendCount.Align(4u);
+            uint requiredElements = requiredBlendElements;
 
             if (requiredElements > 0u)
             {
-                EnsureGlobalBlendshapeWeightsCapacity(_blendCursorElements + requiredElements);
+                bool reuseExistingSlice = entry.HasBlendshapeWeights && entry.BlendshapeWeightCount == requiredElements;
+                if (!reuseExistingSlice)
+                {
+                    entry.BlendshapeWeightBase = _blendCursorElements;
+                    entry.BlendshapeWeightCount = requiredElements;
+                    _blendCursorElements += requiredElements;
+                    EnsureGlobalBlendshapeWeightsCapacity(_blendCursorElements);
+                    anyChange = true;
+                }
+                else
+                {
+                    EnsureGlobalBlendshapeWeightsCapacity(entry.BlendshapeWeightBase + requiredElements);
+                }
 
-                CopyBufferRange(renderer.BlendshapeWeights, _globalBlendshapeWeights, 0u, _blendCursorElements, requiredElements);
+                CopyBufferRange(renderer.BlendshapeWeights, _globalBlendshapeWeights, 0u, entry.BlendshapeWeightBase, requiredElements);
+                MarkGlobalBlendDirty(entry.BlendshapeWeightBase, requiredElements);
 
-                entry.BlendshapeWeightBase = _blendCursorElements;
-                entry.BlendshapeWeightCount = requiredElements;
                 entry.HasBlendshapeWeights = true;
-
-                _blendCursorElements += requiredElements;
-                _globalBlendDirty = true;
+                entry.BlendshapeWeightsVersion = renderer.BlendshapeWeightsVersion;
                 anyChange = true;
             }
         }
@@ -154,7 +172,7 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         if (renderer is null)
             return false;
 
-        if (_entries.TryGetValue(renderer, out var entry) && entry.HasSkinPalette)
+        if (_entries.TryGetValue(renderer, out Entry? entry) && entry.HasSkinPalette)
         {
             baseElement = entry.SkinPaletteBase;
             elementCount = entry.SkinPaletteCount;
@@ -172,7 +190,7 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         if (renderer is null)
             return false;
 
-        if (_entries.TryGetValue(renderer, out var entry) && entry.HasBlendshapeWeights)
+        if (_entries.TryGetValue(renderer, out Entry? entry) && entry.HasBlendshapeWeights)
         {
             baseElement = entry.BlendshapeWeightBase;
             elementCount = entry.BlendshapeWeightCount;
@@ -192,8 +210,23 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
 
         if (pushBlendshapeWeights && _globalBlendDirty)
         {
-            _globalBlendshapeWeights?.PushSubData();
+            if (_globalBlendshapeWeights is not null)
+            {
+                if (_globalBlendDirtyStartElement != uint.MaxValue && _globalBlendDirtyEndElement > _globalBlendDirtyStartElement)
+                {
+                    int offset = checked((int)(_globalBlendDirtyStartElement * _globalBlendshapeWeights.ElementSize));
+                    uint length = checked((_globalBlendDirtyEndElement - _globalBlendDirtyStartElement) * _globalBlendshapeWeights.ElementSize);
+                    _globalBlendshapeWeights.PushSubData(offset, length);
+                }
+                else
+                {
+                    _globalBlendshapeWeights.PushSubData();
+                }
+            }
+
             _globalBlendDirty = false;
+            _globalBlendDirtyStartElement = uint.MaxValue;
+            _globalBlendDirtyEndElement = 0u;
         }
     }
 
@@ -242,7 +275,26 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         else if (_globalBlendshapeWeights.ElementCount < requiredElements)
         {
             _globalBlendshapeWeights.Resize(requiredElements, copyData: true, alignClientSourceToPowerOf2: true);
+            MarkGlobalBlendDirty(0u, requiredElements);
         }
+    }
+
+    private static bool IsCurrentBlendshapeWeightSlice(XRMeshRenderer renderer, Entry entry, uint requiredElements)
+        => entry.HasBlendshapeWeights &&
+           entry.BlendshapeWeightCount == requiredElements &&
+           entry.BlendshapeWeightsVersion == renderer.BlendshapeWeightsVersion;
+
+    private void MarkGlobalBlendDirty(uint baseElement, uint elementCount)
+    {
+        if (elementCount == 0u)
+            return;
+
+        uint endElement = checked(baseElement + elementCount);
+        if (_globalBlendDirtyStartElement == uint.MaxValue || baseElement < _globalBlendDirtyStartElement)
+            _globalBlendDirtyStartElement = baseElement;
+        if (endElement > _globalBlendDirtyEndElement)
+            _globalBlendDirtyEndElement = endElement;
+        _globalBlendDirty = true;
     }
 
     private static unsafe void CopyBufferRange(XRDataBuffer? src, XRDataBuffer? dst, uint srcBaseElement, uint dstBaseElement, uint elementCount)
@@ -291,7 +343,7 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         return true;
     }
 
-    private struct Entry
+    private sealed class Entry
     {
         public bool HasSkinPalette;
         public uint SkinPaletteBase;
@@ -300,6 +352,7 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
         public bool HasBlendshapeWeights;
         public uint BlendshapeWeightBase;
         public uint BlendshapeWeightCount;
+        public ulong BlendshapeWeightsVersion;
     }
 
     private readonly record struct PaletteDedupeKey(XRMesh Mesh, uint ElementCount, uint ElementSize, ulong Hash);

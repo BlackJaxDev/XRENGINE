@@ -133,6 +133,28 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
+    public void BlendshapePrecombineSettings_UseRuntimeRenderingHostServices()
+    {
+        TestRuntimeRenderingHostServices services = new()
+        {
+            EnableBlendshapePrecombinePass = true,
+            EnableBlendshapePrecombineForDirectVertexPath = false,
+            EnableBlendshapePcaBasisCompression = true,
+            BlendshapePrecombineComputeMinActiveShapes = 11,
+            BlendshapePrecombineDirectMinActiveShapes = 13,
+            BlendshapePrecombineMinAffectedVertices = 17,
+        };
+        RuntimeRenderingHostServices.Current = services;
+
+        RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass.ShouldBeTrue();
+        RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath.ShouldBeFalse();
+        RuntimeEngine.Rendering.Settings.EnableBlendshapePcaBasisCompression.ShouldBeTrue();
+        RuntimeEngine.Rendering.Settings.BlendshapePrecombineComputeMinActiveShapes.ShouldBe(11);
+        RuntimeEngine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes.ShouldBe(13);
+        RuntimeEngine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices.ShouldBe(17);
+    }
+
+    [Test]
     public void PipelineInstance_UsesRuntimeRenderingHostServicesFactory()
     {
         TestRenderPipeline pipeline = new();
@@ -306,6 +328,12 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool AllowSkinning => true;
         public bool CalculateSkinningInComputeShader => false;
         public bool CalculateBlendshapesInComputeShader => false;
+        public bool EnableBlendshapePrecombinePass { get; set; } = RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombinePass;
+        public bool EnableBlendshapePrecombineForDirectVertexPath { get; set; } = RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombineForDirectVertexPath;
+        public bool EnableBlendshapePcaBasisCompression { get; set; } = RuntimeRenderingHostServiceDefaults.EnableBlendshapePcaBasisCompression;
+        public int BlendshapePrecombineComputeMinActiveShapes { get; set; } = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineComputeMinActiveShapes;
+        public int BlendshapePrecombineDirectMinActiveShapes { get; set; } = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineDirectMinActiveShapes;
+        public int BlendshapePrecombineMinAffectedVertices { get; set; } = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineMinAffectedVertices;
         public int ShaderConfigVersion => 0;
         public bool IsRenderThread => true;
         public bool IsRendererActive => false;
@@ -748,7 +776,15 @@ public sealed class RuntimeRenderingHostServicesTests
             long skinPaletteBytes = 0,
             int skippedSkinningDispatches = 0,
             int reusedSkinnedOutputBuffers = 0,
-            int liveSkinningShaderPermutations = 0)
+            int liveSkinningShaderPermutations = 0,
+            long blendshapeActiveListUploadBytes = 0,
+            long blendshapeDeltaBytes = 0,
+            int blendshapeAuthoredShapeCount = 0,
+            int blendshapeActiveShapeCount = 0,
+            int blendshapeAffectedVertexCount = 0,
+            int skippedBlendshapeDispatches = 0,
+            int compactedActiveBlendshapeCount = 0,
+            int liveBlendshapeShaderPermutations = 0)
         {
         }
 

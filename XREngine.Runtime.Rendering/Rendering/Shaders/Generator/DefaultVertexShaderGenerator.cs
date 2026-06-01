@@ -191,6 +191,14 @@ namespace XREngine.Rendering.Shaders.Generator
                 UniformNames.Add("skinningInfluenceCap", (EShaderVarType._int, false));
             }
 
+            if (Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            {
+                UniformNames.Add("blendshapeActiveCount", (EShaderVarType._int, false));
+                UniformNames.Add("blendshapeWeightThreshold", (EShaderVarType._float, false));
+                if (UsePrecombinedDirectBlendshapes)
+                    UniformNames.Add("usePrecombinedBlendshapeDeltas", (EShaderVarType._int, false));
+            }
+
             // Used when gl_BaseInstance is 0 (non-indirect draw path).
             if (EmitTransformId)
                 UniformNames.Add("TransformId", (EShaderVarType._uint, false));
@@ -259,17 +267,32 @@ namespace XREngine.Rendering.Shaders.Generator
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
             && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || UseComputeSkinning);
         private bool UseComputeDeformation => UseComputeSkinning || UseComputeBlendshapes;
+        private bool UsePrecombinedDirectBlendshapes => Mesh.BlendshapeCount > 0
+            && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+            && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
+            && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath
+            && !UseComputeBlendshapes
+            && Mesh.BlendshapeSparseShapeRanges is not null
+            && Mesh.BlendshapeSparseRecords is not null
+            && Mesh.BlendshapeQuantizedDeltas is not null
+            && Mesh.BlendshapeQuantizationMetadata is not null;
         private bool UseExplicitRowVectorSkinningConvention => Mesh.SkinningShaderConvention == ESkinningShaderConvention.ExplicitRowMajorRowVector;
 
         private const int ComputeInterleavedBinding = 9;
         private const int ComputePositionBinding = 11;
         private const int ComputeNormalBinding = 12;
         private const int ComputeTangentBinding = 15;
+        private const int PrecombinedBlendshapePositionBinding = 13;
+        private const int PrecombinedBlendshapeNormalBinding = 14;
+        private const int PrecombinedBlendshapeTangentBinding = 15;
 
         private const string ComputeInterleavedBufferName = "SkinnedInterleaved";
         private const string ComputePositionBufferName = "SkinnedPositions";
         private const string ComputeNormalBufferName = "SkinnedNormals";
         private const string ComputeTangentBufferName = "SkinnedTangents";
+        private const string PrecombinedBlendshapePositionBufferName = "PrecombinedBlendshapePositionDeltas";
+        private const string PrecombinedBlendshapeNormalBufferName = "PrecombinedBlendshapeNormalDeltas";
+        private const string PrecombinedBlendshapeTangentBufferName = "PrecombinedBlendshapeTangentDeltas";
 
         private const string ViewMatrixName = "ViewMatrix";
         private const string ModelViewMatrixName = "mvMatrix";
@@ -396,15 +419,63 @@ namespace XREngine.Rendering.Shaders.Generator
                 EShaderVarType intVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                     ? EShaderVarType._ivec4
                     : EShaderVarType._vec4;
+                bool useSparseBlendshapeBuffers = Mesh.BlendshapeSparseShapeRanges is not null && Mesh.BlendshapeSparseRecords is not null;
+                bool useQuantizedBlendshapeDeltas = useSparseBlendshapeBuffers
+                    && Mesh.BlendshapeQuantizedDeltas is not null
+                    && Mesh.BlendshapeQuantizationMetadata is not null;
 
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeDeltas}Buffer", binding++))
-                    WriteUniform(EShaderVarType._vec4, ECommonBufferType.BlendshapeDeltas.ToString(), true);
+                if (useQuantizedBlendshapeDeltas)
+                {
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer", binding++))
+                        WriteUniform(EShaderVarType._uvec2, ECommonBufferType.BlendshapeQuantizedDeltas.ToString(), true);
 
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeIndices}Buffer", binding++))
-                    WriteUniform(intVarType, ECommonBufferType.BlendshapeIndices.ToString(), true);
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer", binding++))
+                        WriteUniform(EShaderVarType._vec4, ECommonBufferType.BlendshapeQuantizationMetadata.ToString(), true);
+                }
+                else
+                {
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeDeltas}Buffer", binding++))
+                        WriteUniform(EShaderVarType._vec4, ECommonBufferType.BlendshapeDeltas.ToString(), true);
+                }
 
-                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeWeights}Buffer", binding++))
-                    WriteUniform(EShaderVarType._float, ECommonBufferType.BlendshapeWeights.ToString(), true);
+                if (!useSparseBlendshapeBuffers)
+                {
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeIndices}Buffer", binding++))
+                        WriteUniform(intVarType, ECommonBufferType.BlendshapeIndices.ToString(), true);
+
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeWeights}Buffer", binding++))
+                        WriteUniform(EShaderVarType._float, ECommonBufferType.BlendshapeWeights.ToString(), true);
+                }
+
+                using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeActiveWeights}Buffer", binding++))
+                    WriteUniform(EShaderVarType._vec2, ECommonBufferType.BlendshapeActiveWeights.ToString(), true);
+
+                if (useSparseBlendshapeBuffers)
+                {
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer", binding++))
+                        WriteUniform(intVarType, ECommonBufferType.BlendshapeSparseShapeRanges.ToString(), true);
+
+                    using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeSparseRecords}Buffer", binding++))
+                        WriteUniform(intVarType, ECommonBufferType.BlendshapeSparseRecords.ToString(), true);
+                }
+
+                if (UsePrecombinedDirectBlendshapes)
+                {
+                    using (StartShaderStorageBufferBlock($"{PrecombinedBlendshapePositionBufferName}Buffer", PrecombinedBlendshapePositionBinding))
+                        WriteUniform(EShaderVarType._vec4, PrecombinedBlendshapePositionBufferName, true);
+
+                    if (_useNormals)
+                    {
+                        using (StartShaderStorageBufferBlock($"{PrecombinedBlendshapeNormalBufferName}Buffer", PrecombinedBlendshapeNormalBinding))
+                            WriteUniform(EShaderVarType._vec4, PrecombinedBlendshapeNormalBufferName, true);
+                    }
+
+                    if (_useTangents)
+                    {
+                        using (StartShaderStorageBufferBlock($"{PrecombinedBlendshapeTangentBufferName}Buffer", PrecombinedBlendshapeTangentBinding))
+                            WriteUniform(EShaderVarType._vec4, PrecombinedBlendshapeTangentBufferName, true);
+                    }
+                }
 
                 wroteAnything = true;
             }
@@ -694,9 +765,48 @@ namespace XREngine.Rendering.Shaders.Generator
             bool hasNormals = _useNormals;
             bool hasTangents = _useTangents;
 
-            bool absolute = RuntimeEngine.Rendering.Settings.UseAbsoluteBlendshapePositions;
+            Line($"// BlendshapeShaderVariant: {Mesh.BlendshapeShaderVariant}");
+            Line("if (blendshapeActiveCount != 0)");
+            using (OpenBracketState())
+            {
+                if (UsePrecombinedDirectBlendshapes)
+                {
+                    Line("if (usePrecombinedBlendshapeDeltas != 0)");
+                    using (OpenBracketState())
+                    {
+                        WritePrecombinedBlendshapeCalc(hasNormals, hasTangents);
+                    }
+                    Line("else");
+                    using (OpenBracketState())
+                    {
+                        WriteBlendshapeFallbackCalc(hasNormals, hasTangents);
+                    }
+                }
+                else
+                {
+                    WriteBlendshapeFallbackCalc(hasNormals, hasTangents);
+                }
+            }
+            return true;
+        }
 
-            const string minWeight = "0.0001f";
+        private void WritePrecombinedBlendshapeCalc(bool hasNormals, bool hasTangents)
+        {
+            Line($"{BasePositionName} += {PrecombinedBlendshapePositionBufferName}[gl_VertexID].xyz;");
+            if (hasNormals)
+                Line($"{BaseNormalName} += {PrecombinedBlendshapeNormalBufferName}[gl_VertexID].xyz;");
+            if (hasTangents)
+                Line($"{BaseTangentName} += {PrecombinedBlendshapeTangentBufferName}[gl_VertexID].xyz;");
+        }
+
+        private void WriteBlendshapeFallbackCalc(bool hasNormals, bool hasTangents)
+        {
+            if (Mesh.BlendshapeSparseShapeRanges is not null && Mesh.BlendshapeSparseRecords is not null)
+            {
+                WriteSparseActiveBlendshapeCalc(hasNormals, hasTangents);
+                return;
+            }
+
             if (Mesh.MaxBlendshapeAccumulation)
             {
                 // MAX blendshape accumulation
@@ -715,7 +825,7 @@ namespace XREngine.Rendering.Shaders.Generator
                         Line($"vec4 blendshapeIndices = {ECommonBufferType.BlendshapeIndices}[index];");
                     Line($"int blendshapeIndex = int(blendshapeIndices.x);");
                     Line($"float weight = {ECommonBufferType.BlendshapeWeights}[blendshapeIndex];");
-                    Line($"if (weight > {minWeight})");
+                    Line("if (abs(weight) > blendshapeWeightThreshold)");
                     using (OpenBracketState())
                     {
                         Line($"int blendshapeDeltaPosIndex = int(blendshapeIndices.y);");
@@ -753,7 +863,7 @@ namespace XREngine.Rendering.Shaders.Generator
                     if (hasTangents)
                         Line($"int blendshapeDeltaTanIndex = int(blendshapeIndices.w);");
                     Line($"float weight = {ECommonBufferType.BlendshapeWeights}[blendshapeIndex];");
-                    Line($"if (weight > {minWeight})");
+                    Line("if (abs(weight) > blendshapeWeightThreshold)");
                     using (OpenBracketState())
                     {
                         Line($"{BasePositionName} += {ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaPosIndex].xyz * weight;");
@@ -764,7 +874,146 @@ namespace XREngine.Rendering.Shaders.Generator
                     }
                 }
             }
-            return true;
+        }
+
+        private void WriteSparseActiveBlendshapeCalc(bool hasNormals, bool hasTangents)
+        {
+            bool integerRecords = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders;
+            string rangeType = integerRecords ? "ivec4" : "vec4";
+            string recordType = integerRecords ? "ivec4" : "vec4";
+
+            Line("int sparseVertexIndex = gl_VertexID;");
+            if (Mesh.MaxBlendshapeAccumulation)
+            {
+                Line("vec3 maxPositionDelta = vec3(0.0f);");
+                if (hasNormals)
+                    Line("vec3 maxNormalDelta = vec3(0.0f);");
+                if (hasTangents)
+                    Line("vec3 maxTangentDelta = vec3(0.0f);");
+            }
+
+            Line("for (int activeIndex = 0; activeIndex < blendshapeActiveCount; activeIndex++)");
+            using (OpenBracketState())
+            {
+                Line($"vec2 activeBlendshape = {ECommonBufferType.BlendshapeActiveWeights}[activeIndex];");
+                Line("int blendshapeIndex = int(activeBlendshape.x);");
+                Line("float weight = activeBlendshape.y;");
+                Line("if (abs(weight) <= blendshapeWeightThreshold)");
+                using (OpenBracketState())
+                    Line("continue;");
+
+                Line($"{rangeType} sparseRange = {ECommonBufferType.BlendshapeSparseShapeRanges}[blendshapeIndex];");
+                WriteSparseIndexDecode("recordStart", "sparseRange.x", integerRecords);
+                WriteSparseIndexDecode("recordCount", "sparseRange.y", integerRecords);
+                Line("if (recordCount <= 0)");
+                using (OpenBracketState())
+                    Line("continue;");
+
+                Line("int low = recordStart;");
+                Line("int high = recordStart + recordCount - 1;");
+                Line("int sparseRecordIndex = -1;");
+                Line("while (low <= high)");
+                using (OpenBracketState())
+                {
+                    Line("int mid = (low + high) >> 1;");
+                    Line($"{recordType} sparseCandidate = {ECommonBufferType.BlendshapeSparseRecords}[mid];");
+                    WriteSparseIndexDecode("candidateVertex", "sparseCandidate.x", integerRecords);
+                    Line("if (candidateVertex < sparseVertexIndex)");
+                    using (OpenBracketState())
+                        Line("low = mid + 1;");
+                    Line("else if (candidateVertex > sparseVertexIndex)");
+                    using (OpenBracketState())
+                        Line("high = mid - 1;");
+                    Line("else");
+                    using (OpenBracketState())
+                    {
+                        Line("sparseRecordIndex = mid;");
+                        Line("break;");
+                    }
+                }
+
+                Line("if (sparseRecordIndex < 0)");
+                using (OpenBracketState())
+                    Line("continue;");
+
+                Line($"{recordType} sparseRecord = {ECommonBufferType.BlendshapeSparseRecords}[sparseRecordIndex];");
+                WriteSparseIndexDecode("blendshapeDeltaPosIndex", "sparseRecord.y", integerRecords);
+                if (hasNormals)
+                    WriteSparseIndexDecode("blendshapeDeltaNrmIndex", "sparseRecord.z", integerRecords);
+                if (hasTangents)
+                    WriteSparseIndexDecode("blendshapeDeltaTanIndex", "sparseRecord.w", integerRecords);
+
+                if (Mesh.MaxBlendshapeAccumulation)
+                {
+                    WriteBlendshapeDeltaLoad("blendshapePositionDelta", "blendshapeDeltaPosIndex", "blendshapeIndex");
+                    Line("maxPositionDelta = max(maxPositionDelta, blendshapePositionDelta * weight);");
+                    if (hasNormals)
+                    {
+                        WriteBlendshapeDeltaLoad("blendshapeNormalDelta", "blendshapeDeltaNrmIndex", "blendshapeIndex");
+                        Line("maxNormalDelta = max(maxNormalDelta, blendshapeNormalDelta * weight);");
+                    }
+                    if (hasTangents)
+                    {
+                        WriteBlendshapeDeltaLoad("blendshapeTangentDelta", "blendshapeDeltaTanIndex", "blendshapeIndex");
+                        Line("maxTangentDelta = max(maxTangentDelta, blendshapeTangentDelta * weight);");
+                    }
+                }
+                else
+                {
+                    WriteBlendshapeDeltaLoad("blendshapePositionDelta", "blendshapeDeltaPosIndex", "blendshapeIndex");
+                    Line($"{BasePositionName} += blendshapePositionDelta * weight;");
+                    if (hasNormals)
+                    {
+                        WriteBlendshapeDeltaLoad("blendshapeNormalDelta", "blendshapeDeltaNrmIndex", "blendshapeIndex");
+                        Line($"{BaseNormalName} += (blendshapeNormalDelta * weight);");
+                    }
+                    if (hasTangents)
+                    {
+                        WriteBlendshapeDeltaLoad("blendshapeTangentDelta", "blendshapeDeltaTanIndex", "blendshapeIndex");
+                        Line($"{BaseTangentName} += (blendshapeTangentDelta * weight);");
+                    }
+                }
+            }
+
+            if (Mesh.MaxBlendshapeAccumulation)
+            {
+                Line($"{BasePositionName} += maxPositionDelta;");
+                if (hasNormals)
+                    Line($"{BaseNormalName} += maxNormalDelta;");
+                if (hasTangents)
+                    Line($"{BaseTangentName} += maxTangentDelta;");
+            }
+        }
+
+        private void WriteSparseIndexDecode(string targetName, string sourceExpression, bool integerRecords)
+        {
+            string expression = integerRecords ? sourceExpression : $"int(round({sourceExpression}))";
+            Line($"int {targetName} = {expression};");
+        }
+
+        private void WriteBlendshapeDeltaLoad(string targetName, string deltaIndexExpression, string blendshapeIndexExpression)
+        {
+            if (Mesh.BlendshapeQuantizedDeltas is not null && Mesh.BlendshapeQuantizationMetadata is not null)
+            {
+                Line($"vec3 {targetName};");
+                Line($"if ({deltaIndexExpression} == 0)");
+                using (OpenBracketState())
+                    Line($"{targetName} = vec3(0.0f);");
+                Line("else");
+                using (OpenBracketState())
+                {
+                    Line($"uvec2 packedDelta = {ECommonBufferType.BlendshapeQuantizedDeltas}[{deltaIndexExpression}];");
+                    Line("vec2 packedXY = unpackSnorm2x16(packedDelta.x);");
+                    Line("vec2 packedZ = unpackSnorm2x16(packedDelta.y);");
+                    Line($"int metadataBase = {blendshapeIndexExpression} * 4;");
+                    Line($"vec3 scale = {ECommonBufferType.BlendshapeQuantizationMetadata}[metadataBase + 2].xyz;");
+                    Line($"vec3 bias = {ECommonBufferType.BlendshapeQuantizationMetadata}[metadataBase + 3].xyz;");
+                    Line($"{targetName} = bias + vec3(packedXY, packedZ.x) * scale;");
+                }
+                return;
+            }
+
+            Line($"vec3 {targetName} = {ECommonBufferType.BlendshapeDeltas}[{deltaIndexExpression}].xyz;");
         }
 
         private void ResolvePosition(string localInputPosName)

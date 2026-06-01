@@ -1022,8 +1022,12 @@ namespace XREngine.Rendering
             if (BlendshapeWeights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
                 return;
 
+            float previous = BlendshapeWeights.GetFloat(index);
+            if (previous.Equals(weight))
+                return;
+
             BlendshapeWeights.SetFloat(index, weight);
-            _blendshapesInvalidated = true;
+            MarkBlendshapeWeightDirty(index);
             MarkSkinnedOutputDirty();
         }
 
@@ -1143,6 +1147,27 @@ namespace XREngine.Rendering
                 BlendshapeWeights.Set(i, 0.0f);
 
             Buffers.Add(BlendshapeWeights.AttributeName, BlendshapeWeights);
+
+            BlendshapeActiveWeights = new XRDataBuffer($"{ECommonBufferType.BlendshapeActiveWeights}Buffer", EBufferTarget.ShaderStorageBuffer, blendshapeCount.Align(4), EComponentType.Float, 2, false, false)
+            {
+                Usage = EBufferUsage.DynamicDraw,
+                DisposeOnPush = false
+            };
+            Buffers.Add(BlendshapeActiveWeights.AttributeName, BlendshapeActiveWeights);
+
+            _activeBlendshapeCount = 0;
+            _blendshapeDirtyStartIndex = uint.MaxValue;
+            _blendshapeDirtyEndIndex = 0u;
+            unchecked
+            {
+                _blendshapeWeightsVersion++;
+                _precombinedBlendshapeInputVersion++;
+            }
+            SetBlendshapesInvalidated(false);
+            _blendshapeActiveListInvalidated = false;
+
+            if (RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass && Mesh is { VertexCount: > 0 } mesh)
+                EnsurePrecombinedBlendshapeBuffers(mesh);
         }
 
         private void ResetDrivableBuffers()
@@ -1181,6 +1206,21 @@ namespace XREngine.Rendering
             RemoveMeshDeformBuffer(BlendshapeWeights);
             BlendshapeWeights?.Destroy();
             BlendshapeWeights = null;
+
+            RemoveMeshDeformBuffer(BlendshapeActiveWeights);
+            BlendshapeActiveWeights?.Destroy();
+            BlendshapeActiveWeights = null;
+            DestroyPrecombinedBlendshapeBuffers();
+            _activeBlendshapeCount = 0;
+            _blendshapeDirtyStartIndex = uint.MaxValue;
+            _blendshapeDirtyEndIndex = 0u;
+            unchecked
+            {
+                _blendshapeWeightsVersion++;
+                _precombinedBlendshapeInputVersion++;
+            }
+            SetBlendshapesInvalidated(false);
+            _blendshapeActiveListInvalidated = false;
 
             ResetMeshDeformBuffers();
         }
@@ -1344,6 +1384,98 @@ namespace XREngine.Rendering
         public XRDataBuffer? BlendshapeWeights { get; private set; }
 
         /// <summary>
+        /// Dense active blendshape index/weight pairs for compact shader paths.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? BlendshapeActiveWeights { get; private set; }
+
+        [MemoryPackIgnore]
+        public int ActiveBlendshapeCount => _activeBlendshapeCount;
+
+        [MemoryPackIgnore]
+        public bool HasActiveBlendshapes => _activeBlendshapeCount > 0;
+
+        [MemoryPackIgnore]
+        public ulong BlendshapeWeightsVersion => _blendshapeWeightsVersion;
+
+        [MemoryPackIgnore]
+        public float BlendshapeActiveWeightThreshold
+        {
+            get => _blendshapeActiveWeightThreshold;
+            set
+            {
+                float normalized = Math.Max(0.0f, value);
+                if (!SetField(ref _blendshapeActiveWeightThreshold, normalized))
+                    return;
+
+                RebuildActiveBlendshapeList();
+                MarkSkinnedOutputDirty();
+            }
+        }
+
+        private BlendshapeLodProfile? _blendshapeLodProfile;
+        private int _activeBlendshapeLodTier;
+        private float _lastBlendshapeLodDistance;
+        private float _lastBlendshapeLodScreenCoverage;
+        private BlendshapeLodAvatarRole _lastBlendshapeLodAvatarRole;
+
+        [MemoryPackIgnore]
+        public BlendshapeLodProfile? BlendshapeLodProfile
+        {
+            get => _blendshapeLodProfile;
+            set
+            {
+                SetField(ref _blendshapeLodProfile, value);
+                RebuildActiveBlendshapeList();
+                MarkSkinnedOutputDirty();
+            }
+        }
+
+        [MemoryPackIgnore]
+        public int ActiveBlendshapeLodTier
+        {
+            get => _activeBlendshapeLodTier;
+            set
+            {
+                int normalized = Math.Max(0, value);
+                if (!SetField(ref _activeBlendshapeLodTier, normalized))
+                    return;
+                RebuildActiveBlendshapeList();
+                MarkSkinnedOutputDirty();
+            }
+        }
+
+        [MemoryPackIgnore]
+        public float LastBlendshapeLodDistance => _lastBlendshapeLodDistance;
+
+        [MemoryPackIgnore]
+        public float LastBlendshapeLodScreenCoverage => _lastBlendshapeLodScreenCoverage;
+
+        [MemoryPackIgnore]
+        public BlendshapeLodAvatarRole LastBlendshapeLodAvatarRole => _lastBlendshapeLodAvatarRole;
+
+        [MemoryPackIgnore]
+        public string BlendshapeLodDiagnosticSummary
+            => $"tier={_activeBlendshapeLodTier} role={_lastBlendshapeLodAvatarRole} distance={_lastBlendshapeLodDistance:0.###} screen={_lastBlendshapeLodScreenCoverage:0.###} active={_activeBlendshapeCount}";
+
+        public bool UpdateBlendshapeLodSelection(float distance, float screenCoverage, BlendshapeLodAvatarRole role = BlendshapeLodAvatarRole.Primary)
+        {
+            SetField(ref _lastBlendshapeLodDistance, Math.Max(0.0f, distance));
+            SetField(ref _lastBlendshapeLodScreenCoverage, Math.Clamp(screenCoverage, 0.0f, 1.0f));
+            SetField(ref _lastBlendshapeLodAvatarRole, role);
+
+            if (_blendshapeLodProfile is null)
+                return false;
+
+            int selectedTier = _blendshapeLodProfile.SelectTier(_lastBlendshapeLodDistance, _lastBlendshapeLodScreenCoverage, role);
+            if (selectedTier == _activeBlendshapeLodTier)
+                return false;
+
+            ActiveBlendshapeLodTier = selectedTier;
+            return true;
+        }
+
+        /// <summary>
         /// Indirect draw buffer for the mesh - renders multiple meshes with a single draw call.
         /// </summary>
         [MemoryPackIgnore]
@@ -1377,14 +1509,48 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         public XRDataBuffer? SkinnedInterleavedBuffer { get; internal set; }
 
+        /// <summary>
+        /// Precombined position deltas for active blendshapes. The compute pre-pass writes this and
+        /// final skinning/direct vertex paths add it once per vertex when the heuristic selects it.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? PrecombinedBlendshapePositionsBuffer { get; internal set; }
+
+        /// <summary>
+        /// Precombined normal deltas for active blendshapes.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? PrecombinedBlendshapeNormalsBuffer { get; internal set; }
+
+        /// <summary>
+        /// Precombined tangent deltas for active blendshapes.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? PrecombinedBlendshapeTangentsBuffer { get; internal set; }
+
         private bool _skinnedOutputDirty = true;
         private ulong _skinnedOutputVersion;
+        private XRMesh? _precombinedBlendshapeMesh;
+        private int _precombinedBlendshapeVertexCount;
+        private bool _precombinedBlendshapeHasNormals;
+        private bool _precombinedBlendshapeHasTangents;
+        private bool _hasValidPrecombinedBlendshapeOutput;
+        private ulong _precombinedBlendshapeInputVersion;
+        private ulong _precombinedBlendshapeOutputVersion;
 
         [MemoryPackIgnore]
         internal bool SkinnedOutputDirty => _skinnedOutputDirty;
 
         [MemoryPackIgnore]
         internal ulong SkinnedOutputVersion => _skinnedOutputVersion;
+
+        [MemoryPackIgnore]
+        internal bool HasValidPrecombinedBlendshapeDeltas
+            => _hasValidPrecombinedBlendshapeOutput
+            && _precombinedBlendshapeMesh is not null
+            && ReferenceEquals(_precombinedBlendshapeMesh, Mesh)
+            && _precombinedBlendshapeVertexCount == (Mesh?.VertexCount ?? 0)
+            && _precombinedBlendshapeOutputVersion == _precombinedBlendshapeInputVersion;
 
         [MemoryPackIgnore]
         internal bool HasPendingComputeSkinningInputChanges
@@ -1411,6 +1577,84 @@ namespace XREngine.Rendering
                 bool dirty = false;
                 SetField(ref _skinnedOutputDirty, dirty);
             }
+        }
+
+        internal bool EnsurePrecombinedBlendshapeBuffers(XRMesh mesh)
+        {
+            int vertexCount = mesh.VertexCount;
+            if (vertexCount <= 0)
+                return false;
+
+            bool buffersExist = PrecombinedBlendshapePositionsBuffer is not null
+                && (!mesh.HasNormals || PrecombinedBlendshapeNormalsBuffer is not null)
+                && (!mesh.HasTangents || PrecombinedBlendshapeTangentsBuffer is not null);
+            if (buffersExist
+                && ReferenceEquals(_precombinedBlendshapeMesh, mesh)
+                && _precombinedBlendshapeVertexCount == vertexCount
+                && _precombinedBlendshapeHasNormals == mesh.HasNormals
+                && _precombinedBlendshapeHasTangents == mesh.HasTangents)
+            {
+                return true;
+            }
+
+            DestroyPrecombinedBlendshapeBuffers();
+
+            _precombinedBlendshapeMesh = mesh;
+            _precombinedBlendshapeVertexCount = vertexCount;
+            _precombinedBlendshapeHasNormals = mesh.HasNormals;
+            _precombinedBlendshapeHasTangents = mesh.HasTangents;
+
+            PrecombinedBlendshapePositionsBuffer = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapePositionDeltas", vertexCount);
+            if (mesh.HasNormals)
+                PrecombinedBlendshapeNormalsBuffer = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapeNormalDeltas", vertexCount);
+            if (mesh.HasTangents)
+                PrecombinedBlendshapeTangentsBuffer = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapeTangentDeltas", vertexCount);
+
+            _hasValidPrecombinedBlendshapeOutput = false;
+            _precombinedBlendshapeOutputVersion = 0UL;
+            return true;
+        }
+
+        internal void MarkPrecombinedBlendshapeDeltasValid(XRMesh mesh)
+        {
+            _precombinedBlendshapeMesh = mesh;
+            _precombinedBlendshapeVertexCount = mesh.VertexCount;
+            _precombinedBlendshapeHasNormals = mesh.HasNormals;
+            _precombinedBlendshapeHasTangents = mesh.HasTangents;
+            _precombinedBlendshapeOutputVersion = _precombinedBlendshapeInputVersion;
+            _hasValidPrecombinedBlendshapeOutput = true;
+        }
+
+        internal void InvalidatePrecombinedBlendshapeDeltas()
+        {
+            if (!_hasValidPrecombinedBlendshapeOutput)
+                return;
+
+            bool valid = false;
+            SetField(ref _hasValidPrecombinedBlendshapeOutput, valid);
+        }
+
+        private static XRDataBuffer CreatePrecombinedBlendshapeBuffer(string name, int vertexCount)
+            => new(name, EBufferTarget.ShaderStorageBuffer, (uint)vertexCount, EComponentType.Float, 4, true, false)
+            {
+                Usage = EBufferUsage.DynamicDraw,
+                DisposeOnPush = false,
+            };
+
+        private void DestroyPrecombinedBlendshapeBuffers()
+        {
+            PrecombinedBlendshapePositionsBuffer?.Destroy();
+            PrecombinedBlendshapeNormalsBuffer?.Destroy();
+            PrecombinedBlendshapeTangentsBuffer?.Destroy();
+            PrecombinedBlendshapePositionsBuffer = null;
+            PrecombinedBlendshapeNormalsBuffer = null;
+            PrecombinedBlendshapeTangentsBuffer = null;
+            _precombinedBlendshapeMesh = null;
+            _precombinedBlendshapeVertexCount = 0;
+            _precombinedBlendshapeHasNormals = false;
+            _precombinedBlendshapeHasTangents = false;
+            _hasValidPrecombinedBlendshapeOutput = false;
+            _precombinedBlendshapeOutputVersion = 0UL;
         }
 
         #region Mesh Deform Buffers
@@ -1632,6 +1876,12 @@ namespace XREngine.Rendering
 
         private bool _bonesInvalidated = false;
         private bool _blendshapesInvalidated = false;
+        private bool _blendshapeActiveListInvalidated;
+        private uint _blendshapeDirtyStartIndex = uint.MaxValue;
+        private uint _blendshapeDirtyEndIndex;
+        private int _activeBlendshapeCount;
+        private ulong _blendshapeWeightsVersion;
+        private float _blendshapeActiveWeightThreshold;
     private int[]? _gpuDrivenBoneRefCounts;
     private int _gpuDrivenBoneCount;
     private object? _externalSkinPaletteSourceOwner;
@@ -2101,15 +2351,137 @@ namespace XREngine.Rendering
             _bonesInvalidated = _dirtyBoneIndices.Count > 0;
         }
 
-        public void PushBlendshapeWeightsToGPU()
+        private void SetBlendshapesInvalidated(bool value)
+            => SetField(ref _blendshapesInvalidated, value);
+
+        private void MarkBlendshapeWeightDirty(uint index)
         {
-            if (BlendshapeWeights is null || !_blendshapesInvalidated)
+            SetBlendshapesInvalidated(true);
+            if (_blendshapeDirtyStartIndex == uint.MaxValue || index < _blendshapeDirtyStartIndex)
+                _blendshapeDirtyStartIndex = index;
+            if (index > _blendshapeDirtyEndIndex)
+                _blendshapeDirtyEndIndex = index;
+
+            unchecked
+            {
+                _blendshapeWeightsVersion++;
+                _precombinedBlendshapeInputVersion++;
+            }
+
+            RebuildActiveBlendshapeList();
+        }
+
+        private void RebuildActiveBlendshapeList()
+        {
+            if (BlendshapeWeights is null || BlendshapeActiveWeights is null || Mesh is null)
                 return;
 
-            long blendshapeWeightBytes = BlendshapeWeights.Length;
-            _blendshapesInvalidated = false;
-            BlendshapeWeights.PushSubData();
-            RuntimeEngine.Rendering.Stats.RecordSkinningUpload(0L, blendshapeWeightBytes);
+            uint blendshapeCount = Mesh.BlendshapeCount;
+            int activeCount = 0;
+            for (uint i = 0; i < blendshapeCount; i++)
+            {
+                float weight = BlendshapeWeights.GetFloat(i);
+                if (!IsBlendshapeWeightActive(weight) || !IsBlendshapeAllowedByLod((int)i))
+                    continue;
+
+                BlendshapeActiveWeights.SetVector2((uint)activeCount, new Vector2(i, weight));
+                activeCount++;
+            }
+
+            SetField(ref _activeBlendshapeCount, activeCount);
+            _blendshapeActiveListInvalidated = true;
+            unchecked
+            {
+                _precombinedBlendshapeInputVersion++;
+            }
+        }
+
+        private bool IsBlendshapeWeightActive(float weight)
+            => MathF.Abs(weight) > _blendshapeActiveWeightThreshold;
+
+        private bool IsBlendshapeAllowedByLod(int blendshapeIndex)
+        {
+            if (_blendshapeLodProfile is null || !_blendshapeLodProfile.TryGetTier(_activeBlendshapeLodTier, out BlendshapeLodTier tier))
+                return true;
+
+            if (tier.Evaluation == BlendshapeLodEvaluation.Disabled)
+                return false;
+            if (tier.Evaluation == BlendshapeLodEvaluation.Full)
+                return true;
+
+            IReadOnlyList<int>? shapeIndices = tier.ShapeIndices;
+            if (shapeIndices is not null)
+            {
+                for (int i = 0; i < shapeIndices.Count; i++)
+                    if (shapeIndices[i] == blendshapeIndex)
+                        return true;
+            }
+
+            string[]? names = Mesh?.BlendshapeNames;
+            if (names is null || (uint)blendshapeIndex >= (uint)names.Length)
+                return false;
+
+            string name = names[blendshapeIndex];
+            IReadOnlyList<string>? protectedNames = tier.ProtectedShapeNames;
+            if (protectedNames is not null)
+            {
+                for (int i = 0; i < protectedNames.Count; i++)
+                    if (string.Equals(protectedNames[i], name, StringComparison.OrdinalIgnoreCase))
+                        return true;
+            }
+
+            return false;
+        }
+
+        public void PushBlendshapeWeightsToGPU()
+        {
+            if (BlendshapeWeights is null)
+                return;
+
+            long blendshapeWeightBytes = 0L;
+            if (_blendshapesInvalidated)
+            {
+                if (_blendshapeDirtyStartIndex != uint.MaxValue && _blendshapeDirtyEndIndex >= _blendshapeDirtyStartIndex)
+                {
+                    int offset = checked((int)(_blendshapeDirtyStartIndex * BlendshapeWeights.ElementSize));
+                    uint length = checked((_blendshapeDirtyEndIndex - _blendshapeDirtyStartIndex + 1u) * BlendshapeWeights.ElementSize);
+                    BlendshapeWeights.PushSubData(offset, length);
+                    blendshapeWeightBytes = length;
+                }
+                else
+                {
+                    BlendshapeWeights.PushSubData();
+                    blendshapeWeightBytes = BlendshapeWeights.Length;
+                }
+
+                _blendshapeDirtyStartIndex = uint.MaxValue;
+                _blendshapeDirtyEndIndex = 0u;
+                SetBlendshapesInvalidated(false);
+            }
+
+            long activeListBytes = 0L;
+            if (_blendshapeActiveListInvalidated && BlendshapeActiveWeights is not null)
+            {
+                if (_activeBlendshapeCount > 0)
+                {
+                    uint length = checked((uint)_activeBlendshapeCount * BlendshapeActiveWeights.ElementSize);
+                    BlendshapeActiveWeights.PushSubData(0, length);
+                    activeListBytes = length;
+                }
+
+                _blendshapeActiveListInvalidated = false;
+            }
+
+            if (blendshapeWeightBytes > 0 || activeListBytes > 0)
+            {
+                RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
+                    0L,
+                    blendshapeWeightBytes,
+                    blendshapeActiveListUploadBytes: activeListBytes,
+                    blendshapeAuthoredShapeCount: (int)(Mesh?.BlendshapeCount ?? 0u),
+                    blendshapeActiveShapeCount: _activeBlendshapeCount,
+                    compactedActiveBlendshapeCount: _activeBlendshapeCount);
+            }
         }
 
         #region Mesh Deformation Methods
@@ -2769,6 +3141,14 @@ namespace XREngine.Rendering
 
             if (!ReferenceEquals(vertexProgram, materialProgram))
                 renderState?.ApplyScopedProgramBindings(materialProgram);
+
+            vertexProgram.Uniform("blendshapeActiveCount", ActiveBlendshapeCount);
+            vertexProgram.Uniform("blendshapeWeightThreshold", BlendshapeActiveWeightThreshold);
+            if (!ReferenceEquals(vertexProgram, materialProgram))
+            {
+                materialProgram.Uniform("blendshapeActiveCount", ActiveBlendshapeCount);
+                materialProgram.Uniform("blendshapeWeightThreshold", BlendshapeActiveWeightThreshold);
+            }
 
             _settingUniforms?.Invoke(vertexProgram, materialProgram);
         }

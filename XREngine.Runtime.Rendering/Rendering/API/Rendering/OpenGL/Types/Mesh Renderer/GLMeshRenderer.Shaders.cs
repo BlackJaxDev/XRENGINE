@@ -530,7 +530,7 @@ namespace XREngine.Rendering.OpenGL
                         _combinedProgramPipelineFallbackLogged = true;
                         Debug.OpenGL(
                             $"[GLMeshRenderer] Using temporary shader-pipeline fallback for '{GetDescribingName()}' " +
-                            $"while combined Uber program for material '{material.Data.Name ?? "<unnamed>"}' is still building.");
+                            $"while combined program for material '{material.Data.Name ?? "<unnamed>"}' is still building.");
                     }
                     return true;
                 }
@@ -546,7 +546,6 @@ namespace XREngine.Rendering.OpenGL
             private bool ShouldUsePipelineFallbackForPendingCombinedProgram(GLMaterial material)
             {
                 if (RuntimeEngine.Rendering.State.IsShadowPass ||
-                    !RuntimeEngine.Rendering.Settings.AllowShaderPipelines ||
                     !Data.AllowShaderPipelines)
                 {
                     return false;
@@ -555,7 +554,7 @@ namespace XREngine.Rendering.OpenGL
                 if (_combinedProgram is not { IsAsyncBuildPending: true })
                     return false;
 
-                return material.Data.TryGetUberMaterialState(out _, out _);
+                return true;
             }
 
             private bool ShouldSkipShadowDrawForProgramBuild(GLMaterial material)

@@ -500,6 +500,7 @@ namespace XREngine.Rendering.OpenGL
                 BindSSBOs(vtx!);
 
                 BindSkinnedVertexBuffers(vtx!);
+                BindPrecombinedBlendshapeBuffers();
 
                 MeshRenderer.PushBoneMatricesToGPU();
                 MeshRenderer.PushBlendshapeWeightsToGPU();
@@ -571,6 +572,23 @@ namespace XREngine.Rendering.OpenGL
                     triangleCount: triangles,
                     skinned: mesh?.HasSkinning == true || mesh?.BlendshapeCount > 0,
                     representation: "source_mesh");
+
+                if (mesh is not null && mesh.BlendshapeCount > 0)
+                {
+                    long blendshapeDeltaBytes =
+                        (mesh.BlendshapeDeltas?.Length ?? 0u) +
+                        (mesh.BlendshapeSparseRecords?.Length ?? 0u) +
+                        (mesh.BlendshapeQuantizedDeltas?.Length ?? 0u);
+                    RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
+                        0L,
+                        0L,
+                        blendshapeDeltaBytes: blendshapeDeltaBytes,
+                        blendshapeAuthoredShapeCount: (int)mesh.BlendshapeCount,
+                        blendshapeActiveShapeCount: MeshRenderer.ActiveBlendshapeCount,
+                        blendshapeAffectedVertexCount: mesh.BlendshapeAffectedVertexCount,
+                        compactedActiveBlendshapeCount: MeshRenderer.ActiveBlendshapeCount,
+                        liveBlendshapeShaderPermutations: mesh.BlendshapeShaderVariant == BlendshapeShaderVariant.None ? 0 : 1);
+                }
             }
 
             private bool TryResolvePendingUberFallbackMaterial(GLMaterial blockedMaterial, out GLMaterial? fallbackMaterial)
@@ -734,6 +752,16 @@ namespace XREngine.Rendering.OpenGL
                 materialProgram?.Uniform("skinPaletteCount", meshRenderer.ActiveSkinPaletteCount);
                 vertexProgram.Uniform("skinningInfluenceCap", meshRenderer.ActiveSkinningInfluenceCap);
                 materialProgram?.Uniform("skinningInfluenceCap", meshRenderer.ActiveSkinningInfluenceCap);
+                vertexProgram.Uniform("blendshapeActiveCount", meshRenderer.ActiveBlendshapeCount);
+                materialProgram?.Uniform("blendshapeActiveCount", meshRenderer.ActiveBlendshapeCount);
+                vertexProgram.Uniform("blendshapeWeightThreshold", meshRenderer.BlendshapeActiveWeightThreshold);
+                materialProgram?.Uniform("blendshapeWeightThreshold", meshRenderer.BlendshapeActiveWeightThreshold);
+                int usePrecombinedBlendshapes = RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
+                    && meshRenderer.HasValidPrecombinedBlendshapeDeltas
+                        ? 1
+                        : 0;
+                vertexProgram.Uniform("usePrecombinedBlendshapeDeltas", usePrecombinedBlendshapes);
+                materialProgram?.Uniform("usePrecombinedBlendshapeDeltas", usePrecombinedBlendshapes);
                 SetDirectionalCascadeLayeredUniforms(vertexProgram);
                 SetPointLightLayeredUniforms(vertexProgram);
 

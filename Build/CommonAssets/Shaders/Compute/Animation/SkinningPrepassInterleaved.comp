@@ -21,24 +21,29 @@ layout(std430, binding = 3) buffer BoneWeightsOrCountsBuffer
     uint BoneInfluenceCoreWeightsRaw[];
 };
 
-layout(std430, binding = 4) buffer BlendshapeCountsBuffer
+layout(std430, binding = 1) buffer BlendshapeActiveWeightsBuffer
 {
-    uvec2 BlendshapeCounts[];
+    vec2 BlendshapeActiveWeights[];
 };
 
-layout(std430, binding = 5) buffer BlendshapeIndicesBuffer
+layout(std430, binding = 4) buffer BlendshapeSparseShapeRangesBuffer
 {
-    uvec4 BlendshapeIndices[];
+    uvec4 BlendshapeSparseShapeRanges[];
 };
 
-layout(std430, binding = 6) buffer BlendshapeDeltasBuffer
+layout(std430, binding = 5) buffer BlendshapeSparseRecordsBuffer
 {
-    vec4 BlendshapeDeltas[];
+    uvec4 BlendshapeSparseRecords[];
 };
 
-layout(std430, binding = 7) buffer BlendshapeWeightsBuffer
+layout(std430, binding = 6) buffer BlendshapeQuantizedDeltasBuffer
 {
-    float BlendshapeWeights[];
+    uvec2 BlendshapeQuantizedDeltas[];
+};
+
+layout(std430, binding = 7) buffer BlendshapeQuantizationMetadataBuffer
+{
+    vec4 BlendshapeQuantizationMetadata[];
 };
 
 // Interleaved vertex buffers - input and output
@@ -70,6 +75,8 @@ uniform int hasBlendshapes;
 uniform int allowBlendshapes;
 uniform int absoluteBlendshapePositions;
 uniform int maxBlendshapeAccumulation;
+uniform int activeBlendshapeCount;
+uniform float blendshapeWeightThreshold;
 uniform int useIntegerUniforms;
 uniform int skinningCoreIndexFormat;
 uniform int hasSpillInfluences;
@@ -82,24 +89,12 @@ uniform uint positionOffsetBytes;
 uniform uint normalOffsetBytes;
 uniform uint tangentOffsetBytes;
 
-const float MIN_BLEND_WEIGHT = 0.0001f;
-
 uint decodeIndex(uint raw)
 {
     return useIntegerUniforms != 0 ? raw : uint(round(uintBitsToFloat(raw)));
 }
 
-uint decodeCount(uvec2 raw)
-{
-    return useIntegerUniforms != 0 ? raw.y : uint(round(uintBitsToFloat(raw.y)));
-}
-
-uint decodeStart(uvec2 raw)
-{
-    return useIntegerUniforms != 0 ? raw.x : uint(round(uintBitsToFloat(raw.x)));
-}
-
-ivec4 decodeBlendshapeIndices(uvec4 raw)
+ivec4 decodeSparseBlendshapeRecord(uvec4 raw)
 {
     if (useIntegerUniforms != 0)
         return ivec4(raw);
@@ -108,6 +103,39 @@ ivec4 decodeBlendshapeIndices(uvec4 raw)
         round(uintBitsToFloat(raw.y)),
         round(uintBitsToFloat(raw.z)),
         round(uintBitsToFloat(raw.w)));
+}
+
+int findSparseBlendshapeRecord(uint recordStart, uint recordCount, uint vertexIndex)
+{
+    int low = int(recordStart);
+    int high = int(recordStart + recordCount) - 1;
+    while (low <= high)
+    {
+        int mid = (low + high) >> 1;
+        uint candidateVertex = decodeIndex(BlendshapeSparseRecords[uint(mid)].x);
+        if (candidateVertex < vertexIndex)
+            low = mid + 1;
+        else if (candidateVertex > vertexIndex)
+            high = mid - 1;
+        else
+            return mid;
+    }
+
+    return -1;
+}
+
+vec3 decodeBlendshapeDelta(uint deltaIndex, uint blendshapeIndex)
+{
+    if (deltaIndex == 0u)
+        return vec3(0.0);
+
+    uvec2 packedDelta = BlendshapeQuantizedDeltas[deltaIndex];
+    vec2 xy = unpackSnorm2x16(packedDelta.x);
+    vec2 z0 = unpackSnorm2x16(packedDelta.y);
+    uint metadataBase = blendshapeIndex * 4u;
+    vec3 scale = BlendshapeQuantizationMetadata[metadataBase + 2u].xyz;
+    vec3 bias = BlendshapeQuantizationMetadata[metadataBase + 3u].xyz;
+    return bias + vec3(xy, z0.x) * scale;
 }
 
 float loadInterleavedFloat(uint byteOffset)
@@ -146,13 +174,7 @@ void copyInterleavedVertex(uint baseByte)
 
 void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
 {
-    if (hasBlendshapes == 0 || allowBlendshapes == 0)
-        return;
-
-    uvec2 countData = BlendshapeCounts[vertexIndex];
-    uint start = decodeStart(countData);
-    uint count = decodeCount(countData);
-    if (count == 0u)
+    if (hasBlendshapes == 0 || allowBlendshapes == 0 || activeBlendshapeCount == 0)
         return;
 
     if (maxBlendshapeAccumulation != 0)
@@ -160,23 +182,34 @@ void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent
         vec3 maxPos = vec3(0.0);
         vec3 maxNrm = vec3(0.0);
         vec3 maxTan = vec3(0.0);
-        for (uint i = 0u; i < count; ++i)
+        for (int activeIndex = 0; activeIndex < activeBlendshapeCount; ++activeIndex)
         {
-            ivec4 bs = decodeBlendshapeIndices(BlendshapeIndices[start + i]);
-            int blendIndex = bs.x;
+            vec2 activeBlendshape = BlendshapeActiveWeights[activeIndex];
+            int blendIndex = int(activeBlendshape.x);
             if (blendIndex < 0)
                 continue;
-            float weight = BlendshapeWeights[blendshapeWeightBase + uint(blendIndex)];
-            if (weight <= MIN_BLEND_WEIGHT)
+            float weight = activeBlendshape.y;
+            if (abs(weight) <= blendshapeWeightThreshold)
                 continue;
 
+            uvec4 range = BlendshapeSparseShapeRanges[uint(blendIndex)];
+            uint recordStart = decodeIndex(range.x);
+            uint recordCount = decodeIndex(range.y);
+            if (recordCount == 0u)
+                continue;
+
+            int sparseRecordIndex = findSparseBlendshapeRecord(recordStart, recordCount, vertexIndex);
+            if (sparseRecordIndex < 0)
+                continue;
+
+            ivec4 bs = decodeSparseBlendshapeRecord(BlendshapeSparseRecords[uint(sparseRecordIndex)]);
             int posIndex = bs.y;
             int nrmIndex = bs.z;
             int tanIndex = bs.w;
 
-            maxPos = max(maxPos, BlendshapeDeltas[posIndex].xyz * weight);
-            maxNrm = max(maxNrm, BlendshapeDeltas[nrmIndex].xyz * weight);
-            maxTan = max(maxTan, BlendshapeDeltas[tanIndex].xyz * weight);
+            maxPos = max(maxPos, decodeBlendshapeDelta(uint(posIndex), uint(blendIndex)) * weight);
+            maxNrm = max(maxNrm, decodeBlendshapeDelta(uint(nrmIndex), uint(blendIndex)) * weight);
+            maxTan = max(maxTan, decodeBlendshapeDelta(uint(tanIndex), uint(blendIndex)) * weight);
         }
 
         position += maxPos;
@@ -187,25 +220,36 @@ void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent
     }
     else
     {
-        for (uint i = 0u; i < count; ++i)
+        for (int activeIndex = 0; activeIndex < activeBlendshapeCount; ++activeIndex)
         {
-            ivec4 bs = decodeBlendshapeIndices(BlendshapeIndices[start + i]);
-            int blendIndex = bs.x;
+            vec2 activeBlendshape = BlendshapeActiveWeights[activeIndex];
+            int blendIndex = int(activeBlendshape.x);
             if (blendIndex < 0)
                 continue;
-            float weight = BlendshapeWeights[blendshapeWeightBase + uint(blendIndex)];
-            if (weight <= MIN_BLEND_WEIGHT)
+            float weight = activeBlendshape.y;
+            if (abs(weight) <= blendshapeWeightThreshold)
                 continue;
 
+            uvec4 range = BlendshapeSparseShapeRanges[uint(blendIndex)];
+            uint recordStart = decodeIndex(range.x);
+            uint recordCount = decodeIndex(range.y);
+            if (recordCount == 0u)
+                continue;
+
+            int sparseRecordIndex = findSparseBlendshapeRecord(recordStart, recordCount, vertexIndex);
+            if (sparseRecordIndex < 0)
+                continue;
+
+            ivec4 bs = decodeSparseBlendshapeRecord(BlendshapeSparseRecords[uint(sparseRecordIndex)]);
             int posIndex = bs.y;
             int nrmIndex = bs.z;
             int tanIndex = bs.w;
 
-            position += BlendshapeDeltas[posIndex].xyz * weight;
+            position += decodeBlendshapeDelta(uint(posIndex), uint(blendIndex)) * weight;
             if (hasNormals != 0)
-                normal += BlendshapeDeltas[nrmIndex].xyz * weight;
+                normal += decodeBlendshapeDelta(uint(nrmIndex), uint(blendIndex)) * weight;
             if (hasTangents != 0)
-                tangent += BlendshapeDeltas[tanIndex].xyz * weight;
+                tangent += decodeBlendshapeDelta(uint(tanIndex), uint(blendIndex)) * weight;
         }
     }
 }

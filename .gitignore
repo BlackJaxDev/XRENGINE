@@ -466,3 +466,4 @@ yt-dlp.exe
 XREngine.Server/Assets/UnitTestingWorldSettings.jsonc
 XREngine.UnitTests/Build/Validation/
 */Build/TempValidation/*
+Assets/Imported/

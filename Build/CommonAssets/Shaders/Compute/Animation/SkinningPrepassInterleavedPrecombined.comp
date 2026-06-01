@@ -1,0 +1,276 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer SkinPaletteBuffer
+{
+    vec4 SkinPaletteRows[];
+};
+
+layout(std430, binding = 2) buffer BoneIndicesOrOffsetsBuffer
+{
+    uint BoneInfluenceCoreIndicesRaw[];
+};
+
+layout(std430, binding = 3) buffer BoneWeightsOrCountsBuffer
+{
+    uint BoneInfluenceCoreWeightsRaw[];
+};
+
+layout(std430, binding = 4) readonly buffer PrecombinedBlendshapePositionDeltasBuffer
+{
+    vec4 PrecombinedBlendshapePositionDeltas[];
+};
+
+layout(std430, binding = 5) readonly buffer PrecombinedBlendshapeNormalDeltasBuffer
+{
+    vec4 PrecombinedBlendshapeNormalDeltas[];
+};
+
+layout(std430, binding = 6) readonly buffer PrecombinedBlendshapeTangentDeltasBuffer
+{
+    vec4 PrecombinedBlendshapeTangentDeltas[];
+};
+
+layout(std430, binding = 8) readonly buffer InterleavedInBuffer
+{
+    uint InterleavedIn[];
+};
+
+layout(std430, binding = 9) buffer InterleavedOutBuffer
+{
+    uint InterleavedOut[];
+};
+
+layout(std430, binding = 10) buffer BoneInfluenceSpillHeadersBuffer
+{
+    uint BoneInfluenceSpillHeaders[];
+};
+
+layout(std430, binding = 11) buffer BoneInfluenceSpillEntriesBuffer
+{
+    uint BoneInfluenceSpillEntries[];
+};
+
+uniform uint vertexCount;
+uniform int hasSkinning;
+uniform int hasNormals;
+uniform int hasTangents;
+uniform int hasBlendshapes;
+uniform int allowBlendshapes;
+uniform int absoluteBlendshapePositions;
+uniform int maxBlendshapeAccumulation;
+uniform int activeBlendshapeCount;
+uniform float blendshapeWeightThreshold;
+uniform int useIntegerUniforms;
+uniform int skinningCoreIndexFormat;
+uniform int hasSpillInfluences;
+uniform int skinningInfluenceCap;
+uniform uint skinPaletteBase;
+uniform uint skinPaletteCount;
+uniform uint blendshapeWeightBase;
+uniform int usePrecombinedBlendshapeDeltas;
+uniform uint interleavedStride;
+uniform uint positionOffsetBytes;
+uniform uint normalOffsetBytes;
+uniform uint tangentOffsetBytes;
+
+float loadInterleavedFloat(uint byteOffset)
+{
+    return uintBitsToFloat(InterleavedIn[byteOffset >> 2]);
+}
+
+void storeInterleavedFloat(uint byteOffset, float value)
+{
+    InterleavedOut[byteOffset >> 2] = floatBitsToUint(value);
+}
+
+vec3 loadInterleavedVec3(uint baseByte)
+{
+    return vec3(
+        loadInterleavedFloat(baseByte + 0u),
+        loadInterleavedFloat(baseByte + 4u),
+        loadInterleavedFloat(baseByte + 8u));
+}
+
+void storeInterleavedVec3(uint baseByte, vec3 value)
+{
+    storeInterleavedFloat(baseByte + 0u, value.x);
+    storeInterleavedFloat(baseByte + 4u, value.y);
+    storeInterleavedFloat(baseByte + 8u, value.z);
+}
+
+void copyInterleavedVertex(uint baseByte)
+{
+    uint wordBase = baseByte >> 2u;
+    uint wordCount = interleavedStride >> 2u;
+    for (uint i = 0u; i < wordCount; ++i)
+        InterleavedOut[wordBase + i] = InterleavedIn[wordBase + i];
+}
+
+void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
+{
+    if (hasBlendshapes == 0 || allowBlendshapes == 0 || activeBlendshapeCount == 0 || usePrecombinedBlendshapeDeltas == 0)
+        return;
+
+    position += PrecombinedBlendshapePositionDeltas[vertexIndex].xyz;
+    if (hasNormals != 0)
+        normal += PrecombinedBlendshapeNormalDeltas[vertexIndex].xyz;
+    if (hasTangents != 0)
+        tangent += PrecombinedBlendshapeTangentDeltas[vertexIndex].xyz;
+}
+
+uvec4 loadCoreIndices(uint vertexIndex)
+{
+    if (skinningCoreIndexFormat == 1)
+    {
+        uint raw = BoneInfluenceCoreIndicesRaw[vertexIndex];
+        return uvec4(raw & 0xFFu, (raw >> 8) & 0xFFu, (raw >> 16) & 0xFFu, (raw >> 24) & 0xFFu);
+    }
+
+    uint base = vertexIndex * 2u;
+    uint lo = BoneInfluenceCoreIndicesRaw[base + 0u];
+    uint hi = BoneInfluenceCoreIndicesRaw[base + 1u];
+    return uvec4(lo & 0xFFFFu, lo >> 16, hi & 0xFFFFu, hi >> 16);
+}
+
+vec4 loadCoreWeights(uint vertexIndex)
+{
+    return unpackUnorm4x8(BoneInfluenceCoreWeightsRaw[vertexIndex]);
+}
+
+uint skinPaletteRowBase(uint paletteIndex)
+{
+    return paletteIndex * 3u;
+}
+
+vec3 transformSkinPosition(uint paletteIndex, vec3 position)
+{
+    uint rowBase = skinPaletteRowBase(paletteIndex);
+    vec4 p = vec4(position, 1.0f);
+    return vec3(
+        dot(SkinPaletteRows[rowBase + 0u], p),
+        dot(SkinPaletteRows[rowBase + 1u], p),
+        dot(SkinPaletteRows[rowBase + 2u], p));
+}
+
+vec3 transformSkinNormal(uint paletteIndex, vec3 normal)
+{
+    uint rowBase = skinPaletteRowBase(paletteIndex);
+    vec3 row0 = SkinPaletteRows[rowBase + 0u].xyz;
+    vec3 row1 = SkinPaletteRows[rowBase + 1u].xyz;
+    vec3 row2 = SkinPaletteRows[rowBase + 2u].xyz;
+    vec3 cof0 = cross(row1, row2);
+    vec3 cof1 = cross(row2, row0);
+    vec3 cof2 = cross(row0, row1);
+    return vec3(dot(cof0, normal), dot(cof1, normal), dot(cof2, normal));
+}
+
+void accumulateSkinInfluence(
+    uint boneIndex,
+    float weight,
+    vec3 basePosition,
+    vec3 baseNormal,
+    vec3 baseTangent,
+    inout vec3 skinnedPos,
+    inout vec3 skinnedNormal,
+    inout vec3 skinnedTangent,
+    inout float totalWeight)
+{
+    if (boneIndex == 0u || weight <= 0.0f || boneIndex >= skinPaletteCount)
+        return;
+
+    uint idx = skinPaletteBase + boneIndex;
+    skinnedPos += transformSkinPosition(idx, basePosition) * weight;
+    totalWeight += weight;
+
+    if (hasNormals != 0)
+        skinnedNormal += transformSkinNormal(idx, baseNormal) * weight;
+    if (hasTangents != 0)
+        skinnedTangent += transformSkinNormal(idx, baseTangent) * weight;
+}
+
+void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
+{
+    if (hasSkinning == 0)
+        return;
+
+    vec3 basePosition = position;
+    vec3 baseNormal = normal;
+    vec3 baseTangent = tangent;
+
+    vec3 skinnedPos = vec3(0.0);
+    vec3 skinnedNormal = vec3(0.0);
+    vec3 skinnedTangent = vec3(0.0);
+    float totalWeight = 0.0f;
+    int influenceLimit = skinningInfluenceCap <= 0 ? 2147483647 : skinningInfluenceCap;
+
+    uvec4 coreIndices = loadCoreIndices(vertexIndex);
+    vec4 coreWeights = loadCoreWeights(vertexIndex);
+    for (int i = 0; i < 4 && i < influenceLimit; ++i)
+    {
+        accumulateSkinInfluence(
+            coreIndices[i],
+            coreWeights[i],
+            basePosition,
+            baseNormal,
+            baseTangent,
+            skinnedPos,
+            skinnedNormal,
+            skinnedTangent,
+            totalWeight);
+    }
+
+    if (hasSpillInfluences != 0)
+    {
+        uint spillHeader = BoneInfluenceSpillHeaders[vertexIndex];
+        uint spillOffset = spillHeader & 0x00FFFFFFu;
+        uint spillCount = spillHeader >> 24;
+        for (uint i = 0u; i < spillCount && int(i) + 4 < influenceLimit; ++i)
+        {
+            uint entry = BoneInfluenceSpillEntries[spillOffset + i];
+            accumulateSkinInfluence(
+                entry & 0xFFFFu,
+                float((entry >> 16) & 0xFFu) * (1.0f / 255.0f),
+                basePosition,
+                baseNormal,
+                baseTangent,
+                skinnedPos,
+                skinnedNormal,
+                skinnedTangent,
+                totalWeight);
+        }
+    }
+
+    if (totalWeight <= 0.0001f)
+        return;
+
+    position = skinnedPos;
+    if (hasNormals != 0)
+        normal = skinnedNormal;
+    if (hasTangents != 0)
+        tangent = skinnedTangent;
+}
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= vertexCount)
+        return;
+
+    uint baseByte = idx * interleavedStride;
+    copyInterleavedVertex(baseByte);
+
+    vec3 position = loadInterleavedVec3(baseByte + positionOffsetBytes);
+    vec3 normal = (hasNormals != 0) ? loadInterleavedVec3(baseByte + normalOffsetBytes) : vec3(0.0);
+    vec3 tangent = (hasTangents != 0) ? loadInterleavedVec3(baseByte + tangentOffsetBytes) : vec3(0.0);
+
+    applyBlendshapes(position, normal, tangent, idx);
+    applySkinning(position, normal, tangent, idx);
+
+    storeInterleavedVec3(baseByte + positionOffsetBytes, position);
+    if (hasNormals != 0)
+        storeInterleavedVec3(baseByte + normalOffsetBytes, normalize(normal));
+    if (hasTangents != 0)
+        storeInterleavedVec3(baseByte + tangentOffsetBytes, normalize(tangent));
+}
