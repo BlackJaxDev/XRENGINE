@@ -1212,11 +1212,32 @@ namespace XREngine.Rendering.OpenGL
                 }
                 else
                 {
-                    // Cache the resource index lookup per program to avoid expensive GL query every frame
+                    // Cache the resolved binding point per program to avoid expensive GL queries every frame.
                     uint programId = program.BindingId;
                     if (!_ssboResourceIndexCache.TryGetValue(programId, out resourceIndex))
                     {
-                        resourceIndex = Api.GetProgramResourceIndex(programId, GLEnum.ShaderStorageBlock, Data.AttributeName);
+                        uint blockIndex = Api.GetProgramResourceIndex(programId, GLEnum.ShaderStorageBlock, Data.AttributeName);
+                        if (blockIndex == uint.MaxValue)
+                        {
+                            resourceIndex = uint.MaxValue;
+                        }
+                        else
+                        {
+                            // glGetProgramResourceIndex returns the block's enumeration ordinal, NOT its
+                            // declared layout(binding = N) point. Those only coincide when blocks are declared
+                            // sequentially from 0 (e.g. the standalone skinning compute program). In a combined
+                            // forward-lit, skinned draw program the generated SkinPalette block's ordinal differs
+                            // from its declared binding, so binding to the ordinal mis-targeted the palette (and
+                            // displaced a lighting/material SSBO), corrupting both skinning and lighting. Resolve
+                            // the actual GL_BUFFER_BINDING so we bind to the binding point the shader reads from.
+                            unsafe
+                            {
+                                GLEnum prop = GLEnum.BufferBinding;
+                                int bindingPoint = 0;
+                                Api.GetProgramResource(programId, GLEnum.ShaderStorageBlock, blockIndex, 1u, &prop, 1u, null, &bindingPoint);
+                                resourceIndex = (uint)bindingPoint;
+                            }
+                        }
                         _ssboResourceIndexCache[programId] = resourceIndex;
                     }
                 }

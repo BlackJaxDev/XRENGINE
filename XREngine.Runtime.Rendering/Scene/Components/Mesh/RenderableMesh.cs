@@ -80,6 +80,13 @@ namespace XREngine.Components.Scene.Mesh
         // current transform state on the first collect, mirroring the skinning toggle path.
         private bool _initialRenderStateSeeded;
 
+        // Vertex-skinning pose-settle latch. The compute path settles its CPU-built skin palette in
+        // SkinningPrepassDispatcher; the vertex draw path has no equivalent, so it drives the same
+        // shared pose-settle re-seed (XRMeshRenderer.ReseedSkinPaletteUntilPoseStable) each frame
+        // until the runtime-imported skeleton's pose stabilizes. Without this the palette can latch
+        // an intermediate startup pose and render exploded until a bone is manually moved.
+        private bool _vertexSkinSeedSettled;
+
         /// <summary>
         /// Minimum interval (in seconds) between expensive skinned bounds recomputations.
         /// The root bone matrix is updated every frame regardless, so culling remains correct;
@@ -578,6 +585,22 @@ namespace XREngine.Components.Scene.Mesh
                 if (rend?.Mesh?.HasSkinning == true && rend.EnsureSkinningBuffers(logWarnings: false))
                     rend.RefreshBoneMatricesFromRenderState();
                 QueueCurrentRenderMatrixUpdate();
+            }
+
+            // Vertex draw path pose-settle: keep re-seeding the CPU-built skin palette from current
+            // bone render state until the skeleton pose stabilizes. The compute path does this in
+            // SkinningPrepassDispatcher; the vertex shader reads the same palette but has no settle
+            // loop of its own, so a runtime-imported avatar that publishes intermediate startup poses
+            // can otherwise latch a wrong pose and render exploded until a bone is manually moved.
+            // Only the vertex path runs this -- when compute skinning is enabled the dispatcher owns
+            // the shared re-seed and double-driving it here would corrupt its pose tracking.
+            if (!_vertexSkinSeedSettled
+                && rend?.Mesh?.HasSkinning == true
+                && RuntimeEngine.Rendering.Settings.AllowSkinning
+                && !RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
+                && rend.EnsureSkinningBuffers(logWarnings: false))
+            {
+                _vertexSkinSeedSettled = rend.ReseedSkinPaletteUntilPoseStable();
             }
 
             if (skinned)

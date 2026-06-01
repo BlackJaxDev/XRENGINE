@@ -351,10 +351,18 @@ public partial class OpenGLRenderer
 
                 Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentObjectType, out int objType);
                 Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentObjectName, out int objName);
-                Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentTextureLevel, out int attachedLevel);
-                Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentTextureLayer, out int attachedLayer);
+                GLEnum glObjType = (GLEnum)objType;
+                int attachedLevel = 0;
+                int attachedLayer = 0;
+                if (glObjType == GLEnum.Texture)
+                {
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentTextureLevel, out attachedLevel);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentTextureLayer, out attachedLayer);
+                }
 
-                s += $"{splitter}[FBO Detail] {Attachment}: GL objType={(GLEnum)objType} objName={objName} texLevel={attachedLevel} texLayer={attachedLayer}";
+                s += glObjType == GLEnum.Texture
+                    ? $"{splitter}[FBO Detail] {Attachment}: GL objType={glObjType} objName={objName} texLevel={attachedLevel} texLayer={attachedLayer}"
+                    : $"{splitter}[FBO Detail] {Attachment}: GL objType={glObjType} objName={objName}";
 
                 // If we can resolve the GL texture wrapper, also dump texture params/level info.
                 if (Target is XRTexture xrTex)
@@ -431,12 +439,20 @@ public partial class OpenGLRenderer
 
                 Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentObjectType, out int objType);
                 Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentObjectName, out int objName);
-                if ((GLEnum)objType == GLEnum.None || objName == 0)
+                GLEnum glObjType = (GLEnum)objType;
+                if (glObjType == GLEnum.None || objName == 0)
                     continue;
 
-                Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentTextureLevel, out int level);
-                Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentTextureLayer, out int layer);
-                s += $"{splitter}[FBO Detail]   {att}: objType={(GLEnum)objType} objName={objName} texLevel={level} texLayer={layer}";
+                if (glObjType == GLEnum.Texture)
+                {
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentTextureLevel, out int level);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentTextureLayer, out int layer);
+                    s += $"{splitter}[FBO Detail]   {att}: objType={glObjType} objName={objName} texLevel={level} texLayer={layer}";
+                }
+                else
+                {
+                    s += $"{splitter}[FBO Detail]   {att}: objType={glObjType} objName={objName}";
+                }
             }
 
             return s;

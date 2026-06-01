@@ -675,6 +675,14 @@ namespace XREngine.Rendering.Shaders.Generator
                 if (hasTangents)
                     Line($"{FinalTangentName} = {BaseTangentName};");
             }
+
+            // The influence loop accumulates '{FinalPositionName} += vec4(skinnedPosition, 1.0f) * weight',
+            // so the w component sums to xreTotalSkinWeight rather than 1.0. Downstream transforms
+            // (ModelMatrix * finalPosition, ModelViewProj * finalPosition) treat w as the homogeneous
+            // coordinate, so a sub-1.0 total weight (UNorm8 quantization, or influences past the Core4
+            // cap being dropped) would scale the translation column and deform the mesh. The compute
+            // skinning path writes a plain vec3 position (w = 1.0 at draw), so force w = 1.0 here to match.
+            Line($"{FinalPositionName}.w = 1.0f;");
             return true;
         }
         
