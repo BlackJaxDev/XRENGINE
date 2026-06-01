@@ -516,8 +516,7 @@ public sealed partial class XRRenderPipelineInstance
 
         public void ApplyScopedProgramBindings(XRRenderProgram program)
         {
-            XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance;
-            if (pipeline is null)
+            if (RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext is not XRRenderPipelineInstance pipeline)
                 return;
 
             pipeline.Variables.Apply(program);

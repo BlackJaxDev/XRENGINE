@@ -49,6 +49,12 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool AllowSkinning => Engine.Rendering.Settings.AllowSkinning;
     public bool CalculateSkinningInComputeShader => Engine.Rendering.Settings.CalculateSkinningInComputeShader;
     public bool CalculateBlendshapesInComputeShader => Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
+    public bool EnableBlendshapePrecombinePass => Engine.Rendering.Settings.EnableBlendshapePrecombinePass;
+    public bool EnableBlendshapePrecombineForDirectVertexPath => Engine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath;
+    public bool EnableBlendshapePcaBasisCompression => Engine.Rendering.Settings.EnableBlendshapePcaBasisCompression;
+    public int BlendshapePrecombineComputeMinActiveShapes => Engine.Rendering.Settings.BlendshapePrecombineComputeMinActiveShapes;
+    public int BlendshapePrecombineDirectMinActiveShapes => Engine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes;
+    public int BlendshapePrecombineMinAffectedVertices => Engine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices;
     public int ShaderConfigVersion => Engine.Rendering.Settings.ShaderConfigVersion;
     public bool AllowBinaryProgramCaching => Engine.Rendering.Settings.AllowBinaryProgramCaching;
     public bool AsyncProgramBinaryUpload => Engine.Rendering.Settings.AsyncProgramBinaryUpload;
@@ -523,7 +529,15 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         long skinPaletteBytes = 0,
         int skippedSkinningDispatches = 0,
         int reusedSkinnedOutputBuffers = 0,
-        int liveSkinningShaderPermutations = 0)
+        int liveSkinningShaderPermutations = 0,
+        long blendshapeActiveListUploadBytes = 0,
+        long blendshapeDeltaBytes = 0,
+        int blendshapeAuthoredShapeCount = 0,
+        int blendshapeActiveShapeCount = 0,
+        int blendshapeAffectedVertexCount = 0,
+        int skippedBlendshapeDispatches = 0,
+        int compactedActiveBlendshapeCount = 0,
+        int liveBlendshapeShaderPermutations = 0)
         => Engine.Rendering.Stats.SceneAssets.RecordSkinningUpload(
             boneMatrixBytes,
             blendshapeWeightBytes,
@@ -535,7 +549,15 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             skinPaletteBytes,
             skippedSkinningDispatches,
             reusedSkinnedOutputBuffers,
-            liveSkinningShaderPermutations);
+            liveSkinningShaderPermutations,
+            blendshapeActiveListUploadBytes,
+            blendshapeDeltaBytes,
+            blendshapeAuthoredShapeCount,
+            blendshapeActiveShapeCount,
+            blendshapeAffectedVertexCount,
+            skippedBlendshapeDispatches,
+            compactedActiveBlendshapeCount,
+            liveBlendshapeShaderPermutations);
 
     public void RecordRenderShaderVariant(bool requested, bool warming, bool linked, bool failed, bool loadedFromDiskCache, bool generatedThisRun)
         => Engine.Rendering.Stats.SceneAssets.RecordShaderVariant(requested, warming, linked, failed, loadedFromDiskCache, generatedThisRun);

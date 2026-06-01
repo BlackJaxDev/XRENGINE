@@ -33,6 +33,11 @@ public partial class XRMesh
             _maxSpillInfluenceCount = MaxSpillInfluenceCount,
             BindRootMatrix = BindRootMatrix,
             BlendshapeNames = [.. BlendshapeNames],
+            _blendshapeShaderVariant = BlendshapeShaderVariant,
+            _blendshapeDeltaStorageMode = BlendshapeDeltaStorageMode,
+            _blendshapeDeltaEncoding = BlendshapeDeltaEncoding,
+            _blendshapeAffectedVertexCount = BlendshapeAffectedVertexCount,
+            _blendshapeSparseRecordCount = BlendshapeSparseRecordCount,
             _vertices = new Vertex[Vertices.Length]
         };
 
@@ -80,6 +85,10 @@ public partial class XRMesh
             clone.BlendshapeCounts = clone.Buffers.GetValueOrDefault(ECommonBufferType.BlendshapeCount.ToString());
             clone.BlendshapeIndices = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeIndices}Buffer");
             clone.BlendshapeDeltas = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeDeltas}Buffer");
+            clone.BlendshapeSparseShapeRanges = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer");
+            clone.BlendshapeSparseRecords = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeSparseRecords}Buffer");
+            clone.BlendshapeQuantizedDeltas = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer");
+            clone.BlendshapeQuantizationMetadata = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer");
         }
 
         return clone;

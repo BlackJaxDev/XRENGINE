@@ -487,6 +487,12 @@ namespace XREngine
                 private int _openGLParallelShaderCompileProbeTimeoutMs = 25;
                 private bool _calculateBlendshapesInComputeShader = true;
                 private bool _calculateSkinningInComputeShader = true;
+                private bool _enableBlendshapePrecombinePass = false;
+                private bool _enableBlendshapePrecombineForDirectVertexPath = true;
+                private bool _enableBlendshapePcaBasisCompression = false;
+                private int _blendshapePrecombineComputeMinActiveShapes = 8;
+                private int _blendshapePrecombineDirectMinActiveShapes = 8;
+                private int _blendshapePrecombineMinAffectedVertices = 1024;
                 private bool _useDetailPreservingComputeMipmaps = true;
                 private bool _useGlobalSkinPaletteBufferForComputeSkinning = false;
                 private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
@@ -1147,6 +1153,72 @@ namespace XREngine
                 {
                     get => _calculateBlendshapesInComputeShader;
                     set => SetField(ref _calculateBlendshapesInComputeShader, value, null, _ => BumpShaderConfigVersion());
+                }
+
+                /// <summary>
+                /// If true, eligible blendshape renderers can precombine active shape deltas into one per-vertex buffer before final skinning or direct vertex evaluation.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, eligible blendshape renderers can precombine active shape deltas into one per-vertex buffer before final skinning or direct vertex evaluation.")]
+                public bool EnableBlendshapePrecombinePass
+                {
+                    get => _enableBlendshapePrecombinePass;
+                    set => SetField(ref _enableBlendshapePrecombinePass, value, null, _ => BumpShaderConfigVersion());
+                }
+
+                /// <summary>
+                /// If true, the precombined blendshape buffer may be used by direct vertex-shader blendshape evaluation.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, the precombined blendshape buffer may be used by direct vertex-shader blendshape evaluation.")]
+                public bool EnableBlendshapePrecombineForDirectVertexPath
+                {
+                    get => _enableBlendshapePrecombineForDirectVertexPath;
+                    set => SetField(ref _enableBlendshapePrecombineForDirectVertexPath, value, null, _ => BumpShaderConfigVersion());
+                }
+
+                /// <summary>
+                /// If true, cooked blendshape basis payloads may use PCA/SVD basis compression for non-protected shape groups.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, cooked blendshape basis payloads may use PCA/SVD basis compression for non-protected shape groups. Disabled unless the mesh has basis data.")]
+                public bool EnableBlendshapePcaBasisCompression
+                {
+                    get => _enableBlendshapePcaBasisCompression;
+                    set => SetField(ref _enableBlendshapePcaBasisCompression, value, null, _ => BumpShaderConfigVersion());
+                }
+
+                /// <summary>
+                /// Minimum active shape count before the compute deformation path considers the precombine pass.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Minimum active shape count before the compute deformation path considers the precombine pass.")]
+                public int BlendshapePrecombineComputeMinActiveShapes
+                {
+                    get => _blendshapePrecombineComputeMinActiveShapes;
+                    set => SetField(ref _blendshapePrecombineComputeMinActiveShapes, Math.Max(1, value));
+                }
+
+                /// <summary>
+                /// Minimum active shape count before the direct vertex path considers the precombine pass.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Minimum active shape count before the direct vertex path considers the precombine pass.")]
+                public int BlendshapePrecombineDirectMinActiveShapes
+                {
+                    get => _blendshapePrecombineDirectMinActiveShapes;
+                    set => SetField(ref _blendshapePrecombineDirectMinActiveShapes, Math.Max(1, value));
+                }
+
+                /// <summary>
+                /// Minimum total affected vertex count before the precombine pass is considered.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Minimum total affected vertex count before the precombine pass is considered.")]
+                public int BlendshapePrecombineMinAffectedVertices
+                {
+                    get => _blendshapePrecombineMinAffectedVertices;
+                    set => SetField(ref _blendshapePrecombineMinAffectedVertices, Math.Max(1, value));
                 }
                 
                 /// <summary>

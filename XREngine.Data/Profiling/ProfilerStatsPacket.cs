@@ -308,6 +308,8 @@ public sealed partial class RenderProfilerSceneAssetData
     public int SkinnedRendererCount { get; set; }
     public long BoneMatrixUploadBytes { get; set; }
     public long BlendshapeWeightUploadBytes { get; set; }
+    public long BlendshapeActiveListUploadBytes { get; set; }
+    public long BlendshapeDeltaBytes { get; set; }
     public long SkinningCoreInfluenceBytes { get; set; }
     public long SkinningSpillHeaderBytes { get; set; }
     public long SkinningSpillEntryBytes { get; set; }
@@ -315,8 +317,14 @@ public sealed partial class RenderProfilerSceneAssetData
     public int SkinningComputeDispatchCount { get; set; }
     public int BlendshapeComputeDispatchCount { get; set; }
     public int SkippedSkinningComputeDispatchCount { get; set; }
+    public int SkippedBlendshapeComputeDispatchCount { get; set; }
     public int ReusedSkinnedOutputBufferCount { get; set; }
     public int LiveSkinningShaderPermutationCount { get; set; }
+    public int BlendshapeAuthoredShapeCount { get; set; }
+    public int BlendshapeActiveShapeCount { get; set; }
+    public int BlendshapeAffectedVertexCount { get; set; }
+    public int CompactedActiveBlendshapeCount { get; set; }
+    public int LiveBlendshapeShaderPermutationCount { get; set; }
     public int AvatarSourceMeshCount { get; set; }
     public int AvatarOptimizedLodCount { get; set; }
     public int AvatarMeshletCount { get; set; }

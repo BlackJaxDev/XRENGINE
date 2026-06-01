@@ -35,7 +35,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     }
 
     [Test]
-    public void GLMeshRenderer_UsesCombinedProgramsWithoutUberPipelineFallbackWhenPipelinesAreDisabled()
+    public void GLMeshRenderer_UsesCombinedProgramsWithTemporaryPipelineFallbackWhilePending()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
 
@@ -47,9 +47,11 @@ public sealed class GLMeshRendererLifecycleContractTests
         source.ShouldContain("material.Data.DestroyShaderPipelineProgram();");
         source.ShouldContain("if (GetCombinedProgram(material, out vertexProgram, out materialProgram))");
         source.ShouldContain("ShouldUsePipelineFallbackForPendingCombinedProgram(material)");
-        source.ShouldContain("!RuntimeEngine.Rendering.Settings.AllowShaderPipelines");
         source.ShouldContain("allowWhenShaderPipelinesDisabled: true");
-        source.ShouldContain("material.Data.TryGetUberMaterialState(out _, out _)");
+        source.ShouldContain("_combinedProgram is not { IsAsyncBuildPending: true }");
+        source.ShouldContain("!Data.AllowShaderPipelines");
+        source.ShouldNotContain("!RuntimeEngine.Rendering.Settings.AllowShaderPipelines ||");
+        source.ShouldNotContain("return material.Data.TryGetUberMaterialState(out _, out _);");
         source.ShouldContain("private void EnsureCombinedProgramForMaterial(GLMaterial material)");
         source.ShouldNotContain("ShouldForceSeparableUberProgram");
         source.ShouldNotContain("|| forceShaderPipelines");

@@ -602,6 +602,155 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void ComputeSkinningShaders_BlendshapeActiveCountAndThresholdAreUniformGated()
+    {
+        foreach (string shader in new[] { "Compute/Animation/SkinningPrepass.comp", "Compute/Animation/SkinningPrepassInterleaved.comp" })
+        {
+            string source = LoadShaderSource(shader);
+
+            source.ShouldContain("uniform int activeBlendshapeCount;");
+            source.ShouldContain("uniform float blendshapeWeightThreshold;");
+            source.ShouldContain("BlendshapeActiveWeightsBuffer");
+            source.ShouldContain("BlendshapeSparseShapeRangesBuffer");
+            source.ShouldContain("BlendshapeSparseRecordsBuffer");
+            source.ShouldContain("BlendshapeQuantizedDeltasBuffer");
+            source.ShouldContain("BlendshapeQuantizationMetadataBuffer");
+            source.ShouldContain("findSparseBlendshapeRecord");
+            source.ShouldContain("decodeBlendshapeDelta");
+            source.ShouldContain("for (int activeIndex = 0; activeIndex < activeBlendshapeCount; ++activeIndex)");
+            source.ShouldContain("if (hasBlendshapes == 0 || allowBlendshapes == 0 || activeBlendshapeCount == 0)");
+            source.ShouldContain("if (abs(weight) <= blendshapeWeightThreshold)");
+            source.ShouldNotContain("MIN_BLEND_WEIGHT");
+            source.ShouldNotContain("BlendshapeCounts");
+            source.ShouldNotContain("BlendshapeIndices");
+        }
+    }
+
+    [Test]
+    public void ComputeBlendshapeShaders_AvoidDriverReservedLocalNames()
+    {
+        foreach (string shader in new[]
+        {
+            "Compute/Animation/SkinningPrepass.comp",
+            "Compute/Animation/SkinningPrepassInterleaved.comp",
+            "Compute/Animation/BlendshapePrecombine.comp",
+        })
+        {
+            string source = LoadShaderSource(shader);
+
+            source.ShouldStartWith("#version 450");
+            Assert.That(source, Does.Not.Match(@"\buvec2\s+packed\s*="), shader);
+            Assert.That(source, Does.Not.Match(@"\bvec2\s+active\s*="), shader);
+            source.ShouldContain("packedDelta");
+            source.ShouldContain("activeBlendshape");
+        }
+    }
+
+    [Test]
+    public void PrecombinedBlendshapeShaders_ExposePrecombineAndConsumptionContracts()
+    {
+        string precombine = LoadShaderSource("Compute/Animation/BlendshapePrecombine.comp");
+        precombine.ShouldContain("PrecombinedBlendshapePositionDeltasBuffer");
+        precombine.ShouldContain("BlendshapeActiveWeightsBuffer");
+        precombine.ShouldContain("for (int activeIndex = 0; activeIndex < activeBlendshapeCount; ++activeIndex)");
+        precombine.ShouldContain("findSparseBlendshapeRecord");
+
+        foreach (string shader in new[] { "Compute/Animation/SkinningPrepassPrecombined.comp", "Compute/Animation/SkinningPrepassInterleavedPrecombined.comp" })
+        {
+            string source = LoadShaderSource(shader);
+            source.ShouldStartWith("#version 450");
+            source.ShouldContain("uniform int usePrecombinedBlendshapeDeltas;");
+            source.ShouldContain("PrecombinedBlendshapePositionDeltasBuffer");
+            source.ShouldContain("position += PrecombinedBlendshapePositionDeltas[vertexIndex].xyz;");
+            source.ShouldNotContain("BlendshapeSparseShapeRangesBuffer");
+            source.ShouldNotContain("BlendshapeQuantizedDeltasBuffer");
+        }
+    }
+
+    [Test]
+    public void DefaultVertexShaderGenerator_DirectBlendshapes_EmitsActiveListContract()
+    {
+        XRMesh mesh = CreateGeneratedContractMesh();
+
+        bool previousComputeSkinning = GetRuntimeRenderingBool("CalculateSkinningInComputeShader");
+        bool previousComputeBlendshapes = GetRuntimeRenderingBool("CalculateBlendshapesInComputeShader");
+        bool previousAllowSkinning = GetRuntimeRenderingBool("AllowSkinning");
+        bool previousAllowBlendshapes = GetRuntimeRenderingBool("AllowBlendshapes");
+
+        try
+        {
+            SetRuntimeRenderingBool("AllowSkinning", false);
+            SetRuntimeRenderingBool("AllowBlendshapes", true);
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", false);
+            SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", false);
+
+            string source = new DefaultVertexShaderGenerator(mesh).Generate();
+
+            source.ShouldContain("uniform int blendshapeActiveCount;");
+            source.ShouldContain("uniform float blendshapeWeightThreshold;");
+            source.ShouldContain("BlendshapeActiveWeightsBuffer");
+            source.ShouldContain("BlendshapeSparseShapeRangesBuffer");
+            source.ShouldContain("BlendshapeSparseRecordsBuffer");
+            source.ShouldContain("BlendshapeQuantizedDeltasBuffer");
+            source.ShouldContain("BlendshapeQuantizationMetadataBuffer");
+            source.ShouldContain("for (int activeIndex = 0; activeIndex < blendshapeActiveCount; activeIndex++)");
+            source.ShouldContain("while (low <= high)");
+            source.ShouldContain("BlendshapeShaderVariant:");
+            source.ShouldContain("if (blendshapeActiveCount != 0)");
+            source.ShouldContain("if (abs(weight) <= blendshapeWeightThreshold)");
+        }
+        finally
+        {
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", previousComputeSkinning);
+            SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", previousComputeBlendshapes);
+            SetRuntimeRenderingBool("AllowSkinning", previousAllowSkinning);
+            SetRuntimeRenderingBool("AllowBlendshapes", previousAllowBlendshapes);
+        }
+    }
+
+    [Test]
+    public void DefaultVertexShaderGenerator_DirectBlendshapes_EmitsPrecombinedFallbackContractWhenEnabled()
+    {
+        XRMesh mesh = CreateGeneratedContractMesh();
+
+        bool previousComputeSkinning = GetRuntimeRenderingBool("CalculateSkinningInComputeShader");
+        bool previousComputeBlendshapes = GetRuntimeRenderingBool("CalculateBlendshapesInComputeShader");
+        bool previousAllowSkinning = GetRuntimeRenderingBool("AllowSkinning");
+        bool previousAllowBlendshapes = GetRuntimeRenderingBool("AllowBlendshapes");
+        bool previousPrecombine = GetRuntimeRenderingBool("EnableBlendshapePrecombinePass");
+        bool previousDirectPrecombine = GetRuntimeRenderingBool("EnableBlendshapePrecombineForDirectVertexPath");
+
+        try
+        {
+            SetRuntimeRenderingBool("AllowSkinning", false);
+            SetRuntimeRenderingBool("AllowBlendshapes", true);
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", false);
+            SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", false);
+            SetRuntimeRenderingBool("EnableBlendshapePrecombinePass", true);
+            SetRuntimeRenderingBool("EnableBlendshapePrecombineForDirectVertexPath", true);
+
+            string source = new DefaultVertexShaderGenerator(mesh).Generate();
+
+            source.ShouldContain("uniform int usePrecombinedBlendshapeDeltas;");
+            source.ShouldContain("PrecombinedBlendshapePositionDeltasBuffer");
+            source.ShouldContain("if (usePrecombinedBlendshapeDeltas != 0)");
+            source.ShouldContain("basePosition += PrecombinedBlendshapePositionDeltas[gl_VertexID].xyz;");
+            source.ShouldContain("else");
+            source.ShouldContain("BlendshapeSparseShapeRangesBuffer");
+            source.ShouldContain("for (int activeIndex = 0; activeIndex < blendshapeActiveCount; activeIndex++)");
+        }
+        finally
+        {
+            SetRuntimeRenderingBool("CalculateSkinningInComputeShader", previousComputeSkinning);
+            SetRuntimeRenderingBool("CalculateBlendshapesInComputeShader", previousComputeBlendshapes);
+            SetRuntimeRenderingBool("AllowSkinning", previousAllowSkinning);
+            SetRuntimeRenderingBool("AllowBlendshapes", previousAllowBlendshapes);
+            SetRuntimeRenderingBool("EnableBlendshapePrecombinePass", previousPrecombine);
+            SetRuntimeRenderingBool("EnableBlendshapePrecombineForDirectVertexPath", previousDirectPrecombine);
+        }
+    }
+
+    [Test]
     public void DefaultVertexShaderGenerator_ComputeSkinning_UsesComputeBlendshapePathToo()
     {
         XRMesh mesh = CreateGeneratedContractMesh();
@@ -737,12 +886,23 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         for (int i = 0; i < vertices.Count; i++)
             vertices[i].Weights = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>(weights);
 
+        vertices[0].Blendshapes =
+        [
+            ("Smile", new VertexData
+            {
+                Position = vertices[0].Position + new Vector3(0.0f, 0.1f, 0.0f),
+                Normal = normal,
+                Tangent = tangent,
+            }),
+        ];
+
         XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 })
         {
             BlendshapeNames = ["Smile"],
             UtilizedBones = [(bone, Matrix4x4.Identity)],
         };
         mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildBlendshapeBuffersFromVertices();
 
         return mesh;
     }

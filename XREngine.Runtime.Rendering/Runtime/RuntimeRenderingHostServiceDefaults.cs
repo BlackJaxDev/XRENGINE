@@ -18,6 +18,12 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool AllowSkinning = true;
     public const bool CalculateSkinningInComputeShader = false;
     public const bool CalculateBlendshapesInComputeShader = false;
+    public const bool EnableBlendshapePrecombinePass = false;
+    public const bool EnableBlendshapePrecombineForDirectVertexPath = true;
+    public const bool EnableBlendshapePcaBasisCompression = false;
+    public const int BlendshapePrecombineComputeMinActiveShapes = 8;
+    public const int BlendshapePrecombineDirectMinActiveShapes = 8;
+    public const int BlendshapePrecombineMinAffectedVertices = 1024;
     public const int ShaderConfigVersion = 0;
     public const bool AllowBinaryProgramCaching = true;
     public const bool AsyncProgramBinaryUpload = true;

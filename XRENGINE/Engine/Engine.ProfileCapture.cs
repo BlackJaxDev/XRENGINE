@@ -515,6 +515,8 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "skinned_renderer_count", Engine.Rendering.Stats.SceneAssets.SkinnedRendererCount, ref first);
             AppendNumberField(s_lineBuilder, "bone_matrix_upload_bytes", Engine.Rendering.Stats.SceneAssets.BoneMatrixUploadBytes, ref first);
             AppendNumberField(s_lineBuilder, "blendshape_weight_upload_bytes", Engine.Rendering.Stats.SceneAssets.BlendshapeWeightUploadBytes, ref first);
+            AppendNumberField(s_lineBuilder, "blendshape_active_list_upload_bytes", Engine.Rendering.Stats.SceneAssets.BlendshapeActiveListUploadBytes, ref first);
+            AppendNumberField(s_lineBuilder, "blendshape_delta_bytes", Engine.Rendering.Stats.SceneAssets.BlendshapeDeltaBytes, ref first);
             AppendNumberField(s_lineBuilder, "skinning_core_influence_bytes", Engine.Rendering.Stats.SceneAssets.SkinningCoreInfluenceBytes, ref first);
             AppendNumberField(s_lineBuilder, "skinning_spill_header_bytes", Engine.Rendering.Stats.SceneAssets.SkinningSpillHeaderBytes, ref first);
             AppendNumberField(s_lineBuilder, "skinning_spill_entry_bytes", Engine.Rendering.Stats.SceneAssets.SkinningSpillEntryBytes, ref first);
@@ -522,8 +524,14 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "skinning_compute_dispatch_count", Engine.Rendering.Stats.SceneAssets.SkinningComputeDispatchCount, ref first);
             AppendNumberField(s_lineBuilder, "blendshape_compute_dispatch_count", Engine.Rendering.Stats.SceneAssets.BlendshapeComputeDispatchCount, ref first);
             AppendNumberField(s_lineBuilder, "skipped_skinning_compute_dispatch_count", Engine.Rendering.Stats.SceneAssets.SkippedSkinningComputeDispatchCount, ref first);
+            AppendNumberField(s_lineBuilder, "skipped_blendshape_compute_dispatch_count", Engine.Rendering.Stats.SceneAssets.SkippedBlendshapeComputeDispatchCount, ref first);
             AppendNumberField(s_lineBuilder, "reused_skinned_output_buffer_count", Engine.Rendering.Stats.SceneAssets.ReusedSkinnedOutputBufferCount, ref first);
             AppendNumberField(s_lineBuilder, "live_skinning_shader_permutation_count", Engine.Rendering.Stats.SceneAssets.LiveSkinningShaderPermutationCount, ref first);
+            AppendNumberField(s_lineBuilder, "blendshape_authored_shape_count", Engine.Rendering.Stats.SceneAssets.BlendshapeAuthoredShapeCount, ref first);
+            AppendNumberField(s_lineBuilder, "blendshape_active_shape_count", Engine.Rendering.Stats.SceneAssets.BlendshapeActiveShapeCount, ref first);
+            AppendNumberField(s_lineBuilder, "blendshape_affected_vertex_count", Engine.Rendering.Stats.SceneAssets.BlendshapeAffectedVertexCount, ref first);
+            AppendNumberField(s_lineBuilder, "compacted_active_blendshape_count", Engine.Rendering.Stats.SceneAssets.CompactedActiveBlendshapeCount, ref first);
+            AppendNumberField(s_lineBuilder, "live_blendshape_shader_permutation_count", Engine.Rendering.Stats.SceneAssets.LiveBlendshapeShaderPermutationCount, ref first);
             AppendNumberField(s_lineBuilder, "avatar_source_mesh_count", Engine.Rendering.Stats.SceneAssets.AvatarSourceMeshCount, ref first);
             AppendNumberField(s_lineBuilder, "avatar_optimized_lod_count", Engine.Rendering.Stats.SceneAssets.AvatarOptimizedLodCount, ref first);
             AppendNumberField(s_lineBuilder, "avatar_meshlet_count", Engine.Rendering.Stats.SceneAssets.AvatarMeshletCount, ref first);

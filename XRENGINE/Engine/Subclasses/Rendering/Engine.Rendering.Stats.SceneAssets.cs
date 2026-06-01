@@ -31,6 +31,8 @@ namespace XREngine
                     private static int _skinnedRendererCount;
                     private static long _boneMatrixUploadBytes;
                     private static long _blendshapeWeightUploadBytes;
+                    private static long _blendshapeActiveListUploadBytes;
+                    private static long _blendshapeDeltaBytes;
                     private static long _skinningCoreInfluenceBytes;
                     private static long _skinningSpillHeaderBytes;
                     private static long _skinningSpillEntryBytes;
@@ -38,8 +40,14 @@ namespace XREngine
                     private static int _skinningComputeDispatchCount;
                     private static int _blendshapeComputeDispatchCount;
                     private static int _skippedSkinningComputeDispatchCount;
+                    private static int _skippedBlendshapeComputeDispatchCount;
                     private static int _reusedSkinnedOutputBufferCount;
                     private static int _liveSkinningShaderPermutationCount;
+                    private static int _blendshapeAuthoredShapeCount;
+                    private static int _blendshapeActiveShapeCount;
+                    private static int _blendshapeAffectedVertexCount;
+                    private static int _compactedActiveBlendshapeCount;
+                    private static int _liveBlendshapeShaderPermutationCount;
                     private static int _avatarSourceMeshCount;
                     private static int _avatarOptimizedLodCount;
                     private static int _avatarMeshletCount;
@@ -67,6 +75,8 @@ namespace XREngine
                     private static int _lastFrameSkinnedRendererCount;
                     private static long _lastFrameBoneMatrixUploadBytes;
                     private static long _lastFrameBlendshapeWeightUploadBytes;
+                    private static long _lastFrameBlendshapeActiveListUploadBytes;
+                    private static long _lastFrameBlendshapeDeltaBytes;
                     private static long _lastFrameSkinningCoreInfluenceBytes;
                     private static long _lastFrameSkinningSpillHeaderBytes;
                     private static long _lastFrameSkinningSpillEntryBytes;
@@ -74,8 +84,14 @@ namespace XREngine
                     private static int _lastFrameSkinningComputeDispatchCount;
                     private static int _lastFrameBlendshapeComputeDispatchCount;
                     private static int _lastFrameSkippedSkinningComputeDispatchCount;
+                    private static int _lastFrameSkippedBlendshapeComputeDispatchCount;
                     private static int _lastFrameReusedSkinnedOutputBufferCount;
                     private static int _lastFrameLiveSkinningShaderPermutationCount;
+                    private static int _lastFrameBlendshapeAuthoredShapeCount;
+                    private static int _lastFrameBlendshapeActiveShapeCount;
+                    private static int _lastFrameBlendshapeAffectedVertexCount;
+                    private static int _lastFrameCompactedActiveBlendshapeCount;
+                    private static int _lastFrameLiveBlendshapeShaderPermutationCount;
                     private static int _lastFrameAvatarSourceMeshCount;
                     private static int _lastFrameAvatarOptimizedLodCount;
                     private static int _lastFrameAvatarMeshletCount;
@@ -108,6 +124,8 @@ namespace XREngine
                     public static int SkinnedRendererCount => _lastFrameSkinnedRendererCount;
                     public static long BoneMatrixUploadBytes => _lastFrameBoneMatrixUploadBytes;
                     public static long BlendshapeWeightUploadBytes => _lastFrameBlendshapeWeightUploadBytes;
+                    public static long BlendshapeActiveListUploadBytes => _lastFrameBlendshapeActiveListUploadBytes;
+                    public static long BlendshapeDeltaBytes => _lastFrameBlendshapeDeltaBytes;
                     public static long SkinningCoreInfluenceBytes => _lastFrameSkinningCoreInfluenceBytes;
                     public static long SkinningSpillHeaderBytes => _lastFrameSkinningSpillHeaderBytes;
                     public static long SkinningSpillEntryBytes => _lastFrameSkinningSpillEntryBytes;
@@ -115,8 +133,14 @@ namespace XREngine
                     public static int SkinningComputeDispatchCount => _lastFrameSkinningComputeDispatchCount;
                     public static int BlendshapeComputeDispatchCount => _lastFrameBlendshapeComputeDispatchCount;
                     public static int SkippedSkinningComputeDispatchCount => _lastFrameSkippedSkinningComputeDispatchCount;
+                    public static int SkippedBlendshapeComputeDispatchCount => _lastFrameSkippedBlendshapeComputeDispatchCount;
                     public static int ReusedSkinnedOutputBufferCount => _lastFrameReusedSkinnedOutputBufferCount;
                     public static int LiveSkinningShaderPermutationCount => _lastFrameLiveSkinningShaderPermutationCount;
+                    public static int BlendshapeAuthoredShapeCount => _lastFrameBlendshapeAuthoredShapeCount;
+                    public static int BlendshapeActiveShapeCount => _lastFrameBlendshapeActiveShapeCount;
+                    public static int BlendshapeAffectedVertexCount => _lastFrameBlendshapeAffectedVertexCount;
+                    public static int CompactedActiveBlendshapeCount => _lastFrameCompactedActiveBlendshapeCount;
+                    public static int LiveBlendshapeShaderPermutationCount => _lastFrameLiveBlendshapeShaderPermutationCount;
                     public static int AvatarSourceMeshCount => _lastFrameAvatarSourceMeshCount;
                     public static int AvatarOptimizedLodCount => _lastFrameAvatarOptimizedLodCount;
                     public static int AvatarMeshletCount => _lastFrameAvatarMeshletCount;
@@ -149,6 +173,8 @@ namespace XREngine
                         _lastFrameSkinnedRendererCount = Interlocked.Exchange(ref _skinnedRendererCount, 0);
                         _lastFrameBoneMatrixUploadBytes = Interlocked.Exchange(ref _boneMatrixUploadBytes, 0);
                         _lastFrameBlendshapeWeightUploadBytes = Interlocked.Exchange(ref _blendshapeWeightUploadBytes, 0);
+                        _lastFrameBlendshapeActiveListUploadBytes = Interlocked.Exchange(ref _blendshapeActiveListUploadBytes, 0);
+                        _lastFrameBlendshapeDeltaBytes = Interlocked.Exchange(ref _blendshapeDeltaBytes, 0);
                         _lastFrameSkinningCoreInfluenceBytes = Interlocked.Exchange(ref _skinningCoreInfluenceBytes, 0);
                         _lastFrameSkinningSpillHeaderBytes = Interlocked.Exchange(ref _skinningSpillHeaderBytes, 0);
                         _lastFrameSkinningSpillEntryBytes = Interlocked.Exchange(ref _skinningSpillEntryBytes, 0);
@@ -156,8 +182,14 @@ namespace XREngine
                         _lastFrameSkinningComputeDispatchCount = Interlocked.Exchange(ref _skinningComputeDispatchCount, 0);
                         _lastFrameBlendshapeComputeDispatchCount = Interlocked.Exchange(ref _blendshapeComputeDispatchCount, 0);
                         _lastFrameSkippedSkinningComputeDispatchCount = Interlocked.Exchange(ref _skippedSkinningComputeDispatchCount, 0);
+                        _lastFrameSkippedBlendshapeComputeDispatchCount = Interlocked.Exchange(ref _skippedBlendshapeComputeDispatchCount, 0);
                         _lastFrameReusedSkinnedOutputBufferCount = Interlocked.Exchange(ref _reusedSkinnedOutputBufferCount, 0);
                         _lastFrameLiveSkinningShaderPermutationCount = Interlocked.Exchange(ref _liveSkinningShaderPermutationCount, 0);
+                        _lastFrameBlendshapeAuthoredShapeCount = Interlocked.Exchange(ref _blendshapeAuthoredShapeCount, 0);
+                        _lastFrameBlendshapeActiveShapeCount = Interlocked.Exchange(ref _blendshapeActiveShapeCount, 0);
+                        _lastFrameBlendshapeAffectedVertexCount = Interlocked.Exchange(ref _blendshapeAffectedVertexCount, 0);
+                        _lastFrameCompactedActiveBlendshapeCount = Interlocked.Exchange(ref _compactedActiveBlendshapeCount, 0);
+                        _lastFrameLiveBlendshapeShaderPermutationCount = Interlocked.Exchange(ref _liveBlendshapeShaderPermutationCount, 0);
                         _lastFrameAvatarSourceMeshCount = Interlocked.Exchange(ref _avatarSourceMeshCount, 0);
                         _lastFrameAvatarOptimizedLodCount = Interlocked.Exchange(ref _avatarOptimizedLodCount, 0);
                         _lastFrameAvatarMeshletCount = Interlocked.Exchange(ref _avatarMeshletCount, 0);
@@ -277,7 +309,15 @@ namespace XREngine
                         long skinPaletteBytes = 0,
                         int skippedSkinningDispatches = 0,
                         int reusedSkinnedOutputBuffers = 0,
-                        int liveSkinningShaderPermutations = 0)
+                        int liveSkinningShaderPermutations = 0,
+                        long blendshapeActiveListUploadBytes = 0,
+                        long blendshapeDeltaBytes = 0,
+                        int blendshapeAuthoredShapeCount = 0,
+                        int blendshapeActiveShapeCount = 0,
+                        int blendshapeAffectedVertexCount = 0,
+                        int skippedBlendshapeDispatches = 0,
+                        int compactedActiveBlendshapeCount = 0,
+                        int liveBlendshapeShaderPermutations = 0)
                     {
                         if (!EnableTracking)
                             return;
@@ -286,6 +326,10 @@ namespace XREngine
                             Interlocked.Add(ref _boneMatrixUploadBytes, boneMatrixBytes);
                         if (blendshapeWeightBytes > 0)
                             Interlocked.Add(ref _blendshapeWeightUploadBytes, blendshapeWeightBytes);
+                        if (blendshapeActiveListUploadBytes > 0)
+                            Interlocked.Add(ref _blendshapeActiveListUploadBytes, blendshapeActiveListUploadBytes);
+                        if (blendshapeDeltaBytes > 0)
+                            Interlocked.Add(ref _blendshapeDeltaBytes, blendshapeDeltaBytes);
                         if (coreInfluenceBytes > 0)
                             Interlocked.Add(ref _skinningCoreInfluenceBytes, coreInfluenceBytes);
                         if (spillHeaderBytes > 0)
@@ -300,10 +344,22 @@ namespace XREngine
                             Interlocked.Add(ref _blendshapeComputeDispatchCount, blendshapeDispatches);
                         if (skippedSkinningDispatches > 0)
                             Interlocked.Add(ref _skippedSkinningComputeDispatchCount, skippedSkinningDispatches);
+                        if (skippedBlendshapeDispatches > 0)
+                            Interlocked.Add(ref _skippedBlendshapeComputeDispatchCount, skippedBlendshapeDispatches);
                         if (reusedSkinnedOutputBuffers > 0)
                             Interlocked.Add(ref _reusedSkinnedOutputBufferCount, reusedSkinnedOutputBuffers);
                         if (liveSkinningShaderPermutations > 0)
                             Interlocked.Exchange(ref _liveSkinningShaderPermutationCount, liveSkinningShaderPermutations);
+                        if (blendshapeAuthoredShapeCount > 0)
+                            Interlocked.Add(ref _blendshapeAuthoredShapeCount, blendshapeAuthoredShapeCount);
+                        if (blendshapeActiveShapeCount > 0)
+                            Interlocked.Add(ref _blendshapeActiveShapeCount, blendshapeActiveShapeCount);
+                        if (blendshapeAffectedVertexCount > 0)
+                            Interlocked.Add(ref _blendshapeAffectedVertexCount, blendshapeAffectedVertexCount);
+                        if (compactedActiveBlendshapeCount > 0)
+                            Interlocked.Add(ref _compactedActiveBlendshapeCount, compactedActiveBlendshapeCount);
+                        if (liveBlendshapeShaderPermutations > 0)
+                            Interlocked.Exchange(ref _liveBlendshapeShaderPermutationCount, liveBlendshapeShaderPermutations);
                     }
 
                     public static void RecordAvatarRepresentation(string? representation, int count)

@@ -16,6 +16,9 @@ namespace XREngine.Rendering.OpenGL
             private const uint ComputePositionBinding = 11u;
             private const uint ComputeNormalBinding = 12u;
             private const uint ComputeTangentBinding = 15u;
+            private const uint PrecombinedBlendshapePositionBinding = 13u;
+            private const uint PrecombinedBlendshapeNormalBinding = 14u;
+            private const uint PrecombinedBlendshapeTangentBinding = 15u;
 
             /// <summary>
             /// Swap triangle index buffer and mark bindings dirty.
@@ -187,6 +190,11 @@ namespace XREngine.Rendering.OpenGL
                     RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeIndices}Buffer");
                     RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer");
                     RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeWeights}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeActiveWeights}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeSparseRecords}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer");
+                    RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer");
                 }
 
                 Dbg($"CollectBuffers end. Total={_bufferCache.Count}, SSBOs={_ssboBufferCache.Count}", "Buffers");
@@ -277,6 +285,13 @@ namespace XREngine.Rendering.OpenGL
                 Api.BindBufferBase(GLEnum.ShaderStorageBuffer, ComputeTangentBinding, 0);
             }
 
+            private void ClearPrecombinedBlendshapeBindings()
+            {
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, PrecombinedBlendshapePositionBinding, 0);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, PrecombinedBlendshapeNormalBinding, 0);
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, PrecombinedBlendshapeTangentBinding, 0);
+            }
+
             /// <summary>
             /// Bind compute-skinned outputs as SSBOs or attributes depending on configuration.
             /// </summary>
@@ -359,6 +374,41 @@ namespace XREngine.Rendering.OpenGL
                 BindMeshDeformSourceBuffers();
 
                 Dbg("Bound skinned vertex buffers as SSBOs for compute pre-pass", "Buffers");
+            }
+
+            private void BindPrecombinedBlendshapeBuffers()
+            {
+                XRMesh? mesh = MeshRenderer.Mesh;
+                bool useComputeSkinning = mesh?.HasSkinning == true
+                    && RuntimeEngine.Rendering.Settings.AllowSkinning
+                    && RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
+                bool useComputeBlendshapes = mesh?.BlendshapeCount > 0
+                    && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+                    && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+                bool directBlendshapePath = mesh?.BlendshapeCount > 0
+                    && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+                    && !useComputeBlendshapes;
+
+                if (!directBlendshapePath)
+                    return;
+
+                if (!RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
+                    || !MeshRenderer.HasValidPrecombinedBlendshapeDeltas)
+                {
+                    ClearPrecombinedBlendshapeBindings();
+                    return;
+                }
+
+                BindStorageBufferAtBinding(MeshRenderer.PrecombinedBlendshapePositionsBuffer, PrecombinedBlendshapePositionBinding);
+                if (mesh?.HasNormals == true)
+                    BindStorageBufferAtBinding(MeshRenderer.PrecombinedBlendshapeNormalsBuffer, PrecombinedBlendshapeNormalBinding);
+                else
+                    Api.BindBufferBase(GLEnum.ShaderStorageBuffer, PrecombinedBlendshapeNormalBinding, 0);
+
+                if (mesh?.HasTangents == true)
+                    BindStorageBufferAtBinding(MeshRenderer.PrecombinedBlendshapeTangentsBuffer, PrecombinedBlendshapeTangentBinding);
+                else
+                    Api.BindBufferBase(GLEnum.ShaderStorageBuffer, PrecombinedBlendshapeTangentBinding, 0);
             }
 
             private void BindMeshDeformSourceBuffers()

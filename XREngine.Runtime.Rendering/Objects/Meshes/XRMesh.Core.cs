@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using MemoryPack;
 using SimpleScene.Util.ssBVH;
+using System;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Core.Files;
@@ -31,6 +32,32 @@ public enum SkinningCoreIndexFormat : byte
     None = 0,
     Core4x8 = 1,
     Core4x16 = 2,
+}
+
+[Flags]
+public enum BlendshapeShaderVariant : byte
+{
+    None = 0,
+    ActiveList = 1 << 0,
+    SparseDeltas = 1 << 1,
+    QuantizedDeltas = 1 << 2,
+    PrecombinedDeltas = 1 << 3,
+    LodTier = 1 << 4,
+    BasisCompression = 1 << 5,
+}
+
+public enum BlendshapeDeltaStorageMode : byte
+{
+    DensePerVertex = 0,
+    SparseAugmentsDenseFallback = 1,
+    SparsePreferred = 2,
+}
+
+public enum BlendshapeDeltaEncoding : byte
+{
+    Float32 = 0,
+    Snorm16Vector3 = 1,
+    Snorm16PositionSnorm8NormalTangent = Snorm16Vector3,
 }
 
 [XRAssetInspector("XREngine.Editor.AssetEditors.XRMeshInspector")]
@@ -223,6 +250,46 @@ public partial class XRMesh : XRAsset
     [Browsable(false)]
     public bool HasBlendshapes => BlendshapeCount > 0;
 
+    private BlendshapeShaderVariant _blendshapeShaderVariant = BlendshapeShaderVariant.None;
+    public BlendshapeShaderVariant BlendshapeShaderVariant
+    {
+        get => _blendshapeShaderVariant;
+        private set => SetField(ref _blendshapeShaderVariant, value);
+    }
+
+    [MemoryPackIgnore]
+    [Browsable(false)]
+    public bool HasBlendshapeBasisCompressionPayload
+        => (BlendshapeShaderVariant & BlendshapeShaderVariant.BasisCompression) != 0;
+
+    private BlendshapeDeltaStorageMode _blendshapeDeltaStorageMode = BlendshapeDeltaStorageMode.DensePerVertex;
+    public BlendshapeDeltaStorageMode BlendshapeDeltaStorageMode
+    {
+        get => _blendshapeDeltaStorageMode;
+        private set => SetField(ref _blendshapeDeltaStorageMode, value);
+    }
+
+    private BlendshapeDeltaEncoding _blendshapeDeltaEncoding = BlendshapeDeltaEncoding.Float32;
+    public BlendshapeDeltaEncoding BlendshapeDeltaEncoding
+    {
+        get => _blendshapeDeltaEncoding;
+        private set => SetField(ref _blendshapeDeltaEncoding, value);
+    }
+
+    private int _blendshapeAffectedVertexCount;
+    public int BlendshapeAffectedVertexCount
+    {
+        get => _blendshapeAffectedVertexCount;
+        private set => SetField(ref _blendshapeAffectedVertexCount, value);
+    }
+
+    private int _blendshapeSparseRecordCount;
+    public int BlendshapeSparseRecordCount
+    {
+        get => _blendshapeSparseRecordCount;
+        private set => SetField(ref _blendshapeSparseRecordCount, value);
+    }
+
     // Buffers (per-vertex)
     [MemoryPackIgnore]
     public XRDataBuffer? PositionsBuffer { get; internal set; }
@@ -256,6 +323,14 @@ public partial class XRMesh : XRAsset
     public XRDataBuffer? BlendshapeDeltas { get; private set; }
     [MemoryPackIgnore]
     public XRDataBuffer? BlendshapeIndices { get; private set; }
+    [MemoryPackIgnore]
+    public XRDataBuffer? BlendshapeSparseShapeRanges { get; private set; }
+    [MemoryPackIgnore]
+    public XRDataBuffer? BlendshapeSparseRecords { get; private set; }
+    [MemoryPackIgnore]
+    public XRDataBuffer? BlendshapeQuantizedDeltas { get; private set; }
+    [MemoryPackIgnore]
+    public XRDataBuffer? BlendshapeQuantizationMetadata { get; private set; }
 
     [MemoryPackIgnore]
     private BufferCollection _buffers = [];
@@ -355,6 +430,10 @@ public partial class XRMesh : XRAsset
             BlendshapeCounts = Buffers.GetValueOrDefault(ECommonBufferType.BlendshapeCount.ToString());
             BlendshapeIndices = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeIndices}Buffer");
             BlendshapeDeltas = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeDeltas}Buffer");
+            BlendshapeSparseShapeRanges = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer");
+            BlendshapeSparseRecords = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeSparseRecords}Buffer");
+            BlendshapeQuantizedDeltas = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer");
+            BlendshapeQuantizationMetadata = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer");
         }
 
         // Rebuild Vertices from buffers if they weren't loaded (we omit them from YAML to reduce file size).

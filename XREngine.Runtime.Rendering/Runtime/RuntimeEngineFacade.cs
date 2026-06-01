@@ -732,7 +732,15 @@ internal static partial class RuntimeEngine
                 long skinPaletteBytes = 0,
                 int skippedSkinningDispatches = 0,
                 int reusedSkinnedOutputBuffers = 0,
-                int liveSkinningShaderPermutations = 0)
+                int liveSkinningShaderPermutations = 0,
+                long blendshapeActiveListUploadBytes = 0,
+                long blendshapeDeltaBytes = 0,
+                int blendshapeAuthoredShapeCount = 0,
+                int blendshapeActiveShapeCount = 0,
+                int blendshapeAffectedVertexCount = 0,
+                int skippedBlendshapeDispatches = 0,
+                int compactedActiveBlendshapeCount = 0,
+                int liveBlendshapeShaderPermutations = 0)
             {
                 if (EnableTracking && HasHostStats)
                     RuntimeRenderingHostServices.Current.RecordRenderSkinningUpload(
@@ -746,7 +754,15 @@ internal static partial class RuntimeEngine
                         skinPaletteBytes,
                         skippedSkinningDispatches,
                         reusedSkinnedOutputBuffers,
-                        liveSkinningShaderPermutations);
+                        liveSkinningShaderPermutations,
+                        blendshapeActiveListUploadBytes,
+                        blendshapeDeltaBytes,
+                        blendshapeAuthoredShapeCount,
+                        blendshapeActiveShapeCount,
+                        blendshapeAffectedVertexCount,
+                        skippedBlendshapeDispatches,
+                        compactedActiveBlendshapeCount,
+                        liveBlendshapeShaderPermutations);
             }
 
             public static void RecordShaderVariant(bool requested = false, bool warming = false, bool linked = false, bool failed = false, bool loadedFromDiskCache = false, bool generatedThisRun = false)
@@ -1991,6 +2007,12 @@ internal sealed class RuntimeRenderSettings
     private bool _allowSkinning = RuntimeRenderingHostServiceDefaults.AllowSkinning;
     private bool _calculateBlendshapesInComputeShader = RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
     private bool _calculateSkinningInComputeShader = RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
+    private bool _enableBlendshapePrecombinePass = RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombinePass;
+    private bool _enableBlendshapePrecombineForDirectVertexPath = RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombineForDirectVertexPath;
+    private bool _enableBlendshapePcaBasisCompression = RuntimeRenderingHostServiceDefaults.EnableBlendshapePcaBasisCompression;
+    private int _blendshapePrecombineComputeMinActiveShapes = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineComputeMinActiveShapes;
+    private int _blendshapePrecombineDirectMinActiveShapes = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineDirectMinActiveShapes;
+    private int _blendshapePrecombineMinAffectedVertices = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineMinAffectedVertices;
     private bool _useIntegerUniformsInShaders = RuntimeRenderingHostServiceDefaults.UseIntegerUniformsInShaders;
     private bool _useSpotShadowAtlas = true;
     private bool _useDirectionalShadowAtlas = true;
@@ -2085,6 +2107,48 @@ internal sealed class RuntimeRenderSettings
             ? services.CalculateBlendshapesInComputeShader
             : _calculateBlendshapesInComputeShader;
         set => SetShaderSetting(ref _calculateBlendshapesInComputeShader, value);
+    }
+    public bool EnableBlendshapePrecombinePass
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.EnableBlendshapePrecombinePass
+            : _enableBlendshapePrecombinePass;
+        set => SetShaderSetting(ref _enableBlendshapePrecombinePass, value);
+    }
+    public bool EnableBlendshapePrecombineForDirectVertexPath
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.EnableBlendshapePrecombineForDirectVertexPath
+            : _enableBlendshapePrecombineForDirectVertexPath;
+        set => SetShaderSetting(ref _enableBlendshapePrecombineForDirectVertexPath, value);
+    }
+    public bool EnableBlendshapePcaBasisCompression
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.EnableBlendshapePcaBasisCompression
+            : _enableBlendshapePcaBasisCompression;
+        set => SetShaderSetting(ref _enableBlendshapePcaBasisCompression, value);
+    }
+    public int BlendshapePrecombineComputeMinActiveShapes
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.BlendshapePrecombineComputeMinActiveShapes
+            : _blendshapePrecombineComputeMinActiveShapes;
+        set => _blendshapePrecombineComputeMinActiveShapes = Math.Max(1, value);
+    }
+    public int BlendshapePrecombineDirectMinActiveShapes
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.BlendshapePrecombineDirectMinActiveShapes
+            : _blendshapePrecombineDirectMinActiveShapes;
+        set => _blendshapePrecombineDirectMinActiveShapes = Math.Max(1, value);
+    }
+    public int BlendshapePrecombineMinAffectedVertices
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.BlendshapePrecombineMinAffectedVertices
+            : _blendshapePrecombineMinAffectedVertices;
+        set => _blendshapePrecombineMinAffectedVertices = Math.Max(1, value);
     }
     public bool CalculateSkinnedBoundsInComputeShader { get; set; }
     public bool CalculateSkinningInComputeShader

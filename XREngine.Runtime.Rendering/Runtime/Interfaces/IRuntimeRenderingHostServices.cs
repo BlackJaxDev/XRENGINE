@@ -90,6 +90,36 @@ public interface IRuntimeRenderingHostServices
     bool CalculateBlendshapesInComputeShader { get; }
 
     /// <summary>
+    /// Gets whether eligible blendshape renderers may run a pre-pass that combines active shapes into per-vertex deltas.
+    /// </summary>
+    bool EnableBlendshapePrecombinePass { get; }
+
+    /// <summary>
+    /// Gets whether the precombined blendshape pass may feed direct vertex-shader blendshape evaluation.
+    /// </summary>
+    bool EnableBlendshapePrecombineForDirectVertexPath { get; }
+
+    /// <summary>
+    /// Gets whether eligible cooked blendshape basis payloads may use PCA/SVD basis compression.
+    /// </summary>
+    bool EnableBlendshapePcaBasisCompression { get; }
+
+    /// <summary>
+    /// Gets the minimum active shape count before the compute deformation path may pay the extra precombine dispatch.
+    /// </summary>
+    int BlendshapePrecombineComputeMinActiveShapes { get; }
+
+    /// <summary>
+    /// Gets the minimum active shape count before the direct vertex path may pay the extra precombine dispatch.
+    /// </summary>
+    int BlendshapePrecombineDirectMinActiveShapes { get; }
+
+    /// <summary>
+    /// Gets the minimum affected vertex count before the precombine pass is considered.
+    /// </summary>
+    int BlendshapePrecombineMinAffectedVertices { get; }
+
+    /// <summary>
     /// Gets the host shader configuration revision used to invalidate runtime render programs.
     /// </summary>
     int ShaderConfigVersion { get; }
@@ -919,7 +949,15 @@ public interface IRuntimeRenderingHostServices
         long skinPaletteBytes = 0,
         int skippedSkinningDispatches = 0,
         int reusedSkinnedOutputBuffers = 0,
-        int liveSkinningShaderPermutations = 0);
+        int liveSkinningShaderPermutations = 0,
+        long blendshapeActiveListUploadBytes = 0,
+        long blendshapeDeltaBytes = 0,
+        int blendshapeAuthoredShapeCount = 0,
+        int blendshapeActiveShapeCount = 0,
+        int blendshapeAffectedVertexCount = 0,
+        int skippedBlendshapeDispatches = 0,
+        int compactedActiveBlendshapeCount = 0,
+        int liveBlendshapeShaderPermutations = 0);
     void RecordRenderShaderVariant(bool requested, bool warming, bool linked, bool failed, bool loadedFromDiskCache, bool generatedThisRun);
     void RecordRenderGpuDrivenBucketWork(int activeBuckets, int emptyBucketSkips, int fullBucketScans, int materialScatterDispatches);
     void RecordRenderGpuDrivenCommandCompaction(long culledCommands, long delayedDrawCountValue, long gpuCompactionOverflow, long activeListOverflow, long bucketOverflow, long meshletOverflow);

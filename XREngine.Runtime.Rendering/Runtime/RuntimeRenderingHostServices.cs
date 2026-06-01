@@ -64,6 +64,12 @@ public static class RuntimeRenderingHostServices
         public bool AllowSkinning => RuntimeRenderingHostServiceDefaults.AllowSkinning;
         public bool CalculateSkinningInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
         public bool CalculateBlendshapesInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
+        public bool EnableBlendshapePrecombinePass => RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombinePass;
+        public bool EnableBlendshapePrecombineForDirectVertexPath => RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombineForDirectVertexPath;
+        public bool EnableBlendshapePcaBasisCompression => RuntimeRenderingHostServiceDefaults.EnableBlendshapePcaBasisCompression;
+        public int BlendshapePrecombineComputeMinActiveShapes => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineComputeMinActiveShapes;
+        public int BlendshapePrecombineDirectMinActiveShapes => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineDirectMinActiveShapes;
+        public int BlendshapePrecombineMinAffectedVertices => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineMinAffectedVertices;
         public int ShaderConfigVersion => RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
         public bool AllowBinaryProgramCaching => RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
         public bool AsyncProgramBinaryUpload => RuntimeRenderingHostServiceDefaults.AsyncProgramBinaryUpload;
@@ -516,7 +522,15 @@ public static class RuntimeRenderingHostServices
             long skinPaletteBytes = 0,
             int skippedSkinningDispatches = 0,
             int reusedSkinnedOutputBuffers = 0,
-            int liveSkinningShaderPermutations = 0)
+            int liveSkinningShaderPermutations = 0,
+            long blendshapeActiveListUploadBytes = 0,
+            long blendshapeDeltaBytes = 0,
+            int blendshapeAuthoredShapeCount = 0,
+            int blendshapeActiveShapeCount = 0,
+            int blendshapeAffectedVertexCount = 0,
+            int skippedBlendshapeDispatches = 0,
+            int compactedActiveBlendshapeCount = 0,
+            int liveBlendshapeShaderPermutations = 0)
         {
         }
 

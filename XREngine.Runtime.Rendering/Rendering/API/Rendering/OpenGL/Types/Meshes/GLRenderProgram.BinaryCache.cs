@@ -17,7 +17,7 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLRenderProgram
         {
-            internal const int BinaryCacheSchemaVersion = 3;
+            internal const int BinaryCacheSchemaVersion = 6;
             private const string BinaryCacheDirectoryName = "ShaderPrograms";
             private const string BinaryCacheRootDirectoryName = "Build";
             private const string BinaryCacheSubDirectoryName = "Cache";

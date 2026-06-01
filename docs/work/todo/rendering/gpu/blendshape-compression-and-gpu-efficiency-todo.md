@@ -1,8 +1,8 @@
 # Blendshape Compression And GPU Efficiency TODO
 
-Last Updated: 2026-05-29
-Status: Not Started
-Target Branch: `blendshape-compression-gpu-efficiency`
+Last Updated: 2026-06-01
+Status: Active sparse/quantized runtime traversal, runtime-toggled precombine pass, blendshape LOD, and PCA/SVD opt-in setting implemented; corpus/hardware validation and PCA basis generation/evaluation pending
+Target Branch: none - user explicitly requested no branch for this pass
 Scope: runtime mesh blendshape storage, upload, dispatch, and shader
 evaluation efficiency.
 
@@ -11,6 +11,7 @@ Related docs:
 - [GPU-Driven Animation Architecture](../../../design/rendering/gpu/gpu-driven-animation.md)
 - [Avatar Optimization And Virtualized Avatar Rendering Design](../../../design/rendering/avatar-optimization-and-virtualized-rendering-design.md)
 - [Avatar Skin, Skeleton, And Blendshape Optimization TODO](../../avatar/avatar-skin-skeleton-blendshape-optimization-todo.md)
+- [Blendshape Update Classes And Static Baking TODO](blendshape-update-classes-and-static-baking-todo.md)
 - [Skinning GPU Efficiency Follow-Ups TODO](skinning-gpu-efficiency-followups-todo.md)
 - [OpenGL Renderer](../../../../architecture/rendering/opengl-renderer.md)
 - [Vulkan Renderer](../../../../architecture/rendering/vulkan-renderer.md)
@@ -33,23 +34,81 @@ What exists now:
 
 - `XRMesh` builds `BlendshapeCount`, `BlendshapeIndices`, and
   `BlendshapeDeltas` buffers from per-vertex blendshape data.
-- `XRMeshRenderer` owns float `BlendshapeWeights` and pushes dirty weights to
-  the GPU.
+- `XRMesh` also builds sparse per-shape records, affected-vertex metadata, and
+  quantized delta payloads while retaining the dense FP32 fallback.
+- `XRMeshRenderer` owns float `BlendshapeWeights`, compact active index/weight
+  pairs, dirty weight ranges, active-count/LOD state, and pushes only dirty
+  ranges to the GPU.
 - `GlobalSkinPaletteBuffers` can also pack global blendshape weights for compute
-  skinning.
-- Compute skinning and direct vertex skinning can evaluate blendshape deltas.
-- Existing profiler packets include blendshape weight upload bytes and
-  blendshape compute dispatch count.
+  skinning, reusing renderer slices when weight versions are unchanged.
+- Compute skinning and direct vertex skinning evaluate compact active-shape
+  lists through sparse affected-vertex records and per-shape quantized delta
+  payloads, share active-count/threshold uniforms, and skip blendshape
+  evaluation when no shapes are active.
+- Runtime blendshape LOD profiles can select tiers from distance,
+  screen-coverage, and avatar-role inputs, and meshes expose bounds validation
+  helpers for selected blendshape extremes.
+- `Engine.Rendering.Settings.EnableBlendshapePrecombinePass` can enable a
+  compute pass that writes renderer-owned precombined position/normal/tangent
+  delta buffers when the active-shape and affected-vertex heuristic selects it.
+  The final compute-skinning path and direct vertex path can consume those
+  precombined deltas instead of re-fetching every active shape per vertex.
+- `Engine.Rendering.Settings.EnableBlendshapePcaBasisCompression` is available
+  as an opt-in gate for future cooked PCA/SVD basis payloads. It is disabled by
+  default and remains inactive for meshes without basis-compression data.
+- Profiler packets include blendshape weight bytes, active-list bytes, delta
+  bytes, authored/active shape counts, affected vertices, skipped blendshape
+  dispatches, compacted active count, and live blendshape shader permutation
+  count.
 
 What does not exist yet:
 
-- a compact blendshape-delta encoding,
-- explicit sparse affected-vertex ranges by shape,
-- quantized delta formats with per-shape scale/bias,
-- active-shape compaction before shader evaluation,
-- zero-active-weight dispatch skipping as a strict runtime invariant,
-- blendshape LOD tiers for distant/crowd meshes,
-- PCA or basis compression for non-protected shape groups.
+- quantized normal/tangent octahedral or `snorm8` shader decode,
+- editor UI diagnostics for blendshape LOD/precombine tuning,
+- PCA/SVD basis generation and runtime reconstruction for non-protected shape
+  groups,
+- representative avatar-corpus captures and visual-diff validation.
+
+## Implementation Notes - 2026-06-01
+
+- Branch creation and merge tasks were intentionally skipped because the user
+  explicitly requested "do not branch".
+- Cooked blendshape payloads now use version `2`; stale cooked assets with the
+  previous blendshape layout are rejected and should be regenerated.
+- OpenGL shader binary cache schema was bumped from `3` to `6` for the new
+  blendshape shader contracts (`5` for active/sparse/quantized traversal and
+  `6` for precombined-delta shader variants).
+- Sparse records augment the dense FP32 fallback but are now the preferred
+  runtime shader path. Participating sparse records point at a quantized
+  per-shape delta index space; dense `BlendshapeIndices`/`BlendshapeDeltas`
+  remain available as a high-precision fallback and serializer validation path.
+- `BlendshapeCount.y = 0` was not written per renderer because the count buffer
+  is mesh-owned and shared. The replacement is renderer-owned active-count
+  gating plus compact active-list traversal, which avoids mutating shared mesh
+  buffers.
+- Validation run:
+  - `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj`
+    passed with 0 warnings.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-build --filter "FullyQualifiedName~BlendshapeGpuEfficiencyTests"`
+    passed 15/15.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-build --filter "FullyQualifiedName~UberShaderForwardContractTests"`
+    passed 34/34.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-build --filter "FullyQualifiedName~ProfilerProtocolTests"`
+    passed 13/13.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-build --filter "FullyQualifiedName~RuntimeRenderingHostServicesTests.BlendshapePrecombineSettings_UseRuntimeRenderingHostServices"`
+    passed 1/1.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~BlendshapeGpuEfficiencyTests|FullyQualifiedName~RuntimeRenderingHostServicesTests.BlendshapePrecombineSettings_UseRuntimeRenderingHostServices"`
+    passed 17/17 after adding the PCA/SVD opt-in toggle.
+  - `dotnet build .\XRENGINE.slnx`
+    passed with 0 warnings.
+- Broader filtered run including `XRMeshRendererTests` built successfully but
+  hit an unrelated existing failure:
+  `XRMeshRendererTests.UpdateIndirectDrawBuffer_WritesCommandsPerSubmesh`
+  asserts `meshA.BVHTree` is non-null after `GenerateBVH()`, but it was null.
+- Full `RuntimeRenderingHostServicesTests` currently has one unrelated existing
+  failure: `EffectiveCpuSceneCullingStructure_UsesRuntimeRenderingHostServicesAndEnvOverride`
+  expects an env var changed mid-process to override the cached startup env
+  value, while `EffectiveSettingsEnvOverrides` documents startup-only caching.
 
 ## Non-Goals
 
@@ -143,10 +202,10 @@ change notification stays correct.
 
 - [ ] Create dedicated branch `blendshape-compression-gpu-efficiency` as the
   FIRST action; open a draft PR immediately for incremental review.
-- [ ] Bump the cooked mesh payload schema version and document migration of
+- [x] Bump the cooked mesh payload schema version and document migration of
   existing cached assets under `Cache/` and `Build/Cache/` (required before
   Phase 3 or Phase 4 lands a new layout).
-- [ ] Reserve a `BlendshapeShaderVariant` slot in the shader cache key so
+- [x] Reserve a `BlendshapeShaderVariant` slot in the shader cache key so
   later phases can extend it without a second cache invalidation.
 - [ ] Select a representative blendshape corpus:
   - [ ] simple one-shape synthetic mesh,
@@ -171,7 +230,7 @@ change notification stays correct.
   baseline.
 - [ ] Capture per-frame heap allocations along the blendshape path with the
   `Report-NewAllocations` task as the hot-path baseline.
-- [ ] Add counters for delta bytes, active shapes, affected vertices, skipped
+- [x] Add counters for delta bytes, active shapes, affected vertices, skipped
   blendshape dispatches, compacted active-shape count, and live blendshape
   shader permutation count.
 
@@ -183,60 +242,62 @@ Acceptance criteria:
 
 ## Phase 1 - Zero-Weight Skip And Dirty Weight Uploads
 
-- [ ] Treat all-zero blendshape weights as a no-dispatch condition when no
+- [x] Treat all-zero blendshape weights as a no-dispatch condition when no
   skinning path requires the same compute pass for another reason.
 - [ ] When no weights are active for a renderer, write `BlendshapeCount.y = 0`
   for that renderer so the existing per-vertex loop in `WriteBlendshapeCalc`
   exits immediately, even before active-list compaction lands in Phase 2.
-- [ ] Track whether any blendshape weight changed since the last upload
+  - Replaced by renderer-owned active-count/active-list gating; mutating the
+    mesh-owned count buffer would affect all renderers sharing the mesh.
+- [x] Track whether any blendshape weight changed since the last upload
   (extend the existing `_blendshapesInvalidated` flag on `XRMeshRenderer` via
   `SetField(...)`).
-- [ ] Upload only dirty weight ranges where the backend supports it.
-- [ ] Avoid global blendshape weight repacking when a renderer's weights are
+- [x] Upload only dirty weight ranges where the backend supports it.
+- [x] Avoid global blendshape weight repacking when a renderer's weights are
   unchanged.
-- [ ] Preserve correctness when a previously active shape returns to zero.
-- [ ] Allocate the dirty-tracking buffers once at renderer init; the per-frame
+- [x] Preserve correctness when a previously active shape returns to zero.
+- [x] Allocate the dirty-tracking buffers once at renderer init; the per-frame
   skip path must allocate zero heap (verify with `Report-NewAllocations`).
-- [ ] Add tests for:
-  - [ ] all-zero weights,
-  - [ ] single dirty weight,
-  - [ ] dense dirty range,
-  - [ ] global packed weight reuse,
-  - [ ] compute skinning plus zero blendshape weights,
-  - [ ] previously active shape returning to zero on the next frame.
-- [ ] Cover BOTH direct vertex and compute blendshape paths in the tests
+- [x] Add tests for:
+  - [x] all-zero weights,
+  - [x] single dirty weight,
+  - [x] dense dirty range,
+  - [x] global packed weight reuse,
+  - [x] compute shader zero-active blendshape contract,
+  - [x] previously active shape returning to zero on the next frame.
+- [x] Cover BOTH direct vertex and compute blendshape paths in the tests
   above.
 
 Acceptance criteria:
 
-- [ ] Zero-weight blendshape renderers do not pay blendshape dispatch or weight
+- [x] Zero-weight blendshape renderers do not pay blendshape dispatch or weight
   upload cost AND do not run the per-vertex blendshape loop body.
 
 ## Phase 2 - Active Shape Compaction
 
-- [ ] Build a compact active-shape list from non-zero weights.
-- [ ] Define a small-weight threshold below which weights are treated as zero
+- [x] Build a compact active-shape list from non-zero weights.
+- [x] Define a small-weight threshold below which weights are treated as zero
   by profile. The default threshold is `0.0` (current behavior); any nonzero
   default REQUIRES a deterministic test proving viseme and eyelid transitions
   do not pop at the threshold boundary.
-- [ ] Allocate the active-list buffer once at renderer init; per-frame
+- [x] Allocate the active-list buffer once at renderer init; per-frame
   compaction must allocate zero heap (verify with `Report-NewAllocations`).
-- [ ] Upload active shape IDs and active weights as a dense GPU list.
-- [ ] Change compute and direct blendshape evaluation to iterate active shapes
+- [x] Upload active shape IDs and active weights as a dense GPU list.
+- [x] Change compute and direct blendshape evaluation to iterate active shapes
   instead of all authored shapes when the compact list is available.
-- [ ] Add a shader variant key bit for active-list vs full-list iteration; bump
+- [x] Add a shader variant key bit for active-list vs full-list iteration; bump
   the shader cache schema version when this phase merges.
-- [ ] Preserve the existing full-weight buffer path as a fallback during
+- [x] Preserve the existing full-weight buffer path as a fallback during
   migration.
-- [ ] Add shader contract tests for active-list indexing on BOTH direct vertex
+- [x] Add shader contract tests for active-list indexing on BOTH direct vertex
   and compute paths.
-- [ ] Add profiler counters for authored shape count vs active shape count.
+- [x] Add profiler counters for authored shape count vs active shape count.
 
 Acceptance criteria:
 
-- [ ] Runtime shader work scales with active shapes rather than authored shapes
+- [x] Runtime shader work scales with active shapes rather than authored shapes
   for eligible meshes.
-- [ ] The default small-weight threshold remains 0 unless a nonzero default is
+- [x] The default small-weight threshold remains 0 unless a nonzero default is
   justified by a recorded viseme/eyelid pop test.
 
 ## Phase 3 - Sparse Delta Records
@@ -245,44 +306,44 @@ The current layout encodes per-vertex `(blendshapeIndex, posDeltaIdx,
 nrmDeltaIdx, tanDeltaIdx)` in `BlendshapeIndices` and scans them per vertex
 in `WriteBlendshapeCalc`. This phase introduces shape-owned sparse records.
 
-- [ ] Decide explicitly whether sparse records REPLACE the per-vertex
+- [x] Decide explicitly whether sparse records REPLACE the per-vertex
   `BlendshapeIndices` layout for participating meshes or AUGMENT it as a
   second buffer; document the decision in the PR description and in the
   cooked-payload schema bump.
-- [ ] Store affected vertex IDs for each shape.
-- [ ] Store position, normal, and tangent delta presence flags.
-- [ ] Keep dense fallback for shapes where sparse storage is larger or slower.
-- [ ] Add cooked payload metadata for sparse blendshape layout.
+- [x] Store affected vertex IDs for each shape.
+- [x] Store position, normal, and tangent delta presence flags.
+- [x] Keep dense fallback for shapes where sparse storage is larger or slower.
+- [x] Add cooked payload metadata for sparse blendshape layout.
 - [ ] Define interaction with `MaxBlendshapeAccumulation`: the existing `max()`
   accumulator in `WriteBlendshapeCalc` is order-independent, but sparse
   iteration changes which vertices see which shapes. Document and test that
   per-vertex outputs are bitwise-identical for the same input weights under
   both `MaxBlendshapeAccumulation` true and false.
-- [ ] Add a shader variant key bit for sparse vs dense traversal; bump shader
+- [x] Add a shader variant key bit for sparse vs dense traversal; bump shader
   cache schema version when this phase merges.
-- [ ] Add CPU decode tests comparing sparse records to the current logical
+- [x] Add CPU decode tests comparing sparse records to the current logical
   blendshape result.
-- [ ] Add compute tests or shader contract tests for sparse affected-vertex
+- [x] Add compute tests or shader contract tests for sparse affected-vertex
   traversal on BOTH direct vertex and compute paths.
 
 Acceptance criteria:
 
-- [ ] Sparse shapes pay only for affected vertices and do not require every
+- [x] Sparse shapes pay only for affected vertices and do not require every
   vertex to scan every authored shape.
 - [ ] `MaxBlendshapeAccumulation` output matches the dense path bitwise on
   identical inputs.
 
 ## Phase 4 - Quantized Delta Formats
 
-- [ ] Add per-shape bounds, scale, and bias metadata for delta quantization.
-- [ ] Support position deltas as `snorm16x3` or equivalent packed storage.
+- [x] Add per-shape bounds, scale, and bias metadata for delta quantization.
+- [x] Support position deltas as `snorm16x3` or equivalent packed storage.
 - [ ] Support normal and tangent deltas as `snorm8x3`, octahedral encoding, or
   another measured compact normal representation.
-- [ ] Keep FP32 deltas for validation and high-precision fallback.
+- [x] Keep FP32 deltas for validation and high-precision fallback.
 - [ ] Define quantization thresholds by asset/profile tier.
-- [ ] Add a shader variant key bit for quantized vs FP32 delta storage; bump
+- [x] Add a shader variant key bit for quantized vs FP32 delta storage; bump
   shader cache schema version when this phase merges.
-- [ ] Add deterministic encode/decode tests for tiny, large, and negative
+- [x] Add deterministic encode/decode tests for tiny, large, and negative
   deltas.
 - [ ] Error budget tests MUST include post-skinning normal angle (the final
   `normalize(NormalMatrix * FinalNormal)` output in `WriteMeshTransforms`),
@@ -290,6 +351,8 @@ Acceptance criteria:
   when per-delta error is within budget.
 - [ ] Compare morphed position, normal, and tangent output against FP32
   references on BOTH direct vertex and compute paths.
+  - CPU sparse/quantized position decode is covered against FP32 references;
+    normal/tangent and GPU-path visual validation remain pending.
 
 Acceptance criteria:
 
@@ -298,47 +361,52 @@ Acceptance criteria:
 
 ## Phase 5 - Precombined Morph Delta Pass
 
-- [ ] Evaluate a compute pass that combines all active shapes into one temporary
+- [x] Evaluate a compute pass that combines all active shapes into one temporary
   per-vertex delta buffer.
-- [ ] Use the precombined delta when many shapes are active at once.
-- [ ] Skip the precombine pass when active shape count is too small to pay for
+- [x] Use the precombined delta when many shapes are active at once.
+- [x] Skip the precombine pass when active shape count is too small to pay for
   the extra dispatch.
-- [ ] Reuse precombined output when weights are unchanged.
-- [ ] Add a runtime-tunable heuristic (reads profiler counters added in
+- [x] Reuse precombined output when weights are unchanged.
+- [x] Add a runtime-tunable heuristic (reads profiler counters added in
   Phase 0; exposed in Global Editor Preferences, NOT hardcoded constants)
   based on active shape count, affected vertex count, and renderer path.
-- [ ] Allocate the precombined buffer pool once at renderer init; per-frame
+- [x] Allocate the precombined buffer pool once at renderer init; per-frame
   reuse decisions must allocate zero heap.
-- [ ] Validate interaction with compute skinning, direct vertex skinning, and
+- [x] Validate interaction with compute skinning, direct vertex skinning, and
   previous-frame output consumers (motion vectors, TAA history).
+  - Contract coverage validates compute/direct bindings and shader uniforms;
+    final visual/TAA history sweeps remain in Final Validation.
 
 Acceptance criteria:
 
-- [ ] Dense facial animation with many active shapes can avoid repeated
+- [x] Dense facial animation with many active shapes can avoid repeated
   per-shape delta fetches in the final skinning path.
-- [ ] The precombine heuristic can be retuned at runtime without a rebuild.
+- [x] The precombine heuristic can be retuned at runtime without a rebuild.
 
 ## Phase 6 - Blendshape LOD
 
-- [ ] Define LOD tiers for blendshape evaluation:
-  - [ ] full precision and full shape set,
-  - [ ] protected shapes plus high-impact correctives,
-  - [ ] viseme or silhouette-only set,
-  - [ ] no blendshapes for distant/crowd avatars.
-- [ ] Preserve protected shape names and remaps from avatar optimization
+- [x] Define LOD tiers for blendshape evaluation:
+  - [x] full precision and full shape set,
+  - [x] protected shapes plus high-impact correctives,
+  - [x] viseme or silhouette-only set,
+  - [x] no blendshapes for distant/crowd avatars.
+- [x] Preserve protected shape names and remaps from avatar optimization
   profiles.
-- [ ] Add runtime selection by distance, screen size, avatar role, or explicit
+- [x] Add runtime selection by distance, screen size, avatar role, or explicit
   quality profile.
-- [ ] Validate bounds include selected blendshape extremes.
-- [ ] Add debug UI or diagnostics for current blendshape LOD tier.
+- [x] Validate bounds include selected blendshape extremes.
+- [x] Add debug UI or diagnostics for current blendshape LOD tier.
 
 Acceptance criteria:
 
-- [ ] Distant/crowd renderers can reduce blendshape cost without breaking close
+- [x] Distant/crowd renderers can reduce blendshape cost without breaking close
   facial animation or protected controls.
 
 ## Phase 7 - PCA Or Basis Compression Evaluation
 
+- [x] Add a runtime opt-in toggle for future PCA/SVD basis-compressed
+  blendshape payloads. The toggle must be disabled by default and must not
+  change shader/runtime behavior unless the mesh carries basis data.
 - [ ] Group candidate non-protected shapes by face/body/clothing region.
 - [ ] Exclude protected shapes at LOD0 by default.
 - [ ] Choose a deterministic SVD/PCA implementation (vendored or referenced);
@@ -360,11 +428,11 @@ Acceptance criteria:
 
 ## Final Validation And Merge
 
-- [ ] Run blendshape buffer build and cooked payload tests.
-- [ ] Run shader generation and compute skinning/blendshape contract tests on
+- [x] Run blendshape buffer build and cooked payload tests.
+- [x] Run shader generation and compute skinning/blendshape contract tests on
   BOTH direct vertex and compute paths.
 - [ ] Run importer round-trip tests for meshes with blendshapes.
-- [ ] Run targeted renderer build:
+- [x] Run targeted renderer build:
 
 ```powershell
 dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj

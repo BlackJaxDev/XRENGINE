@@ -20,6 +20,7 @@ namespace XREngine.Rendering;
 public partial class XRMesh : ICookedBinarySerializable
 {
     private const int CurrentSkinningPayloadVersion = 3;
+    private const int CurrentBlendshapePayloadVersion = 2;
 
     private MeshPayloadWritePlan? _meshPayloadPlan;
     private readonly Dictionary<string, MeshBufferEncoding> _bufferEncodingOverrides = new(StringComparer.OrdinalIgnoreCase);
@@ -495,6 +496,15 @@ public partial class XRMesh : ICookedBinarySerializable
         if (!hasBlendshapes)
             return true;
 
+        int version = reader.ReadInt32();
+        if (version != CurrentBlendshapePayloadVersion)
+            return false;
+        if (!TrySkipBytes(reader, sizeof(byte) * 3L)
+            || !TrySkipBytes(reader, sizeof(int) * 2L))
+        {
+            return false;
+        }
+
         int nameCount = reader.ReadInt32();
         if (nameCount < 0)
             return false;
@@ -506,6 +516,10 @@ public partial class XRMesh : ICookedBinarySerializable
         }
 
         return TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true)
+            && TrySkipBufferData(reader, allowMetadata: true)
             && TrySkipBufferData(reader, allowMetadata: true)
             && TrySkipBufferData(reader, allowMetadata: true);
     }
@@ -995,6 +1009,13 @@ public partial class XRMesh : ICookedBinarySerializable
         if (!plan.HasBlendshapes)
             return;
 
+        writer.Write(CurrentBlendshapePayloadVersion);
+        writer.Write((byte)plan.ShaderVariant);
+        writer.Write((byte)plan.StorageMode);
+        writer.Write((byte)plan.Encoding);
+        writer.Write(plan.AffectedVertexCount);
+        writer.Write(plan.SparseRecordCount);
+
         writer.Write(plan.Names.Length);
         foreach (string name in plan.Names)
             writer.Write(name ?? string.Empty);
@@ -1002,6 +1023,10 @@ public partial class XRMesh : ICookedBinarySerializable
         WriteBufferPlan(writer, plan.Counts);
         WriteBufferPlan(writer, plan.Indices);
         WriteBufferPlan(writer, plan.Deltas);
+        WriteBufferPlan(writer, plan.SparseShapeRanges);
+        WriteBufferPlan(writer, plan.SparseRecords);
+        WriteBufferPlan(writer, plan.QuantizedDeltas);
+        WriteBufferPlan(writer, plan.QuantizationMetadata);
     }
 
     private void ReadBlendshapeData(CookedBinaryReader reader)
@@ -1013,8 +1038,27 @@ public partial class XRMesh : ICookedBinarySerializable
             BlendshapeCounts = null;
             BlendshapeIndices = null;
             BlendshapeDeltas = null;
+            BlendshapeSparseShapeRanges = null;
+            BlendshapeSparseRecords = null;
+            BlendshapeQuantizedDeltas = null;
+            BlendshapeQuantizationMetadata = null;
+            BlendshapeShaderVariant = BlendshapeShaderVariant.None;
+            BlendshapeDeltaStorageMode = BlendshapeDeltaStorageMode.DensePerVertex;
+            BlendshapeDeltaEncoding = BlendshapeDeltaEncoding.Float32;
+            BlendshapeAffectedVertexCount = 0;
+            BlendshapeSparseRecordCount = 0;
             return;
         }
+
+        int payloadVersion = reader.ReadInt32();
+        if (payloadVersion != CurrentBlendshapePayloadVersion)
+            throw new InvalidOperationException($"Unsupported cooked blendshape payload version {payloadVersion}; expected {CurrentBlendshapePayloadVersion}.");
+
+        BlendshapeShaderVariant = (BlendshapeShaderVariant)reader.ReadByte();
+        BlendshapeDeltaStorageMode = (BlendshapeDeltaStorageMode)reader.ReadByte();
+        BlendshapeDeltaEncoding = (BlendshapeDeltaEncoding)reader.ReadByte();
+        BlendshapeAffectedVertexCount = reader.ReadInt32();
+        BlendshapeSparseRecordCount = reader.ReadInt32();
 
         int nameCount = reader.ReadInt32();
         string[] names = new string[nameCount];
@@ -1025,6 +1069,10 @@ public partial class XRMesh : ICookedBinarySerializable
         BlendshapeCounts = ReadBufferData(reader, null, allowMetadata: true);
         BlendshapeIndices = ReadBufferData(reader, null, allowMetadata: true);
         BlendshapeDeltas = ReadBufferData(reader, null, allowMetadata: true);
+        BlendshapeSparseShapeRanges = ReadBufferData(reader, null, allowMetadata: true);
+        BlendshapeSparseRecords = ReadBufferData(reader, null, allowMetadata: true);
+        BlendshapeQuantizedDeltas = ReadBufferData(reader, null, allowMetadata: true);
+        BlendshapeQuantizationMetadata = ReadBufferData(reader, null, allowMetadata: true);
     }
 
     private SkinningPlan BuildSkinningPlan()
@@ -1089,9 +1137,18 @@ public partial class XRMesh : ICookedBinarySerializable
         {
             HasBlendshapes = true,
             Names = BlendshapeNames ?? Array.Empty<string>(),
+            ShaderVariant = BlendshapeShaderVariant,
+            StorageMode = BlendshapeDeltaStorageMode,
+            Encoding = BlendshapeDeltaEncoding,
+            AffectedVertexCount = BlendshapeAffectedVertexCount,
+            SparseRecordCount = BlendshapeSparseRecordCount,
             Counts = CreateBufferPlan(BlendshapeCounts, BlendshapeCounts?.AttributeName ?? "BlendshapeCounts", CaptureBufferMetadata(BlendshapeCounts)),
             Indices = CreateBufferPlan(BlendshapeIndices, BlendshapeIndices?.AttributeName ?? "BlendshapeIndices", CaptureBufferMetadata(BlendshapeIndices)),
-            Deltas = CreateBufferPlan(BlendshapeDeltas, BlendshapeDeltas?.AttributeName ?? "BlendshapeDeltas", CaptureBufferMetadata(BlendshapeDeltas))
+            Deltas = CreateBufferPlan(BlendshapeDeltas, BlendshapeDeltas?.AttributeName ?? "BlendshapeDeltas", CaptureBufferMetadata(BlendshapeDeltas)),
+            SparseShapeRanges = CreateBufferPlan(BlendshapeSparseShapeRanges, BlendshapeSparseShapeRanges?.AttributeName ?? "BlendshapeSparseShapeRanges", CaptureBufferMetadata(BlendshapeSparseShapeRanges)),
+            SparseRecords = CreateBufferPlan(BlendshapeSparseRecords, BlendshapeSparseRecords?.AttributeName ?? "BlendshapeSparseRecords", CaptureBufferMetadata(BlendshapeSparseRecords)),
+            QuantizedDeltas = CreateBufferPlan(BlendshapeQuantizedDeltas, BlendshapeQuantizedDeltas?.AttributeName ?? "BlendshapeQuantizedDeltas", CaptureBufferMetadata(BlendshapeQuantizedDeltas)),
+            QuantizationMetadata = CreateBufferPlan(BlendshapeQuantizationMetadata, BlendshapeQuantizationMetadata?.AttributeName ?? "BlendshapeQuantizationMetadata", CaptureBufferMetadata(BlendshapeQuantizationMetadata))
         };
     }
 
@@ -1425,9 +1482,18 @@ public partial class XRMesh : ICookedBinarySerializable
 
         public bool HasBlendshapes { get; init; }
         public string[] Names { get; init; } = Array.Empty<string>();
+        public BlendshapeShaderVariant ShaderVariant { get; init; }
+        public BlendshapeDeltaStorageMode StorageMode { get; init; }
+        public BlendshapeDeltaEncoding Encoding { get; init; }
+        public int AffectedVertexCount { get; init; }
+        public int SparseRecordCount { get; init; }
         public BufferPlan? Counts { get; init; }
         public BufferPlan? Indices { get; init; }
         public BufferPlan? Deltas { get; init; }
+        public BufferPlan? SparseShapeRanges { get; init; }
+        public BufferPlan? SparseRecords { get; init; }
+        public BufferPlan? QuantizedDeltas { get; init; }
+        public BufferPlan? QuantizationMetadata { get; init; }
 
         public long GetSerializedLength()
         {
@@ -1435,6 +1501,9 @@ public partial class XRMesh : ICookedBinarySerializable
             if (!HasBlendshapes)
                 return size;
 
+            size += sizeof(int); // payload version
+            size += sizeof(byte) * 3; // shader variant + storage mode + encoding
+            size += sizeof(int) * 2; // affected vertices + sparse records
             size += sizeof(int); // name count
             foreach (string name in Names)
                 size += CalculateStringBytes(name ?? string.Empty);
@@ -1442,6 +1511,10 @@ public partial class XRMesh : ICookedBinarySerializable
             size += Counts?.GetSerializedLength() ?? 0;
             size += Indices?.GetSerializedLength() ?? 0;
             size += Deltas?.GetSerializedLength() ?? 0;
+            size += SparseShapeRanges?.GetSerializedLength() ?? 0;
+            size += SparseRecords?.GetSerializedLength() ?? 0;
+            size += QuantizedDeltas?.GetSerializedLength() ?? 0;
+            size += QuantizationMetadata?.GetSerializedLength() ?? 0;
             return size;
         }
     }
@@ -1497,17 +1570,39 @@ public partial class XRMesh : ICookedBinarySerializable
             BlendshapeCounts = null;
             BlendshapeIndices = null;
             BlendshapeDeltas = null;
+            BlendshapeSparseShapeRanges = null;
+            BlendshapeSparseRecords = null;
+            BlendshapeQuantizedDeltas = null;
+            BlendshapeQuantizationMetadata = null;
+            BlendshapeShaderVariant = BlendshapeShaderVariant.None;
+            BlendshapeDeltaStorageMode = BlendshapeDeltaStorageMode.DensePerVertex;
+            BlendshapeDeltaEncoding = BlendshapeDeltaEncoding.Float32;
+            BlendshapeAffectedVertexCount = 0;
+            BlendshapeSparseRecordCount = 0;
             return;
         }
 
         BlendshapeNames = payload.Names ?? Array.Empty<string>();
+        BlendshapeShaderVariant = payload.ShaderVariant;
+        BlendshapeDeltaStorageMode = payload.StorageMode;
+        BlendshapeDeltaEncoding = payload.Encoding;
+        BlendshapeAffectedVertexCount = payload.AffectedVertexCount;
+        BlendshapeSparseRecordCount = payload.SparseRecordCount;
         BlendshapeCounts = RestoreBuffer(payload.Counts);
         BlendshapeIndices = RestoreBuffer(payload.Indices);
         BlendshapeDeltas = RestoreBuffer(payload.Deltas);
+        BlendshapeSparseShapeRanges = RestoreBuffer(payload.SparseShapeRanges);
+        BlendshapeSparseRecords = RestoreBuffer(payload.SparseRecords);
+        BlendshapeQuantizedDeltas = RestoreBuffer(payload.QuantizedDeltas);
+        BlendshapeQuantizationMetadata = RestoreBuffer(payload.QuantizationMetadata);
 
         RegisterBuffer(BlendshapeCounts);
         RegisterBuffer(BlendshapeIndices);
         RegisterBuffer(BlendshapeDeltas);
+        RegisterBuffer(BlendshapeSparseShapeRanges);
+        RegisterBuffer(BlendshapeSparseRecords);
+        RegisterBuffer(BlendshapeQuantizedDeltas);
+        RegisterBuffer(BlendshapeQuantizationMetadata);
     }
 
     private TransformBase[] BuildBonesFromPayload(BoneInfo[] infos)
@@ -1692,9 +1787,18 @@ public partial class XRMesh : ICookedBinarySerializable
     internal sealed class BlendshapePayload
     {
         public string[]? Names { get; set; }
+        public BlendshapeShaderVariant ShaderVariant { get; set; }
+        public BlendshapeDeltaStorageMode StorageMode { get; set; }
+        public BlendshapeDeltaEncoding Encoding { get; set; }
+        public int AffectedVertexCount { get; set; }
+        public int SparseRecordCount { get; set; }
         public BufferBlob? Counts { get; set; }
         public BufferBlob? Indices { get; set; }
         public BufferBlob? Deltas { get; set; }
+        public BufferBlob? SparseShapeRanges { get; set; }
+        public BufferBlob? SparseRecords { get; set; }
+        public BufferBlob? QuantizedDeltas { get; set; }
+        public BufferBlob? QuantizationMetadata { get; set; }
     }
 
     internal sealed class BoneInfo

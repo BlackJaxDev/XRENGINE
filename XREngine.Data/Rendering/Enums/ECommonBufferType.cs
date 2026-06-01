@@ -47,6 +47,26 @@
         /// Referred to by the blendshape indices buffer.
         /// </summary>
         BlendshapeDeltas,
+        /// <summary>
+        /// Dense per-renderer active blendshape list. Each record stores shape index and weight.
+        /// </summary>
+        BlendshapeActiveWeights,
+        /// <summary>
+        /// Per-shape sparse blendshape record ranges.
+        /// </summary>
+        BlendshapeSparseShapeRanges,
+        /// <summary>
+        /// Shape-owned sparse blendshape records.
+        /// </summary>
+        BlendshapeSparseRecords,
+        /// <summary>
+        /// Quantized blendshape delta storage.
+        /// </summary>
+        BlendshapeQuantizedDeltas,
+        /// <summary>
+        /// Per-shape blendshape quantization bounds and scale metadata.
+        /// </summary>
+        BlendshapeQuantizationMetadata,
 
         /// <summary>
         /// Four compact core bone indices per vertex for compressed skinning.
