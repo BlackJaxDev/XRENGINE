@@ -1470,6 +1470,7 @@ namespace XREngine
         private int _deferredDebugView = XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView;
         private bool _modelRenderDiagEnabled = XREngine.Rendering.RenderDiagnosticsFlags.ModelRenderDiagEnabled;
         private bool _directionalShadowAudit = XREngine.Rendering.RenderDiagnosticsFlags.DirectionalShadowAudit;
+        private bool _skinningPrepassDiag = XREngine.Rendering.RenderDiagnosticsFlags.SkinningPrepassDiag;
         private string? _firstChanceExceptionFilter = XREngine.Debug.FirstChanceExceptionFilter;
         private bool _bypassVendorUpscale = XREngine.Rendering.RenderDiagnosticsFlags.BypassVendorUpscale;
         private bool _glDebug = XREngine.Rendering.RenderDiagnosticsFlags.GLDebug;
@@ -2002,6 +2003,20 @@ namespace XREngine
             {
                 if (SetField(ref _directionalShadowAudit, value))
                     XREngine.Rendering.RenderDiagnosticsFlags.SetDirectionalShadowAudit(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Compute Skinning Prepass Diagnostics")]
+        [Description("Compute skinning pre-pass diagnostics: per-dispatch GPU output/palette readbacks ([SkinReadback], [SkinPaletteGpu]), settle/seed/residency traces ([SkinSettle], [SkinResidency]), and bone-palette order verification. Heavy (blocking GPU readbacks each dispatch) — diagnostic only. Defaults on while the skinned-mesh residency investigation is open. Seed env: XRE_SKINNING_PREPASS_DIAG=0 disables.")]
+        [DefaultValue(true)]
+        public bool SkinningPrepassDiag
+        {
+            get => _skinningPrepassDiag;
+            set
+            {
+                if (SetField(ref _skinningPrepassDiag, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetSkinningPrepassDiag(value);
             }
         }
 
@@ -2883,6 +2898,7 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(_deferredDebugView);
             XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(_modelRenderDiagEnabled);
             XREngine.Rendering.RenderDiagnosticsFlags.SetDirectionalShadowAudit(_directionalShadowAudit);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetSkinningPrepassDiag(_skinningPrepassDiag);
             XREngine.Debug.FirstChanceExceptionFilter = _firstChanceExceptionFilter;
             XREngine.Rendering.RenderDiagnosticsFlags.SetBypassVendorUpscale(_bypassVendorUpscale);
             XREngine.Rendering.RenderDiagnosticsFlags.SetGLDebug(_glDebug);
