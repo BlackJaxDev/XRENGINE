@@ -1756,6 +1756,56 @@ namespace XREngine.Rendering
             return hash.ToHashCode();
         }
 
+        private bool _skinPaletteSeededOnce;
+        private int _lastSkinPaletteSeedPoseHash;
+
+        /// <summary>
+        /// Number of times <see cref="ReseedSkinPaletteUntilPoseStable"/> has re-pushed the palette.
+        /// Exposed for the compute dispatcher's settle diagnostics.
+        /// </summary>
+        internal int SkinPaletteReseedCount { get; private set; }
+
+        /// <summary>
+        /// Shared pose-settle re-seed used by BOTH the vertex draw path (<see cref="RenderableMesh"/>)
+        /// and the compute-skinning dispatcher. Re-pushes every bone matrix into the CPU-built skin
+        /// palette from the current bone render state and reports whether the skeleton pose has
+        /// stabilized (the pose hash is unchanged since the previous re-seed).
+        /// <para>
+        /// A runtime-imported avatar publishes several frames of intermediate bone poses at startup.
+        /// If this renderer subscribed to <c>RenderMatrixChanged</c> after the final pose was already
+        /// published (init-order race), no further event fires, so a statically-posed mesh would latch
+        /// the intermediate pose into the palette and render wrong ("exploded") until a bone is
+        /// manually moved. Callers keep invoking this each frame until it returns <c>true</c>, which
+        /// deterministically captures the final settled pose without re-seeding forever.
+        /// </para>
+        /// </summary>
+        /// <returns>True once the pose has been observed stable across two consecutive re-seeds.</returns>
+        internal bool ReseedSkinPaletteUntilPoseStable()
+        {
+            int poseHash = ComputeCurrentBonePoseHash();
+            bool poseStable = _skinPaletteSeededOnce && poseHash == _lastSkinPaletteSeedPoseHash;
+
+            RefreshBoneMatricesFromRenderState();
+
+            _lastSkinPaletteSeedPoseHash = poseHash;
+            _skinPaletteSeededOnce = true;
+            SkinPaletteReseedCount++;
+            return poseStable;
+        }
+
+        /// <summary>
+        /// Clears the shared pose-settle latch so the next <see cref="ReseedSkinPaletteUntilPoseStable"/>
+        /// behaves like a fresh first seed. Called when the skin palette / skinned output buffers are
+        /// rebuilt (e.g. the mesh changed) so a stale prior pose hash cannot make the re-seed settle
+        /// prematurely on the rebuilt palette.
+        /// </summary>
+        internal void ResetSkinPaletteSeedState()
+        {
+            _skinPaletteSeededOnce = false;
+            _lastSkinPaletteSeedPoseHash = 0;
+            SkinPaletteReseedCount = 0;
+        }
+
         private bool MarkBoneMatrixDirty(uint boneIndex, in Matrix4x4 renderMatrix)
         {
             int index = (int)boneIndex;

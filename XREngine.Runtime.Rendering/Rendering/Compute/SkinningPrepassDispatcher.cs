@@ -410,9 +410,6 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         private readonly XRMeshRenderer _renderer = renderer;
         private bool _seededFromRenderState;
         private bool _seedInputsSettled;
-        private int _lastSeedPoseHash;
-        private int _reseedCount;
-        private int _poseChangeCount;
         private bool _settleLogged;
         private XRMesh? _lastMesh;
 
@@ -443,23 +440,21 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             // observed naturally GPU-resident and (b) the bone pose hash is stable across two
             // consecutive frames. Only then do we let the output cache hold. This deterministically
             // captures the final settled pose without permanently re-dispatching.
+            //
+            // The pose-stability half is shared with the vertex draw path via
+            // XRMeshRenderer.ReseedSkinPaletteUntilPoseStable; this path adds the input-residency
+            // gate on top because the compute output cache (unlike the live vertex shader) freezes a
+            // bad first dispatch forever.
             if (_seededFromRenderState && _seedInputsSettled)
                 return;
 
             if (!_seededFromRenderState)
                 _renderer.LogBoneSeedStalenessDiagnostics("FirstDispatch");
 
-            int poseHash = _renderer.ComputeCurrentBonePoseHash();
-            bool poseStable = _seededFromRenderState && poseHash == _lastSeedPoseHash;
-            if (_seededFromRenderState && poseHash != _lastSeedPoseHash)
-                _poseChangeCount++;
-
             bool inputsResident = AreSkinningInputsNaturallyResident(
                 mesh, isInterleaved, doSkinning, doBlendshapes, useGlobalBlendWeights);
 
-            _renderer.RefreshBoneMatricesFromRenderState();
-            _reseedCount++;
-            _lastSeedPoseHash = poseHash;
+            bool poseStable = _renderer.ReseedSkinPaletteUntilPoseStable();
             _seededFromRenderState = true;
             // Settle only once the inputs are resident AND the pose stopped changing; the recompute
             // we just triggered therefore uses the final input data and final pose.
@@ -471,7 +466,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 if (RenderDiagnosticsFlags.SkinningPrepassDiag)
                     Debug.LogWarning(
                         $"[SkinSettle] Mesh='{mesh.Name ?? "<null>"}' verts={mesh.VertexCount} settled after " +
-                        $"{_reseedCount} reseeds, {_poseChangeCount} pose change(s) after first dispatch.");
+                        $"{_renderer.SkinPaletteReseedCount} reseeds.");
             }
         }
 
@@ -982,7 +977,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             {
                 // NaN/Inf or absurd-magnitude output: the span-ratio test below cannot detect this
                 // (NaN excluded from bounds, NaN comparisons are false), so flag it explicitly.
-                explodeFlag = $" *** EXPLODED direct nan={nan} hugeAbs={hugeAbs} settled={_seedInputsSettled} reseed#{_reseedCount} ***";
+                explodeFlag = $" *** EXPLODED direct nan={nan} hugeAbs={hugeAbs} settled={_seedInputsSettled} reseed#{_renderer.SkinPaletteReseedCount} ***";
             }
             else if (vertCountArr > 0)
             {
@@ -995,11 +990,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 // 2.5x is well above any legitimate pose (animation rotates limbs but does not multiply
                 // the whole-mesh extent); a stale/garbage first dispatch blows it up by 5-50x.
                 if (worstRatio > 2.5f)
-                    explodeFlag = $" *** EXPLODED outVsAuth ratio={worstRatio:F1} (rX={rX:F1} rY={rY:F1} rZ={rZ:F1}) settled={_seedInputsSettled} reseed#{_reseedCount} ***";
+                    explodeFlag = $" *** EXPLODED outVsAuth ratio={worstRatio:F1} (rX={rX:F1} rY={rY:F1} rZ={rZ:F1}) settled={_seedInputsSettled} reseed#{_renderer.SkinPaletteReseedCount} ***";
             }
 
             Debug.LogWarning(
-                $"[SkinReadback] verts={mesh.VertexCount} sample={sample} reseed#{_reseedCount} settled={_seedInputsSettled} " +
+                $"[SkinReadback] verts={mesh.VertexCount} sample={sample} reseed#{_renderer.SkinPaletteReseedCount} settled={_seedInputsSettled} " +
                 $"gpuBytes={gpuBytes} expectedBytes={expectedBytes}{allocFlag}{nanFlag}{changeFlag}{explodeFlag} " +
                 $"X[{minX:F2},{maxX:F2}] Y[{minY:F2},{maxY:F2}] Z[{minZ:F2},{maxZ:F2}] out0=({data[0]:F2},{data[1]:F2},{data[2]:F2}) " +
                 $"in0=({in0x:F2},{in0y:F2},{in0z:F2}) maxDisp={maxDisp:F2} maxRatio={maxRatio:F2} " +
@@ -1141,10 +1136,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             _hasValidOutput = false;
             _seededFromRenderState = false;
             _seedInputsSettled = false;
-            _lastSeedPoseHash = 0;
-            _reseedCount = 0;
-            _poseChangeCount = 0;
             _settleLogged = false;
+            _renderer.ResetSkinPaletteSeedState();
             _renderer.MarkSkinnedOutputDirty();
 
             if (isInterleaved)
@@ -1307,10 +1300,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             _hasValidOutput = false;
             _seededFromRenderState = false;
             _seedInputsSettled = false;
-            _lastSeedPoseHash = 0;
-            _reseedCount = 0;
-            _poseChangeCount = 0;
             _settleLogged = false;
+            _renderer.ResetSkinPaletteSeedState();
             _lastDidSkinning = false;
             _lastDidBlendshapes = false;
             _lastOutputVersion = 0;
