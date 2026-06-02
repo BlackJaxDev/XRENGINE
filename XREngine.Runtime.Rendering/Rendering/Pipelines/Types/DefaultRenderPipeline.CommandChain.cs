@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using XREngine.Components.Scene.Volumes;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -142,6 +143,50 @@ public partial class DefaultRenderPipeline
         return c;
     }
 
+    private static bool HasRenderPassCommands(int renderPass)
+        => CurrentRenderingPipeline?.MeshRenderCommands.HasRenderingCommands(renderPass) == true;
+
+    private static bool ShouldRunForwardDepthPrePass()
+        => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled
+        && (HasRenderPassCommands((int)EDefaultRenderPass.OpaqueForward)
+            || HasRenderPassCommands((int)EDefaultRenderPass.MaskedForward));
+
+    private bool ShouldRunTransparencyPasses()
+        => HasRenderPassCommands((int)EDefaultRenderPass.WeightedBlendedOitForward)
+        || HasRenderPassCommands((int)EDefaultRenderPass.PerPixelLinkedListForward)
+        || HasRenderPassCommands((int)EDefaultRenderPass.DepthPeelingForward)
+        || EnableTransparencyAccumulationVisualization
+        || EnableTransparencyRevealageVisualization
+        || EnableTransparencyOverdrawVisualization
+        || EnableDepthPeelingLayerVisualization;
+
+    private static bool ShouldRunAtmosphericScattering()
+    {
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var settings = GetSettings<AtmosphericScatteringSettings>(state) ?? AtmosphericScatteringSettings.Default;
+        bool wantsAerialPerspective = settings.AerialPerspective ||
+            settings.DebugMode != AtmosphericScatteringSettings.EDebugMode.Off;
+
+        return settings.Enabled
+            && wantsAerialPerspective
+            && settings.MaxDistance > 0.0f
+            && settings.SelectActiveAtmosphere(out var active)
+            && active is { HasAerialPerspective: true };
+    }
+
+    private static bool ShouldRunVolumetricFog()
+    {
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var settings = GetSettings<VolumetricFogSettings>(state);
+        var world = RuntimeEngine.Rendering.State.RenderingWorld;
+
+        return settings is { Enabled: true }
+            && settings.Intensity > 0.0f
+            && settings.MaxDistance > 0.0f
+            && world is not null
+            && VolumetricFogVolumeComponent.Registry.HasActive(world);
+    }
+
     private void AppendVoxelConeTracingPass(ViewportRenderCommandContainer c, bool enableComputePasses)
     {
         if (enableComputePasses)
@@ -236,7 +281,8 @@ public partial class DefaultRenderPipeline
     private void AppendForwardDepthPrePass(ViewportRenderCommandContainer c)
     {
         var prePassChoice = c.Add<VPRC_IfElse>();
-        prePassChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+        prePassChoice.Label = "ForwardDepthPrePassActive";
+        prePassChoice.ConditionEvaluator = ShouldRunForwardDepthPrePass;
         {
             var shareChoice = new ViewportRenderCommandContainer(this);
             shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
@@ -282,7 +328,8 @@ public partial class DefaultRenderPipeline
     private void AppendForwardDepthPrePassGBufferRestore(ViewportRenderCommandContainer c)
     {
         var restoreChoice = c.Add<VPRC_IfElse>();
-        restoreChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+        restoreChoice.Label = "ForwardDepthPrePassRestoreActive";
+        restoreChoice.ConditionEvaluator = ShouldRunForwardDepthPrePass;
         {
             var restoreCommands = new ViewportRenderCommandContainer(this);
             restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
@@ -564,20 +611,27 @@ public partial class DefaultRenderPipeline
 
     private void AppendTransparencyPasses(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
-        c.Add<VPRC_RenderQuadToFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
-        c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
-        c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
-        c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
-        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(TransparentAccumulationFBOName, true, false, false, false)))
+        var transparencyChoice = c.Add<VPRC_IfElse>();
+        transparencyChoice.Label = "TransparencyActive";
+        transparencyChoice.ConditionEvaluator = ShouldRunTransparencyPasses;
         {
-            c.Add<VPRC_DepthTest>().Enable = true;
-            c.Add<VPRC_DepthWrite>().Allow = false;
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
-        }
-        c.Add<VPRC_RenderQuadToFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
+            var transparencyCommands = new ViewportRenderCommandContainer(this);
+            transparencyCommands.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
+            transparencyCommands.Add<VPRC_RenderQuadToFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
+            transparencyCommands.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
+            transparencyCommands.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
+            transparencyCommands.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
+            using (transparencyCommands.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(TransparentAccumulationFBOName, true, false, false, false)))
+            {
+                transparencyCommands.Add<VPRC_DepthTest>().Enable = true;
+                transparencyCommands.Add<VPRC_DepthWrite>().Allow = false;
+                transparencyCommands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
+            }
+            transparencyCommands.Add<VPRC_RenderQuadToFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
 
-        AppendExactTransparencyCommands(c);
+            AppendExactTransparencyCommands(transparencyCommands);
+            transparencyChoice.TrueCommands = transparencyCommands;
+        }
     }
 
     private void AppendVelocityPass(ViewportRenderCommandContainer c)
@@ -865,10 +919,20 @@ public partial class DefaultRenderPipeline
     ///   2. Half-resolution aerial-perspective raymarch (<c>AtmosphereHalfScatter</c>).
     ///   3. Half-resolution temporal reprojection (<c>AtmosphereHalfTemporal</c>).
     ///   4. Full-resolution bilateral upscale (<c>AtmosphereColor</c>).
-    /// Disabled/no-active output is (0,0,0,1), making the post-process composite a no-op.
+    /// The chain is gated off when the camera has no active aerial-perspective atmosphere.
     /// </summary>
     private void AppendAtmosphericScattering(ViewportRenderCommandContainer c)
     {
+        var atmosphereChoice = c.Add<VPRC_IfElse>();
+        atmosphereChoice.Label = "AtmosphereActive";
+        atmosphereChoice.ConditionEvaluator = ShouldRunAtmosphericScattering;
+        atmosphereChoice.TrueCommands = CreateAtmosphericScatteringCommands();
+    }
+
+    private ViewportRenderCommandContainer CreateAtmosphericScatteringCommands()
+    {
+        var c = new ViewportRenderCommandContainer(this);
+
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             AtmosphereHalfDepthTextureName,
             CreateAtmosphereHalfDepthTexture,
@@ -980,6 +1044,7 @@ public partial class DefaultRenderPipeline
             linearFilter: false);
 
         c.Add<VPRC_AtmosphereHistoryPass>().Phase = VPRC_AtmosphereHistoryPass.EPhase.Commit;
+        return c;
     }
 
     /// <summary>
@@ -988,14 +1053,22 @@ public partial class DefaultRenderPipeline
     ///   2. Half-resolution scatter raymarch (<c>VolumetricFogHalfScatter</c>).
     ///   3. Half-resolution temporal reprojection (<c>VolumetricFogHalfTemporal</c>).
     ///   4. Full-resolution bilateral upscale (<c>VolumetricFogColor</c>).
-    /// The scatter shader early-outs to (0,0,0,1) when no volumes are present
-    /// or the effect is disabled, so the post-process composite degrades to a
-    /// no-op without an external gate. Each pass uses
+    /// The chain is gated off when there are no active fog volumes. Each pass uses
     /// <see cref="VPRC_RenderQuadToFBO.MatchDestinationRenderArea"/> so the
     /// viewport follows the destination FBO's size automatically.
     /// </summary>
     private void AppendVolumetricFog(ViewportRenderCommandContainer c)
     {
+        var fogChoice = c.Add<VPRC_IfElse>();
+        fogChoice.Label = "VolumetricFogActive";
+        fogChoice.ConditionEvaluator = ShouldRunVolumetricFog;
+        fogChoice.TrueCommands = CreateVolumetricFogCommands();
+    }
+
+    private ViewportRenderCommandContainer CreateVolumetricFogCommands()
+    {
+        var c = new ViewportRenderCommandContainer(this);
+
         // Stage 1: half-resolution depth downsample.
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             VolumetricFogHalfDepthTextureName,
@@ -1111,6 +1184,7 @@ public partial class DefaultRenderPipeline
             linearFilter: false);
 
         c.Add<VPRC_VolumetricFogHistoryPass>().Phase = VPRC_VolumetricFogHistoryPass.EPhase.Commit;
+        return c;
     }
 
     private void AppendTemporalCommit(ViewportRenderCommandContainer c)

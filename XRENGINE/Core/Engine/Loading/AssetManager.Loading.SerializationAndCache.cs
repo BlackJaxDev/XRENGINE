@@ -6,15 +6,18 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using XREngine.Animation;
+using XREngine.Core;
 using XREngine.Core.Engine;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
+using XREngine.Rendering.Models;
 using XREngine.Scene.Prefabs;
 using AssetImportContext = XREngine.Core.Files.AssetImportContext;
 using XRAsset = XREngine.Core.Files.XRAsset;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace XREngine
 {
@@ -87,6 +90,9 @@ namespace XREngine
         {
             EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
+            if ((type.IsAbstract || type.IsInterface) && TryResolveConcreteAssetTypeFromHeader(filePath, type, out Type concreteType))
+                type = concreteType;
+
             AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.OpeningFile, "Opening asset file...", 0.12f);
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(fs);
@@ -128,12 +134,132 @@ namespace XREngine
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
             return await Task.Run(() =>
             {
+                if ((type.IsAbstract || type.IsInterface) && TryResolveConcreteAssetTypeFromHeader(filePath, type, out Type concreteType))
+                    type = concreteType;
+
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var reader = new StreamReader(fs);
                 using var scope = AssetDeserializationContext.Push(filePath);
                 ResetYamlReadContext();
                 return Deserializer.Deserialize(reader, type) as XRAsset;
             }).ConfigureAwait(false);
+        }
+
+        private static bool TryResolveConcreteAssetTypeFromHeader(string assetPath, Type expectedType, out Type type)
+        {
+            type = typeof(XRAsset);
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return false;
+
+            string? typeHint = null;
+            string? firstRootKey = null;
+            try
+            {
+                int scanned = 0;
+                foreach (string line in File.ReadLines(assetPath))
+                {
+                    if (++scanned > 128)
+                        break;
+
+                    string trimmed = line.Trim();
+                    if (trimmed.Length == 0 || trimmed.StartsWith("#", StringComparison.Ordinal))
+                        continue;
+
+                    if (trimmed.StartsWith("__assetType:", StringComparison.Ordinal))
+                    {
+                        typeHint = trimmed["__assetType:".Length..].Trim().Trim('"', '\'');
+                        break;
+                    }
+
+                    if (trimmed.StartsWith("__type:", StringComparison.Ordinal))
+                    {
+                        typeHint = trimmed["__type:".Length..].Trim().Trim('"', '\'');
+                        break;
+                    }
+
+                    if (firstRootKey is null)
+                    {
+                        int colonIndex = trimmed.IndexOf(':');
+                        if (colonIndex > 0)
+                            firstRootKey = trimmed[..colonIndex];
+                    }
+                }
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(typeHint)
+                && TryResolveAssetTypeName(typeHint, expectedType, out Type hintedType))
+            {
+                type = hintedType;
+                return true;
+            }
+
+            if (TryResolveLegacyRootKeyAssetType(firstRootKey, expectedType, out Type legacyType))
+            {
+                type = legacyType;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryResolveAssetTypeName(string typeName, Type expectedType, out Type type)
+        {
+            type = typeof(XRAsset);
+            if (string.IsNullOrWhiteSpace(typeName))
+                return false;
+
+            string rewrittenTypeName = XRTypeRedirectRegistry.RewriteTypeName(typeName);
+            Type? resolved = AotRuntimeMetadataStore.ResolveType(rewrittenTypeName);
+            if (resolved is not null && expectedType.IsAssignableFrom(resolved))
+            {
+                type = resolved;
+                return true;
+            }
+
+            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+            {
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    resolved = assembly.GetType(rewrittenTypeName, throwOnError: false, ignoreCase: false);
+                    if (resolved is not null && expectedType.IsAssignableFrom(resolved))
+                    {
+                        type = resolved;
+                        return true;
+                    }
+                }
+
+                resolved = Type.GetType(rewrittenTypeName, throwOnError: false);
+                if (resolved is not null && expectedType.IsAssignableFrom(resolved))
+                {
+                    type = resolved;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryResolveLegacyRootKeyAssetType(string? rootKey, Type expectedType, out Type type)
+        {
+            type = typeof(XRAsset);
+            Type? candidate = rootKey switch
+            {
+                nameof(XRPrefabSource.RootNode) => typeof(XRPrefabSource),
+                nameof(Model.Meshes) => typeof(Model),
+                nameof(SubMesh.LODs) => typeof(SubMesh),
+                nameof(XRMaterial.Shaders) => typeof(XRMaterial),
+                _ => null,
+            };
+
+            if (candidate is null || !expectedType.IsAssignableFrom(candidate))
+                return false;
+
+            type = candidate;
+            return true;
         }
 
         /// <summary>
@@ -987,7 +1113,19 @@ namespace XREngine
             {
                 try
                 {
-                    codec.TryWrite(cachePath, cacheAsset, originalAsset);
+                    long start = Stopwatch.GetTimestamp();
+                    bool wrote = codec.TryWrite(cachePath, cacheAsset, originalAsset);
+                    double elapsedMs = (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
+                    if (elapsedMs >= 100.0)
+                    {
+                        Debug.Log(
+                            ELogCategory.Assets,
+                            "[ThirdPartyCache] Async cache write {0} for {1} '{2}' took {3:F2} ms.",
+                            wrote ? "completed" : "skipped",
+                            cacheAsset.GetType().Name,
+                            cachePath,
+                            elapsedMs);
+                    }
                 }
                 catch (Exception ex)
                 {

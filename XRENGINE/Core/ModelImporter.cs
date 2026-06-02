@@ -1645,34 +1645,69 @@ namespace XREngine
                     }
                 }
 
-                if (ShouldUseNativeFbxBackend(effectiveImportOptions))
+                FbxImportBackend fbxBackend = ResolveFbxBackend(effectiveImportOptions);
+                if (ShouldUseNativeFbxBackend(fbxBackend))
                 {
-                    NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
-                        this,
-                        SourceFilePath,
-                        effectiveImportOptions,
-                        effectiveImportOptions.ScaleConversion,
-                        effectiveImportOptions.ZUp,
-                        _importLayer,
-                        cancellationToken,
-                        onProgress,
-                        rootTransformMatrix);
+                    bool allowAssimpFallback = fbxBackend == FbxImportBackend.Auto;
 
-                    foreach (XRMaterial material in result.Materials)
-                        _materials.Add(material);
-                    foreach (XRMesh mesh in result.Meshes)
-                        _meshes.Add(mesh);
+                    try
+                    {
+                        LogImportDiagnostic(
+                            SourceFilePath,
+                            "[ModelImporter.Import] Using native FBX backend for '{0}' (option={1}, preference={2}, resolved={3}).",
+                            SourceFilePath,
+                            effectiveImportOptions.FbxBackend,
+                            Engine.EditorPreferences?.FbxImporterBackend.ToString() ?? "<none>",
+                            fbxBackend);
 
-                    _onCompleted?.Invoke();
-                    return result.RootNode;
+                        NativeFbxSceneImporter.ImportResult result = NativeFbxSceneImporter.Import(
+                            this,
+                            SourceFilePath,
+                            effectiveImportOptions,
+                            effectiveImportOptions.ScaleConversion,
+                            effectiveImportOptions.ZUp,
+                            _importLayer,
+                            cancellationToken,
+                            onProgress,
+                            rootTransformMatrix);
+
+                        foreach (XRMaterial material in result.Materials)
+                            _materials.Add(material);
+                        foreach (XRMesh mesh in result.Meshes)
+                            _meshes.Add(mesh);
+
+                        _onCompleted?.Invoke();
+                        return result.RootNode;
+                    }
+                    catch (Exception ex) when (allowAssimpFallback)
+                    {
+                        LogImportWarning(SourceFilePath, $"[ModelImporter.Import] Native FBX import failed for '{SourceFilePath}'. Falling back to Assimp. {ex.Message}");
+                    }
                 }
+
+                LogImportDiagnostic(
+                    SourceFilePath,
+                    "[ModelImporter.Import] Using Assimp backend for '{0}' (fbxOption={1}, fbxPreference={2}, resolved={3}).",
+                    SourceFilePath,
+                    effectiveImportOptions.FbxBackend,
+                    Engine.EditorPreferences?.FbxImporterBackend.ToString() ?? "<none>",
+                    fbxBackend);
+
+                Action<float>? assimpProgress = onProgress is null
+                    ? null
+                    : value => onProgress(Math.Clamp(value, 0.0f, 1.0f));
+                Action<float>? assimpMeshProgress = onProgress is null
+                    ? null
+                    : value => onProgress(0.20f + (0.80f * Math.Clamp(value, 0.0f, 1.0f)));
 
                 SetAssimpConfig(effectiveImportOptions);
 
                 AScene scene;
                 using (Engine.Profiler.Start($"Assimp ImportFile: {SourceFilePath} with options: {effectiveImportOptions.PostProcessSteps}"))
                 {
+                    assimpProgress?.Invoke(0.02f);
                     scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.PostProcessSteps);
+                    assimpProgress?.Invoke(0.12f);
                 }
 
                 if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
@@ -1700,6 +1735,7 @@ namespace XREngine
                     rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
                     _nodeTransforms.Clear();
                     ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, effectiveImportOptions.CollapseGeneratedFbxHelperNodes, null, cancellationToken);
+                    assimpProgress?.Invoke(0.18f);
                     NormalizeNodeScales(
                         scene,
                         rootNode,
@@ -1710,9 +1746,10 @@ namespace XREngine
                         splitSubmeshesIntoSeparateModelComponents,
                         generateSceneNodesPerSubmesh,
                         separateMeshIslands);
+                    assimpProgress?.Invoke(0.20f);
                 }
 
-                void meshProcessAction() => ProcessMeshesOnJobThread(onProgress, cancellationToken);
+                void meshProcessAction() => ProcessMeshesOnJobThread(assimpMeshProgress, cancellationToken);
                 RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken, importedTextureStreamingScope);
                 importedTextureStreamingScope = null;
                 return rootNode;
@@ -1756,14 +1793,19 @@ namespace XREngine
             return resolved;
         }
 
-        private bool ShouldUseNativeFbxBackend(ModelImportOptions effectiveImportOptions)
+        private static FbxImportBackend ResolveFbxBackend(ModelImportOptions effectiveImportOptions)
+        {
+            FbxImportBackend selected = effectiveImportOptions.FbxBackend;
+            if (selected == FbxImportBackend.Auto)
+                selected = Engine.EditorPreferences?.FbxImporterBackend ?? FbxImportBackend.Auto;
+
+            return selected;
+        }
+
+        private bool ShouldUseNativeFbxBackend(FbxImportBackend selected)
         {
             if (!Path.GetExtension(SourceFilePath).Equals(".fbx", StringComparison.OrdinalIgnoreCase))
                 return false;
-
-            FbxImportBackend selected = effectiveImportOptions.FbxBackend;
-            if (selected == FbxImportBackend.Auto)
-                selected = Engine.EditorPreferences?.FbxImporterBackend ?? FbxImportBackend.Assimp;
 
             return selected is not FbxImportBackend.Assimp;
         }

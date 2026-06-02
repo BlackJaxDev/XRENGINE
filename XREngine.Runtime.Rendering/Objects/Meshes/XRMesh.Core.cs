@@ -186,6 +186,17 @@ public partial class XRMesh : XRAsset
         set => SetField(ref _utilizedBones, value);
     }
 
+    [MemoryPackIgnore]
+    [YamlIgnore]
+    private IReadOnlyDictionary<TransformBase, TransformBase>? _runtimeBoneReferenceRemap;
+    [MemoryPackIgnore]
+    [YamlIgnore]
+    internal IReadOnlyDictionary<TransformBase, TransformBase>? RuntimeBoneReferenceRemap
+    {
+        get => _runtimeBoneReferenceRemap;
+        private set => SetField(ref _runtimeBoneReferenceRemap, value);
+    }
+
     private ESkinningShaderConvention _skinningShaderConvention = ESkinningShaderConvention.LegacyImplicitTranspose;
     public ESkinningShaderConvention SkinningShaderConvention
     {
@@ -384,7 +395,7 @@ public partial class XRMesh : XRAsset
     }
 
     protected override void OnDestroying()
-        => Buffers?.ForEach(x => x.Value.Dispose());
+        => Buffers?.DisposeOwnedBuffers();
 
     private void OnBuffersAssigned()
     {

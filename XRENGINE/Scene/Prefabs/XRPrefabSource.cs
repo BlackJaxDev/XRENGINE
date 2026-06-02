@@ -278,7 +278,8 @@ namespace XREngine.Scene.Prefabs
                     zUp: opts.ZUp,
                     multiThread: opts.MultiThread,
                     processMeshesAsynchronously: opts.ProcessMeshesAsynchronously,
-                    batchSubmeshAddsDuringAsyncImport: batchSubmeshAddsDuringAsyncImport);
+                    batchSubmeshAddsDuringAsyncImport: batchSubmeshAddsDuringAsyncImport,
+                    onProgress: opts.ProgressCallback);
             }
 
             if (rootNode is null)

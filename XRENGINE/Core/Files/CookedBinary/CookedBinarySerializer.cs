@@ -2075,7 +2075,11 @@ public static partial class CookedBinarySerializer
             => Cache.GetOrAdd(type, static t => new TypeMetadata(t));
     }
 
+    private static readonly ConcurrentDictionary<Type, bool> RuntimeOnlyTypeCache = new();
+
     private static bool IsRuntimeOnlyType(Type type)
-        => type.GetCustomAttribute<RuntimeOnlyAttribute>(inherit: true) is not null;
+        => RuntimeOnlyTypeCache.GetOrAdd(
+            type,
+            static t => t.GetCustomAttribute<RuntimeOnlyAttribute>(inherit: true) is not null);
 
 }

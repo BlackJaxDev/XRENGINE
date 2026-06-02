@@ -213,7 +213,32 @@ public partial class XRMesh
         return false;
     }
 
-    public bool RebindSerializedTransformReferences(TransformBase searchRoot)
+    public bool NeedsSerializedTransformRebind(TransformBase searchRoot)
+    {
+        ArgumentNullException.ThrowIfNull(searchRoot);
+
+        if (!HasSkinning)
+            return false;
+
+        for (int i = 0; i < UtilizedBones.Length; i++)
+        {
+            TransformBase bone = UtilizedBones[i].tfm;
+            Guid referenceId = bone.EffectiveSerializedReferenceId;
+            if (referenceId == Guid.Empty)
+                continue;
+
+            if (IsSelfOrDescendantOf(searchRoot, bone))
+                continue;
+
+            TransformBase? resolved = searchRoot.FindSelfOrDescendantBySerializedReferenceId(referenceId);
+            if (resolved is not null && !ReferenceEquals(resolved, bone))
+                return true;
+        }
+
+        return false;
+    }
+
+    public bool RebindSerializedTransformReferences(TransformBase searchRoot, bool remapVertexWeights = true)
     {
         ArgumentNullException.ThrowIfNull(searchRoot);
 
@@ -242,13 +267,22 @@ public partial class XRMesh
             return false;
 
         UtilizedBones = reboundBones;
-        RemapVertexWeights(remap);
+        if (remapVertexWeights)
+        {
+            RemapVertexWeights(remap);
+            RuntimeBoneReferenceRemap = null;
+        }
+        else
+        {
+            RuntimeBoneReferenceRemap = remap;
+        }
+
         return true;
     }
 
     private static TransformBase ResolveSerializedBoneReference(TransformBase searchRoot, TransformBase sourceBone)
     {
-        if (sourceBone.SceneNode is not null)
+        if (IsSelfOrDescendantOf(searchRoot, sourceBone))
             return sourceBone;
 
         Guid referenceId = sourceBone.EffectiveSerializedReferenceId;
@@ -256,6 +290,17 @@ public partial class XRMesh
             return sourceBone;
 
         return searchRoot.FindSelfOrDescendantBySerializedReferenceId(referenceId) ?? sourceBone;
+    }
+
+    private static bool IsSelfOrDescendantOf(TransformBase root, TransformBase candidate)
+    {
+        for (TransformBase? current = candidate; current is not null; current = current.Parent)
+        {
+            if (ReferenceEquals(current, root))
+                return true;
+        }
+
+        return false;
     }
 
     private void RemapVertexWeights(IReadOnlyDictionary<TransformBase, TransformBase> remap)

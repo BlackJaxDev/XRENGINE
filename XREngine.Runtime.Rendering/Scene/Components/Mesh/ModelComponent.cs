@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
@@ -25,6 +26,28 @@ namespace XREngine.Components.Scene.Mesh
         private readonly List<RenderableMesh> _batchedRenderableAdds = [];
         private int _pendingModelMeshAddRangeCount;
         private bool _pendingRuntimeMeshRebuild;
+
+        private static readonly AsyncLocal<int> RuntimeMeshBuildSuppressionDepth = new();
+
+        public static IDisposable EnterRuntimeMeshBuildSuppressionScope()
+            => new RuntimeMeshBuildSuppressionScope();
+
+        private sealed class RuntimeMeshBuildSuppressionScope : IDisposable
+        {
+            private bool _disposed;
+
+            public RuntimeMeshBuildSuppressionScope()
+                => RuntimeMeshBuildSuppressionDepth.Value++;
+
+            public void Dispose()
+            {
+                if (_disposed)
+                    return;
+
+                RuntimeMeshBuildSuppressionDepth.Value = Math.Max(0, RuntimeMeshBuildSuppressionDepth.Value - 1);
+                _disposed = true;
+            }
+        }
 
         private Model? _model;
         /// <summary>
@@ -119,7 +142,9 @@ namespace XREngine.Components.Scene.Mesh
             => OnModelChanged();
 
         private bool CanBuildRuntimeMeshes()
-            => SceneNode is not null && !SceneNode.IsTransformNull;
+            => RuntimeMeshBuildSuppressionDepth.Value == 0
+            && SceneNode is not null
+            && !SceneNode.IsTransformNull;
 
         private void OnModelChanged()
         {

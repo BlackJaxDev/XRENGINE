@@ -7,6 +7,7 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
@@ -28,6 +29,8 @@ namespace XREngine.Components.Animation
         private const int MuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
         private readonly float[] _muscleValueSnapshot = new float[MuscleValueCount];
         private static readonly AsyncLocal<int> _deferSceneNodeInitializationScopeDepth = new();
+        private readonly Dictionary<SceneNode, Matrix4x4> _humanoidBindLocalPoses = [];
+        private readonly Dictionary<SceneNode, Matrix4x4> _humanoidBindWorldPoses = [];
         private bool _sceneNodeInitializationComplete;
 
         [Browsable(false)]
@@ -44,10 +47,61 @@ namespace XREngine.Components.Animation
             if (_sceneNodeInitializationComplete || SceneNode.IsDestroyed)
                 return;
 
+            RebuildSceneNodeBindings(clearExistingBindings: false);
+        }
+
+        public void ReinitializeSceneNodeBindings()
+        {
+            if (SceneNode.IsDestroyed)
+                return;
+
+            RebuildSceneNodeBindings(clearExistingBindings: true);
+        }
+
+        private void RebuildSceneNodeBindings(bool clearExistingBindings)
+        {
+            if (clearExistingBindings)
+                ClearSceneNodeBindings();
+
+            CaptureMissingHumanoidBindPoses();
             SetFromNode();
-            ReloadNeutralPosePreset();
+            RefreshBoneBindPosesFromCapturedHierarchy();
+            ReloadNeutralPosePreset(applyPreview: false);
             ApplyPosePreviewMode();
             _sceneNodeInitializationComplete = true;
+        }
+
+        private void CaptureMissingHumanoidBindPoses()
+        {
+            if (SceneNode.IsDestroyed)
+                return;
+
+            _humanoidBindWorldPoses.Clear();
+            CaptureMissingHumanoidBindPosesRecursive(SceneNode, Matrix4x4.Identity);
+        }
+
+        private void CaptureMissingHumanoidBindPosesRecursive(SceneNode node, Matrix4x4 parentWorldBindPose)
+        {
+            if (!_humanoidBindLocalPoses.TryGetValue(node, out Matrix4x4 localBindPose))
+            {
+                localBindPose = GetCurrentLocalMatrix(node);
+                _humanoidBindLocalPoses[node] = localBindPose;
+            }
+
+            Matrix4x4 worldBindPose = localBindPose * parentWorldBindPose;
+            _humanoidBindWorldPoses[node] = worldBindPose;
+
+            foreach (TransformBase child in node.Transform.Children)
+            {
+                if (child.SceneNode is not null)
+                    CaptureMissingHumanoidBindPosesRecursive(child.SceneNode, worldBindPose);
+            }
+        }
+
+        private static Matrix4x4 GetCurrentLocalMatrix(SceneNode node)
+        {
+            node.Transform.RecalcLocal();
+            return node.Transform.LocalMatrix;
         }
 
         private static bool ShouldDeferSceneNodeInitialization()
@@ -512,7 +566,10 @@ namespace XREngine.Components.Animation
             => ApplyMusclePose();
 
         public void ReloadNeutralPosePreset()
-            => ApplyNeutralPosePreset(NeutralPosePreset);
+            => ReloadNeutralPosePreset(applyPreview: true);
+
+        private void ReloadNeutralPosePreset(bool applyPreview)
+            => ApplyNeutralPosePreset(NeutralPosePreset, applyPreview);
 
         public void ClearNeutralPoseOffsets()
         {
@@ -522,9 +579,15 @@ namespace XREngine.Components.Animation
         }
 
         public void ApplyNeutralPosePreset(EHumanoidNeutralPosePreset preset)
-            => ApplyNeutralPoseLocalRotations(HumanoidNeutralPosePresets.GetRotations(preset));
+            => ApplyNeutralPosePreset(preset, applyPreview: true);
+
+        private void ApplyNeutralPosePreset(EHumanoidNeutralPosePreset preset, bool applyPreview)
+            => ApplyNeutralPoseLocalRotations(HumanoidNeutralPosePresets.GetRotations(preset), applyPreview);
 
         public void ApplyNeutralPoseLocalRotations(IReadOnlyDictionary<string, Quaternion> rotations)
+            => ApplyNeutralPoseLocalRotations(rotations, applyPreview: true);
+
+        private void ApplyNeutralPoseLocalRotations(IReadOnlyDictionary<string, Quaternion> rotations, bool applyPreview)
         {
             Settings.NeutralPoseBoneRotations.Clear();
             foreach ((string boneName, Quaternion rotation) in rotations)
@@ -533,13 +596,13 @@ namespace XREngine.Components.Animation
                 SceneNode? targetNode = ResolveNeutralPoseMappedNodeByStoredKey(targetBoneName);
                 Quaternion bindRelativeRotation = rotation;
 
-                if (targetNode?.GetTransformAs<Transform>(true) is Transform targetTransform)
-                    bindRelativeRotation = Quaternion.Normalize(Quaternion.Inverse(targetTransform.BindState.Rotation) * rotation);
+                if (targetNode is not null && TryGetHumanoidBindLocalState(targetNode, out _, out Quaternion bindRotation, out _))
+                    bindRelativeRotation = Quaternion.Normalize(Quaternion.Inverse(bindRotation) * rotation);
 
                 Settings.NeutralPoseBoneRotations[targetBoneName] = Quaternion.Normalize(bindRelativeRotation);
             }
 
-            if (PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
+            if (applyPreview && PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
                 ApplyNeutralPosePreview();
         }
 
@@ -709,6 +772,59 @@ namespace XREngine.Components.Animation
             return false;
         }
 
+        private bool TryGetHumanoidBindLocalState(SceneNode node, out Vector3 scale, out Quaternion rotation, out Vector3 translation)
+        {
+            if (_humanoidBindLocalPoses.TryGetValue(node, out Matrix4x4 localBindPose) &&
+                Matrix4x4.Decompose(localBindPose, out scale, out rotation, out translation))
+            {
+                rotation = Quaternion.Normalize(rotation);
+                return true;
+            }
+
+            if (node.GetTransformAs<Transform>(true) is Transform transform)
+            {
+                TransformState bindState = transform.BindState;
+                scale = bindState.Scale;
+                rotation = Quaternion.Normalize(bindState.Rotation);
+                translation = bindState.Translation;
+                return true;
+            }
+
+            if (Matrix4x4.Decompose(GetCurrentLocalMatrix(node), out scale, out rotation, out translation))
+            {
+                rotation = Quaternion.Normalize(rotation);
+                return true;
+            }
+
+            scale = Vector3.One;
+            rotation = Quaternion.Identity;
+            translation = Vector3.Zero;
+            return false;
+        }
+
+        private Matrix4x4 GetHumanoidBindWorldPose(SceneNode node)
+            => _humanoidBindWorldPoses.TryGetValue(node, out Matrix4x4 worldBindPose)
+                ? worldBindPose
+                : node.Transform.BindMatrix;
+
+        private void ApplyHumanoidBindRelativeRotation(SceneNode node, Quaternion deltaRotation)
+        {
+            if (!TryGetHumanoidBindLocalState(node, out Vector3 scale, out Quaternion bindRotation, out Vector3 translation))
+                return;
+
+            Quaternion rotation = Quaternion.Normalize(bindRotation * deltaRotation);
+            if (node.GetTransformAs<Transform>(true) is Transform transform)
+            {
+                transform.Rotation = rotation;
+                return;
+            }
+
+            node.Transform.DeriveLocalMatrix(
+                Matrix4x4.CreateScale(scale) *
+                Matrix4x4.CreateFromQuaternion(rotation) *
+                Matrix4x4.CreateTranslation(translation));
+        }
+
         private void ApplyNeutralBindRelativeRotation(SceneNode? node, Quaternion deltaRotation)
         {
             if (node?.Transform is null)
@@ -716,7 +832,7 @@ namespace XREngine.Components.Animation
 
             Quaternion neutralRotation = GetNeutralPoseBoneRotation(node);
             Quaternion effective = Quaternion.Normalize(neutralRotation * deltaRotation);
-            node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(effective);
+            ApplyHumanoidBindRelativeRotation(node, effective);
         }
 
         private void ApplyMusclePose()
@@ -1183,8 +1299,10 @@ namespace XREngine.Components.Animation
                 return;
 
             // Scale along the primary bone axis (Y) by default.
-            var bind = tfm.BindState.Scale;
-            tfm.Scale = new Vector3(bind.X, bind.Y * s, bind.Z);
+            Vector3 bindScale = TryGetHumanoidBindLocalState(node, out Vector3 capturedScale, out _, out _)
+                ? capturedScale
+                : tfm.BindState.Scale;
+            tfm.Scale = new Vector3(bindScale.X, bindScale.Y * s, bindScale.Z);
         }
 
         private void ApplyBindRelativeEulerDegrees(SceneNode? node, float yawDeg, float pitchDeg, float rollDeg)
@@ -1283,9 +1401,9 @@ namespace XREngine.Components.Animation
             return lenSq > 1e-8f ? dir / MathF.Sqrt(lenSq) : fallbackWorldAxis;
         }
 
-        private static Vector3 TransformWorldAxisToBoneLocal(SceneNode node, Vector3 worldAxis)
+        private Vector3 TransformWorldAxisToBoneLocal(SceneNode node, Vector3 worldAxis)
         {
-            if (!Matrix4x4.Invert(node.Transform.BindMatrix, out Matrix4x4 invBind))
+            if (!Matrix4x4.Invert(GetHumanoidBindWorldPose(node), out Matrix4x4 invBind))
                 return worldAxis;
 
             Vector3 local = Vector3.TransformNormal(worldAxis, invBind);
@@ -1491,11 +1609,19 @@ namespace XREngine.Components.Animation
                     case nameof(Node):
                         if (Node is not null)
                         {
+                            Node.Transform.RecalcLocal();
                             LocalBindPose = Node.Transform.LocalMatrix;
                             WorldBindPose = Node.Transform.BindMatrix;
                         }
                         break;
                 }
+            }
+
+            public void ClearNodeBinding()
+            {
+                Node = null;
+                LocalBindPose = Matrix4x4.Identity;
+                WorldBindPose = Matrix4x4.Identity;
             }
 
             public void ResetPose()
@@ -1539,6 +1665,13 @@ namespace XREngine.Components.Animation
                         Intermediate.ResetPose();
                         Distal.ResetPose();
                     }
+
+                    public void ClearNodeBindings()
+                    {
+                        Proximal.ClearNodeBinding();
+                        Intermediate.ClearNodeBinding();
+                        Distal.ClearNodeBinding();
+                    }
                 }
 
                 public Finger Pinky { get; } = new();
@@ -1554,6 +1687,15 @@ namespace XREngine.Components.Animation
                     Middle.ResetPose();
                     Index.ResetPose();
                     Thumb.ResetPose();
+                }
+
+                public void ClearNodeBindings()
+                {
+                    Pinky.ClearNodeBindings();
+                    Ring.ClearNodeBindings();
+                    Middle.ClearNodeBindings();
+                    Index.ClearNodeBindings();
+                    Thumb.ClearNodeBindings();
                 }
             }
 
@@ -1581,10 +1723,94 @@ namespace XREngine.Components.Animation
                 Toes.ResetPose();
                 Eye.ResetPose();
             }
+
+            public void ClearNodeBindings()
+            {
+                Shoulder.ClearNodeBinding();
+                Arm.ClearNodeBinding();
+                Elbow.ClearNodeBinding();
+                Wrist.ClearNodeBinding();
+                Hand.ClearNodeBindings();
+                Leg.ClearNodeBinding();
+                Knee.ClearNodeBinding();
+                Foot.ClearNodeBinding();
+                Toes.ClearNodeBinding();
+                Eye.ClearNodeBinding();
+            }
         }
 
         public BodySide Left { get; } = new();
         public BodySide Right { get; } = new();
+
+        private void ClearSceneNodeBindings()
+        {
+            Hips.ClearNodeBinding();
+            Spine.ClearNodeBinding();
+            Chest.ClearNodeBinding();
+            UpperChest.ClearNodeBinding();
+            Neck.ClearNodeBinding();
+            Head.ClearNodeBinding();
+            Jaw.ClearNodeBinding();
+            EyesTarget.ClearNodeBinding();
+            Left.ClearNodeBindings();
+            Right.ClearNodeBindings();
+            _boneMappingComplete = false;
+            _lastBoneMappingComplete = null;
+        }
+
+        private void RefreshBoneBindPosesFromCapturedHierarchy()
+        {
+            RefreshBoneBindPose(Hips);
+            RefreshBoneBindPose(Spine);
+            RefreshBoneBindPose(Chest);
+            RefreshBoneBindPose(UpperChest);
+            RefreshBoneBindPose(Neck);
+            RefreshBoneBindPose(Head);
+            RefreshBoneBindPose(Jaw);
+            RefreshBoneBindPose(EyesTarget);
+            RefreshBodySideBindPoses(Left);
+            RefreshBodySideBindPoses(Right);
+        }
+
+        private void RefreshBodySideBindPoses(BodySide side)
+        {
+            RefreshBoneBindPose(side.Shoulder);
+            RefreshBoneBindPose(side.Arm);
+            RefreshBoneBindPose(side.Elbow);
+            RefreshBoneBindPose(side.Wrist);
+            RefreshFingerBindPoses(side.Hand.Thumb);
+            RefreshFingerBindPoses(side.Hand.Index);
+            RefreshFingerBindPoses(side.Hand.Middle);
+            RefreshFingerBindPoses(side.Hand.Ring);
+            RefreshFingerBindPoses(side.Hand.Pinky);
+            RefreshBoneBindPose(side.Leg);
+            RefreshBoneBindPose(side.Knee);
+            RefreshBoneBindPose(side.Foot);
+            RefreshBoneBindPose(side.Toes);
+            RefreshBoneBindPose(side.Eye);
+        }
+
+        private void RefreshFingerBindPoses(BodySide.Fingers.Finger finger)
+        {
+            RefreshBoneBindPose(finger.Proximal);
+            RefreshBoneBindPose(finger.Intermediate);
+            RefreshBoneBindPose(finger.Distal);
+        }
+
+        private void RefreshBoneBindPose(BoneDef bone)
+        {
+            SceneNode? node = bone.Node;
+            if (node is null)
+                return;
+
+            bone.LocalBindPose = _humanoidBindLocalPoses.TryGetValue(node, out Matrix4x4 localBindPose)
+                ? localBindPose
+                : GetCurrentLocalMatrix(node);
+
+            bone.WorldBindPose = _humanoidBindWorldPoses.TryGetValue(node, out Matrix4x4 worldBindPose)
+                ? worldBindPose
+                : node.Transform.BindMatrix;
+        }
 
         public void ResetAllTransformsToBindPose()
         {
@@ -1597,14 +1823,25 @@ namespace XREngine.Components.Animation
             SyncPreviewRenderMatrices();
         }
 
-        private static void ResetBindPoseRecursive(SceneNode node)
+        private void ResetBindPoseRecursive(SceneNode node)
         {
-            node.Transform.ResetPose();
+            ResetNodeToHumanoidBindPose(node);
             foreach (TransformBase child in node.Transform.Children)
             {
                 if (child.SceneNode is not null)
                     ResetBindPoseRecursive(child.SceneNode);
             }
+        }
+
+        private void ResetNodeToHumanoidBindPose(SceneNode node)
+        {
+            if (_humanoidBindLocalPoses.TryGetValue(node, out Matrix4x4 localBindPose))
+            {
+                node.Transform.DeriveLocalMatrix(localBindPose);
+                return;
+            }
+
+            node.Transform.ResetPose();
         }
 
         private void ClearRuntimeMuscleState()
@@ -1764,6 +2001,8 @@ namespace XREngine.Components.Animation
                     (Right.Toes, ByNameContainsAll(ToeNameContains)),
                 ]);
 
+            RefreshBoneBindPosesFromCapturedHierarchy();
+
             // Log diagnostic information about bone mapping results
             LogBoneMappingDiagnostics();
 
@@ -1800,15 +2039,22 @@ namespace XREngine.Components.Animation
                 if (def.Node is null) return;
                 var tfm = def.Node.GetTransformAs<Transform>(false);
                 if (tfm is null) return;
-                var bs = tfm.BindState;
+                Vector3 bindPosition = tfm.BindState.Translation;
+                Quaternion bindRotation = tfm.BindState.Rotation;
+                if (TryGetHumanoidBindLocalState(def.Node, out _, out Quaternion capturedRotation, out Vector3 capturedTranslation))
+                {
+                    bindPosition = capturedTranslation;
+                    bindRotation = capturedRotation;
+                }
+
                 var axMap = GetBoneAxisMapping(def.Node);
                 string axStr = axMap.HasValue
                     ? $"twist={axMap.Value.TwistAxis} fb={axMap.Value.FrontBackAxis} lr={axMap.Value.LeftRightAxis}"
                     : "default(Y/X/Z)";
                 Debug.Animation(
                     $"[BindPose] {label,-20} node='{def.Node.Name}' " +
-                    $"bindRot=({bs.Rotation.X:F4},{bs.Rotation.Y:F4},{bs.Rotation.Z:F4},{bs.Rotation.W:F4}) " +
-                    $"bindPos=({bs.Translation.X:F3},{bs.Translation.Y:F3},{bs.Translation.Z:F3}) " +
+                    $"bindRot=({bindRotation.X:F4},{bindRotation.Y:F4},{bindRotation.Z:F4},{bindRotation.W:F4}) " +
+                    $"bindPos=({bindPosition.X:F3},{bindPosition.Y:F3},{bindPosition.Z:F3}) " +
                     $"axes={axStr}");
             }
 
@@ -2040,10 +2286,14 @@ namespace XREngine.Components.Animation
         private static readonly string[] MiddleFingerNameMatches = ["middle"];
         private static readonly string[] IndexFingerNameMatches = ["index"];
         private static readonly string[] ThumbFingerNameMatches = ["thumb"];
-        private static readonly string[] ProximalFingerSegmentMatches = ["1", "01", "prox", "proximal"];
-        private static readonly string[] IntermediateFingerSegmentMatches = ["2", "02", "inter", "intermediate"];
-        private static readonly string[] DistalFingerSegmentMatches = ["3", "03", "dist", "distal", "tip"];
         private static readonly string[] FingerBoneMismatch = ["metacarp", "twist"];
+
+        private readonly struct FingerBoneCandidate(SceneNode node, int segmentSortIndex, int traversalIndex)
+        {
+            public SceneNode Node { get; } = node;
+            public int SegmentSortIndex { get; } = segmentSortIndex;
+            public int TraversalIndex { get; } = traversalIndex;
+        }
 
         /// <summary>
         /// Estimates the avatar-space motion scale used by imported Unity humanoid
@@ -2125,7 +2375,10 @@ namespace XREngine.Components.Animation
             }
 
             Vector3 delta = (position - _rootPositionBaseline.Value) * EstimateAnimatedMotionScale();
-            tfm.Translation = tfm.BindState.Translation + delta;
+            Vector3 bindTranslation = TryGetHumanoidBindLocalState(hipsNode, out _, out _, out Vector3 capturedTranslation)
+                ? capturedTranslation
+                : tfm.BindState.Translation;
+            tfm.Translation = bindTranslation + delta;
         }
 
         /// <summary>
@@ -2251,7 +2504,7 @@ namespace XREngine.Components.Animation
                 _rootRotationBaselineLogged = false;
             }
 
-            hipsNode.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(effective);
+            ApplyHumanoidBindRelativeRotation(hipsNode, effective);
         }
 
         private static Func<SceneNode, bool> ByNameContainsAny(params string[] names)
@@ -2359,27 +2612,151 @@ namespace XREngine.Components.Animation
 
         private static void FindFingerChain(SceneNode wrist, BodySide.Fingers.Finger finger, string[] aliases)
         {
-            finger.Proximal.Node ??= FindFingerBone(wrist, aliases, ProximalFingerSegmentMatches);
-
-            var intermediateRoot = finger.Proximal.Node ?? wrist;
-            finger.Intermediate.Node ??= FindFingerBone(intermediateRoot, aliases, IntermediateFingerSegmentMatches);
-
-            var distalRoot = finger.Intermediate.Node ?? finger.Proximal.Node ?? wrist;
-            finger.Distal.Node ??= FindFingerBone(distalRoot, aliases, DistalFingerSegmentMatches);
+            List<FingerBoneCandidate> candidates = CollectFingerBoneCandidates(wrist, aliases);
+            AssignFingerChainFromCandidates(finger, candidates);
         }
 
-        private static SceneNode? FindFingerBone(SceneNode searchRoot, string[] aliases, string[] segmentTokens)
-            => searchRoot.FindDescendant(transform =>
+        private static List<FingerBoneCandidate> CollectFingerBoneCandidates(SceneNode wrist, string[] aliases)
+        {
+            List<FingerBoneCandidate> candidates = [];
+            int traversalIndex = 0;
+            CollectFingerBoneCandidatesRecursive(wrist, aliases, candidates, ref traversalIndex);
+            if (!HasFingerAncestorRelationship(candidates))
+                candidates.Sort(static (left, right) =>
+                {
+                    int segmentComparison = left.SegmentSortIndex.CompareTo(right.SegmentSortIndex);
+                    return segmentComparison != 0
+                        ? segmentComparison
+                        : left.TraversalIndex.CompareTo(right.TraversalIndex);
+                });
+            return candidates;
+        }
+
+        private static bool HasFingerAncestorRelationship(List<FingerBoneCandidate> candidates)
+        {
+            for (int i = 0; i < candidates.Count; i++)
             {
-                var node = transform.SceneNode;
-                if (node is null || ReferenceEquals(node, searchRoot))
-                    return false;
+                for (int j = i + 1; j < candidates.Count; j++)
+                {
+                    if (IsSceneNodeAncestorOf(candidates[i].Node, candidates[j].Node) ||
+                        IsSceneNodeAncestorOf(candidates[j].Node, candidates[i].Node))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsSceneNodeAncestorOf(SceneNode ancestor, SceneNode descendant)
+        {
+            TransformBase? parent = descendant.Transform.Parent;
+            while (parent is not null)
+            {
+                if (ReferenceEquals(parent.SceneNode, ancestor))
+                    return true;
+
+                parent = parent.Parent;
+            }
+
+            return false;
+        }
+
+        private static void CollectFingerBoneCandidatesRecursive(
+            SceneNode root,
+            string[] aliases,
+            List<FingerBoneCandidate> candidates,
+            ref int traversalIndex)
+        {
+            foreach (TransformBase child in root.Transform.Children)
+            {
+                SceneNode? node = child.SceneNode;
+                if (node is null)
+                    continue;
 
                 string? name = node.Name;
-                return NameContainsAny(name, aliases)
-                    && NameContainsAny(name, segmentTokens)
-                    && !NameContainsAny(name, FingerBoneMismatch);
-            });
+                if (NameContainsAny(name, aliases) && !NameContainsAny(name, FingerBoneMismatch))
+                    candidates.Add(new FingerBoneCandidate(node, GetFingerSegmentSortIndex(name), traversalIndex++));
+
+                CollectFingerBoneCandidatesRecursive(node, aliases, candidates, ref traversalIndex);
+            }
+        }
+
+        private static void AssignFingerChainFromCandidates(BodySide.Fingers.Finger finger, List<FingerBoneCandidate> candidates)
+        {
+            if (candidates.Count == 0)
+                return;
+
+            HashSet<SceneNode> assigned = [];
+            AddExistingFingerNode(finger.Proximal.Node, assigned);
+            AddExistingFingerNode(finger.Intermediate.Node, assigned);
+            AddExistingFingerNode(finger.Distal.Node, assigned);
+
+            AssignFingerBone(finger.Proximal, candidates[0], assigned);
+            if (candidates.Count == 1)
+                return;
+
+            if (candidates.Count == 2)
+            {
+                if (candidates[1].SegmentSortIndex >= 3)
+                    AssignFingerBone(finger.Distal, candidates[1], assigned);
+                else
+                    AssignFingerBone(finger.Intermediate, candidates[1], assigned);
+                return;
+            }
+
+            AssignFingerBone(finger.Intermediate, candidates[1], assigned);
+            AssignFingerBone(finger.Distal, candidates[2], assigned);
+        }
+
+        private static void AddExistingFingerNode(SceneNode? node, HashSet<SceneNode> assigned)
+        {
+            if (node is not null)
+                assigned.Add(node);
+        }
+
+        private static void AssignFingerBone(BoneDef bone, FingerBoneCandidate candidate, HashSet<SceneNode> assigned)
+        {
+            if (bone.Node is not null || !assigned.Add(candidate.Node))
+                return;
+
+            bone.Node = candidate.Node;
+        }
+
+        private static int GetFingerSegmentSortIndex(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return int.MaxValue;
+
+            if (name.Contains("prox", StringComparison.InvariantCultureIgnoreCase))
+                return 1;
+
+            if (name.Contains("inter", StringComparison.InvariantCultureIgnoreCase))
+                return 2;
+
+            if (name.Contains("dist", StringComparison.InvariantCultureIgnoreCase) ||
+                name.Contains("tip", StringComparison.InvariantCultureIgnoreCase))
+                return 3;
+
+            for (int i = 0; i < name.Length; i++)
+            {
+                if (!char.IsDigit(name[i]))
+                    continue;
+
+                int value = 0;
+                while (i < name.Length && char.IsDigit(name[i]))
+                {
+                    value = (value * 10) + (name[i] - '0');
+                    i++;
+                }
+
+                if (value is >= 1 and <= 9)
+                    return value;
+            }
+
+            return int.MaxValue;
+        }
 
         private static bool NameContainsAny(string? name, string[] terms, StringComparison comparison = StringComparison.InvariantCultureIgnoreCase)
             => name is not null && terms.Any(term => name.Contains(term, comparison));
@@ -2438,17 +2815,48 @@ namespace XREngine.Components.Animation
 
         private void ResetMappedTransformsToBindPose(bool includeEyesTarget)
         {
-            Hips.ResetPose();
-            Spine.ResetPose();
-            Chest.ResetPose();
-            UpperChest.ResetPose();
-            Neck.ResetPose();
-            Head.ResetPose();
-            Jaw.ResetPose();
+            ResetBoneToHumanoidBindPose(Hips);
+            ResetBoneToHumanoidBindPose(Spine);
+            ResetBoneToHumanoidBindPose(Chest);
+            ResetBoneToHumanoidBindPose(UpperChest);
+            ResetBoneToHumanoidBindPose(Neck);
+            ResetBoneToHumanoidBindPose(Head);
+            ResetBoneToHumanoidBindPose(Jaw);
             if (includeEyesTarget)
-                EyesTarget.ResetPose();
-            Left.ResetPose();
-            Right.ResetPose();
+                ResetBoneToHumanoidBindPose(EyesTarget);
+            ResetBodySideToHumanoidBindPose(Left);
+            ResetBodySideToHumanoidBindPose(Right);
+        }
+
+        private void ResetBodySideToHumanoidBindPose(BodySide side)
+        {
+            ResetBoneToHumanoidBindPose(side.Shoulder);
+            ResetBoneToHumanoidBindPose(side.Arm);
+            ResetBoneToHumanoidBindPose(side.Elbow);
+            ResetBoneToHumanoidBindPose(side.Wrist);
+            ResetFingerToHumanoidBindPose(side.Hand.Thumb);
+            ResetFingerToHumanoidBindPose(side.Hand.Index);
+            ResetFingerToHumanoidBindPose(side.Hand.Middle);
+            ResetFingerToHumanoidBindPose(side.Hand.Ring);
+            ResetFingerToHumanoidBindPose(side.Hand.Pinky);
+            ResetBoneToHumanoidBindPose(side.Leg);
+            ResetBoneToHumanoidBindPose(side.Knee);
+            ResetBoneToHumanoidBindPose(side.Foot);
+            ResetBoneToHumanoidBindPose(side.Toes);
+            ResetBoneToHumanoidBindPose(side.Eye);
+        }
+
+        private void ResetFingerToHumanoidBindPose(BodySide.Fingers.Finger finger)
+        {
+            ResetBoneToHumanoidBindPose(finger.Proximal);
+            ResetBoneToHumanoidBindPose(finger.Intermediate);
+            ResetBoneToHumanoidBindPose(finger.Distal);
+        }
+
+        private void ResetBoneToHumanoidBindPose(BoneDef bone)
+        {
+            if (bone.Node is not null)
+                ResetNodeToHumanoidBindPose(bone.Node);
         }
 
         private void ResetRuntimeAnimationDiagnostics()
@@ -2488,7 +2896,7 @@ namespace XREngine.Components.Animation
                 return;
 
             Quaternion rotation = GetNeutralPoseBoneRotation(node);
-            node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(rotation);
+            ApplyHumanoidBindRelativeRotation(node, rotation);
         }
 
         private void ApplyIKTargetWorldMatrix((TransformBase? tfm, Matrix4x4 offset) binding, Matrix4x4 desiredWorldMatrix)

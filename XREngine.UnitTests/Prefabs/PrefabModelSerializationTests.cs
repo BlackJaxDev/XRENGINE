@@ -805,6 +805,44 @@ MatchDestinationRenderArea: true
     }
 
     [Test]
+    public void RenderableMesh_RebindsCachedTemplateBonesToPrefabInstance()
+    {
+        SceneNode templateRoot = new("PrefabTemplateRoot");
+        SceneNode templateMeshNode = new("MeshNode");
+        templateMeshNode.Parent = templateRoot;
+
+        SceneNode templateBoneNode = new("BoneA");
+        templateBoneNode.Parent = templateRoot;
+
+        XRMesh templateMesh = CreateSkinnedBlendshapeMesh("CachedTemplateSkinnedMesh", templateBoneNode.Transform, "Smile");
+        SubMesh cachedExternalSubMesh = new(new SubMeshLOD(new XRMaterial(), templateMesh, 0.0f))
+        {
+            Name = "CachedTemplateSubMesh",
+            RootBone = templateBoneNode.Transform,
+            RootTransform = templateRoot.Transform,
+        };
+
+        string yaml = AssetManager.Serializer.Serialize(templateRoot);
+        SceneNode instanceRoot = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+
+        SceneNode instanceMeshNode = instanceRoot.FindDescendantByName("MeshNode").ShouldNotBeNull();
+        SceneNode instanceBoneNode = instanceRoot.FindDescendantByName("BoneA").ShouldNotBeNull();
+        ModelComponent instanceComponent = instanceMeshNode.AddComponent<ModelComponent>().ShouldNotBeNull();
+
+        RenderableMesh renderable = new(cachedExternalSubMesh, instanceComponent);
+
+        XRMesh runtimeMesh = renderable.CurrentLODRenderer!.Mesh.ShouldNotBeNull();
+        runtimeMesh.ShouldNotBeSameAs(templateMesh);
+        runtimeMesh.Vertices.ShouldBeSameAs(templateMesh.Vertices);
+        runtimeMesh.UtilizedBones.Length.ShouldBe(1);
+        runtimeMesh.UtilizedBones[0].tfm.ShouldBeSameAs(instanceBoneNode.Transform);
+        runtimeMesh.UtilizedBones[0].tfm.ShouldNotBeSameAs(templateBoneNode.Transform);
+        templateMesh.Vertices[0].Weights.ShouldNotBeNull().ContainsKey(templateBoneNode.Transform).ShouldBeTrue();
+        templateMesh.Vertices[0].Weights.ShouldNotBeNull().ContainsKey(instanceBoneNode.Transform).ShouldBeFalse();
+        renderable.RootBone.ShouldBeSameAs(instanceBoneNode.Transform);
+    }
+
+    [Test]
     public void SyncMetadataWithAssets_ExternalSubMeshReloadsNestedMeshAndMaterialByGeneratedMetadata()
     {
         string tempRoot = Path.Combine(TestContext.CurrentContext.WorkDirectory, "PrefabModelSerializationMetadata", Guid.NewGuid().ToString("N"));

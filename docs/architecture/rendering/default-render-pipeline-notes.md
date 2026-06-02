@@ -190,6 +190,21 @@ Use `false` only for known CPU-only passes such as `PreRender` and `PostRender`.
 
 ---
 
+## 12. Empty-Scene Pass Gates
+
+**Rule:** Expensive pass groups that only prepare resources around optional scene work must be gated by the current frame's render-command/state presence.
+
+The active `DefaultRenderPipeline` path currently skips these groups when they would otherwise be no-op setup:
+
+- Forward depth prepass and GBuffer restore run only when the debug preference is enabled and the current frame has `OpaqueForward` or `MaskedForward` render commands.
+- Weighted/exact transparency resource work runs only when the current frame has transparent render commands, or when transparency/depth-peeling debug visualizations need those buffers.
+- Mono atmospheric aerial perspective runs only when the stage is enabled, requests aerial/debug output, and the current camera has an active atmosphere with aerial perspective enabled.
+- Mono volumetric fog runs only when the stage is enabled and at least one active renderable fog volume exists.
+
+When adding a new optional pass group, prefer a named `VPRC_IfElse` gate so GPU pipeline dumps explain why the group is absent or active. Keep debug visualization modes in the condition if the visualization depends on otherwise-empty resources.
+
+---
+
 ## 11. Volumetric Fog: Separated Half-Res Temporal Chain
 
 **Rule:** In the active `DefaultRenderPipeline` path, volumetric fog is not part of `PostProcess.fs`. Keep the stage ordering as:

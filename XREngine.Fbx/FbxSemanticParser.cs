@@ -391,11 +391,11 @@ public static class FbxSemanticParser
                         inboundIds.Where(id => objectIndexById.TryGetValue(id, out int connectedIndex) && objects[connectedIndex].Category == FbxObjectCategory.Video).ToArray()));
                     break;
 
-                case FbxObjectCategory.Deformer when sceneObject.Subclass.Equals("Skin", StringComparison.Ordinal):
-                    skins.Add(new FbxIntermediateSkin(sceneObject.Id, sceneObject.DisplayName, sceneObject.Subclass, objectIndex, outboundIds.ToArray()));
+                case FbxObjectCategory.Deformer when sceneObject.Subclass.Equals("Skin", StringComparison.OrdinalIgnoreCase):
+                    skins.Add(new FbxIntermediateSkin(sceneObject.Id, sceneObject.DisplayName, sceneObject.Subclass, objectIndex, outboundIds.Concat(inboundIds).Distinct().ToArray()));
                     break;
 
-                case FbxObjectCategory.Deformer when sceneObject.Subclass.Equals("Cluster", StringComparison.Ordinal):
+                case FbxObjectCategory.Deformer when sceneObject.Subclass.Equals("Cluster", StringComparison.OrdinalIgnoreCase):
                     clusters.Add(new FbxIntermediateCluster(sceneObject.Id, sceneObject.DisplayName, sceneObject.Subclass, objectIndex, outboundIds.Concat(inboundIds).Distinct().ToArray()));
                     break;
 

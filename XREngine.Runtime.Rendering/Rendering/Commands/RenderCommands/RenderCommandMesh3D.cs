@@ -26,6 +26,7 @@ namespace XREngine.Rendering.Commands
         private uint _instances = 1;
         private bool _worldMatrixIsModelMatrix = true;
         private bool _forceCpuRendering;
+        private AABB? _worldCullingVolumeOverride;
         private string? _gpuProfilingLabel;
 
         private XRMeshRenderer? _renderMesh;
@@ -35,6 +36,7 @@ namespace XREngine.Rendering.Commands
         private uint _renderInstances;
         private bool _renderWorldMatrixIsModelMatrix;
         private bool _renderForceCpuRendering;
+        private AABB? _renderWorldCullingVolumeOverride;
         private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
         private bool _renderHasPrevWorldMatrix;
         private static int s_MotionVectorLogBudget = 128;
@@ -85,6 +87,16 @@ namespace XREngine.Rendering.Commands
         {
             get => _forceCpuRendering;
             set => SetField(ref _forceCpuRendering, value);
+        }
+        /// <summary>
+        /// Optional world-space bounds supplied by the owning render info. Skinned meshes use this
+        /// because their draw matrix is identity while culling is rooted at the skeleton/bounds basis.
+        /// </summary>
+        [YamlIgnore]
+        public AABB? WorldCullingVolumeOverride
+        {
+            get => _worldCullingVolumeOverride;
+            set => SetField(ref _worldCullingVolumeOverride, value);
         }
         /// <summary>
         /// Optional stable source label for GPU timing dumps.
@@ -158,6 +170,7 @@ namespace XREngine.Rendering.Commands
             _renderInstances = Instances;
             _renderWorldMatrixIsModelMatrix = WorldMatrixIsModelMatrix;
             _renderForceCpuRendering = ForceCpuRendering;
+            _renderWorldCullingVolumeOverride = WorldCullingVolumeOverride;
             _renderGpuCommandIndex = GPUCommandIndex;
             if (_renderWorldMatrixIsModelMatrix)
             {
@@ -223,6 +236,9 @@ namespace XREngine.Rendering.Commands
         {
             get
             {
+                if (TryGetWorldCullingVolumeOverride(out AABB overrideBounds))
+                    return overrideBounds;
+
                 XRMesh? meshAsset = _renderMesh?.Mesh ?? _mesh?.Mesh;
                 if (meshAsset is null)
                     return null;
@@ -233,6 +249,24 @@ namespace XREngine.Rendering.Commands
 
                 return meshAsset.Bounds.Transformed(p => Vector3.Transform(p, modelMatrix));
             }
+        }
+
+        public bool TryGetWorldCullingVolumeOverride(out AABB bounds)
+        {
+            if (_renderWorldCullingVolumeOverride is AABB renderBounds)
+            {
+                bounds = renderBounds;
+                return bounds.IsValid;
+            }
+
+            if (_worldCullingVolumeOverride is AABB currentBounds)
+            {
+                bounds = currentBounds;
+                return bounds.IsValid;
+            }
+
+            bounds = default;
+            return false;
         }
     }
 }

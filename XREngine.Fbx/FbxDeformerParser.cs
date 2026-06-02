@@ -26,16 +26,8 @@ public static class FbxDeformerParser
 
                     long[] geometryObjectIds = [.. skin.ConnectedObjectIds.Where(objectId => semantic.TryGetObject(objectId, out FbxSceneObject sceneObject) && sceneObject.Category == FbxObjectCategory.Geometry)];
                     HashSet<long> clusterObjectIdsSet = [];
-                    foreach (int connectionIndex in semantic.GetInboundConnectionIndices(skinObjectIndex))
-                    {
-                        FbxConnection connection = semantic.Connections[connectionIndex];
-                        if (connection.Source.Id is not long sourceObjectId)
-                            continue;
-                        if (!semantic.TryGetObject(sourceObjectId, out FbxSceneObject sceneObject))
-                            continue;
-                        if (sceneObject.Category == FbxObjectCategory.Deformer && sceneObject.Subclass.Equals("Cluster", StringComparison.OrdinalIgnoreCase))
-                            clusterObjectIdsSet.Add(sourceObjectId);
-                    }
+                    AddConnectedClusters(semantic, skinObjectIndex, clusterObjectIdsSet, inbound: true);
+                    AddConnectedClusters(semantic, skinObjectIndex, clusterObjectIdsSet, inbound: false);
 
                     long[] clusterObjectIds = [.. clusterObjectIdsSet];
                     if (geometryObjectIds.Length == 0 || clusterObjectIds.Length == 0)
@@ -199,6 +191,25 @@ public static class FbxDeformerParser
             transformLinkMatrix,
             inverseBindMatrix,
             controlPointWeights);
+    }
+
+    private static void AddConnectedClusters(FbxSemanticDocument semantic, int skinObjectIndex, HashSet<long> clusterObjectIds, bool inbound)
+    {
+        ReadOnlySpan<int> connectionIndices = inbound
+            ? semantic.GetInboundConnectionIndices(skinObjectIndex)
+            : semantic.GetOutboundConnectionIndices(skinObjectIndex);
+
+        foreach (int connectionIndex in connectionIndices)
+        {
+            FbxConnection connection = semantic.Connections[connectionIndex];
+            long? connectedObjectId = inbound ? connection.Source.Id : connection.Destination.Id;
+            if (connectedObjectId is not long objectId)
+                continue;
+            if (!semantic.TryGetObject(objectId, out FbxSceneObject sceneObject))
+                continue;
+            if (sceneObject.Category == FbxObjectCategory.Deformer && sceneObject.Subclass.Equals("Cluster", StringComparison.OrdinalIgnoreCase))
+                clusterObjectIds.Add(objectId);
+        }
     }
 
     private static FbxBlendShapeChannelBinding? ParseBlendShapeChannelBinding(

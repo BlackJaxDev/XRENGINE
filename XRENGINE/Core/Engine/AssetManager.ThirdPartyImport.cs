@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using XREngine.Animation;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -18,9 +19,15 @@ using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Serialization;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace XREngine
 {
+    public readonly record struct ThirdPartyImportProgress(
+        float Progress,
+        string Message,
+        string? CurrentPath = null);
+
     public partial class AssetManager
     {
         private static Dictionary<string, Type> CreateThirdPartyExtensionMap()
@@ -266,11 +273,11 @@ namespace XREngine
             }
         }
 
-        public bool ReimportThirdPartyFile(string sourcePath)
-            => RunOnJobThreadBlocking(() => ImportThirdPartyToNativeAssetCore(sourcePath, forceOverwrite: true), JobPriority.Normal, bypassJobThread: false);
+        public bool ReimportThirdPartyFile(string sourcePath, Action<ThirdPartyImportProgress>? progress = null)
+            => RunOnJobThreadBlocking(() => ImportThirdPartyToNativeAssetCore(sourcePath, forceOverwrite: true, progress), JobPriority.Normal, bypassJobThread: false);
 
-        public Task<bool> ReimportThirdPartyFileAsync(string sourcePath)
-            => RunOnJobThreadAsync(() => ImportThirdPartyToNativeAssetCore(sourcePath, forceOverwrite: true), JobPriority.Normal, bypassJobThread: false);
+        public Task<bool> ReimportThirdPartyFileAsync(string sourcePath, Action<ThirdPartyImportProgress>? progress = null)
+            => RunOnJobThreadAsync(() => ImportThirdPartyToNativeAssetCore(sourcePath, forceOverwrite: true, progress), JobPriority.Normal, bypassJobThread: false);
 
         private void TryQueueAutoImportForThirdPartyFile(string path, string reason)
         {
@@ -303,29 +310,38 @@ namespace XREngine
             }, JobPriority.Low, bypassJobThread: false);
         }
 
-        private bool ImportThirdPartyToNativeAssetCore(string sourcePath, bool forceOverwrite)
+        private bool ImportThirdPartyToNativeAssetCore(
+            string sourcePath,
+            bool forceOverwrite,
+            Action<ThirdPartyImportProgress>? progress = null)
         {
+            ReportThirdPartyImportProgress(progress, 0.0f, "Validating source asset...", sourcePath);
+
             if (string.IsNullOrWhiteSpace(sourcePath))
             {
                 Debug.LogWarning("Source path is null or empty.");
+                ReportThirdPartyImportProgress(progress, 1.0f, "Import failed: source path is empty.", sourcePath);
                 return false;
             }
 
             if (HasNativeAssetExtension(sourcePath))
             {
                 Debug.LogWarning($"Source path '{sourcePath}' has native asset extension; skipping third-party import.");
+                ReportThirdPartyImportProgress(progress, 1.0f, "Import skipped: source is already a native asset.", sourcePath);
                 return false;
             }
 
             if (!File.Exists(sourcePath))
             {
                 Debug.LogWarning($"Source file '{sourcePath}' does not exist.");
+                ReportThirdPartyImportProgress(progress, 1.0f, "Import failed: source file does not exist.", sourcePath);
                 return false;
             }
 
             if (!TryGetThirdPartyExtension(sourcePath, out var normalizedExtension))
             {
                 Debug.LogWarning($"Source file '{sourcePath}' does not have a recognized third-party extension.");
+                ReportThirdPartyImportProgress(progress, 1.0f, "Import failed: source extension is not registered.", sourcePath);
                 return false;
             }
 
@@ -333,14 +349,18 @@ namespace XREngine
             if (!map.TryGetValue(normalizedExtension, out var assetType))
             {
                 Debug.LogWarning($"No asset type registered for third-party extension '{normalizedExtension}'.");
+                ReportThirdPartyImportProgress(progress, 1.0f, "Import failed: source extension has no asset type.", sourcePath);
                 return false;
             }
 
             if (!TryResolveGeneratedAssetPathForThirdPartySource(sourcePath, out string generatedAssetPath))
             {
                 Debug.LogWarning($"Failed to resolve generated asset path for source '{sourcePath}'.");
+                ReportThirdPartyImportProgress(progress, 1.0f, "Import failed: could not resolve native asset path.", sourcePath);
                 return false;
             }
+
+            ReportThirdPartyImportProgress(progress, 0.04f, "Resolved native asset path.", generatedAssetPath);
 
             // If the target asset already exists, only overwrite when it's linked to this source.
             if (File.Exists(generatedAssetPath))
@@ -372,10 +392,15 @@ namespace XREngine
                     }
 
                     if (!linked)
+                    {
+                        ReportThirdPartyImportProgress(progress, 1.0f, "Import skipped: generated asset is not linked to this source.", sourcePath);
                         return false;
+                    }
                 }
             }
 
+            long totalStart = Stopwatch.GetTimestamp();
+            ReportThirdPartyImportProgress(progress, 0.06f, "Loading import settings...", sourcePath);
             object? importOptions = GetOrCreateThirdPartyImportOptions(sourcePath, assetType);
 
             // When generating a prefab asset we must serialize sub-assets (Models, SubMeshes, etc.)
@@ -387,6 +412,7 @@ namespace XREngine
             if (Activator.CreateInstance(assetType) is not XRAsset asset)
             {
                 Debug.LogWarning($"Failed to create asset instance for '{assetType.FullName}'.");
+                ReportThirdPartyImportProgress(progress, 1.0f, "Import failed: could not create asset instance.", sourcePath);
                 return false;
             }
 
@@ -398,31 +424,105 @@ namespace XREngine
             // stable sibling output paths (e.g., externalized meshes/materials/textures).
             asset.FilePath = generatedAssetPath;
 
-            bool ok = asset.Import3rdParty(sourcePath, importOptions);
+            long importStart = Stopwatch.GetTimestamp();
+            bool ok;
+            ReportThirdPartyImportProgress(progress, 0.10f, "Importing source asset...", sourcePath);
+            ModelImportOptions? progressImportOptions = importOptions as ModelImportOptions;
+            Action<float>? previousModelProgress = progressImportOptions?.ProgressCallback;
+            object progressReportLock = new();
+            long lastModelProgressReportTimestamp = 0L;
+            float lastReportedModelProgress = -1.0f;
+            if (progressImportOptions is not null)
+            {
+                progressImportOptions.ProgressCallback = meshProgress =>
+                {
+                    previousModelProgress?.Invoke(meshProgress);
+                    float clampedMeshProgress = Math.Clamp(meshProgress, 0.0f, 1.0f);
+                    if (!ShouldReportModelImportProgress(
+                        clampedMeshProgress,
+                        progressReportLock,
+                        ref lastModelProgressReportTimestamp,
+                        ref lastReportedModelProgress))
+                    {
+                        return;
+                    }
+
+                    ReportThirdPartyImportProgress(
+                        progress,
+                        0.10f + (0.55f * clampedMeshProgress),
+                        $"Importing model data... {clampedMeshProgress:P0}",
+                        sourcePath);
+                };
+            }
+
+            try
+            {
+                using (GenericRenderObject.EnterApiWrapperCreationSuppressionScope())
+                using (asset is XRPrefabSource ? ModelComponent.EnterRuntimeMeshBuildSuppressionScope() : null)
+                {
+                    ok = asset.Import3rdParty(sourcePath, importOptions);
+                }
+            }
+            finally
+            {
+                if (progressImportOptions is not null)
+                    progressImportOptions.ProgressCallback = previousModelProgress;
+            }
+
+            LogThirdPartyImportPhase("Import3rdParty", importStart, sourcePath, assetType.Name);
             if (!ok)
+            {
+                Debug.LogWarning($"[ThirdPartyImport] Failed importing '{sourcePath}' as {assetType.Name} after {ElapsedMilliseconds(totalStart):F2} ms.");
+                ReportThirdPartyImportProgress(progress, 1.0f, "Import failed while reading source asset.", sourcePath);
                 return false;
+            }
+
+            ReportThirdPartyImportProgress(progress, 0.65f, "Source asset imported.", sourcePath);
 
             // For PrefabSource model imports, export generated sub-assets (materials/textures/meshes/models)
             // into standalone .asset files so the prefab does not embed them.
             if (asset is XRPrefabSource)
-                ExternalizeEmbeddedAssetsForPrefabImport(asset, generatedAssetPath);
+            {
+                long externalizeStart = Stopwatch.GetTimestamp();
+                ExternalizeEmbeddedAssetsForPrefabImport(asset, generatedAssetPath, progress);
+                LogThirdPartyImportPhase("ExternalizeEmbeddedAssets", externalizeStart, sourcePath, assetType.Name);
+            }
+            else
+            {
+                ReportThirdPartyImportProgress(progress, 0.90f, "No embedded model sub-assets to externalize.", generatedAssetPath);
+            }
 
             string? directory = Path.GetDirectoryName(generatedAssetPath);
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
 
             MarkRecentlySaved(generatedAssetPath);
-            asset.SerializeTo(generatedAssetPath, Serializer);
+            long serializeStart = Stopwatch.GetTimestamp();
+            ReportThirdPartyImportProgress(progress, 0.95f, "Serializing native root asset...", generatedAssetPath);
+            SerializeAssetForThirdPartyImport(asset, generatedAssetPath);
+            LogThirdPartyImportPhase("SerializeRootAsset", serializeStart, generatedAssetPath, assetType.Name);
 
             MarkRecentlySaved(generatedAssetPath);
+            ReportThirdPartyImportProgress(progress, 1.0f, "Native asset ready.", generatedAssetPath);
+            Debug.Log(
+                ELogCategory.Assets,
+                "[ThirdPartyImport] Completed native import for '{0}' -> '{1}' as {2} in {3:F2} ms.",
+                sourcePath,
+                generatedAssetPath,
+                assetType.Name,
+                ElapsedMilliseconds(totalStart));
             return true;
         }
 
-        private void ExternalizeEmbeddedAssetsForPrefabImport(XRAsset rootAsset, string rootAssetPath)
+        private void ExternalizeEmbeddedAssetsForPrefabImport(
+            XRAsset rootAsset,
+            string rootAssetPath,
+            Action<ThirdPartyImportProgress>? progress = null)
         {
             ArgumentNullException.ThrowIfNull(rootAsset);
 
             Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Starting externalization for '{0}' (root type: {1})", rootAssetPath, rootAsset.GetType().Name);
+            ReportThirdPartyImportProgress(progress, 0.68f, "Discovering embedded sub-assets...", rootAssetPath);
 
             string? directory = Path.GetDirectoryName(rootAssetPath);
             if (string.IsNullOrWhiteSpace(directory))
@@ -462,6 +562,13 @@ namespace XREngine
                 // ── Phase A: Discovery ───────────────────────────────────────
                 List<XRAsset> discovered = DiscoverRelevantSubAssets(rootAsset);
                 Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Discovered {0} relevant sub-assets", discovered.Count);
+                ReportThirdPartyImportProgress(
+                    progress,
+                    0.70f,
+                    discovered.Count == 0
+                        ? "No embedded sub-assets found."
+                        : $"Discovered {discovered.Count} embedded sub-asset(s).",
+                    rootAssetPath);
                 {
                     int textures = discovered.Count(IsExternalizableTexture);
                     int materials = discovered.Count(IsExternalizableMaterial);
@@ -477,6 +584,7 @@ namespace XREngine
                 try
                 {
                     PreAssignExternalizationPaths(discovered, prefabFolderPath, rootName, createdPlaceholders);
+                    ReportThirdPartyImportProgress(progress, 0.72f, "Reserved externalized asset paths.", prefabFolderPath);
                 }
                 catch (Exception ex)
                 {
@@ -490,6 +598,28 @@ namespace XREngine
                 int skippedCount = 0;
                 int failedCount = 0;
                 var overwrittenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                int processedCount = 0;
+                int totalDiscovered = discovered.Count;
+
+                void ReportExternalizedWriteProgress(XRAsset? currentAsset)
+                {
+                    if (progress is null)
+                        return;
+
+                    float fraction = totalDiscovered <= 0
+                        ? 1.0f
+                        : Math.Clamp(processedCount / (float)totalDiscovered, 0.0f, 1.0f);
+                    string currentName = currentAsset is null
+                        ? rootAsset.Name ?? Path.GetFileNameWithoutExtension(rootAssetPath)
+                        : $"{currentAsset.GetType().Name} '{currentAsset.Name ?? string.Empty}'";
+                    ReportThirdPartyImportProgress(
+                        progress,
+                        0.72f + (0.18f * fraction),
+                        totalDiscovered <= 0
+                            ? "Externalized asset write complete."
+                            : $"Writing externalized assets {processedCount}/{totalDiscovered}: {currentName}",
+                        currentAsset?.FilePath ?? rootAssetPath);
+                }
 
                 try
                 {
@@ -499,21 +629,40 @@ namespace XREngine
                         if (string.IsNullOrWhiteSpace(targetPath))
                         {
                             skippedCount++;
+                            processedCount++;
+                            ReportExternalizedWriteProgress(subAsset);
                             continue;
                         }
 
                         try
                         {
                             Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Exporting {0} '{1}' -> '{2}'", subAsset.GetType().Name, subAsset.Name ?? string.Empty, targetPath);
+                            long exportStart = Stopwatch.GetTimestamp();
                             SaveAssetToPathCore(subAsset, targetPath);
                             EnsureMetadataForAssetPath(targetPath, isDirectory: false);
                             overwrittenPaths.Add(targetPath);
                             exportedCount++;
+                            double exportMs = ElapsedMilliseconds(exportStart);
+                            if (exportMs >= 100.0)
+                            {
+                                Debug.Log(
+                                    ELogCategory.Meshes,
+                                    "[ExternalizeEmbedded] Exported {0} '{1}' in {2:F2} ms -> '{3}'",
+                                    subAsset.GetType().Name,
+                                    subAsset.Name ?? string.Empty,
+                                    exportMs,
+                                    targetPath);
+                            }
                         }
                         catch (Exception ex)
                         {
                             failedCount++;
                             Debug.MeshesException(ex, $"[ExternalizeEmbedded] Failed exporting {subAsset.GetType().Name} '{subAsset.Name}' -> '{targetPath}'");
+                        }
+                        finally
+                        {
+                            processedCount++;
+                            ReportExternalizedWriteProgress(subAsset);
                         }
                     }
                 }
@@ -529,6 +678,7 @@ namespace XREngine
                 }
 
                 Debug.Log(ELogCategory.Meshes, "[ExternalizeEmbedded] Externalization complete: {0} exported, {1} skipped, {2} failed", exportedCount, skippedCount, failedCount);
+                ReportThirdPartyImportProgress(progress, 0.90f, "Externalized sub-assets written.", rootAssetPath);
 
                 // Recompute to ensure the root no longer treats these as embedded.
                 XRAssetGraphUtility.RefreshAssetGraph(rootAsset);
@@ -764,8 +914,89 @@ namespace XREngine
             asset.FilePath = filePath;
             MarkRecentlySaved(filePath);
             XRAssetGraphUtility.RefreshAssetGraph(asset);
-            asset.SerializeTo(filePath, Serializer);
+            SerializeAssetForThirdPartyImport(asset, filePath);
             PostSaved(asset, newAsset: true);
+        }
+
+        // Imported mesh .asset files are already wrapped in a Zstd-compressed DataSource by
+        // XRMeshYamlTypeConverter; inner per-buffer LZMA makes import CPU-bound with little benefit.
+        private static readonly Func<string, XRMesh.MeshBufferEncoding> ThirdPartyImportMeshBufferEncodingResolver =
+            static _ => XRMesh.MeshBufferEncoding.Raw;
+
+        private void SerializeAssetForThirdPartyImport(XRAsset asset, string filePath)
+        {
+            if (asset is not XRMesh mesh)
+            {
+                asset.SerializeTo(filePath, Serializer);
+                return;
+            }
+
+            Func<string, XRMesh.MeshBufferEncoding>? previousResolver = mesh.BufferEncodingResolver;
+            mesh.BufferEncodingResolver = ThirdPartyImportMeshBufferEncodingResolver;
+            try
+            {
+                asset.SerializeTo(filePath, Serializer);
+            }
+            finally
+            {
+                mesh.BufferEncodingResolver = previousResolver;
+            }
+        }
+
+        private static double ElapsedMilliseconds(long startTimestamp)
+            => (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+
+        private static bool ShouldReportModelImportProgress(
+            float progress,
+            object progressReportLock,
+            ref long lastReportTimestamp,
+            ref float lastReportedProgress)
+        {
+            long now = Stopwatch.GetTimestamp();
+            lock (progressReportLock)
+            {
+                if (progress <= 0.0f || progress >= 1.0f)
+                {
+                    lastReportTimestamp = now;
+                    lastReportedProgress = progress;
+                    return true;
+                }
+
+                float progressDelta = progress - lastReportedProgress;
+                double elapsedMs = lastReportTimestamp == 0L
+                    ? double.PositiveInfinity
+                    : (now - lastReportTimestamp) * 1000.0 / Stopwatch.Frequency;
+
+                if (progressDelta < 0.005f && elapsedMs < 75.0)
+                    return false;
+
+                lastReportTimestamp = now;
+                lastReportedProgress = progress;
+                return true;
+            }
+        }
+
+        private static void ReportThirdPartyImportProgress(
+            Action<ThirdPartyImportProgress>? progress,
+            float value,
+            string message,
+            string? currentPath = null)
+        {
+            progress?.Invoke(new ThirdPartyImportProgress(
+                Math.Clamp(value, 0.0f, 1.0f),
+                message,
+                currentPath));
+        }
+
+        private static void LogThirdPartyImportPhase(string phase, long startTimestamp, string path, string assetTypeName)
+        {
+            Debug.Log(
+                ELogCategory.Assets,
+                "[ThirdPartyImport] {0} for {1} '{2}' took {3:F2} ms.",
+                phase,
+                assetTypeName,
+                path,
+                ElapsedMilliseconds(startTimestamp));
         }
 
         private static IEnumerable<XRAsset> CollectReachableAssets(object? root)

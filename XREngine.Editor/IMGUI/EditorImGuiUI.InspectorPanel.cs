@@ -10,6 +10,7 @@ using ImGuiNET;
 using XREngine;
 using XREngine.Animation;
 using XREngine.Components;
+using XREngine.Components.Animation;
 using XREngine.Core.Reflection.Attributes;
 using XREngine.Core.Files;
 using XREngine.Editor.AssetEditors;
@@ -222,14 +223,34 @@ public static partial class EditorImGuiUI
                 {
                     var failedNodes = new List<SceneNode>();
                     var addedComponents = new List<(SceneNode node, XRComponent comp)>();
+                    var deferredHumanoids = new List<HumanoidComponent>();
 
                     foreach (var node in targetNodes)
                     {
-                        if (!node.TryAddComponent(requestedComponent, out var comp) || comp is null)
+                        bool added;
+                        XRComponent? comp;
+                        if (typeof(HumanoidComponent).IsAssignableFrom(requestedComponent))
+                        {
+                            using (HumanoidComponent.BeginDeferredSceneNodeInitialization())
+                                added = node.TryAddComponent(requestedComponent, out comp);
+                        }
+                        else
+                        {
+                            added = node.TryAddComponent(requestedComponent, out comp);
+                        }
+
+                        if (!added || comp is null)
                             failedNodes.Add(node);
                         else
+                        {
                             addedComponents.Add((node, comp));
+                            if (comp is HumanoidComponent humanoid)
+                                deferredHumanoids.Add(humanoid);
+                        }
                     }
+
+                    if (deferredHumanoids.Count > 0)
+                        QueueDeferredHumanoidInitialization(deferredHumanoids);
 
                     if (failedNodes.Count == 0)
                     {
@@ -282,6 +303,27 @@ public static partial class EditorImGuiUI
             {
                 ResetComponentPickerState();
             }
+        }
+
+        private static void QueueDeferredHumanoidInitialization(List<HumanoidComponent> humanoids)
+        {
+            var pending = humanoids.ToArray();
+            int index = 0;
+
+            Engine.AddAppThreadCoroutine(() =>
+            {
+                while (index < pending.Length)
+                {
+                    HumanoidComponent humanoid = pending[index++];
+                    if (humanoid.IsDestroyed || humanoid.SceneNode.IsDestroyed)
+                        continue;
+
+                    humanoid.InitializeSceneNodeBindings();
+                    return index >= pending.Length;
+                }
+
+                return true;
+            });
         }
 
         private static partial void DrawInspectorPanel()
@@ -769,6 +811,7 @@ public static partial class EditorImGuiUI
             bool reimported = false;
             try
             {
+                EditorJobTracker.Report(trackingId, 0.01f, "Saving import settings...");
                 saved = await Task.Run(() => assets.SaveThirdPartyImportOptions(key.SourcePath, key.AssetType, importOptions)).ConfigureAwait(false);
                 if (!saved)
                 {
@@ -776,8 +819,15 @@ public static partial class EditorImGuiUI
                     return;
                 }
 
-                EditorJobTracker.SetStatus(trackingId, "Reimporting asset...");
-                reimported = await assets.ReimportThirdPartyFileAsync(key.SourcePath).ConfigureAwait(false);
+                EditorJobTracker.Report(trackingId, 0.05f, "Import settings saved.");
+
+                void ReportReimportProgress(ThirdPartyImportProgress importProgress)
+                {
+                    float mappedProgress = 0.05f + (0.95f * Math.Clamp(importProgress.Progress, 0.0f, 1.0f));
+                    EditorJobTracker.Report(trackingId, mappedProgress, importProgress.Message);
+                }
+
+                reimported = await assets.ReimportThirdPartyFileAsync(key.SourcePath, ReportReimportProgress).ConfigureAwait(false);
                 if (!reimported)
                 {
                     EditorJobTracker.Fault(trackingId, $"Failed to reimport {System.IO.Path.GetFileName(key.SourcePath)}.");
