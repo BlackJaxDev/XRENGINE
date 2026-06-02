@@ -80,6 +80,16 @@ namespace XREngine.Scene
         private bool _isEditorOnly;
 
         /// <summary>
+        /// Whether editor/runtime tooling is allowed to set <see cref="IsActiveSelf"/> to false.
+        /// </summary>
+        private bool _canDeactivate = true;
+
+        /// <summary>
+        /// Whether transform debug rendering should skip this node's line-to-parent and point marker.
+        /// </summary>
+        private bool _suppressTransformDebugLineAndPoint;
+
+        /// <summary>
         /// The rendering layer index (0-31) for visibility culling and rendering order.
         /// </summary>
         private int _layer = DefaultLayers.DynamicIndex;
@@ -278,6 +288,30 @@ namespace XREngine.Scene
         {
             get => _isEditorOnly;
             set => SetField(ref _isEditorOnly, value);
+        }
+
+        /// <summary>
+        /// If false, attempts to deactivate this node through <see cref="IsActiveSelf"/> or
+        /// <see cref="IsActiveInHierarchy"/> are ignored. Removal from a world can still run
+        /// normal deactivation lifecycle callbacks.
+        /// </summary>
+        [YamlIgnore]
+        [Browsable(false)]
+        public bool CanDeactivate
+        {
+            get => _canDeactivate;
+            set => SetField(ref _canDeactivate, value);
+        }
+
+        /// <summary>
+        /// If true, transform debug rendering skips the line-to-parent and point marker for this node.
+        /// </summary>
+        [YamlIgnore]
+        [Browsable(false)]
+        public bool SuppressTransformDebugLineAndPoint
+        {
+            get => _suppressTransformDebugLineAndPoint;
+            set => SetField(ref _suppressTransformDebugLineAndPoint, value);
         }
 
         /// <summary>
@@ -509,6 +543,10 @@ namespace XREngine.Scene
             {
                 switch (propName)
                 {
+                    case nameof(IsActiveSelf):
+                        if (!CanDeactivate && @new is bool activeSelf && !activeSelf)
+                            return false;
+                        break;
                     case nameof(World):
                         if (field is IRuntimeWorldContext previousWorld &&
                             !previousWorld.IsPlaySessionActive &&

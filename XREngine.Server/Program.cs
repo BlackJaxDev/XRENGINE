@@ -26,6 +26,8 @@ namespace XREngine.Networking
     /// </summary>
     public class Program
     {
+        private const string EditorViewCameraName = "Editor View";
+
         private static readonly Guid _serverSessionId = ResolveConfiguredSessionId();
         private static readonly string? _requiredSessionToken = GetOptionalEnvironmentValue("XRE_SESSION_TOKEN");
         private static readonly string _udpMulticastGroup = GetOptionalEnvironmentValue("XRE_UDP_MULTICAST_GROUP") ?? "239.0.0.222";
@@ -201,7 +203,7 @@ namespace XREngine.Networking
 
         private static SceneNode CreateCamera(SceneNode parentNode, out CameraComponent? camComp, bool smoothed = true)
         {
-            var cameraNode = new SceneNode(parentNode, "TestCameraNode");
+            var cameraNode = new SceneNode(parentNode, EditorViewCameraName);
 
             if (smoothed)
             {
@@ -211,7 +213,7 @@ namespace XREngine.Networking
                 laggedTransform.ScaleSmoothingSpeed = 30.0f;
             }
 
-            if (cameraNode.TryAddComponent(out camComp, "TestCamera"))
+            if (cameraNode.TryAddComponent(out camComp, EditorViewCameraName))
                 camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
             else
                 camComp = null;

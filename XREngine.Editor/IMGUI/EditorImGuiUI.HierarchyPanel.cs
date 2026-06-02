@@ -431,9 +431,14 @@ public static partial class EditorImGuiUI
         ImGui.TableSetColumnIndex(1);
 
         bool activeSelf = node.IsActiveSelf;
+        bool canToggleActiveSelf = node.CanDeactivate || !node.IsActiveSelf;
+        if (!canToggleActiveSelf)
+            ImGui.BeginDisabled();
         bool checkboxToggled = ImGui.Checkbox("##ActiveSelf", ref activeSelf);
+        if (!canToggleActiveSelf)
+            ImGui.EndDisabled();
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Toggle node active state");
+            ImGui.SetTooltip(canToggleActiveSelf ? "Toggle node active state" : "This editor node must stay active.");
         if (checkboxToggled)
         {
             bool capturedActiveSelf = activeSelf;

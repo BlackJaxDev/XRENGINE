@@ -8,6 +8,7 @@ public interface IBootstrapEditorBridge
 {
     void CreateEditorUi(SceneNode parent, CameraComponent? camera, PawnComponent? pawn);
     void EnableTransformToolForNode(SceneNode node);
+    void ConfigureEditorViewCamera(SceneNode parent, SceneNode cameraNode);
 }
 
 public static class BootstrapEditorBridge

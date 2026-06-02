@@ -10,6 +10,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Components.VR;
 using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
+using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
@@ -22,6 +23,8 @@ public static partial class EditorUnitTests
 {
     public static class Pawns
     {
+        private const string EditorViewCameraName = "Editor View";
+
         public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
         {
             SceneNode? characterPawnModelParentNode = null;
@@ -69,6 +72,7 @@ public static partial class EditorUnitTests
             var pawn = cameraNode.AddComponent<MeshEditingPawnComponent>()!;
             pawn.Name = "Mesh Editing Pawn";
             pawn.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
+            ConfigureEditorViewCamera(rootNode, cameraNode);
 
             if (setUI && camComp is not null)
                 UserInterface.CreateEditorUI(rootNode, camComp);
@@ -345,6 +349,8 @@ public static partial class EditorUnitTests
             {
                 pawnComp = cameraNode.AddComponent<EditorFlyingCameraPawnComponent>()!;
                 pawnComp!.Name = "Desktop Camera Pawn (Flyable)";
+                if (cameraNode.Parent is { } parent)
+                    ConfigureEditorViewCamera(parent, cameraNode);
             }
             else
             {
@@ -419,7 +425,7 @@ public static partial class EditorUnitTests
 
         private static SceneNode CreateCamera(SceneNode parentNode, out CameraComponent? camComp, float? smoothed = 50.0f, bool localSmoothing = true)
         {
-            var cameraNode = new SceneNode(parentNode, "TestCameraNode");
+            var cameraNode = new SceneNode(parentNode, EditorViewCameraName);
 
             if (smoothed.HasValue)
             {
@@ -441,7 +447,7 @@ public static partial class EditorUnitTests
                 }
             }
 
-            if (cameraNode.TryAddComponent(out camComp, "TestCamera"))
+            if (cameraNode.TryAddComponent(out camComp, EditorViewCameraName))
             {
                 camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
                 ConfigureCameraPostProcessing(camComp);
@@ -450,6 +456,37 @@ public static partial class EditorUnitTests
                 camComp = null;
 
             return cameraNode;
+        }
+
+        public static void ConfigureEditorViewCamera(SceneNode parent, SceneNode cameraNode)
+        {
+            cameraNode.Name = EditorViewCameraName;
+            cameraNode.IsEditorOnly = true;
+            cameraNode.CanDeactivate = false;
+            cameraNode.SuppressTransformDebugLineAndPoint = true;
+
+            if (parent.World is XRWorldInstance world)
+            {
+                world.AddToEditorScene(cameraNode);
+                return;
+            }
+
+            if (parent.World is not null)
+                return;
+
+            void OnParentWorldAssigned(object? _, IXRPropertyChangedEventArgs e)
+            {
+                if (e.PropertyName != nameof(SceneNode.World))
+                    return;
+
+                if (parent.World is not XRWorldInstance assignedWorld)
+                    return;
+
+                assignedWorld.AddToEditorScene(cameraNode);
+                parent.PropertyChanged -= OnParentWorldAssigned;
+            }
+
+            parent.PropertyChanged += OnParentWorldAssigned;
         }
 
         private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)

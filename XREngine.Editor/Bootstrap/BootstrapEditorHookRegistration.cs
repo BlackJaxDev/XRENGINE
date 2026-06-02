@@ -22,6 +22,9 @@ public static class BootstrapEditorHookRegistration
 
         public void EnableTransformToolForNode(SceneNode node)
             => EditorUnitTests.UserInterface.EnableTransformToolForNode(node);
+
+        public void ConfigureEditorViewCamera(SceneNode parent, SceneNode cameraNode)
+            => EditorUnitTests.Pawns.ConfigureEditorViewCamera(parent, cameraNode);
     }
 
     private sealed class EditorBootstrapWorldBridge : IBootstrapWorldBridge

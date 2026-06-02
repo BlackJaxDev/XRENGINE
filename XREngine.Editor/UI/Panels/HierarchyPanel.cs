@@ -932,20 +932,26 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             toggleGlyph.Text = node.IsActiveSelf ? "\u2713" : string.Empty;
             toggleGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
             toggleGlyph.VerticalAlignment = EVerticalAlignment.Center;
-            toggleGlyph.Color = node.IsActiveSelf ? ColorF4.White : new ColorF4(0.5f, 0.5f, 0.5f, 1.0f);
+            bool canToggleActiveSelf = node.CanDeactivate || !node.IsActiveSelf;
+            toggleGlyph.Color = node.IsActiveSelf
+                ? (canToggleActiveSelf ? ColorF4.White : new ColorF4(0.7f, 0.7f, 0.7f, 1.0f))
+                : new ColorF4(0.5f, 0.5f, 0.5f, 1.0f);
 
             var capturedToggleNode = node;
             var capturedToggleGlyph = toggleGlyph;
-            toggleBtn.InteractAction += _ =>
+            if (canToggleActiveSelf)
             {
-                EnqueueSceneEdit(() =>
+                toggleBtn.InteractAction += _ =>
                 {
-                    capturedToggleNode.IsActiveSelf = !capturedToggleNode.IsActiveSelf;
-                    capturedToggleGlyph.Text = capturedToggleNode.IsActiveSelf ? "\u2713" : string.Empty;
-                    capturedToggleGlyph.Color = capturedToggleNode.IsActiveSelf ? ColorF4.White : new ColorF4(0.5f, 0.5f, 0.5f, 1.0f);
-                    MarkSceneHierarchyDirty(capturedToggleNode);
-                });
-            };
+                    EnqueueSceneEdit(() =>
+                    {
+                        capturedToggleNode.IsActiveSelf = !capturedToggleNode.IsActiveSelf;
+                        capturedToggleGlyph.Text = capturedToggleNode.IsActiveSelf ? "\u2713" : string.Empty;
+                        capturedToggleGlyph.Color = capturedToggleNode.IsActiveSelf ? ColorF4.White : new ColorF4(0.5f, 0.5f, 0.5f, 1.0f);
+                        MarkSceneHierarchyDirty(capturedToggleNode);
+                    });
+                };
+            }
 
             EditorUI.Styles.UpdateButton(button);
             button.DefaultTextColor = ColorF4.White;

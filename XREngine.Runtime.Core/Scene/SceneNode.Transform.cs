@@ -111,7 +111,7 @@ namespace XREngine.Scene
             bool hadBegunPlay = _parentChangeHadBegunPlay;
 
             SceneNode? newParent = Parent;
-            var newWorld = newParent?.World;
+            var newWorld = newParent?.World ?? Transform.World;
             bool shouldHaveBegunPlay = newParent?.HasBegunPlay
                 ?? ((IRuntimeWorldContext?)newWorld)?.IsPlaySessionActive
                 ?? false;

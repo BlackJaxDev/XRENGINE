@@ -20,6 +20,8 @@ namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapPawnFactory
 {
+    private const string EditorViewCameraName = "Editor View";
+
     public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
     {
         var settings = RuntimeBootstrapState.Settings;
@@ -263,6 +265,8 @@ public static class BootstrapPawnFactory
             pawnComp = BootstrapFlyableCameraFactory.CreateFlyableCameraPawn(cameraNode, !isServer) as PawnComponent
                 ?? throw new InvalidOperationException("Bootstrap flyable camera factory did not return a PawnComponent.");
             pawnComp.Name = "Desktop Camera Pawn (Flyable)";
+            if (cameraNode.Parent is { } parent)
+                BootstrapEditorBridge.Current?.ConfigureEditorViewCamera(parent, cameraNode);
         }
         else
         {
@@ -330,7 +334,7 @@ public static class BootstrapPawnFactory
 
     private static SceneNode CreateCamera(SceneNode parentNode, out CameraComponent? camComp, float? smoothed = 50.0f, bool localSmoothing = true)
     {
-        var cameraNode = new SceneNode(parentNode, "TestCameraNode");
+        var cameraNode = new SceneNode(parentNode, EditorViewCameraName);
 
         if (smoothed.HasValue)
         {
@@ -352,7 +356,7 @@ public static class BootstrapPawnFactory
             }
         }
 
-        if (cameraNode.TryAddComponent(out camComp, "TestCamera"))
+        if (cameraNode.TryAddComponent(out camComp, EditorViewCameraName))
         {
             camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
             ConfigureCameraPostProcessing(camComp);

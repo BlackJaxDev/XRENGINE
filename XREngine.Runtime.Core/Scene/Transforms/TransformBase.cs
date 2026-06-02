@@ -1523,17 +1523,18 @@ namespace XREngine.Scene.Transforms
             if (transformServices is null || transformServices.IsShadowPass)
                 return;
 
-            if (transformServices.RenderTransformLines)
+            bool suppressLineAndPoint = SceneNode?.SuppressTransformDebugLineAndPoint ?? false;
+
+            if (!suppressLineAndPoint && transformServices.RenderTransformLines)
                 transformServices.RenderLine(
                     Parent?.RenderTranslation ?? Vector3.Zero,
                     RenderTranslation,
                     transformServices.TransformLineColor);
 
-            if (transformServices.RenderTransformPoints)
+            if (!suppressLineAndPoint && transformServices.RenderTransformPoints)
                 transformServices.RenderPoint(
                     RenderTranslation,
                     transformServices.TransformPointColor);
-
             if (transformServices.RenderTransformCapsules && Capsule is not null)
                 transformServices.RenderCapsule(Capsule.Value, transformServices.TransformCapsuleColor);
         }

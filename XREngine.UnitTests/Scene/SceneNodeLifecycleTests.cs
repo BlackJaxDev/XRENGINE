@@ -115,6 +115,34 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void UnparentingFromEditWorldParent_KeepsChildInWorldAndActive()
+    {
+        SceneNode parent = new("Parent");
+        SceneNode child = new(parent, "Child");
+        LifecycleTrackingComponent component = child.AddComponent<LifecycleTrackingComponent>()!;
+        StubRuntimeWorldContext world = new(isPlaySessionActive: false);
+
+        SetWorld(parent, world);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(child.World, Is.SameAs(world));
+            Assert.That(component.ActivationCount, Is.EqualTo(1));
+            Assert.That(component.DeactivationCount, Is.Zero);
+        });
+
+        child.Parent = null;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(child.Parent, Is.Null);
+            Assert.That(child.World, Is.SameAs(world));
+            Assert.That(component.ActivationCount, Is.EqualTo(1));
+            Assert.That(component.DeactivationCount, Is.Zero);
+        });
+    }
+
+    [Test]
     public void AssigningPlayWorld_DoesNotPreActivateExistingComponents()
     {
         SceneNode node = new("LifecycleRoot");
@@ -128,6 +156,35 @@ public class SceneNodeLifecycleTests
         node.OnActivated();
 
         Assert.That(component.ActivationCount, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void NonDeactivatableNode_RejectsActiveSelfFalse()
+    {
+        SceneNode node = new("ProtectedEditorNode")
+        {
+            CanDeactivate = false,
+        };
+        int deactivatedCount = 0;
+        node.Deactivated += _ => deactivatedCount++;
+
+        node.IsActiveSelf = false;
+        node.IsActiveInHierarchy = false;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(node.IsActiveSelf, Is.True);
+            Assert.That(deactivatedCount, Is.Zero);
+        });
+
+        node.CanDeactivate = true;
+        node.IsActiveSelf = false;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(node.IsActiveSelf, Is.False);
+            Assert.That(deactivatedCount, Is.EqualTo(1));
+        });
     }
 
     [Test]

@@ -15,6 +15,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
+using XREngine.Input.Devices;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Lightmapping;
 using XREngine.Rendering.Picking;
@@ -118,6 +119,8 @@ namespace XREngine.Rendering
 
                 if (!RootNodes.Any(existing => ReferenceEquals(existing, node)))
                     RootNodes.Add(node);
+
+                RefreshControlledEditorScenePawn(node);
             }
 
             // Detaching a node by directly setting Parent can conflict with transform child list
@@ -126,13 +129,40 @@ namespace XREngine.Rendering
             // once the node is actually detached.
             if (node.Transform?.Parent is not null)
             {
-                node.Transform.SetParent(null, preserveWorldTransform: false, EParentAssignmentMode.Deferred,
+                node.Transform.SetParent(null, preserveWorldTransform: true, EParentAssignmentMode.Deferred,
                     onApplied: (_, __) => AddAsEditorRoot());
             }
             else
             {
                 AddAsEditorRoot();
             }
+        }
+
+        private static void RefreshControlledEditorScenePawn(SceneNode node)
+        {
+            node.IterateHierarchy(current =>
+            {
+                lock (current.Components)
+                {
+                    foreach (var component in current.Components)
+                    {
+                        if (component is not PawnComponent pawn)
+                            continue;
+
+                        var controller = pawn.Controller;
+                        if (controller is not { IsLocal: true } ||
+                            !ReferenceEquals(controller.ControlledPawnComponent, pawn))
+                        {
+                            continue;
+                        }
+
+                        controller.OnPawnCameraChanged();
+
+                        if (controller.InputDevice is InputInterface input)
+                            input.TryRegisterInput();
+                    }
+                }
+            });
         }
 
         /// <summary>
