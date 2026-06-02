@@ -12,6 +12,7 @@ using XREngine.Animation;
 using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -566,6 +567,59 @@ public sealed class NativeFbxImporterTests
     }
 
     [Test]
+    public void NativeFbxSkinnedSubMeshCullingBounds_UseRuntimeBasisWithoutOverwritingMeshBounds()
+    {
+        SceneNode rootNode = new("Root");
+        SceneNode meshNode = new(rootNode, "BootMesh");
+        SceneNode basisBoneNode = new(rootNode, "Hip");
+
+        SetLocalMatrix(meshNode, Matrix4x4.Identity);
+        SetLocalMatrix(basisBoneNode, Matrix4x4.CreateTranslation(0.0f, 1.5f, 0.0f));
+
+        Matrix4x4 bindInvWorldMatrix = Matrix4x4.CreateTranslation(0.0f, -4.0f, 0.0f);
+
+        Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> weights = new()
+        {
+            [basisBoneNode.Transform] = (1.0f, bindInvWorldMatrix),
+        };
+
+        Vertex[] vertices =
+        [
+            new Vertex(new Vector3(-0.2f, -0.6f, -0.1f)) { Weights = weights },
+            new Vertex(new Vector3(0.2f, -0.6f, 0.1f)) { Weights = weights },
+            new Vertex(new Vector3(0.0f, 0.0f, 0.0f)) { Weights = weights },
+        ];
+
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.HasSkinning.ShouldBeTrue();
+
+        SubMesh subMesh = new(new SubMeshLOD(new XRMaterial(), mesh, 0.0f))
+        {
+            RootBone = basisBoneNode.Transform,
+            RootTransform = rootNode.Transform,
+        };
+        AABB rawMeshBounds = subMesh.Bounds;
+
+        Type importerType = typeof(ModelImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
+        MethodInfo method = importerType.GetMethod("UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis", BindingFlags.NonPublic | BindingFlags.Static)!;
+        method.Invoke(obj: null, parameters: new object[] { subMesh, mesh, meshNode.Transform.WorldMatrix, rootNode.Transform });
+
+        Matrix4x4 inverseBasisWorld = Matrix4x4.Invert(basisBoneNode.Transform.WorldMatrix, out Matrix4x4 invertedBasisWorld)
+            ? invertedBasisWorld
+            : Matrix4x4.Identity;
+        Matrix4x4 weightedBindPoseToBasis = bindInvWorldMatrix * basisBoneNode.Transform.BindMatrix * inverseBasisWorld;
+        AABB expectedCullingBounds = rawMeshBounds.Transformed(point => Vector3.Transform(point, weightedBindPoseToBasis));
+        AABB rawShortcutBounds = rawMeshBounds.Transformed(point => Vector3.Transform(point, meshNode.Transform.WorldMatrix * inverseBasisWorld));
+
+        MathF.Abs(rawShortcutBounds.Center.Y - expectedCullingBounds.Center.Y).ShouldBeGreaterThan(1.0f);
+
+        AabbShouldBe(subMesh.Bounds, rawMeshBounds, 0.0001f);
+        subMesh.CullingBounds.ShouldNotBeNull();
+        AabbShouldBe(subMesh.CullingBounds.Value, expectedCullingBounds, 0.0001f);
+    }
+
+    [Test]
     public void DefaultVertexShaderGenerator_SkinningUsesRowVectorMultiplication()
     {
         SceneNode boneNode = new("Bone");
@@ -958,6 +1012,16 @@ public sealed class NativeFbxImporterTests
         actual.M42.ShouldBe(expected.M42, tolerance);
         actual.M43.ShouldBe(expected.M43, tolerance);
         actual.M44.ShouldBe(expected.M44, tolerance);
+    }
+
+    private static void AabbShouldBe(in AABB actual, in AABB expected, float tolerance)
+    {
+        actual.Min.X.ShouldBe(expected.Min.X, tolerance);
+        actual.Min.Y.ShouldBe(expected.Min.Y, tolerance);
+        actual.Min.Z.ShouldBe(expected.Min.Z, tolerance);
+        actual.Max.X.ShouldBe(expected.Max.X, tolerance);
+        actual.Max.Y.ShouldBe(expected.Max.Y, tolerance);
+        actual.Max.Z.ShouldBe(expected.Max.Z, tolerance);
     }
 
     private sealed class TestRuntimeShaderServices : IRuntimeShaderServices

@@ -81,7 +81,7 @@ namespace XREngine.Rendering.Commands
             };
 
             // Bounds: world-space (center + radius), conservative for non-uniform scale.
-            SetWorldSpaceBoundingSphere(ref gpuCommand, mesh.Bounds, modelMatrix);
+            gpuCommand.BoundingSphere = ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, boundsId + 1u).BoundingSphere;
 
             gpuCommand.RenderDistance = command.RenderDistance.ClampMin(0.0f);
 
@@ -212,7 +212,8 @@ namespace XREngine.Rendering.Commands
                     var updated = existing;
 
                     bool transformChanged = UpdateTransform(existing.TransformID, modelMatrix);
-                    SetWorldSpaceBoundingSphere(ref updated, mesh.Bounds, modelMatrix);
+                    BoundsGpu updatedBounds = ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, updated.BoundsID + 1u);
+                    updated.BoundingSphere = updatedBounds.BoundingSphere;
 
                     updated.MeshID = newMeshID;
                     updated.SubmeshID = (newMeshID << 16) | ((uint)subMeshIndex & 0xFFFF);
@@ -248,11 +249,14 @@ namespace XREngine.Rendering.Commands
                         ReleaseLogicalMeshResidency(existing.LogicalMeshID, "TryUpdateMeshCommand(mesh changed)");
                     }
 
-                    if (!existing.Equals(updated) || transformChanged)
+                    BoundsGpu existingBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(index);
+                    bool boundsChanged = !existingBounds.Equals(updatedBounds);
+
+                    if (!existing.Equals(updated) || transformChanged || boundsChanged)
                     {
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, updated);
                         WriteDrawMetadata(index, updated);
-                        WriteBounds(index, ComputeWorldBoundsGpu(mesh.Bounds, modelMatrix, updated.BoundsID + 1u));
+                        WriteBounds(index, updatedBounds);
                         if (existing.MeshID != updated.MeshID || existing.LogicalMeshID != updated.LogicalMeshID)
                             LodTransitionBuffer.SetDataRawAtIndex(index, default(GPULodTransitionState));
                         if (_useInternalBvh)

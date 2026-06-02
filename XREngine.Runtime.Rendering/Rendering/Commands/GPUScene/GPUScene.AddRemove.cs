@@ -169,7 +169,7 @@ namespace XREngine.Rendering.Commands
                         commandValue.Reserved1 = index;
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
                         WriteDrawMetadata(index, commandValue);
-                        WriteBounds(boundsId, ComputeWorldBoundsGpu(mesh.Bounds, modelMatrix, 1u));
+                        WriteBounds(boundsId, ComputeRenderCullingBoundsGpu(renderInfo, mesh.Bounds, modelMatrix, 1u));
                         UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
                         if (_useInternalBvh)
                             WriteTightCommandAabb(index, renderInfo, mesh.Bounds, modelMatrix);

@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.Reflection;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Serialization;
 using YamlDotNet.Core;
@@ -13,6 +15,8 @@ namespace XREngine;
 [YamlTypeConverter]
 public sealed class XRMeshYamlTypeConverter : IYamlTypeConverter
 {
+    private const string FailedCookedMeshCategory = "XRMesh Cooked Payload";
+
     public bool Accepts(Type type)
         => type == typeof(XRMesh);
 
@@ -36,10 +40,167 @@ public sealed class XRMeshYamlTypeConverter : IYamlTypeConverter
             return new XRMesh();
 
         byte[] payload = envelope.Payload.GetBytes();
-        XRMesh? mesh = RuntimeCookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
-            () => RuntimeCookedBinarySerializer.Deserialize(typeof(XRMesh), payload) as XRMesh);
+        if (TryExtractRuntimeCookedPayload(payload, out byte[]? runtimePayload))
+            payload = runtimePayload!;
 
-        return mesh ?? new XRMesh();
+        XRMesh? mesh;
+        try
+        {
+            mesh = RuntimeCookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+                () => RuntimeCookedBinarySerializer.Deserialize(typeof(XRMesh), payload) as XRMesh);
+        }
+        catch (Exception ex) when (IsRecoverableCookedMeshPayloadException(ex))
+        {
+            return CreateFailedCookedMeshPlaceholder(envelope, payload.Length, ex);
+        }
+
+        if (mesh is null)
+        {
+            return CreateFailedCookedMeshPlaceholder(
+                envelope,
+                payload.Length,
+                new InvalidOperationException("Cooked mesh payload did not deserialize to an XRMesh instance."));
+        }
+
+        return mesh;
+    }
+
+    private static bool IsRecoverableCookedMeshPayloadException(Exception ex)
+        => ex is EndOfStreamException
+            or IOException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException
+            or FormatException
+            or InvalidCastException
+            or OverflowException;
+
+    private static XRMesh CreateFailedCookedMeshPlaceholder(XRMeshYamlEnvelope envelope, int payloadLength, Exception ex)
+    {
+        Guid id = envelope.ID.GetValueOrDefault();
+        string diagnosticPath = GetFailedCookedMeshDiagnosticPath(id);
+        string context = GetFailedCookedMeshContext(envelope, payloadLength, ex);
+
+        AssetDiagnostics.RecordMissingAsset(diagnosticPath, FailedCookedMeshCategory, context);
+        Debug.MeshesWarningEvery(
+            string.Concat(nameof(XRMeshYamlTypeConverter), ":", diagnosticPath),
+            TimeSpan.FromMinutes(1),
+            "Cooked XRMesh payload failed to deserialize for '{0}'. The model will load with a placeholder mesh. Reimport the source FBX/model or clear generated asset cache. {1}: {2}",
+            diagnosticPath,
+            ex.GetType().Name,
+            ex.Message);
+
+        string idSuffix = id == Guid.Empty ? "unknown" : id.ToString("N")[..8];
+        XRMesh placeholder = new()
+        {
+            Name = string.Concat("FailedCookedMesh_", idSuffix)
+        };
+        if (id != Guid.Empty)
+            TryAssignMeshId(placeholder, id);
+
+        return placeholder;
+    }
+
+    private static string GetFailedCookedMeshDiagnosticPath(Guid id)
+    {
+        string? ownerPath = AssetDeserializationContext.CurrentFilePath;
+        if (!string.IsNullOrWhiteSpace(ownerPath))
+            return ownerPath;
+
+        string idText = id == Guid.Empty ? "no-id" : id.ToString("D");
+        return string.Concat("<inline XRMesh payload ", idText, ">");
+    }
+
+    private static string GetFailedCookedMeshContext(XRMeshYamlEnvelope envelope, int payloadLength, Exception ex)
+    {
+        Guid id = envelope.ID.GetValueOrDefault();
+        string idText = id == Guid.Empty ? "<none>" : id.ToString("D");
+        return string.Concat(
+            nameof(XRMeshYamlTypeConverter),
+            ".",
+            nameof(ReadYaml),
+            " failed to deserialize cooked mesh payload ",
+            "(id='",
+            idText,
+            "', bytes=",
+            payloadLength,
+            ", format='",
+            envelope.Format,
+            "', version=",
+            envelope.Version,
+            "). Reimport the source FBX/model or clear generated mesh cache. ",
+            ex.GetType().Name,
+            ": ",
+            ex.Message);
+    }
+
+    private static void TryAssignMeshId(XRMesh mesh, Guid id)
+    {
+        try
+        {
+            PropertyInfo? idProperty = mesh.GetType().GetProperty("ID", BindingFlags.Public | BindingFlags.Instance);
+            if (idProperty?.SetMethod is not null)
+                idProperty.SetValue(mesh, id);
+        }
+        catch
+        {
+            // The placeholder is still useful even if a non-public ID setter cannot be reached.
+        }
+    }
+
+    private static bool TryExtractRuntimeCookedPayload(byte[] payload, out byte[]? runtimePayload)
+    {
+        const byte cookedBinaryCustomObjectMarker = 24;
+
+        runtimePayload = null;
+        if (payload.Length < sizeof(byte) + sizeof(int) || payload[0] != cookedBinaryCustomObjectMarker)
+            return false;
+
+        try
+        {
+            using MemoryStream stream = new(payload, writable: false);
+            using BinaryReader reader = new(stream, System.Text.Encoding.UTF8);
+            if (reader.ReadByte() != cookedBinaryCustomObjectMarker)
+                return false;
+
+            string typeName = reader.ReadString();
+            if (!IsSerializedMeshType(typeName))
+                return false;
+
+            int payloadLength = reader.ReadInt32();
+            long remaining = stream.Length - stream.Position;
+            if (payloadLength <= 0 || payloadLength > remaining)
+                return false;
+
+            runtimePayload = reader.ReadBytes(payloadLength);
+            return runtimePayload.Length == payloadLength;
+        }
+        catch (Exception ex) when (
+            ex is EndOfStreamException or
+            IOException or
+            ArgumentException or
+            FormatException or
+            OverflowException)
+        {
+            runtimePayload = null;
+            return false;
+        }
+    }
+
+    private static bool IsSerializedMeshType(string? typeName)
+    {
+        if (string.IsNullOrWhiteSpace(typeName))
+            return false;
+
+        Type? resolved = Type.GetType(typeName, throwOnError: false);
+        if (resolved is not null)
+            return typeof(XRMesh).IsAssignableFrom(resolved);
+
+        int assemblySeparator = typeName.IndexOf(',');
+        string fullName = assemblySeparator >= 0
+            ? typeName[..assemblySeparator].Trim()
+            : typeName.Trim();
+        return string.Equals(fullName, typeof(XRMesh).FullName, StringComparison.Ordinal);
     }
 
     private static XRMesh? ResolveExternalReference(Guid id)

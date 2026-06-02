@@ -12,6 +12,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Occlusion;
 
 namespace XREngine.UnitTests.Rendering;
@@ -98,6 +99,37 @@ public class GpuRenderingBacklogTests
         command.BoundingSphere.Y.ShouldBe(expectedCenter.Y, 0.0001f);
         command.BoundingSphere.Z.ShouldBe(expectedCenter.Z, 0.0001f);
         command.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
+    }
+
+    [Test]
+    public void GPUScene_CullingBounds_UseRenderInfoBasisWhenAvailable()
+    {
+        var method = typeof(GPUScene).GetMethod("ComputeRenderCullingBoundsGpu", BindingFlags.NonPublic | BindingFlags.Static);
+        method.ShouldNotBeNull();
+
+        var owner = new TestRenderable();
+        RenderInfo3D renderInfo = RenderInfo3D.New(owner, new RenderCommandMesh3D(0));
+        renderInfo.LocalCullingVolume = new AABB(new Vector3(1f, -2f, -3f), new Vector3(3f, 2f, 3f));
+        renderInfo.CullingOffsetMatrix = Matrix4x4.CreateScale(2f, 3f, 4f) * Matrix4x4.CreateTranslation(10f, 20f, 30f);
+
+        var fallbackBounds = new AABB(new Vector3(-100f, -100f, -100f), new Vector3(100f, 100f, 100f));
+        Matrix4x4 fallbackMatrix = Matrix4x4.CreateTranslation(-500f, -500f, -500f);
+        object?[] args = [renderInfo, fallbackBounds, fallbackMatrix, 7u];
+
+        BoundsGpu bounds = (BoundsGpu)method!.Invoke(null, args)!;
+
+        bounds.BoundingSphere.X.ShouldBe(14f, 0.0001f);
+        bounds.BoundingSphere.Y.ShouldBe(20f, 0.0001f);
+        bounds.BoundingSphere.Z.ShouldBe(30f, 0.0001f);
+        bounds.BoundingSphere.W.ShouldBe(MathF.Sqrt(1f + 4f + 9f) * 4f, 0.0001f);
+        bounds.BoundsVersion.ShouldBe(7u);
+
+        bounds.AabbMin.X.ShouldBe(12f, 0.0001f);
+        bounds.AabbMin.Y.ShouldBe(14f, 0.0001f);
+        bounds.AabbMin.Z.ShouldBe(18f, 0.0001f);
+        bounds.AabbMax.X.ShouldBe(16f, 0.0001f);
+        bounds.AabbMax.Y.ShouldBe(26f, 0.0001f);
+        bounds.AabbMax.Z.ShouldBe(42f, 0.0001f);
     }
 
     [Test]
@@ -666,5 +698,10 @@ public class GpuRenderingBacklogTests
         public XRDataBuffer? BvhMortonBuffer => null;
         public uint BvhNodeCount => 0u;
         public bool IsBvhReady => isReady;
+    }
+
+    private sealed class TestRenderable : IRenderable
+    {
+        public RenderInfo[] RenderedObjects { get; set; } = [];
     }
 }

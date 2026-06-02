@@ -40,7 +40,7 @@ public static partial class EditorImGuiUI
             var missingAssets = AssetDiagnostics.GetTrackedMissingAssets();
             if (missingAssets.Count == 0)
             {
-                ImGui.TextDisabled("No fully missing asset references have been tracked.");
+                ImGui.TextDisabled("No missing or unreadable asset references have been tracked.");
                 if (ImGui.Button("Clear Missing Asset Log"))
                     AssetDiagnostics.ClearTrackedMissingAssets();
                 ClearMissingAssetSelection();
@@ -51,7 +51,7 @@ public static partial class EditorImGuiUI
             foreach (var info in missingAssets)
                 totalHits += info.Count;
 
-            ImGui.TextUnformatted($"Fully missing references: {missingAssets.Count} | Hits: {totalHits}");
+            ImGui.TextUnformatted($"Missing/unreadable references: {missingAssets.Count} | Hits: {totalHits}");
 
             if (ImGui.Button("Clear Missing Asset Log"))
             {
@@ -206,6 +206,16 @@ public static partial class EditorImGuiUI
             return string.Concat(normalizedCategory, "::", normalizedPath);
         }
 
+        private static bool IsUnreadableAssetPayload(in AssetDiagnostics.MissingAssetInfo info)
+            => info.Category.Contains("Payload", StringComparison.OrdinalIgnoreCase)
+                || info.Category.Contains("Corrupt", StringComparison.OrdinalIgnoreCase)
+                || info.Category.Contains("Unreadable", StringComparison.OrdinalIgnoreCase);
+
+        private static string GetMissingAssetStatusText(in AssetDiagnostics.MissingAssetInfo info)
+            => IsUnreadableAssetPayload(info)
+                ? "Status: Unreadable embedded asset payload - reimport or regenerate the source asset."
+                : "Status: Fully missing - no readable file was found for this reference.";
+
         private static void ClearMissingAssetSelection()
         {
             _selectedMissingAssetKey = null;
@@ -214,7 +224,7 @@ public static partial class EditorImGuiUI
 
         private static void DrawMissingAssetReplacementEditor(in AssetDiagnostics.MissingAssetInfo info)
         {
-            ImGui.TextUnformatted("Selected Missing Asset");
+            ImGui.TextUnformatted("Selected Asset Diagnostic");
             ImGui.SameLine();
             if (ImGui.SmallButton("Reveal"))
                 RevealMissingAssetLocation(info.AssetPath);
@@ -224,7 +234,7 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
 
-            ImGui.TextDisabled("Status: Fully missing - no readable file was found for this reference.");
+            ImGui.TextDisabled(GetMissingAssetStatusText(info));
             ImGui.TextUnformatted($"Category: {info.Category}");
             ImGui.TextUnformatted($"Hits: {info.Count}");
             ImGui.TextUnformatted($"Last Seen: {info.LastSeenUtc.ToLocalTime():g}");
@@ -244,6 +254,26 @@ public static partial class EditorImGuiUI
             }
 
             ImGui.Spacing();
+
+            if (IsUnreadableAssetPayload(info))
+            {
+                ImGui.TextWrapped("This diagnostic points at an embedded payload, not a standalone missing file. Reimport the source model or clear/regenerate the cooked asset cache, then reload.");
+
+                if (ImGui.Button("Mark Resolved"))
+                {
+                    if (AssetDiagnostics.RemoveTrackedMissingAsset(info.AssetPath, info.Category))
+                    {
+                        Debug.Out($"Removed unreadable asset payload diagnostic '{info.AssetPath}' from diagnostics.");
+                        ClearMissingAssetSelection();
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"Failed to remove unreadable asset payload diagnostic '{info.AssetPath}'.");
+                    }
+                }
+
+                return;
+            }
 
             string replacement = _missingAssetReplacementPath;
             if (ImGui.InputTextWithHint("##MissingAssetReplacement", "Replacement path...", ref replacement, 512u))

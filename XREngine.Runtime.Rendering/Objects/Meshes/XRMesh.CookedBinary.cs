@@ -178,7 +178,15 @@ public partial class XRMesh : ICookedBinarySerializable
 
     private void ReadMeshPayload(CookedBinaryReader reader)
     {
-        MeshMetadata metadata = ReadMetadata(reader);
+        long payloadStart = reader.Position;
+        if (!TryReadMetadata(reader, payloadStart, out MeshMetadata metadata))
+        {
+            reader.Position = payloadStart;
+            if (TryReadLegacyMeshPayload(reader, payloadStart))
+                return;
+
+            throw new InvalidOperationException("Unable to read cooked mesh metadata.");
+        }
 
         Triangles = ReadTriangles(reader);
         Lines = ReadLines(reader);
@@ -236,18 +244,9 @@ public partial class XRMesh : ICookedBinarySerializable
         TexCoordOffset = metadata.TexCoordOffset;
     }
 
-    private MeshMetadata ReadMetadata(CookedBinaryReader reader)
-    {
-        long startPosition = reader.Position;
-
-        if (TryReadMetadata(reader, startPosition, includeSkinningConvention: true, out MeshMetadata metadata))
-            return metadata;
-
-        if (TryReadMetadata(reader, startPosition, includeSkinningConvention: false, out metadata))
-            return metadata;
-
-        throw new InvalidOperationException("Unable to read cooked mesh metadata.");
-    }
+    private bool TryReadMetadata(CookedBinaryReader reader, long startPosition, out MeshMetadata metadata)
+        => TryReadMetadata(reader, startPosition, includeSkinningConvention: true, out metadata)
+            || TryReadMetadata(reader, startPosition, includeSkinningConvention: false, out metadata);
 
     private bool TryReadMetadata(CookedBinaryReader reader, long startPosition, bool includeSkinningConvention, out MeshMetadata metadata)
     {
@@ -278,6 +277,195 @@ public partial class XRMesh : ICookedBinarySerializable
             reader.Position = startPosition;
             return false;
         }
+    }
+
+    private bool TryReadLegacyMeshPayload(CookedBinaryReader reader, long startPosition)
+    {
+        reader.Position = startPosition;
+
+        try
+        {
+            MeshCookedPayload payload = ReadPayload(reader);
+            ApplyLegacyPayload(payload);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is EndOfStreamException or
+            InvalidCastException or
+            InvalidOperationException or
+            ArgumentOutOfRangeException or
+            FormatException or
+            NotSupportedException or
+            OverflowException)
+        {
+            reader.Position = startPosition;
+            return false;
+        }
+    }
+
+    private void ApplyLegacyPayload(MeshCookedPayload payload)
+    {
+        Vector3[] positions = payload.Positions ?? Array.Empty<Vector3>();
+        Vector3[]? normals = payload.Normals;
+        Vector3[]? tangents = payload.Tangents;
+        Vector4[][]? colors = payload.Colors;
+        Vector2[][]? texCoords = payload.TexCoords;
+
+        VertexCount = positions.Length;
+        Type = Enum.IsDefined(typeof(EPrimitiveType), payload.PrimitiveType)
+            ? payload.PrimitiveType
+            : EPrimitiveType.Triangles;
+        Bounds = new AABB(payload.BoundsMin, payload.BoundsMax);
+        SkinningShaderConvention = ESkinningShaderConvention.LegacyImplicitTranspose;
+
+        Triangles = CreateLegacyTriangles(payload.Triangles);
+        Lines = CreateLegacyLines(payload.Lines);
+        Points = payload.Points is { Length: > 0 } ? new List<int>(payload.Points) : null;
+
+        int colorChannels = colors?.Length ?? 0;
+        int texCoordChannels = texCoords?.Length ?? 0;
+        bool hasNormals = normals is { Length: > 0 };
+        bool hasTangents = tangents is { Length: > 0 };
+
+        Buffers?.Clear();
+        InitMeshBuffers(hasNormals, hasTangents, colorChannels, texCoordChannels);
+        PopulateLegacyBuffers(positions, normals, tangents, colors, texCoords);
+        Vertices = BuildLegacyVertices(positions, normals, tangents, colors, texCoords);
+
+        ApplySkinningPayload(payload.Skinning);
+        ApplyBlendshapePayload(payload.Blendshapes);
+        MeshletPayload = null;
+    }
+
+    private void PopulateLegacyBuffers(
+        Vector3[] positions,
+        Vector3[]? normals,
+        Vector3[]? tangents,
+        Vector4[][]? colors,
+        Vector2[][]? texCoords)
+    {
+        for (int i = 0; i < positions.Length; i++)
+            SetPosition((uint)i, positions[i]);
+
+        if (normals is not null)
+        {
+            int count = Math.Min(normals.Length, positions.Length);
+            for (int i = 0; i < count; i++)
+                SetNormal((uint)i, normals[i]);
+        }
+
+        if (tangents is not null)
+        {
+            int count = Math.Min(tangents.Length, positions.Length);
+            for (int i = 0; i < count; i++)
+                SetTangent((uint)i, tangents[i]);
+        }
+
+        if (colors is not null)
+        {
+            for (int channel = 0; channel < colors.Length; channel++)
+            {
+                Vector4[]? values = colors[channel];
+                if (values is null)
+                    continue;
+
+                int count = Math.Min(values.Length, positions.Length);
+                for (int i = 0; i < count; i++)
+                    SetColor((uint)i, values[i], (uint)channel);
+            }
+        }
+
+        if (texCoords is not null)
+        {
+            for (int channel = 0; channel < texCoords.Length; channel++)
+            {
+                Vector2[]? values = texCoords[channel];
+                if (values is null)
+                    continue;
+
+                int count = Math.Min(values.Length, positions.Length);
+                for (int i = 0; i < count; i++)
+                    SetTexCoord((uint)i, values[i], (uint)channel);
+            }
+        }
+    }
+
+    private static Vertex[] BuildLegacyVertices(
+        Vector3[] positions,
+        Vector3[]? normals,
+        Vector3[]? tangents,
+        Vector4[][]? colors,
+        Vector2[][]? texCoords)
+    {
+        Vertex[] vertices = new Vertex[positions.Length];
+        for (int i = 0; i < positions.Length; i++)
+        {
+            Vertex vertex = new(positions[i]);
+            if (normals is not null && i < normals.Length)
+                vertex.Normal = normals[i];
+            if (tangents is not null && i < tangents.Length)
+                vertex.Tangent = tangents[i];
+
+            if (colors is not null && colors.Length > 0)
+            {
+                List<Vector4> colorSets = new(colors.Length);
+                for (int channel = 0; channel < colors.Length; channel++)
+                {
+                    Vector4[]? values = colors[channel];
+                    colorSets.Add(values is not null && i < values.Length ? values[i] : Vector4.Zero);
+                }
+
+                vertex.ColorSets = colorSets;
+            }
+
+            if (texCoords is not null && texCoords.Length > 0)
+            {
+                List<Vector2> texCoordSets = new(texCoords.Length);
+                for (int channel = 0; channel < texCoords.Length; channel++)
+                {
+                    Vector2[]? values = texCoords[channel];
+                    texCoordSets.Add(values is not null && i < values.Length ? values[i] : Vector2.Zero);
+                }
+
+                vertex.TextureCoordinateSets = texCoordSets;
+            }
+
+            vertices[i] = vertex;
+        }
+
+        return vertices;
+    }
+
+    private static List<IndexTriangle>? CreateLegacyTriangles(int[]? indices)
+    {
+        int count = indices?.Length / 3 ?? 0;
+        if (count == 0)
+            return null;
+
+        List<IndexTriangle> triangles = new(count);
+        for (int i = 0; i < count; i++)
+        {
+            int index = i * 3;
+            triangles.Add(new IndexTriangle(indices![index], indices[index + 1], indices[index + 2]));
+        }
+
+        return triangles;
+    }
+
+    private static List<IndexLine>? CreateLegacyLines(int[]? indices)
+    {
+        int count = indices?.Length / 2 ?? 0;
+        if (count == 0)
+            return null;
+
+        List<IndexLine> lines = new(count);
+        for (int i = 0; i < count; i++)
+        {
+            int index = i * 2;
+            lines.Add(new IndexLine(indices![index], indices[index + 1]));
+        }
+
+        return lines;
     }
 
     private static MeshMetadata ReadMetadataCore(CookedBinaryReader reader, bool includeSkinningConvention)

@@ -71,6 +71,7 @@ namespace XREngine.Components.Scene.Mesh
         private Task<SkinnedMeshBvhScheduler.Result>? _skinnedBvhTask;
         private int _skinnedBvhVersion = 0;
         private bool _skinnedBvhScheduledOnce;
+        private bool _usesAuthoredSkinnedCullingBounds;
         private AABB _bindPoseBounds;
         private Matrix4x4 _skinnedRootRenderMatrix = Matrix4x4.Identity;
         private Matrix4x4 _skinnedRootRenderMatrixInverse = Matrix4x4.Identity;
@@ -256,12 +257,16 @@ namespace XREngine.Components.Scene.Mesh
 
             }
 
-            RootBone = ResolveSkinnedRootBoneTransform(serializedRootBone, DetermineRootBoneFromRenderers());
+            RootBone = ResolveSkinnedRootBoneTransform(
+                serializedRootBone,
+                DetermineRootBoneFromRenderers(),
+                referenceSearchRoot);
 
             _renderBoundsCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, DoRenderBounds);
             RenderInfo = RenderInfo3D.New(component, _rc = new RenderCommandMesh3D(0));
             if (RenderBounds)
                 RenderInfo.RenderCommands.Add(_renderBoundsCommand);
+            _usesAuthoredSkinnedCullingBounds = mesh.CullingBounds.HasValue;
             RenderInfo.LocalCullingVolume = mesh.CullingBounds ?? mesh.Bounds;
             _bindPoseBounds = RenderInfo.LocalCullingVolume ?? mesh.Bounds;
             RenderInfo.PreCollectCommandsCallback = BeforeAdd;
@@ -940,6 +945,26 @@ namespace XREngine.Components.Scene.Mesh
             TransformBase? inferredRootBone)
             => serializedRootBone ?? inferredRootBone;
 
+        internal static TransformBase? ResolveSkinnedRootBoneTransform(
+            TransformBase? serializedRootBone,
+            TransformBase? inferredRootBone,
+            TransformBase? referenceSearchRoot)
+        {
+            if (serializedRootBone is null)
+                return inferredRootBone;
+
+            if (referenceSearchRoot is null)
+                return serializedRootBone;
+
+            if (IsSelfOrDescendantOf(referenceSearchRoot, serializedRootBone))
+                return serializedRootBone;
+
+            if (inferredRootBone is not null && IsSelfOrDescendantOf(referenceSearchRoot, inferredRootBone))
+                return inferredRootBone;
+
+            return serializedRootBone;
+        }
+
         internal static TransformBase? ResolveSkinnedBoundsBasisTransform(
             TransformBase? rootBone,
             TransformBase? rootTransform)
@@ -1141,6 +1166,9 @@ namespace XREngine.Components.Scene.Mesh
         private bool EnsureSkinnedBounds()
         {
             if (!IsSkinned)
+                return false;
+
+            if (_usesAuthoredSkinnedCullingBounds)
                 return false;
 
             lock (_skinnedDataLock)
@@ -1466,7 +1494,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ProcessSkinnedBoundsRefresh()
         {
-            if (!IsSkinned)
+            if (!IsSkinned || _usesAuthoredSkinnedCullingBounds)
                 return;
 
             bool requeue = false;
@@ -1850,7 +1878,7 @@ namespace XREngine.Components.Scene.Mesh
             if (!localBounds.IsValid)
                 return false;
 
-            Matrix4x4 basis = Component.Transform.RenderMatrix;
+            Matrix4x4 basis = RenderInfo?.CullingOffsetMatrix ?? Component.Transform.RenderMatrix;
             worldBounds = TransformBounds(localBounds, basis);
             return worldBounds.IsValid;
         }
