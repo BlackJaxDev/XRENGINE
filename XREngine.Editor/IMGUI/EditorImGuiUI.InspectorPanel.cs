@@ -533,9 +533,14 @@ public static partial class EditorImGuiUI
                 }
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
+                bool canToggleActiveSelf = !allActive || nodes.All(static node => node.CanDeactivate);
                 if (mixed)
                     ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * 0.6f);
+                if (!canToggleActiveSelf)
+                    ImGui.BeginDisabled();
                 bool toggled = ImGui.Checkbox("##SceneNodeActiveSelfMulti", ref active);
+                if (!canToggleActiveSelf)
+                    ImGui.EndDisabled();
                 if (mixed)
                     ImGui.PopStyleVar();
                 if (toggled)
@@ -563,9 +568,14 @@ public static partial class EditorImGuiUI
                 }
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
+                bool canToggleActiveInHierarchy = !allActive || nodes.All(static node => node.CanDeactivate);
                 if (mixed)
                     ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * 0.6f);
+                if (!canToggleActiveInHierarchy)
+                    ImGui.BeginDisabled();
                 bool toggled = ImGui.Checkbox("##SceneNodeActiveInHierarchyMulti", ref active);
+                if (!canToggleActiveInHierarchy)
+                    ImGui.EndDisabled();
                 if (mixed)
                     ImGui.PopStyleVar();
                 if (toggled)
@@ -1277,21 +1287,31 @@ public static partial class EditorImGuiUI
             DrawInspectorRow("Active Self", () =>
             {
                 bool active = node.IsActiveSelf;
+                bool canToggleActiveSelf = node.CanDeactivate || !node.IsActiveSelf;
+                if (!canToggleActiveSelf)
+                    ImGui.BeginDisabled();
                 if (ImGui.Checkbox("##SceneNodeActiveSelf", ref active))
                 {
                     using var _ = Undo.TrackChange("Toggle Active Self", node);
                     node.IsActiveSelf = active;
                 }
+                if (!canToggleActiveSelf)
+                    ImGui.EndDisabled();
             });
 
             DrawInspectorRow("Active In Hierarchy", () =>
             {
                 bool active = node.IsActiveInHierarchy;
+                bool canToggleActiveInHierarchy = node.CanDeactivate || !node.IsActiveInHierarchy;
+                if (!canToggleActiveInHierarchy)
+                    ImGui.BeginDisabled();
                 if (ImGui.Checkbox("##SceneNodeActiveInHierarchy", ref active))
                 {
                     using var _ = Undo.TrackChange("Toggle Active In Hierarchy", node);
                     node.IsActiveInHierarchy = active;
                 }
+                if (!canToggleActiveInHierarchy)
+                    ImGui.EndDisabled();
             });
 
             DrawInspectorRow("ID", () => ImGui.TextUnformatted(node.ID.ToString()));
