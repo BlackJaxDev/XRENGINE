@@ -22,7 +22,7 @@ Current limitations:
 ## Default routing
 
 - The ImGui editor exposes `Tools > Import External Files...` and `Tools > Import External Folder...` to copy external sources into the project `Assets/` tree and optionally run the registered third-party import pipeline immediately. Folder import is the preferred path for Unity exports because it preserves `.meta` files and referenced material, shader, and texture dependencies.
-- `.fbx` files route through the native `XREngine.Fbx` importer by default.
+- `.fbx` files route through the native `XREngine.Fbx` importer by default. `FbxBackend = Auto` attempts native import first and falls back to Assimp if the native path rejects the asset or throws.
 - `.gltf` and `.glb` files route through the native fastgltf-backed path by default.
 - `.anim` files route to `AnimationClip` through the Unity YAML animation importer.
 - `.unity`, `.prefab`, and `.mat` files route through the Unity YAML scene, prefab, and material importers.
@@ -83,6 +83,7 @@ Enabled FBX trace lines flow through the engine `Assets` log category, so they a
 The remaining import settings apply across native and compatibility paths unless noted otherwise:
 
 - `ProcessMeshesAsynchronously`: runs mesh conversion work on background jobs instead of finishing the whole import inline.
+- `NativeFbxMeshBuildMaxDegreeOfParallelism`: caps the native FBX mesh build stage. `0` uses an editor-friendly automatic cap; positive values force an exact maximum worker count.
 - `GenerateMeshRenderersAsync`: leaves `XRMeshRenderer.GenerateAsync` off by default globally, but allows imported model renderers to opt into async renderer generation.
 - `SplitSubmeshesIntoSeparateModelComponents`: creates one `ModelComponent` per imported submesh instead of grouping a source node's submeshes into one model component.
 - `GenerateSceneNodesPerSubmesh`: creates individual child scene nodes for split submesh model components. This implies split submesh components.
@@ -104,6 +105,8 @@ Without `PutAllCoacdCollidersIntoOneStaticRigidBodyComponent`, `GenerateCoacdCol
 `BatchSubmeshAddsDuringAsyncImport = false` streams submeshes into the scene as they become ready. Publication still happens on the swap thread rather than directly from worker threads, and the importer preserves source order by only releasing the next contiguous ready submeshes.
 
 `ProcessMeshesAsynchronously` can still inherit the engine-wide async import preference.
+
+`NativeFbxMeshBuildMaxDegreeOfParallelism` is a per-import setting for the native FBX backend. Its default `0` leaves worker selection to the importer, which intentionally keeps the cap conservative so background imports do not starve editor input and rendering. Raise it only when batch-import throughput matters more than interactive responsiveness.
 
 `GenerateMeshRenderersAsync` is a per-import setting on `ModelImportOptions`. Its current default is `true`.
 
@@ -141,3 +144,9 @@ When a third-party model (e.g. `Mitsuki.fbx`) is imported to a native prefab `Mi
 ```
 
 If any sub-asset serialization fails mid-import, placeholder files that were never overwritten are deleted during cleanup so the on-disk folder does not accumulate empty `.asset` stubs.
+
+During third-party import externalization, generated `XRMesh` assets serialize their runtime mesh buffers as raw streams inside the cooked mesh payload. The outer YAML `DataSource` payload is already Zstd-compressed, so this avoids expensive per-buffer LZMA work while keeping the written `.asset` files compressed. Existing mesh assets that were written with LZMA buffer streams remain readable.
+
+Third-party-to-native conversion suppresses render API wrapper creation and `ModelComponent` runtime renderable mesh construction while the source model is being converted. The saved prefab template still contains the authored `Model`/`SubMesh` references; runtime `RenderableMesh` objects are rebuilt when the prefab hierarchy is deserialized or instantiated. Conversion logs one timing line each for source import, externalized sub-asset write, root serialization, and total completion. Individual sub-asset/cache writes only log timing details when they exceed 100 ms.
+
+Save & Reimport reports determinate editor job progress: settings save, source/model import, embedded sub-asset externalization, root serialization, and finalization. Model imports forward per-mesh importer progress when available, so the UI can show a moving percentage during the longest stage instead of an indeterminate spinner.

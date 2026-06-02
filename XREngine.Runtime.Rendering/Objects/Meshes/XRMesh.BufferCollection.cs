@@ -61,6 +61,16 @@ namespace XREngine.Rendering
         public class BufferCollection : XRBase, IEventDictionary<string, XRDataBuffer>
         {
             private EventDictionary<string, XRDataBuffer> _buffers = [];
+            private bool _ownsBufferData = true;
+
+            public BufferCollection()
+            {
+            }
+
+            private BufferCollection(bool ownsBufferData)
+            {
+                _ownsBufferData = ownsBufferData;
+            }
 
             //public XRDataBuffer? this[string bindingName]
             //{
@@ -82,7 +92,8 @@ namespace XREngine.Rendering
                 if (_buffers.TryGetValue(name, out XRDataBuffer? buffer))
                 {
                     _buffers.Remove(name);
-                    buffer.Dispose();
+                    if (_ownsBufferData)
+                        buffer.Dispose();
                 }
             }
 
@@ -216,10 +227,27 @@ namespace XREngine.Rendering
 
             public BufferCollection Clone()
             {
-                BufferCollection clone = [];
+                BufferCollection clone = new(ownsBufferData: true);
                 foreach (KeyValuePair<string, XRDataBuffer> kvp in _buffers)
                     clone.Add(kvp.Key, kvp.Value.Clone(true, kvp.Value.Target));
                 return clone;
+            }
+
+            internal BufferCollection CloneShared()
+            {
+                BufferCollection clone = new(ownsBufferData: false);
+                foreach (KeyValuePair<string, XRDataBuffer> kvp in _buffers)
+                    clone.Add(kvp.Key, kvp.Value);
+                return clone;
+            }
+
+            internal void DisposeOwnedBuffers()
+            {
+                if (!_ownsBufferData)
+                    return;
+
+                foreach (KeyValuePair<string, XRDataBuffer> kvp in _buffers)
+                    kvp.Value.Dispose();
             }
 
             public EventDictionary<string, XRDataBuffer> Buffers

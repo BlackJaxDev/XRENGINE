@@ -110,7 +110,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
         ImGui.SameLine();
         if (ImGui.Button("Auto Detect Rig"))
-            RunSceneEdit(humanoid.SetFromNode);
+            RunSceneEdit(humanoid.ReinitializeSceneNodeBindings);
 
         ImGui.SameLine();
         if (ImGui.Button("Apply Neutral Preset"))

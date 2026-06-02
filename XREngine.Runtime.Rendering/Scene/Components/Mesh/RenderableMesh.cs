@@ -33,6 +33,7 @@ namespace XREngine.Components.Scene.Mesh
         private readonly record struct SkinnedBoundsCpuSnapshot(
             Vertex[] Vertices,
             Dictionary<TransformBase, Matrix4x4> SkinMatrices,
+            IReadOnlyDictionary<TransformBase, TransformBase>? BoneReferenceRemap,
             Matrix4x4 FallbackMatrix,
             Matrix4x4 Basis);
 
@@ -264,6 +265,8 @@ namespace XREngine.Components.Scene.Mesh
             RenderInfo.LocalCullingVolume = mesh.CullingBounds ?? mesh.Bounds;
             _bindPoseBounds = RenderInfo.LocalCullingVolume ?? mesh.Bounds;
             RenderInfo.PreCollectCommandsCallback = BeforeAdd;
+            RenderInfo.PropertyChanged += RenderInfoPropertyChanged;
+            PublishRenderCommandCullingVolume();
 
             lock (_lodsLock)
             {
@@ -294,6 +297,18 @@ namespace XREngine.Components.Scene.Mesh
 
             _lastRenderSkinningEnabled = IsSkinned;
             RuntimeEngine.Rendering.SettingsChanged += Rendering_SettingsChanged;
+        }
+
+        private void RenderInfoPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is nameof(RenderInfo3D.LocalCullingVolume) or nameof(RenderInfo3D.CullingOffsetMatrix))
+                PublishRenderCommandCullingVolume();
+        }
+
+        private void PublishRenderCommandCullingVolume()
+        {
+            Box? worldBox = ((IOctreeItem)RenderInfo).WorldCullingVolume;
+            _rc.WorldCullingVolumeOverride = worldBox?.GetAABB(transformed: true);
         }
 
         internal RenderableLOD[] GetLodSnapshot()
@@ -1286,7 +1301,7 @@ namespace XREngine.Components.Scene.Mesh
 
             for (int i = 0; i < vertices.Length; i++)
             {
-                Vector3 worldPos = ComputeSkinnedPosition(vertices[i], fallbackMatrix, snapshot.SkinMatrices);
+                Vector3 worldPos = ComputeSkinnedPosition(vertices[i], fallbackMatrix, snapshot.SkinMatrices, snapshot.BoneReferenceRemap);
                 Vector3 localPos = TransformPosition(worldPos, invBasis);
                 localPositions[i] = localPos;
 
@@ -1313,7 +1328,11 @@ namespace XREngine.Components.Scene.Mesh
             return true;
         }
 
-        private static Vector3 ComputeSkinnedPosition(Vertex vertex, Matrix4x4 fallbackMatrix, IReadOnlyDictionary<TransformBase, Matrix4x4> skinMatrices)
+        private static Vector3 ComputeSkinnedPosition(
+            Vertex vertex,
+            Matrix4x4 fallbackMatrix,
+            IReadOnlyDictionary<TransformBase, Matrix4x4> skinMatrices,
+            IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap)
         {
             if (vertex.Weights is not { Count: > 0 })
                 return TransformPosition(vertex.Position, fallbackMatrix);
@@ -1321,8 +1340,12 @@ namespace XREngine.Components.Scene.Mesh
             Vector3 result = Vector3.Zero;
             foreach (var (bone, data) in vertex.Weights)
             {
-                if (!skinMatrices.TryGetValue(bone, out Matrix4x4 boneMatrix))
-                    boneMatrix = data.bindInvWorldMatrix * bone.RenderMatrix;
+                TransformBase resolvedBone = boneReferenceRemap is not null && boneReferenceRemap.TryGetValue(bone, out TransformBase? reboundBone)
+                    ? reboundBone
+                    : bone;
+
+                if (!skinMatrices.TryGetValue(resolvedBone, out Matrix4x4 boneMatrix))
+                    boneMatrix = data.bindInvWorldMatrix * resolvedBone.RenderMatrix;
                 result += TransformPosition(vertex.Position, boneMatrix) * data.weight;
             }
             return result;
@@ -1401,6 +1424,7 @@ namespace XREngine.Components.Scene.Mesh
             return new SkinnedBoundsCpuSnapshot(
                 vertices,
                 skinMatrices,
+                mesh.RuntimeBoneReferenceRemap,
                 Component.Transform.RenderMatrix,
                 GetSkinnedBasisMatrix());
         }
@@ -1636,6 +1660,7 @@ namespace XREngine.Components.Scene.Mesh
         public void Dispose()
         {
             RuntimeEngine.Rendering.SettingsChanged -= Rendering_SettingsChanged;
+            RenderInfo.PropertyChanged -= RenderInfoPropertyChanged;
             UntrackAllBones();
             SkinnedMeshBoundsCalculator.Instance.UnregisterSkinnedMesh(this, World?.VisualScene?.GPUCommands);
             RenderableLOD[] lods;
@@ -1689,7 +1714,7 @@ namespace XREngine.Components.Scene.Mesh
             if (source is null || searchRoot is null)
                 return source;
 
-            if (source.SceneNode is not null)
+            if (IsSelfOrDescendantOf(searchRoot, source))
                 return source;
 
             Guid referenceId = source.EffectiveSerializedReferenceId;
@@ -1701,11 +1726,11 @@ namespace XREngine.Components.Scene.Mesh
 
         private XRMesh? CreateRuntimeMesh(XRMesh? sourceMesh, TransformBase? searchRoot)
         {
-            if (sourceMesh is null || searchRoot is null || !sourceMesh.NeedsSerializedTransformRebind())
+            if (sourceMesh is null || searchRoot is null || !sourceMesh.NeedsSerializedTransformRebind(searchRoot))
                 return sourceMesh;
 
-            XRMesh reboundMesh = sourceMesh.Clone();
-            if (!reboundMesh.RebindSerializedTransformReferences(searchRoot))
+            XRMesh reboundMesh = sourceMesh.CloneForRuntimeTransformRebind();
+            if (!reboundMesh.RebindSerializedTransformReferences(searchRoot, remapVertexWeights: false))
             {
                 reboundMesh.Destroy(now: true);
                 return sourceMesh;
@@ -1713,6 +1738,17 @@ namespace XREngine.Components.Scene.Mesh
 
             _ownedRuntimeMeshes.Add(reboundMesh);
             return reboundMesh;
+        }
+
+        private static bool IsSelfOrDescendantOf(TransformBase root, TransformBase candidate)
+        {
+            for (TransformBase? current = candidate; current is not null; current = current.Parent)
+            {
+                if (ReferenceEquals(current, root))
+                    return true;
+            }
+
+            return false;
         }
 
         private void ReleaseOwnedRuntimeMesh(XRMesh? mesh)

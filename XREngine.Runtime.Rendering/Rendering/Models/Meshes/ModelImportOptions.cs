@@ -1,4 +1,5 @@
 using Assimp;
+using System;
 using System.ComponentModel;
 using XREngine.Data;
 using XREngine.Fbx;
@@ -189,6 +190,12 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool MultiThread { get; set; } = true;
 
     /// <summary>
+    /// Maximum worker parallelism used by the native FBX mesh build stage.
+    /// Zero means auto: use a conservative editor-friendly cap that avoids saturating the UI/render thread.
+    /// </summary>
+    public int NativeFbxMeshBuildMaxDegreeOfParallelism { get; set; } = 0;
+
+    /// <summary>
     /// Whether to process meshes asynchronously.
     /// Null means "inherit <see cref="RuntimeEngine.Rendering.Settings.ProcessMeshImportsAsynchronously"/>".
     /// </summary>
@@ -224,6 +231,14 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     /// to the scene in one batch at the end or streamed in as they become ready.
     /// </summary>
     public bool BatchSubmeshAddsDuringAsyncImport { get; set; } = true;
+
+    /// <summary>
+    /// Runtime-only progress callback used by editor/import jobs. This is intentionally
+    /// not serialized into import settings.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public Action<float>? ProgressCallback { get; set; }
 
     /// <summary>
     /// Maps original imported texture file paths to finalized texture assets.

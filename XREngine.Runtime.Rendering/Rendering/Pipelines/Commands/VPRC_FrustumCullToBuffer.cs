@@ -88,6 +88,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (mesh is null)
                 return false;
 
+            if (meshCommand is RenderCommandMesh3D command3d &&
+                command3d.TryGetWorldCullingVolumeOverride(out AABB overrideBounds))
+            {
+                worldBounds = overrideBounds.ToBox(Matrix4x4.Identity);
+                return true;
+            }
+
             AABB localBounds = mesh.Bounds;
             Vector3 size = localBounds.HalfExtents * 2.0f;
             if (size.X < 0.0f || size.Y < 0.0f || size.Z < 0.0f)

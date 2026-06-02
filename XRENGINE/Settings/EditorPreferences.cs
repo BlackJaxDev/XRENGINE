@@ -91,8 +91,8 @@ namespace XREngine
         private string _mcpAssistantGitHubModelsModel = "openai/gpt-4.1";
 
         // Importer backend selection (per third-party file type).
-        // Defaults favor the legacy Assimp path while the native importers stabilize.
-        private FbxImportBackend _fbxImporterBackend = FbxImportBackend.Assimp;
+        // Auto favors native importers with compatibility fallbacks where available.
+        private FbxImportBackend _fbxImporterBackend = FbxImportBackend.Auto;
         private GltfImportBackend _gltfImporterBackend = GltfImportBackend.Auto;
 
         [Category("Theme")]
@@ -755,7 +755,7 @@ namespace XREngine
 
         /// <summary>
         /// Selects which importer backend is used for .fbx third-party assets.
-        /// Default is <see cref="FbxImportBackend.Assimp"/> while the native FBX path stabilizes.
+        /// Default is <see cref="FbxImportBackend.Auto"/> (native with Assimp fallback).
         /// Per-asset <c>ModelImportOptions.FbxBackend</c> overrides this default when not set to <c>Auto</c>.
         /// </summary>
         [Category("Importers")]

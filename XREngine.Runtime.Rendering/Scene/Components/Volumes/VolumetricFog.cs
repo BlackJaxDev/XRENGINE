@@ -262,6 +262,23 @@ namespace XREngine.Components.Scene.Volumes
                     return count;
                 }
             }
+
+            public static bool HasActive(IRuntimeRenderWorld world)
+            {
+                lock (s_lock)
+                {
+                    if (!s_perWorld.TryGetValue(world, out var list))
+                        return false;
+
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (list[i].HasRenderableVolume)
+                            return true;
+                    }
+
+                    return false;
+                }
+            }
         }
     }
 }

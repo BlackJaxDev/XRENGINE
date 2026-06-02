@@ -299,6 +299,10 @@ public sealed class NativeFbxImporterTests
 
             ModelComponent? modelComponent = meshNode!.GetComponent<ModelComponent>();
             modelComponent.ShouldNotBeNull();
+            SubMesh subMesh = modelComponent!.Model!.Meshes[0];
+            subMesh.RootBone.ShouldNotBeNull();
+            subMesh.RootBone!.Name.ShouldBe("Root");
+            subMesh.RootTransform.ShouldBeSameAs(rootNode.Transform);
             SubMeshLOD lod = modelComponent!.Model!.Meshes[0].LODs.Min!;
             XRMesh mesh = lod.Mesh!;
 
@@ -344,6 +348,55 @@ public sealed class NativeFbxImporterTests
             AnimationMember blendshapeMethod = FindChild(getComponent, "SetBlendShapeWeightNormalized", EAnimationMemberType.Method, "Smile");
             blendshapeMethod.Animation.ShouldNotBeNull();
             ((PropAnimFloat)blendshapeMethod.Animation!).Keyframes.Count.ShouldBe(2);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Import_NativeFbxBackend_ImportsSkinningWhenSkinConnectionsAreReversed()
+    {
+        string tempDirectory = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"fbx-native-reversed-skin-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        string fbxPath = Path.Combine(tempDirectory, "reversed-skin.fbx");
+        string fbx = CreateSyntheticPhase4Fbx()
+            .Replace("C: \"OO\",6000,2000", "C: \"OO\",2000,6000", StringComparison.Ordinal)
+            .Replace("C: \"OO\",6001,6000", "C: \"OO\",6000,6001", StringComparison.Ordinal)
+            .Replace("C: \"OO\",6002,6000", "C: \"OO\",6000,6002", StringComparison.Ordinal);
+        File.WriteAllText(fbxPath, fbx);
+
+        try
+        {
+            using var importer = new ModelImporter(fbxPath, onCompleted: null, materialFactory: null)
+            {
+                ImportOptions = new ModelImportOptions
+                {
+                    GenerateMeshRenderersAsync = false,
+                },
+            };
+
+            SceneNode? rootNode = importer.Import(PostProcessSteps.None, onProgress: null);
+
+            rootNode.ShouldNotBeNull();
+            SceneNode? meshNode = rootNode!.FindDescendantByName("MeshNode");
+            meshNode.ShouldNotBeNull();
+
+            ModelComponent? modelComponent = meshNode!.GetComponent<ModelComponent>();
+            modelComponent.ShouldNotBeNull();
+            SubMesh subMesh = modelComponent!.Model!.Meshes[0];
+            subMesh.RootBone.ShouldNotBeNull();
+            subMesh.RootBone!.Name.ShouldBe("Root");
+            XRMesh mesh = subMesh.LODs.Min!.Mesh!;
+
+            mesh.HasSkinning.ShouldBeTrue();
+            mesh.UtilizedBones.Length.ShouldBe(2);
+            mesh.UtilizedBones.Select(static entry => entry.tfm.Name).ShouldContain("BoneA");
+            mesh.UtilizedBones.Select(static entry => entry.tfm.Name).ShouldContain("BoneB");
+            mesh.Vertices[2].Weights.ShouldNotBeNull();
+            mesh.Vertices[2].Weights!.Count.ShouldBe(2);
         }
         finally
         {
@@ -428,6 +481,30 @@ public sealed class NativeFbxImporterTests
 
         options.FbxBackend.ShouldBe(FbxImportBackend.Assimp);
         options.GltfBackend.ShouldBe(GltfImportBackend.Assimp);
+    }
+
+    [Test]
+    public void NativeFbxMeshBuildParallelism_UsesExplicitLimitAndConservativeAutoCap()
+    {
+        Type importerType = typeof(ModelImporter).Assembly.GetType("XREngine.NativeFbxSceneImporter", throwOnError: true)!;
+        MethodInfo method = importerType.GetMethod("ResolveMeshBuildParallelism", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        int explicitParallelism = (int)method.Invoke(null, [new ModelImportOptions
+        {
+            NativeFbxMeshBuildMaxDegreeOfParallelism = 3,
+        }])!;
+        explicitParallelism.ShouldBe(3);
+
+        int disabledParallelism = (int)method.Invoke(null, [new ModelImportOptions
+        {
+            MultiThread = false,
+            NativeFbxMeshBuildMaxDegreeOfParallelism = 3,
+        }])!;
+        disabledParallelism.ShouldBe(1);
+
+        int autoParallelism = (int)method.Invoke(null, [new ModelImportOptions()])!;
+        autoParallelism.ShouldBeGreaterThanOrEqualTo(1);
+        autoParallelism.ShouldBeLessThanOrEqualTo(4);
     }
 
     [Test]

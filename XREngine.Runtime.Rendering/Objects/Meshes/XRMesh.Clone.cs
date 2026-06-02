@@ -93,4 +93,53 @@ public partial class XRMesh
 
         return clone;
     }
+
+    internal XRMesh CloneForRuntimeTransformRebind()
+    {
+        using var _ = RuntimeRenderingHostServices.Current.StartProfileScope("XRMesh Runtime Transform Rebind Clone");
+
+        XRMesh clone = new()
+        {
+            Name = Name,
+            _interleaved = Interleaved,
+            _interleavedStride = InterleavedStride,
+            _positionOffset = PositionOffset,
+            _normalOffset = NormalOffset,
+            _tangentOffset = TangentOffset,
+            _colorOffset = ColorOffset,
+            _texCoordOffset = TexCoordOffset,
+            _colorCount = ColorCount,
+            _texCoordCount = TexCoordCount,
+            VertexCount = VertexCount,
+            _type = Type,
+            _patchVertices = PatchVertices,
+            _bounds = Bounds,
+            _maxWeightCount = MaxWeightCount,
+            _skinningShaderConvention = SkinningShaderConvention,
+            _skinningInfluenceEncoding = SkinningInfluenceEncoding,
+            _skinningCoreIndexFormat = SkinningCoreIndexFormat,
+            _hasSpillInfluences = HasSpillInfluences,
+            _maxSpillInfluenceCount = MaxSpillInfluenceCount,
+            BindRootMatrix = BindRootMatrix,
+            BlendshapeNames = [.. BlendshapeNames],
+            _blendshapeShaderVariant = BlendshapeShaderVariant,
+            _blendshapeDeltaStorageMode = BlendshapeDeltaStorageMode,
+            _blendshapeDeltaEncoding = BlendshapeDeltaEncoding,
+            _blendshapeAffectedVertexCount = BlendshapeAffectedVertexCount,
+            _blendshapeSparseRecordCount = BlendshapeSparseRecordCount,
+            _vertices = Vertices,
+            _points = _points,
+            _lines = _lines,
+            _triangles = _triangles,
+        };
+
+        if (HasSkinning)
+        {
+            clone.UtilizedBones = new (TransformBase tfm, System.Numerics.Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
+            Array.Copy(UtilizedBones, clone.UtilizedBones, UtilizedBones.Length);
+        }
+
+        clone.Buffers = Buffers.CloneShared();
+        return clone;
+    }
 }

@@ -1,6 +1,7 @@
 using MemoryPack;
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Threading;
 using XREngine.Core.Files;
 using YamlDotNet.Serialization;
 
@@ -19,6 +20,28 @@ public abstract partial class GenericRenderObject : XRAsset
     internal static readonly ConcurrentDictionary<Type, List<GenericRenderObject>> _roCache = [];
 
     public static IReadOnlyDictionary<Type, List<GenericRenderObject>> RenderObjectCache => _roCache;
+
+    private static readonly AsyncLocal<int> ApiWrapperCreationSuppressionDepth = new();
+
+    public static IDisposable EnterApiWrapperCreationSuppressionScope()
+        => new ApiWrapperCreationSuppressionScope();
+
+    private sealed class ApiWrapperCreationSuppressionScope : IDisposable
+    {
+        private bool _disposed;
+
+        public ApiWrapperCreationSuppressionScope()
+            => ApiWrapperCreationSuppressionDepth.Value++;
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            ApiWrapperCreationSuppressionDepth.Value = Math.Max(0, ApiWrapperCreationSuppressionDepth.Value - 1);
+            _disposed = true;
+        }
+    }
 
     /// <summary>
     /// True if this object is currently in use by any rendering host.
@@ -74,7 +97,8 @@ public abstract partial class GenericRenderObject : XRAsset
             list.Add(this);
         }
 
-        GetWrappers();
+        if (ApiWrapperCreationSuppressionDepth.Value == 0)
+            GetWrappers();
     }
 
     private void GetWrappers()
