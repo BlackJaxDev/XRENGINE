@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using XREngine.Animation;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Fbx;
 using XREngine.Rendering;
@@ -671,7 +672,7 @@ internal static class NativeFbxSceneImporter
                         RootTransform = rootTransform,
                         RootBone = ResolveRootBone(xrMesh),
                     };
-                    UpdateSkinnedSubMeshBoundsForRuntimeBasis(subMesh, xrMesh, meshWorldMatrix, rootTransform);
+                    UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis(subMesh, xrMesh, meshWorldMatrix, rootTransform);
 
                     IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(subMesh, separateMeshIslands);
                     if (separateMeshIslands && finalSubMeshes.Count > 1)
@@ -681,7 +682,7 @@ internal static class NativeFbxSceneImporter
                             SubMesh finalSubMesh = finalSubMeshes[finalIndex];
                             XRMesh? finalMesh = finalSubMesh.LODs.Min?.Mesh;
                             if (finalMesh is not null)
-                                UpdateSkinnedSubMeshBoundsForRuntimeBasis(finalSubMesh, finalMesh, meshWorldMatrix, rootTransform);
+                                UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis(finalSubMesh, finalMesh, meshWorldMatrix, rootTransform);
                         }
                     }
                     subMeshes.AddRange(finalSubMeshes);
@@ -731,7 +732,7 @@ internal static class NativeFbxSceneImporter
         }
     }
 
-    private static void UpdateSkinnedSubMeshBoundsForRuntimeBasis(
+    private static void UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis(
         SubMesh subMesh,
         XRMesh mesh,
         Matrix4x4 meshWorldMatrix,
@@ -742,11 +743,49 @@ internal static class NativeFbxSceneImporter
 
         TransformBase basisTransform = subMesh.RootBone ?? rootTransform;
         Matrix4x4 basisWorldMatrix = basisTransform.WorldMatrix;
-        Matrix4x4 localFromMesh = Matrix4x4.Invert(basisWorldMatrix, out Matrix4x4 inverseBasisWorld)
-            ? meshWorldMatrix * inverseBasisWorld
-            : Matrix4x4.Identity;
+        if (!Matrix4x4.Invert(basisWorldMatrix, out Matrix4x4 inverseBasisWorld))
+            return;
 
-        subMesh.Bounds = mesh.Bounds.Transformed(point => Vector3.Transform(point, localFromMesh));
+        subMesh.CullingBounds = CalculateSkinnedBindPoseCullingBounds(mesh, meshWorldMatrix, inverseBasisWorld);
+    }
+
+    private static AABB CalculateSkinnedBindPoseCullingBounds(XRMesh mesh, Matrix4x4 meshWorldMatrix, Matrix4x4 inverseBasisWorld)
+    {
+        Vertex[]? vertices = mesh.Vertices;
+        if (vertices is not { Length: > 0 })
+        {
+            Matrix4x4 localFromMesh = meshWorldMatrix * inverseBasisWorld;
+            return mesh.Bounds.Transformed(point => Vector3.Transform(point, localFromMesh));
+        }
+
+        Vector3 min = TransformSkinnedBindPositionToBasisLocal(vertices[0], meshWorldMatrix, inverseBasisWorld);
+        Vector3 max = min;
+
+        for (int vertexIndex = 1; vertexIndex < vertices.Length; vertexIndex++)
+        {
+            Vector3 localPosition = TransformSkinnedBindPositionToBasisLocal(vertices[vertexIndex], meshWorldMatrix, inverseBasisWorld);
+            min = Vector3.Min(min, localPosition);
+            max = Vector3.Max(max, localPosition);
+        }
+
+        return new AABB(min, max);
+    }
+
+    private static Vector3 TransformSkinnedBindPositionToBasisLocal(Vertex vertex, Matrix4x4 meshWorldMatrix, Matrix4x4 inverseBasisWorld)
+    {
+        Vector3 worldPosition;
+        if (vertex.Weights is { Count: > 0 } weights)
+        {
+            worldPosition = Vector3.Zero;
+            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) influence) in weights)
+                worldPosition += Vector3.Transform(vertex.Position, influence.bindInvWorldMatrix * bone.BindMatrix) * influence.weight;
+        }
+        else
+        {
+            worldPosition = Vector3.Transform(vertex.Position, meshWorldMatrix);
+        }
+
+        return Vector3.Transform(worldPosition, inverseBasisWorld);
     }
 
     private static int CountPolygonVertexCount(IReadOnlyList<int> polygonVertexIndices, int polygonVertexStart)

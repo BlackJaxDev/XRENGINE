@@ -1,10 +1,16 @@
 using System.Numerics;
 using System.Reflection;
+using System.Linq;
+using System.Collections.Generic;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Compute;
+using XREngine.Rendering.Models;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
@@ -62,6 +68,94 @@ public sealed class RenderableMeshBoundsTests
             inferredAncestor);
 
         ReferenceEquals(rootBone, serializedRootBone).ShouldBeTrue();
+    }
+
+    [Test]
+    public void ResolveSkinnedRootBoneTransform_UsesInferredPrefabBoneWhenSerializedRootIsOutsideInstance()
+    {
+        SceneNode prefabRoot = new("PrefabRoot");
+        SceneNode inferredBoneNode = new(prefabRoot, "Bone");
+        Transform serializedRootBone = new();
+
+        TransformBase? rootBone = RenderableMesh.ResolveSkinnedRootBoneTransform(
+            serializedRootBone,
+            inferredBoneNode.Transform,
+            prefabRoot.Transform);
+
+        ReferenceEquals(rootBone, inferredBoneNode.Transform).ShouldBeTrue();
+    }
+
+    [Test]
+    public void TryGetWorldBounds_UsesRenderInfoCullingBasisForBindPoseFallback()
+    {
+        SceneNode node = new("BoundsRoot");
+        Transform transform = node.SetTransform<Transform>();
+        transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        ModelComponent component = node.AddComponent<ModelComponent>()!;
+        component.Model = new Model(
+            new SubMesh(
+                XRMesh.Shapes.SolidBox(Vector3.Zero, new Vector3(2.0f)),
+                new XRMaterial()));
+
+        RenderableMesh renderable = component.Meshes.Single();
+        renderable.RenderInfo.LocalCullingVolume = new AABB(new Vector3(-1.0f), new Vector3(1.0f));
+        renderable.RenderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(12.0f, -3.0f, 4.0f);
+
+        renderable.TryGetWorldBounds(out AABB worldBounds).ShouldBeTrue();
+
+        worldBounds.Center.X.ShouldBe(12.0f, 0.0001f);
+        worldBounds.Center.Y.ShouldBe(-3.0f, 0.0001f);
+        worldBounds.Center.Z.ShouldBe(4.0f, 0.0001f);
+    }
+
+    [Test]
+    public void AuthoredSkinnedCullingBounds_AreNotReplacedByRuntimeSkinnedBounds()
+    {
+        SceneNode root = new("SkinnedRoot");
+        SceneNode meshNode = new(root, "MeshNode");
+        SceneNode boneNode = new(root, "Bone");
+
+        Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> weights = new()
+        {
+            [boneNode.Transform] = (1.0f, Matrix4x4.Identity),
+        };
+
+        XRMesh mesh = new(
+            [
+                new Vertex(new Vector3(-0.25f, 0.0f, 0.0f)) { Weights = weights },
+                new Vertex(new Vector3(0.25f, 0.0f, 0.0f)) { Weights = weights },
+                new Vertex(new Vector3(0.0f, 0.5f, 0.0f)) { Weights = weights },
+            ],
+            new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices();
+
+        AABB authoredBounds = new(new Vector3(-3.0f, -2.0f, -1.0f), new Vector3(3.0f, 2.0f, 1.0f));
+        SubMesh subMesh = new(new SubMeshLOD(new XRMaterial(), mesh, 0.0f))
+        {
+            CullingBounds = authoredBounds,
+            RootBone = boneNode.Transform,
+            RootTransform = root.Transform,
+        };
+
+        ModelComponent component = meshNode.AddComponent<ModelComponent>()!;
+        component.Model = new Model(subMesh);
+
+        RenderableMesh renderable = component.Meshes.Single();
+        renderable.IsSkinned.ShouldBeTrue();
+
+        MethodInfo ensureSkinnedBounds = typeof(RenderableMesh).GetMethod(
+            "EnsureSkinnedBounds",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        bool ensured = (bool)ensureSkinnedBounds.Invoke(renderable, null)!;
+        ensured.ShouldBeFalse();
+
+        MethodInfo processPending = typeof(RenderableMesh).GetMethod(
+            "ProcessPendingRenderMatrixUpdates",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
+        processPending.Invoke(null, null);
+
+        renderable.RenderInfo.LocalCullingVolume.ShouldBe(authoredBounds);
     }
 
     [Test]

@@ -31,6 +31,7 @@ internal static class ModelRenderDiagnostics
     private static int s_visibilityLines;
     private static int s_commandLines;
     private static int s_rejectLines;
+    private static readonly string[] s_priorityTokens = BuildPriorityTokens();
 
     private static bool Enabled
     {
@@ -395,7 +396,15 @@ internal static class ModelRenderDiagnostics
         XRMeshRenderer? renderer = renderable.GetCurrentOrFirstLodRenderer();
         XRMesh? mesh = renderer?.Mesh;
         XRMaterial? material = renderer?.Material;
-        return ContainsPriorityToken(mesh?.Name) ||
+        ModelComponent? component = renderable.Component as ModelComponent;
+        string? subMeshName = null;
+        if (component is not null && component.TryGetSourceSubMesh(renderable, out SubMesh? subMesh))
+            subMeshName = subMesh.Name;
+
+        return ContainsPriorityToken(component?.SceneNode?.Name) ||
+               ContainsPriorityToken(component?.Name) ||
+               ContainsPriorityToken(subMeshName) ||
+               ContainsPriorityToken(mesh?.Name) ||
                ContainsPriorityToken(material?.Name) ||
                (mesh?.VertexCount ?? 0) == 0 ||
                (mesh?.Triangles?.Count ?? 0) == 0 ||
@@ -403,8 +412,33 @@ internal static class ModelRenderDiagnostics
     }
 
     private static bool ContainsPriorityToken(string? value)
-        => !string.IsNullOrWhiteSpace(value) &&
-           value.Contains("body", StringComparison.OrdinalIgnoreCase);
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        for (int tokenIndex = 0; tokenIndex < s_priorityTokens.Length; tokenIndex++)
+            if (value.Contains(s_priorityTokens[tokenIndex], StringComparison.OrdinalIgnoreCase))
+                return true;
+
+        return false;
+    }
+
+    private static string[] BuildPriorityTokens()
+    {
+        string? env = System.Environment.GetEnvironmentVariable("XRE_MODEL_RENDER_DIAG_FILTER");
+        if (string.IsNullOrWhiteSpace(env))
+            return ["body"];
+
+        string trimmed = env.Trim();
+        if (trimmed.Equals("0", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("off", StringComparison.OrdinalIgnoreCase))
+        {
+            return ["body"];
+        }
+
+        return trimmed.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
 
     private static string ComponentLabel(ModelComponent component)
         => $"'{component.SceneNode?.Name ?? component.Name ?? "<unnamed>"}'#{ComponentKey(component)}";

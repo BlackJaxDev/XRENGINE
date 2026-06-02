@@ -161,6 +161,25 @@ namespace XREngine.Rendering.Commands
             };
         }
 
+        private static BoundsGpu ComputeRenderCullingBoundsGpu(
+            RenderInfo? renderInfo,
+            in AABB fallbackLocal,
+            in Matrix4x4 fallbackMatrix,
+            uint version)
+        {
+            AABB localBounds = fallbackLocal;
+            Matrix4x4 basis = fallbackMatrix;
+
+            if (renderInfo is RenderInfo3D info3d)
+            {
+                if (info3d.LocalCullingVolume is AABB localOverride)
+                    localBounds = localOverride;
+                basis = info3d.CullingOffsetMatrix;
+            }
+
+            return ComputeWorldBoundsGpu(localBounds, basis, version);
+        }
+
         // Tight world-space AABB for a single command, written into _commandAabbBuffer.
         // Layout matches the shader-side Aabb struct in bvh_nodes.glslinc / bvh_build.comp:
         //   vec4 minBounds; vec4 maxBounds;   (8 floats, 32 bytes)

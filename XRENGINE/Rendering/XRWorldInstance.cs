@@ -671,7 +671,9 @@ namespace XREngine.Rendering
         private void PreCollectVisible()
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.PreCollectVisible");
-            
+
+            ApplyRenderMatrixChanges();
+            RenderableMesh.ProcessPendingRenderMatrixUpdates();
             VisualScene.GlobalCollectVisible();
         }
 
