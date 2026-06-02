@@ -175,6 +175,15 @@ namespace XREngine.Scene
             OnDeactivated();
             OnEndPlay();
 
+            SceneNode[] childNodes = _transform?.Children
+                .Select(static child => child?.SceneNode)
+                .Where(static child => child is not null)
+                .Cast<SceneNode>()
+                .ToArray() ?? [];
+
+            foreach (SceneNode child in childNodes)
+                child.Destroy(true);
+
             ComponentsInternal.PostAnythingAdded -= OnComponentAdded;
             ComponentsInternal.PostAnythingRemoved -= OnComponentRemoved;
 

@@ -181,6 +181,7 @@ internal static class VulkanShaderAutoUniforms
         Dictionary<string, uint> integralConstants = ParseIntegralConstants(source);
 
         List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)> members = new();
+        HashSet<string> memberNames = new(StringComparer.Ordinal);
         StringBuilder output = new(source.Length + 256);
 
         int lastIndex = 0;
@@ -231,7 +232,11 @@ internal static class VulkanShaderAutoUniforms
             if (statementMembers.Count > 0)
             {
                 canRewriteStatement = true;
-                members.AddRange(statementMembers);
+                foreach (var member in statementMembers)
+                {
+                    if (memberNames.Add(member.Name))
+                        members.Add(member);
+                }
             }
 
             if (!canRewriteStatement)
@@ -261,7 +266,7 @@ internal static class VulkanShaderAutoUniforms
         {
             rewritten = Regex.Replace(
                 rewritten,
-                $@"\b{Regex.Escape(member.Name)}\b",
+                $@"(?<!\.)\b{Regex.Escape(member.Name)}\b",
                 $"{instanceName}.{member.Name}");
         }
 

@@ -34,6 +34,7 @@ public sealed class SubMeshInspector : IXRAssetInspector
 
         DrawHeader(sub);
         DrawBoundsSummary(sub);
+        DrawGpuBvhSection(sub);
         DrawLODList(sub);
         DrawAdvancedSection(sub, visitedObjects);
     }
@@ -82,6 +83,22 @@ public sealed class SubMeshInspector : IXRAssetInspector
 
         if (sub.RootBone is { } bone)
             ImGui.TextUnformatted($"Root Bone: {bone.Name ?? bone.GetType().Name}");
+
+        ImGui.Separator();
+    }
+
+    private static void DrawGpuBvhSection(SubMesh sub)
+    {
+        ImGui.TextColored(SectionLabelColor, "GPU BVH");
+        ImGui.Spacing();
+
+        bool useGpuMeshBvh = sub.UseGpuMeshBvh;
+        if (ImGui.Checkbox("Use GPU Mesh BVH", ref useGpuMeshBvh))
+            sub.UseGpuMeshBvh = useGpuMeshBvh;
+
+        bool realtimeSkinned = sub.RealtimeGpuMeshBvhForSkinnedMeshes;
+        if (ImGui.Checkbox("Realtime Skinned GPU BVH", ref realtimeSkinned))
+            sub.RealtimeGpuMeshBvhForSkinnedMeshes = realtimeSkinned;
 
         ImGui.Separator();
     }

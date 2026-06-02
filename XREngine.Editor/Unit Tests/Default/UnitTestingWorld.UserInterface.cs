@@ -885,9 +885,24 @@ public static partial class EditorUnitTests
             if (node is null)
                 return;
 
+            if (node.SuppressTransformTools)
+            {
+                TransformToolUndoAdapter.Attach(null);
+                TransformTool3D.DestroyInstance();
+                return;
+            }
+
             //we have to wait for the scene node to be activated in the instance of the world before we can attach the transform tool
             void Edit(SceneNode x)
             {
+                if (x.SuppressTransformTools)
+                {
+                    TransformToolUndoAdapter.Attach(null);
+                    TransformTool3D.DestroyInstance();
+                    x.Activated -= Edit;
+                    return;
+                }
+
                 var tool = TransformTool3D.GetInstance(x.Transform);
                 TransformToolUndoAdapter.Attach(tool);
                 x.Activated -= Edit;

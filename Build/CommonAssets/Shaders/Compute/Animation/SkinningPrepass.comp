@@ -63,12 +63,12 @@ layout(std430, binding = 10) readonly buffer TangentsInBuffer
     float TangentsIn[];
 };
 
-// Output buffers (write-only, skinned results)
+// Output buffers (skinned results)
 // These reuse bindings 11-13 which don't conflict with bone index/weight lists
 // since those are only used for variable weight skinning path
-layout(std430, binding = 11) writeonly buffer PositionsOutBuffer
+layout(std430, binding = 11) buffer PositionsOutBuffer
 {
-    vec4 PositionsOut[];
+    uvec4 PositionsOutBits[];
 };
 
 layout(std430, binding = 12) writeonly buffer NormalsOutBuffer
@@ -111,6 +111,35 @@ uniform int skinningInfluenceCap;
 uniform uint skinPaletteBase;
 uniform uint skinPaletteCount;
 uniform uint blendshapeWeightBase;
+uniform int updateLiveBounds;
+uniform uint liveBoundsVec4Offset;
+
+shared vec3 LiveBoundsSharedMin[gl_WorkGroupSize.x];
+shared vec3 LiveBoundsSharedMax[gl_WorkGroupSize.x];
+
+#define LIVE_ATOMIC_MIN(component, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint old = PositionsOutBits[liveBoundsVec4Offset + 0u].component; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) >= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(PositionsOutBits[liveBoundsVec4Offset + 0u].component, expected, enc); \
+    } while (expected != old); \
+}
+
+#define LIVE_ATOMIC_MAX(component, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint old = PositionsOutBits[liveBoundsVec4Offset + 1u].component; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) <= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(PositionsOutBits[liveBoundsVec4Offset + 1u].component, expected, enc); \
+    } while (expected != old); \
+}
 
 uint decodeIndex(uint raw)
 {
@@ -393,26 +422,82 @@ void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, u
         tangent = skinnedTangent;
 }
 
+void storePosition(uint vertexIndex, vec3 position)
+{
+    PositionsOutBits[vertexIndex] = uvec4(floatBitsToUint(position), floatBitsToUint(1.0));
+}
+
+bool isFiniteVec3(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+void updateLiveSkinnedBounds(vec3 position, bool validVertex)
+{
+    uint local = gl_LocalInvocationID.x;
+    bool validBoundsVertex = validVertex && isFiniteVec3(position);
+
+    const float FLT_MAX = 3.402823466e+38;
+    LiveBoundsSharedMin[local] = validBoundsVertex ? position : vec3(FLT_MAX);
+    LiveBoundsSharedMax[local] = validBoundsVertex ? position : vec3(-FLT_MAX);
+    barrier();
+
+    for (uint stride = gl_WorkGroupSize.x / 2u; stride > 0u; stride >>= 1u)
+    {
+        if (local < stride)
+        {
+            LiveBoundsSharedMin[local] = min(LiveBoundsSharedMin[local], LiveBoundsSharedMin[local + stride]);
+            LiveBoundsSharedMax[local] = max(LiveBoundsSharedMax[local], LiveBoundsSharedMax[local + stride]);
+        }
+        barrier();
+    }
+
+    if (local != 0u)
+        return;
+
+    vec3 groupMin = LiveBoundsSharedMin[0];
+    vec3 groupMax = LiveBoundsSharedMax[0];
+
+    LIVE_ATOMIC_MIN(x, groupMin.x);
+    LIVE_ATOMIC_MIN(y, groupMin.y);
+    LIVE_ATOMIC_MIN(z, groupMin.z);
+
+    LIVE_ATOMIC_MAX(x, groupMax.x);
+    LIVE_ATOMIC_MAX(y, groupMax.y);
+    LIVE_ATOMIC_MAX(z, groupMax.z);
+}
+
 void main()
 {
     uint idx = gl_GlobalInvocationID.x;
-    if (idx >= vertexCount)
+    bool validVertex = idx < vertexCount;
+    if (!validVertex && updateLiveBounds == 0)
         return;
 
     // Note: Interleaved vertex buffer support has been removed to stay within
     // the 16 SSBO binding limit. Compute skinning only works with non-interleaved meshes.
     // If interleaved mode is requested, this shader will not produce correct results.
 
-    vec3 basePosition = loadPosition(idx);
-    vec3 baseNormal = (hasNormals != 0) ? loadNormal(idx) : vec3(0.0);
-    vec3 baseTangent = (hasTangents != 0) ? loadTangent(idx) : vec3(0.0);
+    vec3 basePosition = vec3(0.0);
+    vec3 baseNormal = vec3(0.0);
+    vec3 baseTangent = vec3(0.0);
 
-    applyBlendshapes(basePosition, baseNormal, baseTangent, idx);
-    applySkinning(basePosition, baseNormal, baseTangent, idx);
+    if (validVertex)
+    {
+        basePosition = loadPosition(idx);
+        baseNormal = (hasNormals != 0) ? loadNormal(idx) : vec3(0.0);
+        baseTangent = (hasTangents != 0) ? loadTangent(idx) : vec3(0.0);
 
-    PositionsOut[idx].xyz = basePosition;
-    if (hasNormals != 0)
-        NormalsOut[idx].xyz = normalize(baseNormal);
-    if (hasTangents != 0)
-        TangentsOut[idx].xyz = normalize(baseTangent);
+        applyBlendshapes(basePosition, baseNormal, baseTangent, idx);
+        applySkinning(basePosition, baseNormal, baseTangent, idx);
+
+        storePosition(idx, basePosition);
+        if (hasNormals != 0)
+            NormalsOut[idx].xyz = normalize(baseNormal);
+        if (hasTangents != 0)
+            TangentsOut[idx].xyz = normalize(baseTangent);
+    }
+
+    if (updateLiveBounds != 0)
+        updateLiveSkinnedBounds(basePosition, validVertex);
 }

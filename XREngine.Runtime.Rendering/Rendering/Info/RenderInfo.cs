@@ -73,6 +73,14 @@ namespace XREngine.Rendering.Info
 
         protected abstract void RenderCullingVolume();
 
+        public delegate bool DelRenderCullingVolumeDebug(RenderInfo info);
+        /// <summary>
+        /// Optional culling-volume debug override. Return true when the override handled
+        /// debug drawing, even if it intentionally drew nothing.
+        /// </summary>
+        [YamlIgnore]
+        public DelRenderCullingVolumeDebug? RenderCullingVolumeDebugOverride;
+
         private EventList<RenderCommand> _renderCommands = [];
         public EventList<RenderCommand> RenderCommands
         {
@@ -139,8 +147,11 @@ namespace XREngine.Rendering.Info
                 passes.AddCPU(cmd);
             }
 
-            if (RuntimeRenderingHostServices.Current.RenderCullingVolumesEnabled)
+            if (RuntimeRenderingHostServices.Current.RenderCullingVolumesEnabled &&
+                !(RenderCullingVolumeDebugOverride?.Invoke(this) ?? false))
+            {
                 RenderCullingVolume();
+            }
         }
     }
 }

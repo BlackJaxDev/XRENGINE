@@ -86,7 +86,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 return false;
 
             var resources = GetOrCreateResources(xrMesh);
-            if (!resources.SupportsBoundsReduction)
+            if (!resources.IsValid)
                 return false;
 
             uint vertexCount = (uint)xrMesh.VertexCount;
@@ -162,11 +162,9 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     {
         result = default;
 
-        if (xrMesh.Interleaved)
-            return false; // SkinningPrepass disables compute skinning for interleaved meshes.
-
-        var (positionsOut, _, _, _) = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
-        if (positionsOut is null)
+        var (positionsOut, _, _, interleavedOut) = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
+        XRDataBuffer? positionSource = positionsOut ?? interleavedOut;
+        if (positionSource is null)
             return false;
 
         lock (_syncRoot)
@@ -182,9 +180,12 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             uint vertexCount = (uint)xrMesh.VertexCount;
             resources.ResetBoundsBuffer();
 
-            // Bind PositionsIn at slot 0 and the per-mesh bounds buffer at slot 1.
-            positionsOut.SetBlockIndex(0);
+            // Bind both possible prepass output layouts. The shader selects the
+            // active one with useInterleaved so non-interleaved meshes keep the
+            // old lightweight path.
+            (positionsOut ?? positionSource).SetBlockIndex(0);
             resources.BindBoundsBufferForReduce(1);
+            (interleavedOut ?? positionSource).SetBlockIndex(2);
 
             Matrix4x4 basis = mesh.GetSkinnedBoundsBasisMatrix();
             Matrix4x4 positionsToBoundsLocal = CalculateWorldToSkinnedBoundsBasis(basis);
@@ -193,6 +194,9 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _reduceProgram.Uniform("slotIndex", 0u);
             _reduceProgram.Uniform("applyTransform", 1);
             _reduceProgram.Uniform("transformMatrix", positionsToBoundsLocal);
+            _reduceProgram.Uniform("useInterleaved", interleavedOut is not null ? 1u : 0u);
+            _reduceProgram.Uniform("interleavedStrideBytes", xrMesh.InterleavedStride);
+            _reduceProgram.Uniform("positionOffsetBytes", xrMesh.PositionOffset);
 
             const uint groupSize = 256;
             uint groupsX = Math.Max(1u, (vertexCount + groupSize - 1u) / groupSize);
@@ -211,6 +215,167 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             // fall back via RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader.
             result = new Result(Array.Empty<Vector3>(), localBounds, basis);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Refreshes the GPU bounds-reduction buffer from the current skinned prepass output
+    /// and returns that buffer for GPU debug rendering without CPU readback.
+    /// </summary>
+    internal bool TryPrepareGpuDebugBounds(
+        RenderableMesh mesh,
+        out XRDataBuffer? boundsBuffer,
+        out Matrix4x4 boundsToWorld,
+        out uint boundsVec4Offset)
+    {
+        boundsBuffer = null;
+        boundsToWorld = Matrix4x4.Identity;
+        boundsVec4Offset = 0u;
+
+        if (!RuntimeEngine.IsRenderThread || AbstractRenderer.Current is null)
+            return false;
+        if (mesh?.IsSkinned != true)
+            return false;
+        if (!RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
+            return false;
+
+        var renderer = mesh.CurrentLODRenderer;
+        var xrMesh = renderer?.Mesh;
+        if (renderer is null || xrMesh is null || xrMesh.VertexCount <= 0)
+            return false;
+        if (!MeshSupportsGpuSkinning(xrMesh))
+            return false;
+
+        if (RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader)
+        {
+            SkinningPrepassDispatcher.Instance.Run(renderer);
+            if (!SkinningPrepassDispatcher.Instance.TryGetSkinnedBoundsBuffer(renderer, out boundsBuffer, out boundsVec4Offset))
+                return false;
+
+            boundsToWorld = Matrix4x4.Identity;
+            return boundsBuffer is not null;
+        }
+
+        // Direct vertex skinning has no skinned-position stream to reduce, so run
+        // the compute prepass in forced bounds-producer mode. The draw path still
+        // uses vertex-shader skinning because compute outputs are only bound when
+        // CalculateSkinningInComputeShader is enabled.
+        SkinningPrepassDispatcher.Instance.RunForGpuMeshBvh(renderer);
+        if (!SkinningPrepassDispatcher.Instance.TryGetSkinnedBoundsBuffer(renderer, out boundsBuffer, out boundsVec4Offset))
+            return false;
+
+        boundsToWorld = Matrix4x4.Identity;
+        return boundsBuffer is not null;
+    }
+
+    internal bool TryReadGpuDebugBounds(RenderableMesh mesh, out AABB worldBounds)
+    {
+        worldBounds = default;
+
+        if (!RuntimeEngine.IsRenderThread || AbstractRenderer.Current is null)
+            return false;
+        if (mesh?.IsSkinned != true)
+            return false;
+        if (!RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
+            return false;
+
+        var renderer = mesh.CurrentLODRenderer;
+        var xrMesh = renderer?.Mesh;
+        if (renderer is null || xrMesh is null || xrMesh.VertexCount <= 0)
+            return false;
+        if (!MeshSupportsGpuSkinning(xrMesh))
+            return false;
+
+        if (RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader)
+        {
+            SkinningPrepassDispatcher.Instance.Run(renderer);
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+            return SkinningPrepassDispatcher.Instance.TryReadSkinnedWorldBounds(renderer, out worldBounds);
+        }
+
+        SkinningPrepassDispatcher.Instance.RunForGpuMeshBvh(renderer);
+        AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+        return SkinningPrepassDispatcher.Instance.TryReadSkinnedWorldBounds(renderer, out worldBounds);
+    }
+
+    private bool TryPrepareStandaloneGpuDebugBounds(
+        RenderableMesh mesh,
+        XRMeshRenderer renderer,
+        XRMesh xrMesh,
+        bool readBackBounds,
+        out XRDataBuffer? boundsBuffer,
+        out Matrix4x4 boundsToWorld,
+        out AABB worldBounds)
+    {
+        boundsBuffer = null;
+        boundsToWorld = Matrix4x4.Identity;
+        worldBounds = default;
+
+        if (!renderer.HasExternalSkinPaletteSource)
+        {
+            if (!renderer.EnsureSkinningBuffers(logWarnings: false))
+                return false;
+
+            renderer.RefreshBoneMatricesFromRenderState();
+            renderer.PushBoneMatricesToGPU();
+        }
+
+        XRDataBuffer? activeSkinPalette = renderer.ActiveSkinPaletteBuffer;
+        if (activeSkinPalette is null)
+            return false;
+
+        lock (_syncRoot)
+        {
+            EnsureInitialized();
+            if (_program is null)
+                return false;
+
+            var resources = GetOrCreateResources(xrMesh);
+            if (!resources.IsValid)
+                return false;
+
+            uint vertexCount = (uint)xrMesh.VertexCount;
+            resources.EnsureCapacity(vertexCount);
+            resources.ResetBoundsBuffer();
+
+            activeSkinPalette.SetBlockIndex(0);
+            if (!xrMesh.HasSpillInfluences)
+            {
+                EnsureEmptySpillBuffers();
+                _emptySpillHeaders?.SetBlockIndex(7);
+                _emptySpillEntries?.SetBlockIndex(8);
+            }
+
+            _program.Uniform("vertexCount", vertexCount);
+            _program.Uniform("hasSkinning", 1);
+            _program.Uniform("skinningCoreIndexFormat", (int)xrMesh.SkinningCoreIndexFormat);
+            _program.Uniform("hasSpillInfluences", xrMesh.HasSpillInfluences ? 1 : 0);
+            _program.Uniform("skinningInfluenceCap", renderer.ActiveSkinningInfluenceCap);
+            _program.Uniform("skinPaletteBase", renderer.ActiveSkinPaletteBase);
+            _program.Uniform("skinPaletteCount", renderer.ActiveSkinPaletteCount);
+            _program.Uniform("fallbackMatrix", mesh.Component.Transform.RenderMatrix);
+            _program.Uniform("useInterleaved", xrMesh.Interleaved ? 1u : 0u);
+            _program.Uniform("interleavedStrideBytes", xrMesh.InterleavedStride);
+            _program.Uniform("positionOffsetBytes", xrMesh.PositionOffset);
+
+            const uint groupSize = 256u;
+            uint groupsX = Math.Max(1u, (vertexCount + groupSize - 1u) / groupSize);
+            _program.DispatchCompute(
+                groupsX,
+                1u,
+                1u,
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
+
+            boundsBuffer = resources.BoundsBuffer;
+            boundsToWorld = Matrix4x4.Identity;
+            if (readBackBounds)
+            {
+                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+                AbstractRenderer.Current?.WaitForGpu();
+                return resources.TryReadBounds(out worldBounds);
+            }
+
+            return boundsBuffer is not null;
         }
     }
 
@@ -236,13 +401,14 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 
         var renderer = mesh.CurrentLODRenderer;
         var xrMesh = renderer?.Mesh;
-        if (renderer is null || xrMesh is null || xrMesh.Interleaved)
+        if (renderer is null || xrMesh is null)
             return false;
         if (!MeshSupportsGpuSkinning(xrMesh))
             return false;
 
-        var (positionsOut, _, _, _) = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
-        if (positionsOut is null)
+        var (positionsOut, _, _, interleavedOut) = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
+        XRDataBuffer? positionSource = positionsOut ?? interleavedOut;
+        if (positionSource is null)
             return false;
 
         if (!targetScene.TryGetCommandIndicesForRenderer(renderer, scratchIndices) || scratchIndices.Count == 0)
@@ -276,14 +442,18 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (_reduceProgram is null)
                 return false;
 
-            // Bind positions at slot 0 and the scene's command-AABB SSBO at slot 1
-            // for the reducer's BoundsBits binding.
-            positionsOut.SetBlockIndex(0);
+            // Bind positions at slot 0, the scene's command-AABB SSBO at slot 1
+            // for the reducer's BoundsBits binding, and interleaved output at slot 2.
+            (positionsOut ?? positionSource).SetBlockIndex(0);
             commandAabbBuffer.SetBlockIndex(1);
+            (interleavedOut ?? positionSource).SetBlockIndex(2);
 
             _reduceProgram.Uniform("vertexCount", vertexCount);
             _reduceProgram.Uniform("applyTransform", 0);
             _reduceProgram.Uniform("transformMatrix", Matrix4x4.Identity);
+            _reduceProgram.Uniform("useInterleaved", interleavedOut is not null ? 1u : 0u);
+            _reduceProgram.Uniform("interleavedStrideBytes", xrMesh.InterleavedStride);
+            _reduceProgram.Uniform("positionOffsetBytes", xrMesh.PositionOffset);
 
             const uint groupSize = 256u;
             uint groupsX = Math.Max(1u, (vertexCount + groupSize - 1u) / groupSize);
@@ -377,7 +547,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         if (!mesh.SupportsComputeSkinning)
             return false;
 
-        return mesh.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill;
+        return mesh.SkinningInfluenceEncoding is SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill;
     }
 
     internal static AABB CalculateBounds(IReadOnlyList<Vector3> positions)
@@ -466,6 +636,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         private readonly XRDataBuffer? _boneWeights;
         private readonly XRDataBuffer? _spillHeaders;
         private readonly XRDataBuffer? _spillEntries;
+        private readonly XRDataBuffer? _interleavedPositions;
         private readonly XRDataBuffer? _outputPositions;
         private readonly XRDataBuffer? _bounds;
 
@@ -473,7 +644,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         private static readonly UInt4 NegativeInfinityPacked = UInt4.FromVector(new Vector4(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity, -1f));
 
         public bool IsValid { get; }
-        public bool SupportsBoundsReduction => IsValid && _bounds is not null;
+        public bool SupportsBoundsReduction => _bounds is not null;
+        public XRDataBuffer? BoundsBuffer => _bounds;
 
         public MeshResources(XRMesh mesh)
         {
@@ -482,14 +654,29 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _bounds = new XRDataBuffer($"{meshName}_SkinnedBoundsReduction", EBufferTarget.ShaderStorageBuffer, 2, EComponentType.UInt, 4, false, false)
             {
                 AttributeName = $"{meshName}_SkinnedBoundsReduction",
+                ShouldMap = true,
                 Resizable = false,
-                StorageFlags = EBufferMapStorageFlags.DynamicStorage
+                StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
+                RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent
             };
 
             if (mesh.SkinningInfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill) || mesh.BoneInfluenceCoreIndices?.Integral != true)
                 return;
 
-            _positions = CloneSourceBuffer(mesh, ECommonBufferType.Position.ToString(), meshName, 4u);
+            if (mesh.Interleaved)
+            {
+                _interleavedPositions = mesh.InterleavedVertexBuffer?.Clone(false, EBufferTarget.ShaderStorageBuffer);
+                if (_interleavedPositions is not null)
+                {
+                    _interleavedPositions.AttributeName = $"{meshName}_InterleavedVertex_SkinnedBounds";
+                    _interleavedPositions.SetBlockIndex(9);
+                }
+            }
+            else
+            {
+                _positions = CloneSourceBuffer(mesh, ECommonBufferType.Position.ToString(), meshName, 4u);
+            }
+
             _boneIndices = mesh.BoneInfluenceCoreIndices.Clone(false, EBufferTarget.ShaderStorageBuffer);
             _boneWeights = mesh.BoneInfluenceCoreWeights?.Clone(false, EBufferTarget.ShaderStorageBuffer);
             _spillHeaders = mesh.BoneInfluenceSpillHeaders?.Clone(false, EBufferTarget.ShaderStorageBuffer);
@@ -503,7 +690,10 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent
             };
 
-            if (_positions is null || _boneIndices is null || _boneWeights is null || _outputPositions is null || _bounds is null)
+            bool hasPositionSource = mesh.Interleaved
+                ? _interleavedPositions is not null
+                : _positions is not null;
+            if (!hasPositionSource || _boneIndices is null || _boneWeights is null || _outputPositions is null || _bounds is null)
                 return;
             if (mesh.HasSpillInfluences && (_spillHeaders is null || _spillEntries is null))
                 return;
@@ -591,6 +781,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 
             _bounds.SetDataRawAtIndex(0u, PositiveInfinityPacked);
             _bounds.SetDataRawAtIndex(1u, NegativeInfinityPacked);
+            if (!_bounds.IsMapped)
+                _bounds.MapBufferData();
             _bounds.PushSubData();
         }
 
@@ -605,8 +797,17 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (_bounds is null)
                 return false;
 
-            UInt4 minBits = _bounds.GetDataRawAtIndex<UInt4>(0);
-            UInt4 maxBits = _bounds.GetDataRawAtIndex<UInt4>(1);
+            if (!TryGetMappedAddress(_bounds, out VoidPtr mappedAddress))
+                return false;
+
+            UInt4 minBits;
+            UInt4 maxBits;
+            unsafe
+            {
+                UInt4* ptr = (UInt4*)mappedAddress.Pointer;
+                minBits = ptr[0];
+                maxBits = ptr[1];
+            }
 
             Vector3 min = minBits.ToVector3();
             if (float.IsInfinity(min.X) || float.IsInfinity(min.Y) || float.IsInfinity(min.Z))
@@ -627,6 +828,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _boneWeights?.Destroy();
             _spillHeaders?.Destroy();
             _spillEntries?.Destroy();
+            _interleavedPositions?.Destroy();
             _outputPositions?.Destroy();
             _bounds?.Destroy();
         }

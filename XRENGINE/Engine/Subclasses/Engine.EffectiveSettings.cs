@@ -579,6 +579,18 @@ namespace XREngine
                     : Rendering.Settings.CalculateSkinningInComputeShader;
 
             /// <summary>
+            /// Gets whether skinned mesh bounds should be evaluated on the GPU.
+            /// </summary>
+            public static bool CalculateSkinnedBoundsInComputeShader
+                => Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+
+            /// <summary>
+            /// Gets whether GPU skinned bounds may write directly into GPU command AABB buffers.
+            /// </summary>
+            public static bool SkinnedBoundsGpuDirectAabbWrite
+                => Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite;
+
+            /// <summary>
             /// Gets the effective compute shader blendshapes setting.
             /// Resolved from: Project Override > Engine Default (not user-overridable)
             /// </summary>

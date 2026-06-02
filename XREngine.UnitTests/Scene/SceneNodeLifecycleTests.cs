@@ -4,6 +4,8 @@ using NUnit.Framework;
 using XREngine;
 using XREngine.Components;
 using XREngine.Components.Lights;
+using XREngine.Data.Core;
+using XREngine.Editor;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
@@ -140,6 +142,146 @@ public class SceneNodeLifecycleTests
             Assert.That(component.ActivationCount, Is.EqualTo(1));
             Assert.That(component.DeactivationCount, Is.Zero);
         });
+    }
+
+    [Test]
+    public void Destroy_AfterUnparentingFromEditWorld_ClearsWorldForDetachedHierarchy()
+    {
+        SceneNode parent = new("Parent");
+        SceneNode child = new(parent, "Child");
+        SceneNode grandChild = new(child, "GrandChild");
+        LifecycleTrackingComponent childComponent = child.AddComponent<LifecycleTrackingComponent>()!;
+        LifecycleTrackingComponent grandChildComponent = grandChild.AddComponent<LifecycleTrackingComponent>()!;
+        StubRuntimeWorldContext world = new(isPlaySessionActive: false);
+
+        SetWorld(parent, world);
+
+        parent.Transform.RemoveChild(child.Transform, EParentAssignmentMode.Immediate);
+        child.Destroy();
+        XRObjectBase.ProcessPendingDestructions();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(child.Parent, Is.Null);
+            Assert.That(child.IsDestroyed, Is.True);
+            Assert.That(grandChild.IsDestroyed, Is.True);
+            Assert.That(child.World, Is.Null);
+            Assert.That(child.Transform.World, Is.Null);
+            Assert.That(grandChild.World, Is.Null);
+            Assert.That(grandChild.Transform.World, Is.Null);
+            Assert.That(childComponent.DeactivationCount, Is.EqualTo(1));
+            Assert.That(grandChildComponent.DeactivationCount, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void Undo_DestroySceneNode_RestoresFreshChildHierarchy()
+    {
+        Undo.ClearHistory();
+
+        try
+        {
+            SceneNode parent = new("Parent");
+            SceneNode child = new(parent, "Child");
+            _ = new SceneNode(child, "GrandChild");
+            StubRuntimeWorldContext world = new(isPlaySessionActive: false);
+
+            SetWorld(parent, world);
+            Undo.TrackSceneNode(parent);
+            Undo.ClearHistory();
+
+            child.Destroy();
+            XRObjectBase.ProcessPendingDestructions();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(child.IsDestroyed, Is.True);
+                Assert.That(parent.Transform.Children.Count, Is.Zero);
+                Assert.That(Undo.CanUndo, Is.True);
+            });
+
+            Assert.That(Undo.TryUndo(), Is.True);
+
+            SceneNode restoredChild = parent.Transform.Children.Single().SceneNode!;
+            SceneNode restoredGrandChild = restoredChild.Transform.Children.Single().SceneNode!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(restoredChild, Is.Not.SameAs(child));
+                Assert.That(restoredChild.Name, Is.EqualTo("Child"));
+                Assert.That(restoredChild.World, Is.SameAs(world));
+                Assert.That(restoredGrandChild.Name, Is.EqualTo("GrandChild"));
+                Assert.That(restoredGrandChild.World, Is.SameAs(world));
+            });
+
+            Assert.That(Undo.TryRedo(), Is.True);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(restoredChild.IsDestroyed, Is.True);
+                Assert.That(restoredGrandChild.IsDestroyed, Is.True);
+                Assert.That(parent.Transform.Children.Count, Is.Zero);
+            });
+        }
+        finally
+        {
+            Undo.ClearHistory();
+        }
+    }
+
+    [Test]
+    public void Undo_DestroyRootSceneNode_RestoresSceneAndWorldRoots()
+    {
+        Undo.ClearHistory();
+
+        try
+        {
+            SceneNode root = new("Root");
+            _ = new SceneNode(root, "Child");
+            XRScene scene = new("Scene", root);
+            XRWorldInstance world = new(new XRWorld("World", scene));
+
+            Undo.TrackScene(scene);
+            Undo.ClearHistory();
+
+            root.Destroy();
+            XRObjectBase.ProcessPendingDestructions();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(root.IsDestroyed, Is.True);
+                Assert.That(scene.RootNodes, Is.Empty);
+                Assert.That(world.RootNodes.Count, Is.Zero);
+                Assert.That(Undo.CanUndo, Is.True);
+            });
+
+            Assert.That(Undo.TryUndo(), Is.True);
+
+            SceneNode restoredRoot = scene.RootNodes.Single();
+            SceneNode restoredChild = restoredRoot.Transform.Children.Single().SceneNode!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(restoredRoot, Is.Not.SameAs(root));
+                Assert.That(restoredRoot.Name, Is.EqualTo("Root"));
+                Assert.That(restoredRoot.World, Is.SameAs(world));
+                Assert.That(restoredChild.Name, Is.EqualTo("Child"));
+                Assert.That(restoredChild.World, Is.SameAs(world));
+                Assert.That(world.RootNodes.Any(node => ReferenceEquals(node, restoredRoot)), Is.True);
+            });
+
+            Assert.That(Undo.TryRedo(), Is.True);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(restoredRoot.IsDestroyed, Is.True);
+                Assert.That(restoredChild.IsDestroyed, Is.True);
+                Assert.That(scene.RootNodes, Is.Empty);
+                Assert.That(world.RootNodes.Count, Is.Zero);
+            });
+        }
+        finally
+        {
+            Undo.ClearHistory();
+        }
     }
 
     [Test]

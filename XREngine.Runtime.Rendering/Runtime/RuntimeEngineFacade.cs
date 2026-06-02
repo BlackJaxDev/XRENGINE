@@ -2007,6 +2007,8 @@ internal sealed class RuntimeRenderSettings
     private bool _allowSkinning = RuntimeRenderingHostServiceDefaults.AllowSkinning;
     private bool _calculateBlendshapesInComputeShader = RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
     private bool _calculateSkinningInComputeShader = RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
+    private bool _calculateSkinnedBoundsInComputeShader;
+    private bool _skinnedBoundsGpuDirectAabbWrite;
     private bool _enableBlendshapePrecombinePass = RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombinePass;
     private bool _enableBlendshapePrecombineForDirectVertexPath = RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombineForDirectVertexPath;
     private bool _enableBlendshapePcaBasisCompression = RuntimeRenderingHostServiceDefaults.EnableBlendshapePcaBasisCompression;
@@ -2150,7 +2152,13 @@ internal sealed class RuntimeRenderSettings
             : _blendshapePrecombineMinAffectedVertices;
         set => _blendshapePrecombineMinAffectedVertices = Math.Max(1, value);
     }
-    public bool CalculateSkinnedBoundsInComputeShader { get; set; }
+    public bool CalculateSkinnedBoundsInComputeShader
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.CalculateSkinnedBoundsInComputeShader
+            : _calculateSkinnedBoundsInComputeShader;
+        set => _calculateSkinnedBoundsInComputeShader = value;
+    }
     public bool CalculateSkinningInComputeShader
     {
         get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
@@ -2158,7 +2166,13 @@ internal sealed class RuntimeRenderSettings
             : _calculateSkinningInComputeShader;
         set => SetShaderSetting(ref _calculateSkinningInComputeShader, value);
     }
-    public bool SkinnedBoundsGpuDirectAabbWrite { get; set; }
+    public bool SkinnedBoundsGpuDirectAabbWrite
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.SkinnedBoundsGpuDirectAabbWrite
+            : _skinnedBoundsGpuDirectAabbWrite;
+        set => _skinnedBoundsGpuDirectAabbWrite = value;
+    }
     public bool CullShadowCollectionByCameraFrusta { get; set; } = true;
     public Vector3 DefaultLuminance { get; set; } = new(0.299f, 0.587f, 0.114f);
     public float DlssCustomScale { get; set; } = 1.0f;

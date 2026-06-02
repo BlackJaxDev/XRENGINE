@@ -62,55 +62,10 @@ namespace XREngine.Editor.Mcp
             if (targets.Length == 0)
                 return Task.FromResult(new McpToolResponse("No selected nodes found in the active world.", isError: true));
 
-            var world = context.WorldInstance;
-            // Capture pre-deletion state for each node
-            var nodeStates = targets.Select(node => new
-            {
-                Node = node,
-                ParentTransform = node.Transform.Parent,
-                WasActive = node.IsActiveSelf
-            }).ToArray();
-
-            // Soft-delete all nodes
-            foreach (var state in nodeStates)
-            {
-                if (state.ParentTransform is not null)
-                    state.ParentTransform.RemoveChild(state.Node.Transform, EParentAssignmentMode.Immediate);
-                else
-                    world.RootNodes.Remove(state.Node);
-
-                state.Node.IsActiveSelf = false;
-            }
+            foreach (var node in targets)
+                node.Destroy();
 
             Selection.Clear();
-
-            // Record structural undo
-            using var interaction = Undo.BeginUserInteraction();
-            using var scope = Undo.BeginChange("MCP Delete Selected Nodes");
-            Undo.RecordStructuralChange($"Delete {targets.Length} node(s)",
-                undoAction: () =>
-                {
-                    foreach (var state in nodeStates)
-                    {
-                        if (state.ParentTransform is not null)
-                            state.Node.Transform.SetParent(state.ParentTransform, false, EParentAssignmentMode.Immediate);
-                        else
-                            world.RootNodes.Add(state.Node);
-                        state.Node.IsActiveSelf = state.WasActive;
-                        Undo.TrackSceneNode(state.Node);
-                    }
-                },
-                redoAction: () =>
-                {
-                    foreach (var state in nodeStates)
-                    {
-                        if (state.ParentTransform is not null)
-                            state.ParentTransform.RemoveChild(state.Node.Transform, EParentAssignmentMode.Immediate);
-                        else
-                            world.RootNodes.Remove(state.Node);
-                        state.Node.IsActiveSelf = false;
-                    }
-                });
 
             return Task.FromResult(new McpToolResponse($"Deleted {targets.Length} selected node(s)."));
         }

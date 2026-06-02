@@ -16,6 +16,46 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private readonly object _pendingDeviceReadyProgramLinksLock = new();
+    private readonly HashSet<VkRenderProgram> _pendingDeviceReadyProgramLinks = new();
+
+    internal void QueueProgramLinkUntilDeviceReady(VkRenderProgram program)
+    {
+        lock (_pendingDeviceReadyProgramLinksLock)
+            _pendingDeviceReadyProgramLinks.Add(program);
+    }
+
+    private void FlushPendingDeviceReadyProgramLinks()
+    {
+        if (!IsLogicalDeviceReady)
+            return;
+
+        VkRenderProgram[] pendingPrograms;
+        lock (_pendingDeviceReadyProgramLinksLock)
+        {
+            if (_pendingDeviceReadyProgramLinks.Count == 0)
+                return;
+
+            pendingPrograms = [.. _pendingDeviceReadyProgramLinks];
+            _pendingDeviceReadyProgramLinks.Clear();
+        }
+
+        foreach (VkRenderProgram program in pendingPrograms)
+        {
+            if (program.IsLinked || !program.Data.LinkReady)
+                continue;
+
+            if (!program.Link())
+                Debug.VulkanWarning($"Failed to link Vulkan program '{program.Data.Name ?? "UnnamedProgram"}' after logical device creation.");
+        }
+    }
+
+    private void ClearPendingDeviceReadyProgramLinks()
+    {
+        lock (_pendingDeviceReadyProgramLinksLock)
+            _pendingDeviceReadyProgramLinks.Clear();
+    }
+
     private const EProgramStageMask GraphicsStageMask =
         EProgramStageMask.VertexShaderBit |
         EProgramStageMask.TessControlShaderBit |
@@ -236,6 +276,12 @@ public unsafe partial class VulkanRenderer
             if (RuntimeEngine.InvokeOnMainThread(() => OnLinkRequested(program), "VkRenderProgram.LinkRequested"))
                 return;
 
+            if (!Renderer.IsLogicalDeviceReady)
+            {
+                Renderer.QueueProgramLinkUntilDeviceReady(this);
+                return;
+            }
+
             if (!Link())
                 Debug.VulkanWarning($"Failed to link Vulkan program '{Data.Name ?? "UnnamedProgram"}'.");
         }
@@ -244,6 +290,12 @@ public unsafe partial class VulkanRenderer
         {
             if (RuntimeEngine.InvokeOnMainThread(() => OnUseRequested(program), "VkRenderProgram.UseRequested"))
                 return;
+
+            if (!Renderer.IsLogicalDeviceReady)
+            {
+                Renderer.QueueProgramLinkUntilDeviceReady(this);
+                return;
+            }
 
             if (!IsLinked)
                 Link();
@@ -416,8 +468,17 @@ public unsafe partial class VulkanRenderer
             if (IsLinked)
                 return true;
 
+            if (!Renderer.IsLogicalDeviceReady)
+            {
+                Renderer.QueueProgramLinkUntilDeviceReady(this);
+                return false;
+            }
+
             if (!IsActive)
                 Generate();
+
+            if (!IsActive)
+                return false;
 
             if (!Data.LinkReady)
                 return false;
@@ -429,7 +490,12 @@ public unsafe partial class VulkanRenderer
             }
 
             foreach (VkShader shader in _shaderCache.Values)
+            {
                 shader.Generate();
+
+                if (!shader.IsGenerated)
+                    return false;
+            }
 
             BuildStageLookup();
             BuildDescriptorLayouts();

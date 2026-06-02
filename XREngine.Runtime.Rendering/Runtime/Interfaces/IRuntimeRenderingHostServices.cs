@@ -90,6 +90,16 @@ public interface IRuntimeRenderingHostServices
     bool CalculateBlendshapesInComputeShader { get; }
 
     /// <summary>
+    /// Gets whether skinned mesh bounds should be evaluated on the GPU.
+    /// </summary>
+    bool CalculateSkinnedBoundsInComputeShader { get; }
+
+    /// <summary>
+    /// Gets whether GPU skinned bounds may write directly into GPU command AABB buffers.
+    /// </summary>
+    bool SkinnedBoundsGpuDirectAabbWrite { get; }
+
+    /// <summary>
     /// Gets whether eligible blendshape renderers may run a pre-pass that combines active shapes into per-vertex deltas.
     /// </summary>
     bool EnableBlendshapePrecombinePass { get; }

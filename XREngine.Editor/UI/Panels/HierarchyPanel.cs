@@ -1186,13 +1186,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
         EnqueueSceneEdit(() =>
         {
-            var parent = node.Transform.Parent;
-            if (parent is not null)
-                parent.RemoveChild(node.Transform, EParentAssignmentMode.Immediate);
-            else
-                RootNodes.Remove(node);
-
-            node.IsActiveSelf = false;
+            node.Destroy();
             MarkSceneHierarchyDirty(node);
             RemakeChildren();
         });

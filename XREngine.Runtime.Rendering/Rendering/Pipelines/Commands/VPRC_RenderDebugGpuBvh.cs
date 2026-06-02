@@ -114,6 +114,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             _computeProgram.Uniform("MaxNodes", visualizedNodes);
             _computeProgram.Uniform("LeafColor", leafColor);
             _computeProgram.Uniform("InternalColor", internalColor);
+            _computeProgram.Uniform("NodeToWorld", Matrix4x4.Identity);
             _computeProgram.Uniform("ShowFilter", showFilter);
 
             uint groups = (visualizedNodes + ComputeGroupSize - 1u) / ComputeGroupSize;

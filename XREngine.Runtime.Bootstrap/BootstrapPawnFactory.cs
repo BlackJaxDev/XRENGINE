@@ -335,6 +335,8 @@ public static class BootstrapPawnFactory
     private static SceneNode CreateCamera(SceneNode parentNode, out CameraComponent? camComp, float? smoothed = 50.0f, bool localSmoothing = true)
     {
         var cameraNode = new SceneNode(parentNode, EditorViewCameraName);
+        cameraNode.SuppressTransformDebugLineAndPoint = true;
+        cameraNode.SuppressTransformTools = true;
 
         if (smoothed.HasValue)
         {

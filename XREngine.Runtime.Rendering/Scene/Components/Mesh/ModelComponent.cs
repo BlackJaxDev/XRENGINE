@@ -1,11 +1,9 @@
 using XREngine.Extensions;
-using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
 using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Geometry;
@@ -184,8 +182,6 @@ namespace XREngine.Components.Scene.Mesh
             AddMeshesWithoutEvents(renderableMeshes);
             SubscribeModelMeshEvents(model);
 
-            BuildMeshBVHs(renderableMeshes);
-
             ModelChanged?.Invoke();
             ModelRenderDiagnostics.LogComponentPublished(
                 this,
@@ -229,26 +225,6 @@ namespace XREngine.Components.Scene.Mesh
             ModelRenderDiagnostics.LogComponentActivated(this);
         }
 
-        private void BuildMeshBVHs()
-            => BuildMeshBVHs(Meshes);
-
-        private void BuildMeshBVHs(IEnumerable<RenderableMesh> meshes)
-        {
-            foreach (RenderableMesh renderable in meshes)
-                ScheduleMeshBVHWarmup(renderable);
-        }
-
-        private static void WarmupMeshBVH(RenderableMesh renderable)
-        {
-            // Prime static BVH for each LOD mesh
-            foreach (RenderableMesh.RenderableLOD lod in renderable.GetLodSnapshot())
-                lod.Renderer.Mesh?.GenerateBVH();
-
-            // Kick skinned BVH build so hit-tests have data ready
-            if (renderable.IsSkinned)
-                _ = renderable.GetSkinnedBvh();
-        }
-
         private void AddMesh(SubMesh item)
         {
             RenderableMesh mesh = CreateRenderableMesh(item);
@@ -278,7 +254,6 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             _meshLinks.TryAdd(item, mesh);
-            ScheduleMeshBVHWarmup(mesh);
             ModelChanged?.Invoke();
         }
 
@@ -307,10 +282,7 @@ namespace XREngine.Components.Scene.Mesh
             int batchedCount = _batchedRenderableAdds.Count;
 
             if (_batchedRenderableAdds.Count > 0)
-            {
                 AppendRenderedObjects(_batchedRenderableAdds);
-                BuildMeshBVHs(_batchedRenderableAdds);
-            }
 
             _batchedRenderableAdds.Clear();
             ModelChanged?.Invoke();
@@ -365,15 +337,6 @@ namespace XREngine.Components.Scene.Mesh
             return count;
         }
 
-        private static void ScheduleMeshBVHWarmup(RenderableMesh mesh)
-        {
-            // BVH generation can be expensive; keep it away from render/swap hot paths.
-            RuntimeEngine.Jobs.Schedule(
-                () => WarmupMeshBVHJob(mesh),
-                error: ex => Debug.LogException(ex, "ModelComponent BVH warmup failed."),
-                priority: JobPriority.Low);
-        }
-
         private static void WarnIfSlowModelPublish(string operation, long startTimestamp, int sourceMeshCount, int renderedObjectCount)
         {
             double elapsedMs = (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
@@ -388,74 +351,6 @@ namespace XREngine.Components.Scene.Mesh
                 sourceMeshCount,
                 renderedObjectCount,
                 elapsedMs);
-        }
-
-        private static IEnumerable WarmupMeshBVHJob(RenderableMesh renderable)
-        {
-            RenderableMesh.RenderableLOD[] lods = renderable.GetLodSnapshot();
-            int staticCount = lods.Length;
-            int totalSteps = staticCount + (renderable.IsSkinned ? 1 : 0);
-            if (totalSteps <= 0)
-            {
-                WarmupMeshBVH(renderable);
-                yield return new JobProgress(1f, "BVH ready");
-                yield break;
-            }
-
-            int completed = 0;
-            yield return JobProgress.FromRange(completed, totalSteps, "Starting BVH warmup");
-
-            // Prime static BVH for each LOD mesh
-            int lodIndex = 0;
-            foreach (RenderableMesh.RenderableLOD lod in lods)
-            {
-                lodIndex++;
-                lod.Renderer.Mesh?.GenerateBVH();
-                completed++;
-                yield return JobProgress.FromRange(completed, totalSteps, $"Static BVH LOD {lodIndex}/{staticCount}");
-            }
-
-            // Kick skinned BVH build so hit-tests have data ready.
-            if (renderable.IsSkinned)
-            {
-                _ = renderable.GetSkinnedBvh();
-                completed++;
-                yield return JobProgress.FromRange(completed, totalSteps, "Skinned BVH scheduled");
-            }
-
-            yield return new JobProgress(1f, "BVH warmup complete");
-            yield break;
-        }
-
-        private static volatile MethodInfo? _editorJobTrackerTrackMethod;
-        private static volatile bool _editorJobTrackerResolved;
-
-        [RequiresDynamicCode("Uses reflection to call the editor-only job tracker when available.")]
-        private static void TryTrackInEditor(Job job, string label)
-        {
-            try
-            {
-                if (!_editorJobTrackerResolved)
-                {
-                    _editorJobTrackerResolved = true;
-
-                    // Avoid a hard dependency from engine -> editor.
-                    // If the editor assembly is present, register the job so it shows in the menu bar progress UI.
-                    var type = Type.GetType("XREngine.Editor.EditorJobTracker, XREngine.Editor", throwOnError: false);
-                    _editorJobTrackerTrackMethod = type?.GetMethod(
-                        "Track",
-                        BindingFlags.Public | BindingFlags.Static,
-                        binder: null,
-                        types: [typeof(Job), typeof(string), typeof(Func<object?, string?>)],
-                        modifiers: null);
-                }
-
-                _editorJobTrackerTrackMethod?.Invoke(null, [job, label, null]);
-            }
-            catch
-            {
-                // Ignore: tracking is best-effort.
-            }
         }
         private void RemoveMesh(SubMesh item)
         {

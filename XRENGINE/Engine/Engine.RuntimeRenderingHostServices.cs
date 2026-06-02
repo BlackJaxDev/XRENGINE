@@ -49,6 +49,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool AllowSkinning => Engine.Rendering.Settings.AllowSkinning;
     public bool CalculateSkinningInComputeShader => Engine.Rendering.Settings.CalculateSkinningInComputeShader;
     public bool CalculateBlendshapesInComputeShader => Engine.Rendering.Settings.CalculateBlendshapesInComputeShader;
+    public bool CalculateSkinnedBoundsInComputeShader => Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+    public bool SkinnedBoundsGpuDirectAabbWrite => Engine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite;
     public bool EnableBlendshapePrecombinePass => Engine.Rendering.Settings.EnableBlendshapePrecombinePass;
     public bool EnableBlendshapePrecombineForDirectVertexPath => Engine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath;
     public bool EnableBlendshapePcaBasisCompression => Engine.Rendering.Settings.EnableBlendshapePcaBasisCompression;

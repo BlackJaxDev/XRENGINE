@@ -90,6 +90,11 @@ namespace XREngine.Scene
         private bool _suppressTransformDebugLineAndPoint;
 
         /// <summary>
+        /// Whether editor transform tools should skip this node as a manipulation target.
+        /// </summary>
+        private bool _suppressTransformTools;
+
+        /// <summary>
         /// The rendering layer index (0-31) for visibility culling and rendering order.
         /// </summary>
         private int _layer = DefaultLayers.DynamicIndex;
@@ -312,6 +317,17 @@ namespace XREngine.Scene
         {
             get => _suppressTransformDebugLineAndPoint;
             set => SetField(ref _suppressTransformDebugLineAndPoint, value);
+        }
+
+        /// <summary>
+        /// If true, editor transform tools skip this node as a manipulation target.
+        /// </summary>
+        [YamlIgnore]
+        [Browsable(false)]
+        public bool SuppressTransformTools
+        {
+            get => _suppressTransformTools;
+            set => SetField(ref _suppressTransformTools, value);
         }
 
         /// <summary>

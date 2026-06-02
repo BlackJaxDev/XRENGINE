@@ -25,6 +25,7 @@ namespace XREngine.Rendering.Vulkan
             CreateSurface();
             PickPhysicalDevice();
             CreateLogicalDevice();
+            InitializeMemoryAllocator();
             InitializeCanonicalImmutableSamplers();
             CreateCommandPool();
 
@@ -36,9 +37,9 @@ namespace XREngine.Rendering.Vulkan
 
             CreateSyncObjects();
             CreateFrameTimingResources();
-            InitializeMemoryAllocator();
             InitializeSynchronizationBackend();
             InitializeDynamicUniformRingBuffers();
+            FlushPendingDeviceReadyProgramLinks();
         }
 
         /// <summary>

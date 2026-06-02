@@ -64,6 +64,8 @@ public static class RuntimeRenderingHostServices
         public bool AllowSkinning => RuntimeRenderingHostServiceDefaults.AllowSkinning;
         public bool CalculateSkinningInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
         public bool CalculateBlendshapesInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
+        public bool CalculateSkinnedBoundsInComputeShader => false;
+        public bool SkinnedBoundsGpuDirectAabbWrite => false;
         public bool EnableBlendshapePrecombinePass => RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombinePass;
         public bool EnableBlendshapePrecombineForDirectVertexPath => RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombineForDirectVertexPath;
         public bool EnableBlendshapePcaBasisCompression => RuntimeRenderingHostServiceDefaults.EnableBlendshapePcaBasisCompression;

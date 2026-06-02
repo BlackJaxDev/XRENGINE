@@ -44,6 +44,11 @@ layout(std430, binding = 8) buffer BoneInfluenceSpillEntriesBuffer
     uint BoneInfluenceSpillEntries[];
 };
 
+layout(std430, binding = 9) readonly buffer InterleavedPositionBuffer
+{
+    uint InterleavedPositions[];
+};
+
 uniform uint vertexCount;
 uniform int hasSkinning;
 uniform int skinningCoreIndexFormat;
@@ -52,6 +57,9 @@ uniform int skinningInfluenceCap;
 uniform uint skinPaletteBase;
 uniform uint skinPaletteCount;
 uniform mat4 fallbackMatrix;
+uniform uint useInterleaved;
+uniform uint interleavedStrideBytes;
+uniform uint positionOffsetBytes;
 
 const float FLT_MAX = 3.402823466e+38;
 
@@ -146,6 +154,15 @@ void atomicMaxVec(vec4 value)
 
 vec3 loadPosition(uint vertexIndex)
 {
+    if (useInterleaved != 0u)
+    {
+        uint baseByte = vertexIndex * interleavedStrideBytes + positionOffsetBytes;
+        return vec3(
+            uintBitsToFloat(InterleavedPositions[(baseByte + 0u) >> 2]),
+            uintBitsToFloat(InterleavedPositions[(baseByte + 4u) >> 2]),
+            uintBitsToFloat(InterleavedPositions[(baseByte + 8u) >> 2]));
+    }
+
     uint base = vertexIndex * 3u;
     return vec3(Positions[base + 0u], Positions[base + 1u], Positions[base + 2u]);
 }
@@ -192,6 +209,11 @@ void accumulateSkinInfluence(
     uint paletteIndex = skinPaletteBase + boneIndex;
     skinnedPosition += vec4(transformSkinPosition(paletteIndex, basePosition), 1.0) * weight;
     accumulatedWeight += weight;
+}
+
+bool isFiniteVec3(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
 }
 
 void main()
@@ -243,9 +265,13 @@ void main()
             skinnedPosition = fallbackMatrix * vec4(basePosition, 1.0);
         }
 
+        skinnedPosition.w = 1.0;
         OutputPositions[index] = skinnedPosition;
-        minValue = skinnedPosition;
-        maxValue = skinnedPosition;
+        if (isFiniteVec3(skinnedPosition.xyz))
+        {
+            minValue = skinnedPosition;
+            maxValue = skinnedPosition;
+        }
     }
 
     sharedMin[localIndex] = minValue;

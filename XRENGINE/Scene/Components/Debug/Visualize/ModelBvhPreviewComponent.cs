@@ -1,12 +1,10 @@
-using System.Collections.Generic;
 using System.Numerics;
-using SimpleScene.Util.ssBVH;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
-using XREngine.Scene.Transforms;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.Components;
 
@@ -19,8 +17,7 @@ namespace XREngine.Components;
 [Obsolete("BVH preview is now available from the ModelComponent ImGui editor. This component remains for backward compatibility.")]
 public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
 {
-    private readonly Stack<BVHNode<Triangle>> _nodeStack = new();
-    private readonly HashSet<XRMesh> _attemptedBvhBuilds = new();
+    private readonly GpuBvhDebugLineRenderer _gpuRenderer = new();
 
     private ModelComponent? _modelComponent;
     private bool _missingModelLogged;
@@ -39,18 +36,55 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
         set => SetField(ref _leafNodeColor, value);
     }
 
-    private bool _highlightLeafNodes = true;
-    public bool HighlightLeafNodes
+    private GpuBvhDebugNodeRenderMode _nodeRenderMode = GpuBvhDebugNodeRenderMode.HighlightLeafNodes;
+    public GpuBvhDebugNodeRenderMode NodeRenderMode
     {
-        get => _highlightLeafNodes;
-        set => SetField(ref _highlightLeafNodes, value);
+        get => _nodeRenderMode;
+        set => SetField(ref _nodeRenderMode, value);
     }
 
-    private bool _cullNodesAgainstCamera = true;
-    public bool CullNodesAgainstCamera
+    [Obsolete("Use NodeRenderMode instead.")]
+    public bool HighlightLeafNodes
     {
-        get => _cullNodesAgainstCamera;
-        set => SetField(ref _cullNodesAgainstCamera, value);
+        get => NodeRenderMode == GpuBvhDebugNodeRenderMode.HighlightLeafNodes;
+        set => NodeRenderMode = value
+            ? GpuBvhDebugNodeRenderMode.HighlightLeafNodes
+            : GpuBvhDebugNodeRenderMode.AllNodesSame;
+    }
+
+    private bool _onlyUpdateBvhOnRequest = true;
+    public bool OnlyUpdateBvhOnRequest
+    {
+        get => _onlyUpdateBvhOnRequest;
+        set => SetField(ref _onlyUpdateBvhOnRequest, value);
+    }
+
+    private bool _onlyRenderBvhOnRequest = true;
+    public bool OnlyRenderBvhOnRequest
+    {
+        get => _onlyRenderBvhOnRequest;
+        set => SetField(ref _onlyRenderBvhOnRequest, value);
+    }
+
+    [Obsolete("Use OnlyUpdateBvhOnRequest instead.")]
+    public bool LiveSkinnedGpuPreview
+    {
+        get => !OnlyUpdateBvhOnRequest;
+        set => OnlyUpdateBvhOnRequest = !value;
+    }
+
+    private float _lineWidth = 0.0015f;
+    public float LineWidth
+    {
+        get => _lineWidth;
+        set => SetField(ref _lineWidth, MathF.Max(0.0001f, value));
+    }
+
+    private int _maxGpuNodes = 16384;
+    public int MaxGpuNodes
+    {
+        get => _maxGpuNodes;
+        set => SetField(ref _maxGpuNodes, Math.Max(1, value));
     }
 
     protected override void OnComponentActivated()
@@ -77,7 +111,7 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
             if (!MeshIsVisible(mesh, frustum))
                 continue;
 
-            RenderMeshTree(mesh, frustum);
+            RenderMeshTree(mesh, camera as XRCamera);
         }
     }
 
@@ -124,67 +158,94 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
         return mesh.CurrentLODRenderer?.Mesh is not null;
     }
 
-    private void RenderMeshTree(RenderableMesh mesh, IVolume? frustum)
+    private void RenderMeshTree(RenderableMesh mesh, XRCamera? camera)
     {
-        bool skinned = mesh.IsSkinned;
-        BVH<Triangle>? tree;
-
-        if (skinned)
-        {
-            tree = mesh.GetSkinnedBvh();
-        }
-        else
-        {
-            var renderer = mesh.CurrentLODRenderer;
-            var xrMesh = renderer?.Mesh;
-            tree = xrMesh?.BVHTree;
-            if (tree?._rootBVH is null && xrMesh is not null && _attemptedBvhBuilds.Add(xrMesh))
-            {
-                xrMesh.GenerateBVH();
-                tree = xrMesh.BVHTree;
-            }
-        }
-
-        var root = tree?._rootBVH;
-        if (root is null)
+        bool requestActive = RequestGpuMeshBvhRefreshIfCursorIntersects(mesh);
+        if (mesh.IsSkinned && OnlyRenderBvhOnRequest && !requestActive)
             return;
 
-        _nodeStack.Clear();
-        _nodeStack.Push(root);
-
-        Matrix4x4 meshMatrix = skinned ? mesh.SkinnedBvhLocalToWorldMatrix : GetMeshWorldMatrix(mesh);
-        Matrix4x4 rotationScaleMatrix = meshMatrix;
-        rotationScaleMatrix.Translation = Vector3.Zero;
-
-        while (_nodeStack.Count > 0)
+        bool refreshRequested = mesh.HasGpuMeshBvhRefreshRequest;
+        bool realtimeSkinned = mesh.IsSkinned && (!OnlyUpdateBvhOnRequest || refreshRequested);
+        if ((realtimeSkinned || refreshRequested || !mesh.HasCurrentGpuMeshBvh) &&
+            !mesh.PrepareGpuMeshBvh(realtimeSkinned))
         {
-            var node = _nodeStack.Pop();
-            if (node is null)
-                continue;
-
-            AABB nodeBounds = node.box;
-            AABB worldBounds = TransformAabb(nodeBounds, meshMatrix);
-            if (CullNodesAgainstCamera && frustum is not null)
-            {
-                EContainment containment = frustum.ContainsAABB(worldBounds);
-                if (containment == EContainment.Disjoint)
-                    continue;
-            }
-
-            ColorF4 color = node.IsLeaf && HighlightLeafNodes ? LeafNodeColor : InternalNodeColor;
-            Vector3 worldCenter = Vector3.Transform(nodeBounds.Center, meshMatrix);
-            Engine.Rendering.Debug.RenderBox(nodeBounds.HalfExtents, worldCenter, rotationScaleMatrix, false, color);
-
-            if (node.left is not null)
-                _nodeStack.Push(node.left);
-            if (node.right is not null)
-                _nodeStack.Push(node.right);
+            return;
         }
+
+        if (refreshRequested)
+            mesh.ClearGpuMeshBvhRefreshRequestIfPrepared();
+
+        var gpuBvh = mesh.GpuMeshBvh;
+        var nodeBuffer = gpuBvh?.BvhNodeBuffer;
+        if (gpuBvh?.IsBvhReady != true || nodeBuffer is null)
+            return;
+
+        Vector4 internalColor = ToVector4(InternalNodeColor);
+        Vector4 leafColor = NodeRenderMode is GpuBvhDebugNodeRenderMode.HighlightLeafNodes or GpuBvhDebugNodeRenderMode.LeafNodesOnly
+            ? ToVector4(LeafNodeColor)
+            : internalColor;
+
+        _gpuRenderer.Render(
+            nodeBuffer,
+            gpuBvh.BvhNodeCount,
+            gpuBvh.LocalToWorldMatrix,
+            camera,
+            (uint)Math.Max(1, MaxGpuNodes),
+            LineWidth,
+            leafColor,
+            internalColor,
+            GetBvhNodeShowFilter(NodeRenderMode));
     }
 
-    private static Matrix4x4 GetMeshWorldMatrix(RenderableMesh mesh)
-        => mesh.Component.Transform.RenderMatrix;
+    private bool RequestGpuMeshBvhRefreshIfCursorIntersects(RenderableMesh mesh)
+    {
+        if (!mesh.IsSkinned)
+            return false;
 
-    private static AABB TransformAabb(AABB localBounds, Matrix4x4 transform)
-        => localBounds.Transformed(point => Vector3.Transform(point, transform));
+        var subMesh = mesh.CurrentLODRenderer?.SourceSubMeshAsset;
+        if (subMesh is null || !subMesh.RealtimeGpuMeshBvhForSkinnedMeshes)
+            return false;
+
+        if (Engine.State.MainPlayer?.ControlledPawnComponent is not PawnComponent pawn)
+            return false;
+
+        Segment worldSegment = pawn.CursorPositionWorld;
+        if (!TryGetCurrentHoverBounds(mesh, out AABB worldBounds) || !worldBounds.IsValid)
+            return false;
+
+        if (GeoUtil.Intersect.SegmentWithAABB(
+                worldSegment.Start,
+                worldSegment.End,
+                worldBounds.Min,
+                worldBounds.Max,
+                out _,
+                out _))
+        {
+            if (OnlyUpdateBvhOnRequest)
+                mesh.RequestGpuMeshBvhRefresh();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetCurrentHoverBounds(RenderableMesh mesh, out AABB worldBounds)
+        => mesh.TryGetGpuMeshBvhRequestWorldBounds(out worldBounds);
+
+    private static Vector4 ToVector4(ColorF4 color)
+        => new(color.R, color.G, color.B, color.A);
+
+    private static uint GetBvhNodeShowFilter(GpuBvhDebugNodeRenderMode mode)
+        => mode switch
+        {
+            GpuBvhDebugNodeRenderMode.LeafNodesOnly => 1u,
+            GpuBvhDebugNodeRenderMode.InternalNodesOnly => 2u,
+            _ => 0u,
+        };
+
+    protected override void OnDestroying()
+    {
+        _gpuRenderer.Dispose();
+        base.OnDestroying();
+    }
 }

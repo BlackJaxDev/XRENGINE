@@ -57,6 +57,10 @@ namespace XREngine.Components.Scene.Mesh
         private Matrix4x4 _skinnedRootRenderMatrix = Matrix4x4.Identity;
         private Matrix4x4 _skinnedRootRenderMatrixInverse = Matrix4x4.Identity;
         private bool _lastRenderSkinningEnabled;
+        private bool _lastRenderComputeSkinningEnabled;
+        private bool _lastRenderComputeSkinnedBoundsEnabled;
+        private bool _lastRenderComputeBlendshapesEnabled;
+        private bool _lastRenderBlendshapesEnabled;
 
         // Scene load can seed the draw matrix before every transform has published a fresh render matrix.
         // The first collect re-reads the current transform state and mirrors the skinning-toggle path.
@@ -73,6 +77,46 @@ namespace XREngine.Components.Scene.Mesh
         private const float SkinnedBoundsRefreshInterval = 5.0f;
         private static readonly long SkinnedBoundsRefreshIntervalTicks = RuntimeTiming.SecondsToStopwatchTicks(SkinnedBoundsRefreshInterval);
         private long _lastSkinnedBoundsRefreshTicks = long.MinValue;
+
+        #endregion
+
+        #region Render deformation settings
+
+        private void CaptureRenderDeformationSettings(bool isSkinned)
+        {
+            var settings = RuntimeEngine.Rendering.Settings;
+            _lastRenderSkinningEnabled = isSkinned;
+            _lastRenderComputeSkinningEnabled = settings.CalculateSkinningInComputeShader;
+            _lastRenderComputeSkinnedBoundsEnabled = settings.CalculateSkinnedBoundsInComputeShader;
+            _lastRenderComputeBlendshapesEnabled = settings.CalculateBlendshapesInComputeShader;
+            _lastRenderBlendshapesEnabled = settings.AllowBlendshapes;
+        }
+
+        private bool RenderDeformationSettingsChanged(bool isSkinned)
+        {
+            var settings = RuntimeEngine.Rendering.Settings;
+            return isSkinned != _lastRenderSkinningEnabled ||
+                settings.CalculateSkinningInComputeShader != _lastRenderComputeSkinningEnabled ||
+                settings.CalculateSkinnedBoundsInComputeShader != _lastRenderComputeSkinnedBoundsEnabled ||
+                settings.CalculateBlendshapesInComputeShader != _lastRenderComputeBlendshapesEnabled ||
+                settings.AllowBlendshapes != _lastRenderBlendshapesEnabled;
+        }
+
+        private void InvalidateGpuDeformationState()
+        {
+            foreach (RenderableLOD lod in GetLodSnapshot())
+            {
+                XRMeshRenderer renderer = lod.Renderer;
+                SkinningPrepassDispatcher.Instance.InvalidateRenderer(renderer);
+                renderer.ResetSkinPaletteSeedState();
+                renderer.MarkSkinnedOutputDirty();
+            }
+
+            SkinnedMeshBoundsCalculator.Instance.UnregisterSkinnedMesh(this, World?.VisualScene?.GPUCommands);
+            DisposeGpuSkinnedBoundsDebugRenderer();
+            _vertexSkinSeedSettled = false;
+            _initialRenderStateSeeded = false;
+        }
 
         #endregion
 
@@ -367,7 +411,7 @@ namespace XREngine.Components.Scene.Mesh
             if (!IsSkinned)
                 return false;
 
-            if (_usesAuthoredSkinnedCullingBounds)
+            if (ShouldUseAuthoredSkinnedCullingBounds())
                 return false;
 
             lock (_skinnedDataLock)
@@ -693,7 +737,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ProcessSkinnedBoundsRefresh()
         {
-            if (!IsSkinned || _usesAuthoredSkinnedCullingBounds)
+            if (!IsSkinned || ShouldUseAuthoredSkinnedCullingBounds())
                 return;
 
             bool requeue = false;
@@ -707,14 +751,20 @@ namespace XREngine.Components.Scene.Mesh
                 bool allowMissingBoundsRefresh = AllowsInitialRuntimeSkinnedBoundsBuild(policy, allowInitialBuildWhenNever);
                 bool refreshInFlight = _skinnedBoundsRefreshTask is not null;
                 long nowTicks = RuntimeEngine.ElapsedTicks;
-                if (ShouldScheduleSkinnedBoundsRefresh(
+                bool refreshComputeNow = ShouldRefreshComputeSkinnedBoundsNow(refreshInFlight);
+                bool scheduleCpuVisibleBoundsRefresh = ShouldScheduleSkinnedBoundsRefresh(
                     policy,
                     allowInitialBuildWhenNever,
                     _hasSkinnedBounds,
                     _skinnedBoundsDirty,
                     refreshInFlight,
                     nowTicks,
-                    _lastSkinnedBoundsRefreshTicks))
+                    _lastSkinnedBoundsRefreshTicks);
+
+                if (refreshComputeNow && CurrentLODRenderer is { } computeRenderer)
+                    SkinningPrepassDispatcher.Instance.RunForGpuMeshBvh(computeRenderer);
+
+                if (scheduleCpuVisibleBoundsRefresh)
                 {
                     if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader && RuntimeEngine.IsRenderThread)
                     {
@@ -776,7 +826,7 @@ namespace XREngine.Components.Scene.Mesh
         public BVH<Triangle>? GetSkinnedBvh(bool allowRebuild = true)
         {
             if (!IsSkinned)
-                return CurrentLODRenderer?.Mesh?.BVHTree;
+                return CurrentLODRenderer?.Mesh?.CachedBVHTree;
 
             lock (_skinnedDataLock)
             {
@@ -814,6 +864,27 @@ namespace XREngine.Components.Scene.Mesh
                 return null;
             }
         }
+
+        private bool ShouldRefreshComputeSkinnedBoundsNow(bool refreshInFlight)
+        {
+            if (!RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader ||
+                !RuntimeEngine.IsRenderThread ||
+                refreshInFlight)
+            {
+                return false;
+            }
+
+            var renderer = CurrentLODRenderer;
+            var mesh = renderer?.Mesh;
+            return renderer is not null &&
+                mesh?.HasSkinning == true &&
+                mesh.VertexCount > 0 &&
+                RuntimeEngine.Rendering.Settings.AllowSkinning;
+        }
+
+        private bool ShouldUseAuthoredSkinnedCullingBounds()
+            => _usesAuthoredSkinnedCullingBounds &&
+               !RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
 
 
         private void ScheduleSkinnedBvhJobIfNeeded()

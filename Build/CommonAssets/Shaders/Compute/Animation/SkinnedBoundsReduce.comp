@@ -1,8 +1,8 @@
 #version 450
 
-// Reduces an already-skinned vec4 position buffer (e.g. SkinningPrepass output)
-// into a tight AABB for a single command/mesh slot, written via atomic CAS into
-// a packed bounds buffer.
+// Reduces an already-skinned position buffer (e.g. SkinningPrepass output) into
+// a tight AABB for a single command/mesh slot, written via atomic CAS into a
+// packed bounds buffer.
 //
 // Intentionally tiny: 2 SSBO bindings + a few uniforms. Designed to run
 // piggy-backed on SkinningPrepass.comp output without touching its 16-binding
@@ -32,10 +32,18 @@ layout(std430, binding = 1) buffer BoundsBuffer
     uvec4 BoundsBits[];
 };
 
+layout(std430, binding = 2) readonly buffer InterleavedPositionsBuffer
+{
+    uint InterleavedPositions[];
+};
+
 uniform uint vertexCount;
 uniform uint slotIndex;
 uniform int applyTransform;
 uniform mat4 transformMatrix;
+uniform uint useInterleaved;
+uniform uint interleavedStrideBytes;
+uniform uint positionOffsetBytes;
 
 shared vec3 sharedMin[gl_WorkGroupSize.x];
 shared vec3 sharedMax[gl_WorkGroupSize.x];
@@ -112,6 +120,28 @@ shared vec3 sharedMax[gl_WorkGroupSize.x];
     } while (expected != old); \
 }
 
+float loadInterleavedFloat(uint byteOffset)
+{
+    return uintBitsToFloat(InterleavedPositions[byteOffset >> 2]);
+}
+
+vec3 loadPosition(uint vertexIndex)
+{
+    if (useInterleaved == 0u)
+        return PositionsIn[vertexIndex].xyz;
+
+    uint baseByte = vertexIndex * interleavedStrideBytes + positionOffsetBytes;
+    return vec3(
+        loadInterleavedFloat(baseByte + 0u),
+        loadInterleavedFloat(baseByte + 4u),
+        loadInterleavedFloat(baseByte + 8u));
+}
+
+bool isFiniteVec3(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
 void main()
 {
     uint idx = gl_GlobalInvocationID.x;
@@ -123,11 +153,14 @@ void main()
 
     if (idx < vertexCount)
     {
-        vec3 p = PositionsIn[idx].xyz;
+        vec3 p = loadPosition(idx);
         if (applyTransform != 0)
             p = (transformMatrix * vec4(p, 1.0)).xyz;
-        localMin = p;
-        localMax = p;
+        if (isFiniteVec3(p))
+        {
+            localMin = p;
+            localMax = p;
+        }
     }
 
     sharedMin[local] = localMin;
