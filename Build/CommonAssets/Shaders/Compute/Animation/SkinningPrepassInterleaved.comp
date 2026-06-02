@@ -88,6 +88,40 @@ uniform uint interleavedStride;
 uniform uint positionOffsetBytes;
 uniform uint normalOffsetBytes;
 uniform uint tangentOffsetBytes;
+uniform int updateLiveBounds;
+uniform uint liveBoundsWordOffset;
+
+shared vec3 LiveBoundsSharedMin[gl_WorkGroupSize.x];
+shared vec3 LiveBoundsSharedMax[gl_WorkGroupSize.x];
+
+#define LIVE_MIN_WORD(componentIndex) (liveBoundsWordOffset + uint(componentIndex))
+#define LIVE_MAX_WORD(componentIndex) (liveBoundsWordOffset + 4u + uint(componentIndex))
+
+#define LIVE_ATOMIC_MIN(componentIndex, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint word = LIVE_MIN_WORD(componentIndex); \
+    uint old = InterleavedOut[word]; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) >= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(InterleavedOut[word], expected, enc); \
+    } while (expected != old); \
+}
+
+#define LIVE_ATOMIC_MAX(componentIndex, value) \
+{ \
+    uint enc = floatBitsToUint(value); \
+    uint word = LIVE_MAX_WORD(componentIndex); \
+    uint old = InterleavedOut[word]; \
+    uint expected; \
+    do { \
+        expected = old; \
+        if ((value) <= uintBitsToFloat(expected)) break; \
+        old = atomicCompSwap(InterleavedOut[word], expected, enc); \
+    } while (expected != old); \
+}
 
 uint decodeIndex(uint raw)
 {
@@ -386,27 +420,72 @@ void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, u
         tangent = skinnedTangent;
 }
 
+void updateLiveSkinnedBounds(vec3 position, bool validVertex)
+{
+    uint local = gl_LocalInvocationID.x;
+    bool validBoundsVertex = validVertex && !any(isnan(position)) && !any(isinf(position));
+
+    const float FLT_MAX = 3.402823466e+38;
+    LiveBoundsSharedMin[local] = validBoundsVertex ? position : vec3(FLT_MAX);
+    LiveBoundsSharedMax[local] = validBoundsVertex ? position : vec3(-FLT_MAX);
+    barrier();
+
+    for (uint stride = gl_WorkGroupSize.x / 2u; stride > 0u; stride >>= 1u)
+    {
+        if (local < stride)
+        {
+            LiveBoundsSharedMin[local] = min(LiveBoundsSharedMin[local], LiveBoundsSharedMin[local + stride]);
+            LiveBoundsSharedMax[local] = max(LiveBoundsSharedMax[local], LiveBoundsSharedMax[local + stride]);
+        }
+        barrier();
+    }
+
+    if (local != 0u)
+        return;
+
+    vec3 groupMin = LiveBoundsSharedMin[0];
+    vec3 groupMax = LiveBoundsSharedMax[0];
+
+    LIVE_ATOMIC_MIN(0, groupMin.x);
+    LIVE_ATOMIC_MIN(1, groupMin.y);
+    LIVE_ATOMIC_MIN(2, groupMin.z);
+
+    LIVE_ATOMIC_MAX(0, groupMax.x);
+    LIVE_ATOMIC_MAX(1, groupMax.y);
+    LIVE_ATOMIC_MAX(2, groupMax.z);
+}
+
 void main()
 {
     uint idx = gl_GlobalInvocationID.x;
-    if (idx >= vertexCount)
+    bool validVertex = idx < vertexCount;
+    if (!validVertex && updateLiveBounds == 0)
         return;
 
     uint baseByte = idx * interleavedStride;
+    vec3 basePosition = vec3(0.0);
+    vec3 baseNormal = vec3(0.0);
+    vec3 baseTangent = vec3(0.0);
 
-    // Start by copying the incoming vertex so all attributes remain intact.
-    copyInterleavedVertex(baseByte);
+    if (validVertex)
+    {
+        // Start by copying the incoming vertex so all attributes remain intact.
+        copyInterleavedVertex(baseByte);
 
-    vec3 basePosition = loadInterleavedVec3(baseByte + positionOffsetBytes);
-    vec3 baseNormal = (hasNormals != 0) ? loadInterleavedVec3(baseByte + normalOffsetBytes) : vec3(0.0);
-    vec3 baseTangent = (hasTangents != 0) ? loadInterleavedVec3(baseByte + tangentOffsetBytes) : vec3(0.0);
+        basePosition = loadInterleavedVec3(baseByte + positionOffsetBytes);
+        baseNormal = (hasNormals != 0) ? loadInterleavedVec3(baseByte + normalOffsetBytes) : vec3(0.0);
+        baseTangent = (hasTangents != 0) ? loadInterleavedVec3(baseByte + tangentOffsetBytes) : vec3(0.0);
 
-    applyBlendshapes(basePosition, baseNormal, baseTangent, idx);
-    applySkinning(basePosition, baseNormal, baseTangent, idx);
+        applyBlendshapes(basePosition, baseNormal, baseTangent, idx);
+        applySkinning(basePosition, baseNormal, baseTangent, idx);
 
-    storeInterleavedVec3(baseByte + positionOffsetBytes, basePosition);
-    if (hasNormals != 0)
-        storeInterleavedVec3(baseByte + normalOffsetBytes, normalize(baseNormal));
-    if (hasTangents != 0)
-        storeInterleavedVec3(baseByte + tangentOffsetBytes, normalize(baseTangent));
+        storeInterleavedVec3(baseByte + positionOffsetBytes, basePosition);
+        if (hasNormals != 0)
+            storeInterleavedVec3(baseByte + normalOffsetBytes, normalize(baseNormal));
+        if (hasTangents != 0)
+            storeInterleavedVec3(baseByte + tangentOffsetBytes, normalize(baseTangent));
+    }
+
+    if (updateLiveBounds != 0)
+        updateLiveSkinnedBounds(basePosition, validVertex);
 }

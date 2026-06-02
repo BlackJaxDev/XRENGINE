@@ -18,6 +18,7 @@ using XREngine.Data.Trees;
 using XREngine.Input.Devices;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Lightmapping;
+using XREngine.Rendering.Models;
 using XREngine.Rendering.Picking;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
@@ -1346,6 +1347,8 @@ namespace XREngine.Rendering
             if (mesh is null || ShouldIgnoreRenderableMesh(mesh))
                 return false;
 
+            QueueGpuMeshBvhInteractionRefresh(component, mesh, worldSegment);
+
             if (!TryIntersectRenderableMesh(mesh, worldSegment, out distance, out Triangle worldTriangle, out Vector3 hitPoint, out IndexTriangle triangleIndices, out int triangleIndex))
                 return false;
 
@@ -1490,6 +1493,26 @@ namespace XREngine.Rendering
             return false;
         }
 
+        private static void QueueGpuMeshBvhInteractionRefresh(RenderableComponent component, RenderableMesh mesh, Segment worldSegment)
+        {
+            if (component is not ModelComponent model ||
+                !model.TryGetSourceSubMesh(mesh, out SubMesh? subMesh) ||
+                !subMesh.UseGpuMeshBvh)
+            {
+                return;
+            }
+
+            bool skinned = (mesh.CurrentLODMesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            if (skinned && !subMesh.RealtimeGpuMeshBvhForSkinnedMeshes)
+                return;
+
+            if (!mesh.TryGetGpuMeshBvhRequestWorldBounds(out AABB worldBounds) || !worldBounds.IsValid)
+                return;
+
+            if (GeoUtil.Intersect.SegmentWithAABB(worldSegment.Start, worldSegment.End, worldBounds.Min, worldBounds.Max, out _, out _))
+                mesh.RequestGpuMeshBvhRefresh();
+        }
+
         private static bool TryIntersectRenderableMesh(
             RenderableMesh mesh,
             Segment worldSegment,
@@ -1519,16 +1542,9 @@ namespace XREngine.Rendering
 
             bool skinned = xrMesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
 
-            var bvh = skinned ? mesh.GetSkinnedBvh() : xrMesh.BVHTree;
+            var bvh = skinned ? mesh.GetSkinnedBvh(allowRebuild: false) : xrMesh.CachedBVHTree;
             if (bvh is null)
-            {
-                if (skinned)
-                    return false; // Skinned BVH build is asynchronous; try again next frame.
-
-                // Static BVH build is now scheduled through the job system; try again next frame.
-                _ = xrMesh.BVHTree;
                 return false;
-            }
 
             Vector3 segmentSpaceStart;
             Vector3 segmentSpaceEnd;

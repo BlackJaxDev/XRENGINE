@@ -1497,64 +1497,8 @@ public static partial class EditorImGuiUI
         if (_nodesPendingAddComponent?.Contains(node) == true)
             _nodesPendingAddComponent = null;
 
-        var tfm = node.Transform;
-        var parentTransform = tfm.Parent;
-        bool wasActive = node.IsActiveSelf;
-        string nodeName = node.Name ?? SceneNode.DefaultName;
-
-        // Capture state for undo before making changes
-        var worldCapture = world;
-        var sceneCapture = owningScene;
-
-        // Capture undo context before making changes
-        using var interaction = Undo.BeginUserInteraction();
-        using var scope = Undo.BeginChange($"Delete {nodeName}");
-
-        if (parentTransform is not null)
-        {
-            parentTransform.RemoveChild(tfm, EParentAssignmentMode.Immediate);
-        }
-        else
-        {
-            world.RootNodes.Remove(node);
-            owningScene?.RootNodes.Remove(node);
-        }
-
-        FinalizeSceneNodeDeletion(node);
-
-        Undo.RecordStructuralChange($"Delete {nodeName}",
-            undoAction: () =>
-            {
-                // Restore: reattach to parent or root, reactivate
-                if (parentTransform is not null)
-                    tfm.SetParent(parentTransform, false, EParentAssignmentMode.Immediate);
-                else
-                {
-                    sceneCapture?.RootNodes.Add(node);
-                    worldCapture.RootNodes.Add(node);
-                }
-                node.IsActiveSelf = wasActive;
-                Undo.TrackSceneNode(node);
-            },
-            redoAction: () =>
-            {
-                // Re-delete
-                if (parentTransform is not null)
-                    parentTransform.RemoveChild(tfm, EParentAssignmentMode.Immediate);
-                else
-                {
-                    worldCapture.RootNodes.Remove(node);
-                    sceneCapture?.RootNodes.Remove(node);
-                }
-                node.IsActiveSelf = false;
-            });
-
+        node.Destroy();
         MarkSceneHierarchyDirty(node, owningScene, world);
-    }
-
-    private static void FinalizeSceneNodeDeletion(SceneNode node)
-    {
-        node.IsActiveSelf = false;
     }
 
     private static void CreateChildSceneNode(SceneNode parent, XRScene? owningScene, XRWorldInstance world)

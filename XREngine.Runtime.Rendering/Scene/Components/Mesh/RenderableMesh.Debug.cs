@@ -7,6 +7,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Transforms;
@@ -22,6 +23,8 @@ namespace XREngine.Components.Scene.Mesh
         private XRMaterial? _highlightSourceMaterial;
         private int _highlightStencilBits;
         private bool _skinnedCullDiagLogged;
+        private bool _gpuSkinnedBoundsDebugFailureLogged;
+        private GpuBoundsDebugLineRenderer? _gpuBoundsDebugRenderer;
 
         #endregion
 
@@ -218,7 +221,8 @@ namespace XREngine.Components.Scene.Mesh
             bool showTransparencyModeOverlay = debug.VisualizeTransparencyModeOverlay;
             bool showTransparencyClassificationOverlay = debug.VisualizeTransparencyClassificationOverlay;
 
-            if (debug.RenderMesh3DBounds && !showTransparencyModeOverlay && !showTransparencyClassificationOverlay)
+            bool renderMeshBounds = RenderBounds || debug.RenderMesh3DBounds;
+            if (!renderMeshBounds && !showTransparencyModeOverlay && !showTransparencyClassificationOverlay)
                 return;
 
             XRMaterial? material = CurrentLODRenderer?.Material;
@@ -230,10 +234,18 @@ namespace XREngine.Components.Scene.Mesh
                 boundsColor = GetTransparencyClassificationColor(material.GetEffectiveTransparencyMode());
 
             var box = (RenderInfo as IOctreeItem)?.WorldCullingVolume;
-            if (box is not null)
+            if (renderMeshBounds && ShouldUseLiveGpuSkinnedBounds())
+            {
+                if (!TryRenderGpuSkinnedBounds(boundsColor, camera: null))
+                    ReportGpuSkinnedBoundsDebugFailure();
+            }
+            else if (box is not null)
             {
                 RenderDebugBox(box.Value, boundsColor);
+            }
 
+            if (box is not null)
+            {
                 if (material is not null && (showTransparencyModeOverlay || showTransparencyClassificationOverlay))
                 {
                     string label = showTransparencyModeOverlay
@@ -319,12 +331,128 @@ namespace XREngine.Components.Scene.Mesh
             if (!ShouldQueueCollectedMeshBoundsDebug(passes, camera))
                 return;
 
+            if (ShouldUseLiveGpuSkinnedBounds())
+                return;
+
             Box? box = ((IOctreeItem)RenderInfo).WorldCullingVolume;
             if (box is null)
                 return;
 
             ColorF4 boundsColor = RuntimeEngine.EditorPreferences.Theme.MeshBoundsContainedColor;
             RenderDebugBox(box.Value, boundsColor);
+        }
+
+        private bool ShouldUseLiveGpuSkinnedBounds()
+            => IsSkinned && RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+
+        private bool RenderCullingVolumeDebugOverride(RenderInfo info)
+        {
+            if (!ShouldUseLiveGpuSkinnedBounds())
+                return false;
+
+            if (RuntimeEngine.Rendering.State.IsShadowPass ||
+                RuntimeEngine.Rendering.State.IsLightProbePass ||
+                RuntimeEngine.Rendering.State.IsSceneCapturePass)
+            {
+                return true;
+            }
+
+            ColorF4 boundsColor = RuntimeEngine.EditorPreferences.Theme.Bounds3DColor;
+            if (!TryRenderGpuSkinnedBounds(boundsColor, camera: null))
+                ReportGpuSkinnedBoundsDebugFailure();
+            return true;
+        }
+
+        private bool TryRenderGpuSkinnedBounds(ColorF4 boundsColor, XRCamera? camera)
+        {
+            if (!RuntimeEngine.IsRenderThread ||
+                !ShouldUseLiveGpuSkinnedBounds())
+            {
+                return false;
+            }
+
+            if (!TryGetLiveGpuSkinnedBoundsBuffer(
+                    out XRDataBuffer? boundsBuffer,
+                    out Matrix4x4 boundsToWorld,
+                    out uint boundsVec4Offset) ||
+                boundsBuffer is null)
+            {
+                return false;
+            }
+
+            _gpuBoundsDebugRenderer ??= new GpuBoundsDebugLineRenderer();
+            bool rendered = _gpuBoundsDebugRenderer.Render(
+                boundsBuffer,
+                boundsToWorld,
+                camera ?? ResolveCurrentBoundsDebugCamera(),
+                0.0015f,
+                new Vector4(boundsColor.R, boundsColor.G, boundsColor.B, boundsColor.A),
+                boundsVec4Offset);
+            if (rendered)
+                _gpuSkinnedBoundsDebugFailureLogged = false;
+            return rendered;
+        }
+
+        private void ReportGpuSkinnedBoundsDebugFailure()
+        {
+            if (!_gpuSkinnedBoundsDebugFailureLogged)
+            {
+                _gpuSkinnedBoundsDebugFailureLogged = true;
+                RuntimeEngine.LogWarning(
+                    $"[GpuSkinnedBoundsDebug] Mesh='{CurrentLODRenderer?.Mesh?.Name ?? "<null>"}' " +
+                    "failed to render live GPU skinned bounds. The bounds buffer is missing, invalid, " +
+                    "or the GPU debug-line renderer could not draw it.");
+            }
+
+            Box? box = ((IOctreeItem)RenderInfo).WorldCullingVolume;
+            if (box is null)
+                return;
+
+            Vector3 center = box.Value.WorldCenter;
+            RuntimeEngine.Rendering.Debug.RenderPoint(center, ColorF4.Red);
+            RuntimeEngine.Rendering.Debug.RenderText(center, "GPU skinned bounds unavailable", ColorF4.Red);
+        }
+
+        private bool TryGetLiveGpuSkinnedBoundsBuffer(
+            out XRDataBuffer? boundsBuffer,
+            out Matrix4x4 boundsToWorld,
+            out uint boundsVec4Offset)
+        {
+            boundsBuffer = null;
+            boundsToWorld = Matrix4x4.Identity;
+            boundsVec4Offset = 0u;
+            if (!ShouldUseLiveGpuSkinnedBounds())
+                return false;
+
+            return SkinnedMeshBoundsCalculator.Instance.TryPrepareGpuDebugBounds(
+                this,
+                out boundsBuffer,
+                out boundsToWorld,
+                out boundsVec4Offset);
+        }
+
+        public bool TryGetLiveGpuSkinnedWorldBounds(out AABB bounds)
+        {
+            bounds = default;
+            if (!ShouldUseLiveGpuSkinnedBounds())
+                return false;
+
+            return SkinnedMeshBoundsCalculator.Instance.TryReadGpuDebugBounds(this, out bounds);
+        }
+
+        private static XRCamera? ResolveCurrentBoundsDebugCamera()
+        {
+            var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            return RuntimeEngine.Rendering.State.RenderingCamera
+                ?? RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera
+                ?? pipeline?.LastSceneCamera
+                ?? pipeline?.LastRenderingCamera;
+        }
+
+        private void DisposeGpuSkinnedBoundsDebugRenderer()
+        {
+            _gpuBoundsDebugRenderer?.Dispose();
+            _gpuBoundsDebugRenderer = null;
         }
 
         private static void RenderDebugBox(in Box box, ColorF4 color)
@@ -351,7 +479,7 @@ namespace XREngine.Components.Scene.Mesh
                 return false;
 
             var debug = RuntimeEngine.EditorPreferences.Debug;
-            return debug.RenderMesh3DBounds &&
+            return (RenderBounds || debug.RenderMesh3DBounds) &&
                    !debug.VisualizeTransparencyModeOverlay &&
                    !debug.VisualizeTransparencyClassificationOverlay;
         }

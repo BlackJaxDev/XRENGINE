@@ -149,6 +149,7 @@ namespace XREngine.Components.Scene.Mesh
             RenderInfo.LocalCullingVolume = mesh.CullingBounds ?? mesh.Bounds;
             _bindPoseBounds = RenderInfo.LocalCullingVolume ?? mesh.Bounds;
             RenderInfo.PreCollectCommandsCallback = BeforeAdd;
+            RenderInfo.RenderCullingVolumeDebugOverride = RenderCullingVolumeDebugOverride;
             RenderInfo.PropertyChanged += RenderInfoPropertyChanged;
             PublishRenderCommandCullingVolume();
 
@@ -179,7 +180,7 @@ namespace XREngine.Components.Scene.Mesh
                 RenderInfo.CullingOffsetMatrix = Component.Transform.WorldMatrix;
             }
 
-            _lastRenderSkinningEnabled = IsSkinned;
+            CaptureRenderDeformationSettings(IsSkinned);
             RuntimeEngine.Rendering.SettingsChanged += Rendering_SettingsChanged;
         }
 
@@ -258,6 +259,9 @@ namespace XREngine.Components.Scene.Mesh
 
             if (skinned)
             {
+                if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader && RuntimeEngine.IsRenderThread)
+                    ProcessSkinnedBoundsRefresh();
+
                 bool skinnedBoundsOk = EnsureSkinnedBounds();
                 if (!skinnedBoundsOk)
                 {
@@ -285,7 +289,7 @@ namespace XREngine.Components.Scene.Mesh
 
             ApplyHighlightRenderOptionsOverride(mat);
             ModelRenderDiagnostics.LogCommandCollect(this, _rc, passes, camera, distance);
-            QueueCollectedMeshBoundsDebug(passes, camera);
+            ProcessPendingGpuMeshBvhRefresh();
 
             return true;
         }
@@ -325,19 +329,9 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         public Segment GetLocalSegment(Segment worldSegment, bool skinnedMesh)
-        {
-            Segment localSegment;
-            if (skinnedMesh)
-            {
-                localSegment = worldSegment.TransformedBy(SkinnedBvhWorldToLocalMatrix);
-            }
-            else
-            {
-                localSegment = worldSegment.TransformedBy(Component.Transform.InverseWorldMatrix);
-            }
-
-            return localSegment;
-        }
+            => skinnedMesh
+                ? worldSegment.TransformedBy(SkinnedBvhWorldToLocalMatrix)
+                : worldSegment.TransformedBy(Component.Transform.InverseWorldMatrix);
 
         /// <summary>
         /// Attempts to retrieve the current world-space bounds for this mesh, preferring skinned bounds when available.
@@ -436,7 +430,7 @@ namespace XREngine.Components.Scene.Mesh
                     {
                         var rend = CurrentLODRenderer;
                         bool skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
-                        _lastRenderSkinningEnabled = skinned;
+                        CaptureRenderDeformationSettings(skinned);
                         _rc.WorldMatrix = skinned ? Matrix4x4.Identity : Component.Transform.RenderMatrix;
                     }
                     break;
@@ -467,6 +461,8 @@ namespace XREngine.Components.Scene.Mesh
             foreach (XRMesh mesh in _ownedRuntimeMeshes)
                 mesh.Destroy(now: true);
             _ownedRuntimeMeshes.Clear();
+            DisposeGpuMeshBvh();
+            DisposeGpuSkinnedBoundsDebugRenderer();
 
             lock (_highlightStateLock)
             {

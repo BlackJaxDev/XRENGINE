@@ -187,47 +187,7 @@ namespace XREngine.Editor.Mcp
             if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
-            var world = context.WorldInstance;
-            var tfm = node.Transform;
-            var parentTransform = tfm.Parent;
-            bool wasActive = node.IsActiveSelf;
-            string nodeName = node.Name ?? SceneNode.DefaultName;
-
-            // Soft-delete: detach from parent/root and deactivate
-            if (parentTransform is not null)
-            {
-                parentTransform.RemoveChild(tfm, EParentAssignmentMode.Immediate);
-            }
-            else
-            {
-                world.RootNodes.Remove(node);
-                // Try to find and remove from owning scene
-                foreach (var scene in world.TargetWorld?.Scenes ?? [])
-                    scene.RootNodes.Remove(node);
-            }
-            node.IsActiveSelf = false;
-
-            // Record structural undo
-            using var interaction = Undo.BeginUserInteraction();
-            using var scope = Undo.BeginChange($"MCP Delete {nodeName}");
-            Undo.RecordStructuralChange($"Delete {nodeName}",
-                undoAction: () =>
-                {
-                    if (parentTransform is not null)
-                        tfm.SetParent(parentTransform, false, EParentAssignmentMode.Immediate);
-                    else
-                        world.RootNodes.Add(node);
-                    node.IsActiveSelf = wasActive;
-                    Undo.TrackSceneNode(node);
-                },
-                redoAction: () =>
-                {
-                    if (parentTransform is not null)
-                        parentTransform.RemoveChild(tfm, EParentAssignmentMode.Immediate);
-                    else
-                        world.RootNodes.Remove(node);
-                    node.IsActiveSelf = false;
-                });
+            node.Destroy();
 
             return Task.FromResult(new McpToolResponse($"Deleted scene node '{nodeId}'."));
         }

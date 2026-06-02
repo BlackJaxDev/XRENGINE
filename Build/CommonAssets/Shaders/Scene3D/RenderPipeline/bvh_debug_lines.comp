@@ -31,6 +31,7 @@ layout(std430, binding = 1) writeonly buffer DebugLines
 uniform uint MaxNodes;
 uniform vec4 LeafColor;
 uniform vec4 InternalColor;
+uniform mat4 NodeToWorld;
 // 0 = all nodes, 1 = leaves only, 2 = internal nodes only.
 uniform uint ShowFilter;
 
@@ -39,8 +40,8 @@ const uint VEC4_PER_LINE = 3u;
 
 void writeLine(uint baseIdx, vec3 a, vec3 b, vec4 color)
 {
-    Lines[baseIdx + 0u] = vec4(a, 1.0);
-    Lines[baseIdx + 1u] = vec4(b, 1.0);
+    Lines[baseIdx + 0u] = NodeToWorld * vec4(a, 1.0);
+    Lines[baseIdx + 1u] = NodeToWorld * vec4(b, 1.0);
     Lines[baseIdx + 2u] = color;
 }
 

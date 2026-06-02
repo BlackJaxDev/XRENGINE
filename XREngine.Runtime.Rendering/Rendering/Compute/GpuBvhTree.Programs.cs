@@ -155,10 +155,9 @@ public sealed partial class GpuBvhTree
         if (program.IsLinked)
             return true;
 
-        if (!program.LinkReady)
-            program.Link();
+        program.Link();
 
-        return false;
+        return program.IsLinked;
     }
 
     private void DisposeProgramsCore()

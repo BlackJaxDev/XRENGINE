@@ -344,10 +344,9 @@ namespace XREngine.Rendering.Commands
             if (program.IsLinked)
                 return true;
 
-            if (!program.LinkReady)
-                program.Link();
+            program.Link();
 
-            return false;
+            return program.IsLinked;
         }
 
         private void EnsureCommandAabbBuffer(uint commandCount)

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Numerics;
 using Silk.NET.OpenGL;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using State = XREngine.RuntimeEngine.Rendering.State;
 using XREngine.Rendering;
@@ -26,6 +28,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     private const string PrecombinedShaderPath = "Compute/Animation/SkinningPrepassPrecombined.comp";
     private const string PrecombinedInterleavedShaderPath = "Compute/Animation/SkinningPrepassInterleavedPrecombined.comp";
     private const string BlendshapePrecombineShaderPath = "Compute/Animation/BlendshapePrecombine.comp";
+    private const string SkinnedBoundsReduceShaderPath = "Compute/Animation/SkinnedBoundsReduce.comp";
     private const uint ThreadGroupSize = 256u;
 
     internal enum BlendshapePrecombineRendererPath
@@ -95,6 +98,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     private XRRenderProgram? _precombinedInterleavedProgram;
     private XRShader? _blendshapePrecombineShader;
     private XRRenderProgram? _blendshapePrecombineProgram;
+    private XRShader? _skinnedBoundsReduceShader;
+    private XRRenderProgram? _skinnedBoundsReduceProgram;
     private XRDataBuffer? _emptySpillHeaders;
     private XRDataBuffer? _emptySpillEntries;
 
@@ -118,6 +123,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             _precombinedInterleavedShader?.Destroy();
             _blendshapePrecombineProgram?.Destroy();
             _blendshapePrecombineShader?.Destroy();
+            _skinnedBoundsReduceProgram?.Destroy();
+            _skinnedBoundsReduceShader?.Destroy();
             _program = null;
             _shader = null;
             _interleavedProgram = null;
@@ -128,6 +135,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             _precombinedInterleavedShader = null;
             _blendshapePrecombineProgram = null;
             _blendshapePrecombineShader = null;
+            _skinnedBoundsReduceProgram = null;
+            _skinnedBoundsReduceShader = null;
             _emptySpillHeaders?.Destroy();
             _emptySpillEntries?.Destroy();
             _emptySpillHeaders = null;
@@ -164,11 +173,61 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
     }
 
+    public bool TryGetSkinnedBoundsBuffer(XRMeshRenderer renderer, out XRDataBuffer? boundsBuffer)
+        => TryGetSkinnedBoundsBuffer(renderer, out boundsBuffer, out _);
+
+    public bool TryGetSkinnedBoundsBuffer(XRMeshRenderer renderer, out XRDataBuffer? boundsBuffer, out uint boundsVec4Offset)
+    {
+        lock (_syncRoot)
+        {
+            if (_resources.TryGetValue(renderer, out var resources) && resources.HasValidSkinnedBounds)
+            {
+                boundsBuffer = resources.SkinnedBounds;
+                boundsVec4Offset = resources.SkinnedBoundsVec4Offset;
+                return boundsBuffer is not null;
+            }
+        }
+
+        boundsBuffer = null;
+        boundsVec4Offset = 0u;
+        return false;
+    }
+
+    public bool TryReadSkinnedWorldBounds(XRMeshRenderer renderer, out AABB bounds)
+    {
+        lock (_syncRoot)
+        {
+            if (_resources.TryGetValue(renderer, out var resources) && resources.TryReadSkinnedBounds(out bounds))
+                return true;
+        }
+
+        bounds = default;
+        return false;
+    }
+
+    internal void InvalidateRenderer(XRMeshRenderer renderer)
+    {
+        lock (_syncRoot)
+        {
+            if (!_resources.TryGetValue(renderer, out var resources))
+                return;
+
+            resources.Dispose();
+            _resources.Remove(renderer);
+        }
+    }
+
     /// <summary>
     /// Executes the compute pre-pass for the supplied renderer if the current engine settings require it.
     /// Supports both interleaved and non-interleaved meshes with separate shader programs.
     /// </summary>
     public void Run(XRMeshRenderer renderer)
+        => Run(renderer, forceSkinning: false);
+
+    internal void RunForGpuMeshBvh(XRMeshRenderer renderer)
+        => Run(renderer, forceSkinning: true);
+
+    private void Run(XRMeshRenderer renderer, bool forceSkinning)
     {
         if (AbstractRenderer.Current is null)
             return;
@@ -177,7 +236,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         if (mesh is null || mesh.VertexCount <= 0)
             return;
 
-        bool doSkinning = RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
+        bool doSkinning = (forceSkinning || RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader)
             && mesh.HasSkinning
             && RuntimeEngine.Rendering.Settings.AllowSkinning;
         bool hasBlendshapePath = mesh.BlendshapeCount > 0
@@ -231,6 +290,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             && !renderer.HasGpuDrivenBoneSource;
         bool useSharedSkinPaletteBuffer = useExternalSkinPaletteSource || usePackedGlobalSkinPalette;
         bool useGlobalBlendWeights = false;
+        bool needsLiveSkinnedBounds = doSkinning &&
+            (forceSkinning || RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader);
 
         bool isInterleaved = mesh.Interleaved;
         lock (_syncRoot)
@@ -282,13 +343,20 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             // that decides whether a dispatch is necessary this frame.
             RendererResources resources = _resources.GetValue(renderer, r => new RendererResources(r));
 
-            if (resources.LastComputePrepassFrameId == frameId)
+            bool forceLivePoseRefresh = forceSkinning && needsLiveSkinnedBounds;
+
+            if (!forceLivePoseRefresh &&
+                resources.HasFrameOutput(frameId, doSkinning, doBlendshapes, usePrecombinedBlendshapes) &&
+                (!needsLiveSkinnedBounds || resources.HasValidSkinnedBounds))
+            {
                 return;
+            }
 
             if (!resources.Validate(mesh, doSkinning, doBlendshapes, isInterleaved, usePrecombinedBlendshapes))
                 return;
 
-            if (resources.CanReuseOutput(doSkinning, doBlendshapes, usePrecombinedBlendshapes))
+            if (!needsLiveSkinnedBounds &&
+                resources.CanReuseOutput(doSkinning, doBlendshapes, usePrecombinedBlendshapes))
             {
                 resources.LastComputePrepassFrameId = frameId;
                 RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
@@ -317,7 +385,12 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             // toggle forces a rebuild). This runs on the render thread where render matrices are
             // guaranteed valid, mirroring the toggle path (RefreshBoneMatricesFromRenderState).
             if (doSkinning && !useExternalSkinPaletteSource)
-                resources.EnsureSeededFromRenderState(mesh, isInterleaved, doSkinning, doBlendshapes, useGlobalBlendWeights);
+            {
+                if (forceLivePoseRefresh)
+                    renderer.RefreshBoneMatricesFromRenderState();
+                else
+                    resources.EnsureSeededFromRenderState(mesh, isInterleaved, doSkinning, doBlendshapes, useGlobalBlendWeights);
+            }
 
             // Ensure this renderer's animation inputs are present in the global packed buffers (if enabled).
             // This may resize and/or re-upload global buffers.
@@ -376,6 +449,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             // storage that the draw then reads. This only allocates (and pushes the zeroed client
             // data once); once allocated it never re-pushes, so it cannot clobber compute results.
             resources.EnsureSkinningOutputResident(isInterleaved, doSkinning);
+            bool updateLiveBounds = needsLiveSkinnedBounds &&
+                resources.ResetSkinnedBoundsInOutput(mesh, isInterleaved);
 
             try
             {
@@ -409,6 +484,9 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 activeProgram.Uniform("skinningCoreIndexFormat", (int)mesh.SkinningCoreIndexFormat);
                 activeProgram.Uniform("hasSpillInfluences", mesh.HasSpillInfluences ? 1 : 0);
                 activeProgram.Uniform("skinningInfluenceCap", renderer.ActiveSkinningInfluenceCap);
+                activeProgram.Uniform("updateLiveBounds", updateLiveBounds ? 1 : 0);
+                activeProgram.Uniform("liveBoundsVec4Offset", resources.SkinnedBoundsVec4Offset);
+                activeProgram.Uniform("liveBoundsWordOffset", resources.SkinnedBoundsWordOffset);
 
                 // Global-packed animation input base offsets (0 when using per-renderer buffers).
                 activeProgram.Uniform("skinPaletteBase", skinPaletteBase);
@@ -425,8 +503,14 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 }
 
                 uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
-                activeProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
+                EMemoryBarrierMask barrierMask = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray;
+
+                activeProgram.DispatchCompute(groupsX, 1u, 1u, barrierMask);
                 resources.MarkOutputValid(doSkinning, doBlendshapes, usePrecombinedBlendshapes);
+                if (updateLiveBounds)
+                    resources.MarkSkinnedBoundsValid();
+                else if (needsLiveSkinnedBounds)
+                    TryUpdateSkinnedBoundsFromOutput(resources, mesh, isInterleaved, vertexCount);
                 if (doSkinning && RenderDiagnosticsFlags.SkinningPrepassDiag)
                     resources.DebugReadbackSkinnedOutput(mesh);
                 RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
@@ -449,6 +533,47 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 ClearOpenGlComputeBindings();
             }
         }
+    }
+
+    private bool TryUpdateSkinnedBoundsFromOutput(RendererResources resources, XRMesh mesh, bool isInterleaved, uint vertexCount)
+    {
+        if (vertexCount == 0u)
+            return false;
+        if (!EnsureSkinnedBoundsReduceProgramReady())
+            return false;
+
+        XRDataBuffer? positions = resources.SkinnedPositions;
+        XRDataBuffer? interleaved = resources.SkinnedInterleaved;
+        XRDataBuffer? source = isInterleaved ? interleaved : positions;
+        if (source is null)
+            return false;
+
+        XRDataBuffer? boundsBuffer = resources.ResetSkinnedBoundsBuffer(mesh);
+        if (boundsBuffer is null)
+            return false;
+
+        XRRenderProgram program = _skinnedBoundsReduceProgram!;
+        program.BindBuffer(positions ?? source, 0);
+        program.BindBuffer(boundsBuffer, 1);
+        program.BindBuffer(interleaved ?? source, 2);
+
+        program.Uniform("vertexCount", vertexCount);
+        program.Uniform("slotIndex", 0u);
+        program.Uniform("applyTransform", 0);
+        program.Uniform("transformMatrix", Matrix4x4.Identity);
+        program.Uniform("useInterleaved", isInterleaved ? 1u : 0u);
+        program.Uniform("interleavedStrideBytes", mesh.InterleavedStride);
+        program.Uniform("positionOffsetBytes", mesh.PositionOffset);
+
+        uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
+        program.DispatchCompute(
+            groupsX,
+            1u,
+            1u,
+            EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray | EMemoryBarrierMask.ClientMappedBuffer);
+
+        resources.MarkSkinnedBoundsValid();
+        return true;
     }
 
     internal static bool ShouldUseBlendshapePrecombine(
@@ -744,6 +869,24 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
         _blendshapePrecombineShader ??= ShaderHelper.LoadEngineShader(BlendshapePrecombineShaderPath, EShaderType.Compute);
         _blendshapePrecombineProgram = _blendshapePrecombineShader is null ? null : new XRRenderProgram(true, false, _blendshapePrecombineShader);
+    }
+
+    private bool EnsureSkinnedBoundsReduceProgramReady()
+    {
+        if (_skinnedBoundsReduceProgram is null)
+        {
+            _skinnedBoundsReduceShader ??= ShaderHelper.LoadEngineShader(SkinnedBoundsReduceShaderPath, EShaderType.Compute);
+            _skinnedBoundsReduceProgram = _skinnedBoundsReduceShader is null ? null : new XRRenderProgram(true, false, _skinnedBoundsReduceShader);
+        }
+
+        if (_skinnedBoundsReduceProgram is null)
+            return false;
+
+        if (_skinnedBoundsReduceProgram.IsLinked)
+            return true;
+
+        _skinnedBoundsReduceProgram.Link();
+        return _skinnedBoundsReduceProgram.IsLinked;
     }
 
 }

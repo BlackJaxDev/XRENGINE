@@ -122,16 +122,18 @@ namespace XREngine.Components.Scene.Mesh
         private void Rendering_SettingsChanged()
         {
             bool isSkinned = IsSkinned;
-            if (isSkinned == _lastRenderSkinningEnabled)
+            if (!RenderDeformationSettingsChanged(isSkinned))
                 return;
 
-            _lastRenderSkinningEnabled = isSkinned;
+            CaptureRenderDeformationSettings(isSkinned);
+            InvalidateGpuDeformationState();
+            MarkSkinnedDataDirty();
+
             if (isSkinned)
             {
                 XRMeshRenderer? renderer = CurrentLODRenderer;
                 if (renderer?.EnsureSkinningBuffers(logWarnings: false) == true)
                     renderer.RefreshBoneMatricesFromRenderState();
-                MarkSkinnedDataDirty();
 
                 if (RootBone is not null)
                     MarkPendingRootBoneRenderMatrix(GetCurrentTransformMatrix(RootBone));

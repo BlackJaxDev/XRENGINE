@@ -49,6 +49,9 @@ public unsafe partial class VulkanRenderer
             if (IsActive || _generationFailed)
                 return;
 
+            if (!Renderer.IsLogicalDeviceReady)
+                return;
+
             PreGenerated();
             try
             {

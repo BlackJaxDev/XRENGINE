@@ -520,13 +520,7 @@ namespace XREngine.Scene
                 return;
 
             if (mesh.IsSkinned)
-            {
                 _skinnedMeshes.Add(mesh);
-            }
-            else
-            {
-                EnsureStaticMeshBvh(mesh);
-            }
         }
 
         private void UntrackRenderable(RenderInfo3D renderable)
@@ -537,14 +531,5 @@ namespace XREngine.Scene
             _skinnedMeshes.Remove(mesh);
         }
 
-        private static void EnsureStaticMeshBvh(RenderableMesh mesh)
-        {
-            var xrMesh = mesh.CurrentLODRenderer?.Mesh;
-            if (xrMesh is null)
-                return;
-
-            if (xrMesh.BVHTree is null)
-                _ = xrMesh.BVHTree;
-        }
     }
 }

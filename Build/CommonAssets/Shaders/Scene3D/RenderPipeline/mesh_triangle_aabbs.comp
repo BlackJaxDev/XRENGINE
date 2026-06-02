@@ -1,0 +1,83 @@
+#version 460 core
+
+// Writes one local-space AABB per mesh triangle. Static meshes use the original
+// CPU-authored vertex positions uploaded as vec4s; skinned meshes use the
+// SkinningPrepass output and transform world-space skinned positions back into
+// the renderable's skinned-BVH basis before building/refitting the tree.
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer PositionsInBuffer
+{
+    vec4 PositionsIn[];
+};
+
+layout(std430, binding = 1) readonly buffer InterleavedPositionsBuffer
+{
+    uint InterleavedPositions[];
+};
+
+layout(std430, binding = 2) readonly buffer TriangleIndexBuffer
+{
+    uvec4 TriangleIndices[];
+};
+
+struct Aabb
+{
+    vec4 minBounds;
+    vec4 maxBounds;
+};
+
+layout(std430, binding = 3) writeonly buffer AABBs
+{
+    Aabb AabbsOut[];
+};
+
+uniform uint TriangleCount;
+uniform uint UseInterleaved;
+uniform uint InterleavedStrideBytes;
+uniform uint PositionOffsetBytes;
+uniform int ApplyTransform;
+uniform mat4 TransformMatrix;
+
+vec3 loadInterleavedPosition(uint vertexIndex)
+{
+    uint baseByte = vertexIndex * InterleavedStrideBytes + PositionOffsetBytes;
+    uint word = baseByte >> 2u;
+    return vec3(
+        uintBitsToFloat(InterleavedPositions[word + 0u]),
+        uintBitsToFloat(InterleavedPositions[word + 1u]),
+        uintBitsToFloat(InterleavedPositions[word + 2u]));
+}
+
+vec3 loadPosition(uint vertexIndex)
+{
+    return UseInterleaved != 0u
+        ? loadInterleavedPosition(vertexIndex)
+        : PositionsIn[vertexIndex].xyz;
+}
+
+vec3 maybeTransform(vec3 value)
+{
+    return ApplyTransform != 0
+        ? (TransformMatrix * vec4(value, 1.0)).xyz
+        : value;
+}
+
+void main()
+{
+    uint triangleIndex = gl_GlobalInvocationID.x;
+    if (triangleIndex >= TriangleCount)
+        return;
+
+    uvec4 indices = TriangleIndices[triangleIndex];
+    vec3 p0 = maybeTransform(loadPosition(indices.x));
+    vec3 p1 = maybeTransform(loadPosition(indices.y));
+    vec3 p2 = maybeTransform(loadPosition(indices.z));
+
+    vec3 mn = min(p0, min(p1, p2));
+    vec3 mx = max(p0, max(p1, p2));
+
+    AabbsOut[triangleIndex].minBounds = vec4(mn, 0.0);
+    AabbsOut[triangleIndex].maxBounds = vec4(mx, 0.0);
+}

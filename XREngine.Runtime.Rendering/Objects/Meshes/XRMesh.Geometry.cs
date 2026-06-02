@@ -131,6 +131,8 @@ public partial class XRMesh
         }
     }
 
+    public BVH<Triangle>? CachedBVHTree => _bvhTree;
+
     private IEnumerable GenerateBVHJob()
     {
         var task = Task.Run(GenerateBVH);
@@ -206,9 +208,10 @@ public partial class XRMesh
     public float? Intersect(Segment localSegment, out Triangle? triangle)
     {
         triangle = null;
-        if (BVHTree is null) return null;
+        BVH<Triangle>? bvh = CachedBVHTree;
+        if (bvh is null) return null;
 
-        var matches = BVHTree.Traverse(x => GeoUtil.Intersect.SegmentWithAABB(localSegment.Start, localSegment.End, x.Min, x.Max, out _, out _));
+        var matches = bvh.Traverse(x => GeoUtil.Intersect.SegmentWithAABB(localSegment.Start, localSegment.End, x.Min, x.Max, out _, out _));
         if (matches is null) return null;
 
         float? minDist = null;

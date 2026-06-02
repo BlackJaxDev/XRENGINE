@@ -426,6 +426,8 @@ public static partial class EditorUnitTests
         private static SceneNode CreateCamera(SceneNode parentNode, out CameraComponent? camComp, float? smoothed = 50.0f, bool localSmoothing = true)
         {
             var cameraNode = new SceneNode(parentNode, EditorViewCameraName);
+            cameraNode.SuppressTransformDebugLineAndPoint = true;
+            cameraNode.SuppressTransformTools = true;
 
             if (smoothed.HasValue)
             {
@@ -464,6 +466,7 @@ public static partial class EditorUnitTests
             cameraNode.IsEditorOnly = true;
             cameraNode.CanDeactivate = false;
             cameraNode.SuppressTransformDebugLineAndPoint = true;
+            cameraNode.SuppressTransformTools = true;
 
             if (parent.World is XRWorldInstance world)
             {

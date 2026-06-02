@@ -10,6 +10,7 @@ using XREngine.Data.Core;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
@@ -112,6 +113,18 @@ public static class Undo
     /// Uses a concurrent queue for thread-safe enqueueing from any thread.
     /// </summary>
     private static readonly ConcurrentQueue<TransformBase> _pendingTransformRefresh = new();
+
+    /// <summary>
+    /// Scene-node destroy roots currently being recorded for undo. Descendant destroys
+    /// caused by a root hierarchy destroy are skipped so the undo stack receives one entry.
+    /// </summary>
+    private static readonly HashSet<SceneNode> _sceneNodeDestroyUndoRoots = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Last known scene-root placements for tracked scene nodes. Root collections may remove
+    /// a node before the undo destroy callback sees it, so tracked scene ownership is retained here.
+    /// </summary>
+    private static readonly Dictionary<SceneNode, List<SceneRootPlacement>> _trackedSceneRootPlacements = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Flag indicating whether the transform refresh hook has been registered.
@@ -586,8 +599,14 @@ public static class Undo
             return;
 
         Track(scene);
-        foreach (var node in scene.RootNodes)
+        for (int i = 0; i < scene.RootNodes.Count; i++)
+        {
+            SceneNode node = scene.RootNodes[i];
             TrackSceneNode(node);
+
+            lock (_sync)
+                RememberSceneRootPlacementLocked(scene, node, i);
+        }
     }
 
     /// <summary>
@@ -796,6 +815,101 @@ public static class Undo
                 Untrack(comp);
         }
     }
+
+    private static void RecordSceneNodeDestroy(SceneNode node)
+    {
+        if (Volatile.Read(ref _suppressRecordingCount) > 0 || !EditorState.InEditMode)
+            return;
+
+        lock (_sync)
+        {
+            if (HasDestroyUndoAncestorLocked(node))
+                return;
+
+            _sceneNodeDestroyUndoRoots.Add(node);
+        }
+
+        node.Destroyed += SceneNodeDestroyUndoRootDestroyed;
+
+        SceneNodeDestroyUndoState state;
+        try
+        {
+            state = SceneNodeDestroyUndoState.Capture(node);
+        }
+        catch (Exception ex)
+        {
+            lock (_sync)
+                _sceneNodeDestroyUndoRoots.Remove(node);
+
+            node.Destroyed -= SceneNodeDestroyUndoRootDestroyed;
+            Debug.LogWarning($"Unable to capture undo snapshot for destroyed scene node '{node.Name ?? SceneNode.DefaultName}': {ex.Message}");
+            return;
+        }
+
+        void Record()
+            => RecordStructuralChange(
+                $"Delete {state.DisplayName}",
+                undoAction: state.Restore,
+                redoAction: state.DestroyRestored);
+
+        if (UserInteractionActive)
+            Record();
+        else
+        {
+            using var interaction = BeginUserInteraction();
+            Record();
+        }
+    }
+
+    private static bool HasDestroyUndoAncestorLocked(SceneNode node)
+    {
+        SceneNode? ancestor = node.Parent;
+        while (ancestor is not null)
+        {
+            if (_sceneNodeDestroyUndoRoots.Contains(ancestor))
+                return true;
+
+            ancestor = ancestor.Parent;
+        }
+
+        return false;
+    }
+
+    private static void SceneNodeDestroyUndoRootDestroyed(XRObjectBase obj)
+    {
+        if (obj is not SceneNode node)
+            return;
+
+        lock (_sync)
+            _sceneNodeDestroyUndoRoots.Remove(node);
+
+        node.Destroyed -= SceneNodeDestroyUndoRootDestroyed;
+    }
+
+    private static void RememberSceneRootPlacementLocked(XRScene scene, SceneNode node, int index)
+    {
+        if (!_trackedSceneRootPlacements.TryGetValue(node, out List<SceneRootPlacement>? placements))
+        {
+            placements = [];
+            _trackedSceneRootPlacements[node] = placements;
+        }
+
+        placements.RemoveAll(placement => ReferenceEquals(placement.Scene, scene));
+        placements.Add(new SceneRootPlacement(scene, index));
+    }
+
+    private static List<SceneRootPlacement> GetRememberedSceneRootPlacements(SceneNode node)
+    {
+        lock (_sync)
+        {
+            return _trackedSceneRootPlacements.TryGetValue(node, out List<SceneRootPlacement>? placements)
+                ? [.. placements]
+                : [];
+        }
+    }
+
+    private static void ForgetSceneRootPlacementsLocked(SceneNode node)
+        => _trackedSceneRootPlacements.Remove(node);
 
     /// <summary>
     /// Records a property change for undo/redo tracking.
@@ -1283,6 +1397,8 @@ public static class Undo
         private readonly SceneNode _node;
         private readonly Action<(SceneNode node, XRComponent comp)> _componentAdded;
         private readonly Action<(SceneNode node, XRComponent comp)> _componentRemoved;
+        private readonly Func<XRObjectBase, bool> _destroying;
+        private readonly Action<XRObjectBase> _destroyed;
         private readonly EventList<TransformBase>.SingleHandler _childAdded;
         private readonly EventList<TransformBase>.SingleHandler _childRemoved;
         private TransformBase? _transform;
@@ -1309,6 +1425,20 @@ public static class Undo
                     Untrack(data.comp);
             };
 
+            _destroying = obj =>
+            {
+                if (ReferenceEquals(obj, _node))
+                    RecordSceneNodeDestroy(_node);
+
+                return true;
+            };
+
+            _destroyed = obj =>
+            {
+                if (ReferenceEquals(obj, _node))
+                    Untrack(_node);
+            };
+
             // Handler for when child transforms are added
             _childAdded = transform =>
             {
@@ -1322,6 +1452,8 @@ public static class Undo
             // Subscribe to component events
             _node.ComponentAdded += _componentAdded;
             _node.ComponentRemoved += _componentRemoved;
+            _node.Destroying += _destroying;
+            _node.Destroyed += _destroyed;
 
             // Track all existing components
             foreach (var component in _node.Components)
@@ -1383,6 +1515,8 @@ public static class Undo
             // Unsubscribe from component events
             _node.ComponentAdded -= _componentAdded;
             _node.ComponentRemoved -= _componentRemoved;
+            _node.Destroying -= _destroying;
+            _node.Destroyed -= _destroyed;
 
             // Clean up transform tracking
             if (_transform is not null)
@@ -1393,6 +1527,150 @@ public static class Undo
                 Untrack(_transform);
                 _transform = null;
             }
+
+            lock (_sync)
+                ForgetSceneRootPlacementsLocked(_node);
+        }
+    }
+
+    private sealed class SceneNodeDestroyUndoState
+    {
+        private readonly SceneNode _snapshot;
+        private readonly TransformBase? _parentTransform;
+        private readonly XRWorldInstance? _world;
+        private readonly bool _wasWorldRoot;
+        private readonly bool _wasEditorSceneRoot;
+        private readonly List<SceneRootPlacement> _sceneRootPlacements;
+        private SceneNode? _restoredNode;
+
+        private SceneNodeDestroyUndoState(
+            SceneNode snapshot,
+            string displayName,
+            TransformBase? parentTransform,
+            XRWorldInstance? world,
+            bool wasWorldRoot,
+            bool wasEditorSceneRoot,
+            List<SceneRootPlacement> sceneRootPlacements)
+        {
+            _snapshot = snapshot;
+            DisplayName = displayName;
+            _parentTransform = parentTransform;
+            _world = world;
+            _wasWorldRoot = wasWorldRoot;
+            _wasEditorSceneRoot = wasEditorSceneRoot;
+            _sceneRootPlacements = sceneRootPlacements;
+        }
+
+        public string DisplayName { get; }
+
+        public static SceneNodeDestroyUndoState Capture(SceneNode node)
+        {
+            TransformBase? parentTransform = node.Transform.Parent;
+            XRWorldInstance? world = node.World as XRWorldInstance;
+            bool wasWorldRoot = world is not null && ContainsWorldRoot(world, node);
+            bool wasEditorSceneRoot = parentTransform is null && world?.IsInEditorScene(node) == true;
+            List<SceneRootPlacement> sceneRootPlacements = parentTransform is null && world is not null
+                ? CaptureSceneRootPlacements(world, node)
+                : [];
+            bool restoreAsWorldRoot = wasWorldRoot ||
+                (parentTransform is null &&
+                !node.IsEditorOnly &&
+                sceneRootPlacements.Any(static placement => placement.SceneIsVisible));
+
+            return new SceneNodeDestroyUndoState(
+                SceneNodePrefabUtility.CloneHierarchy(node),
+                node.Name ?? SceneNode.DefaultName,
+                parentTransform,
+                world,
+                restoreAsWorldRoot,
+                wasEditorSceneRoot,
+                sceneRootPlacements);
+        }
+
+        public void Restore()
+        {
+            if (_restoredNode is { IsDestroyed: false })
+                return;
+
+            SceneNode restored = SceneNodePrefabUtility.CloneHierarchy(_snapshot);
+            Attach(restored);
+            TrackSceneNode(restored);
+            _restoredNode = restored;
+        }
+
+        public void DestroyRestored()
+        {
+            if (_restoredNode is not { IsDestroyed: false } restored)
+                return;
+
+            restored.Destroy(true);
+            _restoredNode = null;
+        }
+
+        private void Attach(SceneNode node)
+        {
+            if (_parentTransform is { IsDestroyed: false })
+            {
+                node.Transform.SetParent(_parentTransform, false, EParentAssignmentMode.Immediate);
+                return;
+            }
+
+            if (_world is null)
+                return;
+
+            if (_wasEditorSceneRoot)
+            {
+                _world.AddToEditorScene(node);
+                return;
+            }
+
+            foreach (SceneRootPlacement placement in _sceneRootPlacements)
+                placement.Restore(node);
+
+            if (_wasWorldRoot && !ContainsWorldRoot(_world, node))
+                _world.RootNodes.Add(node);
+        }
+
+        private static bool ContainsWorldRoot(XRWorldInstance world, SceneNode node)
+        {
+            foreach (SceneNode root in world.RootNodes)
+                if (ReferenceEquals(root, node))
+                    return true;
+
+            return false;
+        }
+
+        private static List<SceneRootPlacement> CaptureSceneRootPlacements(XRWorldInstance world, SceneNode node)
+        {
+            List<SceneRootPlacement> placements = [];
+            foreach (XRScene scene in world.TargetWorld?.Scenes ?? [])
+            {
+                int index = scene.RootNodes.FindIndex(root => ReferenceEquals(root, node));
+                if (index >= 0)
+                    placements.Add(new SceneRootPlacement(scene, index));
+            }
+
+            if (placements.Count > 0)
+                return placements;
+
+            return GetRememberedSceneRootPlacements(node);
+        }
+    }
+
+    private readonly struct SceneRootPlacement(XRScene scene, int index)
+    {
+        public XRScene Scene => scene;
+        public bool SceneIsVisible => scene.IsVisible;
+
+        public void Restore(SceneNode node)
+        {
+            if (scene.RootNodes.Any(root => ReferenceEquals(root, node)))
+                return;
+
+            if (index < 0 || index >= scene.RootNodes.Count)
+                scene.RootNodes.Add(node);
+            else
+                scene.RootNodes.Insert(index, node);
         }
     }
 

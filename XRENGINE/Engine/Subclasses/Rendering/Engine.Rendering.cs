@@ -655,6 +655,8 @@ namespace XREngine
             {
                 Settings.CalculateSkinningInComputeShader = Engine.EffectiveSettings.CalculateSkinningInComputeShader;
                 Settings.CalculateBlendshapesInComputeShader = Engine.EffectiveSettings.CalculateBlendshapesInComputeShader;
+                Settings.CalculateSkinnedBoundsInComputeShader = Engine.EffectiveSettings.CalculateSkinnedBoundsInComputeShader;
+                Settings.SkinnedBoundsGpuDirectAabbWrite = Engine.EffectiveSettings.SkinnedBoundsGpuDirectAabbWrite;
                 Settings.UseDetailPreservingComputeMipmaps = Engine.EffectiveSettings.UseDetailPreservingComputeMipmaps;
             }
 

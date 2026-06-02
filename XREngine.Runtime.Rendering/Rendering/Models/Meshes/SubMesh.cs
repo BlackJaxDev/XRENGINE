@@ -1,4 +1,5 @@
 ﻿using MemoryPack;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Data.Geometry;
@@ -40,6 +41,8 @@ namespace XREngine.Rendering.Models
         private AABB _bounds;
         private AABB? _cullingVolumeOverride;
         private TransformBase? _rootBone;
+        private bool _useGpuMeshBvh;
+        private bool _realtimeGpuMeshBvhForSkinnedMeshes = true;
 
         /// <summary>
         /// The true bind-pose bounding box of this mesh.
@@ -64,6 +67,24 @@ namespace XREngine.Rendering.Models
         {
             get => _cullingVolumeOverride;
             set => SetField(ref _cullingVolumeOverride, value);
+        }
+
+        [Category("BVH")]
+        [DisplayName("Use GPU Mesh BVH")]
+        [Description("Builds a GPU triangle BVH for this submesh when editor preview or interaction requests it.")]
+        public bool UseGpuMeshBvh
+        {
+            get => _useGpuMeshBvh;
+            set => SetField(ref _useGpuMeshBvh, value);
+        }
+
+        [Category("BVH")]
+        [DisplayName("Realtime Skinned GPU BVH")]
+        [Description("When enabled, skinned instances refit their GPU triangle BVH from compute-skinned vertex positions when requested.")]
+        public bool RealtimeGpuMeshBvhForSkinnedMeshes
+        {
+            get => _realtimeGpuMeshBvhForSkinnedMeshes;
+            set => SetField(ref _realtimeGpuMeshBvhForSkinnedMeshes, value);
         }
 
         [YamlTransformReference]

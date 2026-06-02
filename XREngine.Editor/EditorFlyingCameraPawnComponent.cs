@@ -67,18 +67,32 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void Selection_SelectionChanged(SceneNode[] selection)
     {
-        if (selection.Length == 0)
+        SceneNode? transformToolTarget = GetTransformToolTarget(selection);
+        if (transformToolTarget is null)
         {
             TransformToolUndoAdapter.Attach(null);
             TransformTool3D.DestroyInstance();
         }
         else
         {
-            var tool = TransformTool3D.GetInstance(selection[0].Transform);
+            var tool = TransformTool3D.GetInstance(transformToolTarget.Transform);
             TransformToolUndoAdapter.Attach(tool);
+            if (tool is null)
+                TransformTool3D.DestroyInstance();
         }
         UpdateSelectionHighlight();
         InvalidateView();
+    }
+
+    private static SceneNode? GetTransformToolTarget(SceneNode[] selection)
+    {
+        foreach (var node in selection)
+        {
+            if (!node.SuppressTransformTools)
+                return node;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -560,6 +574,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private MeshVertexPickResult? _vertexPickResult = null;
     private MeshPickResult? _meshPickResult = null;
     private Segment _lastRaycastSegment = new(Vector3.Zero, Vector3.Zero);
+    private static readonly Lock s_lastViewportMouseSegmentLock = new();
+    private static Segment s_lastViewportMouseSegment = new(Vector3.Zero, Vector3.Zero);
+    private static bool s_hasLastViewportMouseSegment;
     private Vector3? _depthHitNormalizedViewportPoint = null;
     private Vector3? _lastDepthHitNormalizedViewportPoint = null;
 
@@ -569,6 +586,30 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     [Browsable(false)]
     public Lock RaycastLock => _raycastLock;
+
+    public static bool TryGetLastViewportMouseSegment(out Segment segment)
+    {
+        using (s_lastViewportMouseSegmentLock.EnterScope())
+        {
+            segment = s_lastViewportMouseSegment;
+            return s_hasLastViewportMouseSegment;
+        }
+    }
+
+    private static void SetLastViewportMouseSegment(Segment segment)
+    {
+        using (s_lastViewportMouseSegmentLock.EnterScope())
+        {
+            s_lastViewportMouseSegment = segment;
+            s_hasLastViewportMouseSegment = true;
+        }
+    }
+
+    private static void ClearLastViewportMouseSegment()
+    {
+        using (s_lastViewportMouseSegmentLock.EnterScope())
+            s_hasLastViewportMouseSegment = false;
+    }
 
     private bool _depthQueryRequested = false;
 
@@ -1150,16 +1191,28 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void ApplyInput(XRViewport? vp)
     {
         if (vp is null)
+        {
+            ClearLastViewportMouseSegment();
             return;
+        }
 
         var cam = GetCamera();
         if (cam is null)
+        {
+            ClearLastViewportMouseSegment();
             return;
+        }
 
-        var p = GetNormalizedCursorPosition(vp);
+        Vector2 rawP = GetUnclampedNormalizedCursorPosition(vp);
+        bool cursorInViewport = IsNormalizedViewportPointInside(rawP);
+        Vector2 p = ClampNormalizedViewport(rawP);
         ApplyTransformations(vp);
 
         _lastRaycastSegment = vp.GetWorldSegment(p, useUnjitteredProjection: true);
+        if (cursorInViewport)
+            SetLastViewportMouseSegment(_lastRaycastSegment);
+        else
+            ClearLastViewportMouseSegment();
 
         SceneNode? tfmTool = TransformTool3D.InstanceNode;
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
@@ -1168,7 +1221,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         UpdateSelectionDrag(vp);
 
         if (AllowWorldPicking)
-            DispatchWorldPickIfNeeded(vp, p);
+            DispatchWorldPickIfNeeded(vp, cursorInViewport ? p : rawP);
     }
 
     /// <summary>
@@ -1611,17 +1664,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         => vp.GetWorldSegment(GetNormalizedCursorPosition(vp), useUnjitteredProjection: true);
 
     private Vector2 GetNormalizedCursorPosition(XRViewport vp)
-    {
-        // Clamp to viewport bounds to avoid dispatching picks with UVs outside [0,1],
-        // which can happen with multi-monitor/HiDPI coordinate drift and results in
-        // empty pick results (hover outline never enabled).
-        var uv = vp.NormalizeInternalCoordinate(GetCursorInternalCoordinatePosition(vp));
-        // Clamp to just inside the viewport to avoid rays on the exact 1.0 edge
-        // being treated as out-of-bounds by the picker.
-        const float epsilon = 1e-4f;
-        uv = Vector2.Clamp(uv, Vector2.Zero, Vector2.One - new Vector2(epsilon));
-        return uv;
-    }
+        => ClampNormalizedViewport(GetUnclampedNormalizedCursorPosition(vp));
+
+    private Vector2 GetUnclampedNormalizedCursorPosition(XRViewport vp)
+        => vp.NormalizeInternalCoordinate(GetCursorInternalCoordinatePosition(vp));
+
+    private static bool IsNormalizedViewportPointInside(Vector2 uv)
+        => uv.X >= 0f && uv.X <= 1f &&
+           uv.Y >= 0f && uv.Y <= 1f;
 
     private Vector2 GetCursorInternalCoordinatePosition(XRViewport vp)
     {

@@ -44,10 +44,12 @@ internal sealed partial class SkinningPrepassDispatcher
             if (isInterleaved)
             {
                 int stride = (int)mesh.InterleavedStride;
+                uint vertexWords = (uint)(vertexCount * stride / sizeof(float));
+                uint boundsWordOffset = AlignUp(vertexWords, 4u);
                 _renderer.SkinnedInterleavedBuffer = new XRDataBuffer(
                     "InterleavedSkinned",
                     EBufferTarget.ShaderStorageBuffer,
-                    (uint)(vertexCount * stride / sizeof(float)),
+                    boundsWordOffset + 8u,
                     EComponentType.Float,
                     1,
                     true,
@@ -62,7 +64,7 @@ internal sealed partial class SkinningPrepassDispatcher
                 _renderer.SkinnedPositionsBuffer = new XRDataBuffer(
                     ECommonBufferType.Position.ToString(),
                     EBufferTarget.ShaderStorageBuffer,
-                    (uint)vertexCount,
+                    (uint)vertexCount + 2u,
                     EComponentType.Float,
                     4,
                     true,

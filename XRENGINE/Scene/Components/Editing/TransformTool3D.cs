@@ -104,6 +104,12 @@ namespace XREngine.Scene.Components.Editing
         /// <returns></returns>
         public static TransformTool3D? GetInstance(TransformBase comp)
         {
+            if (comp.SceneNode?.SuppressTransformTools == true)
+            {
+                DestroyInstance();
+                return null;
+            }
+
             XRWorldInstance? world = comp?.World as XRWorldInstance;
             if (world is null)
                 return null;

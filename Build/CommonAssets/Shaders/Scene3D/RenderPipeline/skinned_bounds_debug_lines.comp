@@ -1,0 +1,82 @@
+#version 460 core
+
+// GPU debug visualization for a single skinned-bounds reduction buffer.
+// The source buffer is the same two-uvec4 layout written by
+// SkinnedBoundsReduce.comp: slot 0 min bits, slot 0 max bits.
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer BoundsBuffer
+{
+    uvec4 BoundsBits[];
+};
+
+layout(std430, binding = 1) writeonly buffer DebugLines
+{
+    vec4 Lines[];
+};
+
+uniform mat4 BoundsToWorld;
+uniform vec4 Color;
+uniform uint BoundsVec4Offset;
+
+const uint LINES_PER_BOX = 12u;
+const uint VEC4_PER_LINE = 3u;
+
+void writeLine(uint lineIndex, vec3 a, vec3 b)
+{
+    uint baseIdx = lineIndex * VEC4_PER_LINE;
+    Lines[baseIdx + 0u] = BoundsToWorld * vec4(a, 1.0);
+    Lines[baseIdx + 1u] = BoundsToWorld * vec4(b, 1.0);
+    Lines[baseIdx + 2u] = Color;
+}
+
+void writeDegenerate(uint lineIndex)
+{
+    uint baseIdx = lineIndex * VEC4_PER_LINE;
+    Lines[baseIdx + 0u] = vec4(0.0);
+    Lines[baseIdx + 1u] = vec4(0.0);
+    Lines[baseIdx + 2u] = vec4(0.0);
+}
+
+bool invalidBounds(vec3 mn, vec3 mx)
+{
+    return any(isnan(mn)) || any(isnan(mx)) ||
+           any(isinf(mn)) || any(isinf(mx)) ||
+           any(greaterThan(mn, mx));
+}
+
+void main()
+{
+    vec3 mn = uintBitsToFloat(BoundsBits[BoundsVec4Offset + 0u].xyz);
+    vec3 mx = uintBitsToFloat(BoundsBits[BoundsVec4Offset + 1u].xyz);
+
+    if (invalidBounds(mn, mx))
+    {
+        for (uint i = 0u; i < LINES_PER_BOX; ++i)
+            writeDegenerate(i);
+        return;
+    }
+
+    vec3 c000 = vec3(mn.x, mn.y, mn.z);
+    vec3 c100 = vec3(mx.x, mn.y, mn.z);
+    vec3 c010 = vec3(mn.x, mx.y, mn.z);
+    vec3 c110 = vec3(mx.x, mx.y, mn.z);
+    vec3 c001 = vec3(mn.x, mn.y, mx.z);
+    vec3 c101 = vec3(mx.x, mn.y, mx.z);
+    vec3 c011 = vec3(mn.x, mx.y, mx.z);
+    vec3 c111 = vec3(mx.x, mx.y, mx.z);
+
+    writeLine(0u, c000, c100);
+    writeLine(1u, c100, c110);
+    writeLine(2u, c110, c010);
+    writeLine(3u, c010, c000);
+    writeLine(4u, c001, c101);
+    writeLine(5u, c101, c111);
+    writeLine(6u, c111, c011);
+    writeLine(7u, c011, c001);
+    writeLine(8u, c000, c001);
+    writeLine(9u, c100, c101);
+    writeLine(10u, c110, c111);
+    writeLine(11u, c010, c011);
+}

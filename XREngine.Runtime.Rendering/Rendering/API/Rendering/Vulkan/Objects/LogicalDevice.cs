@@ -23,6 +23,7 @@ public unsafe partial class VulkanRenderer
     private bool _supportsSynchronization2Feature;
 
     public Device Device => device;
+    internal bool IsLogicalDeviceReady => device.Handle != 0;
     public Queue GraphicsQueue => graphicsQueue;
     public Queue SecondaryGraphicsQueue => secondaryGraphicsQueue;
     public Queue PresentQueue => presentQueue;
@@ -34,11 +35,22 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyLogicalDevice()
     {
+        ClearPendingDeviceReadyProgramLinks();
+
+        if (!IsLogicalDeviceReady)
+            return;
+
         DestroyDescriptorUpdateTemplateCache();
         DestroyCachedDescriptorSetLayouts();
         DestroyVulkanPipelineCache();
         DestroyCanonicalImmutableSamplers();
         Api!.DestroyDevice(device, null);
+        device = default;
+        graphicsQueue = default;
+        secondaryGraphicsQueue = default;
+        presentQueue = default;
+        computeQueue = default;
+        transferQueue = default;
     }
 
     /// <summary>
@@ -491,6 +503,9 @@ public unsafe partial class VulkanRenderer
             deviceFeatures.GeometryShader = Vk.True;
             _supportsGeometryShader = true;
         }
+
+        if (supportedFeatures.SampleRateShading)
+            deviceFeatures.SampleRateShading = Vk.True;
 
         _availableDeviceExtensions = EnumerateAvailableDeviceExtensions();
         var availableExtensionSet = new HashSet<string>(_availableDeviceExtensions, StringComparer.Ordinal);

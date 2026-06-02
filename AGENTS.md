@@ -16,6 +16,7 @@ XRENGINE is a Windows-first C# XR engine and editor. It has not shipped v1, so t
 - Run targeted tests or the narrowest useful build/run validation.
 - Update docs when user-facing behavior, launch flags, env vars, tasks, setup, or workflows change.
 - Fix easy unrelated validation issues when nearby; report larger unrelated failures.
+- Do not hide explicitly requested GPU/accelerated paths behind silent CPU fallbacks; make failures visible with diagnostics unless fallback behavior is explicitly requested.
 - When asked to commit, use simple imperative commit messages.
 - If this file conflicts with an explicit user request, follow the user request and note the deviation.
 
