@@ -48,6 +48,15 @@ namespace XREngine.Rendering.Info
         protected RenderInfo3D(IRenderable owner, params RenderCommand[] renderCommands)
             : base(owner, renderCommands) { }
 
+        public delegate bool DelCullingIntersectionOverride(RenderInfo3D info, IVolume? cullingVolume, bool containsOnly);
+
+        /// <summary>
+        /// Optional narrow-phase culling override. The render tree still uses <see cref="LocalCullingVolume" />
+        /// for broad-phase placement; this hook lets owners refine the final camera-volume test.
+        /// </summary>
+        [YamlIgnore]
+        public DelCullingIntersectionOverride? CullingIntersectionOverride;
+
         private AABB? _localCullingVolume;
         private Matrix4x4 _cullingMatrix = Matrix4x4.Identity;
         private OctreeNodeBase? _octreeNode;
@@ -153,6 +162,9 @@ namespace XREngine.Rendering.Info
 
         public bool Intersects(IVolume? cullingVolume, bool containsOnly)
         {
+            if (CullingIntersectionOverride is not null)
+                return CullingIntersectionOverride(this, cullingVolume, containsOnly);
+
             var worldCullingVolume = ((IOctreeItem)this).WorldCullingVolume;
             if (worldCullingVolume is null)
                 return true;

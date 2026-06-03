@@ -347,19 +347,16 @@ namespace XREngine.Components.Scene.Mesh
 
         private bool RenderCullingVolumeDebugOverride(RenderInfo info)
         {
-            if (!ShouldUseLiveGpuSkinnedBounds())
+            if (!TryGetSkinnedBoneCullingVolumesSnapshot(out SkinnedBoneCullingVolume[] volumes))
                 return false;
 
-            if (RuntimeEngine.Rendering.State.IsShadowPass ||
-                RuntimeEngine.Rendering.State.IsLightProbePass ||
-                RuntimeEngine.Rendering.State.IsSceneCapturePass)
+            for (int i = 0; i < volumes.Length; i++)
             {
-                return true;
+                Matrix4x4 matrix = GetCurrentTransformMatrix(volumes[i].Transform);
+                Box worldBox = volumes[i].LocalBounds.ToBox(matrix);
+                RenderDebugBox(worldBox, ColorF4.Red);
             }
 
-            ColorF4 boundsColor = RuntimeEngine.EditorPreferences.Theme.Bounds3DColor;
-            if (!TryRenderGpuSkinnedBounds(boundsColor, camera: null))
-                ReportGpuSkinnedBoundsDebugFailure();
             return true;
         }
 
@@ -404,13 +401,6 @@ namespace XREngine.Components.Scene.Mesh
                     "or the GPU debug-line renderer could not draw it.");
             }
 
-            Box? box = ((IOctreeItem)RenderInfo).WorldCullingVolume;
-            if (box is null)
-                return;
-
-            Vector3 center = box.Value.WorldCenter;
-            RuntimeEngine.Rendering.Debug.RenderPoint(center, ColorF4.Red);
-            RuntimeEngine.Rendering.Debug.RenderText(center, "GPU skinned bounds unavailable", ColorF4.Red);
         }
 
         private bool TryGetLiveGpuSkinnedBoundsBuffer(
@@ -438,6 +428,15 @@ namespace XREngine.Components.Scene.Mesh
                 return false;
 
             return SkinnedMeshBoundsCalculator.Instance.TryReadGpuDebugBounds(this, out bounds);
+        }
+
+        public bool TryGetLastKnownGpuSkinnedWorldBounds(out AABB bounds)
+        {
+            bounds = default;
+            if (!ShouldUseLiveGpuSkinnedBounds())
+                return false;
+
+            return SkinnedMeshBoundsCalculator.Instance.TryReadLastKnownGpuDebugBounds(this, out bounds);
         }
 
         private static XRCamera? ResolveCurrentBoundsDebugCamera()

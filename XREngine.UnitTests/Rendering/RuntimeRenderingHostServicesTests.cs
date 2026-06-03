@@ -328,6 +328,8 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool AllowSkinning => true;
         public bool CalculateSkinningInComputeShader => false;
         public bool CalculateBlendshapesInComputeShader => false;
+        public bool CalculateSkinnedBoundsInComputeShader => false;
+        public bool SkinnedBoundsGpuDirectAabbWrite => false;
         public bool EnableBlendshapePrecombinePass { get; set; } = RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombinePass;
         public bool EnableBlendshapePrecombineForDirectVertexPath { get; set; } = RuntimeRenderingHostServiceDefaults.EnableBlendshapePrecombineForDirectVertexPath;
         public bool EnableBlendshapePcaBasisCompression { get; set; } = RuntimeRenderingHostServiceDefaults.EnableBlendshapePcaBasisCompression;

@@ -209,6 +209,12 @@ public static partial class EditorImGuiUI
         private static int _inspectorDepth;
 
         private static readonly Vector4 DlssRuntimeWarningColor = new(1.0f, 0.16f, 0.16f, 1.0f);
+        private static readonly Vector4 OverriddenSettingWarningColor = new(1.0f, 0.72f, 0.18f, 1.0f);
+
+        private sealed record ActiveEditorPreferenceOverride(
+            string SourceLabel,
+            string OverrideDisplayName,
+            object? OverrideValue);
 
         // Property Editor Logic will be moved here
         private static void DrawSettingsObject(InspectorTargetSet targets, string label, string? description, HashSet<object> visited, bool defaultOpen, string? idOverride = null)
@@ -3588,10 +3594,22 @@ public static partial class EditorImGuiUI
                 NotifyInspectorValueEdited(target);
         }
 
-        private static void DrawInspectorMemberLabel(MemberInfo member, string displayName, string? description)
+        private static void DrawInspectorMemberLabel(
+            MemberInfo member,
+            string displayName,
+            string? description,
+            ActiveEditorPreferenceOverride? activeOverride = null)
         {
             ImGui.TextUnformatted(displayName);
             bool labelHovered = ImGui.IsItemHovered();
+
+            if (activeOverride is not null)
+            {
+                ImGui.SameLine(0.0f, 5.0f);
+                ImGui.TextColored(OverriddenSettingWarningColor, "Overridden");
+                if (ImGui.IsItemHovered())
+                    DrawActiveEditorPreferenceOverrideTooltip(activeOverride);
+            }
 
             if (TryGetDlssRuntimeWarning(member, out string? warning) && warning is not null)
             {
@@ -3603,6 +3621,92 @@ public static partial class EditorImGuiUI
 
             if (!string.IsNullOrEmpty(description) && labelHovered)
                 ImGui.SetTooltip(description);
+        }
+
+        private static void DrawActiveEditorPreferenceOverrideTooltip(ActiveEditorPreferenceOverride activeOverride)
+        {
+            if (!ImGui.BeginTooltip())
+                return;
+
+            ImGui.PushTextWrapPos(ImGui.GetFontSize() * 42.0f);
+            ImGui.TextWrapped(
+                "This global editor preference is shadowed by an active editor preference override. "
+                + "Editing it will not change the current effective editor value until the override is cleared.");
+            ImGui.Spacing();
+            ImGui.TextWrapped($"{activeOverride.SourceLabel} > {activeOverride.OverrideDisplayName}");
+            ImGui.TextWrapped($"Override value: {FormatSettingValue(activeOverride.OverrideValue)}");
+            ImGui.PopTextWrapPos();
+            ImGui.EndTooltip();
+        }
+
+        private static bool TryGetActiveEditorPreferenceOverride(
+            InspectorTargetSet targets,
+            PropertyInfo property,
+            out ActiveEditorPreferenceOverride? activeOverride)
+        {
+            activeOverride = null;
+            if (targets.HasMultipleTargets)
+                return false;
+
+            return TryGetActiveEditorPreferenceOverride(targets.PrimaryTarget, property, out activeOverride);
+        }
+
+        private static bool TryGetActiveEditorPreferenceOverride(
+            object owner,
+            PropertyInfo property,
+            out ActiveEditorPreferenceOverride? activeOverride)
+        {
+            activeOverride = null;
+
+            if (!TryResolveEditorPreferenceOverrideOwner(owner, out object? overrideOwner, out string sourceLabel))
+                return false;
+
+            string overridePropertyName = property.Name + "Override";
+            PropertyInfo? overrideProperty = overrideOwner.GetType().GetProperty(
+                overridePropertyName,
+                BindingFlags.Public | BindingFlags.Instance);
+
+            if (overrideProperty?.GetValue(overrideOwner) is not IOverrideableSetting { HasOverride: true } setting)
+                return false;
+
+            string overrideDisplayName = overrideProperty.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName
+                ?? overrideProperty.Name.SplitCamelCase();
+            activeOverride = new ActiveEditorPreferenceOverride(sourceLabel, overrideDisplayName, setting.BoxedValue);
+            return true;
+        }
+
+        private static bool TryResolveEditorPreferenceOverrideOwner(
+            object owner,
+            out object overrideOwner,
+            out string sourceLabel)
+        {
+            EditorPreferences globalPreferences = Engine.GlobalEditorPreferences;
+            EditorPreferencesOverrides overrides = Engine.EditorPreferencesOverrides;
+
+            if (ReferenceEquals(owner, globalPreferences))
+            {
+                overrideOwner = overrides;
+                sourceLabel = "Editor Preferences Overrides";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Theme))
+            {
+                overrideOwner = overrides.Theme;
+                sourceLabel = "Editor Preferences Overrides > Theme";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Debug))
+            {
+                overrideOwner = overrides.Debug;
+                sourceLabel = "Editor Preferences Overrides > Debug";
+                return true;
+            }
+
+            overrideOwner = null!;
+            sourceLabel = string.Empty;
+            return false;
         }
 
         private static bool TryGetDlssRuntimeWarning(MemberInfo member, out string? warning)
@@ -3635,7 +3739,8 @@ public static partial class EditorImGuiUI
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimplePropertyRow");
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
-            DrawInspectorMemberLabel(property, displayName, description);
+            TryGetActiveEditorPreferenceOverride(targets, property, out ActiveEditorPreferenceOverride? activeOverride);
+            DrawInspectorMemberLabel(property, displayName, description, activeOverride);
             ImGui.TableSetColumnIndex(1);
             ImGui.PushID(property.Name);
 
