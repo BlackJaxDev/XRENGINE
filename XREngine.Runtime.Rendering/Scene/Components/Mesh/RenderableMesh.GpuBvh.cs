@@ -13,20 +13,26 @@ public partial class RenderableMesh
     public GpuMeshBvh? GpuMeshBvh => _gpuMeshBvh;
 
     public bool HasCurrentGpuMeshBvh
+        => HasCurrentGpuMeshBvhForMaxLeafPrimitives(XREngine.Rendering.Compute.GpuMeshBvh.DefaultMaxLeafPrimitives);
+
+    public bool HasCurrentGpuMeshBvhForMaxLeafPrimitives(uint maxLeafPrimitives)
     {
-        get
-        {
-            lock (_gpuMeshBvhLock)
-                return _gpuMeshBvh?.IsBvhReady == true && _gpuMeshBvh.MatchesSource(CurrentLODRenderer);
-        }
+        uint clampedMaxLeafPrimitives = maxLeafPrimitives == 0u ? 1u : maxLeafPrimitives;
+        lock (_gpuMeshBvhLock)
+            return _gpuMeshBvh?.IsBvhReady == true &&
+                _gpuMeshBvh.MatchesSource(CurrentLODRenderer) &&
+                _gpuMeshBvh.MaxLeafPrimitives == clampedMaxLeafPrimitives;
     }
 
-    public bool PrepareGpuMeshBvh(bool realtimeSkinned, bool forceRebuild = false)
+    public bool PrepareGpuMeshBvh(
+        bool realtimeSkinned,
+        bool forceRebuild = false,
+        uint maxLeafPrimitives = XREngine.Rendering.Compute.GpuMeshBvh.DefaultMaxLeafPrimitives)
     {
         lock (_gpuMeshBvhLock)
         {
             _gpuMeshBvh ??= new GpuMeshBvh();
-            return _gpuMeshBvh.Prepare(this, realtimeSkinned, forceRebuild);
+            return _gpuMeshBvh.Prepare(this, realtimeSkinned, forceRebuild, maxLeafPrimitives);
         }
     }
 
@@ -56,8 +62,8 @@ public partial class RenderableMesh
 
     public bool TryGetGpuMeshBvhRequestWorldBounds(out AABB worldBounds)
     {
-        if (TryGetLiveGpuSkinnedWorldBounds(out worldBounds))
-            return true;
+        if (IsSkinned && RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
+            return TryGetLastKnownGpuSkinnedWorldBounds(out worldBounds);
 
         return TryGetWorldBounds(out worldBounds);
     }

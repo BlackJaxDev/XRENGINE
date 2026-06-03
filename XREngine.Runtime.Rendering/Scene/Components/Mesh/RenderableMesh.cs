@@ -126,6 +126,8 @@ namespace XREngine.Components.Scene.Mesh
                             renderer.Mesh = CreateRuntimeMesh(lod.Mesh, GetTransformReferenceSearchRoot());
                             TrackBones(renderer.Mesh, true);
                             MarkSkinnedDataDirty();
+                            MarkSkinnedBoneCullingVolumesDirty();
+                            RefreshSkinnedCullingIntersectionOverride();
                         }
                         else if (e.PropertyName == nameof(SubMeshLOD.Material))
                             renderer.Material = lod.Material;
@@ -150,6 +152,7 @@ namespace XREngine.Components.Scene.Mesh
             _bindPoseBounds = RenderInfo.LocalCullingVolume ?? mesh.Bounds;
             RenderInfo.PreCollectCommandsCallback = BeforeAdd;
             RenderInfo.RenderCullingVolumeDebugOverride = RenderCullingVolumeDebugOverride;
+            RefreshSkinnedCullingIntersectionOverride();
             RenderInfo.PropertyChanged += RenderInfoPropertyChanged;
             PublishRenderCommandCullingVolume();
 
@@ -262,7 +265,7 @@ namespace XREngine.Components.Scene.Mesh
                 if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader && RuntimeEngine.IsRenderThread)
                     ProcessSkinnedBoundsRefresh();
 
-                bool skinnedBoundsOk = EnsureSkinnedBounds();
+                bool skinnedBoundsOk = TryApplySkinnedBoneCullingBounds() || EnsureSkinnedBounds();
                 if (!skinnedBoundsOk)
                 {
                     RenderInfo.LocalCullingVolume = _bindPoseBounds;
@@ -342,6 +345,9 @@ namespace XREngine.Components.Scene.Mesh
             worldBounds = default;
 
             // Prefer the live skinned bounds when skinning is active and successfully computed.
+            if (IsSkinned && TryGetSkinnedBoneAggregateWorldBounds(out worldBounds))
+                return true;
+
             if (IsSkinned && EnsureSkinnedBounds())
             {
                 worldBounds = TransformBounds(_skinnedLocalBounds, _skinnedRootRenderMatrix);

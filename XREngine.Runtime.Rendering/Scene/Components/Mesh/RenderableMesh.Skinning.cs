@@ -7,9 +7,11 @@ using System.Threading.Tasks;
 using SimpleScene.Util.ssBVH;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Trees;
 using XREngine.Data.Transforms;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
@@ -27,6 +29,34 @@ namespace XREngine.Components.Scene.Mesh
             Matrix4x4 FallbackMatrix,
             Matrix4x4 Basis);
 
+        internal readonly record struct SkinnedBoneCullingVolume(
+            TransformBase Transform,
+            AABB LocalBounds);
+
+        private struct SkinnedBoneBoundsBuilder
+        {
+            public bool Initialized;
+            public Vector3 Min;
+            public Vector3 Max;
+
+            public void Include(Vector3 point)
+            {
+                if (!Initialized)
+                {
+                    Min = point;
+                    Max = point;
+                    Initialized = true;
+                    return;
+                }
+
+                Min = Vector3.Min(Min, point);
+                Max = Vector3.Max(Max, point);
+            }
+
+            public readonly AABB ToBounds()
+                => new(Min, Max);
+        }
+
         private readonly record struct SkinnedBoundsRefreshResult(
             int Revision,
             SkinnedMeshBoundsCalculator.Result Result,
@@ -39,6 +69,9 @@ namespace XREngine.Components.Scene.Mesh
         private readonly object _relativeCacheLock = new();
         private readonly object _skinnedDataLock = new();
         private readonly TransformBase? _skinnedBoundsRootTransform;
+        private SkinnedBoneCullingVolume[] _skinnedBoneCullingVolumes = [];
+        private XRMesh? _skinnedBoneCullingSourceMesh;
+        private bool _skinnedBoneCullingVolumesDirty = true;
         private bool _skinnedBoundsDirty = true;
         private bool _hasSkinnedBounds;
         private bool _skinnedBoundsAreWorldSpace;
@@ -401,6 +434,278 @@ namespace XREngine.Components.Scene.Mesh
             // producing an infinite loop of wasted GenerateBvhJob invocations
             // (severe frame drops). The BVH is built once at setup and reused.
         }
+
+        #endregion
+
+        #region Per-bone culling bounds
+
+        private bool SkinnedBoneCullingIntersectionOverride(RenderInfo3D info, IVolume? cullingVolume, bool containsOnly)
+        {
+            if (cullingVolume is null)
+                return true;
+
+            if (!IsSkinned)
+                return DefaultRenderInfoCullingIntersection(info, cullingVolume, containsOnly);
+
+            SkinnedBoneCullingVolume[] volumes;
+            lock (_skinnedDataLock)
+            {
+                if (!TryEnsureSkinnedBoneCullingVolumesLocked(out volumes))
+                    return DefaultRenderInfoCullingIntersection(info, cullingVolume, containsOnly);
+            }
+
+            return IntersectsSkinnedBoneCullingVolumes(volumes, cullingVolume, containsOnly);
+        }
+
+        private static bool DefaultRenderInfoCullingIntersection(RenderInfo3D info, IVolume? cullingVolume, bool containsOnly)
+        {
+            Box? worldCullingVolume = ((IOctreeItem)info).WorldCullingVolume;
+            if (worldCullingVolume is null)
+                return true;
+
+            EContainment containment = cullingVolume?.ContainsBox(worldCullingVolume.Value) ?? EContainment.Contains;
+            return containsOnly ? containment == EContainment.Contains : containment != EContainment.Disjoint;
+        }
+
+        internal static bool IntersectsSkinnedBoneCullingVolumes(
+            ReadOnlySpan<SkinnedBoneCullingVolume> volumes,
+            IVolume? cullingVolume,
+            bool containsOnly)
+        {
+            if (cullingVolume is null)
+                return true;
+
+            bool testedAny = false;
+            for (int i = 0; i < volumes.Length; i++)
+            {
+                if (!TryGetSkinnedBoneWorldBounds(volumes[i], out AABB worldBounds))
+                    continue;
+
+                testedAny = true;
+                EContainment containment = cullingVolume.ContainsAABB(worldBounds);
+                if (!containsOnly && containment != EContainment.Disjoint)
+                    return true;
+
+                if (containsOnly && containment != EContainment.Contains)
+                    return false;
+            }
+
+            return containsOnly && testedAny;
+        }
+
+        private bool TryApplySkinnedBoneCullingBounds()
+        {
+            if (!IsSkinned)
+                return false;
+
+            lock (_skinnedDataLock)
+            {
+                if (!TryEnsureSkinnedBoneCullingVolumesLocked(out SkinnedBoneCullingVolume[] volumes) ||
+                    !TryComputeSkinnedBoneAggregateWorldBounds(volumes, out AABB aggregateWorldBounds))
+                {
+                    return false;
+                }
+
+                ApplySkinnedBoneAggregateWorldBounds(aggregateWorldBounds);
+
+                return true;
+            }
+        }
+
+        private void ApplySkinnedBoneAggregateWorldBounds(in AABB aggregateWorldBounds)
+        {
+            if (RenderInfo is null)
+                return;
+
+            if (RenderInfo.LocalCullingVolume is not AABB currentBounds || !AabbNearlyEqual(currentBounds, aggregateWorldBounds))
+                RenderInfo.LocalCullingVolume = aggregateWorldBounds;
+
+            if (RenderInfo.CullingOffsetMatrix != Matrix4x4.Identity)
+                RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
+        }
+
+        private static bool AabbNearlyEqual(in AABB a, in AABB b, float epsilon = 1e-4f)
+            => MathF.Abs(a.Min.X - b.Min.X) <= epsilon &&
+               MathF.Abs(a.Min.Y - b.Min.Y) <= epsilon &&
+               MathF.Abs(a.Min.Z - b.Min.Z) <= epsilon &&
+               MathF.Abs(a.Max.X - b.Max.X) <= epsilon &&
+               MathF.Abs(a.Max.Y - b.Max.Y) <= epsilon &&
+               MathF.Abs(a.Max.Z - b.Max.Z) <= epsilon;
+
+        private bool TryGetSkinnedBoneAggregateWorldBounds(out AABB aggregateWorldBounds)
+        {
+            aggregateWorldBounds = default;
+            if (!IsSkinned)
+                return false;
+
+            lock (_skinnedDataLock)
+            {
+                return TryEnsureSkinnedBoneCullingVolumesLocked(out SkinnedBoneCullingVolume[] volumes) &&
+                    TryComputeSkinnedBoneAggregateWorldBounds(volumes, out aggregateWorldBounds);
+            }
+        }
+
+        private bool TryGetSkinnedBoneCullingVolumesSnapshot(out SkinnedBoneCullingVolume[] volumes)
+        {
+            volumes = [];
+            if (!IsSkinned)
+                return false;
+
+            lock (_skinnedDataLock)
+                return TryEnsureSkinnedBoneCullingVolumesLocked(out volumes);
+        }
+
+        private bool TryEnsureSkinnedBoneCullingVolumesLocked(out SkinnedBoneCullingVolume[] volumes)
+        {
+            XRMesh? mesh = CurrentLODRenderer?.Mesh;
+            if (mesh is null || !mesh.HasSkinning)
+            {
+                volumes = [];
+                return false;
+            }
+
+            if (!_skinnedBoneCullingVolumesDirty && ReferenceEquals(_skinnedBoneCullingSourceMesh, mesh))
+            {
+                volumes = _skinnedBoneCullingVolumes;
+                return volumes.Length > 0;
+            }
+
+            _skinnedBoneCullingVolumes = BuildSkinnedBoneCullingVolumes(mesh, Component.Transform);
+            _skinnedBoneCullingSourceMesh = mesh;
+            _skinnedBoneCullingVolumesDirty = false;
+            volumes = _skinnedBoneCullingVolumes;
+            return volumes.Length > 0;
+        }
+
+        internal static SkinnedBoneCullingVolume[] BuildSkinnedBoneCullingVolumes(XRMesh mesh, TransformBase fallbackTransform)
+        {
+            Vertex[]? vertices = mesh.Vertices;
+            if (vertices is not { Length: > 0 })
+                return [];
+
+            Dictionary<TransformBase, SkinnedBoneBoundsBuilder> builders = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap = mesh.RuntimeBoneReferenceRemap;
+
+            for (int vertexIndex = 0; vertexIndex < vertices.Length; vertexIndex++)
+            {
+                Vertex vertex = vertices[vertexIndex];
+                bool includedWeightedBone = false;
+                if (vertex.Weights is { Count: > 0 } weights)
+                {
+                    foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) data) in weights)
+                    {
+                        if (!(data.weight > 0.0f))
+                            continue;
+
+                        TransformBase resolvedBone = ResolveRuntimeBoneReference(bone, boneReferenceRemap);
+                        Vector3 localPosition = TransformPosition(vertex.Position, data.bindInvWorldMatrix);
+                        IncludeSkinnedBoneCullingPoint(builders, resolvedBone, localPosition);
+                        includedWeightedBone = true;
+                    }
+                }
+
+                if (!includedWeightedBone)
+                    IncludeSkinnedBoneCullingPoint(builders, fallbackTransform, vertex.Position);
+            }
+
+            if (builders.Count == 0)
+                return [];
+
+            SkinnedBoneCullingVolume[] volumes = new SkinnedBoneCullingVolume[builders.Count];
+            int volumeIndex = 0;
+            foreach ((TransformBase transform, SkinnedBoneBoundsBuilder builder) in builders)
+            {
+                if (!builder.Initialized)
+                    continue;
+
+                volumes[volumeIndex++] = new SkinnedBoneCullingVolume(transform, builder.ToBounds());
+            }
+
+            if (volumeIndex == volumes.Length)
+                return volumes;
+
+            Array.Resize(ref volumes, volumeIndex);
+            return volumes;
+        }
+
+        private static TransformBase ResolveRuntimeBoneReference(
+            TransformBase bone,
+            IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap)
+            => boneReferenceRemap is not null && boneReferenceRemap.TryGetValue(bone, out TransformBase? reboundBone)
+                ? reboundBone
+                : bone;
+
+        private static void IncludeSkinnedBoneCullingPoint(
+            Dictionary<TransformBase, SkinnedBoneBoundsBuilder> builders,
+            TransformBase transform,
+            Vector3 localPosition)
+        {
+            builders.TryGetValue(transform, out SkinnedBoneBoundsBuilder builder);
+            builder.Include(localPosition);
+            builders[transform] = builder;
+        }
+
+        private static bool TryComputeSkinnedBoneAggregateWorldBounds(
+            ReadOnlySpan<SkinnedBoneCullingVolume> volumes,
+            out AABB aggregateWorldBounds)
+        {
+            aggregateWorldBounds = default;
+            bool initialized = false;
+
+            for (int i = 0; i < volumes.Length; i++)
+            {
+                if (!TryGetSkinnedBoneWorldBounds(volumes[i], out AABB worldBounds))
+                    continue;
+
+                if (!initialized)
+                {
+                    aggregateWorldBounds = worldBounds;
+                    initialized = true;
+                }
+                else
+                {
+                    aggregateWorldBounds.ExpandToInclude(worldBounds);
+                }
+            }
+
+            return initialized;
+        }
+
+        private static bool TryGetSkinnedBoneWorldBounds(SkinnedBoneCullingVolume volume, out AABB worldBounds)
+        {
+            Matrix4x4 matrix = GetCurrentTransformMatrix(volume.Transform);
+            worldBounds = TransformBounds(volume.LocalBounds, matrix);
+            return worldBounds.IsValid;
+        }
+
+        private bool HasAnySkinnedLod()
+        {
+            lock (_lodsLock)
+            {
+                for (LinkedListNode<RenderableLOD>? node = LODs.First; node is not null; node = node.Next)
+                {
+                    if (node.Value.Renderer.Mesh?.HasSkinning == true)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void MarkSkinnedBoneCullingVolumesDirty()
+        {
+            lock (_skinnedDataLock)
+            {
+                _skinnedBoneCullingVolumesDirty = true;
+                _skinnedBoneCullingSourceMesh = null;
+                _skinnedBoneCullingVolumes = [];
+            }
+        }
+
+        private void RefreshSkinnedCullingIntersectionOverride()
+            => RenderInfo.CullingIntersectionOverride = HasAnySkinnedLod()
+                ? SkinnedBoneCullingIntersectionOverride
+                : null;
 
         #endregion
 

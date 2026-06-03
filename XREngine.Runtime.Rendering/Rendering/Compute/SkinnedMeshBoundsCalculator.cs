@@ -298,6 +298,25 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         return SkinningPrepassDispatcher.Instance.TryReadSkinnedWorldBounds(renderer, out worldBounds);
     }
 
+    internal bool TryReadLastKnownGpuDebugBounds(RenderableMesh mesh, out AABB worldBounds)
+    {
+        worldBounds = default;
+
+        if (mesh?.IsSkinned != true)
+            return false;
+        if (!RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
+            return false;
+
+        var renderer = mesh.CurrentLODRenderer;
+        var xrMesh = renderer?.Mesh;
+        if (renderer is null || xrMesh is null || xrMesh.VertexCount <= 0)
+            return false;
+        if (!MeshSupportsGpuSkinning(xrMesh))
+            return false;
+
+        return SkinningPrepassDispatcher.Instance.TryReadSkinnedWorldBounds(renderer, out worldBounds);
+    }
+
     private bool TryPrepareStandaloneGpuDebugBounds(
         RenderableMesh mesh,
         XRMeshRenderer renderer,

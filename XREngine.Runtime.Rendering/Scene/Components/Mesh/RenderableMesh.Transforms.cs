@@ -210,6 +210,7 @@ namespace XREngine.Components.Scene.Mesh
                 _rc.WorldMatrix = Matrix4x4.Identity;
                 SetSkinnedRootRenderMatrix(basis);
                 RenderInfo?.CullingOffsetMatrix = basis;
+                _ = TryApplySkinnedBoneCullingBounds();
 
                 return;
             }
@@ -309,6 +310,8 @@ namespace XREngine.Components.Scene.Mesh
             _rc?.SwapBuffers();
 
             ProcessSkinnedBoundsRefresh();
+            if (hasSkinning && TryApplySkinnedBoneCullingBounds())
+                _rc?.SwapBuffers();
         }
 
         internal static void ProcessPendingRenderMatrixUpdates()

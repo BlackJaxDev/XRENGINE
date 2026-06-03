@@ -16,6 +16,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 {
     private const string TriangleAabbShaderPath = "Scene3D/RenderPipeline/mesh_triangle_aabbs.comp";
     private const uint TriangleAabbGroupSize = 128u;
+    public const uint DefaultMaxLeafPrimitives = 1u;
 
     private readonly GpuBvhTree _tree = new();
 
@@ -36,6 +37,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     public XRDataBuffer? BvhRangeBuffer => _tree.RangeBuffer;
     public XRDataBuffer? BvhMortonBuffer => _tree.MortonBuffer;
     public uint BvhNodeCount => _tree.NodeCount;
+    public uint MaxLeafPrimitives => _tree.MaxLeafPrimitives;
     public bool IsBvhReady => _built && _tree.NodeCount > 0 && _tree.PrimitiveCount == _triangleCount;
     public Matrix4x4 LocalToWorldMatrix { get; private set; } = Matrix4x4.Identity;
     public bool LastUpdateUsedGpuSkinning { get; private set; }
@@ -56,7 +58,11 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _tree.MarkDirty();
     }
 
-    public bool Prepare(RenderableMesh renderable, bool realtimeSkinned, bool forceRebuild = false)
+    public bool Prepare(
+        RenderableMesh renderable,
+        bool realtimeSkinned,
+        bool forceRebuild = false,
+        uint maxLeafPrimitives = DefaultMaxLeafPrimitives)
     {
         if (renderable is null || !RuntimeEngine.IsRenderThread || AbstractRenderer.Current is null)
             return false;
@@ -71,7 +77,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         if (sourceChanged)
             ResetForSource(mesh, renderer, triangleCount);
 
-        ConfigureTree();
+        ConfigureTree(maxLeafPrimitives);
         EnsureTriangleIndexBuffer(mesh, triangles);
         EnsureAabbBuffer(triangleCount);
 
@@ -132,10 +138,10 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _tree.MarkDirty();
     }
 
-    private void ConfigureTree()
+    private void ConfigureTree(uint maxLeafPrimitives)
     {
         _tree.BuildMode = BvhBuildMode.MortonOnly;
-        _tree.MaxLeafPrimitives = 1u;
+        _tree.MaxLeafPrimitives = Math.Max(1u, maxLeafPrimitives);
     }
 
     private void EnsureTriangleIndexBuffer(XRMesh mesh, List<IndexTriangle> triangles)

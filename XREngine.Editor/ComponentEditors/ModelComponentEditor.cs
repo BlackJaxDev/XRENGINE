@@ -44,6 +44,9 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         GpuBvhDebugNodeRenderMode.LeafNodesOnly,
         GpuBvhDebugNodeRenderMode.InternalNodesOnly,
     ];
+    private const float BvhPreviewMinMeshAccuracy = 0.01f;
+    private const float BvhPreviewMaxMeshAccuracy = 1.0f;
+    private const uint BvhPreviewMaxLeafPrimitivesAtMinAccuracy = 64u;
     private const float TexturePreviewMaxEdge = 96.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
 
@@ -88,6 +91,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         public GpuBvhDebugNodeRenderMode NodeRenderMode = GpuBvhDebugNodeRenderMode.HighlightLeafNodes;
         public bool OnlyUpdateBvhOnRequest = true;
         public bool OnlyRenderBvhOnRequest = true;
+        public float MeshAccuracy = BvhPreviewMaxMeshAccuracy;
         public float LineWidth = 0.0015f;
         public int MaxGpuNodes = 16384;
 
@@ -417,6 +421,12 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             if (ImGui.Checkbox("Only Render BVH On Request", ref onlyRenderBvhOnRequest))
                 state.OnlyRenderBvhOnRequest = onlyRenderBvhOnRequest;
 
+            float meshAccuracy = state.MeshAccuracy;
+            if (ImGui.InputFloat("Mesh Accuracy", ref meshAccuracy, 0.01f, 0.1f, "%.3f"))
+                state.MeshAccuracy = ClampBvhPreviewMeshAccuracy(meshAccuracy);
+            ImGui.SameLine();
+            ImGui.TextDisabled($"Leaf Budget: {GetBvhMaxLeafPrimitives(state.MeshAccuracy)}");
+
             GpuBvhDebugNodeRenderMode renderMode = state.NodeRenderMode;
             if (DrawBvhNodeRenderModeCombo("Node Render Mode", ref renderMode))
                 state.NodeRenderMode = renderMode;
@@ -527,9 +537,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         bool refreshRequested = mesh.HasGpuMeshBvhRefreshRequest;
         bool realtimeSkinned = mesh.IsSkinned && (!state.OnlyUpdateBvhOnRequest || refreshRequested);
+        uint maxLeafPrimitives = GetBvhMaxLeafPrimitives(state.MeshAccuracy);
+        bool hasCurrentGpuMeshBvh = mesh.HasCurrentGpuMeshBvhForMaxLeafPrimitives(maxLeafPrimitives);
 
-        if ((realtimeSkinned || refreshRequested || !mesh.HasCurrentGpuMeshBvh) &&
-            !mesh.PrepareGpuMeshBvh(realtimeSkinned))
+        if ((realtimeSkinned || refreshRequested || !hasCurrentGpuMeshBvh) &&
+            !mesh.PrepareGpuMeshBvh(realtimeSkinned, maxLeafPrimitives: maxLeafPrimitives))
         {
             return false;
         }
@@ -592,6 +604,20 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static bool TryGetCurrentHoverBounds(RenderableMesh mesh, out AABB worldBounds)
         => mesh.TryGetGpuMeshBvhRequestWorldBounds(out worldBounds);
+
+    private static float ClampBvhPreviewMeshAccuracy(float value)
+        => float.IsNaN(value)
+            ? BvhPreviewMaxMeshAccuracy
+            : Math.Clamp(value, BvhPreviewMinMeshAccuracy, BvhPreviewMaxMeshAccuracy);
+
+    private static uint GetBvhMaxLeafPrimitives(float meshAccuracy)
+    {
+        float clampedAccuracy = ClampBvhPreviewMeshAccuracy(meshAccuracy);
+        uint maxLeafPrimitives = (uint)MathF.Ceiling(1.0f / clampedAccuracy);
+        return maxLeafPrimitives > BvhPreviewMaxLeafPrimitivesAtMinAccuracy
+            ? BvhPreviewMaxLeafPrimitivesAtMinAccuracy
+            : maxLeafPrimitives;
+    }
 
     private static Vector4 ToVector4(ColorF4 color)
         => new(
