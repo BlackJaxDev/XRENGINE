@@ -983,6 +983,26 @@ namespace XREngine.Rendering.OpenGL
             {
                 uint id = BindingId;
                 uint length = GetLength();
+
+                // Guard against mapping a range larger than the actual allocated immutable
+                // storage. Buffer (re)allocation timing — e.g. a resize that pads the client-side
+                // source up to a power of two, or a generate/allocate race — can transiently leave
+                // GetLength() larger than the GPU storage. glMapNamedBufferRange then emits
+                // GL_INVALID_VALUE ("Offset and/or length are out of range") and returns null.
+                // The allocated storage always covers the live element data, so clamping to the
+                // real buffer size is safe and over-mapping is never valid anyway.
+                Api.GetNamedBufferParameter(id, BufferPNameARB.Size, out int allocatedSize);
+                if (allocatedSize <= 0)
+                {
+                    // Storage was never allocated; do so now so there is something to map.
+                    AllocateImmutable();
+                    Api.GetNamedBufferParameter(id, BufferPNameARB.Size, out allocatedSize);
+                }
+                if (allocatedSize > 0 && length > (uint)allocatedSize)
+                    length = (uint)allocatedSize;
+                if (length == 0)
+                    return;
+
                 GPUSideSource?.Dispose();
 
                 var glRange = (uint)ToGLEnum(Data.RangeFlags);
@@ -1022,6 +1042,14 @@ namespace XREngine.Rendering.OpenGL
                 var glStorage = (uint)ToGLEnum(Data.StorageFlags);
                 if (IsGpuBufferLoggingEnabled())
                     Debug.OpenGL($"[GLBuffer/Storage] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
+
+                Api.GetNamedBufferParameter(id, BufferPNameARB.Size, out int allocatedSize);
+                if (allocatedSize > 0)
+                {
+                    RecreateBuffer();
+                    id = BindingId;
+                }
+
                 if (existingSource is not null)
                 {
                     Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, glStorage);
@@ -1048,7 +1076,14 @@ namespace XREngine.Rendering.OpenGL
 
                 if (IsGpuBufferLoggingEnabled())
                     Debug.OpenGL($"[GLBuffer/Unmap] {GetDescribingName()} name={BufferNameOrTarget()} id={BindingId}");
-                Api.UnmapNamedBuffer(BindingId);
+
+                // Only call UnmapNamedBuffer when GL still considers this buffer mapped. Our
+                // ActivelyMapping set can lag the real GL state during teardown or after a buffer
+                // recreate (which drops the mapping without going through UnmapBufferData),
+                // producing GL_INVALID_OPERATION "Buffer is unbound or is already unmapped." spam.
+                Api.GetNamedBufferParameter(BindingId, BufferPNameARB.Mapped, out int isMapped);
+                if (isMapped != 0)
+                    Api.UnmapNamedBuffer(BindingId);
                 Data.ActivelyMapping.Remove(this);
 
                 GPUSideSource?.Dispose();

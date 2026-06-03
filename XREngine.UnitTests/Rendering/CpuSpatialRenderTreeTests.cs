@@ -5,6 +5,7 @@ using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
+using XREngine.Rendering.Info;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -128,6 +129,44 @@ public sealed class CpuSpatialRenderTreeTests
 
         CountVisible(tree, AABB.FromCenterSize(new Vector3(-20.0f, 0.0f, 0.0f), new Vector3(4.0f))).ShouldBe(0);
         CountVisible(tree, AABB.FromCenterSize(new Vector3(20.0f, 0.0f, 0.0f), new Vector3(4.0f))).ShouldBe(1);
+    }
+
+    [Test]
+    public void RenderInfo3D_NullCullingVolumeMovesCpuBvhItemToUnboundedLane()
+    {
+        var tree = new CpuBvhRenderTree<RenderInfo3D>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        var item = RenderInfo3D.New(new TestRenderable());
+        item.LocalCullingVolume = AABB.FromCenterSize(new Vector3(-20.0f, -20.0f, -20.0f), new Vector3(2.0f));
+
+        tree.Add(item);
+        tree.Swap();
+
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(20.0f, 20.0f, 20.0f), new Vector3(4.0f))).ShouldBe(0);
+
+        item.LocalCullingVolume = null;
+        tree.Swap();
+
+        tree.GetOccupancyStats().UnboundedItemCount.ShouldBe(1);
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(20.0f, 20.0f, 20.0f), new Vector3(4.0f))).ShouldBe(1);
+    }
+
+    [Test]
+    public void RenderInfo3D_NullCullingVolumeMovesOctreeItemToAlwaysVisibleRoot()
+    {
+        var tree = new Octree<RenderInfo3D>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        var item = RenderInfo3D.New(new TestRenderable());
+        item.LocalCullingVolume = AABB.FromCenterSize(new Vector3(-20.0f, -20.0f, -20.0f), new Vector3(2.0f));
+
+        tree.Add(item);
+        tree.Swap();
+
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(20.0f, 20.0f, 20.0f), new Vector3(4.0f))).ShouldBe(0);
+
+        item.LocalCullingVolume = null;
+        tree.Swap();
+
+        tree.GetOccupancyStats().UnboundedItemCount.ShouldBe(1);
+        CountVisible(tree, AABB.FromCenterSize(new Vector3(20.0f, 20.0f, 20.0f), new Vector3(4.0f))).ShouldBe(1);
     }
 
     [Test]
@@ -402,6 +441,13 @@ public sealed class CpuSpatialRenderTreeTests
         return count;
     }
 
+    private static int CountVisible(I3DRenderTree<RenderInfo3D> tree, AABB volume)
+    {
+        int count = 0;
+        tree.CollectVisible(volume, false, _ => count++, static (item, cullingVolume, containsOnly) => item.Intersects(cullingVolume, containsOnly));
+        return count;
+    }
+
     private static int[] CollectVisibleIds(I3DRenderTree<TestRenderItem> tree, IVolume volume)
     {
         List<int> ids = [];
@@ -459,5 +505,11 @@ public sealed class CpuSpatialRenderTreeTests
         public AABB? LocalCullingVolume { get; set; }
         public Matrix4x4 CullingOffsetMatrix { get; set; } = Matrix4x4.Identity;
         public OctreeNodeBase? OctreeNode { get; set; }
+    }
+
+    private sealed class TestRenderable : IRenderable
+    {
+        public RenderInfo[] RenderedObjects => [];
+        public float TransformDepth => 0.0f;
     }
 }

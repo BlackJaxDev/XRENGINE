@@ -129,6 +129,22 @@ bool FrustumSphereVisible(vec3 center, float radius)
     return true;
 }
 
+bool FrustumAabbVisible(vec3 minB, vec3 maxB)
+{
+    for (int i = 0; i < 6; ++i)
+    {
+        vec4 p = FrustumPlanes[i];
+        vec3 positive = vec3(
+            p.x >= 0.0 ? maxB.x : minB.x,
+            p.y >= 0.0 ? maxB.y : minB.y,
+            p.z >= 0.0 ? maxB.z : minB.z);
+
+        if (dot(p.xyz, positive) + p.w < 0.0)
+            return false;
+    }
+    return true;
+}
+
 bool ViewMaskContains(uvec2 mask, uint viewId)
 {
     if (viewId < 32u)
@@ -255,7 +271,8 @@ void main()
     if (boundsId >= Bounds.length())
         return;
 
-    vec4 sphere = Bounds[boundsId].BoundingSphere;
+    BoundsGpu bounds = Bounds[boundsId];
+    vec4 sphere = bounds.BoundingSphere;
     uint instanceCount = meta.InstanceCount;
     uint renderPass = meta.RenderPass;
     uint layerMask = meta.LayerMask;
@@ -276,7 +293,11 @@ void main()
         return;
     }
 
-    if (!FrustumSphereVisible(center, radius)) {
+    bool aabbValid = all(lessThanEqual(bounds.AabbMin.xyz, bounds.AabbMax.xyz));
+    bool frustumVisible = aabbValid
+        ? FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)
+        : FrustumSphereVisible(center, radius);
+    if (!frustumVisible) {
         atomicAdd(StatsRejectedFrustum, 1u);
         return;
     }

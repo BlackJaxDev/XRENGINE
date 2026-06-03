@@ -14,6 +14,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Occlusion;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -90,9 +91,9 @@ public class GpuRenderingBacklogTests
         command = (GPUIndirectRenderCommand)args[0]!;
 
         Vector3 expectedCenter = Vector3.Transform(localBounds.Center, model);
-        Vector3 xAxis = new(model.M11, model.M21, model.M31);
-        Vector3 yAxis = new(model.M12, model.M22, model.M32);
-        Vector3 zAxis = new(model.M13, model.M23, model.M33);
+        Vector3 xAxis = new(model.M11, model.M12, model.M13);
+        Vector3 yAxis = new(model.M21, model.M22, model.M23);
+        Vector3 zAxis = new(model.M31, model.M32, model.M33);
         float expectedRadius = localBounds.HalfExtents.Length() * MathF.Max(xAxis.Length(), MathF.Max(yAxis.Length(), zAxis.Length()));
 
         command.BoundingSphere.X.ShouldBe(expectedCenter.X, 0.0001f);
@@ -130,6 +131,107 @@ public class GpuRenderingBacklogTests
         bounds.AabbMax.X.ShouldBe(16f, 0.0001f);
         bounds.AabbMax.Y.ShouldBe(26f, 0.0001f);
         bounds.AabbMax.Z.ShouldBe(42f, 0.0001f);
+    }
+
+    [Test]
+    public void RenderCommandMesh3D_SwapBuffers_PublishesCullingOverrideBeforeCallbacks()
+    {
+        RenderCommandMesh3D command = new(0);
+        AABB expectedBounds = new(new Vector3(1f, 2f, 3f), new Vector3(4f, 5f, 6f));
+        AABB? observedBounds = null;
+
+        command.WorldCullingVolumeOverride = expectedBounds;
+        command.OnSwapBuffers += swappedCommand => observedBounds = swappedCommand.CullingVolume;
+
+        command.SwapBuffers();
+
+        AABB bounds = observedBounds.ShouldNotBeNull();
+        bounds.Min.X.ShouldBe(expectedBounds.Min.X, 0.0001f);
+        bounds.Min.Y.ShouldBe(expectedBounds.Min.Y, 0.0001f);
+        bounds.Min.Z.ShouldBe(expectedBounds.Min.Z, 0.0001f);
+        bounds.Max.X.ShouldBe(expectedBounds.Max.X, 0.0001f);
+        bounds.Max.Y.ShouldBe(expectedBounds.Max.Y, 0.0001f);
+        bounds.Max.Z.ShouldBe(expectedBounds.Max.Z, 0.0001f);
+    }
+
+    [Test]
+    public void RenderCommandMesh3D_TryGetWorldCullingVolumeOverride_PrefersDirtyCollectSideBounds()
+    {
+        RenderCommandMesh3D command = new(0)
+        {
+            WorldCullingVolumeOverride = new AABB(new Vector3(-10f), new Vector3(-9f)),
+        };
+        command.SwapBuffers();
+
+        AABB expectedBounds = new(new Vector3(1f, 2f, 3f), new Vector3(4f, 5f, 6f));
+        command.WorldCullingVolumeOverride = expectedBounds;
+
+        command.TryGetWorldCullingVolumeOverride(out AABB bounds).ShouldBeTrue();
+        bounds.Min.X.ShouldBe(expectedBounds.Min.X, 0.0001f);
+        bounds.Min.Y.ShouldBe(expectedBounds.Min.Y, 0.0001f);
+        bounds.Min.Z.ShouldBe(expectedBounds.Min.Z, 0.0001f);
+        bounds.Max.X.ShouldBe(expectedBounds.Max.X, 0.0001f);
+        bounds.Max.Y.ShouldBe(expectedBounds.Max.Y, 0.0001f);
+        bounds.Max.Z.ShouldBe(expectedBounds.Max.Z, 0.0001f);
+    }
+
+    [Test]
+    public void RenderCommandMesh3D_CullingVolume_ReturnsNullForForcedUnboundedSkinnedCommand()
+    {
+        bool previous = RenderDiagnosticsFlags.ForceSkinnedUnbounded;
+        RenderDiagnosticsFlags.SetForceSkinnedUnbounded(true);
+        try
+        {
+            Transform bone = new();
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> weights = new()
+            {
+                [bone] = (1.0f, Matrix4x4.Identity),
+            };
+            XRMesh mesh = new(
+                [
+                    new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
+                    new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
+                    new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
+                ],
+                new List<ushort> { 0, 1, 2 });
+            mesh.RebuildSkinningBuffersFromVertices();
+
+            RenderCommandMesh3D command = new(0)
+            {
+                Mesh = new XRMeshRenderer { Mesh = mesh },
+                WorldCullingVolumeOverride = new AABB(new Vector3(-1.0f), new Vector3(1.0f)),
+            };
+            command.SwapBuffers();
+
+            command.CullingVolume.ShouldBeNull();
+        }
+        finally
+        {
+            RenderDiagnosticsFlags.SetForceSkinnedUnbounded(previous);
+        }
+    }
+
+    [Test]
+    public void GpuFrustumShaders_UseAabbBoundsForVisibilityRejection()
+    {
+        string classicCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCulling.comp");
+        string soaCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCullingSoA.comp");
+        string bvhCull = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp");
+
+        classicCull.ShouldContain("FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
+        soaCull.ShouldContain("FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
+        bvhCull.ShouldContain("AabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)");
+    }
+
+    [Test]
+    public void FrustumCullToBuffer_UsesAabbIntersectionFallback()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_FrustumCullToBuffer.cs");
+
+        source.ShouldContain("ClassifyWorldBounds(frustum, worldBounds)");
+        source.ShouldContain("frustum.Intersects(worldBounds.GetAABB(transformed: true))");
+        source.ShouldContain("RenderDiagnosticsFlags.ForceSkinnedUnbounded");
+        source.ShouldContain("UsesDeformedMesh(meshCommand)");
     }
 
     [Test]

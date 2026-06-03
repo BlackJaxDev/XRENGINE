@@ -157,6 +157,23 @@ public static class RenderDiagnosticsFlags
     /// </summary>
     public static volatile bool SkinningPrepassDiag;
 
+    /// <summary>
+    /// Diagnostic force-visible mode for skinned/blendshape mesh commands. When enabled, deformed
+    /// mesh renderables publish no scene culling volume and command-level culling returns no proxy
+    /// bounds. Seed: <c>XRE_FORCE_SKINNED_UNBOUNDED=1</c>.
+    /// </summary>
+    public static volatile bool ForceSkinnedUnbounded;
+
+    /// <summary>
+    /// Stage-isolation logging for skinned-mesh CPU culling. When enabled, the CPU collect path
+    /// emits a <c>[SkinCullReject]</c> line whenever a skinned renderable that was collected last
+    /// generation is dropped this generation, recording which stage rejected it
+    /// (<c>bvh-node</c> = pruned before the narrow phase, <c>bone-override</c> = narrow phase
+    /// returned false, <c>downstream</c> = passed scene culling but no command was collected).
+    /// Diagnostic only. Seed: <c>XRE_SKIN_CULL_REJECT_DIAG=1</c>.
+    /// </summary>
+    public static volatile bool SkinCullRejectDiag;
+
     static RenderDiagnosticsFlags()
     {
         SeedFromEnvironment();
@@ -203,6 +220,8 @@ public static class RenderDiagnosticsFlags
         }
         ModelRenderDiagEnabled = modelDiagEnabled && !modelDiagDisabled;
         DirectionalShadowAudit = ReadBool("XRE_DIRECTIONAL_SHADOW_AUDIT") || ReadBool("XRE_SHADOW_AUDIT");
+        ForceSkinnedUnbounded = ReadBool("XRE_FORCE_SKINNED_UNBOUNDED");
+        SkinCullRejectDiag = ReadBool("XRE_SKIN_CULL_REJECT_DIAG");
 
         BypassVendorUpscale = ReadBool("XRE_BYPASS_VENDOR_UPSCALE");
         GLDebug = ReadBool("XRE_GL_DEBUG");
@@ -334,4 +353,6 @@ public static class RenderDiagnosticsFlags
     public static void SetVkForceSwapchainMagenta(bool value) => VkForceSwapchainMagenta = value;
     public static void SetVkSkipImGui(bool value) => VkSkipImGui = value;
     public static void SetSkinningPrepassDiag(bool value) => SkinningPrepassDiag = value;
+    public static void SetForceSkinnedUnbounded(bool value) => ForceSkinnedUnbounded = value;
+    public static void SetSkinCullRejectDiag(bool value) => SkinCullRejectDiag = value;
 }

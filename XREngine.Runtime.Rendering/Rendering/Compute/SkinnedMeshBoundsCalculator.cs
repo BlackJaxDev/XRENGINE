@@ -42,9 +42,18 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     }
 
     public bool TryCompute(RenderableMesh mesh, out Result result)
+        => TryCompute(mesh, out result, requirePositions: false);
+
+    /// <param name="requirePositions">
+    /// When true, the lightweight prepass fast path (which returns bounds only, with an
+    /// empty position array) is skipped and the full skinning dispatch + position readback
+    /// is always performed. Required by consumers that need CPU triangle data, such as the
+    /// skinned CPU BVH build used for click picking.
+    /// </param>
+    public bool TryCompute(RenderableMesh mesh, out Result result, bool requirePositions)
     {
         if (RuntimeEngine.IsRenderThread)
-            return TryComputeOnRenderThread(mesh, out result);
+            return TryComputeOnRenderThread(mesh, out result, requirePositions);
 
         // Never block worker/update threads waiting for render-thread execution.
         // Callers can fall back to CPU bounds or keep cached bounds for this frame.
@@ -52,7 +61,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         return false;
     }
 
-    private bool TryComputeOnRenderThread(RenderableMesh mesh, out Result result)
+    private bool TryComputeOnRenderThread(RenderableMesh mesh, out Result result, bool requirePositions)
     {
         result = default;
 
@@ -73,7 +82,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         // Fast path: if SkinningPrepass already produced skinned positions for this renderer
         // this frame, reduce over them rather than re-running the full skin pass and reading
         // back every vertex. Costs ~32 bytes of readback (the bounds quads) instead of N*16.
-        if (TryComputeFromPrepassOutput(mesh, renderer, xrMesh, out result))
+        if (!requirePositions && TryComputeFromPrepassOutput(mesh, renderer, xrMesh, out result))
             return true;
 
         if (renderer.ActiveSkinPaletteBuffer is null)
@@ -658,6 +667,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         private readonly XRDataBuffer? _interleavedPositions;
         private readonly XRDataBuffer? _outputPositions;
         private readonly XRDataBuffer? _bounds;
+        private bool _outputStorageInitialized;
 
         private static readonly UInt4 PositiveInfinityPacked = UInt4.FromVector(new Vector4(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity, 1f));
         private static readonly UInt4 NegativeInfinityPacked = UInt4.FromVector(new Vector4(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity, -1f));
@@ -746,10 +756,21 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (_outputPositions is null)
                 return;
 
+            // The output buffer is created with immutable persistent storage, but the GPU
+            // storage is only actually allocated when data is pushed. On first use (no
+            // resize) the storage would otherwise be zero bytes, so mapping a non-zero
+            // length range fails with GL_INVALID_VALUE and the position readback returns
+            // garbage/false. Push once to allocate storage before the first map.
             if (_outputPositions.ElementCount < vertexCount)
             {
                 _outputPositions.Resize(vertexCount, false, true);
                 _outputPositions.PushData();
+                _outputStorageInitialized = true;
+            }
+            else if (!_outputStorageInitialized)
+            {
+                _outputPositions.PushData();
+                _outputStorageInitialized = true;
             }
 
             if (!_outputPositions.IsMapped)

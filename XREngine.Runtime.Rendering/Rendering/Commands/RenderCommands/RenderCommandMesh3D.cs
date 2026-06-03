@@ -161,8 +161,6 @@ namespace XREngine.Rendering.Commands
 
         public override void SwapBuffers()
         {
-            base.SwapBuffers();
-            
             _renderMesh = Mesh;
             _renderWorldMatrix = WorldMatrix;
             _renderMaterialOverride = MaterialOverride;
@@ -187,6 +185,8 @@ namespace XREngine.Rendering.Commands
                 _lastSubmittedModelMatrix = Matrix4x4.Identity;
                 _lastSubmittedModelMatrixValid = false;
             }
+
+            base.SwapBuffers();
         }
 
         internal void ApplyLateRenderThreadWorldMatrix(Matrix4x4 worldMatrix)
@@ -236,6 +236,9 @@ namespace XREngine.Rendering.Commands
         {
             get
             {
+                if (RenderDiagnosticsFlags.ForceSkinnedUnbounded && UsesDeformedMesh(_renderMesh ?? _mesh))
+                    return null;
+
                 if (TryGetWorldCullingVolumeOverride(out AABB overrideBounds))
                     return overrideBounds;
 
@@ -253,6 +256,12 @@ namespace XREngine.Rendering.Commands
 
         public bool TryGetWorldCullingVolumeOverride(out AABB bounds)
         {
+            if (_dirty && _worldCullingVolumeOverride is AABB dirtyBounds)
+            {
+                bounds = dirtyBounds;
+                return bounds.IsValid;
+            }
+
             if (_renderWorldCullingVolumeOverride is AABB renderBounds)
             {
                 bounds = renderBounds;
@@ -268,5 +277,25 @@ namespace XREngine.Rendering.Commands
             bounds = default;
             return false;
         }
+
+        private static bool UsesDeformedMesh(XRMeshRenderer? renderer)
+        {
+            if (renderer is null)
+                return false;
+
+            if (IsDeformedMesh(renderer.Mesh))
+                return true;
+
+            for (int i = 0; i < renderer.Submeshes.Count; i++)
+            {
+                if (IsDeformedMesh(renderer.Submeshes[i].Mesh))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsDeformedMesh(XRMesh? mesh)
+            => mesh is not null && (mesh.HasSkinning || mesh.BlendshapeCount > 0);
     }
 }

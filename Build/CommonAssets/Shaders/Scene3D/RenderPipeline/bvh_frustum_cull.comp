@@ -386,7 +386,8 @@ void main()
         if (meta.BoundsID >= Bounds.length())
             continue;
 
-        vec4 sphere = Bounds[meta.BoundsID].BoundingSphere;
+        BoundsGpu bounds = Bounds[meta.BoundsID];
+        vec4 sphere = bounds.BoundingSphere;
         vec3 toCenter = sphere.xyz - CameraPosition;
         float renderDistance = dot(toCenter, toCenter);
         if (renderDistance > MaxRenderDistance)
@@ -396,7 +397,11 @@ void main()
             continue;
         }
 
-        if (!SphereVisible(sphere.xyz, sphere.w))
+        bool aabbValid = all(lessThanEqual(bounds.AabbMin.xyz, bounds.AabbMax.xyz));
+        bool frustumVisible = aabbValid
+            ? AabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)
+            : SphereVisible(sphere.xyz, sphere.w);
+        if (!frustumVisible)
         {
             if (StatsEnabled != 0u)
                 atomicAdd(StatsRejectedFrustum, 1u);

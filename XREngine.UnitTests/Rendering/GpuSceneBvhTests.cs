@@ -76,17 +76,20 @@ public class GpuSceneBvhTests
     #region Test Data Structures
 
     /// <summary>
-    /// BVH Node structure matching BvhRaycastCore.glsl layout.
+    /// BVH Node structure matching BvhRaycastCore.glsl / bvh_nodes.glslinc layout
+    /// (80 bytes / 20 uint scalars, leaf flag in bit 0 of <see cref="Flags"/>).
     /// </summary>
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Explicit, Size = 80)]
     private struct GpuBvhNode
     {
-        public Vector4 MinBounds;
-        public Vector4 MaxBounds;
-        public uint LeftChildOrFirstPrimitive;
-        public uint RightChildOrPrimitiveCount;
-        public uint FirstPrimitive;
-        public uint FlagsAndCount; // bit 31 = leaf flag
+        [FieldOffset(0)] public Vector3 MinBounds;
+        [FieldOffset(12)] public uint LeftChild;
+        [FieldOffset(16)] public Vector3 MaxBounds;
+        [FieldOffset(28)] public uint RightChild;
+        [FieldOffset(32)] public uint PrimitiveStart;
+        [FieldOffset(36)] public uint PrimitiveCount;
+        [FieldOffset(40)] public uint ParentIndex;
+        [FieldOffset(44)] public uint Flags; // bit 0 = leaf flag
     }
 
     /// <summary>
@@ -206,8 +209,8 @@ public class GpuSceneBvhTests
     [Test]
     public void GpuBvhNode_StructLayout_CorrectSize()
     {
-        // BvhNode in shader: vec4 minBounds, vec4 maxBounds, uvec4 meta = 48 bytes
-        int expectedSize = 48;
+        // BvhNode matches bvh_nodes.glslinc: 80 bytes / 20 uint scalars.
+        int expectedSize = 80;
         int actualSize = Marshal.SizeOf<GpuBvhNode>();
         actualSize.ShouldBe(expectedSize);
     }
@@ -242,19 +245,20 @@ public class GpuSceneBvhTests
     [Test]
     public void BvhLeafBit_MatchesShaderConstant()
     {
-        // XR_BVH_LEAF_BIT in shader = 0x80000000u
-        const uint XR_BVH_LEAF_BIT = 0x80000000u;
-        
+        // Leaf flag in BvhRaycastCore.glsl / bvh_nodes.glslinc = bit 0 (BVH_FLAG_LEAF = 1u).
+        const uint XR_BVH_LEAF_FLAG = 1u;
+
         var leafNode = new GpuBvhNode
         {
-            FlagsAndCount = XR_BVH_LEAF_BIT | 5u // leaf with 5 primitives
+            Flags = XR_BVH_LEAF_FLAG,
+            PrimitiveStart = 10u,
+            PrimitiveCount = 5u,
         };
 
-        bool isLeaf = (leafNode.FlagsAndCount & XR_BVH_LEAF_BIT) != 0;
-        uint primitiveCount = leafNode.FlagsAndCount & ~XR_BVH_LEAF_BIT;
+        bool isLeaf = (leafNode.Flags & XR_BVH_LEAF_FLAG) != 0;
 
         isLeaf.ShouldBeTrue();
-        primitiveCount.ShouldBe(5u);
+        leafNode.PrimitiveCount.ShouldBe(5u);
     }
 
     #endregion

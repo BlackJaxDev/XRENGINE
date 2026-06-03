@@ -523,6 +523,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         => _lastOctreePickResults;
 
     private SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
+    private readonly HashSet<GpuMeshBvhPickCandidate> _pendingGpuSelectionCandidates = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     /// <summary>
     /// The last octree pick results from the raycast, sorted by distance.
     /// Use RaycastLock to access this safely.
@@ -663,6 +664,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// Set by left-click so the click handler always has fresh results.
     /// </summary>
     private bool _forceRepick;
+
+    /// <summary>
+    /// When true, the world-pick callback should run <see cref="Select"/> once the forced
+    /// repick completes. Set on left-click so selection resolves against a fresh raycast at
+    /// the exact click position instead of the last throttled/async result (which can be up
+    /// to one throttle interval plus the GPU BVH readback latency behind the cursor).
+    /// </summary>
+    private bool _selectAfterForcedPick;
     private readonly Lock _pickDispatchLock = new();
     private bool _octreePickInFlight;
     private bool _pendingPickAfterCurrent;
@@ -1319,6 +1328,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             ReturnOctreePickResultDict(old);
         }
 
+        // A click set _selectAfterForcedPick so selection waits for this fresh pick
+        // (dispatched at the exact click position) instead of the stale prior result.
+        // Octree raycast callbacks run on the scene-swap thread, so marshal the
+        // selection mutation onto the main thread like the GPU pending-selection path.
+        if (_selectAfterForcedPick)
+        {
+            _selectAfterForcedPick = false;
+            Engine.EnqueueMainThreadTask(Select, "EditorFlyingCameraPawnComponent.ClickSelect");
+        }
+
         bool requestFollowUpPick;
         using (_pickDispatchLock.EnterScope())
         {
@@ -1420,8 +1439,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 MeshEdgePickResult => 0,
                 MeshVertexPickResult => 1,
                 MeshPickResult => 2,
-                Vector3 => 3,
-                Triangle => 4,
+                GpuMeshBvhPickCandidate { HasHit: true } => 3,
+                Vector3 => 4,
+                Triangle => 5,
                 _ => 5,
             },
             ERaycastHitMode.Points => data switch
@@ -1429,8 +1449,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 MeshVertexPickResult => 0,
                 MeshEdgePickResult => 1,
                 MeshPickResult => 2,
-                Vector3 => 3,
-                Triangle => 4,
+                GpuMeshBvhPickCandidate { HasHit: true } => 3,
+                Vector3 => 4,
+                Triangle => 5,
                 _ => 5,
             },
             _ => data switch
@@ -1438,8 +1459,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 MeshPickResult => 0,
                 MeshEdgePickResult => 1,
                 MeshVertexPickResult => 2,
-                Vector3 => 3,
-                Triangle => 4,
+                GpuMeshBvhPickCandidate { HasHit: true } => 3,
+                Vector3 => 4,
+                Triangle => 5,
                 _ => 5,
             },
         };
@@ -1450,6 +1472,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             MeshPickResult meshHit => RuntimeHelpers.GetHashCode(meshHit.Mesh),
             MeshEdgePickResult edgeHit => RuntimeHelpers.GetHashCode(edgeHit.FaceHit.Mesh),
             MeshVertexPickResult vertexHit => RuntimeHelpers.GetHashCode(vertexHit.FaceHit.Mesh),
+            GpuMeshBvhPickCandidate gpuHit => RuntimeHelpers.GetHashCode(gpuHit.Mesh),
             _ => 0,
         };
 
@@ -1459,6 +1482,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             MeshPickResult meshHit => meshHit.TriangleIndex,
             MeshEdgePickResult edgeHit => edgeHit.EdgeIndex,
             MeshVertexPickResult vertexHit => vertexHit.VertexIndex,
+            GpuMeshBvhPickCandidate gpuHit when gpuHit.HasHit => (int)Math.Min(gpuHit.ObjectId, int.MaxValue),
             _ => 0,
         };
 
@@ -1529,6 +1553,37 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 meshHitPoint = vertexHit.Position;
                 vertexPickResult = vertexHit;
                 meshPickResult = vertexHit.FaceHit;
+                break;
+            case GpuMeshBvhPickCandidate { HasHit: true } gpuHit:
+                meshHitPoint = gpuHit.HitPoint;
+                // Prefer the hit-mode-resolved primitive (face / edge / vertex) from the GPU readback
+                // so hover highlighting snaps to the exact feature under the cursor.
+                switch (gpuHit.PickResult)
+                {
+                    case MeshEdgePickResult gpuEdgeHit:
+                        facePickResult = gpuEdgeHit.WorldTriangle;
+                        meshHitPoint = gpuEdgeHit.ClosestPoint;
+                        edgePickResult = gpuEdgeHit;
+                        meshPickResult = gpuEdgeHit.FaceHit;
+                        break;
+                    case MeshVertexPickResult gpuVertexHit:
+                        facePickResult = gpuVertexHit.WorldTriangle;
+                        meshHitPoint = gpuVertexHit.Position;
+                        vertexPickResult = gpuVertexHit;
+                        meshPickResult = gpuVertexHit.FaceHit;
+                        break;
+                    case MeshPickResult gpuFaceResult:
+                        facePickResult = gpuFaceResult.WorldTriangle;
+                        meshPickResult = gpuFaceResult;
+                        break;
+                    default:
+                        if (gpuHit.FaceHit is MeshPickResult gpuFaceHit)
+                        {
+                            facePickResult = gpuFaceHit.WorldTriangle;
+                            meshPickResult = gpuFaceHit;
+                        }
+                        break;
+                }
                 break;
             case Vector3 point:
                 meshHitPoint = point;
@@ -1630,8 +1685,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     private bool TryCollectModelComponentHits(List<SceneNode> currentHits)
+        => TryCollectModelComponentHits(currentHits, out _);
+
+    private bool TryCollectModelComponentHits(List<SceneNode> currentHits, out bool pendingGpuSelection)
     {
         bool found = false;
+        pendingGpuSelection = false;
 
         using var scope = _raycastLock.EnterScope();
         if (_lastOctreePickResults.Count == 0)
@@ -1643,6 +1702,22 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             for (int i = 0; i < list.Count; i++)
             {
                 var (_, data) = list[i];
+                if (data is GpuMeshBvhPickCandidate gpuCandidate)
+                {
+                    if (gpuCandidate.HasHit && gpuCandidate.SceneNode is SceneNode gpuNode)
+                    {
+                        currentHits.Add(gpuNode);
+                        found = true;
+                    }
+                    else if (!gpuCandidate.IsComplete)
+                    {
+                        pendingGpuSelection = true;
+                        RegisterPendingGpuSelection(gpuCandidate);
+                    }
+
+                    continue;
+                }
+
                 if (!TryExtractMeshPickResult(data, out MeshPickResult meshHit))
                     continue;
 
@@ -1658,6 +1733,24 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             UpdateMeshHitVisualization(_lastOctreePickResults);
 
         return found;
+    }
+
+    private void RegisterPendingGpuSelection(GpuMeshBvhPickCandidate candidate)
+    {
+        if (!_pendingGpuSelectionCandidates.Add(candidate))
+            return;
+
+        (bool ctrl, bool alt, bool shift) modifiers = CaptureSelectionModifiers();
+        candidate.Completed += completed =>
+        {
+            _pendingGpuSelectionCandidates.Remove(completed);
+            if (!completed.HasHit || completed.SceneNode is not SceneNode node)
+                return;
+
+            Engine.EnqueueMainThreadTask(
+                () => UpdateSelection(modifiers.ctrl, modifiers.alt, modifiers.shift, node),
+                "EditorFlyingCameraPawnComponent.GpuMeshBvhPickSelection");
+        };
     }
 
     private Segment GetWorldSegment(XRViewport vp)
@@ -1904,7 +1997,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         // Force a fresh raycast on the next tick so click handlers always have
         // up-to-date results, regardless of throttle or cursor-dirty state.
         _forceRepick = true;
-
         if (!AllowWorldPicking)
             return;
 
@@ -1925,7 +2017,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
             if (!ShiftPressed)
             {
-                Select();
+                // Defer selection until the forced fresh pick (dispatched next tick at the
+                // exact click position) completes, so the click resolves against an
+                // up-to-date raycast rather than the last throttled/async result.
+                _selectAfterForcedPick = true;
                 return;
             }
 
@@ -1956,7 +2051,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
 
         if (!TryFinalizeRectangleSelection(viewport))
-            Select();
+            _selectAfterForcedPick = true;
 
         ResetSelectionDrag();
     }
@@ -2650,8 +2745,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
             return;
         List<SceneNode> currentHits = [];
-        if (!TryCollectModelComponentHits(currentHits))
+        if (!TryCollectModelComponentHits(currentHits, out bool pendingGpuSelection))
+        {
+            if (pendingGpuSelection)
+                return;
+
             CollectHits(currentHits);
+        }
         if (_lastHits is null)
             SetSelection(currentHits);
         else
@@ -2694,7 +2794,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         foreach (var x in _lastOctreePickResults.Values)
             for (int i =0; i < x.Count; i++)
             {
-                var (info, _) = x[i];
+                var (info, data) = x[i];
+                if (data is GpuMeshBvhPickCandidate gpuCandidate)
+                {
+                    if (gpuCandidate.HasHit && gpuCandidate.SceneNode is SceneNode gpuNode)
+                        currentHits.Add(gpuNode);
+                    continue;
+                }
+
                 if (info.Owner is XRComponent comp && comp.SceneNode is not null)
                     currentHits.Add(comp.SceneNode);
                 else if (info.Owner is TransformBase tfm && tfm.SceneNode is not null)
@@ -2728,6 +2835,41 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         Selection.SceneNodes = [node];
     }
 
+    private (bool ctrl, bool alt, bool shift) CaptureSelectionModifiers()
+    {
+        var kbd = LocalInput?.Keyboard;
+        bool ctrl = kbd is not null && (kbd.GetKeyState(EKey.ControlLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.ControlRight, EButtonInputType.Pressed));
+        bool alt = kbd is not null && (kbd.GetKeyState(EKey.AltLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.AltRight, EButtonInputType.Pressed));
+        bool shift = kbd is not null && (kbd.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.ShiftRight, EButtonInputType.Pressed));
+        return (ctrl, alt, shift);
+    }
+
+    private static void UpdateSelection(bool ctrl, bool alt, bool shift, SceneNode node)
+    {
+        if (ctrl)
+        {
+            if (Selection.SceneNodes.Contains(node))
+                RemoveNode(node);
+            else
+                AddNode(node);
+            return;
+        }
+
+        if (alt)
+        {
+            RemoveNode(node);
+            return;
+        }
+
+        if (shift)
+        {
+            AddNode(node);
+            return;
+        }
+
+        Selection.SceneNodes = [node];
+    }
+
     private static void AddNode(SceneNode node)
     {
         if (Selection.SceneNodes.Contains(node)) return;
@@ -2752,6 +2894,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 return true;
             case MeshVertexPickResult vertexHit:
                 meshHit = vertexHit.FaceHit;
+                return true;
+            case GpuMeshBvhPickCandidate { FaceHit: MeshPickResult gpuFaceHit }:
+                meshHit = gpuFaceHit;
                 return true;
             default:
                 meshHit = default;

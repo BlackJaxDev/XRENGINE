@@ -1,0 +1,92 @@
+#version 460 core
+
+// Packs one raycast-ready triangle per Morton-sorted primitive slot. The BVH
+// leaf node stores sorted primitive ranges, so the output order must match the
+// sorted Morton buffer rather than the source mesh triangle order.
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer PositionsInBuffer
+{
+    vec4 PositionsIn[];
+};
+
+layout(std430, binding = 1) readonly buffer InterleavedPositionsBuffer
+{
+    uint InterleavedPositions[];
+};
+
+layout(std430, binding = 2) readonly buffer TriangleIndexBuffer
+{
+    uvec4 TriangleIndices[];
+};
+
+layout(std430, binding = 3) readonly buffer MortonBuffer
+{
+    uint MortonData[];
+};
+
+struct PackedTriangle
+{
+    vec4 v0;
+    vec4 v1;
+    vec4 v2;
+    uvec4 extra;
+};
+
+layout(std430, binding = 4) writeonly buffer PackedTrianglesBuffer
+{
+    PackedTriangle PackedTriangles[];
+};
+
+uniform uint TriangleCount;
+uniform uint UseInterleaved;
+uniform uint InterleavedStrideBytes;
+uniform uint PositionOffsetBytes;
+uniform int ApplyTransform;
+uniform mat4 TransformMatrix;
+
+vec3 loadInterleavedPosition(uint vertexIndex)
+{
+    uint baseByte = vertexIndex * InterleavedStrideBytes + PositionOffsetBytes;
+    uint word = baseByte >> 2u;
+    return vec3(
+        uintBitsToFloat(InterleavedPositions[word + 0u]),
+        uintBitsToFloat(InterleavedPositions[word + 1u]),
+        uintBitsToFloat(InterleavedPositions[word + 2u]));
+}
+
+vec3 loadPosition(uint vertexIndex)
+{
+    return UseInterleaved != 0u
+        ? loadInterleavedPosition(vertexIndex)
+        : PositionsIn[vertexIndex].xyz;
+}
+
+vec3 maybeTransform(vec3 value)
+{
+    return ApplyTransform != 0
+        ? (TransformMatrix * vec4(value, 1.0)).xyz
+        : value;
+}
+
+void main()
+{
+    uint sortedIndex = gl_GlobalInvocationID.x;
+    if (sortedIndex >= TriangleCount)
+        return;
+
+    uint sourceTriangleIndex = MortonData[sortedIndex * 2u + 1u];
+    if (sourceTriangleIndex >= TriangleCount)
+        return;
+
+    uvec4 indices = TriangleIndices[sourceTriangleIndex];
+    vec3 p0 = maybeTransform(loadPosition(indices.x));
+    vec3 p1 = maybeTransform(loadPosition(indices.y));
+    vec3 p2 = maybeTransform(loadPosition(indices.z));
+
+    PackedTriangles[sortedIndex].v0 = vec4(p0, 1.0);
+    PackedTriangles[sortedIndex].v1 = vec4(p1, 1.0);
+    PackedTriangles[sortedIndex].v2 = vec4(p2, 1.0);
+    PackedTriangles[sortedIndex].extra = uvec4(sourceTriangleIndex, sourceTriangleIndex, 0u, 0u);
+}

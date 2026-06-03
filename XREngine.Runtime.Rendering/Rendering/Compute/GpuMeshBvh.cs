@@ -15,15 +15,20 @@ namespace XREngine.Rendering.Compute;
 public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 {
     private const string TriangleAabbShaderPath = "Scene3D/RenderPipeline/mesh_triangle_aabbs.comp";
+    private const string PackedTriangleShaderPath = "Scene3D/RenderPipeline/mesh_bvh_pack_triangles.comp";
     private const uint TriangleAabbGroupSize = 128u;
+    private const uint PackedTriangleGroupSize = 128u;
     public const uint DefaultMaxLeafPrimitives = 1u;
 
     private readonly GpuBvhTree _tree = new();
 
     private XRDataBuffer? _aabbBuffer;
     private XRDataBuffer? _triangleIndexBuffer;
+    private XRDataBuffer? _packedTriangleBuffer;
     private XRShader? _triangleAabbShader;
+    private XRShader? _packedTriangleShader;
     private XRRenderProgram? _triangleAabbProgram;
+    private XRRenderProgram? _packedTriangleProgram;
     private TriangleGpuIndex[]? _triangleIndices;
     private TriangleAabb[]? _staticAabbs;
 
@@ -32,13 +37,21 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     private uint _triangleCount;
     private bool _built;
     private bool _staticAabbsUploaded;
+    private bool _packedTrianglesUploaded;
 
     public XRDataBuffer? BvhNodeBuffer => _tree.NodeBuffer;
     public XRDataBuffer? BvhRangeBuffer => _tree.RangeBuffer;
     public XRDataBuffer? BvhMortonBuffer => _tree.MortonBuffer;
+    public XRDataBuffer? PackedTriangleBuffer => _packedTriangleBuffer;
     public uint BvhNodeCount => _tree.NodeCount;
+    public uint TriangleCount => _triangleCount;
     public uint MaxLeafPrimitives => _tree.MaxLeafPrimitives;
-    public bool IsBvhReady => _built && _tree.NodeCount > 0 && _tree.PrimitiveCount == _triangleCount;
+    public bool IsBvhReady => _built &&
+        _tree.NodeCount > 0 &&
+        _tree.PrimitiveCount == _triangleCount &&
+        _packedTrianglesUploaded &&
+        _packedTriangleBuffer is not null &&
+        _packedTriangleBuffer.ElementCount >= _triangleCount;
     public Matrix4x4 LocalToWorldMatrix { get; private set; } = Matrix4x4.Identity;
     public bool LastUpdateUsedGpuSkinning { get; private set; }
 
@@ -55,6 +68,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     {
         _built = false;
         _staticAabbsUploaded = false;
+        _packedTrianglesUploaded = false;
         _tree.MarkDirty();
     }
 
@@ -84,16 +98,23 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         bool skinned = realtimeSkinned && mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
         if (skinned)
         {
-            if (TryUpdateSkinnedAabbs(renderable, renderer, mesh, triangleCount))
+            if (TryUpdateSkinnedAabbs(renderable, renderer, mesh, triangleCount, out XRDataBuffer? skinnedPositions, out XRDataBuffer? skinnedInterleaved))
             {
                 LastUpdateUsedGpuSkinning = true;
                 LocalToWorldMatrix = renderable.SkinnedBvhLocalToWorldMatrix;
-                return BuildOrRefit(
+                bool ready = BuildOrRefit(
                     mesh,
                     triangleCount,
                     renderable.RenderInfo.LocalCullingVolume ?? mesh.Bounds,
                     forceRebuild,
                     aabbsUpdated: true);
+                return ready && PackTriangles(
+                    mesh,
+                    triangleCount,
+                    skinnedPositions,
+                    skinnedInterleaved,
+                    applyTransform: true,
+                    renderable.SkinnedBvhWorldToLocalMatrix);
             }
 
             if (IsBvhReady)
@@ -108,7 +129,8 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
             if (!UploadStaticAabbsIfNeeded(mesh, triangles, triangleCount))
                 return false;
 
-            return BuildOrRefit(mesh, triangleCount, mesh.Bounds, forceRebuild, fallbackAabbsWillUpload);
+            bool fallbackReady = BuildOrRefit(mesh, triangleCount, mesh.Bounds, forceRebuild, fallbackAabbsWillUpload);
+            return fallbackReady && PackStaticTriangles(mesh, triangleCount);
         }
 
         LastUpdateUsedGpuSkinning = false;
@@ -117,13 +139,15 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         if (!UploadStaticAabbsIfNeeded(mesh, triangles, triangleCount))
             return false;
 
-        return BuildOrRefit(mesh, triangleCount, mesh.Bounds, forceRebuild, staticAabbsWillUpload);
+        bool staticReady = BuildOrRefit(mesh, triangleCount, mesh.Bounds, forceRebuild, staticAabbsWillUpload);
+        return staticReady && PackStaticTriangles(mesh, triangleCount);
     }
 
     private bool ClearReadyState()
     {
         _built = false;
         _triangleCount = 0;
+        _packedTrianglesUploaded = false;
         _tree.Clear();
         return false;
     }
@@ -135,6 +159,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _triangleCount = triangleCount;
         _built = false;
         _staticAabbsUploaded = false;
+        _packedTrianglesUploaded = false;
         _tree.MarkDirty();
     }
 
@@ -211,10 +236,18 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         }
     }
 
-    private bool TryUpdateSkinnedAabbs(RenderableMesh renderable, XRMeshRenderer renderer, XRMesh mesh, uint triangleCount)
+    private bool TryUpdateSkinnedAabbs(
+        RenderableMesh renderable,
+        XRMeshRenderer renderer,
+        XRMesh mesh,
+        uint triangleCount,
+        out XRDataBuffer? positions,
+        out XRDataBuffer? interleaved)
     {
         SkinningPrepassDispatcher.Instance.RunForGpuMeshBvh(renderer);
-        var (positions, _, _, interleaved) = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
+        var resolvedBuffers = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
+        positions = resolvedBuffers.positions;
+        interleaved = resolvedBuffers.interleaved;
         XRDataBuffer? source = positions ?? interleaved;
         if (source is null)
             return false;
@@ -240,6 +273,96 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
             EMemoryBarrierMask.ShaderStorage);
 
         return true;
+    }
+
+    private bool PackStaticTriangles(XRMesh mesh, uint triangleCount)
+    {
+        XRDataBuffer? positions = mesh.Interleaved ? null : mesh.PositionsBuffer;
+        XRDataBuffer? interleaved = mesh.Interleaved ? mesh.InterleavedVertexBuffer : null;
+        return PackTriangles(mesh, triangleCount, positions, interleaved, applyTransform: false, Matrix4x4.Identity);
+    }
+
+    private bool PackTriangles(
+        XRMesh mesh,
+        uint triangleCount,
+        XRDataBuffer? positions,
+        XRDataBuffer? interleaved,
+        bool applyTransform,
+        Matrix4x4 transformMatrix)
+    {
+        XRDataBuffer? source = positions ?? interleaved;
+        XRDataBuffer? morton = _tree.MortonBuffer;
+        if (source is null || morton is null || _triangleIndexBuffer is null || triangleCount == 0)
+            return false;
+
+        EnsurePackedTriangleBuffer(triangleCount);
+        if (!EnsurePackedTriangleProgramReady())
+            return false;
+
+        XRRenderProgram program = _packedTriangleProgram!;
+        program.BindBuffer(positions ?? source, 0);
+        program.BindBuffer(interleaved ?? source, 1);
+        program.BindBuffer(_triangleIndexBuffer, 2);
+        program.BindBuffer(morton, 3);
+        program.BindBuffer(_packedTriangleBuffer!, 4);
+        program.Uniform("TriangleCount", triangleCount);
+        program.Uniform("UseInterleaved", interleaved is not null ? 1u : 0u);
+        program.Uniform("InterleavedStrideBytes", mesh.InterleavedStride);
+        program.Uniform("PositionOffsetBytes", mesh.PositionOffset);
+        program.Uniform("ApplyTransform", applyTransform ? 1 : 0);
+        program.Uniform("TransformMatrix", transformMatrix);
+        program.DispatchCompute(
+            ComputeGroups(triangleCount, PackedTriangleGroupSize),
+            1u,
+            1u,
+            EMemoryBarrierMask.ShaderStorage);
+
+        _packedTrianglesUploaded = true;
+        return true;
+    }
+
+    private void EnsurePackedTriangleBuffer(uint triangleCount)
+    {
+        if (_packedTriangleBuffer is null)
+        {
+            _packedTriangleBuffer = new XRDataBuffer(
+                "GpuMeshBvh_PackedTriangles",
+                EBufferTarget.ShaderStorageBuffer,
+                Math.Max(triangleCount, 1u),
+                EComponentType.Struct,
+                (uint)Marshal.SizeOf<PackedTriangle>(),
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicDraw,
+                Resizable = true,
+                DisposeOnPush = false,
+                PadEndingToVec4 = true,
+                ShouldMap = false
+            };
+            _packedTrianglesUploaded = false;
+        }
+        else if (_packedTriangleBuffer.ElementCount < triangleCount)
+        {
+            _packedTriangleBuffer.Resize(triangleCount, false, true);
+            _packedTrianglesUploaded = false;
+        }
+    }
+
+    private bool EnsurePackedTriangleProgramReady()
+    {
+        if (_packedTriangleProgram is null)
+        {
+            _packedTriangleShader ??= ShaderHelper.LoadEngineShader(PackedTriangleShaderPath, EShaderType.Compute);
+            _packedTriangleProgram = new XRRenderProgram(true, false, _packedTriangleShader);
+        }
+
+        if (_packedTriangleProgram.IsLinked)
+            return true;
+
+        _packedTriangleProgram.Link();
+
+        return _packedTriangleProgram.IsLinked;
     }
 
     private bool UploadStaticAabbsIfNeeded(XRMesh mesh, List<IndexTriangle> triangles, uint triangleCount)
@@ -313,12 +436,18 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _tree.Dispose();
         _aabbBuffer?.Dispose();
         _triangleIndexBuffer?.Dispose();
+        _packedTriangleBuffer?.Dispose();
         _triangleAabbProgram?.Destroy();
         _triangleAabbShader?.Destroy();
+        _packedTriangleProgram?.Destroy();
+        _packedTriangleShader?.Destroy();
         _aabbBuffer = null;
         _triangleIndexBuffer = null;
+        _packedTriangleBuffer = null;
         _triangleAabbProgram = null;
         _triangleAabbShader = null;
+        _packedTriangleProgram = null;
+        _packedTriangleShader = null;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -335,5 +464,14 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     {
         public readonly Vector4 Min = min;
         public readonly Vector4 Max = max;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct PackedTriangle(Vector4 v0, Vector4 v1, Vector4 v2, Vector4 extra)
+    {
+        public readonly Vector4 V0 = v0;
+        public readonly Vector4 V1 = v1;
+        public readonly Vector4 V2 = v2;
+        public readonly Vector4 Extra = extra;
     }
 }

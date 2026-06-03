@@ -586,6 +586,10 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         public RenderBone[]? Bones => _bones;
 
+        // Transform callbacks can mark bones dirty while the render thread uploads them.
+        [MemoryPackIgnore]
+        private readonly object _dirtyBoneSyncRoot = new();
+
         [MemoryPackIgnore]
         private Dictionary<TransformBase, RenderBone>? _boneByTransform;
         [MemoryPackIgnore]
@@ -1178,11 +1182,15 @@ namespace XREngine.Rendering
                     pair.Key.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
                 _boneByTransform.Clear();
             }
-            _dirtyBoneIndices?.Clear();
-            _dirtyBoneFlags = null;
-            _dirtyBoneMatrices = null;
-            _gpuDrivenBoneRefCounts = null;
-            _gpuDrivenBoneCount = 0;
+            lock (_dirtyBoneSyncRoot)
+            {
+                _dirtyBoneIndices?.Clear();
+                _dirtyBoneFlags = null;
+                _dirtyBoneMatrices = null;
+                _bonesInvalidated = false;
+                _gpuDrivenBoneRefCounts = null;
+                _gpuDrivenBoneCount = 0;
+            }
             ClearGpuDrivenSkinPaletteSource();
 
             _bones = null;
@@ -1765,10 +1773,15 @@ namespace XREngine.Rendering
 
             _bones = new RenderBone[boneCount];
             _boneByTransform = new Dictionary<TransformBase, RenderBone>((int)boneCount);
-            _dirtyBoneIndices = new List<uint>((int)boneCount);
-            _dirtyBoneFlags = new bool[boneCount + 1];
-            _dirtyBoneMatrices = new Matrix4x4[boneCount + 1];
-            _gpuDrivenBoneRefCounts = new int[boneCount + 1];
+            lock (_dirtyBoneSyncRoot)
+            {
+                _dirtyBoneIndices = new List<uint>((int)boneCount);
+                _dirtyBoneFlags = new bool[boneCount + 1];
+                _dirtyBoneMatrices = new Matrix4x4[boneCount + 1];
+                _bonesInvalidated = false;
+                _gpuDrivenBoneRefCounts = new int[boneCount + 1];
+                _gpuDrivenBoneCount = 0;
+            }
 
             // Vertices live in root-local space (from geometryTransform), but InverseBindMatrix
             // maps from world space to bone-local space. Pre-multiply by the root's BindMatrix
@@ -2059,34 +2072,39 @@ namespace XREngine.Rendering
         private bool MarkBoneMatrixDirty(uint boneIndex, in Matrix4x4 renderMatrix)
         {
             int index = (int)boneIndex;
-            if (index <= 0 || IsBoneGpuDriven(index))
+            if (index <= 0)
                 return false;
 
-            if (_dirtyBoneFlags is null || _dirtyBoneIndices is null || _dirtyBoneMatrices is null)
-                return false;
-
-            if (index >= _dirtyBoneFlags.Length || index >= _dirtyBoneMatrices.Length)
-                return false;
-
-            _dirtyBoneMatrices[index] = renderMatrix;
-            if (!_dirtyBoneFlags[index])
+            lock (_dirtyBoneSyncRoot)
             {
-                _dirtyBoneFlags[index] = true;
-                _dirtyBoneIndices.Add(boneIndex);
-            }
+                if (IsBoneGpuDriven(index))
+                    return false;
 
-            _bonesInvalidated = true;
+                if (_dirtyBoneFlags is null || _dirtyBoneIndices is null || _dirtyBoneMatrices is null)
+                    return false;
+
+                if (index >= _dirtyBoneFlags.Length || index >= _dirtyBoneMatrices.Length)
+                    return false;
+
+                _dirtyBoneMatrices[index] = renderMatrix;
+                if (!_dirtyBoneFlags[index])
+                {
+                    _dirtyBoneFlags[index] = true;
+                    _dirtyBoneIndices.Add(boneIndex);
+                }
+
+                _bonesInvalidated = true;
+            }
             return true;
         }
 
         internal void SyncDirtyBoneMatricesToClientBuffer()
-            => WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: false, logDiagnostics: false);
+            => WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: false, logDiagnostics: false, out _);
 
         //TODO: use mapped buffer for constant streaming
         public void PushBoneMatricesToGPU()
         {
-            int dirtyBoneCount = _dirtyBoneIndices?.Count ?? 0;
-            if (!WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: true, logDiagnostics: true))
+            if (!WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: true, logDiagnostics: true, out int dirtyBoneCount))
                 return;
 
             BoneMatricesBuffer?.PushSubData();
@@ -2095,43 +2113,53 @@ namespace XREngine.Rendering
             RuntimeEngine.Rendering.Stats.RecordSkinningUpload(skinPaletteBytes, 0L, skinPaletteBytes: skinPaletteBytes);
         }
 
-        private bool WriteDirtyBoneMatricesToClientBuffer(bool clearDirtyState, bool logDiagnostics)
+        private bool WriteDirtyBoneMatricesToClientBuffer(bool clearDirtyState, bool logDiagnostics, out int dirtyBoneCount)
         {
-            if (BoneMatricesBuffer is null || !_bonesInvalidated)
+            dirtyBoneCount = 0;
+
+            if (BoneMatricesBuffer is null)
                 return false;
 
-            if (_dirtyBoneIndices is null || _dirtyBoneFlags is null || _dirtyBoneMatrices is null)
-                return false;
-
-            if (_dirtyBoneIndices.Count == 0)
+            lock (_dirtyBoneSyncRoot)
             {
-                if (clearDirtyState)
-                    _bonesInvalidated = false;
-                return false;
-            }
+                if (!_bonesInvalidated)
+                    return false;
 
-            if (logDiagnostics && _skinningDiagnosticsEnabled && _bones is not null)
-                LogDirtyBoneDiagnostics();
+                if (_dirtyBoneIndices is null || _dirtyBoneFlags is null || _dirtyBoneMatrices is null)
+                    return false;
 
-            foreach (var index in _dirtyBoneIndices)
-            {
-                int i = (int)index;
-                Matrix4x4 currentMatrix = _dirtyBoneMatrices[i];
-                BoneMatricesBuffer.Set(index, currentMatrix);
-                if (SkinPaletteBuffer is not null)
+                dirtyBoneCount = _dirtyBoneIndices.Count;
+                if (dirtyBoneCount == 0)
                 {
-                    Matrix4x4 composed = ComposeSkinPaletteMatrix(index, currentMatrix);
-                    DetectSkinPaletteExplosion(index, currentMatrix, composed);
-                    SkinPaletteBuffer.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(composed));
+                    if (clearDirtyState)
+                        _bonesInvalidated = false;
+                    return false;
                 }
-                if (clearDirtyState)
-                    _dirtyBoneFlags[i] = false;
-            }
 
-            if (clearDirtyState)
-            {
-                _bonesInvalidated = false;
-                _dirtyBoneIndices.Clear();
+                if (logDiagnostics && _skinningDiagnosticsEnabled && _bones is not null)
+                    LogDirtyBoneDiagnostics();
+
+                for (int dirtyIndex = 0; dirtyIndex < dirtyBoneCount; dirtyIndex++)
+                {
+                    uint index = _dirtyBoneIndices[dirtyIndex];
+                    int i = (int)index;
+                    Matrix4x4 currentMatrix = _dirtyBoneMatrices[i];
+                    BoneMatricesBuffer.Set(index, currentMatrix);
+                    if (SkinPaletteBuffer is not null)
+                    {
+                        Matrix4x4 composed = ComposeSkinPaletteMatrix(index, currentMatrix);
+                        DetectSkinPaletteExplosion(index, currentMatrix, composed);
+                        SkinPaletteBuffer.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(composed));
+                    }
+                    if (clearDirtyState)
+                        _dirtyBoneFlags[i] = false;
+                }
+
+                if (clearDirtyState)
+                {
+                    _bonesInvalidated = false;
+                    _dirtyBoneIndices.Clear();
+                }
             }
 
             return true;
@@ -2264,16 +2292,22 @@ namespace XREngine.Rendering
             if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
                 return;
 
-            for (int i = 0; i < boneIndices.Count; ++i)
+            lock (_dirtyBoneSyncRoot)
             {
-                uint boneIndex = boneIndices[i];
-                if (boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
-                    continue;
+                if (_gpuDrivenBoneRefCounts is null)
+                    return;
 
-                if (_gpuDrivenBoneRefCounts[boneIndex]++ == 0)
-                    ++_gpuDrivenBoneCount;
+                for (int i = 0; i < boneIndices.Count; ++i)
+                {
+                    uint boneIndex = boneIndices[i];
+                    if (boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
+                        continue;
 
-                ClearDirtyBoneIndex((int)boneIndex);
+                    if (_gpuDrivenBoneRefCounts[boneIndex]++ == 0)
+                        ++_gpuDrivenBoneCount;
+
+                    ClearDirtyBoneIndex((int)boneIndex);
+                }
             }
         }
 
@@ -2282,20 +2316,26 @@ namespace XREngine.Rendering
             if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
                 return;
 
-            for (int i = 0; i < boneIndices.Count; ++i)
+            lock (_dirtyBoneSyncRoot)
             {
-                uint boneIndex = boneIndices[i];
-                if (boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
-                    continue;
+                if (_gpuDrivenBoneRefCounts is null)
+                    return;
 
-                int refCount = _gpuDrivenBoneRefCounts[boneIndex];
-                if (refCount <= 0)
-                    continue;
+                for (int i = 0; i < boneIndices.Count; ++i)
+                {
+                    uint boneIndex = boneIndices[i];
+                    if (boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
+                        continue;
 
-                refCount -= 1;
-                _gpuDrivenBoneRefCounts[boneIndex] = refCount;
-                if (refCount == 0 && _gpuDrivenBoneCount > 0)
-                    --_gpuDrivenBoneCount;
+                    int refCount = _gpuDrivenBoneRefCounts[boneIndex];
+                    if (refCount <= 0)
+                        continue;
+
+                    refCount -= 1;
+                    _gpuDrivenBoneRefCounts[boneIndex] = refCount;
+                    if (refCount == 0 && _gpuDrivenBoneCount > 0)
+                        --_gpuDrivenBoneCount;
+                }
             }
         }
 
@@ -2340,15 +2380,18 @@ namespace XREngine.Rendering
 
         private void ClearDirtyBoneIndex(int index)
         {
-            if (_dirtyBoneFlags is null || _dirtyBoneIndices is null)
-                return;
+            lock (_dirtyBoneSyncRoot)
+            {
+                if (_dirtyBoneFlags is null || _dirtyBoneIndices is null)
+                    return;
 
-            if (index < 0 || index >= _dirtyBoneFlags.Length || !_dirtyBoneFlags[index])
-                return;
+                if (index < 0 || index >= _dirtyBoneFlags.Length || !_dirtyBoneFlags[index])
+                    return;
 
-            _dirtyBoneFlags[index] = false;
-            _dirtyBoneIndices.Remove((uint)index);
-            _bonesInvalidated = _dirtyBoneIndices.Count > 0;
+                _dirtyBoneFlags[index] = false;
+                _dirtyBoneIndices.Remove((uint)index);
+                _bonesInvalidated = _dirtyBoneIndices.Count > 0;
+            }
         }
 
         private void SetBlendshapesInvalidated(bool value)

@@ -340,10 +340,32 @@ namespace XREngine.Rendering.Occlusion
             XRMaterial? material,
             RenderingParameters? optionsOverride)
         {
-            return command.RenderOptionsOverride?.ExcludeFromCpuOcclusion == true ||
+            return UsesDeformedMesh(command) ||
+                   command.RenderOptionsOverride?.ExcludeFromCpuOcclusion == true ||
                    optionsOverride?.ExcludeFromCpuOcclusion == true ||
                    material?.RenderOptions?.ExcludeFromCpuOcclusion == true;
         }
+
+        private static bool UsesDeformedMesh(IRenderCommandMesh command)
+        {
+            XRMeshRenderer? renderer = command.Mesh;
+            if (renderer is null)
+                return false;
+
+            if (IsDeformedMesh(renderer.Mesh))
+                return true;
+
+            for (int i = 0; i < renderer.Submeshes.Count; i++)
+            {
+                if (IsDeformedMesh(renderer.Submeshes[i].Mesh))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsDeformedMesh(XRMesh? mesh)
+            => mesh is not null && (mesh.HasSkinning || mesh.BlendshapeCount > 0);
 
         private static bool TryGetCommandSnapshot(
             IRenderCommandMesh command,

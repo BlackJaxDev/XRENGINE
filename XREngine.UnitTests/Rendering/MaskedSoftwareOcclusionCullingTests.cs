@@ -4,8 +4,10 @@ using Shouldly;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Occlusion;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -232,6 +234,33 @@ public sealed class MaskedSoftwareOcclusionCullingTests
         {
             TransparencyMode = ETransparencyMode.Opaque
         }).ShouldBeTrue();
+    }
+
+    [Test]
+    public void SkinnedMeshCommandsAreExcludedFromCpuOcclusion()
+    {
+        Transform bone = new();
+        Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> weights = new()
+        {
+            [bone] = (1.0f, Matrix4x4.Identity),
+        };
+
+        XRMesh mesh = new(
+            [
+                new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
+                new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
+                new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
+            ],
+            new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.HasSkinning.ShouldBeTrue();
+
+        RenderCommandMesh3D command = new()
+        {
+            Mesh = new XRMeshRenderer { Mesh = mesh },
+        };
+
+        CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(command).ShouldBeTrue();
     }
 
     [Test]

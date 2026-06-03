@@ -30,6 +30,28 @@ public sealed class RenderFrameTimingContractTests
         swapCpuTree.ShouldBeGreaterThan(applyRenderableMatrices);
     }
 
+    [Test]
+    public void VisualScene3D_GlobalCollectVisible_RefreshesSkinnedBoundsBeforeCpuTreeSwap()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs").Replace("\r\n", "\n");
+
+        int collectStart = source.IndexOf("public override void GlobalCollectVisible()", StringComparison.Ordinal);
+        collectStart.ShouldBeGreaterThanOrEqualTo(0);
+
+        int collectEnd = source.IndexOf("public override void GlobalPreRender()", collectStart, StringComparison.Ordinal);
+        collectEnd.ShouldBeGreaterThan(collectStart);
+
+        string collectBody = source.Substring(collectStart, collectEnd - collectStart);
+
+        int processRenderables = collectBody.IndexOf("ProcessPendingRenderableOperations();", StringComparison.Ordinal);
+        int refreshSkinnedBounds = collectBody.IndexOf("RefreshSkinnedCpuCullingBounds();", StringComparison.Ordinal);
+        int swapCpuTree = collectBody.IndexOf("ActiveCpuRenderTree.Swap();", StringComparison.Ordinal);
+
+        processRenderables.ShouldBeGreaterThanOrEqualTo(0);
+        refreshSkinnedBounds.ShouldBeGreaterThan(processRenderables);
+        swapCpuTree.ShouldBeGreaterThan(refreshSkinnedBounds);
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();

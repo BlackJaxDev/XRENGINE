@@ -169,8 +169,12 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             Matrix4x4 basis = GetSkinnedBasisMatrix();
+            // Keep the basis for the GPU skinned BVH only. Skinned culling bounds use the single
+            // world-space-LocalCullingVolume + identity-offset convention; republish via the aggregate
+            // path instead of stamping the basis as an offset (which would pair the existing world-space
+            // volume with the root matrix and double-transform the box -> culling "tower" flicker).
             SetSkinnedRootRenderMatrix(basis);
-            RenderInfo?.CullingOffsetMatrix = basis;
+            TryApplySkinnedBoneCullingBounds();
         }
 
         /// <summary>
@@ -193,8 +197,10 @@ namespace XREngine.Components.Scene.Mesh
             if (hasSkinning)
             {
                 Matrix4x4 basis = GetSkinnedBasisMatrix();
+                // World-space bounds + identity offset convention; republish via aggregate path
+                // rather than stamping the basis as a culling offset (torn-read tower bug).
                 SetSkinnedRootRenderMatrix(basis);
-                RenderInfo?.CullingOffsetMatrix = basis;
+                TryApplySkinnedBoneCullingBounds();
                 return;
             }
 
@@ -208,8 +214,9 @@ namespace XREngine.Components.Scene.Mesh
             {
                 Matrix4x4 basis = GetSkinnedBasisMatrix();
                 _rc.WorldMatrix = Matrix4x4.Identity;
+                // Basis is for the GPU skinned BVH; TryApplySkinnedBoneCullingBounds publishes the
+                // world-space aggregate with an identity offset (the single skinned convention).
                 SetSkinnedRootRenderMatrix(basis);
-                RenderInfo?.CullingOffsetMatrix = basis;
                 _ = TryApplySkinnedBoneCullingBounds();
 
                 return;
@@ -283,8 +290,14 @@ namespace XREngine.Components.Scene.Mesh
             {
                 Matrix4x4 basis = GetSkinnedBasisMatrix();
                 _rc?.WorldMatrix = Matrix4x4.Identity;
+                // Keep the basis available for the GPU skinned BVH, but DO NOT publish it as the
+                // culling offset. Skinned culling bounds use a single convention: a world-space
+                // LocalCullingVolume paired with an IDENTITY CullingOffsetMatrix (see
+                // PublishSkinnedWorldCullingBounds). Writing the basis here as an offset-only update
+                // (without updating LocalCullingVolume) pairs the prior world-space aggregate volume
+                // with the root render matrix, double-transforming the box into the culling "tower"
+                // that flickers the mesh out. The bounds publish below owns the offset.
                 SetSkinnedRootRenderMatrix(basis);
-                RenderInfo?.CullingOffsetMatrix = basis;
             }
             else
             {

@@ -81,6 +81,18 @@ bool FrustumSphereVisible(vec3 center, float radius){
     return true;
 }
 
+bool FrustumAabbVisible(vec3 minB, vec3 maxB){
+    for(int i=0;i<6;++i){
+        vec4 p = FrustumPlanes[i];
+        vec3 positive = vec3(
+            p.x >= 0.0 ? maxB.x : minB.x,
+            p.y >= 0.0 ? maxB.y : minB.y,
+            p.z >= 0.0 ? maxB.z : minB.z);
+        if(dot(p.xyz, positive) + p.w < 0.0) return false;
+    }
+    return true;
+}
+
 void main(){
     uint idx = gl_GlobalInvocationID.x;
     if(idx >= uint(InputCommandCount) || idx >= Draws.length()) return;
@@ -89,7 +101,8 @@ void main(){
     DrawMetadata meta = Draws[idx];
     if(meta.BoundsID >= Bounds.length()) return;
 
-    vec4 sphere = Bounds[meta.BoundsID].BoundingSphere;
+    BoundsGpu bounds = Bounds[meta.BoundsID];
+    vec4 sphere = bounds.BoundingSphere;
     uint instanceCount = meta.InstanceCount;
     uint renderPass = meta.RenderPass;
     uint layerMask = meta.LayerMask;
@@ -103,7 +116,11 @@ void main(){
     vec3 toCenter = sphere.xyz - CameraPosition;
     float dist2 = dot(toCenter,toCenter);
     if(dist2 > MaxRenderDistance){ atomicAdd(StatsRejectedDistance,1u); return; }
-    if(!FrustumSphereVisible(sphere.xyz, sphere.w)){ atomicAdd(StatsRejectedFrustum,1u); return; }
+    bool aabbValid = all(lessThanEqual(bounds.AabbMin.xyz, bounds.AabbMax.xyz));
+    bool frustumVisible = aabbValid
+        ? FrustumAabbVisible(bounds.AabbMin.xyz, bounds.AabbMax.xyz)
+        : FrustumSphereVisible(sphere.xyz, sphere.w);
+    if(!frustumVisible){ atomicAdd(StatsRejectedFrustum,1u); return; }
 
     uint outIndex = atomicAdd(CulledCount, 1u);
     if(outIndex >= 0xFFFFFFFEu){ atomicExchange(CullingOverflowFlag,1u); atomicCompSwap(CulledOverflow,0u,outIndex+1u); return; }

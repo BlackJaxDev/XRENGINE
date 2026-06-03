@@ -20,7 +20,12 @@
 // uniform uint uAnyHitMode;
 // uniform uint uMaxStackDepth;
 
-const uint XR_BVH_LEAF_BIT = 0x80000000u;
+// Leaf flag lives in BvhNode.flags bit 0 (matches BVH_FLAG_LEAF in bvh_nodes.glslinc
+// and GpuBvhLayout.LeafFlag on the engine side). The legacy XR_BVH_LEAF_BIT name is
+// retained as an alias so existing shader-source contract tests keep resolving.
+const uint XR_BVH_LEAF_FLAG = 1u;
+const uint XR_BVH_LEAF_BIT = XR_BVH_LEAF_FLAG;
+const uint XR_BVH_INVALID_INDEX = 0xFFFFFFFFu;
 
 struct RayInput
 {
@@ -36,11 +41,20 @@ struct Ray
     float tMax;
 };
 
+// Matches XREngine.Rendering.Compute.GpuBvhNode / bvh_nodes.glslinc:
+// 80-byte stride (20 uint scalars), vec3 bounds with packed child indices,
+// in-node primitive range, and a leaf flag in bit 0 of `flags`.
 struct BvhNode
 {
-    vec4 minBounds;
-    vec4 maxBounds;
-    uvec4 meta; // x = left child or first primitive, y = right child or primitive count, z = first primitive, w = flags/count (bit31 = leaf)
+    vec3 minBounds;
+    uint leftChild;
+    vec3 maxBounds;
+    uint rightChild;
+    uvec2 primitiveRange; // x = first primitive, y = primitive count
+    uint parentIndex;
+    uint flags;           // bit 0 = leaf
+    uvec4 _pad0;
+    uvec4 _pad1;
 };
 
 struct PackedTriangle
@@ -66,8 +80,15 @@ layout(std430, binding = 0) readonly buffer Rays
     RayInput gRays[];
 };
 
+// The node SSBO is the raw GpuBvhTree buffer: a 4-scalar header precedes the
+// node array. Declaring the header here keeps gNodes[] correctly aligned to the
+// first real node and exposes the build-provided root index.
 layout(std430, binding = 1) readonly buffer Nodes
 {
+    uint gNodeCount;
+    uint gRootIndex;
+    uint gNodeStrideScalars;
+    uint gMaxLeafPrimitives;
     BvhNode gNodes[];
 };
 
@@ -93,8 +114,8 @@ Ray DecodeRay(RayInput rayInput)
 
 bool IntersectAabb(in Ray ray, in vec3 invDir, in BvhNode node, out float tEnter)
 {
-    vec3 t0 = (node.minBounds.xyz - ray.origin) * invDir;
-    vec3 t1 = (node.maxBounds.xyz - ray.origin) * invDir;
+    vec3 t0 = (node.minBounds - ray.origin) * invDir;
+    vec3 t1 = (node.maxBounds - ray.origin) * invDir;
     vec3 tMinVec = min(t0, t1);
     vec3 tMaxVec = max(t0, t1);
 
@@ -153,24 +174,40 @@ HitRecord TraceRay(in Ray ray, uint rootIndex, uint maxStackDepth, bool anyHit)
     vec3 invDir = 1.0 / ray.direction;
     HitRecord hit = MakeMiss(ray);
 
+    // Prefer the build-provided root from the node header; the caller's rootIndex
+    // is only used as a fallback when the header has not been populated.
+    uint nodeCount = gNodeCount;
+    uint triCount = uint(gTriangles.length());
+    uint start = (gRootIndex != XR_BVH_INVALID_INDEX) ? gRootIndex : rootIndex;
+    if (nodeCount == 0u || start >= nodeCount)
+        return hit;
+
     uint stack[XR_BVH_STACK_MAX];
     uint stackPtr = 0u;
-    stack[stackPtr++] = rootIndex;
+    stack[stackPtr++] = start;
 
     while (stackPtr > 0u)
     {
         uint nodeIndex = stack[--stackPtr];
+        if (nodeIndex >= nodeCount)
+            continue;
         BvhNode node = gNodes[nodeIndex];
 
         float boxT;
         if (!IntersectAabb(ray, invDir, node, boxT) || boxT > hit.t)
             continue;
 
-        bool isLeaf = (node.meta.w & XR_BVH_LEAF_BIT) != 0u;
+        bool isLeaf = (node.flags & XR_BVH_LEAF_FLAG) != 0u;
         if (isLeaf)
         {
-            uint first = node.meta.z;
-            uint count = node.meta.w & ~XR_BVH_LEAF_BIT;
+            uint first = node.primitiveRange.x;
+            uint count = node.primitiveRange.y;
+            // Clamp the primitive range to the triangle buffer so a malformed
+            // leaf (or a node misread as a leaf) cannot spin the inner loop over
+            // billions of out-of-range entries and hang the GPU.
+            if (first >= triCount)
+                continue;
+            count = min(count, triCount - first);
             for (uint i = 0u; i < count; ++i)
             {
                 float triT;
@@ -194,13 +231,15 @@ HitRecord TraceRay(in Ray ray, uint rootIndex, uint maxStackDepth, bool anyHit)
         }
         else
         {
-            uint left = node.meta.x;
-            uint right = node.meta.y;
+            uint left = node.leftChild;
+            uint right = node.rightChild;
 
             if (stackPtr + 2u <= maxStackDepth && stackPtr + 2u <= XR_BVH_STACK_MAX)
             {
-                stack[stackPtr++] = left;
-                stack[stackPtr++] = right;
+                if (left != XR_BVH_INVALID_INDEX && left < nodeCount)
+                    stack[stackPtr++] = left;
+                if (right != XR_BVH_INVALID_INDEX && right < nodeCount)
+                    stack[stackPtr++] = right;
             }
         }
     }
