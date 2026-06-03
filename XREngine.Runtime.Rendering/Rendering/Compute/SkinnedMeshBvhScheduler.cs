@@ -88,7 +88,7 @@ internal sealed class SkinnedMeshBvhScheduler
     {
         try
         {
-            if (!SkinnedMeshBoundsCalculator.Instance.TryCompute(mesh, out var boundsResult))
+            if (!SkinnedMeshBoundsCalculator.Instance.TryCompute(mesh, out var boundsResult, requirePositions: true))
             {
                 tcs.TrySetResult(Result.Empty(version));
                 return;

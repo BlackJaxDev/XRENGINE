@@ -62,9 +62,19 @@ public partial class RenderableMesh
 
     public bool TryGetGpuMeshBvhRequestWorldBounds(out AABB worldBounds)
     {
-        if (IsSkinned && RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
-            return TryGetLastKnownGpuSkinnedWorldBounds(out worldBounds);
+        // Prefer the live GPU-skinned world bounds when compute-skinned bounds are enabled AND a
+        // readback is actually available, so the hover ray test lines up with the GPU-skinned tree.
+        if (IsSkinned &&
+            RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader &&
+            TryGetLastKnownGpuSkinnedWorldBounds(out worldBounds) &&
+            worldBounds.IsValid)
+            return true;
 
+        // Fall back to the CPU bone-aggregate world culling bounds (the same world-space volumes the
+        // CPU scene BVH culls against). These are always present and tight once skinning is running,
+        // so the hover gate works even before any GPU skinned bounds readback exists (e.g. CPU-direct
+        // submission) or when compute-skinned bounds are disabled. Without this fallback the request
+        // gate returns false every frame and the Update/Render-On-Request toggles never fire.
         return TryGetWorldBounds(out worldBounds);
     }
 

@@ -41,7 +41,7 @@ namespace XREngine.Rendering.Models
         private AABB _bounds;
         private AABB? _cullingVolumeOverride;
         private TransformBase? _rootBone;
-        private bool _useGpuMeshBvh;
+        private bool _useGpuMeshBvh = true;
         private bool _realtimeGpuMeshBvhForSkinnedMeshes = true;
 
         /// <summary>

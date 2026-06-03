@@ -42,6 +42,7 @@ namespace XREngine
         private bool _selectionOutlineEnabled = true;
         private ColorF4 _hoverOutlineColor = ColorF4.Yellow;
         private ColorF4 _selectionOutlineColor = ColorF4.Green;
+        private bool _gpuMeshBvhClickPickEnabled = true;
         private bool _confirmBeforeEnteringPlayMode = true;
         private bool _confirmBeforeExitingPlayMode = true;
         private int _materialInspectorTabIndex = 0;
@@ -184,6 +185,16 @@ namespace XREngine
         {
             get => _selectionOutlineColor;
             set => SetField(ref _selectionOutlineColor, value);
+        }
+
+        [Category("Selection")]
+        [DisplayName("GPU Mesh BVH Click Pick")]
+        [Description("When enabled, meshes that have a GPU mesh BVH (UseGpuMeshBvh) are hover/click-picked by traversing their GPU BVH via an asynchronous compute raycast and GPU readback, resolving the exact triangle/edge/vertex under the cursor. When disabled, those meshes are not precisely pickable in the viewport.")]
+        [DefaultValue(true)]
+        public bool GpuMeshBvhClickPickEnabled
+        {
+            get => _gpuMeshBvhClickPickEnabled;
+            set => SetField(ref _gpuMeshBvhClickPickEnabled, value);
         }
 
         [Category("Play Mode")]
@@ -1471,6 +1482,7 @@ namespace XREngine
         private bool _modelRenderDiagEnabled = XREngine.Rendering.RenderDiagnosticsFlags.ModelRenderDiagEnabled;
         private bool _directionalShadowAudit = XREngine.Rendering.RenderDiagnosticsFlags.DirectionalShadowAudit;
         private bool _skinningPrepassDiag = XREngine.Rendering.RenderDiagnosticsFlags.SkinningPrepassDiag;
+        private bool _skinCullRejectDiag = XREngine.Rendering.RenderDiagnosticsFlags.SkinCullRejectDiag;
         private string? _firstChanceExceptionFilter = XREngine.Debug.FirstChanceExceptionFilter;
         private bool _bypassVendorUpscale = XREngine.Rendering.RenderDiagnosticsFlags.BypassVendorUpscale;
         private bool _glDebug = XREngine.Rendering.RenderDiagnosticsFlags.GLDebug;
@@ -2017,6 +2029,20 @@ namespace XREngine
             {
                 if (SetField(ref _skinningPrepassDiag, value))
                     XREngine.Rendering.RenderDiagnosticsFlags.SetSkinningPrepassDiag(value);
+            }
+        }
+
+        [Category("Diagnostics")]
+        [DisplayName("Skinned Cull Reject Diagnostics")]
+        [Description("Stage-isolation logging for skinned-mesh CPU culling. Emits a [SkinCullReject] line whenever a skinned renderable collected last generation is dropped this generation, attributing the rejecting stage (bvh-node = pruned before narrow phase, bone-override = narrow phase returned false, downstream = passed scene culling but no command collected). Diagnostic only. Seed env: XRE_SKIN_CULL_REJECT_DIAG=1.")]
+        [DefaultValue(false)]
+        public bool SkinCullRejectDiag
+        {
+            get => _skinCullRejectDiag;
+            set
+            {
+                if (SetField(ref _skinCullRejectDiag, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetSkinCullRejectDiag(value);
             }
         }
 
@@ -2899,6 +2925,7 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(_modelRenderDiagEnabled);
             XREngine.Rendering.RenderDiagnosticsFlags.SetDirectionalShadowAudit(_directionalShadowAudit);
             XREngine.Rendering.RenderDiagnosticsFlags.SetSkinningPrepassDiag(_skinningPrepassDiag);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetSkinCullRejectDiag(_skinCullRejectDiag);
             XREngine.Debug.FirstChanceExceptionFilter = _firstChanceExceptionFilter;
             XREngine.Rendering.RenderDiagnosticsFlags.SetBypassVendorUpscale(_bypassVendorUpscale);
             XREngine.Rendering.RenderDiagnosticsFlags.SetGLDebug(_glDebug);

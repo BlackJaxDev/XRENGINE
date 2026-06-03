@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using XREngine.Extensions;
 using XREngine.Audio;
 using XREngine.Components;
@@ -17,6 +18,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Input.Devices;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Lightmapping;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Picking;
@@ -38,6 +40,20 @@ namespace XREngine.Rendering
     {
         private const float EdgeBarycentricThreshold = 0.12f;
         private const float VertexBarycentricThreshold = 0.08f;
+
+        private static readonly ConditionalWeakTable<RenderableMesh, GpuMeshBvhPickState> GpuMeshBvhPickStates = new();
+
+        /// <summary>
+        /// When <see cref="Engine.Rendering.EngineSettings.EnableGpuMeshBvhPickLogging"/> is set,
+        /// emits verbose diagnostics for the GPU mesh-BVH pick path: dispatch decisions, ray
+        /// transforms, and readback hit/miss results.
+        /// </summary>
+        private static void GpuPickLog(string message)
+        {
+            if (Engine.Rendering.Settings.EnableGpuMeshBvhPickLogging)
+                Debug.Out($"[GpuMeshBvhPick] {message}");
+        }
+
 
         public static Dictionary<XRWorld, XRWorldInstance> WorldInstances { get; } = [];
 
@@ -1347,7 +1363,46 @@ namespace XREngine.Rendering
             if (mesh is null || ShouldIgnoreRenderableMesh(mesh))
                 return false;
 
-            QueueGpuMeshBvhInteractionRefresh(component, mesh, worldSegment);
+            if (TryGetGpuMeshBvhPickSubMesh(component, mesh, out _))
+            {
+                // Meshes that opt in to a GPU mesh BVH are picked exclusively by traversing
+                // that BVH on the GPU (the CPU skinned-BVH readback can't track realtime
+                // GPU skinning, so it is intentionally not used here).
+                if (!(Engine.EditorPreferences?.GpuMeshBvhClickPickEnabled ?? true))
+                    return false;
+
+                if (!GpuMeshBvhPickRayIntersectsRequestBounds(mesh, worldSegment, out float boundsDistance))
+                    return false;
+
+                QueueGpuMeshBvhInteractionRefresh(component, mesh, worldSegment);
+
+                GpuMeshBvhPickCandidate candidate = QueueGpuMeshBvhPick(component, info, mesh, worldSegment, boundsDistance, hitMode, out GpuMeshBvhPickCandidate? lastHit);
+
+                if (candidate.IsComplete)
+                {
+                    // The current ray has a definitive answer for this mesh.
+                    if (!candidate.HasHit)
+                        return false;
+
+                    distance = candidate.Distance;
+                    result = candidate.PickResult ?? candidate;
+                    return true;
+                }
+
+                // Pending GPU readback: surface the most recent exact hit (one-frame latency)
+                // so hover highlighting tracks the cursor smoothly instead of snapping to the
+                // coarse bounding-volume distance while a fresh raycast is in flight.
+                if (lastHit is { HasHit: true })
+                {
+                    distance = lastHit.Distance;
+                    result = lastHit.PickResult ?? lastHit;
+                    return true;
+                }
+
+                distance = candidate.CandidateDistance;
+                result = candidate;
+                return true;
+            }
 
             if (!TryIntersectRenderableMesh(mesh, worldSegment, out distance, out Triangle worldTriangle, out Vector3 hitPoint, out IndexTriangle triangleIndices, out int triangleIndex))
                 return false;
@@ -1506,11 +1561,360 @@ namespace XREngine.Rendering
             if (skinned && !subMesh.RealtimeGpuMeshBvhForSkinnedMeshes)
                 return;
 
-            if (!mesh.TryGetGpuMeshBvhRequestWorldBounds(out AABB worldBounds) || !worldBounds.IsValid)
-                return;
+            // Caller (TryIntersectRenderableComponent) already confirmed the pick ray intersects
+            // the request bounds via GpuMeshBvhPickRayIntersectsRequestBounds, so refresh directly.
+            mesh.RequestGpuMeshBvhRefresh();
+        }
 
-            if (GeoUtil.Intersect.SegmentWithAABB(worldSegment.Start, worldSegment.End, worldBounds.Min, worldBounds.Max, out _, out _))
-                mesh.RequestGpuMeshBvhRefresh();
+        /// <summary>
+        /// Returns true when the component/mesh pair carries an opted-in GPU mesh BVH
+        /// (<see cref="SubMesh.UseGpuMeshBvh"/>), exposing the owning <see cref="SubMesh"/>.
+        /// Used to gate the GPU-mesh-BVH pick path on the mesh's bone-driven request bounds.
+        /// </summary>
+        private static bool TryGetGpuMeshBvhPickSubMesh(RenderableComponent component, RenderableMesh mesh, out SubMesh? subMesh)
+        {
+            subMesh = null;
+            return component is ModelComponent model &&
+                model.TryGetSourceSubMesh(mesh, out subMesh) &&
+                subMesh.UseGpuMeshBvh;
+        }
+
+        /// <summary>
+        /// Mirrors the BVH preview's hover gate: the pick ray must intersect the mesh's
+        /// bone-driven request bounds (<see cref="RenderableMesh.TryGetGpuMeshBvhRequestWorldBounds"/>)
+        /// before its GPU/CPU BVH is recalculated or triangle-tested.
+        /// </summary>
+        private static bool GpuMeshBvhPickRayIntersectsRequestBounds(RenderableMesh mesh, Segment worldSegment, out float distance)
+        {
+            distance = 0.0f;
+            if (!mesh.TryGetGpuMeshBvhRequestWorldBounds(out AABB worldBounds) || !worldBounds.IsValid)
+                return false;
+
+            if (!GeoUtil.Intersect.SegmentWithAABB(worldSegment.Start, worldSegment.End, worldBounds.Min, worldBounds.Max, out Vector3 enterPoint, out _))
+                return false;
+
+            distance = (enterPoint - worldSegment.Start).Length();
+            return true;
+        }
+
+        private static GpuMeshBvhPickCandidate QueueGpuMeshBvhPick(
+            RenderableComponent component,
+            RenderInfo3D info,
+            RenderableMesh mesh,
+            Segment worldSegment,
+            float candidateDistance,
+            ERaycastHitMode hitMode,
+            out GpuMeshBvhPickCandidate? lastHit)
+        {
+            GpuMeshBvhPickState state = GpuMeshBvhPickStates.GetValue(mesh, static _ => new GpuMeshBvhPickState());
+            lock (state)
+            {
+                lastHit = state.LastHit;
+
+                if (state.Candidate is { } existing && GpuPickSegmentsMatch(existing.WorldSegment, worldSegment) && existing.HitMode == hitMode)
+                    return existing;
+
+                GpuMeshBvhPickCandidate candidate = new(component, mesh, info, worldSegment, candidateDistance, hitMode);
+                state.Candidate = candidate;
+                int generation = ++state.Generation;
+
+                Engine.EnqueueMainThreadTask(
+                    () => DispatchGpuMeshBvhPick(component, info, mesh, worldSegment, candidate, state, generation),
+                    "XRWorldInstance.GpuMeshBvhPick");
+                return candidate;
+            }
+        }
+
+        private static void DispatchGpuMeshBvhPick(
+            RenderableComponent component,
+            RenderInfo3D info,
+            RenderableMesh mesh,
+            Segment worldSegment,
+            GpuMeshBvhPickCandidate candidate,
+            GpuMeshBvhPickState state,
+            int generation)
+        {
+            try
+            {
+                if (!(Engine.EditorPreferences?.GpuMeshBvhClickPickEnabled ?? true))
+                {
+                    GpuPickLog("dispatch aborted: GpuMeshBvhClickPickEnabled is false.");
+                    candidate.CompleteMiss();
+                    return;
+                }
+
+                var worldInstance = info.WorldInstance as XRWorldInstance;
+                if (worldInstance is null)
+                {
+                    GpuPickLog("dispatch aborted: info.WorldInstance is not an XRWorldInstance.");
+                    candidate.CompleteMiss();
+                    return;
+                }
+
+                var renderer = mesh.GetCurrentOrFirstLodRenderer();
+                var xrMesh = renderer?.Mesh;
+                if (renderer is null || xrMesh is null)
+                {
+                    GpuPickLog("dispatch aborted: renderer or mesh is null.");
+                    candidate.CompleteMiss();
+                    return;
+                }
+
+                bool skinned = xrMesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+                if (!mesh.PrepareGpuMeshBvh(realtimeSkinned: skinned, forceRebuild: mesh.HasGpuMeshBvhRefreshRequest))
+                {
+                    GpuPickLog($"dispatch aborted: PrepareGpuMeshBvh returned false (skinned={skinned}, tris={xrMesh.Triangles?.Count ?? 0}).");
+                    candidate.CompleteMiss();
+                    return;
+                }
+
+                mesh.ClearGpuMeshBvhRefreshRequestIfPrepared();
+
+                GpuMeshBvh? bvh = mesh.GpuMeshBvh;
+                if (bvh is null || !bvh.IsBvhReady || bvh.BvhNodeBuffer is null || bvh.PackedTriangleBuffer is null)
+                {
+                    GpuPickLog($"dispatch aborted: BVH not ready (bvh={(bvh is null ? "null" : "set")}, ready={bvh?.IsBvhReady}, nodeBuf={(bvh?.BvhNodeBuffer is null ? "null" : "set")}, packedBuf={(bvh?.PackedTriangleBuffer is null ? "null" : "set")}).");
+                    candidate.CompleteMiss();
+                    return;
+                }
+
+                if (!Matrix4x4.Invert(bvh.LocalToWorldMatrix, out Matrix4x4 worldToLocal))
+                {
+                    GpuPickLog("dispatch aborted: LocalToWorldMatrix is not invertible.");
+                    candidate.CompleteMiss();
+                    return;
+                }
+
+                Vector3 localStart = Vector3.Transform(worldSegment.Start, worldToLocal);
+                Vector3 localEnd = Vector3.Transform(worldSegment.End, worldToLocal);
+                Vector3 localDelta = localEnd - localStart;
+                float localLength = localDelta.Length();
+                if (localLength <= 1e-5f)
+                {
+                    GpuPickLog("dispatch aborted: degenerate local ray length.");
+                    candidate.CompleteMiss();
+                    return;
+                }
+
+                Vector3 localDirection = localDelta / localLength;
+                if (!state.EnsureBuffers())
+                {
+                    GpuPickLog("dispatch aborted: EnsureBuffers failed.");
+                    candidate.CompleteMiss();
+                    return;
+                }
+
+                state.UploadRay(localStart, localDirection, localLength);
+
+                GpuPickLog($"dispatch enqueued: tris={bvh.TriangleCount}, nodes={bvh.BvhNodeCount}, gpuSkinned={bvh.LastUpdateUsedGpuSkinning}, localStart={localStart}, localDir={localDirection}, localLen={localLength:F3}.");
+
+                worldInstance.VisualScene.BvhRaycasts.Enqueue(new BvhRaycastRequest
+                {
+                    RayBuffer = state.RayBuffer,
+                    NodeBuffer = bvh.BvhNodeBuffer,
+                    TriangleBuffer = bvh.PackedTriangleBuffer,
+                    HitBuffer = state.HitBuffer,
+                    RayCount = 1u,
+                    RootNodeIndex = 0u,
+                    Variant = BvhRaycastVariant.ClosestHit,
+                    Completed = result => CompleteGpuMeshBvhPick(component, mesh, worldSegment, bvh.LocalToWorldMatrix, localStart, localDirection, candidate, state, generation, result),
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingException(ex, "GPU mesh BVH pick dispatch failed.");
+                candidate.CompleteMiss();
+            }
+        }
+
+        private static void CompleteGpuMeshBvhPick(
+            RenderableComponent component,
+            RenderableMesh mesh,
+            Segment worldSegment,
+            Matrix4x4 localToWorld,
+            Vector3 localStart,
+            Vector3 localDirection,
+            GpuMeshBvhPickCandidate candidate,
+            GpuMeshBvhPickState state,
+            int generation,
+            BvhRaycastResult result)
+        {
+            try
+            {
+                if (result.Hits.Count == 0)
+                {
+                    GpuPickLog("readback: no hit records returned.");
+                    candidate.CompleteMiss();
+                    ClearGpuMeshBvhLastHit(state, generation);
+                    return;
+                }
+
+                GpuRaycastHit hit = result.Hits[0];
+                if (hit.TriangleIndex == uint.MaxValue)
+                {
+                    GpuPickLog("readback: miss (TriangleIndex == uint.MaxValue).");
+                    candidate.CompleteMiss();
+                    ClearGpuMeshBvhLastHit(state, generation);
+                    return;
+                }
+
+                Vector3 localHitPoint = localStart + localDirection * hit.Distance;
+                Vector3 worldHitPoint = Vector3.Transform(localHitPoint, localToWorld);
+                float worldDistance = (worldHitPoint - worldSegment.Start).Length();
+                float worldSegmentLength = (worldSegment.End - worldSegment.Start).Length();
+                if (worldDistance < 0.0f || worldDistance > worldSegmentLength)
+                {
+                    GpuPickLog($"readback: rejected (worldDistance={worldDistance:F3} outside [0,{worldSegmentLength:F3}], localDist={hit.Distance:F3}).");
+                    candidate.CompleteMiss();
+                    ClearGpuMeshBvhLastHit(state, generation);
+                    return;
+                }
+
+                MeshPickResult? faceHit = BuildGpuMeshBvhFaceHit(component, mesh, localToWorld, worldHitPoint, hit);
+
+                // Resolve the exact primitive (face / edge / vertex) for the requested hit mode
+                // directly from the GPU-resolved triangle so hover snaps to the precise feature.
+                object? pickResult = null;
+                if (faceHit.HasValue)
+                    TryBuildPickResult(candidate.HitMode, faceHit.Value, out pickResult);
+
+                GpuPickLog($"readback: HIT tri={hit.TriangleIndex}, face={hit.FaceIndex}, dist={worldDistance:F3}, bary={hit.Barycentric}, mode={candidate.HitMode}, resolved={(pickResult?.GetType().Name ?? "none")}.");
+
+                candidate.CompleteHit(worldDistance, worldHitPoint, hit.Barycentric, hit.ObjectId, hit.TriangleIndex, faceHit, pickResult);
+
+                lock (state)
+                {
+                    state.LastHit = candidate;
+                    if (state.Generation == generation)
+                        state.Candidate = candidate;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingException(ex, "GPU mesh BVH pick completion failed.");
+                candidate.CompleteMiss();
+            }
+        }
+
+        private static void ClearGpuMeshBvhLastHit(GpuMeshBvhPickState state, int generation)
+        {
+            lock (state)
+            {
+                if (state.Generation == generation)
+                    state.LastHit = null;
+            }
+        }
+
+        private static MeshPickResult? BuildGpuMeshBvhFaceHit(
+            RenderableComponent component,
+            RenderableMesh mesh,
+            Matrix4x4 localToWorld,
+            Vector3 hitPoint,
+            GpuRaycastHit hit)
+        {
+            var renderer = mesh.GetCurrentOrFirstLodRenderer();
+            var xrMesh = renderer?.Mesh;
+            var triangles = xrMesh?.Triangles;
+            if (xrMesh is null || triangles is null || hit.FaceIndex >= (uint)triangles.Count)
+                return null;
+
+            IndexTriangle indices = triangles[(int)hit.FaceIndex];
+            Triangle worldTriangle;
+            if (mesh.GpuMeshBvh?.LastUpdateUsedGpuSkinning == true)
+            {
+                worldTriangle = new Triangle(hitPoint, hitPoint, hitPoint);
+            }
+            else
+            {
+                worldTriangle = new Triangle(
+                    Vector3.Transform(xrMesh.GetPosition((uint)Math.Max(0, indices.Point0)), localToWorld),
+                    Vector3.Transform(xrMesh.GetPosition((uint)Math.Max(0, indices.Point1)), localToWorld),
+                    Vector3.Transform(xrMesh.GetPosition((uint)Math.Max(0, indices.Point2)), localToWorld));
+            }
+
+            return new MeshPickResult(component, mesh, worldTriangle, hitPoint, (int)hit.FaceIndex, indices);
+        }
+
+        private static bool GpuPickSegmentsMatch(Segment left, Segment right)
+        {
+            const float epsilonSq = 1e-4f;
+            return Vector3.DistanceSquared(left.Start, right.Start) <= epsilonSq &&
+                Vector3.DistanceSquared(left.End, right.End) <= epsilonSq;
+        }
+
+        private sealed class GpuMeshBvhPickState
+        {
+            private readonly GpuBvhPickRayInput[] _rayData = new GpuBvhPickRayInput[1];
+
+            public XRDataBuffer? RayBuffer { get; private set; }
+            public XRDataBuffer? HitBuffer { get; private set; }
+            public GpuMeshBvhPickCandidate? Candidate { get; set; }
+
+            /// <summary>
+            /// Most recent completed candidate that produced a hit. Surfaced as the placeholder
+            /// result while a fresh raycast is in flight so hover highlighting stays continuous.
+            /// </summary>
+            public GpuMeshBvhPickCandidate? LastHit { get; set; }
+            public int Generation { get; set; }
+
+            public bool EnsureBuffers()
+            {
+                RayBuffer ??= new XRDataBuffer(
+                    "GpuMeshBvhPick_Ray",
+                    EBufferTarget.ShaderStorageBuffer,
+                    1u,
+                    EComponentType.Struct,
+                    (uint)Marshal.SizeOf<GpuBvhPickRayInput>(),
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicDraw,
+                    // The ray buffer is rewritten every frame with the current cursor ray. Keep it a
+                    // plain mutable (resizable) buffer with no storage/range flags so PushData routes
+                    // through glNamedBufferData. Immutable storage (any StorageFlags or persistent/
+                    // coherent RangeFlags) makes re-uploads throw GL_INVALID_OPERATION
+                    // ("Cannot modify immutable buffer") because the immutable-storage path attempts
+                    // to re-run glNamedBufferStorage on an already-allocated immutable buffer.
+                    Resizable = true,
+                    DisposeOnPush = false,
+                    PadEndingToVec4 = true,
+                    ShouldMap = false,
+                };
+
+                HitBuffer ??= new XRDataBuffer(
+                    "GpuMeshBvhPick_Hit",
+                    EBufferTarget.ShaderStorageBuffer,
+                    1u,
+                    EComponentType.Struct,
+                    (uint)Marshal.SizeOf<GpuRaycastHit>(),
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.StreamRead,
+                    Resizable = false,
+                    DisposeOnPush = false,
+                    PadEndingToVec4 = true,
+                    ShouldMap = true,
+                    StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
+                    RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
+                };
+
+                return RayBuffer is not null && HitBuffer is not null;
+            }
+
+            public void UploadRay(Vector3 origin, Vector3 direction, float maxDistance)
+            {
+                _rayData[0] = new GpuBvhPickRayInput(new Vector4(origin, 0.0f), new Vector4(direction, maxDistance));
+                RayBuffer!.SetDataRaw(_rayData);
+                RayBuffer.PushData();
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private readonly struct GpuBvhPickRayInput(Vector4 origin, Vector4 direction)
+        {
+            public readonly Vector4 Origin = origin;
+            public readonly Vector4 Direction = direction;
         }
 
         private static bool TryIntersectRenderableMesh(

@@ -81,7 +81,7 @@ namespace XREngine.Data.Trees
             //However, if the item is inserted into a volume with at least one other item in it, 
             //need to try subdividing for all items at that point.
 
-            if (item?.LocalCullingVolume != null)
+            if (item is not null)
                 Owner.Move(item);
         }
         public override void HandleMovedItem(IOctreeItem item)
@@ -91,6 +91,15 @@ namespace XREngine.Data.Trees
 
             //Still within the same volume?
             var worldCullingVolume = t.WorldCullingVolume;
+            if (worldCullingVolume is null)
+            {
+                bool removed = RemoveHereOrSmaller(t, out bool destroyNode);
+                if (destroyNode)
+                    ParentNode?.ClearSubNode(_subDivIndex);
+                Owner._head.AddHere(t);
+                return;
+            }
+
             if (worldCullingVolume is not null && _bounds.ContainsBox(worldCullingVolume.Value) == EContainment.Contains)
             {
                 //Try subdividing
@@ -159,7 +168,7 @@ namespace XREngine.Data.Trees
             Color color = Color.Red;
             if (renderChildren)
             {
-                EContainment containment = collectionVolume?.ContainsAABB(_bounds) ?? EContainment.Contains;
+                EContainment containment = ClassifyBounds(collectionVolume, _bounds);
                 color = containment == EContainment.Intersects ? Color.Green : containment == EContainment.Contains ? Color.White : Color.Red;
                 if (containment != EContainment.Disjoint)
                     foreach (OctreeNode<T>? n in _subNodes)
@@ -175,7 +184,7 @@ namespace XREngine.Data.Trees
         #region Visible collection 
         public void CollectVisible(IVolume? cullingVolume, bool containsOnly, Action<T> action, DelIntersectionTest intersectionTest)
         {
-            switch (cullingVolume?.ContainsAABB(_bounds) ?? EContainment.Contains)
+            switch (ClassifyBounds(cullingVolume, _bounds))
             {
                 case EContainment.Contains:
                     //If the culling volume contains this bounds, collect all items in this node and all sub nodes. No need to check individual items.
@@ -189,7 +198,7 @@ namespace XREngine.Data.Trees
         }
         public void CollectVisible(IVolume? cullingVolume, bool containsOnly, Action<IOctreeItem> action, OctreeNode<IOctreeItem>.DelIntersectionTestGeneric intersectionTest)
         {
-            switch (cullingVolume?.ContainsAABB(_bounds) ?? EContainment.Contains)
+            switch (ClassifyBounds(cullingVolume, _bounds))
             {
                 case EContainment.Contains:
                     //If the culling volume contains this bounds, collect all items in this node and all sub nodes. No need to check individual items.
@@ -203,7 +212,7 @@ namespace XREngine.Data.Trees
         }
         public void CollectVisibleNodes(IVolume? cullingVolume, bool containsOnly, Action<(OctreeNodeBase node, bool intersects)> action)
         {
-            switch (cullingVolume?.ContainsAABB(_bounds) ?? EContainment.Contains)
+            switch (ClassifyBounds(cullingVolume, _bounds))
             {
                 case EContainment.Contains:
                     CollectNode(action);
@@ -480,6 +489,23 @@ namespace XREngine.Data.Trees
                 if (i != index && _subNodes[i] != null)
                     return false;
             return true;
+        }
+        private static EContainment ClassifyBounds(IVolume? volume, AABB bounds)
+        {
+            if (volume is null)
+                return EContainment.Contains;
+
+            EContainment containment = volume.ContainsAABB(bounds);
+            if (containment != EContainment.Disjoint)
+                return containment;
+
+            if (volume is AABB aabb && aabb.Intersects(bounds))
+                return EContainment.Intersects;
+
+            if (volume is Frustum frustum && frustum.Intersects(bounds))
+                return EContainment.Intersects;
+
+            return EContainment.Disjoint;
         }
         private OctreeNode<T> CreateSubNode(AABB bounds, int index)
         {

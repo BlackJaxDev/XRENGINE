@@ -143,7 +143,18 @@ public sealed class BvhRaycastDispatcher
         }
 
         while (_completedCallbacks.TryDequeue(out var callback))
-            callback();
+        {
+            try
+            {
+                callback();
+            }
+            catch (Exception ex)
+            {
+                // A throwing completion callback must not take down the render
+                // thread silently; surface it and continue draining the queue.
+                Debug.RenderingException(ex, "BVH raycast completion callback failed.");
+            }
+        }
     }
 
     public void SetEnabled(bool enabled, string? reason = null)
@@ -226,12 +237,12 @@ public sealed class BvhRaycastDispatcher
         program.BindBuffer(request.TriangleBuffer, 2);
         program.BindBuffer(request.HitBuffer, 3);
 
-        program.Uniform("uRayCount", (int)request.RayCount);
-        program.Uniform("uRootIndex", (int)request.RootNodeIndex);
-        program.Uniform("uPacketWidth", (int)packetWidth);
-        program.Uniform("uUsePacketMode", request.UsePacketMode ? 1 : 0);
-        program.Uniform("uAnyHitMode", request.AnyHit ? 1 : 0);
-        program.Uniform("uMaxStackDepth", (int)(request.MaxStackDepth ?? DefaultStackLimit));
+        program.Uniform("uRayCount", request.RayCount);
+        program.Uniform("uRootIndex", request.RootNodeIndex);
+        program.Uniform("uPacketWidth", packetWidth);
+        program.Uniform("uUsePacketMode", request.UsePacketMode ? 1u : 0u);
+        program.Uniform("uAnyHitMode", request.AnyHit ? 1u : 0u);
+        program.Uniform("uMaxStackDepth", request.MaxStackDepth ?? DefaultStackLimit);
 
         using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Raycast, request.RayCount))
             program.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);

@@ -50,10 +50,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                         continue;
 
                     candidateCount++;
+                    if (RenderDiagnosticsFlags.ForceSkinnedUnbounded && UsesDeformedMesh(meshCommand))
+                    {
+                        sourceIndex = meshCommand.GPUCommandIndex != uint.MaxValue
+                            ? meshCommand.GPUCommandIndex
+                            : sourceIndex;
+                        visibleIndices[visibleCount++] = sourceIndex;
+                        continue;
+                    }
+
                     if (!TryBuildWorldBounds(meshCommand, out Box worldBounds))
                         continue;
 
-                    if (frustum.ContainsBox(worldBounds) == EContainment.Disjoint)
+                    if (ClassifyWorldBounds(frustum, worldBounds) == EContainment.Disjoint)
                         continue;
 
                     sourceIndex = meshCommand.GPUCommandIndex != uint.MaxValue
@@ -78,6 +87,38 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 ArrayPool<uint>.Shared.Return(visibleIndices, clearArray: false);
             }
+        }
+
+        private static bool UsesDeformedMesh(IRenderCommandMesh command)
+        {
+            XRMeshRenderer? renderer = command.Mesh;
+            if (renderer is null)
+                return false;
+
+            if (IsDeformedMesh(renderer.Mesh))
+                return true;
+
+            for (int i = 0; i < renderer.Submeshes.Count; i++)
+            {
+                if (IsDeformedMesh(renderer.Submeshes[i].Mesh))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsDeformedMesh(XRMesh? mesh)
+            => mesh is not null && (mesh.HasSkinning || mesh.BlendshapeCount > 0);
+
+        private static EContainment ClassifyWorldBounds(Frustum frustum, in Box worldBounds)
+        {
+            EContainment containment = frustum.ContainsBox(worldBounds);
+            if (containment != EContainment.Disjoint)
+                return containment;
+
+            return frustum.Intersects(worldBounds.GetAABB(transformed: true))
+                ? EContainment.Intersects
+                : EContainment.Disjoint;
         }
 
         private static bool TryBuildWorldBounds(IRenderCommandMesh meshCommand, out Box worldBounds)

@@ -166,6 +166,78 @@ public sealed class RenderableMeshBoundsTests
     }
 
     [Test]
+    public void RefreshSkinnedCullingBoundsForSceneCulling_PublishesAnimatedBoundsWithoutPendingMatrixQueue()
+    {
+        SceneNode root = new("SkinnedRoot");
+        SceneNode meshNode = new(root, "MeshNode");
+        Transform bone = CreateBone(Vector3.Zero);
+
+        XRMesh mesh = CreateSingleBoneWeightedMesh(bone);
+        SubMesh subMesh = new(new SubMeshLOD(new XRMaterial(), mesh, 0.0f))
+        {
+            CullingBounds = new AABB(new Vector3(-3.0f), new Vector3(3.0f)),
+            RootBone = bone,
+            RootTransform = root.Transform,
+        };
+
+        ModelComponent component = meshNode.AddComponent<ModelComponent>()!;
+        component.Model = new Model(subMesh);
+
+        RenderableMesh renderable = component.Meshes.Single();
+        renderable.IsSkinned.ShouldBeTrue();
+        renderable.RenderInfo.CullingIntersectionOverride.ShouldNotBeNull();
+        renderable.RenderInfo.LocalCullingVolume = new AABB(new Vector3(-50.0f), new Vector3(-49.0f));
+        renderable.RenderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(-50.0f, 0.0f, 0.0f);
+
+        MoveBone(bone, new Vector3(8.0f, 2.0f, -1.0f));
+
+        renderable.RefreshSkinnedCullingBoundsForSceneCulling().ShouldBeTrue();
+
+        AABB runtimeBounds = renderable.RenderInfo.LocalCullingVolume.ShouldNotBeNull();
+        runtimeBounds.Min.X.ShouldBe(7.95f, 0.0001f);
+        runtimeBounds.Min.Y.ShouldBe(1.95f, 0.0001f);
+        runtimeBounds.Min.Z.ShouldBe(-1.0f, 0.0001f);
+        runtimeBounds.Max.X.ShouldBe(8.05f, 0.0001f);
+        runtimeBounds.Max.Y.ShouldBe(2.05f, 0.0001f);
+        runtimeBounds.Max.Z.ShouldBe(-1.0f, 0.0001f);
+        renderable.RenderInfo.CullingOffsetMatrix.ShouldBe(Matrix4x4.Identity);
+    }
+
+    [Test]
+    public void RefreshSkinnedCullingBoundsForSceneCulling_ForceUnboundedPublishesNullBounds()
+    {
+        bool previous = RenderDiagnosticsFlags.ForceSkinnedUnbounded;
+        RenderDiagnosticsFlags.SetForceSkinnedUnbounded(true);
+        try
+        {
+            SceneNode root = new("SkinnedRoot");
+            SceneNode meshNode = new(root, "MeshNode");
+            Transform bone = CreateBone(Vector3.Zero);
+
+            XRMesh mesh = CreateSingleBoneWeightedMesh(bone);
+            SubMesh subMesh = new(new SubMeshLOD(new XRMaterial(), mesh, 0.0f))
+            {
+                CullingBounds = new AABB(new Vector3(-3.0f), new Vector3(3.0f)),
+                RootBone = bone,
+                RootTransform = root.Transform,
+            };
+
+            ModelComponent component = meshNode.AddComponent<ModelComponent>()!;
+            component.Model = new Model(subMesh);
+
+            RenderableMesh renderable = component.Meshes.Single();
+            renderable.RefreshSkinnedCullingBoundsForSceneCulling().ShouldBeTrue();
+
+            renderable.RenderInfo.LocalCullingVolume.ShouldBeNull();
+            renderable.RenderInfo.CullingOffsetMatrix.ShouldBe(Matrix4x4.Identity);
+        }
+        finally
+        {
+            RenderDiagnosticsFlags.SetForceSkinnedUnbounded(previous);
+        }
+    }
+
+    [Test]
     public void ResolveSkinnedBoundsBasisTransform_PrefersRootBoneOverImportRoot()
     {
         var importRoot = new Transform();
@@ -219,7 +291,7 @@ public sealed class RenderableMeshBoundsTests
     }
 
     [Test]
-    public void IntersectsSkinnedBoneCullingVolumes_ReturnsFalseWhenAllBoneBoxesAreDisjoint()
+    public void IntersectsSkinnedBoneCullingVolumes_ReturnsFalseWhenEveryBoneBoxIsOutsideView()
     {
         var boneA = new Transform(new Vector3(50.0f, 0.0f, 0.0f));
         var boneB = new Transform(new Vector3(-50.0f, 0.0f, 0.0f));
@@ -232,7 +304,63 @@ public sealed class RenderableMeshBoundsTests
 
         bool intersects = RenderableMesh.IntersectsSkinnedBoneCullingVolumes(volumes, viewBounds, containsOnly: false);
 
-        intersects.ShouldBeFalse();
+        intersects.ShouldBeFalse("the per-bone narrow phase only accepts the mesh when at least one transformed bone box intersects.");
+    }
+
+    [Test]
+    public void IntersectsSkinnedBoneCullingVolumes_DoesNotUseAggregateGapAsFinalVisibility()
+    {
+        Transform boneA = CreateBone(new Vector3(12.0f, 0.0f, 0.0f));
+        Transform boneB = CreateBone(new Vector3(-12.0f, 0.0f, 0.0f));
+        XRMesh mesh = CreateTwoBoneBlendedMesh(boneA, boneB);
+        RenderableMesh.SkinnedBoneCullingVolume[] volumes = RenderableMesh.BuildSkinnedBoneCullingVolumes(mesh, boneA);
+        AABB viewBounds = AABB.FromCenterSize(Vector3.Zero, new Vector3(1.0f));
+
+        Vector3 blendedPosition = ComputeSkinnedPosition(mesh.Vertices[0]);
+        viewBounds.ContainsPoint(blendedPosition).ShouldBeTrue();
+        EachIndividualBoneBoxShouldBeOutsideView(volumes, viewBounds);
+
+        bool intersects = RenderableMesh.IntersectsSkinnedBoneCullingVolumes(volumes, viewBounds, containsOnly: false);
+
+        intersects.ShouldBeFalse("final skinned visibility is determined by individual transformed bone boxes, not by their aggregate span.");
+    }
+
+    [Test]
+    public void IntersectsSkinnedBoneCullingVolumes_CullsAfterAnimatedPoseMovesEveryBoneBoxOutsideView()
+    {
+        Transform boneA = CreateBone(Vector3.Zero);
+        Transform boneB = CreateBone(Vector3.Zero);
+        XRMesh mesh = CreateTwoBoneBlendedMesh(boneA, boneB);
+        RenderableMesh.SkinnedBoneCullingVolume[] volumes = RenderableMesh.BuildSkinnedBoneCullingVolumes(mesh, boneA);
+        AABB viewBounds = AABB.FromCenterSize(Vector3.Zero, new Vector3(1.0f));
+
+        RenderableMesh.IntersectsSkinnedBoneCullingVolumes(volumes, viewBounds, containsOnly: false)
+            .ShouldBeTrue("bind pose sanity check: both bone boxes start around the visible blended geometry.");
+
+        MoveBone(boneA, new Vector3(12.0f, 0.0f, 0.0f));
+        MoveBone(boneB, new Vector3(-12.0f, 0.0f, 0.0f));
+
+        Vector3 blendedPosition = ComputeSkinnedPosition(mesh.Vertices[0]);
+        viewBounds.ContainsPoint(blendedPosition).ShouldBeTrue();
+        EachIndividualBoneBoxShouldBeOutsideView(volumes, viewBounds);
+
+        bool intersects = RenderableMesh.IntersectsSkinnedBoneCullingVolumes(volumes, viewBounds, containsOnly: false);
+
+        intersects.ShouldBeFalse("once animation moves every transformed bone box outside the view, the mesh is culled.");
+    }
+
+    [Test]
+    public async Task IntersectsSkinnedBoneCullingVolumes_UsesPublishedRenderMatrixWhenWorldMatrixHasAdvanced()
+    {
+        Transform bone = CreateBone(new Vector3(12.0f, 0.0f, 0.0f));
+        await bone.SetRenderMatrix(Matrix4x4.CreateTranslation(0.1f, 0.0f, 0.0f), recalcAllChildRenderMatrices: false);
+        XRMesh mesh = CreateSingleBoneWeightedMesh(bone);
+        RenderableMesh.SkinnedBoneCullingVolume[] volumes = RenderableMesh.BuildSkinnedBoneCullingVolumes(mesh, bone);
+        AABB viewBounds = AABB.FromCenterSize(Vector3.Zero, new Vector3(1.0f));
+
+        bool intersects = RenderableMesh.IntersectsSkinnedBoneCullingVolumes(volumes, viewBounds, containsOnly: false);
+
+        intersects.ShouldBeTrue("culling must match the render-thread skin palette pose when RenderMatrix and WorldMatrix diverge.");
     }
 
     private static XRMesh CreateTwoBoneWeightedMesh(TransformBase boneA, TransformBase boneB)
@@ -258,5 +386,78 @@ public sealed class RenderableMeshBoundsTests
             new List<ushort> { 0, 1, 2, 3, 4, 5 });
         mesh.RebuildSkinningBuffersFromVertices();
         return mesh;
+    }
+
+    private static XRMesh CreateSingleBoneWeightedMesh(TransformBase bone)
+    {
+        Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> weights = new()
+        {
+            [bone] = (1.0f, Matrix4x4.Identity),
+        };
+
+        XRMesh mesh = new(
+            [
+                new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
+                new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
+                new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
+            ],
+            new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices();
+        return mesh;
+    }
+
+    private static XRMesh CreateTwoBoneBlendedMesh(TransformBase boneA, TransformBase boneB)
+    {
+        XRMesh mesh = new(
+            [
+                new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
+                new Vertex(new Vector3(0.05f, -0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
+                new Vertex(new Vector3(0.0f, 0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
+            ],
+            new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices();
+        return mesh;
+    }
+
+    private static Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> CreateEvenBlendWeights(
+        TransformBase boneA,
+        TransformBase boneB)
+        => new()
+        {
+            [boneA] = (0.5f, Matrix4x4.Identity),
+            [boneB] = (0.5f, Matrix4x4.Identity),
+        };
+
+    private static Transform CreateBone(Vector3 translation)
+    {
+        Transform bone = new(translation);
+        RecalculateForCulling(bone);
+        return bone;
+    }
+
+    private static void MoveBone(Transform bone, Vector3 translation)
+    {
+        bone.Translation = translation;
+        RecalculateForCulling(bone);
+    }
+
+    private static void RecalculateForCulling(TransformBase transform)
+        => transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+    private static Vector3 ComputeSkinnedPosition(Vertex vertex)
+    {
+        Vector3 result = Vector3.Zero;
+        foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) data) in vertex.Weights!)
+            result += Vector3.Transform(vertex.Position, data.bindInvWorldMatrix * bone.WorldMatrix) * data.weight;
+        return result;
+    }
+
+    private static void EachIndividualBoneBoxShouldBeOutsideView(
+        RenderableMesh.SkinnedBoneCullingVolume[] volumes,
+        AABB viewBounds)
+    {
+        foreach (RenderableMesh.SkinnedBoneCullingVolume volume in volumes)
+            RenderableMesh.IntersectsSkinnedBoneCullingVolumes([volume], viewBounds, containsOnly: false)
+                .ShouldBeFalse();
     }
 }

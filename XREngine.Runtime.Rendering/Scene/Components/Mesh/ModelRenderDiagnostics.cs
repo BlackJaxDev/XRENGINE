@@ -146,7 +146,7 @@ internal static class ModelRenderDiagnostics
         bool cpuGpuMirrorActive,
         int trackedRenderables)
     {
-        if (renderInfo.Owner is not RenderableMesh renderable || !ShouldTrace(renderable))
+        if (renderInfo.OwnerRenderableMesh is not RenderableMesh renderable || !ShouldTrace(renderable))
             return;
 
         bool priority = IsPriorityRenderable(renderable);
@@ -169,7 +169,7 @@ internal static class ModelRenderDiagnostics
 
     internal static void LogVisibilityAccepted(RenderInfo3D renderInfo, RenderCommandCollection commands, IRuntimeRenderCamera? camera, bool collectMirrors)
     {
-        if (renderInfo.Owner is not RenderableMesh renderable || !ShouldTrace(renderable))
+        if (renderInfo.OwnerRenderableMesh is not RenderableMesh renderable || !ShouldTrace(renderable))
             return;
 
         bool priority = IsPriorityRenderable(renderable);
@@ -201,7 +201,7 @@ internal static class ModelRenderDiagnostics
         bool containsOnly,
         bool collectMirrors)
     {
-        if (renderInfo.Owner is not RenderableMesh renderable || !ShouldTrace(renderable))
+        if (renderInfo.OwnerRenderableMesh is not RenderableMesh renderable || !ShouldTrace(renderable))
             return;
 
         bool priority = IsPriorityRenderable(renderable);

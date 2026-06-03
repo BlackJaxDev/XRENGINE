@@ -145,6 +145,7 @@ namespace XREngine.Components.Scene.Mesh
 
             _renderBoundsCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, DoRenderBounds);
             RenderInfo = RenderInfo3D.New(component, _rc = new RenderCommandMesh3D(0));
+            RenderInfo.OwnerRenderableMesh = this;
             if (RenderBounds)
                 RenderInfo.RenderCommands.Add(_renderBoundsCommand);
             _usesAuthoredSkinnedCullingBounds = mesh.CullingBounds.HasValue;
@@ -172,9 +173,12 @@ namespace XREngine.Components.Scene.Mesh
             // This avoids the first registration frame depending on a later queued matrix update.
             if (IsSkinned)
             {
-                TransformBase basisTransform = GetSkinnedBoundsBasisTransform();
-                SetSkinnedRootRenderMatrix(basisTransform.RenderMatrix);
-                RenderInfo.CullingOffsetMatrix = basisTransform.WorldMatrix;
+                Matrix4x4 basis = GetSkinnedBasisMatrix();
+                SetSkinnedRootRenderMatrix(basis);
+                // Seed with the single skinned convention: world-space LocalCullingVolume + identity
+                // offset. Publishing root-local bounds with a non-identity offset here would be a
+                // torn-read source until the first aggregate refresh (the culling "tower" flicker).
+                PublishSkinnedWorldCullingBounds(_bindPoseBounds, basis, boundsAreWorldSpace: false);
                 QueuePendingRenderMatrixUpdate();
             }
             else
@@ -262,15 +266,7 @@ namespace XREngine.Components.Scene.Mesh
 
             if (skinned)
             {
-                if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader && RuntimeEngine.IsRenderThread)
-                    ProcessSkinnedBoundsRefresh();
-
-                bool skinnedBoundsOk = TryApplySkinnedBoneCullingBounds() || EnsureSkinnedBounds();
-                if (!skinnedBoundsOk)
-                {
-                    RenderInfo.LocalCullingVolume = _bindPoseBounds;
-                    RenderInfo.CullingOffsetMatrix = GetSkinnedBasisMatrix();
-                }
+                bool skinnedBoundsOk = RefreshSkinnedCullingBoundsForSceneCulling();
                 LogSkinnedCullingDiagnosticsOnce(skinnedBoundsOk);
             }
             else

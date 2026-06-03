@@ -34,9 +34,9 @@ namespace XREngine.Rendering.Commands
         {
             // System.Numerics uses basis columns for Vector3.Transform:
             // x' = x*M11 + y*M21 + z*M31 + M41, etc.
-            Vector3 xAxis = new(m.M11, m.M21, m.M31);
-            Vector3 yAxis = new(m.M12, m.M22, m.M32);
-            Vector3 zAxis = new(m.M13, m.M23, m.M33);
+            Vector3 xAxis = new(m.M11, m.M12, m.M13);
+            Vector3 yAxis = new(m.M21, m.M22, m.M23);
+            Vector3 zAxis = new(m.M31, m.M32, m.M33);
 
             float sx = xAxis.Length();
             float sy = yAxis.Length();
@@ -51,9 +51,9 @@ namespace XREngine.Rendering.Commands
 
         private static float ComputeMaxAxisScale(in AffineMatrix4x3 m)
         {
-            Vector3 xAxis = new(m.M11, m.M21, m.M31);
-            Vector3 yAxis = new(m.M12, m.M22, m.M32);
-            Vector3 zAxis = new(m.M13, m.M23, m.M33);
+            Vector3 xAxis = new(m.M11, m.M12, m.M13);
+            Vector3 yAxis = new(m.M21, m.M22, m.M23);
+            Vector3 zAxis = new(m.M31, m.M32, m.M33);
 
             float sx = xAxis.Length();
             float sy = yAxis.Length();

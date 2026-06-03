@@ -38,7 +38,7 @@ void main() {
         for (uint j = k >> 1u; j > 0u; j >>= 1u) {
             uint ixj = tid ^ j;
             if (ixj > tid) {
-                bool up = ((tid & k) == 0u);
+                bool up = ((i & k) == 0u);
                 MortonObject a = sdata[tid];
                 MortonObject b = sdata[ixj];
                 bool swap = up ? greater(a,b) : greater(b,a);

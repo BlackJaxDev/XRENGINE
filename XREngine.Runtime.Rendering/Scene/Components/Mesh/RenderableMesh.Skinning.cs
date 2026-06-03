@@ -72,6 +72,13 @@ namespace XREngine.Components.Scene.Mesh
         private SkinnedBoneCullingVolume[] _skinnedBoneCullingVolumes = [];
         private XRMesh? _skinnedBoneCullingSourceMesh;
         private bool _skinnedBoneCullingVolumesDirty = true;
+
+        /// <summary>
+        /// Tracks whether this skinned renderable was collected in the previous diagnostic generation.
+        /// Used only by <see cref="RenderDiagnosticsFlags.SkinCullRejectDiag"/> to detect the
+        /// collected-then-dropped transition that produces the visible flicker.
+        /// </summary>
+        internal bool DiagWasCollectedLastEval;
         private bool _skinnedBoundsDirty = true;
         private bool _hasSkinnedBounds;
         private bool _skinnedBoundsAreWorldSpace;
@@ -274,9 +281,6 @@ namespace XREngine.Components.Scene.Mesh
 
         private static Matrix4x4 GetCurrentTransformMatrix(TransformBase transform)
         {
-            if (!RuntimeEngine.IsRenderThread)
-                return transform.WorldMatrix;
-
             Matrix4x4 renderMatrix = transform.RenderMatrix;
             if (!renderMatrix.Equals(Matrix4x4.Identity))
                 return renderMatrix;
@@ -457,6 +461,44 @@ namespace XREngine.Components.Scene.Mesh
             return IntersectsSkinnedBoneCullingVolumes(volumes, cullingVolume, containsOnly);
         }
 
+        /// <summary>
+        /// Builds the <c>[SkinCullReject]</c> diagnostic line for this skinned renderable. Called by
+        /// the CPU collect path when this mesh was collected last generation but dropped this one.
+        /// <paramref name="stage"/> is the attributed rejecting stage
+        /// (<c>bvh-node</c>/<c>bone-override</c>/<c>downstream</c>).
+        /// </summary>
+        internal string BuildSkinCullRejectPayload(string stage, long gen)
+        {
+            XRMesh? lodMesh = CurrentLODRenderer?.Mesh;
+            string meshName = lodMesh?.Name ?? "<null>";
+            bool hasSkinning = lodMesh?.HasSkinning ?? false;
+
+            int boneVolumeCount = 0;
+            bool aggOk = false;
+            AABB agg = default;
+            lock (_skinnedDataLock)
+            {
+                if (TryEnsureSkinnedBoneCullingVolumesLocked(out SkinnedBoneCullingVolume[] volumes))
+                {
+                    boneVolumeCount = volumes.Length;
+                    aggOk = TryComputeSkinnedBoneAggregateWorldBounds(volumes, out agg);
+                }
+            }
+
+            Box? worldBox = ((IOctreeItem)RenderInfo).WorldCullingVolume;
+            bool overrideInstalled = RenderInfo.CullingIntersectionOverride is not null;
+            string aggStr = aggOk
+                ? $"min=({agg.Min.X:F2},{agg.Min.Y:F2},{agg.Min.Z:F2}) max=({agg.Max.X:F2},{agg.Max.Y:F2},{agg.Max.Z:F2})"
+                : "min=<n/a> max=<n/a>";
+            string boxStr = worldBox.HasValue
+                ? $"center=({worldBox.Value.WorldCenter.X:F2},{worldBox.Value.WorldCenter.Y:F2},{worldBox.Value.WorldCenter.Z:F2}) half=({worldBox.Value.LocalHalfExtents.X:F2},{worldBox.Value.LocalHalfExtents.Y:F2},{worldBox.Value.LocalHalfExtents.Z:F2})"
+                : "<null>";
+
+            return $"[SkinCullReject] gen={gen} stage={stage} mesh='{meshName}' rootBone='{RootBone?.Name ?? "<null>"}' " +
+                $"hasSkinning={hasSkinning} overrideInstalled={overrideInstalled} forceUnbounded={RenderDiagnosticsFlags.ForceSkinnedUnbounded} " +
+                $"boneVolumeCount={boneVolumeCount} aggregate[{aggStr}] worldBox[{boxStr}]";
+        }
+
         private static bool DefaultRenderInfoCullingIntersection(RenderInfo3D info, IVolume? cullingVolume, bool containsOnly)
         {
             Box? worldCullingVolume = ((IOctreeItem)info).WorldCullingVolume;
@@ -475,22 +517,32 @@ namespace XREngine.Components.Scene.Mesh
             if (cullingVolume is null)
                 return true;
 
-            bool testedAny = false;
             for (int i = 0; i < volumes.Length; i++)
             {
                 if (!TryGetSkinnedBoneWorldBounds(volumes[i], out AABB worldBounds))
                     continue;
 
-                testedAny = true;
-                EContainment containment = cullingVolume.ContainsAABB(worldBounds);
-                if (!containsOnly && containment != EContainment.Disjoint)
+                EContainment containment = ClassifySkinnedCullingBounds(cullingVolume, worldBounds);
+                if (containsOnly ? containment == EContainment.Contains : containment != EContainment.Disjoint)
                     return true;
-
-                if (containsOnly && containment != EContainment.Contains)
-                    return false;
             }
 
-            return containsOnly && testedAny;
+            return false;
+        }
+
+        private static EContainment ClassifySkinnedCullingBounds(IVolume cullingVolume, AABB worldBounds)
+        {
+            EContainment containment = cullingVolume.ContainsAABB(worldBounds);
+            if (containment != EContainment.Disjoint)
+                return containment;
+
+            if (cullingVolume is AABB aabb && aabb.Intersects(worldBounds))
+                return EContainment.Intersects;
+
+            if (cullingVolume is Frustum frustum && frustum.Intersects(worldBounds))
+                return EContainment.Intersects;
+
+            return EContainment.Disjoint;
         }
 
         private bool TryApplySkinnedBoneCullingBounds()
@@ -512,6 +564,107 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
+        // Throttle so an anomalous frame logs at most a few lines per mesh per second.
+        private long _lastAggregateAnomalyLogTicks;
+
+        /// <summary>
+        /// Flag-gated (<see cref="RenderDiagnosticsFlags.SkinCullRejectDiag"/>) diagnostic that proves
+        /// when the FINAL published <see cref="RenderInfo3D.WorldCullingVolume"/> is displaced or oversized
+        /// relative to where the skinned geometry actually is. The live per-bone aggregate is recomputed
+        /// as ground truth; if the published box center diverges from it (the alternate-frame "teleport to
+        /// origin" that makes the BVH node a tower) or the box is oversized, the offending branch is logged.
+        /// Catches the aggregate, GPU/EnsureSkinnedBounds, and bind-pose fallback paths. Mutates nothing.
+        /// </summary>
+        private void LogSkinnedPublishedBoundsAnomaly(string branch)
+        {
+            // A whole avatar is ~2m tall; a single submesh broad-phase box larger than this on any
+            // axis is a tower. A published center more than this far from the live bone aggregate is
+            // a displacement (the box teleported away from the geometry).
+            const float TowerHalfExtentMeters = 1.5f;
+            const float DisplacementMeters = 0.5f;
+
+            Box? worldBox = ((IOctreeItem)RenderInfo).WorldCullingVolume;
+            if (worldBox is not Box box)
+                return;
+
+            Vector3 half = box.LocalHalfExtents;
+            float maxHalf = MathF.Max(half.X, MathF.Max(half.Y, half.Z));
+            bool oversized = maxHalf >= TowerHalfExtentMeters;
+
+            // Ground truth: where the bones actually place the geometry this frame.
+            bool aggOk = TryGetSkinnedBoneAggregateWorldBounds(out AABB agg);
+            Vector3 publishedCenter = box.WorldCenter;
+            float displacement = 0.0f;
+            bool displaced = false;
+            if (aggOk)
+            {
+                Vector3 aggCenter = (agg.Min + agg.Max) * 0.5f;
+                displacement = Vector3.Distance(publishedCenter, aggCenter);
+                displaced = displacement >= DisplacementMeters;
+            }
+
+            if (!oversized && !displaced)
+                return;
+
+            long nowTicks = Stopwatch.GetTimestamp();
+            if (nowTicks - _lastAggregateAnomalyLogTicks < Stopwatch.Frequency / 4)
+                return;
+            _lastAggregateAnomalyLogTicks = nowTicks;
+
+            string meshName = CurrentLODRenderer?.Mesh?.Name ?? "<null>";
+            AABB? localVolume = RenderInfo.LocalCullingVolume;
+            Matrix4x4 offset = RenderInfo.CullingOffsetMatrix;
+            string localStr = localVolume is AABB lv
+                ? $"min=({lv.Min.X:F2},{lv.Min.Y:F2},{lv.Min.Z:F2}) max=({lv.Max.X:F2},{lv.Max.Y:F2},{lv.Max.Z:F2})"
+                : "<null>";
+            string aggStr = aggOk
+                ? $"center=({(agg.Min.X + agg.Max.X) * 0.5f:F2},{(agg.Min.Y + agg.Max.Y) * 0.5f:F2},{(agg.Min.Z + agg.Max.Z) * 0.5f:F2})"
+                : "<n/a>";
+
+            RuntimeEngine.LogWarning(
+                $"[SkinCullAnomaly] branch={branch} reason={(oversized ? "oversized" : "")}{(displaced ? "displaced" : "")} " +
+                $"mesh='{meshName}' rootBone='{RootBone?.Name ?? "<null>"}' " +
+                $"publishedCenter=({publishedCenter.X:F2},{publishedCenter.Y:F2},{publishedCenter.Z:F2}) " +
+                $"publishedHalf=({half.X:F2},{half.Y:F2},{half.Z:F2}) boneAggregate[{aggStr}] displacement={displacement:F2} " +
+                $"localCullingVolume[{localStr}] offsetT=({offset.Translation.X:F2},{offset.Translation.Y:F2},{offset.Translation.Z:F2}) " +
+                $"offsetIdentity={offset.Equals(Matrix4x4.Identity)}");
+        }
+
+        internal bool RefreshSkinnedCullingBoundsForSceneCulling()
+        {
+            if (!IsSkinned)
+                return false;
+
+            bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) &&
+                RuntimeEngine.Rendering.Settings.AllowSkinning;
+            if (!hasSkinning)
+                return false;
+
+            if (RenderDiagnosticsFlags.ForceSkinnedUnbounded)
+            {
+                RenderInfo.LocalCullingVolume = null;
+                RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
+                return true;
+            }
+
+            if (RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader && RuntimeEngine.IsRenderThread)
+                ProcessSkinnedBoundsRefresh();
+
+            bool aggregateOk = TryApplySkinnedBoneCullingBounds();
+            bool ensureOk = !aggregateOk && EnsureSkinnedBounds();
+            bool skinnedBoundsOk = aggregateOk || ensureOk;
+            if (!skinnedBoundsOk)
+                PublishSkinnedWorldCullingBounds(_bindPoseBounds, GetSkinnedBasisMatrix(), boundsAreWorldSpace: false);
+
+            if (RenderDiagnosticsFlags.SkinCullRejectDiag)
+            {
+                string branch = aggregateOk ? "aggregate" : ensureOk ? "ensure-skinned" : "bind-pose-fallback";
+                LogSkinnedPublishedBoundsAnomaly(branch);
+            }
+
+            return skinnedBoundsOk;
+        }
+
         private void ApplySkinnedBoneAggregateWorldBounds(in AABB aggregateWorldBounds)
         {
             if (RenderInfo is null)
@@ -522,6 +675,34 @@ namespace XREngine.Components.Scene.Mesh
 
             if (RenderInfo.CullingOffsetMatrix != Matrix4x4.Identity)
                 RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
+        }
+
+        /// <summary>
+        /// Publishes skinned culling bounds to <see cref="RenderInfo"/> using a SINGLE consistent convention:
+        /// a world-space <see cref="RenderInfo3D.LocalCullingVolume"/> paired with an IDENTITY
+        /// <see cref="RenderInfo3D.CullingOffsetMatrix"/>. The aggregate path already publishes world-space +
+        /// identity; the GPU/ensure/bind-pose paths historically published root-bone-local bounds plus a
+        /// non-identity root render-matrix offset. Lock-free readers (CPU BVH rebuild, octree moves,
+        /// diagnostics) evaluate <c>WorldCullingVolume = LocalCullingVolume.ToBox(CullingOffsetMatrix)</c> by
+        /// reading the two fields separately, so a frame that switched conventions could pair a world-space
+        /// local volume with the stale root-matrix offset and double-transform the box into the "tower" that
+        /// culls the mesh out (visible as flicker). Baking the basis into the published world AABB and forcing
+        /// the offset to Identity makes the pair torn-read safe: any read yields a valid (possibly one frame
+        /// stale) world box, never a double transform. <see cref="_skinnedRootRenderMatrix"/> is still
+        /// maintained for the GPU BVH (<see cref="SkinnedBvhLocalToWorldMatrix"/>).
+        /// </summary>
+        private void PublishSkinnedWorldCullingBounds(in AABB bounds, in Matrix4x4 basis, bool boundsAreWorldSpace)
+        {
+            if (RenderInfo is null)
+                return;
+
+            AABB worldBounds = boundsAreWorldSpace ? bounds : TransformBounds(bounds, basis);
+
+            // Force the offset to Identity FIRST so any octree move queued from the LocalCullingVolume
+            // change already observes the identity offset (never world-local x stale-matrix).
+            if (RenderInfo.CullingOffsetMatrix != Matrix4x4.Identity)
+                RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
+            RenderInfo.LocalCullingVolume = worldBounds;
         }
 
         private static bool AabbNearlyEqual(in AABB a, in AABB b, float epsilon = 1e-4f)
@@ -583,13 +764,15 @@ namespace XREngine.Components.Scene.Mesh
             if (vertices is not { Length: > 0 })
                 return [];
 
-            Dictionary<TransformBase, SkinnedBoneBoundsBuilder> builders = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            Dictionary<TransformBase, SkinnedBoneBoundsBuilder> builders =
+                new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
             IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap = mesh.RuntimeBoneReferenceRemap;
 
             for (int vertexIndex = 0; vertexIndex < vertices.Length; vertexIndex++)
             {
                 Vertex vertex = vertices[vertexIndex];
                 bool includedWeightedBone = false;
+
                 if (vertex.Weights is { Count: > 0 } weights)
                 {
                     foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) data) in weights)
@@ -613,12 +796,13 @@ namespace XREngine.Components.Scene.Mesh
 
             SkinnedBoneCullingVolume[] volumes = new SkinnedBoneCullingVolume[builders.Count];
             int volumeIndex = 0;
-            foreach ((TransformBase transform, SkinnedBoneBoundsBuilder builder) in builders)
+            foreach (KeyValuePair<TransformBase, SkinnedBoneBoundsBuilder> pair in builders)
             {
+                SkinnedBoneBoundsBuilder builder = pair.Value;
                 if (!builder.Initialized)
                     continue;
 
-                volumes[volumeIndex++] = new SkinnedBoneCullingVolume(transform, builder.ToBounds());
+                volumes[volumeIndex++] = new SkinnedBoneCullingVolume(pair.Key, builder.ToBounds());
             }
 
             if (volumeIndex == volumes.Length)
@@ -627,13 +811,6 @@ namespace XREngine.Components.Scene.Mesh
             Array.Resize(ref volumes, volumeIndex);
             return volumes;
         }
-
-        private static TransformBase ResolveRuntimeBoneReference(
-            TransformBase bone,
-            IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap)
-            => boneReferenceRemap is not null && boneReferenceRemap.TryGetValue(bone, out TransformBase? reboundBone)
-                ? reboundBone
-                : bone;
 
         private static void IncludeSkinnedBoneCullingPoint(
             Dictionary<TransformBase, SkinnedBoneBoundsBuilder> builders,
@@ -644,6 +821,13 @@ namespace XREngine.Components.Scene.Mesh
             builder.Include(localPosition);
             builders[transform] = builder;
         }
+
+        private static TransformBase ResolveRuntimeBoneReference(
+            TransformBase bone,
+            IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap)
+            => boneReferenceRemap is not null && boneReferenceRemap.TryGetValue(bone, out TransformBase? reboundBone)
+                ? reboundBone
+                : bone;
 
         private static bool TryComputeSkinnedBoneAggregateWorldBounds(
             ReadOnlySpan<SkinnedBoneCullingVolume> volumes,
@@ -703,9 +887,13 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private void RefreshSkinnedCullingIntersectionOverride()
-            => RenderInfo.CullingIntersectionOverride = HasAnySkinnedLod()
+        {
+            // The scene tree uses the aggregate as a broad proxy; final visibility for
+            // skinned meshes is "any transformed bone box intersects the collection volume."
+            RenderInfo.CullingIntersectionOverride = HasAnySkinnedLod()
                 ? SkinnedBoneCullingIntersectionOverride
                 : null;
+        }
 
         #endregion
 
@@ -744,11 +932,7 @@ namespace XREngine.Components.Scene.Mesh
                     _skinnedBoundsDirty = false;
                     _hasSkinnedBounds = true;
                     _skinnedBoundsAreWorldSpace = false;
-                    if (RenderInfo is not null)
-                    {
-                        RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
-                        RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
-                    }
+                    PublishSkinnedWorldCullingBounds(_skinnedLocalBounds, _skinnedRootRenderMatrix, _skinnedBoundsAreWorldSpace);
                     return true;
                 }
 
@@ -760,11 +944,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             Matrix4x4 basis = GetSkinnedBasisMatrix();
             SetSkinnedRootRenderMatrix(basis);
-            if (RenderInfo is not null)
-            {
-                RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
-                RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
-            }
+            PublishSkinnedWorldCullingBounds(_skinnedLocalBounds, _skinnedRootRenderMatrix, _skinnedBoundsAreWorldSpace);
         }
 
         private bool TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result result)
@@ -797,13 +977,9 @@ namespace XREngine.Components.Scene.Mesh
             _skinnedBoundsAreWorldSpace = result.IsWorldSpace;
 
             SetSkinnedRootRenderMatrix(result.Basis);
-            if (RenderInfo is not null)
-            {
-                RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
-                // Bounds are in root bone local space. Use the basis (root bone world matrix)
-                // to transform them to world space for culling.
-                RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
-            }
+            // Bake the basis (root bone world matrix) into a world-space AABB and publish with an
+            // identity offset so lock-free readers can never pair this world volume with a stale matrix.
+            PublishSkinnedWorldCullingBounds(_skinnedLocalBounds, _skinnedRootRenderMatrix, _skinnedBoundsAreWorldSpace);
             return true;
         }
 
@@ -849,11 +1025,7 @@ namespace XREngine.Components.Scene.Mesh
             _skinnedBoundsDirty = false;
             _hasSkinnedBounds = true;
             _skinnedBoundsAreWorldSpace = false;
-            if (RenderInfo is not null)
-            {
-                RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
-                RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
-            }
+            PublishSkinnedWorldCullingBounds(_skinnedLocalBounds, _skinnedRootRenderMatrix, _skinnedBoundsAreWorldSpace);
 
             return true;
         }
@@ -1227,12 +1399,20 @@ namespace XREngine.Components.Scene.Mesh
                 ApplySkinnedBoundsResult(result.Bounds, markBvhDirty: false);
                 _skinnedBvh = result.Tree;
                 tree = _skinnedBvh;
+
+                // A null tree means the build produced no geometry this attempt (e.g. the GPU
+                // skinned-position readback was not ready yet). Clear the one-shot latch so a
+                // subsequent pick reschedules instead of leaving the mesh permanently
+                // unselectable after a single empty build.
+                if (_skinnedBvh is null)
+                    _skinnedBvhScheduledOnce = false;
                 return true;
             }
             catch (Exception ex)
             {
                 Debug.RenderingException(ex, "Skinned BVH compute path failed.");
                 _skinnedBvh = null;
+                _skinnedBvhScheduledOnce = false;
                 return true;
             }
             finally

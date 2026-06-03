@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Components.Lights;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -56,6 +57,28 @@ namespace XREngine.Rendering.Info
         /// </summary>
         [YamlIgnore]
         public DelCullingIntersectionOverride? CullingIntersectionOverride;
+
+        /// <summary>
+        /// Diagnostic stamps for <see cref="RenderDiagnosticsFlags.SkinCullRejectDiag"/>. Written
+        /// only by the CPU collect path while that flag is enabled; ignored otherwise. These let the
+        /// frame-start evaluator distinguish "pruned before narrow phase" from "narrow phase rejected"
+        /// from "passed culling but no command collected" for skinned renderables.
+        /// </summary>
+        [YamlIgnore]
+        internal long DiagCollectedGen = -1;
+        [YamlIgnore]
+        internal long DiagIntersectGen = -1;
+        [YamlIgnore]
+        internal bool DiagIntersectResult;
+
+        /// <summary>
+        /// Back-reference to the owning <see cref="RenderableMesh"/>, if this render info belongs to
+        /// one. <see cref="RenderInfo.Owner"/> is the owning <c>RenderableComponent</c> (used for
+        /// transform-depth semantics) and can never be a <see cref="RenderableMesh"/>, so scene-side
+        /// skinned-mesh tracking and per-mesh diagnostics resolve the mesh through this field instead.
+        /// </summary>
+        [YamlIgnore]
+        internal RenderableMesh? OwnerRenderableMesh;
 
         private AABB? _localCullingVolume;
         private Matrix4x4 _cullingMatrix = Matrix4x4.Identity;
@@ -169,8 +192,27 @@ namespace XREngine.Rendering.Info
             if (worldCullingVolume is null)
                 return true;
 
-            var containment = cullingVolume?.ContainsBox(worldCullingVolume.Value) ?? EContainment.Contains;
+            var containment = ClassifyWorldCullingVolume(cullingVolume, worldCullingVolume.Value);
             return containsOnly ? containment == EContainment.Contains : containment != EContainment.Disjoint;
+        }
+
+        private static EContainment ClassifyWorldCullingVolume(IVolume? cullingVolume, in Box worldCullingVolume)
+        {
+            if (cullingVolume is null)
+                return EContainment.Contains;
+
+            EContainment containment = cullingVolume.ContainsBox(worldCullingVolume);
+            if (containment != EContainment.Disjoint)
+                return containment;
+
+            AABB worldBounds = worldCullingVolume.GetAABB(transformed: true);
+            if (cullingVolume is AABB aabb && aabb.Intersects(worldBounds))
+                return EContainment.Intersects;
+
+            if (cullingVolume is Frustum frustum && frustum.Intersects(worldBounds))
+                return EContainment.Intersects;
+
+            return EContainment.Disjoint;
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -220,16 +262,15 @@ namespace XREngine.Rendering.Info
                 return;
 
             var worldBounds = ((IOctreeItem)this).WorldCullingVolume;
-            if (worldBounds is null)
-                return;
-
-            if (_lastQueuedWorldBounds.HasValue && BoxNearlyEqual(_lastQueuedWorldBounds.Value, worldBounds.Value))
+            if (worldBounds.HasValue &&
+                _lastQueuedWorldBounds.HasValue &&
+                BoxNearlyEqual(_lastQueuedWorldBounds.Value, worldBounds.Value))
             {
                 RuntimeRenderingHostServices.Current.RecordOctreeSkippedMove();
                 return;
             }
 
-            _lastQueuedWorldBounds = worldBounds.Value;
+            _lastQueuedWorldBounds = worldBounds;
             OctreeNode.QueueItemMoved(this);
         }
 

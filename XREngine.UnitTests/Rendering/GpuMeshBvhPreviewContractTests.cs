@@ -61,6 +61,87 @@ public sealed class GpuMeshBvhPreviewContractTests
         lastKnownRead.ShouldNotContain("Run(renderer");
     }
 
+    [Test]
+    public void GpuMeshBvhLargeMortonSort_AlternatesTileDirectionForBitonicMerge()
+    {
+        string dispatchSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhTree.Dispatch.cs");
+        string tileSortShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/OctreeGeneration/sort_morton_tiles.comp");
+        string mergeShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/OctreeGeneration/merge_morton.comp");
+
+        dispatchSource.ShouldContain("tileProgram.DispatchCompute(paddedCount / 1024u");
+        tileSortShader.ShouldContain("uint i = base + tid;");
+        tileSortShader.ShouldContain("bool up = ((i & k) == 0u);");
+        tileSortShader.ShouldNotContain("bool up = ((tid & k) == 0u);");
+        mergeShader.ShouldContain("bool up = ((i & K) == 0u);");
+    }
+
+    [Test]
+    public void GpuMeshBvhClickPick_UsesMortonSortedPackedTriangles()
+    {
+        string gpuMeshBvhSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
+        string pickSource = ReadWorkspaceFile("XRENGINE/Rendering/XRWorldInstance.cs");
+        string editorSource = ReadWorkspaceFile("XREngine.Editor/EditorFlyingCameraPawnComponent.cs");
+        string glDataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs");
+        string visualSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs");
+        string raycastDispatcherSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/BvhRaycastDispatcher.cs");
+        string packShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/mesh_bvh_pack_triangles.comp");
+
+        gpuMeshBvhSource.ShouldContain("PackedTriangleShaderPath");
+        gpuMeshBvhSource.ShouldContain("public XRDataBuffer? PackedTriangleBuffer => _packedTriangleBuffer;");
+        gpuMeshBvhSource.ShouldContain("program.BindBuffer(morton, 3);");
+        gpuMeshBvhSource.ShouldContain("program.BindBuffer(_packedTriangleBuffer!, 4);");
+
+        packShader.ShouldContain("uint sourceTriangleIndex = MortonData[sortedIndex * 2u + 1u];");
+        packShader.ShouldContain("uvec4 TriangleIndices[];");
+        packShader.ShouldContain("PackedTriangles[sortedIndex].extra = uvec4(sourceTriangleIndex, sourceTriangleIndex, 0u, 0u);");
+
+        pickSource.ShouldContain("BvhRaycastRequest");
+        pickSource.ShouldContain("TriangleBuffer = bvh.PackedTriangleBuffer");
+        pickSource.ShouldContain("GpuMeshBvhPickCandidate");
+
+        // The pick setting is a boolean toggle and the CPU triangle-test fallback was removed.
+        pickSource.ShouldContain("GpuMeshBvhClickPickEnabled");
+        pickSource.ShouldNotContain("EnsureGpuMeshBvhClickPickCpuBvh");
+        pickSource.ShouldNotContain("EMeshBvhClickPickMode");
+
+        // The GPU readback resolves the exact face/edge/vertex for the requested hit mode.
+        pickSource.ShouldContain("TryBuildPickResult(candidate.HitMode");
+
+        string uploadRay = Slice(
+            pickSource,
+            "public void UploadRay(Vector3 origin, Vector3 direction, float maxDistance)",
+            "[StructLayout(LayoutKind.Sequential)]",
+            StringComparison.Ordinal);
+
+        uploadRay.ShouldContain("RayBuffer.PushData();");
+        uploadRay.ShouldNotContain("HitBuffer.PushData();");
+
+        glDataBufferSource.ShouldContain("Api.GetNamedBufferParameter(id, BufferPNameARB.Size, out int allocatedSize);");
+        glDataBufferSource.ShouldContain("if (allocatedSize > 0)");
+        glDataBufferSource.ShouldContain("RecreateBuffer();");
+
+        visualSceneSource.ShouldContain("BvhRaycasts.ProcessDispatches();");
+        visualSceneSource.ShouldContain("BvhRaycasts.ProcessCompletions();");
+        visualSceneSource.ShouldNotContain("BvhRaycasts.SetEnabled(false, \"initial settings disabled\")");
+        visualSceneSource.ShouldNotContain("BvhRaycasts.SetEnabled(false, \"disabled by settings\")");
+
+        raycastDispatcherSource.ShouldContain("program.Uniform(\"uRayCount\", request.RayCount);");
+        raycastDispatcherSource.ShouldContain("program.Uniform(\"uRootIndex\", request.RootNodeIndex);");
+        raycastDispatcherSource.ShouldContain("program.Uniform(\"uPacketWidth\", packetWidth);");
+        raycastDispatcherSource.ShouldContain("program.Uniform(\"uUsePacketMode\", request.UsePacketMode ? 1u : 0u);");
+        raycastDispatcherSource.ShouldContain("program.Uniform(\"uAnyHitMode\", request.AnyHit ? 1u : 0u);");
+        raycastDispatcherSource.ShouldContain("program.Uniform(\"uMaxStackDepth\", request.MaxStackDepth ?? DefaultStackLimit);");
+        raycastDispatcherSource.ShouldNotContain("program.Uniform(\"uRayCount\", (int)request.RayCount);");
+        raycastDispatcherSource.ShouldNotContain("program.Uniform(\"uMaxStackDepth\", (int)(request.MaxStackDepth ?? DefaultStackLimit));");
+
+        string preferencesSource = ReadWorkspaceFile("XRENGINE/Settings/EditorPreferences.cs");
+        preferencesSource.ShouldContain("public bool GpuMeshBvhClickPickEnabled");
+        preferencesSource.ShouldNotContain("enum EMeshBvhClickPickMode");
+
+        editorSource.ShouldContain("RegisterPendingGpuSelection(gpuCandidate)");
+        editorSource.ShouldContain("data is GpuMeshBvhPickCandidate gpuCandidate");
+    }
+
     private static string Slice(string source, string startToken, string endToken, StringComparison comparison)
     {
         string normalized = source.Replace("\r\n", "\n");

@@ -41,10 +41,7 @@ namespace XREngine.Scene
         {
             GPUCommands.UseGpuBvh = _useGpuBvhActive;
             GPUCommands.UseInternalBvh = _useGpuBvhActive; // Enable internal command BVH for GPU culling
-            if (_useGpuBvhActive)
-                BvhRaycasts.WarmShaders();
-            else
-                BvhRaycasts.SetEnabled(false, "initial settings disabled");
+            BvhRaycasts.WarmShaders();
         }
 
         public void SetBounds(AABB bounds)
@@ -130,6 +127,11 @@ namespace XREngine.Scene
             bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
             {
                 bool allowed = item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
+                if (RenderDiagnosticsFlags.SkinCullRejectDiag)
+                {
+                    item.DiagIntersectGen = _collectGen;
+                    item.DiagIntersectResult = allowed;
+                }
                 if (!allowed && modelDiagActive)
                     ModelRenderDiagnostics.LogRejected(item, cullingVolume, commands, camera, containsOnly, collectMirrors);
                 return allowed;
@@ -138,6 +140,8 @@ namespace XREngine.Scene
             void AddRenderCommands(RenderInfo3D renderable)
             {
                 visibleRenderables++;
+                if (RenderDiagnosticsFlags.SkinCullRejectDiag)
+                    renderable.DiagCollectedGen = _collectGen;
                 if (modelDiagActive)
                     ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
                 renderable.CollectCommands(commands, camera);
@@ -212,14 +216,43 @@ namespace XREngine.Scene
             ProcessPendingRenderableOperations();
 
             if (!_isGpuDispatchActive)
+            {
+                if (RenderDiagnosticsFlags.SkinCullRejectDiag)
+                    EvaluateSkinCullRejectDiagnostics(_collectGen);
+                _collectGen++;
+                RefreshSkinnedCpuCullingBounds();
                 ActiveCpuRenderTree.Swap();
+            }
+        }
+
+        // Per-collect generation counter for the SkinCullRejectDiag stage log. Incremented once per
+        // CPU GlobalCollectVisible; all CollectRenderedItems passes within a frame share one value so
+        // a drop is "collected in any viewport last gen, no viewport this gen".
+        private long _collectGen;
+
+        private void EvaluateSkinCullRejectDiagnostics(long finishedGen)
+        {
+            foreach (RenderableMesh mesh in _skinnedMeshes)
+            {
+                RenderInfo3D ri = mesh.RenderInfo;
+                bool collectedThis = ri.DiagCollectedGen == finishedGen;
+                if (mesh.DiagWasCollectedLastEval && !collectedThis)
+                {
+                    bool tested = ri.DiagIntersectGen == finishedGen;
+                    string stage = !tested
+                        ? "bvh-node"
+                        : (ri.DiagIntersectResult ? "downstream" : "bone-override");
+                    RuntimeEngine.LogWarning(mesh.BuildSkinCullRejectPayload(stage, finishedGen));
+                }
+
+                mesh.DiagWasCollectedLastEval = collectedThis;
+            }
         }
 
         public override void GlobalPreRender()
         {
             base.GlobalPreRender();
-            if (_useGpuBvhActive)
-                BvhRaycasts.ProcessDispatches();
+            BvhRaycasts.ProcessDispatches();
             
             RuntimeRenderingHostServices.Current.ProcessGpuPhysicsChainDispatches();
         }
@@ -228,8 +261,7 @@ namespace XREngine.Scene
         {
             base.GlobalPostRender();
             RuntimeRenderingHostServices.Current.ProcessGpuPhysicsChainCompletions();
-            if (_useGpuBvhActive)
-                BvhRaycasts.ProcessCompletions();
+            BvhRaycasts.ProcessCompletions();
         }
 
         public override void GlobalSwapBuffers()
@@ -361,8 +393,7 @@ namespace XREngine.Scene
             }
             else
             {
-                Debug.LogWarning("[VisualScene3D] GPU BVH disabled; falling back to configured CPU scene traversal.");
-                BvhRaycasts.SetEnabled(false, "disabled by settings");
+                Debug.LogWarning("[VisualScene3D] GPU BVH disabled for scene traversal; explicit BVH raycasts remain available for tools and picking.");
             }
         }
 
@@ -457,6 +488,12 @@ namespace XREngine.Scene
                 GPUCommands.TryUpdateMeshCommand(info, meshCmd);
         }
 
+        private void RefreshSkinnedCpuCullingBounds()
+        {
+            foreach (RenderableMesh mesh in _skinnedMeshes)
+                _ = mesh.RefreshSkinnedCullingBoundsForSceneCulling();
+        }
+
         private void SyncCpuSceneCullingStructurePreference()
         {
             ECpuSceneCullingStructure structure = RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure;
@@ -516,7 +553,7 @@ namespace XREngine.Scene
 
         private void TrackRenderable(RenderInfo3D renderable)
         {
-            if (renderable.Owner is not RenderableMesh mesh)
+            if (renderable.OwnerRenderableMesh is not RenderableMesh mesh)
                 return;
 
             if (mesh.IsSkinned)
@@ -525,7 +562,7 @@ namespace XREngine.Scene
 
         private void UntrackRenderable(RenderInfo3D renderable)
         {
-            if (renderable.Owner is not RenderableMesh mesh)
+            if (renderable.OwnerRenderableMesh is not RenderableMesh mesh)
                 return;
 
             _skinnedMeshes.Remove(mesh);

@@ -208,6 +208,7 @@ namespace XREngine
                 private bool _enableGpuIndirectDebugLogging = false;
                 private bool _enableGpuIndirectCpuFallback = false;
                 private bool _enableGpuIndirectValidationLogging = false;
+                private bool _enableGpuMeshBvhPickLogging = false;
                 private bool _enableZeroReadbackMaterialScatter = false;
                 private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.FullBucketScan;
                 private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy = null;
@@ -283,6 +284,18 @@ namespace XREngine
                 {
                     get => _enableGpuIndirectValidationLogging;
                     set => SetField(ref _enableGpuIndirectValidationLogging, value);
+                }
+
+                /// <summary>
+                /// Whether to emit verbose diagnostics for the GPU mesh-BVH editor pick path
+                /// (dispatch decisions, ray transforms, and readback hit/miss results).
+                /// </summary>
+                [Category("Debug")]
+                [Description("Whether to emit verbose diagnostics for the GPU mesh-BVH editor pick path (dispatch decisions, ray transforms, and readback hit/miss results).")]
+                public bool EnableGpuMeshBvhPickLogging
+                {
+                    get => _enableGpuMeshBvhPickLogging;
+                    set => SetField(ref _enableGpuMeshBvhPickLogging, value);
                 }
 
                 [Category("Debug")]
