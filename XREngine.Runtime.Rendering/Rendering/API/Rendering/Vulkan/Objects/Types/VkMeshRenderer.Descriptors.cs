@@ -51,6 +51,7 @@ public unsafe partial class VulkanRenderer
 			int frameCount = Renderer.swapChainImages.Length;
 			int setCount = layouts.Count;
 			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount, frameCount);
+			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
 
 			bool canReuseDescriptorAllocation =
 				_descriptorSets is { Length: > 0 } &&
@@ -59,22 +60,13 @@ public unsafe partial class VulkanRenderer
 				_descriptorSets.Length == frameCount &&
 				_descriptorSets.All(s => s.Length == setCount);
 
-			if (!_descriptorDirty && canReuseDescriptorAllocation)
+			if (!_descriptorDirty && canReuseDescriptorAllocation && _descriptorResourceFingerprint == resourceFingerprint)
 				return true;
 
 			if (canReuseDescriptorAllocation)
-			{
-				for (int frame = 0; frame < frameCount; frame++)
-				{
-					if (!WriteDescriptorSets(_descriptorSets![frame], bindings, material, frame))
-						return false;
-				}
-
-				_descriptorDirty = false;
-				return true;
-			}
-
-			DestroyDescriptors();
+				ReleaseDescriptorAllocation();
+			else
+				DestroyDescriptors();
 
 			var poolSizes = BuildDescriptorPoolSizes(bindings, frameCount);
 			if (poolSizes.Length == 0)
@@ -146,6 +138,7 @@ public unsafe partial class VulkanRenderer
 			}
 
 			_descriptorSchemaFingerprint = schemaFingerprint;
+			_descriptorResourceFingerprint = resourceFingerprint;
 			_descriptorDirty = false;
 			return true;
 		}
@@ -169,6 +162,52 @@ public unsafe partial class VulkanRenderer
 				hash.Add(binding.Count);
 				hash.Add((int)binding.StageFlags);
 				hash.Add(binding.Name);
+			}
+
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private ulong ComputeDescriptorResourceFingerprint(XRMaterial material, int frameCount)
+		{
+			HashCode hash = new();
+			hash.Add(frameCount);
+			hash.Add(MeshRenderer.SkinnedOutputVersion);
+
+			foreach (var pair in _bufferCache.OrderBy(p => p.Key, StringComparer.Ordinal))
+			{
+				VkDataBuffer buffer = pair.Value;
+				hash.Add(pair.Key);
+				hash.Add(buffer.BufferHandle?.Handle ?? 0UL);
+				hash.Add(buffer.Data.Length);
+				hash.Add((int)buffer.Data.Target);
+				hash.Add(buffer.Data.BindingIndexOverride ?? uint.MaxValue);
+			}
+
+			hash.Add(material.Textures.Count);
+			for (int i = 0; i < material.Textures.Count; i++)
+			{
+				XRTexture? texture = material.Textures[i];
+				hash.Add(texture?.GetHashCode() ?? 0);
+			}
+
+			foreach (var pair in _engineUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
+			{
+				hash.Add(pair.Key);
+				foreach (EngineUniformBuffer buffer in pair.Value)
+				{
+					hash.Add(buffer.Buffer.Handle);
+					hash.Add(buffer.Size);
+				}
+			}
+
+			foreach (var pair in _autoUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
+			{
+				hash.Add(pair.Key);
+				foreach (AutoUniformBuffer buffer in pair.Value)
+				{
+					hash.Add(buffer.Buffer.Handle);
+					hash.Add(buffer.Size);
+				}
 			}
 
 			return unchecked((ulong)hash.ToHashCode());
@@ -442,7 +481,7 @@ public unsafe partial class VulkanRenderer
 
 			// Step 1: Exact name match from the mesh renderer's buffer cache.
 			VkDataBuffer? buffer = null;
-			if (!string.IsNullOrWhiteSpace(binding.Name) && _bufferCache.TryGetValue(binding.Name, out buffer))
+			if (!string.IsNullOrWhiteSpace(binding.Name) && TryResolveCachedBufferByName(binding.Name, out buffer))
 			{
 				// found by name — use it directly
 			}
@@ -473,13 +512,8 @@ public unsafe partial class VulkanRenderer
 
 				// Step 3: Generic fallback — only match buffers whose target type
 				// is compatible with the descriptor's expected type.
-				EBufferTarget requiredTarget = binding.DescriptorType switch
-				{
-					DescriptorType.UniformBuffer => EBufferTarget.UniformBuffer,
-					DescriptorType.StorageBuffer => EBufferTarget.ShaderStorageBuffer,
-					_ => EBufferTarget.UniformBuffer,
-				};
-				buffer = _bufferCache.Values.FirstOrDefault(b => b.Data.Target == requiredTarget);
+				if (binding.DescriptorType == DescriptorType.UniformBuffer)
+					buffer = _bufferCache.Values.FirstOrDefault(b => b.Data.Target == EBufferTarget.UniformBuffer);
 			}
 
 			if (buffer is null)
@@ -508,6 +542,43 @@ public unsafe partial class VulkanRenderer
 			};
 
 			return true;
+		}
+
+		private bool TryResolveCachedBufferByName(string bindingName, out VkDataBuffer? buffer)
+		{
+			if (_bufferCache.TryGetValue(bindingName, out buffer))
+				return true;
+
+			string trimmedName = TrimDescriptorBufferSuffix(bindingName);
+			if (!string.Equals(trimmedName, bindingName, StringComparison.Ordinal) &&
+				_bufferCache.TryGetValue(trimmedName, out buffer))
+			{
+				return true;
+			}
+
+			foreach (VkDataBuffer candidate in _bufferCache.Values)
+			{
+				string attributeName = candidate.Data.AttributeName;
+				if (string.Equals(attributeName, bindingName, StringComparison.Ordinal) ||
+					(!string.Equals(trimmedName, bindingName, StringComparison.Ordinal) &&
+					 string.Equals(attributeName, trimmedName, StringComparison.Ordinal)))
+				{
+					buffer = candidate;
+					return true;
+				}
+			}
+
+			buffer = null;
+			return false;
+		}
+
+		private static string TrimDescriptorBufferSuffix(string bindingName)
+		{
+			if (bindingName.EndsWith("Input", StringComparison.Ordinal))
+				return bindingName[..^5];
+			if (bindingName.EndsWith("Buffer", StringComparison.Ordinal))
+				return bindingName[..^6];
+			return bindingName;
 		}
 
 		private bool TryResolveFallbackDescriptorBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
@@ -604,7 +675,7 @@ public unsafe partial class VulkanRenderer
 				{
 					imageInfo = new DescriptorImageInfo
 					{
-						ImageLayout = descriptorType == DescriptorType.StorageImage ? ImageLayout.General : ImageLayout.ShaderReadOnlyOptimal,
+						ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
 						ImageView = depthOnlyView,
 						Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
 					};
@@ -618,7 +689,7 @@ public unsafe partial class VulkanRenderer
 
 			imageInfo = new DescriptorImageInfo
 			{
-				ImageLayout = descriptorType == DescriptorType.StorageImage ? ImageLayout.General : ImageLayout.ShaderReadOnlyOptimal,
+				ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
 				ImageView = source.DescriptorView,
 				Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
 			};

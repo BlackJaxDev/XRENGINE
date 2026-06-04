@@ -591,7 +591,7 @@ public partial class DefaultRenderPipeline2
             {
                 DepthTest = new()
                 {
-                    Enabled = ERenderParamUsage.Unchanged,
+                    Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
@@ -1050,7 +1050,7 @@ public partial class DefaultRenderPipeline2
             {
                 DepthTest = new()
                 {
-                    Enabled = ERenderParamUsage.Unchanged,
+                    Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
@@ -1285,7 +1285,7 @@ public partial class DefaultRenderPipeline2
             {
                 DepthTest = new()
                 {
-                    Enabled = ERenderParamUsage.Unchanged,
+                    Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },

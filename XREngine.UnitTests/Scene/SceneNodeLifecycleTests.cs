@@ -4,6 +4,7 @@ using NUnit.Framework;
 using XREngine;
 using XREngine.Components;
 using XREngine.Components.Lights;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Editor;
 using XREngine.Rendering;
@@ -285,6 +286,52 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void Undo_DestroySceneNode_RestoresAssetReferencesWithoutCloningAssets()
+    {
+        Undo.ClearHistory();
+
+        try
+        {
+            SceneNode parent = new("Parent");
+            SceneNode child = new(parent, "Child");
+            TestDestroyUndoAsset asset = new("SharedModelLikeAsset");
+            DestroyUndoAssetReferenceComponent component = child.AddComponent<DestroyUndoAssetReferenceComponent>()!;
+            component.Asset = asset;
+            StubRuntimeWorldContext world = new(isPlaySessionActive: false);
+
+            SetWorld(parent, world);
+            Undo.TrackSceneNode(parent);
+            Undo.ClearHistory();
+
+            child.Destroy();
+            XRObjectBase.ProcessPendingDestructions();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(child.IsDestroyed, Is.True);
+                Assert.That(parent.Transform.Children.Count, Is.Zero);
+                Assert.That(Undo.CanUndo, Is.True);
+            });
+
+            Assert.That(Undo.TryUndo(), Is.True);
+
+            SceneNode restoredChild = parent.Transform.Children.Single().SceneNode!;
+            DestroyUndoAssetReferenceComponent? restoredComponent = restoredChild.GetComponent<DestroyUndoAssetReferenceComponent>();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(restoredComponent, Is.Not.Null);
+                Assert.That(restoredComponent!.Asset, Is.SameAs(asset));
+                Assert.That(restoredChild.World, Is.SameAs(world));
+            });
+        }
+        finally
+        {
+            Undo.ClearHistory();
+        }
+    }
+
+    [Test]
     public void AssigningPlayWorld_DoesNotPreActivateExistingComponents()
     {
         SceneNode node = new("LifecycleRoot");
@@ -520,6 +567,15 @@ public class SceneNodeLifecycleTests
     {
         protected override System.Numerics.Matrix4x4 CreateLocalMatrix()
             => System.Numerics.Matrix4x4.Identity;
+    }
+
+    private sealed class DestroyUndoAssetReferenceComponent : XRComponent
+    {
+        public XRAsset? Asset { get; set; }
+    }
+
+    private sealed class TestDestroyUndoAsset(string name) : XRAsset(name)
+    {
     }
 
     private sealed class TrackingSceneNodeServices(

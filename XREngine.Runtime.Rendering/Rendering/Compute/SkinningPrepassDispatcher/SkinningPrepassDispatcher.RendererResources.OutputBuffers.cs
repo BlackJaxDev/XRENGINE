@@ -47,7 +47,7 @@ internal sealed partial class SkinningPrepassDispatcher
                 uint vertexWords = (uint)(vertexCount * stride / sizeof(float));
                 uint boundsWordOffset = AlignUp(vertexWords, 4u);
                 _renderer.SkinnedInterleavedBuffer = new XRDataBuffer(
-                    "InterleavedSkinned",
+                    "SkinnedInterleaved",
                     EBufferTarget.ShaderStorageBuffer,
                     boundsWordOffset + 8u,
                     EComponentType.Float,
@@ -55,6 +55,7 @@ internal sealed partial class SkinningPrepassDispatcher
                     true,
                     false)
                 {
+                    BindingIndexOverride = 9u,
                     Usage = EBufferUsage.DynamicDraw,
                     DisposeOnPush = false
                 };
@@ -62,7 +63,7 @@ internal sealed partial class SkinningPrepassDispatcher
             else
             {
                 _renderer.SkinnedPositionsBuffer = new XRDataBuffer(
-                    ECommonBufferType.Position.ToString(),
+                    "SkinnedPositions",
                     EBufferTarget.ShaderStorageBuffer,
                     (uint)vertexCount + 2u,
                     EComponentType.Float,
@@ -70,6 +71,7 @@ internal sealed partial class SkinningPrepassDispatcher
                     true,
                     false)
                 {
+                    BindingIndexOverride = 11u,
                     Usage = EBufferUsage.DynamicDraw,
                     DisposeOnPush = false
                 };
@@ -77,7 +79,7 @@ internal sealed partial class SkinningPrepassDispatcher
                 if (mesh.HasNormals)
                 {
                     _renderer.SkinnedNormalsBuffer = new XRDataBuffer(
-                        ECommonBufferType.Normal.ToString(),
+                        "SkinnedNormals",
                         EBufferTarget.ShaderStorageBuffer,
                         (uint)vertexCount,
                         EComponentType.Float,
@@ -85,6 +87,7 @@ internal sealed partial class SkinningPrepassDispatcher
                         true,
                         false)
                     {
+                        BindingIndexOverride = 12u,
                         Usage = EBufferUsage.DynamicDraw,
                         DisposeOnPush = false
                     };
@@ -93,7 +96,7 @@ internal sealed partial class SkinningPrepassDispatcher
                 if (mesh.HasTangents)
                 {
                     _renderer.SkinnedTangentsBuffer = new XRDataBuffer(
-                        ECommonBufferType.Tangent.ToString(),
+                        "SkinnedTangents",
                         EBufferTarget.ShaderStorageBuffer,
                         (uint)vertexCount,
                         EComponentType.Float,
@@ -101,6 +104,7 @@ internal sealed partial class SkinningPrepassDispatcher
                         true,
                         false)
                     {
+                        BindingIndexOverride = 15u,
                         Usage = EBufferUsage.DynamicDraw,
                         DisposeOnPush = false
                     };

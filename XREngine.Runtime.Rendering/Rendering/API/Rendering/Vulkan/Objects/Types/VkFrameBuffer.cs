@@ -161,7 +161,8 @@ public unsafe partial class VulkanRenderer
                     existing.StencilLoadOp,
                     existing.StencilStoreOp,
                     overrideLayout,
-                    existing.FinalLayout);
+                    existing.FinalLayout,
+                    existing.ReferenceLayout);
             }
             return result;
         }
@@ -414,6 +415,7 @@ public unsafe partial class VulkanRenderer
                             existing.StencilLoadOp,
                             existing.StencilStoreOp),
                     };
+                    updated = WithReferenceLayout(updated, ResolveAttachmentReferenceLayout(updated, usage));
 
                     planned[index] = updated;
                     touchedAttachments.Add(index);
@@ -579,7 +581,37 @@ public unsafe partial class VulkanRenderer
                 stencilLoadOp,
                 stencilStoreOp,
                 signature.InitialLayout,
-                signature.FinalLayout);
+                signature.FinalLayout,
+                signature.ReferenceLayout);
+
+        private static FrameBufferAttachmentSignature WithReferenceLayout(
+            FrameBufferAttachmentSignature signature,
+            ImageLayout referenceLayout)
+            => new(
+                signature.Format,
+                signature.Samples,
+                signature.AspectMask,
+                signature.Role,
+                signature.ColorIndex,
+                signature.LoadOp,
+                signature.StoreOp,
+                signature.StencilLoadOp,
+                signature.StencilStoreOp,
+                signature.InitialLayout,
+                signature.FinalLayout,
+                referenceLayout);
+
+        private static ImageLayout ResolveAttachmentReferenceLayout(
+            FrameBufferAttachmentSignature signature,
+            RenderPassResourceUsage usage)
+        {
+            if (signature.Role == AttachmentRole.Color)
+                return ImageLayout.ColorAttachmentOptimal;
+
+            return usage.Access == ERenderGraphAccess.Read
+                ? ImageLayout.DepthStencilReadOnlyOptimal
+                : ImageLayout.DepthStencilAttachmentOptimal;
+        }
 
         private static AttachmentLoadOp ToVkLoadOp(ERenderPassLoadOp op)
             => op switch
@@ -774,6 +806,12 @@ public unsafe partial class VulkanRenderer
                     ? ImageLayout.DepthStencilReadOnlyOptimal
                     : ImageLayout.DepthStencilAttachmentOptimal;
 
+            ImageLayout referenceLayout = role == AttachmentRole.Color
+                ? ImageLayout.ColorAttachmentOptimal
+                : finalLayout == ImageLayout.DepthStencilReadOnlyOptimal
+                    ? ImageLayout.DepthStencilReadOnlyOptimal
+                    : ImageLayout.DepthStencilAttachmentOptimal;
+
             return new FrameBufferAttachmentSignature(
                 source.Format,
                 source.Samples,
@@ -785,7 +823,8 @@ public unsafe partial class VulkanRenderer
                 stencilLoad,
                 stencilStore,
                 ImageLayout.Undefined,
-                finalLayout);
+                finalLayout,
+                referenceLayout);
         }
 
         private readonly record struct AttachmentSource(ImageView View, Format Format, SampleCountFlags Samples, ImageAspectFlags AspectMask, ImageUsageFlags Usage);

@@ -817,6 +817,7 @@ internal static class VulkanShaderAutoUniforms
     private static string ApplyVulkanSourceFixups(string source)
     {
         string rewritten = source.Replace("gl_InstanceID", "gl_InstanceIndex", StringComparison.Ordinal);
+        rewritten = rewritten.Replace("gl_VertexID", "gl_VertexIndex", StringComparison.Ordinal);
         rewritten = FloatSuffixRegex.Replace(rewritten, "${num}");
         rewritten = EnsureIOLocationQualifiers(rewritten);
         return rewritten;

@@ -141,7 +141,8 @@ public unsafe partial class VulkanRenderer
             AttachmentLoadOp stencilLoadOp,
             AttachmentStoreOp stencilStoreOp,
             ImageLayout initialLayout,
-            ImageLayout finalLayout)
+            ImageLayout finalLayout,
+            ImageLayout referenceLayout)
         {
             Format = format;
             Samples = samples;
@@ -154,6 +155,7 @@ public unsafe partial class VulkanRenderer
             StencilStoreOp = stencilStoreOp;
             InitialLayout = initialLayout;
             FinalLayout = finalLayout;
+            ReferenceLayout = referenceLayout;
         }
 
         public Format Format { get; }
@@ -167,6 +169,7 @@ public unsafe partial class VulkanRenderer
         public AttachmentStoreOp StencilStoreOp { get; }
         public ImageLayout InitialLayout { get; }
         public ImageLayout FinalLayout { get; }
+        public ImageLayout ReferenceLayout { get; }
 
         public AttachmentDescription ToAttachmentDescription()
             => new()
@@ -182,17 +185,11 @@ public unsafe partial class VulkanRenderer
             };
 
         public AttachmentReference ToAttachmentReference(uint attachmentIndex)
-        {
-            ImageLayout layout = Role == AttachmentRole.Color
-                ? ImageLayout.ColorAttachmentOptimal
-                : ImageLayout.DepthStencilAttachmentOptimal;
-
-            return new AttachmentReference
+            => new()
             {
                 Attachment = attachmentIndex,
-                Layout = layout,
+                Layout = ReferenceLayout,
             };
-        }
 
         public bool Equals(FrameBufferAttachmentSignature other)
         {
@@ -206,7 +203,8 @@ public unsafe partial class VulkanRenderer
                    StencilLoadOp == other.StencilLoadOp &&
                    StencilStoreOp == other.StencilStoreOp &&
                    InitialLayout == other.InitialLayout &&
-                   FinalLayout == other.FinalLayout;
+                   FinalLayout == other.FinalLayout &&
+                   ReferenceLayout == other.ReferenceLayout;
         }
 
         public override int GetHashCode()
@@ -223,6 +221,7 @@ public unsafe partial class VulkanRenderer
             hash.Add((int)StencilStoreOp);
             hash.Add((int)InitialLayout);
             hash.Add((int)FinalLayout);
+            hash.Add((int)ReferenceLayout);
             return hash.ToHashCode();
         }
     }

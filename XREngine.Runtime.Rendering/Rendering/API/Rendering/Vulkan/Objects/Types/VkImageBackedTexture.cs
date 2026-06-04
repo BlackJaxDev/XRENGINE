@@ -201,6 +201,24 @@ public unsafe partial class VulkanRenderer
         bool IVkImageDescriptorSource.UsesAllocatorImage => _physicalGroup is not null;
 
         /// <inheritdoc />
+        bool IVkImageDescriptorSource.TryTransitionDedicatedImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
+        {
+            RefreshPhysicalGroupImageIfStale();
+            if (_physicalGroup is not null || _image.Handle == 0)
+                return false;
+
+            ImageLayout currentLayout = _currentImageLayout;
+            if (currentLayout != oldLayout)
+                oldLayout = currentLayout;
+
+            if (oldLayout == newLayout)
+                return true;
+
+            TransitionImageLayout(oldLayout, newLayout);
+            return true;
+        }
+
+        /// <inheritdoc />
         void IVkFrameBufferAttachmentSource.UpdateTrackedLayout(ImageLayout layout)
         {
             if (_physicalGroup is not null)
@@ -1087,6 +1105,13 @@ public unsafe partial class VulkanRenderer
                 sourceStage = PipelineStageFlags.TopOfPipeBit;
                 destinationStage = PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit;
             }
+            else if (oldLayout == ImageLayout.Undefined && (newLayout == ImageLayout.ShaderReadOnlyOptimal || newLayout == ImageLayout.DepthStencilReadOnlyOptimal))
+            {
+                barrier.SrcAccessMask = 0;
+                barrier.DstAccessMask = AccessFlags.ShaderReadBit;
+                sourceStage = PipelineStageFlags.TopOfPipeBit;
+                destinationStage = PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit;
+            }
             else if (oldLayout == ImageLayout.ColorAttachmentOptimal && newLayout == ImageLayout.ShaderReadOnlyOptimal)
             {
                 barrier.SrcAccessMask = AccessFlags.ColorAttachmentWriteBit;
@@ -1094,7 +1119,8 @@ public unsafe partial class VulkanRenderer
                 sourceStage = PipelineStageFlags.ColorAttachmentOutputBit;
                 destinationStage = PipelineStageFlags.FragmentShaderBit;
             }
-            else if ((oldLayout == ImageLayout.DepthStencilAttachmentOptimal || oldLayout == ImageLayout.DepthAttachmentOptimal) && newLayout == ImageLayout.ShaderReadOnlyOptimal)
+            else if ((oldLayout == ImageLayout.DepthStencilAttachmentOptimal || oldLayout == ImageLayout.DepthAttachmentOptimal) &&
+                (newLayout == ImageLayout.ShaderReadOnlyOptimal || newLayout == ImageLayout.DepthStencilReadOnlyOptimal))
             {
                 barrier.SrcAccessMask = AccessFlags.DepthStencilAttachmentWriteBit;
                 barrier.DstAccessMask = AccessFlags.ShaderReadBit;
@@ -1585,8 +1611,9 @@ public unsafe partial class VulkanRenderer
                 preferIndirectCopy);
 
             // Map the staging buffer memory.
+            ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer);
             void* mappedPtr = null;
-            if (Api!.MapMemory(Device, memory, 0, (ulong)length, 0, &mappedPtr) != Result.Success)
+            if (Api!.MapMemory(Device, memory, memoryOffset, (ulong)length, 0, &mappedPtr) != Result.Success)
             {
                 Renderer.DestroyBuffer(buffer, memory);
                 buffer = default;

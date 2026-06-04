@@ -248,8 +248,9 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool TryWriteAutoUniformBlock(AutoUniformBlockInfo block, AutoUniformBuffer buffer, XRMaterial material, in PendingMeshDraw draw)
 		{
+			ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer.Buffer);
 			void* mapped;
-			if (Api!.MapMemory(Device, buffer.Memory, 0, buffer.Size, 0, &mapped) != Result.Success)
+			if (Api!.MapMemory(Device, buffer.Memory, memoryOffset, buffer.Size, 0, &mapped) != Result.Success)
 				return false;
 
 			try
@@ -1054,8 +1055,9 @@ public unsafe partial class VulkanRenderer
 			uint size = (uint)Unsafe.SizeOf<T>();
 			uint copySize = Math.Min(buffer.Size, size);
 
+			ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer.Buffer);
 			void* mapped;
-			if (Api!.MapMemory(Device, buffer.Memory, 0, buffer.Size, 0, &mapped) != Result.Success)
+			if (Api!.MapMemory(Device, buffer.Memory, memoryOffset, buffer.Size, 0, &mapped) != Result.Success)
 				return false;
 
 			T localValue = value;
@@ -1066,8 +1068,9 @@ public unsafe partial class VulkanRenderer
 
 		private bool ClearEngineUniformBuffer(EngineUniformBuffer buffer)
 		{
+			ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer.Buffer);
 			void* mapped;
-			if (Api!.MapMemory(Device, buffer.Memory, 0, buffer.Size, 0, &mapped) != Result.Success)
+			if (Api!.MapMemory(Device, buffer.Memory, memoryOffset, buffer.Size, 0, &mapped) != Result.Success)
 				return false;
 
 			try

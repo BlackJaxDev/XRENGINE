@@ -79,6 +79,8 @@ namespace XREngine.Rendering.Vulkan
             DestroyComputeTransientResources();
             DestroyDanglingMaterialWrappers();
             DestroyDanglingMeshRendererWrappers();
+            DestroyDanglingRenderProgramPipelineWrappers();
+            DestroyDanglingRenderProgramWrappers();
             DestroyDanglingDataBufferWrappers();
             DestroyRemainingTrackedMeshUniformBuffers();
 
@@ -96,26 +98,32 @@ namespace XREngine.Rendering.Vulkan
             _resourceAllocator.DestroyPhysicalImages(this);
             _resourceAllocator.DestroyPhysicalBuffers(this);
             _stagingManager.Destroy(this);
+            DestroyDynamicUniformRingBuffers();
+
+            // Teardown paths above may create or retain late-bound GPU buffers.
+            // Sweep wrappers and deferred queues before disposing the allocator so
+            // buffer destruction can still free through the correct allocation path.
+            DestroyDanglingMaterialWrappers();
+            DestroyDanglingMeshRendererWrappers();
+            DestroyDanglingRenderProgramPipelineWrappers();
+            DestroyDanglingRenderProgramWrappers();
+            DestroyDanglingDataBufferWrappers();
+            DestroyRemainingTrackedMeshUniformBuffers();
+            ForceFlushAllRetiredResources();
+            DestroyRemainingTrackedBufferAllocations();
+
             if (_memoryAllocator is VulkanBlockAllocator blockAllocator)
                 blockAllocator.DestroyAllBlocks(Api!, device);
             _memoryAllocator?.Dispose();
             _memoryAllocator = null;
             _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
-            DestroyDynamicUniformRingBuffers();
             DestroyFrameTimingResources();
 
             DestroySyncObjects();
             DestroyCommandPool();
 
-            // Run a final wrapper sweep after teardown paths that may have created or
-            // retained late-bound GPU buffers during destruction.
-            DestroyDanglingMaterialWrappers();
-            DestroyDanglingMeshRendererWrappers();
-            DestroyDanglingDataBufferWrappers();
-            DestroyRemainingTrackedMeshUniformBuffers();
-
-            // Teardown paths above may retire additional resources. Flush once more
-            // before destroying the logical device to avoid vkDestroyDevice child-object errors.
+            // Flush once more before destroying the logical device to catch any
+            // handles retired by sync/command-pool teardown.
             ForceFlushAllRetiredResources();
 
             DestroyLogicalDevice();
@@ -154,6 +162,36 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private void DestroyDanglingRenderProgramPipelineWrappers()
+        {
+            var wrappers = VkObject<XRRenderProgramPipeline>.Cache.Values.ToArray();
+            foreach (var wrapper in wrappers)
+            {
+                try
+                {
+                    wrapper?.Destroy();
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private void DestroyDanglingRenderProgramWrappers()
+        {
+            var wrappers = VkObject<XRRenderProgram>.Cache.Values.ToArray();
+            foreach (var wrapper in wrappers)
+            {
+                try
+                {
+                    wrapper?.Destroy();
+                }
+                catch
+                {
+                }
+            }
+        }
+
         private void DestroyDanglingDataBufferWrappers()
         {
             var wrappers = VkObject<XRDataBuffer>.Cache.Values.ToArray();
@@ -166,6 +204,34 @@ namespace XREngine.Rendering.Vulkan
                 catch
                 {
                 }
+            }
+        }
+
+        private void DestroyRemainingTrackedBufferAllocations()
+        {
+            foreach (var pair in _bufferAllocations.ToArray())
+            {
+                if (!_bufferAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                    continue;
+
+                Buffer buffer = new() { Handle = pair.Key };
+                if (buffer.Handle != 0)
+                    Api!.DestroyBuffer(device, buffer, null);
+
+                FreeMemoryAllocation(allocation);
+            }
+
+            foreach (var pair in _legacyBufferAllocations.ToArray())
+            {
+                if (!_legacyBufferAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                    continue;
+
+                Buffer buffer = new() { Handle = pair.Key };
+                if (buffer.Handle != 0)
+                    Api!.DestroyBuffer(device, buffer, null);
+
+                if (allocation.Memory.Handle != 0)
+                    Api!.FreeMemory(device, allocation.Memory, null);
             }
         }
 
@@ -396,6 +462,16 @@ namespace XREngine.Rendering.Vulkan
             }
 
             int passIndex = EnsureValidPassIndex(RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, "DispatchCompute");
+            if (passIndex == int.MinValue)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.DispatchCompute.NoPass.{program.Name ?? "UnnamedProgram"}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] DispatchCompute skipped for '{0}' because no active render-graph pass could be resolved.",
+                    program.Name ?? "UnnamedProgram");
+                return;
+            }
+
             EnqueueFrameOp(new ComputeDispatchOp(
                 passIndex,
                 vkProgram,

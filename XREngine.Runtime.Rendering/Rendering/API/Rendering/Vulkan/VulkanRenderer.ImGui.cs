@@ -764,7 +764,7 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            UploadBufferMemory(stagingMemory, uploadSize, pixels);
+            UploadBufferMemory(stagingBuffer, stagingMemory, uploadSize, pixels);
             CreateImGuiFontImage((uint)width, (uint)height);
 
             using (var scope = NewCommandScope())
@@ -1340,10 +1340,13 @@ public unsafe partial class VulkanRenderer
         void* mappedVertex = null;
         void* mappedIndex = null;
 
-        if (Api!.MapMemory(device, _imguiVertexBufferMemory, 0, vertexBytes, 0, &mappedVertex) != Result.Success)
+        ulong vertexMemoryOffset = GetBufferAllocationOffset(_imguiVertexBuffer);
+        ulong indexMemoryOffset = GetBufferAllocationOffset(_imguiIndexBuffer);
+
+        if (Api!.MapMemory(device, _imguiVertexBufferMemory, vertexMemoryOffset, vertexBytes, 0, &mappedVertex) != Result.Success)
             throw new InvalidOperationException("Failed to map ImGui vertex buffer.");
 
-        if (Api.MapMemory(device, _imguiIndexBufferMemory, 0, indexBytes, 0, &mappedIndex) != Result.Success)
+        if (Api.MapMemory(device, _imguiIndexBufferMemory, indexMemoryOffset, indexBytes, 0, &mappedIndex) != Result.Success)
         {
             Api.UnmapMemory(device, _imguiVertexBufferMemory);
             throw new InvalidOperationException("Failed to map ImGui index buffer.");
@@ -1551,10 +1554,26 @@ public unsafe partial class VulkanRenderer
         if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
             return false;
 
+        TryUploadImGuiTextureIfUninitialized(texture, ref source);
+
         descriptorView = ResolveImGuiDescriptorView(source);
         descriptorSampler = source.DescriptorSampler;
-        descriptorLayout = ResolveImGuiDescriptorLayout(source);
+        descriptorLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);
         return descriptorView.Handle != 0 && descriptorSampler.Handle != 0;
+    }
+
+    private void TryUploadImGuiTextureIfUninitialized(XRTexture texture, ref IVkImageDescriptorSource source)
+    {
+        if (source.TrackedImageLayout != ImageLayout.Undefined)
+            return;
+
+        if (texture is not XRTexture2D { Mipmaps.Length: > 0 })
+            return;
+
+        texture.PushData();
+
+        if (GetOrCreateAPIRenderObject(texture, generateNow: true) is IVkImageDescriptorSource refreshed)
+            source = refreshed;
     }
 
     private static ImageView ResolveImGuiDescriptorView(IVkImageDescriptorSource source)
@@ -1572,14 +1591,6 @@ public unsafe partial class VulkanRenderer
         ImageView depthOnlyView = source.GetDepthOnlyDescriptorView();
         return depthOnlyView.Handle != 0 ? depthOnlyView : descriptorView;
     }
-
-    private static ImageLayout ResolveImGuiDescriptorLayout(IVkImageDescriptorSource source)
-        => source.TrackedImageLayout switch
-        {
-            ImageLayout.DepthStencilReadOnlyOptimal => ImageLayout.DepthStencilReadOnlyOptimal,
-            ImageLayout.ShaderReadOnlyOptimal => ImageLayout.ShaderReadOnlyOptimal,
-            _ => ImageLayout.ShaderReadOnlyOptimal,
-        };
 
     private DescriptorSet AllocateImGuiDescriptorSet(ImageView descriptorView, Sampler descriptorSampler, ImageLayout descriptorLayout)
     {

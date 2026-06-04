@@ -7,6 +7,7 @@ public unsafe partial class VulkanRenderer
 {
     private PhysicalDevice _physicalDevice;
     public PhysicalDevice PhysicalDevice => _physicalDevice;
+    private ulong _nonCoherentAtomSize = 1;
 
     private void PickPhysicalDevice()
     {
@@ -34,6 +35,7 @@ public unsafe partial class VulkanRenderer
             throw new Exception("Failed to find a suitable GPU for Vulkan.");
 
         Api!.GetPhysicalDeviceProperties(_physicalDevice, out var properties);
+        _nonCoherentAtomSize = System.Math.Max(properties.Limits.NonCoherentAtomSize, 1UL);
         // NVIDIA PCI vendor ID.
         RuntimeEngine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
         // Intel PCI vendor ID.

@@ -18,6 +18,14 @@ Execution tracker:
 
 - [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 
+Companion designs:
+
+- [Texture Compression And Cooked Texture Cache Design](texture-compression-and-cooked-cache-design.md)
+
+Companion trackers:
+
+- [Texture Compression And Cooked Texture Cache TODO](../../todo/texturing/texture-compression-and-cooked-cache-todo.md)
+
 ## Summary
 
 XRENGINE now has a working v1 texture runtime: imported textures are registered with a streaming manager, source data can come from metadata-first cooked cache assets, uploads are budgeted and generation-gated, and OpenGL can use sparse texture mip residency when the hardware and texture dimensions allow it.

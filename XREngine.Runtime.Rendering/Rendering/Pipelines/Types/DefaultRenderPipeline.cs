@@ -1795,6 +1795,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // Always clear color+depth so the GBuffer starts with known values.
             using (c.AddUsing<VPRC_BindFBOByName>(x =>
             {
+                x.FrameBufferName = DeferredGBufferFBOName;
                 x.Write = true;
                 x.ClearColor = true;
                 x.ClearDepth = true;
@@ -2046,6 +2047,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // Stencil is always cleared so post-process outline is driven only by current-frame writes.
             using (c.AddUsing<VPRC_BindFBOByName>(x =>
             {
+                x.FrameBufferName = ForwardPassFBOName;
                 x.Write = true;
                 x.ClearStencil = true;
                 x.DynamicName = () => RuntimeEnableMsaa ? ForwardPassMsaaFBOName : ForwardPassFBOName;
@@ -3596,19 +3598,21 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private AmbientOcclusionSettings? ResolveAmbientOcclusionSettings()
     {
-        var camera = State.SceneCamera
-            ?? State.RenderingCamera
-            ?? CurrentRenderingPipeline?.LastSceneCamera
-            ?? CurrentRenderingPipeline?.LastRenderingCamera;
+        var currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        var renderState = currentPipeline?.RenderState;
+        var camera = renderState?.SceneCamera
+            ?? renderState?.RenderingCamera
+            ?? currentPipeline?.LastSceneCamera
+            ?? currentPipeline?.LastRenderingCamera;
 
         if (camera is null)
         {
             Debug.RenderingEvery("AO.V1.Resolve.NoCamera", TimeSpan.FromSeconds(2),
                 "[AO][Diag][V1] ResolveAOSettings: camera=null (Scene={0},Rendering={1},LastScene={2},LastRendering={3})",
-                State.SceneCamera is null ? "null" : "set",
-                State.RenderingCamera is null ? "null" : "set",
-                CurrentRenderingPipeline?.LastSceneCamera is null ? "null" : "set",
-                CurrentRenderingPipeline?.LastRenderingCamera is null ? "null" : "set");
+                renderState?.SceneCamera is null ? "null" : "set",
+                renderState?.RenderingCamera is null ? "null" : "set",
+                currentPipeline?.LastSceneCamera is null ? "null" : "set",
+                currentPipeline?.LastRenderingCamera is null ? "null" : "set");
             return null;
         }
 

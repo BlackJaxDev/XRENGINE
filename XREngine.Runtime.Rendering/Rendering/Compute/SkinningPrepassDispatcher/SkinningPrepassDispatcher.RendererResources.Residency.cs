@@ -2,6 +2,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Compute;
 
@@ -229,6 +230,8 @@ internal sealed partial class SkinningPrepassDispatcher
             {
                 if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
                     gl.EnsureStorageAllocatedForGpuCopy();
+                else if (wrapper is VulkanRenderer.VkDataBuffer vk)
+                    vk.Generate();
             }
         }
 

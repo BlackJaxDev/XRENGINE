@@ -329,6 +329,52 @@ public sealed class HumanoidComponentTests
     }
 
     [Test]
+    public void UnityMecanimPreset_KeepsPositiveXLeftArmChainOnCorrectBodySide()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        Quaternion leftShoulderBindRotation = Quaternion.Normalize(new Quaternion(0.5544f, 0.4579f, 0.5255f, -0.4548f));
+        Quaternion rightShoulderBindRotation = Quaternion.Normalize(new Quaternion(0.5544f, -0.4579f, -0.5255f, -0.4548f));
+        Quaternion leftArmBindRotation = Quaternion.Normalize(new Quaternion(0.0843f, 0.0843f, -0.0072f, 0.9928f));
+        Quaternion rightArmBindRotation = Quaternion.Normalize(new Quaternion(0.0843f, -0.0843f, 0.0072f, 0.9928f));
+
+        var leftShoulder = new SceneNode(chest, "Shoulder_L", new Transform(
+            translation: new(0.023f, 0.193f, -0.003f),
+            rotation: leftShoulderBindRotation));
+        var rightShoulder = new SceneNode(chest, "Shoulder_R", new Transform(
+            translation: new(-0.023f, 0.193f, -0.003f),
+            rotation: rightShoulderBindRotation));
+        var leftArm = new SceneNode(leftShoulder, "Arm_L", new Transform(
+            translation: new(0.0f, 0.073f, 0.0f),
+            rotation: leftArmBindRotation));
+        var rightArm = new SceneNode(rightShoulder, "Arm_R", new Transform(
+            translation: new(0.0f, 0.073f, 0.0f),
+            rotation: rightArmBindRotation));
+        var leftElbow = new SceneNode(leftArm, "Elbow_L", new Transform(translation: new(0.0f, 0.221f, 0.0f)));
+        var rightElbow = new SceneNode(rightArm, "Elbow_R", new Transform(translation: new(0.0f, 0.221f, 0.0f)));
+        var leftWrist = new SceneNode(leftElbow, "Wrist_L", new Transform(translation: new(0.0f, 0.195f, 0.0f)));
+        var rightWrist = new SceneNode(rightElbow, "Wrist_R", new Transform(translation: new(0.0f, 0.195f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.Left.Shoulder.Node.ShouldBeSameAs(leftShoulder);
+        humanoid.Right.Shoulder.Node.ShouldBeSameAs(rightShoulder);
+        humanoid.Left.Arm.Node.ShouldBeSameAs(leftArm);
+        humanoid.Right.Arm.Node.ShouldBeSameAs(rightArm);
+
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+
+        leftArm.Transform.WorldTranslation.X.ShouldBeGreaterThan(leftShoulder.Transform.WorldTranslation.X);
+        rightArm.Transform.WorldTranslation.X.ShouldBeLessThan(rightShoulder.Transform.WorldTranslation.X);
+        leftWrist.Transform.WorldTranslation.X.ShouldBeGreaterThan(0.0f);
+        rightWrist.Transform.WorldTranslation.X.ShouldBeLessThan(0.0f);
+    }
+
+    [Test]
     public void SetFromNode_AssignsNegativeXBonesToLeftSide_AndInitialHandTargetsMatch()
     {
         var root = new SceneNode("Root", new Transform());

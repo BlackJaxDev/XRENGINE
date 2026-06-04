@@ -572,6 +572,17 @@ namespace XREngine.Rendering.Vulkan
                 null,
                 1,
                 barrierPtr);
+
+            UpdateTrackedBlitLayout(resolvedInfo, newLayout);
+        }
+
+        private static void UpdateTrackedBlitLayout(in BlitImageInfo info, ImageLayout layout)
+        {
+            if (info.DescriptorSource is IVkFrameBufferAttachmentSource attachmentSource)
+                attachmentSource.UpdateTrackedLayout(layout);
+
+            if (info.RenderBufferSource?.PhysicalGroup is { } group)
+                group.LastKnownLayout = layout;
         }
 
         private void TransitionSwapchainImage(CommandBuffer commandBuffer, Image image, ImageLayout oldLayout, ImageLayout newLayout)
@@ -737,7 +748,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!TryMapReadbackMemory(stagingMemory, 0, rawByteCount, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, rawByteCount, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -828,7 +839,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!TryMapReadbackMemory(stagingMemory, 0, rawByteCount, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, rawByteCount, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -1103,7 +1114,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -1188,7 +1199,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;

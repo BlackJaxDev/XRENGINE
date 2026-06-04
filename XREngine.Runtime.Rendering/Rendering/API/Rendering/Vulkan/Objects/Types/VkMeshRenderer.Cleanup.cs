@@ -87,17 +87,22 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private void DestroyDescriptors()
 		{
-			if (_descriptorSets is not null)
-				_descriptorSets = null;
-			_descriptorSchemaFingerprint = 0;
-
+			ReleaseDescriptorAllocation();
 			DestroyEngineUniformBuffers();
 			DestroyAutoUniformBuffers();
+		}
+
+		private void ReleaseDescriptorAllocation()
+		{
+			if (_descriptorSets is not null)
+				_descriptorSets = null;
+
+			_descriptorSchemaFingerprint = 0;
+			_descriptorResourceFingerprint = 0;
 
 			if (_descriptorPool.Handle != 0)
 			{
-				Api!.DestroyDescriptorPool(Device, _descriptorPool, null);
-				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+				Renderer.RetireDescriptorPool(_descriptorPool);
 				_descriptorPool = default;
 			}
 		}

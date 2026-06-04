@@ -11,6 +11,7 @@ using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 
 namespace XREngine.Rendering;
@@ -479,6 +480,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private void DestroyCacheOnRenderThread()
     {
         LogDefaultRenderPipelineResourceDestruction("DestroyCache");
+        WaitForGpuBeforePhysicalResourceDestruction("DestroyCache");
         Resources.DestroyAllPhysicalResources();
     }
 
@@ -493,6 +495,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
 
         LogDefaultRenderPipelineResourceDestruction($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
+        WaitForGpuBeforePhysicalResourceDestruction("InvalidatePhysicalResources");
         Resources.DestroyAllPhysicalResources(retainDescriptors: true);
         ResourceGeneration++;
     }
@@ -509,6 +512,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             pipeline.LogTextureDestroy(this, name, texture, reason);
         }
 
+        WaitForGpuBeforePhysicalResourceDestruction($"RemoveTextureResource[{name}]");
         Resources.RemoveTexture(name);
     }
 
@@ -524,7 +528,21 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             pipeline.LogFrameBufferDestroy(this, name, frameBuffer, reason);
         }
 
+        WaitForGpuBeforePhysicalResourceDestruction($"RemoveFrameBufferResource[{name}]");
         Resources.RemoveFrameBuffer(name);
+    }
+
+    private static void WaitForGpuBeforePhysicalResourceDestruction(string reason)
+    {
+        if (AbstractRenderer.Current is not VulkanRenderer renderer)
+            return;
+
+        renderer.DeviceWaitIdle();
+        Debug.VulkanEvery(
+            $"Vulkan.RenderPipeline.ResourceDestroy.WaitIdle.{reason}",
+            System.TimeSpan.FromSeconds(1),
+            "[Vulkan] DeviceWaitIdle before render-pipeline physical resource destruction: {0}",
+            reason);
     }
 
     public void ViewportResized(Vector2 size)

@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using ImageMagick;
 using Silk.NET.Vulkan;
 using XREngine.Data;
@@ -130,8 +129,16 @@ namespace XREngine.Rendering.Vulkan
             int w = Math.Clamp(region.Width, 1, Math.Max(1, (int)extent.Width - x));
             int h = Math.Clamp(region.Height, 1, Math.Max(1, (int)extent.Height - y));
 
-            ulong pixelStride = 4; // Assuming 8-bit RGBA swapchain formats (B8G8R8A8/R8G8B8A8).
-            ulong bufferSize = (ulong)(w * h) * pixelStride;
+            uint pixelStride = GetColorFormatPixelSize(swapChainImageFormat);
+            if (pixelStride == 0)
+            {
+                Debug.VulkanWarning($"[Vulkan] CalcDotLuminanceFrontAsync cannot read unsupported swapchain format {swapChainImageFormat}.");
+                callback?.Invoke(false, 0f);
+                return;
+            }
+
+            int pixelCount = w * h;
+            ulong bufferSize = (ulong)pixelCount * pixelStride;
 
             // Create a host-visible staging buffer to receive the image copy.
             var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
@@ -145,16 +152,8 @@ namespace XREngine.Rendering.Vulkan
 
                 // After swapchain recreation, new images start in UNDEFINED layout.
                 // Only assume PresentSrcKhr if the image was actually presented.
-                bool wasPresented = _swapchainImageEverPresented is not null
-                    && readIndex < _swapchainImageEverPresented.Length
-                    && _swapchainImageEverPresented[readIndex];
-
-                ImageLayout srcLayout = wasPresented
-                    ? ImageLayout.PresentSrcKhr
-                    : ImageLayout.Undefined;
-
                 // Transition to transfer src, copy, then transition back to present.
-                TransitionSwapchainImage(scope.CommandBuffer, image, srcLayout, ImageLayout.TransferSrcOptimal);
+                TransitionSwapchainImage(scope.CommandBuffer, image, GetSwapchainReadbackLayout(readIndex), ImageLayout.TransferSrcOptimal);
 
                 BufferImageCopy copy = new()
                 {
@@ -190,7 +189,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and compute luminance on CPU.
-            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 callback?.Invoke(false, 0f);
@@ -200,14 +199,19 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 float accum = 0f;
-                uint pixelCount = (uint)(w * h);
-                byte* p = (byte*)mappedPtr;
-                for (uint i = 0; i < pixelCount; i++)
+                byte[] rgba = new byte[pixelCount * 4];
+                if (!TryConvertColorPixelsToRgba8(mappedPtr, swapChainImageFormat, pixelCount, rgba))
                 {
-                    // Swapchain formats are BGRA; treat alpha as opaque for luminance.
-                    byte b = p[i * pixelStride + 0];
-                    byte g = p[i * pixelStride + 1];
-                    byte r = p[i * pixelStride + 2];
+                    callback?.Invoke(false, 0f);
+                    return;
+                }
+
+                for (int i = 0; i < pixelCount; i++)
+                {
+                    int index = i * 4;
+                    byte r = rgba[index + 0];
+                    byte g = rgba[index + 1];
+                    byte b = rgba[index + 2];
                     accum += (r * luminance.X + g * luminance.Y + b * luminance.Z) / 255f;
                 }
 
@@ -320,7 +324,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and read depth value
-            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return 1.0f;
@@ -574,6 +578,17 @@ namespace XREngine.Rendering.Vulkan
 
         // =========== Pixel Readback ===========
 
+        private ImageLayout GetSwapchainReadbackLayout(uint readIndex)
+        {
+            bool wasPresented = _swapchainImageEverPresented is not null
+                && readIndex < _swapchainImageEverPresented.Length
+                && _swapchainImageEverPresented[readIndex];
+
+            return wasPresented
+                ? ImageLayout.PresentSrcKhr
+                : ImageLayout.Undefined;
+        }
+
         public override void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> colorCallback)
         {
             if (_boundReadFrameBuffer is not null)
@@ -616,7 +631,14 @@ namespace XREngine.Rendering.Vulkan
             x = Math.Clamp(x, 0, (int)swapChainExtent.Width - 1);
             y = Math.Clamp(y, 0, (int)swapChainExtent.Height - 1);
 
-            ulong pixelStride = 4; // BGRA8
+            uint pixelStride = GetColorFormatPixelSize(swapChainImageFormat);
+            if (pixelStride == 0)
+            {
+                Debug.VulkanWarning($"[Vulkan] GetPixelAsync cannot read unsupported swapchain format {swapChainImageFormat}.");
+                colorCallback?.Invoke(ColorF4.Transparent);
+                return;
+            }
+
             ulong bufferSize = pixelStride;
 
             var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
@@ -627,7 +649,9 @@ namespace XREngine.Rendering.Vulkan
 
                 var image = swapChainImages[_lastPresentedImageIndex % (uint)swapChainImages.Length];
 
-                TransitionSwapchainImage(scope.CommandBuffer, image, ImageLayout.PresentSrcKhr, ImageLayout.TransferSrcOptimal);
+                uint readIndex = _lastPresentedImageIndex % (uint)swapChainImages.Length;
+                ImageLayout srcLayout = GetSwapchainReadbackLayout(readIndex);
+                TransitionSwapchainImage(scope.CommandBuffer, image, srcLayout, ImageLayout.TransferSrcOptimal);
 
                 BufferImageCopy copy = new()
                 {
@@ -663,24 +687,22 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and read pixel
-            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 colorCallback?.Invoke(ColorF4.Transparent);
                 return;
             }
 
-            byte* p = (byte*)mappedPtr;
-            // BGRA format
-            float b = p[0] / 255f;
-            float g = p[1] / 255f;
-            float r = p[2] / 255f;
-            float a = p[3] / 255f;
+            byte[] rgba = new byte[4];
+            bool converted = TryConvertColorPixelsToRgba8(mappedPtr, swapChainImageFormat, 1, rgba);
 
             Api!.UnmapMemory(device, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
 
-            colorCallback?.Invoke(new ColorF4(r, g, b, a));
+            colorCallback?.Invoke(converted
+                ? new ColorF4(rgba[0] / 255f, rgba[1] / 255f, rgba[2] / 255f, rgba[3] / 255f)
+                : ColorF4.Transparent);
         }
 
         // =========== Screenshot Readback ===========
@@ -741,8 +763,16 @@ namespace XREngine.Rendering.Vulkan
 
             ClampReadbackRegion(region, swapChainExtent.Width, swapChainExtent.Height, out int x, out int y, out int w, out int h);
 
-            ulong pixelStride = 4; // BGRA8
-            ulong bufferSize = (ulong)(w * h) * pixelStride;
+            uint pixelStride = GetColorFormatPixelSize(swapChainImageFormat);
+            if (pixelStride == 0)
+            {
+                Debug.VulkanWarning($"[Vulkan] GetScreenshotAsync cannot read unsupported swapchain format {swapChainImageFormat}.");
+                imageCallback?.Invoke(null!, 0);
+                return;
+            }
+
+            int pixelCount = w * h;
+            ulong bufferSize = (ulong)pixelCount * pixelStride;
 
             var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
 
@@ -752,7 +782,9 @@ namespace XREngine.Rendering.Vulkan
 
                 var image = swapChainImages[_lastPresentedImageIndex % (uint)swapChainImages.Length];
 
-                TransitionSwapchainImage(scope.CommandBuffer, image, ImageLayout.PresentSrcKhr, ImageLayout.TransferSrcOptimal);
+                uint readIndex = _lastPresentedImageIndex % (uint)swapChainImages.Length;
+                ImageLayout srcLayout = GetSwapchainReadbackLayout(readIndex);
+                TransitionSwapchainImage(scope.CommandBuffer, image, srcLayout, ImageLayout.TransferSrcOptimal);
 
                 BufferImageCopy copy = new()
                 {
@@ -787,7 +819,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 imageCallback?.Invoke(null!, 0);
@@ -796,12 +828,12 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                byte[] pixels = new byte[(int)bufferSize];
-                Marshal.Copy((IntPtr)mappedPtr, pixels, 0, (int)bufferSize);
-
-                // Swapchain path reads BGRA8, while Magick expects RGBA.
-                for (int i = 0; i < pixels.Length; i += 4)
-                    (pixels[i], pixels[i + 2]) = (pixels[i + 2], pixels[i]);
+                byte[] pixels = new byte[pixelCount * 4];
+                if (!TryConvertColorPixelsToRgba8(mappedPtr, swapChainImageFormat, pixelCount, pixels))
+                {
+                    imageCallback?.Invoke(null!, 0);
+                    return;
+                }
 
                 var magickImage = new MagickImage(pixels, new MagickReadSettings
                 {
@@ -890,7 +922,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and compute average luminance
-            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -977,7 +1009,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // Map and read the pixel
-            if (!TryMapReadbackMemory(stagingMemory, 0, bufferSize, out void* mappedPtr))
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;

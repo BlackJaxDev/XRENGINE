@@ -98,7 +98,7 @@ internal unsafe sealed class VulkanStagingManager
             }
 
             if (data != null)
-                renderer.UploadBufferMemory(entry.Memory, requestedSize, data.Pointer);
+                renderer.UploadBufferMemory(entry.Buffer, entry.Memory, requestedSize, data.Pointer);
 
             return (entry.Buffer, entry.Memory);
         }

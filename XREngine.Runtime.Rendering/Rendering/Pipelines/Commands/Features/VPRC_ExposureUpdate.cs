@@ -1,5 +1,6 @@
 using System;
 using XREngine.Rendering;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -43,6 +44,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            int passIndex = ResolvePassIndex(nameof(VPRC_ExposureUpdate));
+            using var passScope = passIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
+
             var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<ColorGradingSettings>();
             if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true || grading is null)
             {
@@ -101,6 +107,30 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             HDRSceneTextureName = hdrSceneTextureName;
             GenerateMipmapsHere = generateMipmapsHere;
+        }
+
+        private int ResolvePassIndex(string passName)
+        {
+            var metadata = ParentPipeline?.PassMetadata;
+            if (metadata is null)
+                return int.MinValue;
+
+            foreach (var pass in metadata)
+            {
+                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
+                    return pass.PassIndex;
+            }
+
+            return int.MinValue;
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            var pass = context.GetOrCreateSyntheticPass(nameof(VPRC_ExposureUpdate), ERenderGraphPassStage.Compute);
+            pass.SampleTexture(MakeTextureResource(HDRSceneTextureName));
+            pass.ReadWriteTexture(MakeTextureResource(AutoExposureTextureName));
         }
     }
 }

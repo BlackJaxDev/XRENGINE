@@ -6,11 +6,11 @@ using System.Reflection;
 using System.Threading;
 using XREngine;
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Scene;
-using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
@@ -125,6 +125,24 @@ public static class Undo
     /// a node before the undo destroy callback sees it, so tracked scene ownership is retained here.
     /// </summary>
     private static readonly Dictionary<SceneNode, List<SceneRootPlacement>> _trackedSceneRootPlacements = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Scene-node delete undo snapshots preserve asset references instead of cloning
+    /// heavyweight meshes, models, textures, and clips into the undo payload.
+    /// </summary>
+    private static readonly CookedBinarySerializationCallbacks SceneNodeDestroySnapshotCallbacks = new()
+    {
+        OnSerializingValue = static value => value switch
+        {
+            null => null,
+            SceneNodeDestroyAssetReference => value,
+            XRAsset asset => SceneNodeDestroyAssetReference.FromAsset(asset),
+            _ => value
+        },
+        OnDeserializedValue = static value => value is SceneNodeDestroyAssetReference reference
+            ? reference.Resolve()
+            : value
+    };
 
     /// <summary>
     /// Flag indicating whether the transform refresh hook has been registered.
@@ -1535,7 +1553,7 @@ public static class Undo
 
     private sealed class SceneNodeDestroyUndoState
     {
-        private readonly SceneNode _snapshot;
+        private readonly byte[] _snapshotPayload;
         private readonly TransformBase? _parentTransform;
         private readonly XRWorldInstance? _world;
         private readonly bool _wasWorldRoot;
@@ -1544,7 +1562,7 @@ public static class Undo
         private SceneNode? _restoredNode;
 
         private SceneNodeDestroyUndoState(
-            SceneNode snapshot,
+            byte[] snapshotPayload,
             string displayName,
             TransformBase? parentTransform,
             XRWorldInstance? world,
@@ -1552,7 +1570,7 @@ public static class Undo
             bool wasEditorSceneRoot,
             List<SceneRootPlacement> sceneRootPlacements)
         {
-            _snapshot = snapshot;
+            _snapshotPayload = snapshotPayload;
             DisplayName = displayName;
             _parentTransform = parentTransform;
             _world = world;
@@ -1578,7 +1596,7 @@ public static class Undo
                 sceneRootPlacements.Any(static placement => placement.SceneIsVisible));
 
             return new SceneNodeDestroyUndoState(
-                SceneNodePrefabUtility.CloneHierarchy(node),
+                SerializeSceneNodeSnapshot(node),
                 node.Name ?? SceneNode.DefaultName,
                 parentTransform,
                 world,
@@ -1592,7 +1610,7 @@ public static class Undo
             if (_restoredNode is { IsDestroyed: false })
                 return;
 
-            SceneNode restored = SceneNodePrefabUtility.CloneHierarchy(_snapshot);
+            SceneNode restored = DeserializeSceneNodeSnapshot(_snapshotPayload);
             Attach(restored);
             TrackSceneNode(restored);
             _restoredNode = restored;
@@ -1655,6 +1673,23 @@ public static class Undo
 
             return GetRememberedSceneRootPlacements(node);
         }
+
+        private static byte[] SerializeSceneNodeSnapshot(SceneNode node)
+        {
+            byte[] payload = CookedBinarySerializer.Serialize(node, SceneNodeDestroySnapshotCallbacks);
+            if (payload.Length == 0)
+                throw new InvalidOperationException("Cooked scene-node snapshot was empty.");
+
+            return payload;
+        }
+
+        private static SceneNode DeserializeSceneNodeSnapshot(byte[] payload)
+        {
+            if (CookedBinarySerializer.Deserialize(typeof(SceneNode), payload, SceneNodeDestroySnapshotCallbacks) is not SceneNode node)
+                throw new InvalidOperationException("Cooked scene-node snapshot did not restore a scene node.");
+
+            return node;
+        }
     }
 
     private readonly struct SceneRootPlacement(XRScene scene, int index)
@@ -1671,6 +1706,49 @@ public static class Undo
                 scene.RootNodes.Add(node);
             else
                 scene.RootNodes.Insert(index, node);
+        }
+    }
+
+    [Serializable]
+    private sealed class SceneNodeDestroyAssetReference
+    {
+        public Guid AssetId { get; set; }
+        public string? AssetPath { get; set; }
+        public string? AssetType { get; set; }
+        public string? AssetName { get; set; }
+
+        public static SceneNodeDestroyAssetReference FromAsset(XRAsset asset)
+            => new()
+            {
+                AssetId = asset.ID,
+                AssetPath = asset.FilePath,
+                AssetType = asset.GetType().AssemblyQualifiedName,
+                AssetName = asset.Name
+            };
+
+        public XRAsset? Resolve()
+        {
+            if (AssetId != Guid.Empty)
+            {
+                if (XRObjectBase.ObjectsCache.TryGetValue(AssetId, out XRObjectBase? cachedObject) && cachedObject is XRAsset cachedAsset)
+                    return cachedAsset;
+
+                if (Engine.Assets.TryGetAssetByID(AssetId, out XRAsset? loadedById) && loadedById is not null)
+                    return loadedById;
+            }
+
+            if (!string.IsNullOrWhiteSpace(AssetPath) &&
+                Engine.Assets.TryGetAssetByPath(AssetPath, out XRAsset? loadedByPath) &&
+                loadedByPath is not null)
+            {
+                return loadedByPath;
+            }
+
+            string displayName = !string.IsNullOrWhiteSpace(AssetName)
+                ? AssetName!
+                : AssetPath ?? AssetType ?? AssetId.ToString();
+            Debug.LogWarning($"Unable to resolve asset reference '{displayName}' while restoring deleted scene node.");
+            return null;
         }
     }
 

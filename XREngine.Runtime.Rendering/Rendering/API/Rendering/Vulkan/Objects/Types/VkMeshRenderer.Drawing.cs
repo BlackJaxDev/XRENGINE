@@ -340,7 +340,7 @@ public unsafe partial class VulkanRenderer
 			Renderer.PushConstantsTracked(
 				commandBuffer,
 				_program.PipelineLayout,
-				ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+				ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit | ShaderStageFlags.ComputeBit,
 				0,
 				constants);
 		}

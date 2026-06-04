@@ -1,3 +1,4 @@
+using System;
 using System.ComponentModel;
 using ImageMagick;
 using MemoryPack;
@@ -154,18 +155,18 @@ namespace XREngine.Rendering
             var p = image.GetPixels().GetValues() ?? [];
             int pixelCount = (int)(image.Width * image.Height);
             int srcChannelCount = (int)image.ChannelCount;
+            double channelScale = ResolveMagickChannelScale(p, image.Depth);
 
             Data = DataSource.Allocate<byte>((uint)(pixelCount * 4));
             byte* dst = (byte*)Data.Address;
-            const float normalizeU16 = 255.0f / ushort.MaxValue;
 
             for (int i = 0; i < pixelCount; i++)
             {
                 int srcBase = i * srcChannelCount;
-                byte r = (byte)(p[srcBase] * normalizeU16 + 0.5f);
-                byte g = srcChannelCount > 1 ? (byte)(p[srcBase + 1] * normalizeU16 + 0.5f) : r;
-                byte b = srcChannelCount > 2 ? (byte)(p[srcBase + 2] * normalizeU16 + 0.5f) : r;
-                byte a = srcChannelCount > 3 ? (byte)(p[srcBase + 3] * normalizeU16 + 0.5f) : (byte)255;
+                byte r = ScaleMagickChannelToByte(p[srcBase], channelScale);
+                byte g = srcChannelCount > 1 ? ScaleMagickChannelToByte(p[srcBase + 1], channelScale) : r;
+                byte b = srcChannelCount > 2 ? ScaleMagickChannelToByte(p[srcBase + 2], channelScale) : r;
+                byte a = srcChannelCount > 3 ? ScaleMagickChannelToByte(p[srcBase + 3], channelScale) : (byte)255;
                 dst[i * 4 + 0] = r;
                 dst[i * 4 + 1] = g;
                 dst[i * 4 + 2] = b;
@@ -174,6 +175,38 @@ namespace XREngine.Rendering
 
             Width = image.Width;
             Height = image.Height;
+        }
+
+        private static double ResolveMagickChannelScale<T>(T[] channels, uint imageDepth) where T : struct, IConvertible
+        {
+            double maxObserved = 0.0;
+            for (int i = 0; i < channels.Length; i++)
+                maxObserved = Math.Max(maxObserved, channels[i].ToDouble(null));
+
+            TypeCode channelType = Type.GetTypeCode(typeof(T));
+            bool floatingPointChannels = channelType is TypeCode.Single or TypeCode.Double or TypeCode.Decimal;
+            if (imageDepth <= 8 && maxObserved <= byte.MaxValue)
+                return 1.0;
+
+            if (maxObserved <= 1.0)
+                return floatingPointChannels ? 255.0 : 255.0 / ushort.MaxValue;
+
+            if (imageDepth > 8 && maxObserved <= ushort.MaxValue)
+                return 255.0 / ushort.MaxValue;
+
+            if (maxObserved <= byte.MaxValue)
+                return 1.0;
+
+            if (maxObserved <= ushort.MaxValue)
+                return 255.0 / ushort.MaxValue;
+
+            return 255.0 / maxObserved;
+        }
+
+        private static byte ScaleMagickChannelToByte<T>(T channel, double scale) where T : struct, IConvertible
+        {
+            double value = channel.ToDouble(null) * scale;
+            return (byte)Math.Clamp((int)Math.Round(value), byte.MinValue, byte.MaxValue);
         }
 
         public MagickImage GetImage()

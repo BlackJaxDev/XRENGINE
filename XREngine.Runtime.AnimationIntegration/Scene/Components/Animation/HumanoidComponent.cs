@@ -28,6 +28,28 @@ namespace XREngine.Components.Animation
         private readonly object _muscleValuesLock = new();
         private const int MuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
         private readonly float[] _muscleValueSnapshot = new float[MuscleValueCount];
+        private static readonly (string Left, string Right)[] MecanimArmSideMirrorPairs =
+        [
+            ("LeftShoulder", "RightShoulder"),
+            ("LeftUpperArm", "RightUpperArm"),
+            ("LeftLowerArm", "RightLowerArm"),
+            ("LeftHand", "RightHand"),
+            ("LeftThumbProximal", "RightThumbProximal"),
+            ("LeftThumbIntermediate", "RightThumbIntermediate"),
+            ("LeftThumbDistal", "RightThumbDistal"),
+            ("LeftIndexProximal", "RightIndexProximal"),
+            ("LeftIndexIntermediate", "RightIndexIntermediate"),
+            ("LeftIndexDistal", "RightIndexDistal"),
+            ("LeftMiddleProximal", "RightMiddleProximal"),
+            ("LeftMiddleIntermediate", "RightMiddleIntermediate"),
+            ("LeftMiddleDistal", "RightMiddleDistal"),
+            ("LeftRingProximal", "RightRingProximal"),
+            ("LeftRingIntermediate", "RightRingIntermediate"),
+            ("LeftRingDistal", "RightRingDistal"),
+            ("LeftLittleProximal", "RightLittleProximal"),
+            ("LeftLittleIntermediate", "RightLittleIntermediate"),
+            ("LeftLittleDistal", "RightLittleDistal"),
+        ];
         private static readonly AsyncLocal<int> _deferSceneNodeInitializationScopeDepth = new();
         private readonly Dictionary<SceneNode, Matrix4x4> _humanoidBindLocalPoses = [];
         private readonly Dictionary<SceneNode, Matrix4x4> _humanoidBindWorldPoses = [];
@@ -582,22 +604,33 @@ namespace XREngine.Components.Animation
             => ApplyNeutralPosePreset(preset, applyPreview: true);
 
         private void ApplyNeutralPosePreset(EHumanoidNeutralPosePreset preset, bool applyPreview)
-            => ApplyNeutralPoseLocalRotations(HumanoidNeutralPosePresets.GetRotations(preset), applyPreview);
+        {
+            IReadOnlyDictionary<string, Quaternion> rotations = HumanoidNeutralPosePresets.GetRotations(preset);
+            bool mirrorArmSideConvention =
+                preset == EHumanoidNeutralPosePreset.UnityMecanim &&
+                ShouldMirrorNeutralPoseArmSideConvention(rotations);
+
+            ApplyNeutralPoseLocalRotations(rotations, applyPreview, mirrorArmSideConvention);
+        }
 
         public void ApplyNeutralPoseLocalRotations(IReadOnlyDictionary<string, Quaternion> rotations)
-            => ApplyNeutralPoseLocalRotations(rotations, applyPreview: true);
+            => ApplyNeutralPoseLocalRotations(rotations, applyPreview: true, mirrorArmSideConvention: false);
 
-        private void ApplyNeutralPoseLocalRotations(IReadOnlyDictionary<string, Quaternion> rotations, bool applyPreview)
+        private void ApplyNeutralPoseLocalRotations(
+            IReadOnlyDictionary<string, Quaternion> rotations,
+            bool applyPreview,
+            bool mirrorArmSideConvention)
         {
             Settings.NeutralPoseBoneRotations.Clear();
             foreach ((string boneName, Quaternion rotation) in rotations)
             {
                 string targetBoneName = ResolveNeutralPoseBoneSettingKey(boneName);
                 SceneNode? targetNode = ResolveNeutralPoseMappedNodeByStoredKey(targetBoneName);
-                Quaternion bindRelativeRotation = rotation;
+                Quaternion targetRotation = ResolveNeutralPoseLocalRotation(rotations, boneName, rotation, mirrorArmSideConvention);
+                Quaternion bindRelativeRotation = targetRotation;
 
                 if (targetNode is not null && TryGetHumanoidBindLocalState(targetNode, out _, out Quaternion bindRotation, out _))
-                    bindRelativeRotation = Quaternion.Normalize(Quaternion.Inverse(bindRotation) * rotation);
+                    bindRelativeRotation = Quaternion.Normalize(Quaternion.Inverse(bindRotation) * targetRotation);
 
                 Settings.NeutralPoseBoneRotations[targetBoneName] = Quaternion.Normalize(bindRelativeRotation);
             }
@@ -605,6 +638,118 @@ namespace XREngine.Components.Animation
             if (applyPreview && PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
                 ApplyNeutralPosePreview();
         }
+
+        private static Quaternion ResolveNeutralPoseLocalRotation(
+            IReadOnlyDictionary<string, Quaternion> rotations,
+            string boneName,
+            Quaternion fallback,
+            bool mirrorArmSideConvention)
+        {
+            if (!mirrorArmSideConvention || !TryGetMirroredMecanimArmBoneName(boneName, out string mirroredBoneName))
+                return fallback;
+
+            return rotations.TryGetValue(mirroredBoneName, out Quaternion mirroredRotation)
+                ? mirroredRotation
+                : fallback;
+        }
+
+        private static bool TryGetMirroredMecanimArmBoneName(string boneName, out string mirroredBoneName)
+        {
+            foreach ((string left, string right) in MecanimArmSideMirrorPairs)
+            {
+                if (StringComparer.Ordinal.Equals(boneName, left))
+                {
+                    mirroredBoneName = right;
+                    return true;
+                }
+
+                if (StringComparer.Ordinal.Equals(boneName, right))
+                {
+                    mirroredBoneName = left;
+                    return true;
+                }
+            }
+
+            mirroredBoneName = string.Empty;
+            return false;
+        }
+
+        private bool ShouldMirrorNeutralPoseArmSideConvention(IReadOnlyDictionary<string, Quaternion> rotations)
+        {
+            if (!rotations.TryGetValue("LeftShoulder", out Quaternion leftShoulderRotation) ||
+                !rotations.TryGetValue("RightShoulder", out Quaternion rightShoulderRotation) ||
+                Left.Shoulder.Node is null ||
+                Left.Arm.Node is null ||
+                Right.Shoulder.Node is null ||
+                Right.Arm.Node is null)
+            {
+                return false;
+            }
+
+            GetBindBodyBasis(out Vector3 bodyLeft, out Vector3 bodyUp, out _);
+
+            Vector3 leftBindDirection = ProjectToBodySidePlane(
+                GetBoneToChildAxisWorld(Left.Shoulder, Left.Arm, bodyLeft),
+                bodyUp,
+                bodyLeft);
+            Vector3 rightBindDirection = ProjectToBodySidePlane(
+                GetBoneToChildAxisWorld(Right.Shoulder, Right.Arm, -bodyLeft),
+                bodyUp,
+                -bodyLeft);
+
+            if (!TryGetNeutralPoseChildDirectionWorld(Left.Shoulder.Node, Left.Arm.Node, leftShoulderRotation, out Vector3 leftCurrentDirection) ||
+                !TryGetNeutralPoseChildDirectionWorld(Right.Shoulder.Node, Right.Arm.Node, rightShoulderRotation, out Vector3 rightCurrentDirection) ||
+                !TryGetNeutralPoseChildDirectionWorld(Left.Shoulder.Node, Left.Arm.Node, rightShoulderRotation, out Vector3 leftSwappedDirection) ||
+                !TryGetNeutralPoseChildDirectionWorld(Right.Shoulder.Node, Right.Arm.Node, leftShoulderRotation, out Vector3 rightSwappedDirection))
+            {
+                return false;
+            }
+
+            leftCurrentDirection = ProjectToBodySidePlane(leftCurrentDirection, bodyUp, bodyLeft);
+            rightCurrentDirection = ProjectToBodySidePlane(rightCurrentDirection, bodyUp, -bodyLeft);
+            leftSwappedDirection = ProjectToBodySidePlane(leftSwappedDirection, bodyUp, bodyLeft);
+            rightSwappedDirection = ProjectToBodySidePlane(rightSwappedDirection, bodyUp, -bodyLeft);
+
+            float currentAgreement =
+                Vector3.Dot(leftCurrentDirection, leftBindDirection) +
+                Vector3.Dot(rightCurrentDirection, rightBindDirection);
+            float swappedAgreement =
+                Vector3.Dot(leftSwappedDirection, leftBindDirection) +
+                Vector3.Dot(rightSwappedDirection, rightBindDirection);
+
+            return swappedAgreement > currentAgreement + 0.25f;
+        }
+
+        private bool TryGetNeutralPoseChildDirectionWorld(
+            SceneNode parentNode,
+            SceneNode childNode,
+            Quaternion parentLocalRotation,
+            out Vector3 direction)
+        {
+            direction = Vector3.Zero;
+            if (!TryGetHumanoidBindLocalState(parentNode, out Vector3 scale, out _, out Vector3 translation))
+                return false;
+
+            Matrix4x4 childLocalPose = _humanoidBindLocalPoses.TryGetValue(childNode, out Matrix4x4 capturedChildLocalPose)
+                ? capturedChildLocalPose
+                : GetCurrentLocalMatrix(childNode);
+
+            Matrix4x4 parentLocalPose =
+                Matrix4x4.CreateScale(scale) *
+                Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(parentLocalRotation)) *
+                Matrix4x4.CreateTranslation(translation);
+            Matrix4x4 parentWorldPose = parentNode.Transform.Parent?.SceneNode is SceneNode parentSceneNode
+                ? GetHumanoidBindWorldPose(parentSceneNode)
+                : parentNode.Transform.Parent?.BindMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 parentCandidateWorldPose = parentLocalPose * parentWorldPose;
+            Matrix4x4 childCandidateWorldPose = childLocalPose * parentCandidateWorldPose;
+
+            direction = childCandidateWorldPose.Translation - parentCandidateWorldPose.Translation;
+            return direction.LengthSquared() > 1e-8f;
+        }
+
+        private static Vector3 ProjectToBodySidePlane(Vector3 direction, Vector3 bodyUp, Vector3 fallback)
+            => NormalizeOrFallback(RejectAxis(direction, bodyUp), fallback);
 
         public void ApplyNeutralPoseRotations(IReadOnlyDictionary<string, Quaternion> rotations)
         {

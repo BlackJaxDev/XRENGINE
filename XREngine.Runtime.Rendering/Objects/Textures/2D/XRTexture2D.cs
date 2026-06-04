@@ -368,23 +368,23 @@ namespace XREngine.Rendering
 
                 try
                 {
-                    texture.ShouldLoadDataFromInternalPBO = true;
-
                     var mipmaps = texture.Mipmaps;
                     uint w = mipmaps?.Length > 0 ? mipmaps[0].Width : 0;
                     uint h = mipmaps?.Length > 0 ? mipmaps[0].Height : 0;
                     //RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Starting upload for '{texture.Name}' ({w}x{h}), {mipmaps?.Length ?? 0} mipmaps, IsRenderThread={RuntimeRenderingHostServices.Current.IsRenderThread}");
 
-                    if (mipmaps is not null && mipmaps.Length > 0)
+                    if (mipmaps is not null)
                     {
                         for (int i = 0; i < mipmaps.Length; ++i)
                         {
                             if (cancellationToken.IsCancellationRequested)
                                 return;
-                            texture.LoadFromPBO(i);
+
+                            mipmaps[i].StreamingPBO = null;
                         }
                     }
 
+                    texture.ShouldLoadDataFromInternalPBO = false;
                     texture.Generate();
                     texture.PushData();
                     //RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Completed upload for '{texture.Name}'");

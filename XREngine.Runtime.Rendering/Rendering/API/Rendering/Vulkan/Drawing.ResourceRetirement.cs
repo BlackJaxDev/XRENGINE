@@ -40,6 +40,63 @@ namespace XREngine.Rendering.Vulkan
         private readonly HashSet<ulong>[] _retiredFramebufferHandles =
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
+        // =========== Descriptor Pool Retirement ===========
+
+        /// <summary>
+        /// Per-frame-slot retirement queue for descriptor pools whose descriptor
+        /// sets may still be referenced by previously recorded command buffers.
+        /// </summary>
+        private readonly List<DescriptorPool>[] _retiredDescriptorPools =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        private readonly HashSet<ulong>[] _retiredDescriptorPoolHandles =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        internal void RetireDescriptorPool(DescriptorPool descriptorPool)
+        {
+            if (descriptorPool.Handle == 0)
+                return;
+
+            int frameSlot = currentFrame;
+
+            lock (_retiredResourceLock)
+            {
+                if (!_retiredDescriptorPoolHandles[frameSlot].Add(descriptorPool.Handle))
+                    return;
+
+                _retiredDescriptorPools[frameSlot].Add(descriptorPool);
+            }
+        }
+
+        private void DrainRetiredDescriptorPools()
+        {
+            int frameSlot = currentFrame;
+            DescriptorPool[] retired;
+
+            lock (_retiredResourceLock)
+            {
+                var list = _retiredDescriptorPools[frameSlot];
+                if (list.Count == 0)
+                    return;
+
+                retired = [.. list];
+                list.Clear();
+                _retiredDescriptorPoolHandles[frameSlot].Clear();
+            }
+
+            if (Api is null || device.Handle == 0)
+                return;
+
+            foreach (DescriptorPool pool in retired)
+            {
+                if (pool.Handle == 0)
+                    continue;
+
+                Api!.DestroyDescriptorPool(device, pool, null);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+            }
+        }
+
         /// <summary>
         /// Queues a VkFramebuffer for deferred destruction.  The handle will be
         /// destroyed the next time this frame slot is reused (after the timeline
@@ -150,6 +207,8 @@ namespace XREngine.Rendering.Vulkan
 
             foreach (var (buf, mem) in retired)
             {
+                DeviceMemory memory = mem;
+
                 // Free through allocator if tracked, otherwise direct FreeMemory.
                 if (buf.Handle != 0 && destroyedBuffers.Add(buf.Handle))
                 {
@@ -159,11 +218,15 @@ namespace XREngine.Rendering.Vulkan
                         FreeMemoryAllocation(allocation);
                         continue;
                     }
+
+                    if (_legacyBufferAllocations.TryRemove(buf.Handle, out VulkanMemoryAllocation legacyAllocation) && memory.Handle == 0)
+                        memory = legacyAllocation.Memory;
+
                     Api!.DestroyBuffer(device, buf, null);
                 }
 
-                if (mem.Handle != 0 && freedMemories.Add(mem.Handle))
-                    Api!.FreeMemory(device, mem, null);
+                if (memory.Handle != 0 && freedMemories.Add(memory.Handle))
+                    Api!.FreeMemory(device, memory, null);
             }
         }
 
@@ -263,6 +326,7 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             {
                 currentFrame = i;
+                DrainRetiredDescriptorPools();
                 DrainRetiredBuffers();
                 DrainRetiredImages();
                 DrainRetiredFramebuffers();
