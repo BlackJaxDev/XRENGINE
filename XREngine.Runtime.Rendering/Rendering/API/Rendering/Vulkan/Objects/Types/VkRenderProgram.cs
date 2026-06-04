@@ -1310,7 +1310,61 @@ public unsafe partial class VulkanRenderer
                     return true;
             }
 
+            if (binding.DescriptorType == DescriptorType.UniformBuffer &&
+                TryCreateFallbackComputeUniformBuffer(binding, tempUniformBuffers, out bufferInfo))
+            {
+                RecordComputeDescriptorFallback(binding);
+                return true;
+            }
+
             return false;
+        }
+
+        private bool TryCreateFallbackComputeUniformBuffer(
+            DescriptorBindingInfo binding,
+            List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers,
+            out DescriptorBufferInfo bufferInfo)
+        {
+            bufferInfo = default;
+
+            const uint fallbackSize = 4096u;
+            (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) = Renderer.CreateBuffer(
+                fallbackSize,
+                BufferUsageFlags.UniformBufferBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                null);
+
+            if (buffer.Handle == 0 || memory.Handle == 0)
+                return false;
+
+            ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer);
+            void* mapped;
+            if (Api!.MapMemory(Device, memory, memoryOffset, fallbackSize, 0, &mapped) != Result.Success)
+            {
+                Renderer.DestroyBuffer(buffer, memory);
+                return false;
+            }
+
+            try
+            {
+                Span<byte> data = new(mapped, (int)fallbackSize);
+                data.Clear();
+            }
+            finally
+            {
+                Api.UnmapMemory(Device, memory);
+            }
+
+            tempUniformBuffers.Add((buffer, memory));
+            bufferInfo = new DescriptorBufferInfo
+            {
+                Buffer = buffer,
+                Offset = 0,
+                Range = fallbackSize
+            };
+
+            WarnComputeOnce($"Using zero-filled fallback uniform buffer for unresolved binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
+            return true;
         }
 
         private bool TryCreateDescriptorBufferInfo(XRDataBuffer dataBuffer, out DescriptorBufferInfo bufferInfo)
@@ -1435,21 +1489,9 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-            ImageLayout descriptorLayout = layout;
-            ImageLayout trackedLayout = source.TrackedImageLayout;
-            if (trackedLayout != ImageLayout.Undefined)
-            {
-                if (requiresStorageUsage && trackedLayout == ImageLayout.General)
-                {
-                    descriptorLayout = trackedLayout;
-                }
-                else if (requiresSampledUsage && trackedLayout is ImageLayout.ShaderReadOnlyOptimal
-                    or ImageLayout.DepthStencilReadOnlyOptimal
-                    or ImageLayout.General)
-                {
-                    descriptorLayout = trackedLayout;
-                }
-            }
+            ImageLayout descriptorLayout = Renderer.ResolveDescriptorImageLayout(
+                source,
+                requiresStorageUsage ? DescriptorType.StorageImage : DescriptorType.SampledImage);
 
             imageInfo = new DescriptorImageInfo
             {
@@ -1494,8 +1536,9 @@ public unsafe partial class VulkanRenderer
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
                 null);
 
+            ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer);
             void* mapped;
-            if (Api!.MapMemory(Device, memory, 0, size, 0, &mapped) != Result.Success)
+            if (Api!.MapMemory(Device, memory, memoryOffset, size, 0, &mapped) != Result.Success)
                 return false;
 
             try

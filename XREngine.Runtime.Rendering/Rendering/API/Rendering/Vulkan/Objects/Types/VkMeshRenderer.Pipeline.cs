@@ -186,9 +186,10 @@ public unsafe partial class VulkanRenderer
 			pipeline = default;
 
 			if (_pipelineDirty)
+			{
 				DestroyPipelines();
-
-			_descriptorDirty = true; // Pipeline/program changes always invalidate descriptor sets
+				_descriptorDirty = true;
+			}
 
 			if (!EnsureProgram(material))
 				return false;

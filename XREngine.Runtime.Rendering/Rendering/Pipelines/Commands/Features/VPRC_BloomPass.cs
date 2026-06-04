@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using System;
+using System.Collections.Generic;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -57,6 +58,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private const string BloomDownsampleStereoFallbackScopeName = "Bloom Downsample shader=BloomDownsampleStereo.fs";
         private const string BloomUpsampleFallbackScopeName = "Bloom Upsample shader=BloomUpsample.fs";
         private const string BloomUpsampleStereoFallbackScopeName = "Bloom Upsample shader=BloomUpsampleStereo.fs";
+        private const string BloomSourceSamplerName = "SourceTexture";
 
         private static readonly string[] BloomDownsampleScopeNames =
         [
@@ -114,6 +116,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private uint _lastWidth = 0u;
         private uint _lastHeight = 0u;
         private int _activeBloomMaxMip = 0;
+        private XRTexture? _bloomSourceViewTexture;
+        private readonly Dictionary<int, XRTexture> _bloomSourceMipViews = [];
 
         private const int BloomMaxMipmapLevel = 4;
 
@@ -276,6 +280,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture outputTexture = CreateBloomTexture(width, height, _activeBloomMaxMip,
                 internalFormat, sizedInternalFormat, pixelFormat, pixelType);
 
+            _bloomSourceMipViews.Clear();
+            _bloomSourceViewTexture = outputTexture;
             instance.SetTexture(outputTexture);
 
             if (outputTexture is not IFrameBufferAttachement outputAttach)
@@ -284,43 +290,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             string downsampleShader = Path.Combine(SceneShaderPath, GetDownsampleShaderName());
             string upsampleShader = Path.Combine(SceneShaderPath, GetUpsampleShaderName());
 
-            // --- Downsample material ---
-            XRMaterial downsampleMat = new(
-                [
-                    new ShaderInt(0, "SourceLOD"),
-                    new ShaderBool(false, "UseThreshold"),
-                    new ShaderBool(false, "UseKarisAverage"),
-                ],
-                [outputTexture],
-                XRShader.EngineShader(downsampleShader, EShaderType.Fragment))
-            {
-                RenderOptions = NoDepthTestParams()
-            };
-
-            // --- Upsample material (additive blend into existing mip content) ---
-            XRMaterial upsampleMat = new(
-                [
-                    new ShaderInt(0, "SourceLOD"),
-                    new ShaderFloat(1.0f, "Radius"),
-                    new ShaderFloat(0.7f, "Scatter"),
-                ],
-                [outputTexture],
-                XRShader.EngineShader(upsampleShader, EShaderType.Fragment))
-            {
-                RenderOptions = UpsampleBlendParams()
-            };
-
             // --- Mip 0 write target (for initial HDR scene copy) ---
             // Uses the downsample material but is only bound for writing; the
             // inputFBO material is what actually renders into it.
-            var mip0 = new XRQuadFrameBuffer(downsampleMat) { Name = BloomMip0FBOName };
+            var mip0 = new XRQuadFrameBuffer(CreateDownsampleMaterial(outputTexture, 0, downsampleShader)) { Name = BloomMip0FBOName };
             mip0.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
             instance.SetFBO(mip0);
 
             // --- Downsample FBOs (target mips 1..N) ---
             for (int mipLevel = 1; mipLevel <= _activeBloomMaxMip; ++mipLevel)
             {
-                var downsampleFbo = new XRQuadFrameBuffer(downsampleMat) { Name = GetDownsampleFboName(mipLevel) };
+                var downsampleFbo = new XRQuadFrameBuffer(CreateDownsampleMaterial(outputTexture, mipLevel - 1, downsampleShader)) { Name = GetDownsampleFboName(mipLevel) };
                 downsampleFbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, mipLevel, -1));
                 downsampleFbo.SettingUniforms += mipLevel == 1
                     ? DownsampleLevel1_SettingUniforms
@@ -331,12 +311,39 @@ namespace XREngine.Rendering.Pipelines.Commands
             // --- Upsample FBOs (target mips N-1..1, blended with downsample content) ---
             for (int targetMipLevel = _activeBloomMaxMip - 1; targetMipLevel >= 1; --targetMipLevel)
             {
-                var upsampleFbo = new XRQuadFrameBuffer(upsampleMat) { Name = GetUpsampleFboName(targetMipLevel) };
+                int sourceMipLevel = targetMipLevel + 1;
+                var upsampleFbo = new XRQuadFrameBuffer(CreateUpsampleMaterial(outputTexture, sourceMipLevel, upsampleShader)) { Name = GetUpsampleFboName(targetMipLevel) };
                 upsampleFbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, targetMipLevel, -1));
                 upsampleFbo.SettingUniforms += UpsampleFbo_SettingUniforms;
                 instance.SetFBO(upsampleFbo);
             }
         }
+
+        private XRMaterial CreateDownsampleMaterial(XRTexture outputTexture, int sourceMip, string downsampleShader)
+            => new(
+                [
+                    new ShaderInt(0, "SourceLOD"),
+                    new ShaderBool(false, "UseThreshold"),
+                    new ShaderBool(false, "UseKarisAverage"),
+                ],
+                [GetOrCreateBloomSourceMipView(outputTexture, sourceMip)],
+                XRShader.EngineShader(downsampleShader, EShaderType.Fragment))
+            {
+                RenderOptions = NoDepthTestParams()
+            };
+
+        private XRMaterial CreateUpsampleMaterial(XRTexture outputTexture, int sourceMip, string upsampleShader)
+            => new(
+                [
+                    new ShaderInt(0, "SourceLOD"),
+                    new ShaderFloat(1.0f, "Radius"),
+                    new ShaderFloat(0.7f, "Scatter"),
+                ],
+                [GetOrCreateBloomSourceMipView(outputTexture, sourceMip)],
+                XRShader.EngineShader(upsampleShader, EShaderType.Fragment))
+            {
+                RenderOptions = UpsampleBlendParams()
+            };
 
         protected override void Execute()
         {
@@ -418,7 +425,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            fbo.Material?.SetInt(0, sourceMip); // SourceLOD
             using (RenderPipelineGpuProfiler.Instance.StartScope(GetDownsampleScopeName(sourceMip)))
             using (fbo.BindForWritingState())
             using (instance.RenderState.PushRenderArea(rect))
@@ -438,35 +444,84 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            fbo.Material?.SetInt(0, sourceMip); // SourceLOD
             using (RenderPipelineGpuProfiler.Instance.StartScope(GetUpsampleScopeName(sourceMip)))
             using (fbo.BindForWritingState())
             using (instance.RenderState.PushRenderArea(rect))
                 fbo.Render();
         }
 
-        // --- Uniform callbacks ---
-
-        private void BindBloomSourceTexture(XRRenderProgram program)
+        private XRTexture GetOrCreateBloomSourceMipView(XRTexture bloomTexture, int sourceMip)
         {
-            var instance = ActivePipelineInstance;
-            XRTexture? bloomTexture = instance?.GetTexture<XRTexture>(BloomOutputTextureName);
-            if (bloomTexture is null)
+            int mip = Math.Clamp(sourceMip, 0, Math.Max(_activeBloomMaxMip, 0));
+            if (!ReferenceEquals(_bloomSourceViewTexture, bloomTexture))
             {
-                program.SuppressFallbackSamplerWarning("SourceTexture");
-                return;
+                _bloomSourceMipViews.Clear();
+                _bloomSourceViewTexture = bloomTexture;
             }
 
-            program.Sampler("SourceTexture", bloomTexture, 0);
+            if (_bloomSourceMipViews.TryGetValue(mip, out XRTexture? cachedView))
+                return cachedView;
+
+            XRTexture view = bloomTexture switch
+            {
+                XRTexture2D texture2D => CreateBloomSourceMipView(texture2D, mip),
+                XRTexture2DArray textureArray => CreateBloomSourceMipView(textureArray, mip),
+                _ => bloomTexture
+            };
+
+            _bloomSourceMipViews[mip] = view;
+            return view;
         }
+
+        private XRTexture2DView CreateBloomSourceMipView(XRTexture2D texture, int mip)
+        {
+            var view = new XRTexture2DView(
+                texture,
+                (uint)mip,
+                1u,
+                texture.SizedInternalFormat,
+                array: false,
+                texture.MultiSample)
+            {
+                Name = $"{BloomOutputTextureName}.Mip{mip}.SourceView",
+                SamplerName = BloomSourceSamplerName,
+                MagFilter = texture.MagFilter,
+                MinFilter = texture.MinFilter,
+                UWrap = texture.UWrap,
+                VWrap = texture.VWrap,
+            };
+            return view;
+        }
+
+        private XRTexture2DArrayView CreateBloomSourceMipView(XRTexture2DArray texture, int mip)
+        {
+            var view = new XRTexture2DArrayView(
+                texture,
+                (uint)mip,
+                1u,
+                0u,
+                Math.Max(texture.Depth, 1u),
+                texture.SizedInternalFormat,
+                array: texture.Depth > 1,
+                texture.MultiSample)
+            {
+                Name = $"{BloomOutputTextureName}.Mip{mip}.SourceView",
+                SamplerName = BloomSourceSamplerName,
+                MagFilter = texture.MagFilter,
+                MinFilter = texture.MinFilter,
+                UWrap = texture.UWrap,
+                VWrap = texture.VWrap,
+            };
+            return view;
+        }
+
+        // --- Uniform callbacks ---
 
         /// <summary>
         /// First downsample level: applies threshold + Karis average.
         /// </summary>
         private void DownsampleLevel1_SettingUniforms(XRRenderProgram program)
         {
-            BindBloomSourceTexture(program);
-
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
@@ -491,8 +546,6 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         private void DownsampleLevelN_SettingUniforms(XRRenderProgram program)
         {
-            BindBloomSourceTexture(program);
-
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
@@ -505,7 +558,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
             if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
             {
-                // SourceLOD is set dynamically in DownsamplePass via SetInt; just set the static uniforms.
+                // SourceLOD stays at zero because each material samples through a one-mip view.
                 bloom.SetDownsampleUniforms(program, firstLevel: false);
                 return;
             }
@@ -515,7 +568,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static void SetDefaultDownsampleUniforms(XRRenderProgram program, bool firstLevel)
         {
-            // SourceLOD is set dynamically via material ShaderInt; do not override here.
+            // SourceLOD stays at zero because each material samples through a one-mip view.
             // Apply threshold on the first downsample level to extract only bright areas.
             program.Uniform("UseThreshold", firstLevel);
             program.Uniform("BloomThreshold", 0.138f);
@@ -527,13 +580,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void UpsampleFbo_SettingUniforms(XRRenderProgram program)
         {
-            BindBloomSourceTexture(program);
-
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
                 LogGuardFailure(nameof(UpsampleFbo_SettingUniforms), "No active pipeline instance; using safe defaults.");
-                // SourceLOD is set dynamically via material ShaderInt; do not override here.
+                // SourceLOD stays at zero because each material samples through a one-mip view.
                 program.Uniform("Radius", 1.0f);
                 program.Uniform("Scatter", 0.7f);
                 return;
@@ -547,7 +598,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            // SourceLOD is set dynamically via material ShaderInt; do not override here.
+            // SourceLOD stays at zero because each material samples through a one-mip view.
             program.Uniform("Radius", 1.0f);
             program.Uniform("Scatter", 0.7f);
         }

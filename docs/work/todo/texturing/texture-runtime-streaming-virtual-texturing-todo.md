@@ -3,6 +3,8 @@
 Last Updated: 2026-05-19
 Status: active phased roadmap
 Source design: [Texture Runtime, Streaming, And Virtual Texturing Design](../../design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
+Compression/cache design: [Texture Compression And Cooked Texture Cache Design](../../design/texturing/texture-compression-and-cooked-cache-design.md)
+Compression/cache tracker: [Texture Compression And Cooked Texture Cache TODO](texture-compression-and-cooked-cache-todo.md)
 Validation ledger: [Texture Runtime Streaming Validation](../../testing/texture-runtime-streaming-validation.md)
 
 Supersedes:
@@ -39,6 +41,7 @@ Known current limits:
 - [ ] Partial sparse page residency is scaffolded but disabled by policy.
 - [ ] Cooked payloads are mip-addressable, not page-addressable.
 - [ ] Color-space and texture-role metadata are incomplete.
+- [ ] GPU-native compressed texture payloads and compressed uploads are not implemented.
 - [ ] Vulkan sparse/image-upload parity is not implemented.
 - [ ] Bindless deferred texturing is design-only.
 - [ ] Neural texture compression is design-only.

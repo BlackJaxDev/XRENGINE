@@ -135,7 +135,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? activeInstance.RenderState.OutputFBO?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
-            int passIndex = ResolvePassIndex($"QuadBlit_{SourceQuadFBOName}_to_{destination}");
+            string passName = $"QuadBlit_{SourceQuadFBOName}_to_{destination}";
+            int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
+            if (passIndex == int.MinValue && hasRenderGraphMetadata)
+            {
+                Debug.RenderingWarningEvery(
+                    $"QuadBlit.MissingRenderGraphPass.{passName}",
+                    TimeSpan.FromSeconds(2),
+                    "[QuadBlitDiag] Skipping quad blit '{0}': no matching render-graph pass metadata was generated.",
+                    passName);
+                return;
+            }
+
             using var passScope = passIndex != int.MinValue
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
@@ -189,13 +200,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             sourceFBO.Render(destFBO);
         }
 
-        private int ResolvePassIndex(string passName)
+        private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
         {
             var metadata = ParentPipeline?.PassMetadata;
-            if (metadata is null)
+            if (metadata is not { Count: > 0 } renderPasses)
+            {
+                hasRenderGraphMetadata = false;
                 return int.MinValue;
+            }
 
-            foreach (var match in metadata)
+            hasRenderGraphMetadata = true;
+
+            foreach (var match in renderPasses)
             {
                 if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
                     return match.PassIndex;

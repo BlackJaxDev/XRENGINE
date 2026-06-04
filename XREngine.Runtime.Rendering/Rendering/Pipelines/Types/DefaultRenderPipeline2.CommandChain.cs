@@ -277,6 +277,7 @@ public partial class DefaultRenderPipeline2
         // Always clear color+depth so the GBuffer starts with known values.
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
+            x.FrameBufferName = DeferredGBufferFBOName;
             x.Write = true;
             x.ClearColor = true;
             x.ClearDepth = true;
@@ -662,6 +663,7 @@ public partial class DefaultRenderPipeline2
         BeginGpuScope(c, "Forward Render");
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
+            x.FrameBufferName = ForwardPassFBOName;
             x.Write = true;
             x.ClearStencil = true;
             x.DynamicName = () => RuntimeEnableMsaa ? ForwardPassMsaaFBOName : ForwardPassFBOName;

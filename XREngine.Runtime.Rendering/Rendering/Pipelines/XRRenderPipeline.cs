@@ -218,7 +218,8 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     private static XRRenderPipelineInstance? TryCurrentPipeline
-        => RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance;
+        => RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 
     private static RenderingState? TryState
         => TryCurrentPipeline?.RenderState;
@@ -272,22 +273,40 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     public static T? GetTexture<T>(string name) where T : XRTexture
-        => TryCurrentPipeline!.GetTexture<T>(name);
+        => TryCurrentPipeline?.GetTexture<T>(name);
 
     public static bool TryGetTexture(string name, out XRTexture? texture)
-        => TryCurrentPipeline!.TryGetTexture(name, out texture);
+    {
+        XRRenderPipelineInstance? pipeline = TryCurrentPipeline;
+        if (pipeline is null)
+        {
+            texture = null;
+            return false;
+        }
+
+        return pipeline.TryGetTexture(name, out texture);
+    }
 
     public static void SetTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
-        => TryCurrentPipeline!.SetTexture(texture, descriptor);
+        => TryCurrentPipeline?.SetTexture(texture, descriptor);
 
     public static T? GetFBO<T>(string name) where T : XRFrameBuffer
-        => TryCurrentPipeline!.GetFBO<T>(name);
+        => TryCurrentPipeline?.GetFBO<T>(name);
 
     public static bool TryGetFBO(string name, out XRFrameBuffer? fbo)
-        => TryCurrentPipeline!.TryGetFBO(name, out fbo);
+    {
+        XRRenderPipelineInstance? pipeline = TryCurrentPipeline;
+        if (pipeline is null)
+        {
+            fbo = null;
+            return false;
+        }
+
+        return pipeline.TryGetFBO(name, out fbo);
+    }
 
     public static void SetFBO(XRFrameBuffer fbo, FrameBufferResourceDescriptor? descriptor = null)
-        => TryCurrentPipeline!.SetFBO(fbo, descriptor);
+        => TryCurrentPipeline?.SetFBO(fbo, descriptor);
 
     // OpenGL (and most GPU APIs) disallow 0-sized textures. During startup or when a window is
     // minimized, the viewport can temporarily report 0; clamp to 1 to avoid invalid allocations.

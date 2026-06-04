@@ -314,6 +314,14 @@ public unsafe partial class VulkanRenderer
     public partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(api, data)
     {
         private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
+        private XRDataBuffer? _cachedSkinnedPositionsBuffer;
+        private XRDataBuffer? _cachedSkinnedNormalsBuffer;
+        private XRDataBuffer? _cachedSkinnedTangentsBuffer;
+        private XRDataBuffer? _cachedSkinnedInterleavedBuffer;
+        private XRDataBuffer? _cachedPrecombinedBlendshapePositionsBuffer;
+        private XRDataBuffer? _cachedPrecombinedBlendshapeNormalsBuffer;
+        private XRDataBuffer? _cachedPrecombinedBlendshapeTangentsBuffer;
+        private ulong _cachedSkinnedOutputVersion;
         private VkDataBuffer? _triangleIndexBuffer;
         private VkDataBuffer? _lineIndexBuffer;
         private VkDataBuffer? _pointIndexBuffer;
@@ -361,6 +369,7 @@ public unsafe partial class VulkanRenderer
         private DescriptorSet[][]? _descriptorSets;
         private bool _descriptorDirty = true;
         private ulong _descriptorSchemaFingerprint;
+        private ulong _descriptorResourceFingerprint;
         private readonly HashSet<string> _descriptorWarnings = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
         private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
@@ -369,6 +378,20 @@ public unsafe partial class VulkanRenderer
         private const string VertexUniformSuffix = "_VTX";
         private const string FallbackDescriptorUniformName = "__FallbackDescriptorBuffer";
         private const uint FallbackDescriptorUniformSize = 1024u;
+        private const uint ComputeInterleavedBinding = 9u;
+        private const uint ComputePositionBinding = 11u;
+        private const uint ComputeNormalBinding = 12u;
+        private const uint PrecombinedBlendshapePositionBinding = 13u;
+        private const uint PrecombinedBlendshapeNormalBinding = 14u;
+        private const uint ComputeTangentBinding = 15u;
+        private const uint PrecombinedBlendshapeTangentBinding = 15u;
+        private const string ComputeInterleavedBufferName = "SkinnedInterleaved";
+        private const string ComputePositionBufferName = "SkinnedPositions";
+        private const string ComputeNormalBufferName = "SkinnedNormals";
+        private const string ComputeTangentBufferName = "SkinnedTangents";
+        private const string PrecombinedBlendshapePositionBufferName = "PrecombinedBlendshapePositionDeltas";
+        private const string PrecombinedBlendshapeNormalBufferName = "PrecombinedBlendshapeNormalDeltas";
+        private const string PrecombinedBlendshapeTangentBufferName = "PrecombinedBlendshapeTangentDeltas";
 
         private static bool IsStencilCapableFormat(Format format)
             => format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
@@ -489,14 +512,16 @@ public unsafe partial class VulkanRenderer
             if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
                 return;
 
+            EnsureRuntimeDeformationBuffersCurrent();
+
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = Renderer.GetCurrentDrawFrameBuffer();
 
             // Resolve the effective material and its render options so the
             // pipeline key captures per-material state (CullMode, DepthTest, etc.)
             // instead of inheriting stale values from the global state tracker.
-            XRMaterial? effectiveMaterial = materialOverride ?? MeshRenderer.Material;
-            RenderingParameters? matOpts = renderOptionsOverride ?? effectiveMaterial?.RenderOptions;
+            XRMaterial effectiveMaterial = ResolveMaterial(materialOverride);
+            RenderingParameters? matOpts = renderOptionsOverride ?? effectiveMaterial.RenderOptions;
 
             // ── CullMode ──
             CullModeFlags cullMode;
@@ -620,7 +645,7 @@ public unsafe partial class VulkanRenderer
                 dstAlpha,
                 modelMatrix,
                 prevModelMatrix,
-                materialOverride,
+                effectiveMaterial,
                 instances,
                 billboardMode,
                 RuntimeEngine.Rendering.State.RenderingCamera,

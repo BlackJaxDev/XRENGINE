@@ -53,8 +53,61 @@ public unsafe partial class VulkanRenderer
 				}
 			}
 
+			AddRuntimeDeformationBuffers();
+			CaptureRuntimeDeformationBufferReferences();
+
 			_buffersDirty = true;
 			_descriptorDirty = true;
+			Renderer.MarkCommandBuffersDirty();
+		}
+
+		private void AddRuntimeDeformationBuffers()
+		{
+			AddRuntimeBuffer(ComputeInterleavedBufferName, MeshRenderer.SkinnedInterleavedBuffer, ComputeInterleavedBinding);
+			AddRuntimeBuffer(ComputePositionBufferName, MeshRenderer.SkinnedPositionsBuffer, ComputePositionBinding);
+			AddRuntimeBuffer(ComputeNormalBufferName, MeshRenderer.SkinnedNormalsBuffer, ComputeNormalBinding);
+			AddRuntimeBuffer(ComputeTangentBufferName, MeshRenderer.SkinnedTangentsBuffer, ComputeTangentBinding);
+			AddRuntimeBuffer(PrecombinedBlendshapePositionBufferName, MeshRenderer.PrecombinedBlendshapePositionsBuffer, PrecombinedBlendshapePositionBinding);
+			AddRuntimeBuffer(PrecombinedBlendshapeNormalBufferName, MeshRenderer.PrecombinedBlendshapeNormalsBuffer, PrecombinedBlendshapeNormalBinding);
+			AddRuntimeBuffer(PrecombinedBlendshapeTangentBufferName, MeshRenderer.PrecombinedBlendshapeTangentsBuffer, PrecombinedBlendshapeTangentBinding);
+		}
+
+		private void AddRuntimeBuffer(string shaderName, XRDataBuffer? dataBuffer, uint binding)
+		{
+			if (dataBuffer is null)
+				return;
+
+			dataBuffer.BindingIndexOverride = binding;
+			if (Renderer.GenericToAPI<VkDataBuffer>(dataBuffer) is { } vkBuffer)
+				_bufferCache[shaderName] = vkBuffer;
+		}
+
+		private void CaptureRuntimeDeformationBufferReferences()
+		{
+			_cachedSkinnedPositionsBuffer = MeshRenderer.SkinnedPositionsBuffer;
+			_cachedSkinnedNormalsBuffer = MeshRenderer.SkinnedNormalsBuffer;
+			_cachedSkinnedTangentsBuffer = MeshRenderer.SkinnedTangentsBuffer;
+			_cachedSkinnedInterleavedBuffer = MeshRenderer.SkinnedInterleavedBuffer;
+			_cachedPrecombinedBlendshapePositionsBuffer = MeshRenderer.PrecombinedBlendshapePositionsBuffer;
+			_cachedPrecombinedBlendshapeNormalsBuffer = MeshRenderer.PrecombinedBlendshapeNormalsBuffer;
+			_cachedPrecombinedBlendshapeTangentsBuffer = MeshRenderer.PrecombinedBlendshapeTangentsBuffer;
+			_cachedSkinnedOutputVersion = MeshRenderer.SkinnedOutputVersion;
+		}
+
+		private bool RuntimeDeformationBufferReferencesChanged()
+			=> !ReferenceEquals(_cachedSkinnedPositionsBuffer, MeshRenderer.SkinnedPositionsBuffer)
+			|| !ReferenceEquals(_cachedSkinnedNormalsBuffer, MeshRenderer.SkinnedNormalsBuffer)
+			|| !ReferenceEquals(_cachedSkinnedTangentsBuffer, MeshRenderer.SkinnedTangentsBuffer)
+			|| !ReferenceEquals(_cachedSkinnedInterleavedBuffer, MeshRenderer.SkinnedInterleavedBuffer)
+			|| !ReferenceEquals(_cachedPrecombinedBlendshapePositionsBuffer, MeshRenderer.PrecombinedBlendshapePositionsBuffer)
+			|| !ReferenceEquals(_cachedPrecombinedBlendshapeNormalsBuffer, MeshRenderer.PrecombinedBlendshapeNormalsBuffer)
+			|| !ReferenceEquals(_cachedPrecombinedBlendshapeTangentsBuffer, MeshRenderer.PrecombinedBlendshapeTangentsBuffer)
+			|| _cachedSkinnedOutputVersion != MeshRenderer.SkinnedOutputVersion;
+
+		private void EnsureRuntimeDeformationBuffersCurrent()
+		{
+			if (RuntimeDeformationBufferReferencesChanged())
+				CollectBuffers();
 		}
 
 		/// <summary>
@@ -67,6 +120,8 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private void EnsureBuffers()
 		{
+			EnsureRuntimeDeformationBuffersCurrent();
+
 			if (!_buffersDirty)
 				return;
 

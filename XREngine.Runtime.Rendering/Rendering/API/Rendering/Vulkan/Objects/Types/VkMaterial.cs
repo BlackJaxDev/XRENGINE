@@ -164,6 +164,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 Data.Textures.PostAnythingAdded += OnTextureChanged;
                 Data.Textures.PostAnythingRemoved += OnTextureChanged;
+                Data.Textures.PostModified += OnTexturesModified;
                 Data.PropertyChanged += OnMaterialPropertyChanged;
                 RebuildParameterLookup();
                 _materialDirty = true;
@@ -178,6 +179,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 Data.Textures.PostAnythingAdded -= OnTextureChanged;
                 Data.Textures.PostAnythingRemoved -= OnTextureChanged;
+                Data.Textures.PostModified -= OnTexturesModified;
                 Data.PropertyChanged -= OnMaterialPropertyChanged;
                 UnsubscribeParameterEvents();
 
@@ -245,6 +247,9 @@ namespace XREngine.Rendering.Vulkan
             /// descriptor writes are re-issued on the next bind.
             /// </summary>
             private void OnTextureChanged(XRTexture? _)
+                => OnTexturesModified();
+
+            private void OnTexturesModified()
             {
                 lock (_stateSync)
                 {
@@ -278,15 +283,14 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            /// <summary>
-            /// Called when the value of any subscribed <see cref="ShaderVar"/> changes.
-            /// Sets <see cref="_materialDirty"/> so uniform buffers are re-uploaded on the next bind.
-            /// </summary>
-            private void OnParameterValueChanged(ShaderVar _)
-            {
-                lock (_stateSync)
-                    _materialDirty = true;
-            }
+        /// <summary>
+        /// Called when the value of any subscribed <see cref="ShaderVar"/> changes.
+        /// Uniform buffers are rebuilt from current parameter values on each bind, so value-only
+        /// changes must not rewrite descriptor sets while a command buffer is recording.
+        /// </summary>
+        private void OnParameterValueChanged(ShaderVar _)
+        {
+        }
 
             #endregion
 
@@ -900,8 +904,10 @@ namespace XREngine.Rendering.Vulkan
                     if (memory.Handle == 0)
                         return false;
 
+                    Silk.NET.Vulkan.Buffer buffer = resource.Buffers[frameIndex];
+                    ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer);
                     void* mapped;
-                    if (Api!.MapMemory(Device, memory, 0, resource.Size, 0, &mapped) != Result.Success)
+                    if (Api!.MapMemory(Device, memory, memoryOffset, resource.Size, 0, &mapped) != Result.Success)
                         return false;
 
                     try
@@ -1034,9 +1040,6 @@ namespace XREngine.Rendering.Vulkan
                 imageInfo = default;
 
                 bool includeSampler = descriptorType == DescriptorType.CombinedImageSampler;
-                ImageLayout layout = descriptorType == DescriptorType.StorageImage
-                    ? ImageLayout.General
-                    : ImageLayout.ShaderReadOnlyOptimal;
 
                 if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
                 {
@@ -1066,7 +1069,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         imageInfo = new DescriptorImageInfo
                         {
-                            ImageLayout = layout,
+                            ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
                             ImageView = depthOnlyView,
                             Sampler = includeSampler ? source.DescriptorSampler : default,
                         };
@@ -1079,7 +1082,7 @@ namespace XREngine.Rendering.Vulkan
 
                 imageInfo = new DescriptorImageInfo
                 {
-                    ImageLayout = layout,
+                    ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
                     ImageView = source.DescriptorView,
                     Sampler = includeSampler ? source.DescriptorSampler : default,
                 };

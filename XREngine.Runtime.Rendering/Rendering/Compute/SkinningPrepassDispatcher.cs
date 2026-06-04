@@ -10,6 +10,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Compute;
 
@@ -458,6 +459,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                     EnsureEmptySpillBuffers();
 
                 resources.BindBlocks(
+                    activeProgram,
                     doSkinning,
                     doBlendshapes,
                     isInterleaved,
@@ -655,7 +657,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
         try
         {
-            BindPrecombineBlocks(renderer, mesh);
+            BindPrecombineBlocks(program, renderer, mesh);
 
             uint vertexCount = (uint)mesh.VertexCount;
             program.Uniform("vertexCount", vertexCount);
@@ -690,16 +692,25 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
     }
 
-    private static void BindPrecombineBlocks(XRMeshRenderer renderer, XRMesh mesh)
+    private static void BindPrecombineBlocks(XRRenderProgram program, XRMeshRenderer renderer, XRMesh mesh)
     {
-        renderer.BlendshapeActiveWeights?.SetBlockIndex(BlendshapePrecombineBindings.BlendshapeActiveWeights);
-        mesh.BlendshapeSparseShapeRanges?.SetBlockIndex(BlendshapePrecombineBindings.BlendshapeSparseShapeRanges);
-        mesh.BlendshapeSparseRecords?.SetBlockIndex(BlendshapePrecombineBindings.BlendshapeSparseRecords);
-        mesh.BlendshapeQuantizedDeltas?.SetBlockIndex(BlendshapePrecombineBindings.BlendshapeQuantizedDeltas);
-        mesh.BlendshapeQuantizationMetadata?.SetBlockIndex(BlendshapePrecombineBindings.BlendshapeQuantizationMetadata);
-        renderer.PrecombinedBlendshapePositionsBuffer?.SetBlockIndex(BlendshapePrecombineBindings.PrecombinedPositionDeltas);
-        renderer.PrecombinedBlendshapeNormalsBuffer?.SetBlockIndex(BlendshapePrecombineBindings.PrecombinedNormalDeltas);
-        renderer.PrecombinedBlendshapeTangentsBuffer?.SetBlockIndex(BlendshapePrecombineBindings.PrecombinedTangentDeltas);
+        BindStorageBuffer(program, renderer.BlendshapeActiveWeights, BlendshapePrecombineBindings.BlendshapeActiveWeights);
+        BindStorageBuffer(program, mesh.BlendshapeSparseShapeRanges, BlendshapePrecombineBindings.BlendshapeSparseShapeRanges);
+        BindStorageBuffer(program, mesh.BlendshapeSparseRecords, BlendshapePrecombineBindings.BlendshapeSparseRecords);
+        BindStorageBuffer(program, mesh.BlendshapeQuantizedDeltas, BlendshapePrecombineBindings.BlendshapeQuantizedDeltas);
+        BindStorageBuffer(program, mesh.BlendshapeQuantizationMetadata, BlendshapePrecombineBindings.BlendshapeQuantizationMetadata);
+        BindStorageBuffer(program, renderer.PrecombinedBlendshapePositionsBuffer, BlendshapePrecombineBindings.PrecombinedPositionDeltas);
+        BindStorageBuffer(program, renderer.PrecombinedBlendshapeNormalsBuffer, BlendshapePrecombineBindings.PrecombinedNormalDeltas);
+        BindStorageBuffer(program, renderer.PrecombinedBlendshapeTangentsBuffer, BlendshapePrecombineBindings.PrecombinedTangentDeltas);
+    }
+
+    private static void BindStorageBuffer(XRRenderProgram program, XRDataBuffer? buffer, uint binding)
+    {
+        if (buffer is null)
+            return;
+
+        buffer.SetBlockIndex(binding);
+        program.BindBuffer(buffer, binding);
     }
 
     private static void EnsurePrecombineInputsResident(XRMeshRenderer renderer, XRMesh mesh)
@@ -722,6 +733,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         {
             if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
                 gl.EnsureStorageAllocatedForGpuCopy();
+            else if (wrapper is VulkanRenderer.VkDataBuffer vk)
+                vk.Generate();
         }
     }
 

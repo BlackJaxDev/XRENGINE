@@ -1904,10 +1904,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private AmbientOcclusionSettings? ResolveAmbientOcclusionSettings()
     {
-        var camera = State.SceneCamera
-            ?? State.RenderingCamera
-            ?? CurrentRenderingPipeline?.LastSceneCamera
-            ?? CurrentRenderingPipeline?.LastRenderingCamera;
+        var currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        var renderState = currentPipeline?.RenderState;
+        var camera = renderState?.SceneCamera
+            ?? renderState?.RenderingCamera
+            ?? currentPipeline?.LastSceneCamera
+            ?? currentPipeline?.LastRenderingCamera;
 
         if (camera is null)
             return null;

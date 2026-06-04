@@ -110,7 +110,7 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            UploadBufferMemory(stagingMem, pixelSize, pixel);
+            UploadBufferMemory(staging, stagingMem, pixelSize, pixel);
 
             using (var scope = NewCommandScope())
             {

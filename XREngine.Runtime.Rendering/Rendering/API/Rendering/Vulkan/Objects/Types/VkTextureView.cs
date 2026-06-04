@@ -221,6 +221,26 @@ namespace XREngine.Rendering.Vulkan
                     source.EnsureAttachmentLayout(depthStencil);
             }
 
+            void IVkFrameBufferAttachmentSource.UpdateTrackedLayout(ImageLayout layout)
+            {
+                XRTexture viewedTexture = Data.GetViewedTexture();
+                if (viewedTexture is null)
+                    return;
+
+                if (Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkFrameBufferAttachmentSource source)
+                    source.UpdateTrackedLayout(layout);
+            }
+
+            bool IVkImageDescriptorSource.TryTransitionDedicatedImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
+            {
+                XRTexture viewedTexture = Data.GetViewedTexture();
+                if (viewedTexture is null)
+                    return false;
+
+                return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source &&
+                    source.TryTransitionDedicatedImageLayout(oldLayout, newLayout);
+            }
+
             private void OnViewedTextureChanged()
             {
                 if (IsActive)

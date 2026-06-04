@@ -252,6 +252,7 @@ public partial class DefaultRenderPipeline
 
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
+            x.FrameBufferName = DeferredGBufferFBOName;
             x.Write = true;
             x.ClearColor = true;
             x.ClearDepth = true;
@@ -534,6 +535,7 @@ public partial class DefaultRenderPipeline
 
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
+            x.FrameBufferName = ForwardPassFBOName;
             x.Write = true;
             x.ClearStencil = true;
             x.DynamicName = () => RuntimeEnableMsaa ? ForwardPassMsaaFBOName : ForwardPassFBOName;

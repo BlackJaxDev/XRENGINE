@@ -17,6 +17,7 @@ using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.TransformEditors;
 using XREngine.Input.Devices;
+using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -52,6 +53,9 @@ public static partial class EditorImGuiUI
             public object? ImportOptions { get; set; }
             public string OptionsPath { get; set; } = string.Empty;
             public string GeneratedAssetPath { get; set; } = string.Empty;
+            public bool IsGeneratedAssetLoading { get; set; }
+            public string GeneratedAssetStatus { get; set; } = string.Empty;
+            public XRAsset? GeneratedAsset { get; set; }
         }
 
         private static void BeginComponentRename(XRComponent component)
@@ -667,7 +671,7 @@ public static partial class EditorImGuiUI
             if (string.Equals(Path.GetExtension(asset.FilePath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            DrawThirdPartyImportSettingsCore(asset.FilePath, asset.GetType(), visited, "Save & Reimport");
+            DrawThirdPartyImportSettingsCore(asset.FilePath, asset.GetType(), visited, "Save & Reimport", pathInfoAtBottom: false);
         }
 
         private static void DrawThirdPartyImportSettings(string sourcePath, Type assetType, HashSet<object> visited)
@@ -679,10 +683,15 @@ public static partial class EditorImGuiUI
             if (string.Equals(Path.GetExtension(sourcePath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            DrawThirdPartyImportSettingsCore(sourcePath, assetType, visited, "Save && Reimport");
+            DrawThirdPartyImportSettingsCore(sourcePath, assetType, visited, "Save && Reimport", pathInfoAtBottom: true);
         }
 
-        private static void DrawThirdPartyImportSettingsCore(string sourcePath, Type assetType, HashSet<object> visited, string saveButtonLabel)
+        private static void DrawThirdPartyImportSettingsCore(
+            string sourcePath,
+            Type assetType,
+            HashSet<object> visited,
+            string saveButtonLabel,
+            bool pathInfoAtBottom)
         {
             ThirdPartyImportSettingsCacheEntry entry = GetOrQueueThirdPartyImportSettings(sourcePath, assetType);
             if (!entry.IsLoading && !entry.IsLoaded && string.IsNullOrWhiteSpace(entry.ErrorMessage))
@@ -693,14 +702,14 @@ public static partial class EditorImGuiUI
 
             ImGui.PushID("ThirdPartyImportSettings");
 
-            ImGui.TextDisabled("Source");
-            ImGui.PushTextWrapPos();
-            ImGui.TextUnformatted(sourcePath);
-            ImGui.PopTextWrapPos();
+            if (!pathInfoAtBottom)
+                DrawThirdPartyImportPathField("Source", sourcePath);
 
             if (entry.IsLoading)
             {
                 ImGui.TextDisabled("Loading import settings...");
+                if (pathInfoAtBottom)
+                    DrawThirdPartyImportInfoCategory(sourcePath, entry);
                 ImGui.PopID();
                 ImGui.Separator();
                 return;
@@ -711,6 +720,8 @@ public static partial class EditorImGuiUI
                 ImGui.PushTextWrapPos();
                 ImGui.TextDisabled(entry.ErrorMessage);
                 ImGui.PopTextWrapPos();
+                if (pathInfoAtBottom)
+                    DrawThirdPartyImportInfoCategory(sourcePath, entry);
                 ImGui.PopID();
                 ImGui.Separator();
                 return;
@@ -719,22 +730,18 @@ public static partial class EditorImGuiUI
             object? importOptions = entry.ImportOptions;
             if (importOptions is null)
             {
+                if (pathInfoAtBottom)
+                    DrawThirdPartyImportInfoCategory(sourcePath, entry);
                 ImGui.PopID();
                 ImGui.Separator();
                 return;
             }
 
-            ImGui.TextDisabled("Generated Asset");
-            ImGui.PushTextWrapPos();
-            ImGui.TextUnformatted(entry.GeneratedAssetPath);
-            ImGui.PopTextWrapPos();
-
-            ImGui.TextDisabled("Options Cache");
-            ImGui.PushTextWrapPos();
-            ImGui.TextUnformatted(entry.OptionsPath);
-            ImGui.PopTextWrapPos();
-
-            ImGui.Separator();
+            if (!pathInfoAtBottom)
+            {
+                DrawThirdPartyImportGeneratedPathFields(entry);
+                ImGui.Separator();
+            }
 
             DrawInspectableObject(new InspectorTargetSet(new[] { importOptions }, importOptions.GetType()), "ThirdPartyImportOptions", visited);
 
@@ -745,6 +752,225 @@ public static partial class EditorImGuiUI
             ImGui.PopID();
 
             ImGui.Separator();
+
+            DrawGeneratedThirdPartyTextureAsset(sourcePath, assetType, entry, visited);
+
+            if (pathInfoAtBottom)
+            {
+                ImGui.Separator();
+                DrawThirdPartyImportInfoCategory(sourcePath, entry);
+            }
+        }
+
+        private static void DrawThirdPartyImportInfoCategory(string sourcePath, ThirdPartyImportSettingsCacheEntry entry)
+        {
+            ImGui.PushID("ThirdPartyImportInfo");
+            if (!ImGui.CollapsingHeader("Info"))
+            {
+                ImGui.PopID();
+                return;
+            }
+
+            DrawThirdPartyImportPathFields(sourcePath, entry);
+            ImGui.PopID();
+        }
+
+        private static void DrawThirdPartyImportPathFields(string sourcePath, ThirdPartyImportSettingsCacheEntry entry)
+        {
+            DrawThirdPartyImportPathField("Source", sourcePath);
+            DrawThirdPartyImportGeneratedPathFields(entry);
+        }
+
+        private static void DrawThirdPartyImportGeneratedPathFields(ThirdPartyImportSettingsCacheEntry entry)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.GeneratedAssetPath))
+                DrawThirdPartyImportPathField("Generated Asset", entry.GeneratedAssetPath);
+
+            if (!string.IsNullOrWhiteSpace(entry.OptionsPath))
+                DrawThirdPartyImportPathField("Options Cache", entry.OptionsPath);
+        }
+
+        private static void DrawThirdPartyImportPathField(string label, string path)
+        {
+            ImGui.TextDisabled(label);
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(path);
+            ImGui.PopTextWrapPos();
+        }
+
+        private static void DrawGeneratedThirdPartyTextureAsset(
+            string sourcePath,
+            Type assetType,
+            ThirdPartyImportSettingsCacheEntry entry,
+            HashSet<object> visited)
+        {
+            if (!typeof(XRTexture2D).IsAssignableFrom(assetType))
+                return;
+
+            EnsureGeneratedThirdPartyTextureAssetQueued(sourcePath, assetType, entry);
+
+            if (entry.IsGeneratedAssetLoading)
+            {
+                ImGui.TextDisabled(string.IsNullOrWhiteSpace(entry.GeneratedAssetStatus)
+                    ? "Preparing generated texture asset..."
+                    : entry.GeneratedAssetStatus);
+                ImGui.Separator();
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.GeneratedAssetStatus))
+            {
+                ImGui.PushTextWrapPos();
+                ImGui.TextDisabled(entry.GeneratedAssetStatus);
+                ImGui.PopTextWrapPos();
+            }
+
+            if (entry.GeneratedAsset is not XRTexture2D texture)
+            {
+                ImGui.Separator();
+                return;
+            }
+
+            ImGui.TextColored(new Vector4(0.85f, 0.85f, 0.85f, 1.0f), "Generated Texture Asset");
+            ImGui.Spacing();
+            if (!TryDrawAssetInspector(new InspectorTargetSet(new[] { texture }, texture.GetType()), visited))
+                DrawDefaultAssetInspector(texture, visited);
+        }
+
+        private static void EnsureGeneratedThirdPartyTextureAssetQueued(
+            string sourcePath,
+            Type assetType,
+            ThirdPartyImportSettingsCacheEntry entry)
+        {
+            if (entry.GeneratedAsset is not null || string.IsNullOrWhiteSpace(entry.GeneratedAssetPath))
+                return;
+
+            lock (_thirdPartyImportSettingsCacheLock)
+            {
+                if (entry.GeneratedAsset is not null || entry.IsGeneratedAssetLoading)
+                    return;
+
+                entry.IsGeneratedAssetLoading = true;
+                entry.GeneratedAssetStatus = File.Exists(entry.GeneratedAssetPath)
+                    ? "Loading generated texture asset..."
+                    : "Importing texture asset...";
+            }
+
+            _ = LoadGeneratedThirdPartyTextureAssetAsync(sourcePath, assetType, entry);
+        }
+
+        private static async Task LoadGeneratedThirdPartyTextureAssetAsync(
+            string sourcePath,
+            Type assetType,
+            ThirdPartyImportSettingsCacheEntry entry)
+        {
+            XRAsset? generatedAsset = null;
+            string status = string.Empty;
+
+            try
+            {
+                var assets = Engine.Assets;
+                if (assets is null)
+                {
+                    status = "Asset manager is not available.";
+                    return;
+                }
+
+                string normalizedSource = NormalizeThirdPartyImportSourcePath(sourcePath);
+                string generatedAssetPath = NormalizeThirdPartyImportSourcePath(entry.GeneratedAssetPath);
+                bool importRequired = !File.Exists(generatedAssetPath);
+
+                if (!importRequired)
+                {
+                    generatedAsset = await LoadGeneratedThirdPartyAssetFromDiskAsync(generatedAssetPath, assetType).ConfigureAwait(false);
+                    if (generatedAsset is null)
+                    {
+                        importRequired = true;
+                    }
+                    else if (!IsLinkedGeneratedThirdPartyAsset(generatedAsset, normalizedSource, generatedAssetPath))
+                    {
+                        status = "Generated asset exists but is not linked to this source file.";
+                        generatedAsset = null;
+                        return;
+                    }
+                    else if (IsThirdPartySourceNewerThanGeneratedAsset(normalizedSource, generatedAsset))
+                    {
+                        importRequired = true;
+                    }
+                }
+
+                if (importRequired)
+                {
+                    Guid trackingId = EditorJobTracker.TrackOperation(
+                        $"Import {Path.GetFileName(normalizedSource)}",
+                        "Importing texture asset...");
+
+                    void ReportImportProgress(ThirdPartyImportProgress importProgress)
+                    {
+                        EditorJobTracker.Report(
+                            trackingId,
+                            Math.Clamp(importProgress.Progress, 0.0f, 1.0f),
+                            importProgress.Message);
+                    }
+
+                    bool imported = await assets.ReimportThirdPartyFileAsync(normalizedSource, ReportImportProgress).ConfigureAwait(false);
+                    if (!imported)
+                    {
+                        status = $"Failed to import {Path.GetFileName(normalizedSource)}.";
+                        EditorJobTracker.Fault(trackingId, status);
+                        generatedAsset = null;
+                        return;
+                    }
+
+                    EditorJobTracker.Complete(trackingId, $"Imported {Path.GetFileName(normalizedSource)}");
+                    generatedAsset = await LoadGeneratedThirdPartyAssetFromDiskAsync(generatedAssetPath, assetType).ConfigureAwait(false);
+                    if (generatedAsset is null)
+                    {
+                        status = $"Imported {Path.GetFileName(normalizedSource)}, but the generated asset could not be loaded.";
+                        return;
+                    }
+                }
+
+                status = generatedAsset is null ? "Generated texture asset is not available." : string.Empty;
+            }
+            catch (Exception ex)
+            {
+                status = ex.Message;
+                Debug.LogException(ex, $"Failed to prepare generated texture asset for '{sourcePath}'.");
+            }
+            finally
+            {
+                lock (_thirdPartyImportSettingsCacheLock)
+                {
+                    entry.GeneratedAsset = generatedAsset;
+                    entry.GeneratedAssetStatus = status;
+                    entry.IsGeneratedAssetLoading = false;
+                }
+            }
+        }
+
+        private static async Task<XRAsset?> LoadGeneratedThirdPartyAssetFromDiskAsync(string generatedAssetPath, Type assetType)
+        {
+            XRAsset? asset = await AssetManager.DeserializeAssetFileAsync(generatedAssetPath, assetType).ConfigureAwait(false);
+            if (asset is null)
+                return null;
+
+            asset.Name = Path.GetFileNameWithoutExtension(generatedAssetPath);
+            asset.FilePath = generatedAssetPath;
+            asset.SourceAsset = asset;
+            XRAssetGraphUtility.RefreshAssetGraph(asset);
+            asset.ClearDirty();
+            return asset;
+        }
+
+        private static bool IsThirdPartySourceNewerThanGeneratedAsset(string sourcePath, XRAsset generatedAsset)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+                return false;
+
+            DateTime sourceWriteTimeUtc = File.GetLastWriteTimeUtc(sourcePath);
+            return generatedAsset.OriginalLastWriteTimeUtc is null
+                || generatedAsset.OriginalLastWriteTimeUtc.Value < sourceWriteTimeUtc;
         }
 
         private static ThirdPartyImportSettingsCacheEntry GetOrQueueThirdPartyImportSettings(string sourcePath, Type assetType)
@@ -845,7 +1071,11 @@ public static partial class EditorImGuiUI
                 }
 
                 lock (_thirdPartyImportSettingsCacheLock)
+                {
                     _thirdPartyImportSettingsCache.Remove(key);
+                    _thirdPartyImportSettingsCache[key] = new ThirdPartyImportSettingsCacheEntry { IsLoading = true };
+                    _ = LoadThirdPartyImportSettingsAsync(key);
+                }
 
                 EditorJobTracker.Complete(trackingId, $"Reimported {System.IO.Path.GetFileName(key.SourcePath)}");
                 Debug.Out($"[ImportSettings] Saved={saved}, Reimported={reimported} for '{key.SourcePath}'.");

@@ -210,11 +210,22 @@ public sealed class XRTexture2DInspector : IXRAssetInspector
 
         if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
         {
-            var apiTexture = glRenderer.GenericToAPI<GLTexture2D>(texture);
+            var apiTexture = glRenderer.GetOrCreateAPIRenderObject(texture, generateNow: true) as GLTexture2D;
             if (apiTexture is null)
             {
                 failureReason = "Texture not uploaded";
                 return false;
+            }
+
+            if (apiTexture.IsInvalidated && !apiTexture.IsPushing)
+            {
+                IGLTexture? previousTexture = glRenderer.BoundTexture;
+                apiTexture.Bind();
+
+                if (previousTexture is null || ReferenceEquals(previousTexture, apiTexture))
+                    apiTexture.Unbind();
+                else
+                    previousTexture.Bind();
             }
 
             uint binding = apiTexture.BindingId;

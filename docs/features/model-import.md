@@ -22,6 +22,7 @@ Current limitations:
 ## Default routing
 
 - The ImGui editor exposes `Tools > Import External Files...` and `Tools > Import External Folder...` to copy external sources into the project `Assets/` tree and optionally run the registered third-party import pipeline immediately. Folder import is the preferred path for Unity exports because it preserves `.meta` files and referenced material, shader, and texture dependencies.
+- Selecting an importable standalone texture file such as `.png`, `.jpg`, `.tga`, `.exr`, or `.hdr` in the ImGui Asset Explorer automatically prepares its generated `XRTexture2D` `.asset` beside the source and shows that asset's texture preview in the same inspector panel.
 - `.fbx` files route through the native `XREngine.Fbx` importer by default. `FbxBackend = Auto` attempts native import first and falls back to Assimp if the native path rejects the asset or throws.
 - `.gltf` and `.glb` files route through the native fastgltf-backed path by default.
 - `.anim` files route to `AnimationClip` through the Unity YAML animation importer.

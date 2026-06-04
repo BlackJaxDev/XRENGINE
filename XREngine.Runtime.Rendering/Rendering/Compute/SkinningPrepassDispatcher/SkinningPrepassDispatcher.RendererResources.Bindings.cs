@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 
 namespace XREngine.Rendering.Compute;
 
@@ -9,6 +10,7 @@ internal sealed partial class SkinningPrepassDispatcher
     private sealed partial class RendererResources
     {
         public void BindBlocks(
+            XRRenderProgram program,
             bool doSkinning,
             bool doBlendshapes,
             bool isInterleaved,
@@ -25,25 +27,25 @@ internal sealed partial class SkinningPrepassDispatcher
 
             if (isInterleaved)
             {
-                mesh.InterleavedVertexBuffer?.SetBlockIndex(SkinningPrepassBindings.InterleavedInput);
-                _renderer.SkinnedInterleavedBuffer?.SetBlockIndex(SkinningPrepassBindings.InterleavedOutput);
+                BindStorageBuffer(program, mesh.InterleavedVertexBuffer, SkinningPrepassBindings.InterleavedInput);
+                BindStorageBuffer(program, _renderer.SkinnedInterleavedBuffer, SkinningPrepassBindings.InterleavedOutput);
             }
             else
             {
-                mesh.PositionsBuffer?.SetBlockIndex(SkinningPrepassBindings.NonInterleavedPositionInput);
-                mesh.NormalsBuffer?.SetBlockIndex(SkinningPrepassBindings.NonInterleavedNormalInput);
-                mesh.TangentsBuffer?.SetBlockIndex(SkinningPrepassBindings.NonInterleavedTangentInput);
+                BindStorageBuffer(program, mesh.PositionsBuffer, SkinningPrepassBindings.NonInterleavedPositionInput);
+                BindStorageBuffer(program, mesh.NormalsBuffer, SkinningPrepassBindings.NonInterleavedNormalInput);
+                BindStorageBuffer(program, mesh.TangentsBuffer, SkinningPrepassBindings.NonInterleavedTangentInput);
 
-                _renderer.SkinnedPositionsBuffer?.SetBlockIndex(SkinningPrepassBindings.NonInterleavedPositionOutput);
-                _renderer.SkinnedNormalsBuffer?.SetBlockIndex(SkinningPrepassBindings.NonInterleavedNormalOutput);
-                _renderer.SkinnedTangentsBuffer?.SetBlockIndex(SkinningPrepassBindings.NonInterleavedTangentOutput);
+                BindStorageBuffer(program, _renderer.SkinnedPositionsBuffer, SkinningPrepassBindings.NonInterleavedPositionOutput);
+                BindStorageBuffer(program, _renderer.SkinnedNormalsBuffer, SkinningPrepassBindings.NonInterleavedNormalOutput);
+                BindStorageBuffer(program, _renderer.SkinnedTangentsBuffer, SkinningPrepassBindings.NonInterleavedTangentOutput);
             }
 
             if (doSkinning)
             {
-                skinPalette?.SetBlockIndex(SkinningPrepassBindings.SkinPalette);
-                mesh.BoneInfluenceCoreIndices?.SetBlockIndex(SkinningPrepassBindings.BoneCoreIndices);
-                mesh.BoneInfluenceCoreWeights?.SetBlockIndex(SkinningPrepassBindings.BoneCoreWeights);
+                BindStorageBuffer(program, skinPalette, SkinningPrepassBindings.SkinPalette);
+                BindStorageBuffer(program, mesh.BoneInfluenceCoreIndices, SkinningPrepassBindings.BoneCoreIndices);
+                BindStorageBuffer(program, mesh.BoneInfluenceCoreWeights, SkinningPrepassBindings.BoneCoreWeights);
 
                 XRDataBuffer? spillHeaders = mesh.HasSpillInfluences ? mesh.BoneInfluenceSpillHeaders : emptySpillHeaders;
                 XRDataBuffer? spillEntries = mesh.HasSpillInfluences ? mesh.BoneInfluenceSpillEntries : emptySpillEntries;
@@ -51,13 +53,13 @@ internal sealed partial class SkinningPrepassDispatcher
                 // Spill influence buffers have different bindings for interleaved vs non-interleaved.
                 if (isInterleaved)
                 {
-                    spillHeaders?.SetBlockIndex(SkinningPrepassBindings.InterleavedSpillHeaders);
-                    spillEntries?.SetBlockIndex(SkinningPrepassBindings.InterleavedSpillEntries);
+                    BindStorageBuffer(program, spillHeaders, SkinningPrepassBindings.InterleavedSpillHeaders);
+                    BindStorageBuffer(program, spillEntries, SkinningPrepassBindings.InterleavedSpillEntries);
                 }
                 else
                 {
-                    spillHeaders?.SetBlockIndex(SkinningPrepassBindings.NonInterleavedSpillHeaders);
-                    spillEntries?.SetBlockIndex(SkinningPrepassBindings.NonInterleavedSpillEntries);
+                    BindStorageBuffer(program, spillHeaders, SkinningPrepassBindings.NonInterleavedSpillHeaders);
+                    BindStorageBuffer(program, spillEntries, SkinningPrepassBindings.NonInterleavedSpillEntries);
                 }
             }
 
@@ -65,19 +67,28 @@ internal sealed partial class SkinningPrepassDispatcher
             {
                 if (usePrecombinedBlendshapes)
                 {
-                    _renderer.PrecombinedBlendshapePositionsBuffer?.SetBlockIndex(SkinningPrepassBindings.BlendshapeSparseShapeRanges);
-                    _renderer.PrecombinedBlendshapeNormalsBuffer?.SetBlockIndex(SkinningPrepassBindings.BlendshapeSparseRecords);
-                    _renderer.PrecombinedBlendshapeTangentsBuffer?.SetBlockIndex(SkinningPrepassBindings.BlendshapeQuantizedDeltas);
+                    BindStorageBuffer(program, _renderer.PrecombinedBlendshapePositionsBuffer, SkinningPrepassBindings.BlendshapeSparseShapeRanges);
+                    BindStorageBuffer(program, _renderer.PrecombinedBlendshapeNormalsBuffer, SkinningPrepassBindings.BlendshapeSparseRecords);
+                    BindStorageBuffer(program, _renderer.PrecombinedBlendshapeTangentsBuffer, SkinningPrepassBindings.BlendshapeQuantizedDeltas);
                 }
                 else
                 {
-                    _renderer.BlendshapeActiveWeights?.SetBlockIndex(SkinningPrepassBindings.BlendshapeActiveWeights);
-                    mesh.BlendshapeSparseShapeRanges?.SetBlockIndex(SkinningPrepassBindings.BlendshapeSparseShapeRanges);
-                    mesh.BlendshapeSparseRecords?.SetBlockIndex(SkinningPrepassBindings.BlendshapeSparseRecords);
-                    mesh.BlendshapeQuantizedDeltas?.SetBlockIndex(SkinningPrepassBindings.BlendshapeQuantizedDeltas);
-                    mesh.BlendshapeQuantizationMetadata?.SetBlockIndex(SkinningPrepassBindings.BlendshapeQuantizationMetadata);
+                    BindStorageBuffer(program, _renderer.BlendshapeActiveWeights, SkinningPrepassBindings.BlendshapeActiveWeights);
+                    BindStorageBuffer(program, mesh.BlendshapeSparseShapeRanges, SkinningPrepassBindings.BlendshapeSparseShapeRanges);
+                    BindStorageBuffer(program, mesh.BlendshapeSparseRecords, SkinningPrepassBindings.BlendshapeSparseRecords);
+                    BindStorageBuffer(program, mesh.BlendshapeQuantizedDeltas, SkinningPrepassBindings.BlendshapeQuantizedDeltas);
+                    BindStorageBuffer(program, mesh.BlendshapeQuantizationMetadata, SkinningPrepassBindings.BlendshapeQuantizationMetadata);
                 }
             }
+        }
+
+        private static void BindStorageBuffer(XRRenderProgram program, XRDataBuffer? buffer, uint binding)
+        {
+            if (buffer is null)
+                return;
+
+            buffer.SetBlockIndex(binding);
+            program.BindBuffer(buffer, binding);
         }
     }
 }

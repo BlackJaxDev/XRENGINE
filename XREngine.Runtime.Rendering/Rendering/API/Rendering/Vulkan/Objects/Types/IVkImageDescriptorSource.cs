@@ -26,6 +26,13 @@ public unsafe partial class VulkanRenderer
         bool UsesAllocatorImage => false;
 
         /// <summary>
+        /// Attempts to transition a dedicated image before descriptor binding.
+        /// Render-graph allocator images should leave this as <c>false</c> and rely
+        /// on the command-buffer barrier planner.
+        /// </summary>
+        bool TryTransitionDedicatedImageLayout(ImageLayout oldLayout, ImageLayout newLayout) => false;
+
+        /// <summary>
         /// Returns a depth-only <see cref="ImageView"/> for combined depth-stencil textures,
         /// suitable for sampled image descriptor bindings where a single depth aspect is required.
         /// Implementations that do not support this should return <c>default</c>.

@@ -577,12 +577,12 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             for (int i = 0; i < _computeTransientResources.Length; i++)
-                CleanupComputeTransientResources((uint)i);
+                CleanupComputeTransientResources((uint)i, destroyPools: true);
 
             _computeTransientResources = null;
         }
 
-        private void CleanupComputeTransientResources(uint imageIndex)
+        private void CleanupComputeTransientResources(uint imageIndex, bool destroyPools = false)
         {
             if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
                 return;
@@ -596,30 +596,36 @@ namespace XREngine.Rendering.Vulkan
                 DescriptorPool descriptorPool = resources.DescriptorPools[i];
                 if (descriptorPool.Handle != 0)
                 {
-                    Result resetResult = Api!.ResetDescriptorPool(device, descriptorPool, 0);
-                    if (resetResult == Result.Success)
-                    {
-                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolReset();
-                    }
-                    else
+                    if (destroyPools)
                     {
                         Api!.DestroyDescriptorPool(device, descriptorPool, null);
                         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
                         resources.DescriptorPools[i] = default;
                     }
+                    else
+                    {
+                        Result resetResult = Api!.ResetDescriptorPool(device, descriptorPool, 0);
+                        if (resetResult == Result.Success)
+                        {
+                            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolReset();
+                        }
+                        else
+                        {
+                            Api!.DestroyDescriptorPool(device, descriptorPool, null);
+                            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                            resources.DescriptorPools[i] = default;
+                        }
+                    }
                 }
             }
 
             resources.ActiveDescriptorPool = default;
-            resources.DescriptorPoolsInitialized = resources.DescriptorPools.Count > 0;
+            resources.DescriptorPoolsInitialized = !destroyPools && resources.DescriptorPools.Count > 0;
+            if (destroyPools)
+                resources.DescriptorPools.Clear();
 
             foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in resources.UniformBuffers)
-            {
-                if (buffer.Handle != 0)
-                    Api!.DestroyBuffer(device, buffer, null);
-                if (memory.Handle != 0)
-                    Api!.FreeMemory(device, memory, null);
-            }
+                DestroyBuffer(buffer, memory);
 
             resources.UniformBuffers.Clear();
         }
@@ -733,13 +739,7 @@ namespace XREngine.Rendering.Vulkan
             if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in uniformBuffers)
-                {
-                    if (buffer.Handle != 0)
-                        Api!.DestroyBuffer(device, buffer, null);
-
-                    if (memory.Handle != 0)
-                        Api!.FreeMemory(device, memory, null);
-                }
+                    DestroyBuffer(buffer, memory);
 
                 return;
             }
@@ -1142,6 +1142,7 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<XRFrameBuffer, ImageLayout[]> fboLayoutTracking = [];
             int swapchainPresentTransitions = 0;
             bool usedSwapchainDynamicRendering = false;
+            bool swapchainInColorAttachmentLayout = false;
 
             void ApplyPipelineOverride(in FrameOpContext context)
             {
@@ -1149,50 +1150,65 @@ namespace XREngine.Rendering.Vulkan
                 activePipelineOverrideScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(context.PipelineInstance);
             }
 
-            void EndActiveRenderPass()
+            void TransitionSwapchainToPresent()
+            {
+                if (!swapchainInColorAttachmentLayout || swapChainImages is null || imageIndex >= swapChainImages.Length)
+                    return;
+
+                ImageMemoryBarrier presentBarrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = AccessFlags.ColorAttachmentWriteBit,
+                    DstAccessMask = 0,
+                    OldLayout = ImageLayout.ColorAttachmentOptimal,
+                    NewLayout = ImageLayout.PresentSrcKhr,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = swapChainImages[imageIndex],
+                    SubresourceRange = new ImageSubresourceRange
+                    {
+                        AspectMask = ImageAspectFlags.ColorBit,
+                        BaseMipLevel = 0,
+                        LevelCount = 1,
+                        BaseArrayLayer = 0,
+                        LayerCount = 1
+                    }
+                };
+
+                CmdPipelineBarrierTracked(
+                    commandBuffer,
+                    PipelineStageFlags.ColorAttachmentOutputBit,
+                    PipelineStageFlags.BottomOfPipeBit,
+                    0,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &presentBarrier);
+                swapchainPresentTransitions++;
+                swapchainInColorAttachmentLayout = false;
+            }
+
+            void EndActiveRenderPass(bool finalClose = false)
             {
                 if (!renderPassActive)
+                {
+                    if (finalClose)
+                        TransitionSwapchainToPresent();
                     return;
+                }
 
                 bool transitionSwapchainToPresent = activeDynamicRendering && activeTarget is null;
                 if (activeDynamicRendering)
                 {
                     Api!.CmdEndRendering(commandBuffer);
 
-                    if (transitionSwapchainToPresent && swapChainImages is not null && imageIndex < swapChainImages.Length)
+                    if (transitionSwapchainToPresent)
                     {
-                        ImageMemoryBarrier presentBarrier = new()
-                        {
-                            SType = StructureType.ImageMemoryBarrier,
-                            SrcAccessMask = AccessFlags.ColorAttachmentWriteBit,
-                            DstAccessMask = 0,
-                            OldLayout = ImageLayout.ColorAttachmentOptimal,
-                            NewLayout = ImageLayout.PresentSrcKhr,
-                            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                            Image = swapChainImages[imageIndex],
-                            SubresourceRange = new ImageSubresourceRange
-                            {
-                                AspectMask = ImageAspectFlags.ColorBit,
-                                BaseMipLevel = 0,
-                                LevelCount = 1,
-                                BaseArrayLayer = 0,
-                                LayerCount = 1
-                            }
-                        };
-
-                        CmdPipelineBarrierTracked(
-                            commandBuffer,
-                            PipelineStageFlags.ColorAttachmentOutputBit,
-                            PipelineStageFlags.BottomOfPipeBit,
-                            0,
-                            0,
-                            null,
-                            0,
-                            null,
-                            1,
-                            &presentBarrier);
-                        swapchainPresentTransitions++;
+                        swapchainInColorAttachmentLayout = true;
+                        if (finalClose)
+                            TransitionSwapchainToPresent();
                     }
                 }
                 else
@@ -1246,18 +1262,15 @@ namespace XREngine.Rendering.Vulkan
 
                     if (useDynamicRendering)
                     {
-                        // On the first frame for a given swapchain image, it starts in UNDEFINED
-                        // (never been presented). Use Undefined as old layout to avoid validation errors.
-                        // If we already rendered to the swapchain this frame (re-entry after compute
-                        // dispatch etc.), the image was transitioned to PresentSrcKhr by EndActiveRenderPass.
+                        // On the first frame for a given swapchain image, it starts in UNDEFINED.
+                        // Re-entries within the same command buffer keep the image in color-attachment
+                        // layout until the final close transitions it to PresentSrcKhr.
                         bool imageEverPresented = _swapchainImageEverPresented is not null &&
                             imageIndex < _swapchainImageEverPresented.Length &&
                             _swapchainImageEverPresented[imageIndex];
 
-                        // Re-entry: the image is in PresentSrcKhr from the previous EndActiveRenderPass barrier.
-                        // First entry: use PresentSrcKhr if the image has been presented before, else Undefined.
                         ImageLayout colorOldLayout = swapchainClearedThisFrame
-                            ? ImageLayout.PresentSrcKhr
+                            ? ImageLayout.ColorAttachmentOptimal
                             : (swapchainWrittenOutsideRenderPass
                                 ? ImageLayout.ColorAttachmentOptimal
                                 : (imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined));
@@ -1369,6 +1382,7 @@ namespace XREngine.Rendering.Vulkan
                         renderPassActive = true;
                         activeDynamicRendering = true;
                         usedSwapchainDynamicRendering = true;
+                        swapchainInColorAttachmentLayout = true;
                         activeTarget = null;
                         activeRenderPass = default;
                         activeFramebuffer = default;
@@ -1657,9 +1671,6 @@ namespace XREngine.Rendering.Vulkan
 
                         if (opPassIndex == int.MinValue)
                         {
-                            System.Diagnostics.Debug.Assert(
-                                op.PassIndex != int.MinValue || activePassIndex != int.MinValue,
-                                "Vulkan frame op reached recording with int.MinValue pass index outside a documented active-pass bootstrap.");
                             droppedFrameOps++;
                             if (op is MeshDrawOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp)
                                 droppedDrawOps++;
@@ -1881,10 +1892,12 @@ namespace XREngine.Rendering.Vulkan
                         Debug.VulkanEvery(
                             $"Vulkan.FrameOpError.{GetHashCode()}",
                             TimeSpan.FromSeconds(1),
-                            "[Vulkan] Frame op recording failed for {0}: {1}{2}",
+                            "[Vulkan] Frame op recording failed for {0}: {1}: {2}{3}{4}",
                             op.GetType().Name,
+                            opEx.GetType().Name,
                             opEx.Message,
-                            opContext);
+                            opContext,
+                            opEx.StackTrace is { Length: > 0 } ? Environment.NewLine + opEx.StackTrace : string.Empty);
 
                         // Continue recording remaining ops instead of aborting the
                         // entire command buffer.  A single broken shader/pipeline
@@ -2062,7 +2075,7 @@ namespace XREngine.Rendering.Vulkan
                     firstFailure?.Message,
                     frameDiagnosticSummary);
 
-                EndActiveRenderPass();
+                EndActiveRenderPass(finalClose: true);
 
                 if (usedSwapchainDynamicRendering && swapchainPresentTransitions != 1)
                 {
@@ -2314,8 +2327,21 @@ namespace XREngine.Rendering.Vulkan
                 // for newly-created dedicated images whose tracked layout hasn't been
                 // set yet.  In that case, fall back to the attachment-optimal layout
                 // based on the image's aspect mask.
-                static ImageLayout DerivePostBlitLayout(in BlitImageInfo info)
+                static ImageLayout DerivePostBlitLayout(in BlitImageInfo info, bool isDestination)
                 {
+                    if (isDestination && info.DescriptorSource is { } descriptorSource)
+                    {
+                        ImageUsageFlags usage = descriptorSource.DescriptorUsage;
+                        if ((usage & ImageUsageFlags.StorageBit) != 0)
+                            return ImageLayout.General;
+                        if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)
+                        {
+                            return IsDepthOrStencilAspect(info.AspectMask)
+                                ? ImageLayout.DepthStencilReadOnlyOptimal
+                                : ImageLayout.ShaderReadOnlyOptimal;
+                        }
+                    }
+
                     if (info.PreferredLayout != ImageLayout.Undefined)
                         return info.PreferredLayout;
                     return IsDepthOrStencilAspect(info.AspectMask)
@@ -2323,8 +2349,8 @@ namespace XREngine.Rendering.Vulkan
                         : ImageLayout.ColorAttachmentOptimal;
                 }
 
-                ImageLayout srcPostLayout = DerivePostBlitLayout(resolvedSource);
-                ImageLayout dstPostLayout = DerivePostBlitLayout(resolvedDestination);
+                ImageLayout srcPostLayout = DerivePostBlitLayout(resolvedSource, false);
+                ImageLayout dstPostLayout = DerivePostBlitLayout(resolvedDestination, true);
 
                 // Pre-blit: transition from ACTUAL current layout (PreferredLayout)
                 // to Transfer-optimal.  For newly-created images this is Undefined,
@@ -2652,12 +2678,7 @@ namespace XREngine.Rendering.Vulkan
             if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, out _, out var tempBuffers))
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in tempBuffers)
-                {
-                    if (buffer.Handle != 0)
-                        Api!.DestroyBuffer(device, buffer, null);
-                    if (memory.Handle != 0)
-                        Api!.FreeMemory(device, memory, null);
-                }
+                    DestroyBuffer(buffer, memory);
 
                 // Descriptor binding failed (e.g. a required storage image lacks STORAGE_BIT).
                 // Dispatching without valid descriptors causes GPU faults → device lost.
@@ -2682,7 +2703,7 @@ namespace XREngine.Rendering.Vulkan
             PushConstantsTracked(
                 commandBuffer,
                 op.Program.PipelineLayout,
-                ShaderStageFlags.ComputeBit,
+                ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit | ShaderStageFlags.ComputeBit,
                 0,
                 new ComputeDispatchPushConstants(op.GroupsX, op.GroupsY, op.GroupsZ, 0u));
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
@@ -3459,7 +3480,7 @@ namespace XREngine.Rendering.Vulkan
                 if (submitResult != Result.Success)
                 {
                     Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");
-                    if (submitFence.Handle != 0)
+                    if (submitFence.Handle != 0 && submitResult != Result.ErrorDeviceLost)
                         Api!.DestroyFence(device, submitFence, null);
                     RemoveCommandBufferBindState(commandBuffer);
                     return;
