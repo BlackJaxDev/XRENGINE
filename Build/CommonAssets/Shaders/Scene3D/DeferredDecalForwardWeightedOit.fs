@@ -24,7 +24,7 @@ float XRE_ComputeOitWeight(float alpha)
 
 void main()
 {
-    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
 
     float depth = texture(DepthView, uv).r;
 

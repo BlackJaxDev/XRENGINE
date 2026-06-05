@@ -10,6 +10,7 @@ using XREngine.Components.Scene;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
@@ -63,32 +64,56 @@ public static partial class EditorUnitTests
     {
         var s = Engine.Rendering.Settings;
         var debug = Engine.EditorPreferences.Debug;
-        debug.RenderMesh3DBounds = Toggles.RenderMeshBounds;
-        debug.RenderTransformDebugInfo = Toggles.RenderTransformDebugInfo;
-        debug.RenderTransformLines = Toggles.RenderTransformLines;
-        debug.RenderTransformCapsules = Toggles.RenderTransformCapsules;
-        debug.RenderTransformPoints = Toggles.RenderTransformPoints;
-        debug.Preview3DWorldOctree = Toggles.VisualizeOctree;
-        debug.Preview2DWorldQuadtree = Toggles.VisualizeQuadtree;
+        var runtimeSettings = RuntimeBootstrapState.Settings;
+
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderMeshBounds)))
+            debug.RenderMesh3DBounds = Toggles.RenderMeshBounds;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderTransformDebugInfo)))
+            debug.RenderTransformDebugInfo = Toggles.RenderTransformDebugInfo;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderTransformLines)))
+            debug.RenderTransformLines = Toggles.RenderTransformLines;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderTransformCapsules)))
+            debug.RenderTransformCapsules = Toggles.RenderTransformCapsules;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderTransformPoints)))
+            debug.RenderTransformPoints = Toggles.RenderTransformPoints;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VisualizeOctree)))
+            debug.Preview3DWorldOctree = Toggles.VisualizeOctree;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VisualizeQuadtree)))
+            debug.Preview2DWorldQuadtree = Toggles.VisualizeQuadtree;
         debug.RenderCullingVolumes = false;
-        s.RecalcChildMatricesLoopType = Toggles.RecalcChildMatricesType;
-        s.TickGroupedItemsInParallel = Toggles.TickGroupedItemsInParallel;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RecalcChildMatricesType)))
+            s.RecalcChildMatricesLoopType = Toggles.RecalcChildMatricesType;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.TickGroupedItemsInParallel)))
+            s.TickGroupedItemsInParallel = Toggles.TickGroupedItemsInParallel;
         bool requiresDesktopVrWindow = Toggles.VRPawn && (Toggles.AllowEditingInVR || Toggles.PreviewVRStereoViews);
-        s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresDesktopVrWindow;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) || requiresDesktopVrWindow)
+            s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresDesktopVrWindow;
         s.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;
-        s.AllowShaderPipelines = Toggles.AllowShaderPipelines;
-        s.AllowBinaryProgramCaching = Toggles.AllowBinaryProgramCaching;
-        s.AsyncProgramBinaryUpload = Toggles.AsyncProgramBinaryUpload;
-        s.AsyncProgramCompilation = Toggles.AsyncProgramCompilation;
-        s.AllowSkinning = Toggles.AllowSkinning;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
+            s.AllowShaderPipelines = Toggles.AllowShaderPipelines;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowBinaryProgramCaching)))
+            s.AllowBinaryProgramCaching = Toggles.AllowBinaryProgramCaching;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AsyncProgramBinaryUpload)))
+            s.AsyncProgramBinaryUpload = Toggles.AsyncProgramBinaryUpload;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AsyncProgramCompilation)))
+            s.AsyncProgramCompilation = Toggles.AsyncProgramCompilation;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowSkinning)))
+            s.AllowSkinning = Toggles.AllowSkinning;
         Debug.Out($"[UnitTestingWorld] Applied render toggles AllowSkinning={s.AllowSkinning} AllowShaderPipelines={s.AllowShaderPipelines}");
-        s.OpenGLProgramCompileLinkWorkerCount = Toggles.OpenGLProgramCompileLinkWorkerCount;
-        s.MaxAsyncShaderProgramsPerFrame = Toggles.MaxAsyncShaderProgramsPerFrame;
-        s.OpenGLShaderLinkStrategy = Toggles.OpenGLShaderLinkStrategy;
-        s.OpenGLShaderCompilerThreadCount = Toggles.OpenGLShaderCompilerThreadCount;
-        s.OpenGLParallelShaderCompileProbeEnabled = Toggles.OpenGLParallelShaderCompileProbeEnabled;
-        s.OpenGLParallelShaderCompileProbeTimeoutMs = Toggles.OpenGLParallelShaderCompileProbeTimeoutMs;
-        s.RenderVRSinglePassStereo = Toggles.SinglePassStereoVR;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLProgramCompileLinkWorkerCount)))
+            s.OpenGLProgramCompileLinkWorkerCount = Toggles.OpenGLProgramCompileLinkWorkerCount;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.MaxAsyncShaderProgramsPerFrame)))
+            s.MaxAsyncShaderProgramsPerFrame = Toggles.MaxAsyncShaderProgramsPerFrame;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLShaderLinkStrategy)))
+            s.OpenGLShaderLinkStrategy = Toggles.OpenGLShaderLinkStrategy;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLShaderCompilerThreadCount)))
+            s.OpenGLShaderCompilerThreadCount = Toggles.OpenGLShaderCompilerThreadCount;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeEnabled)))
+            s.OpenGLParallelShaderCompileProbeEnabled = Toggles.OpenGLParallelShaderCompileProbeEnabled;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeTimeoutMs)))
+            s.OpenGLParallelShaderCompileProbeTimeoutMs = Toggles.OpenGLParallelShaderCompileProbeTimeoutMs;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
+            s.RenderVRSinglePassStereo = Toggles.SinglePassStereoVR;
         if (Toggles.RenderPhysicsDebug)
             s.PhysicsVisualizeSettings.SetAllTrue();
 

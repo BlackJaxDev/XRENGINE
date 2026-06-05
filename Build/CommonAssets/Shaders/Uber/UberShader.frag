@@ -61,6 +61,7 @@
 #endif
 #pragma snippet "NormalEncoding"
 #pragma snippet "ShadowMomentEncoding"
+#pragma snippet "ScreenSpaceUtils"
 
 // Transparency algorithm snippets. These are mutually exclusive with each
 // other and with the weighted-blended path which is inlined below.
@@ -637,7 +638,7 @@ vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseCo
 int getForwardPlusVisibleLightBaseIndex() {
     int tileCountX = ForwardPlusTileCountX;
     int tileCountY = ForwardPlusTileCountY;
-    ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;
+    ivec2 tileCoord = XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)) / ForwardPlusTileSize;
     tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));
     int tileIndex = XRENGINE_GetForwardResolvedViewIndex() * (tileCountX * tileCountY) + tileCoord.y * tileCountX + tileCoord.x;
     return tileIndex * ForwardPlusMaxLightsPerTile;

@@ -301,6 +301,8 @@ namespace XREngine.Rendering
         private bool _viewProjectionMatricesDirty = true;
         private XRCameraParameters? _cachedProjectionParameters;
         private uint _cachedProjectionVersion;
+        private RuntimeGraphicsApiKind _cachedProjectionBackend = RuntimeGraphicsApiKind.Unknown;
+        private ERenderClipDepthRange _cachedProjectionClipDepthRange = (ERenderClipDepthRange)(-1);
 
         /// <summary>
         /// Optional oblique near clipping plane in world space.
@@ -741,7 +743,10 @@ namespace XREngine.Rendering
             XRCameraParameters parameters = Parameters;
             uint projectionVersion = parameters.ProjectionVersion;
             bool parametersChanged = !ReferenceEquals(_cachedProjectionParameters, parameters) || _cachedProjectionVersion != projectionVersion;
-            if (!_projectionMatricesDirty && !parametersChanged)
+            RuntimeGraphicsApiKind projectionBackend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+            ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.ResolveEffectiveClipDepthRange(projectionBackend);
+            bool clipPolicyChanged = _cachedProjectionBackend != projectionBackend || _cachedProjectionClipDepthRange != clipDepthRange;
+            if (!_projectionMatricesDirty && !parametersChanged && !clipPolicyChanged)
                 return;
 
             if (_obliqueNearClippingPlane != null && parametersChanged)
@@ -751,7 +756,7 @@ namespace XREngine.Rendering
                 ? _obliqueProjectionMatrix
                 : parameters.GetProjectionMatrix();
 
-            _projectionMatrixUnjittered = ApplyDepthModeToProjection(baseProjection, DepthMode);
+            _projectionMatrixUnjittered = ApplyDepthPolicyToProjection(baseProjection, DepthMode, clipDepthRange);
             if (!Matrix4x4.Invert(_projectionMatrixUnjittered, out _inverseProjectionMatrixUnjittered))
             {
                 Debug.LogWarning($"Failed to invert {nameof(ProjectionMatrixUnjittered)}. Parameters: {parameters}");
@@ -775,6 +780,8 @@ namespace XREngine.Rendering
 
             _cachedProjectionParameters = parameters;
             _cachedProjectionVersion = projectionVersion;
+            _cachedProjectionBackend = projectionBackend;
+            _cachedProjectionClipDepthRange = clipDepthRange;
             _projectionMatricesDirty = false;
             _viewProjectionMatricesDirty = true;
         }
@@ -791,14 +798,37 @@ namespace XREngine.Rendering
             _viewProjectionMatricesDirty = false;
         }
 
-        private static Matrix4x4 ApplyDepthModeToProjection(Matrix4x4 projection, EDepthMode depthMode)
+        private static Matrix4x4 ApplyDepthPolicyToProjection(Matrix4x4 projection, EDepthMode depthMode, ERenderClipDepthRange clipDepthRange)
         {
-            if (depthMode == EDepthMode.Normal)
+            float zScale;
+            float zBias;
+            if (depthMode == EDepthMode.Reversed)
+            {
+                if (clipDepthRange == ERenderClipDepthRange.NegativeOneToOne)
+                {
+                    zScale = -2.0f;
+                    zBias = 1.0f;
+                }
+                else
+                {
+                    zScale = -1.0f;
+                    zBias = 1.0f;
+                }
+            }
+            else if (clipDepthRange == ERenderClipDepthRange.NegativeOneToOne)
+            {
+                zScale = 2.0f;
+                zBias = -1.0f;
+            }
+            else
+            {
                 return projection;
+            }
 
-            Matrix4x4 zFlip = Matrix4x4.Identity;
-            zFlip.M33 = -1.0f;
-            return Matrix4x4.Multiply(projection, zFlip);
+            Matrix4x4 zPolicy = Matrix4x4.Identity;
+            zPolicy.M33 = zScale;
+            zPolicy.M43 = zBias;
+            return Matrix4x4.Multiply(projection, zPolicy);
         }
 
         /// <summary>
@@ -1128,8 +1158,12 @@ namespace XREngine.Rendering
         /// </summary>
         public Vector3 WorldToNormalizedViewportCoordinate(Vector3 worldPoint)
         {
-            // Project to normalized [0,1] UV with depth in [0,1].
-            Vector3 clip01 = (Vector3.Transform(Vector3.Transform(worldPoint, Transform.InverseWorldMatrix), ProjectionMatrix) + Vector3.One) * new Vector3(0.5f);
+            Vector3 clip = Vector3.Transform(Vector3.Transform(worldPoint, Transform.InverseWorldMatrix), ProjectionMatrix);
+            ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.EffectiveClipDepthRange;
+            Vector3 clip01 = new(
+                clip.X * 0.5f + 0.5f,
+                clip.Y * 0.5f + 0.5f,
+                RenderClipSpacePolicy.ClipZToDepthBuffer(clip.Z, clipDepthRange));
 
             // Apply forward lens distortion so predicted screen UV matches post-process sampling.
             var lens = GetActiveLensParams();
@@ -1175,7 +1209,9 @@ namespace XREngine.Rendering
             }
 
             if (depthRange == ERange.ZeroToOne)
-                clipSpacePos.Z = normalizedPointDepth.Z * 2.0f - 1.0f;
+                clipSpacePos.Z = RenderClipSpacePolicy.DepthBufferToClipZ(
+                    normalizedPointDepth.Z,
+                    RuntimeEngine.Rendering.EffectiveClipDepthRange);
 
             Matrix4x4 inverseProjection = useUnjitteredProjection ? InverseProjectionMatrixUnjittered : InverseProjectionMatrix;
             Vector4 viewSpacePos = Vector4.Transform(clipSpacePos, inverseProjection * Transform.WorldMatrix);
@@ -1639,6 +1675,8 @@ namespace XREngine.Rendering
             program.Uniform(EEngineUniform.CameraUp.ToStringFast(), tfm.RenderUp);
             program.Uniform(EEngineUniform.CameraRight.ToStringFast(), tfm.RenderRight);
             program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)DepthMode);
+            program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+            program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
 
             Parameters.SetUniforms(program);
         }

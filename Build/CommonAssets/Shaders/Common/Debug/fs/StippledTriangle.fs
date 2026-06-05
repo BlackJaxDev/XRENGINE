@@ -1,10 +1,14 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout (location = 0) out vec4 OutColor;
 
 uniform vec4 FillColor;
 uniform float StippleScale;
 uniform float StippleThickness;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
 // Pushes the overlay slightly towards the camera to avoid z-fighting.
 // Positive values move the fragment closer (smaller depth).
 uniform float DepthOffset;
@@ -12,7 +16,7 @@ uniform float DepthOffset;
 void main()
 {
     // Get screen-space coordinates for stippling
-    vec2 screenPos = gl_FragCoord.xy;
+    vec2 screenPos = XRENGINE_ScreenCoordLocal(gl_FragCoord.xy, vec2(0.0), vec2(ScreenWidth, ScreenHeight));
     
     // Diagonal stipple pattern (screen-space) at 45 degrees
     // The diagonal line equation: x + y = constant

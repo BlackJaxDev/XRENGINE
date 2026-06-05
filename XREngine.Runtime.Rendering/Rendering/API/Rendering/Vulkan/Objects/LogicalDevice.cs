@@ -135,6 +135,28 @@ public unsafe partial class VulkanRenderer
         _supportsSynchronization2Feature = synchronization2Features.Synchronization2;
     }
 
+    private unsafe void QueryDepthClipControlCapabilities(bool extensionEnabled, out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceDepthClipControlFeaturesEXTNative depthClipControlFeatures = new()
+        {
+            SType = VulkanDepthClipControlExt.PhysicalDeviceFeaturesSType,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &depthClipControlFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = depthClipControlFeatures.DepthClipControl;
+    }
+
     private unsafe void QueryNvMemoryDecompressionCapabilities(
         bool extensionEnabled,
         out bool featureSupported,
@@ -616,6 +638,12 @@ public unsafe partial class VulkanRenderer
         bool enableTimelineSemaphoreFeature = timelineSemaphoreFeatureSupported;
         bool enableSynchronization2Feature = synchronization2ExtensionEnabled && _supportsSynchronization2Feature;
 
+        bool depthClipControlExtensionEnabled = extensionsArray.Contains(VulkanDepthClipControlExt.ExtensionName);
+        QueryDepthClipControlCapabilities(
+            depthClipControlExtensionEnabled,
+            out bool depthClipControlFeatureSupported);
+        bool enableDepthClipControlFeature = depthClipControlExtensionEnabled && depthClipControlFeatureSupported;
+
         bool meshShaderExtensionEnabled = extensionsArray.Contains("VK_EXT_mesh_shader");
         QueryMeshShaderCapabilities(
             meshShaderExtensionEnabled,
@@ -706,6 +734,13 @@ public unsafe partial class VulkanRenderer
             Synchronization2 = enableSynchronization2Feature,
         };
 
+        PhysicalDeviceDepthClipControlFeaturesEXTNative depthClipControlFeatureEnable = new()
+        {
+            SType = VulkanDepthClipControlExt.PhysicalDeviceFeaturesSType,
+            PNext = null,
+            DepthClipControl = enableDepthClipControlFeature,
+        };
+
         PhysicalDeviceMeshShaderFeaturesEXT meshShaderFeatureEnable = new()
         {
             SType = StructureType.PhysicalDeviceMeshShaderFeaturesExt,
@@ -775,6 +810,12 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &synchronization2FeatureEnable;
         }
 
+        if (enableDepthClipControlFeature)
+        {
+            depthClipControlFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &depthClipControlFeatureEnable;
+        }
+
         if (enableMeshShaderFeature)
         {
             meshShaderFeatureEnable.PNext = enabledFeaturesPNext;
@@ -824,10 +865,12 @@ public unsafe partial class VulkanRenderer
         _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
         _supportsTimelineSemaphores = enableTimelineSemaphoreFeature;
         _supportsSynchronization2 = enableSynchronization2Feature;
+        _supportsDepthClipControl = enableDepthClipControlFeature;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
         RuntimeEngine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
+        RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = enableDepthClipControlFeature;
 
         if (descriptorIndexingExtensionEnabled && !enableDescriptorIndexing)
         {
@@ -850,6 +893,13 @@ public unsafe partial class VulkanRenderer
                     "[Vulkan] Draw parameters support unavailable (shaderDrawParametersFeature={0}, extensionEnabled={1}). Shaders using gl_BaseVertex/gl_BaseInstance may fail.",
                     shaderDrawParametersFeatureSupported,
                     shaderDrawParametersExtensionEnabled);
+            }
+
+            if (depthClipControlExtensionEnabled && !enableDepthClipControlFeature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] {0} extension present but disabled because the depthClipControl feature bit is unavailable.",
+                    VulkanDepthClipControlExt.ExtensionName);
             }
 
             if (!enableMultiviewFeature)
@@ -1070,6 +1120,7 @@ public unsafe partial class VulkanRenderer
         RuntimeEngine.Rendering.State.HasVulkanMemoryDecompression = SupportsNvMemoryDecompression;
         RuntimeEngine.Rendering.State.HasVulkanCopyMemoryIndirect = SupportsNvCopyMemoryIndirect;
         RuntimeEngine.Rendering.State.HasVulkanRtxIo = SupportsNvMemoryDecompression || SupportsNvCopyMemoryIndirect;
+        RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = SupportsDepthClipControl;
 
         if (descriptorIndexingExtensionLoaded && _supportsDescriptorIndexing)
             Debug.Vulkan("[Vulkan] VK_EXT_descriptor_indexing enabled for descriptor update-after-bind support.");
@@ -1090,6 +1141,7 @@ public unsafe partial class VulkanRenderer
         LogCapability("DrawIndirectCount", _supportsDrawIndirectCount, "Optional");
         LogCapability("MeshShaderEXT", SupportsVulkanMeshTaskIndirectCount, "Optional");
         LogCapability("Multiview", RuntimeEngine.Rendering.State.HasVulkanMultiView, "Optional");
+        LogCapability("DepthClipControlEXT", SupportsDepthClipControl, "Optional");
         LogCapability("RayTracingPipeline", hasRayTracingPipeline, "DisabledByProfile");
         LogCapability("TimelineSemaphore", _supportsTimelineSemaphores, "Required");
         LogCapability("Synchronization2", _supportsSynchronization2Feature, "Optional");

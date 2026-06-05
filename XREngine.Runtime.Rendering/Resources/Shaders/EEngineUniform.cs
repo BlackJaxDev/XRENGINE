@@ -66,6 +66,8 @@ namespace XREngine.Rendering
         CameraNearZ,
         CameraFarZ,
         DepthMode,
+        ClipSpaceYDirection,
+        ClipDepthRange,
         CameraPosition,
         //CameraForward,
         //CameraUp,

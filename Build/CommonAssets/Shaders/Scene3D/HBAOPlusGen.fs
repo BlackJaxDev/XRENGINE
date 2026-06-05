@@ -2,6 +2,7 @@
 #include "AOCommon.glsl"
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "ScreenSpaceUtils"
 
 const float PI = 3.14159265359f;
 
@@ -93,7 +94,7 @@ void main()
     float radiusPixels = ComputeRadiusPixels(radiusVS, centerPos.z);
     vec2 texelSize = 1.0f / vec2(textureSize(DepthView, 0));
 
-    ivec2 tile = ivec2(gl_FragCoord.xy) & ivec2(3);
+    ivec2 tile = XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView, 0))) & ivec2(3);
     float baseAngle = (float(tile.x + tile.y * 4) / 16.0f) * (2.0f * PI);
     float phase = (float((tile.x * 5 + tile.y * 3) & 3) + 0.5f) * 0.25f;
 

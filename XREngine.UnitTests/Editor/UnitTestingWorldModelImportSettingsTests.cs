@@ -32,6 +32,69 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
+    public void ParseJsonc_TracksOnlyTopLevelPropertiesPresentInJsonc()
+    {
+        const string json = """
+        {
+          // Only these two values are intended unit-test overrides.
+          "RenderAPI": "OpenGL",
+          "VolumetricFog": {
+            "Density": 0.5
+          }
+        }
+        """;
+
+        UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.ParseJsonc(json);
+
+        settings.TracksExplicitJsonProperties.ShouldBeTrue();
+        settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderAPI)).ShouldBeTrue();
+        settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VolumetricFog)).ShouldBeTrue();
+        settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.PhysicsAPI)).ShouldBeFalse();
+        settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.UpdateFPS)).ShouldBeFalse();
+    }
+
+    [Test]
+    public void ApplyStartupOverrides_PreservesExistingSettingsForOmittedJsoncProperties()
+    {
+        const string json = """
+        {
+          "RenderAPI": "OpenGL",
+          "RenderFPS": 144.0,
+          "AudioTransport": "NAudio"
+        }
+        """;
+
+        UnitTestingWorldSettings unitTestSettings = UnitTestingWorldSettingsStore.ParseJsonc(json);
+        var startupSettings = new GameStartupSettings
+        {
+            GPURenderDispatch = true,
+            TargetUpdatesPerSecond = 72.0f,
+            TargetFramesPerSecond = 30.0f,
+            FixedFramesPerSecond = 72.0f,
+            AudioEffectsOverride = new(EAudioEffects.SteamAudio, true),
+            DefaultUserSettings = new UserSettings
+            {
+                RenderLibrary = ERenderLibrary.Vulkan,
+                PhysicsLibrary = EPhysicsLibrary.Jolt,
+            },
+        };
+
+        UnitTestingWorldSettingsStore.ApplyStartupOverrides(startupSettings, unitTestSettings);
+
+        startupSettings.DefaultUserSettings.RenderLibrary.ShouldBe(ERenderLibrary.OpenGL);
+        startupSettings.DefaultUserSettings.PhysicsLibrary.ShouldBe(EPhysicsLibrary.Jolt);
+        startupSettings.GPURenderDispatch.ShouldBeTrue();
+        startupSettings.TargetUpdatesPerSecond.ShouldBe(72.0f);
+        startupSettings.TargetFramesPerSecond.ShouldBe(144.0f);
+        startupSettings.FixedFramesPerSecond.ShouldBe(72.0f);
+        startupSettings.AudioTransportOverride.HasOverride.ShouldBeTrue();
+        startupSettings.AudioTransportOverride.Value.ShouldBe(EAudioTransport.NAudio);
+        startupSettings.AudioEffectsOverride.HasOverride.ShouldBeTrue();
+        startupSettings.AudioEffectsOverride.Value.ShouldBe(EAudioEffects.SteamAudio);
+        startupSettings.AudioArchitectureV2Override.HasOverride.ShouldBeFalse();
+    }
+
+    [Test]
     public void Settings_RoundTripsDynamicDebugLightSettings_BetweenEditorAndRuntimeSettings()
     {
         var editorSettings = new EditorUnitTests.Settings

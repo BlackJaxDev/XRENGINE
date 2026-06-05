@@ -330,6 +330,12 @@ namespace XREngine.Rendering.OpenGL
                     program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
                 }
 
+                if (missingProgramRequirements.HasFlag(EUniformRequirements.ClipSpacePolicy))
+                {
+                    program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+                    program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                }
+
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.MousePosition))
                 {
                     //Program?.Uniform(nameof(EUniformRequirements.MousePosition), mousePosition);

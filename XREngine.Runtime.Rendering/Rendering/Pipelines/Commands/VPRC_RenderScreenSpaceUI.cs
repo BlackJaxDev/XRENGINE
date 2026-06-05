@@ -81,6 +81,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (FailRenderIfNoOutputFBO && fbo is null)
                 return;
 
+            using var clipScope = XREngine.Rendering.AbstractRenderer.Current?.PushUiClipSpacePolicy();
             ui.RenderScreenSpace(ActivePipelineInstance.RenderState.RenderingViewport, fbo);
         }
 

@@ -165,6 +165,12 @@ namespace XREngine.Rendering.Vulkan
                 program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), screenHeight);
             }
 
+            if (reqs.HasFlag(EUniformRequirements.ClipSpacePolicy))
+            {
+                program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+                program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+            }
+
             material.OnSettingUniforms(program);
             RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
         }

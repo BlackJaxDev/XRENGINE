@@ -39,8 +39,12 @@ namespace XREngine.Rendering.Models.Materials
         /// Forward ambient occlusion textures and AO tuning uniforms will be provided.
         /// </summary>
         AmbientOcclusion = 32,
+        /// <summary>
+        /// Clip-space policy uniforms such as ClipSpaceYDirection and ClipDepthRange will be provided.
+        /// </summary>
+        ClipSpacePolicy = 64,
 
-        //UserInterface = 64,
+        //UserInterface = 128,
 
         //LightsAndCamera = Lights | Camera,
     }
@@ -100,6 +104,8 @@ namespace XREngine.Rendering.Models.Materials
                 [nameof(EEngineUniform.ScreenWidth)] = EUniformRequirements.ViewportDimensions,
                 [nameof(EEngineUniform.ScreenHeight)] = EUniformRequirements.ViewportDimensions,
                 [nameof(EEngineUniform.ScreenOrigin)] = EUniformRequirements.ViewportDimensions,
+                [nameof(EEngineUniform.ClipSpaceYDirection)] = EUniformRequirements.ClipSpacePolicy,
+                [nameof(EEngineUniform.ClipDepthRange)] = EUniformRequirements.ClipSpacePolicy,
 
                 // RenderTime flag — time uniforms
                 [nameof(EEngineUniform.RenderTime)] = EUniformRequirements.RenderTime,
@@ -260,6 +266,8 @@ namespace XREngine.Rendering.Models.Materials
 
             // ScreenWidth, ScreenHeight, ScreenOrigin are provided by both Camera and ViewportDimensions
             if (req == EUniformRequirements.ViewportDimensions)
+                req |= EUniformRequirements.Camera;
+            else if (req == EUniformRequirements.ClipSpacePolicy)
                 req |= EUniformRequirements.Camera;
 
             return req;

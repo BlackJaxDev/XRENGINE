@@ -389,14 +389,12 @@ namespace XREngine.Networking
         {
             int w = 1920;
             int h = 1080;
-            float updateHz = 60.0f;
-            float renderHz = 30.0f;
-            float fixedHz = 30.0f;
+            UnitTestingWorldSettings unitTestSettings = RuntimeBootstrapState.Settings;
 
             int primaryX = NativeMethods.GetSystemMetrics(0);
             int primaryY = NativeMethods.GetSystemMetrics(1);
 
-            return new GameStartupSettings()
+            var settings = new GameStartupSettings()
             {
                 // Always create a visible window so it's obvious the server launched.
                 // Dev rendering may add extra UI, but a window should exist in all modes.
@@ -424,17 +422,14 @@ namespace XREngine.Networking
                 UdpMulticastPort = _udpMulticastPort,
                 MultiplayerSessionId = _serverSessionId,
                 NetworkingType = ENetworkingType.Server,
-                GPURenderDispatch = RuntimeBootstrapState.Settings.GPURenderDispatch,
                 DefaultUserSettings = new UserSettings()
                 {
                     VSync = EVSyncMode.Off,
-                    RenderLibrary = RuntimeBootstrapState.Settings.RenderAPI,
-                    PhysicsLibrary = RuntimeBootstrapState.Settings.PhysicsAPI,
                 },
-                TargetUpdatesPerSecond = updateHz,
-                TargetFramesPerSecond = renderHz,
-                FixedFramesPerSecond = fixedHz,
             };
+
+            UnitTestingWorldSettingsStore.ApplyStartupOverrides(settings, unitTestSettings);
+            return settings;
         }
     }
 }

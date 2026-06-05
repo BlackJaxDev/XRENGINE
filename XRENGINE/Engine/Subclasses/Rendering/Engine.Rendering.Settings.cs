@@ -512,6 +512,8 @@ namespace XREngine
                 private ESkinnedBoundsRecomputePolicy _skinnedBoundsRecomputePolicy = ESkinnedBoundsRecomputePolicy.Never;
                 private bool _allowInitialSkinnedBoundsBuildWhenNever = true;
                 private int _shaderConfigVersion = 0;
+                private global::XREngine.Rendering.ERenderClipSpaceYDirection _clipSpaceYDirection = global::XREngine.Rendering.ERenderClipSpaceYDirection.YUp;
+                private global::XREngine.Rendering.ERenderClipDepthRange _clipDepthRange = global::XREngine.Rendering.ERenderClipDepthRange.ZeroToOne;
                 private bool _useGpuBvh = true;
                 private ECpuSceneCullingStructure _cpuSceneCullingStructure = ECpuSceneCullingStructure.Bvh;
                 private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Diagnostics;
@@ -991,6 +993,28 @@ namespace XREngine
                 {
                     get => _useIntegerUniformsInShaders;
                     set => SetField(ref _useIntegerUniformsInShaders, value, null, _ => BumpShaderConfigVersion());
+                }
+
+                /// <summary>
+                /// The logical clip-space Y direction used by renderer backends.
+                /// </summary>
+                [Category("Rendering")]
+                [Description("The logical clip-space Y direction used by renderer backends.")]
+                public global::XREngine.Rendering.ERenderClipSpaceYDirection ClipSpaceYDirection
+                {
+                    get => _clipSpaceYDirection;
+                    set => SetField(ref _clipSpaceYDirection, value, null, _ => BumpShaderConfigVersion());
+                }
+
+                /// <summary>
+                /// The logical clip-space depth range used by camera matrices, depth reconstruction, and renderer backend state.
+                /// </summary>
+                [Category("Rendering")]
+                [Description("The logical clip-space depth range used by camera matrices, depth reconstruction, and renderer backend state.")]
+                public global::XREngine.Rendering.ERenderClipDepthRange ClipDepthRange
+                {
+                    get => _clipDepthRange;
+                    set => SetField(ref _clipDepthRange, value, null, _ => BumpShaderConfigVersion());
                 }
 
                 /// <summary>
@@ -2141,6 +2165,14 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EngineSettings.GpuSortDomainPolicy))
                     Engine.Rendering.LogVulkanFeatureProfileFingerprint();
+
+                if (applyAll
+                    || propertyName == nameof(EngineSettings.ClipSpaceYDirection)
+                    || propertyName == nameof(EngineSettings.ClipDepthRange))
+                {
+                    foreach (var window in Engine.Windows)
+                        window.RequestRenderStateRecheck(resetCircuitBreaker: true);
+                }
 
                 if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                     || propertyName == nameof(EngineSettings.DlssQuality)

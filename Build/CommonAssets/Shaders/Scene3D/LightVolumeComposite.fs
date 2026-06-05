@@ -1,5 +1,7 @@
 #version 450 core
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 
 uniform sampler2D LightVolumeGITexture;
@@ -14,7 +16,7 @@ void main()
         return;
     }
 
-    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
     vec3 gi = texture(LightVolumeGITexture, uv).rgb;
     OutColor = vec4(gi, 0.0);
 }

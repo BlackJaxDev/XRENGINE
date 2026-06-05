@@ -77,10 +77,12 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("XRENGINE_ReadShadowMapDir");
         source.ShouldContain("return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], mesh.worldPos, mesh.vertexNormal, geometricNDotL);");
         source.ShouldNotContain("return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], worldPos, normal, max(nDotL, 0.0));");
+        source.ShouldContain("#pragma snippet \"ScreenSpaceUtils\"");
         source.ShouldContain("int getForwardPlusVisibleLightBaseIndex()");
-        source.ShouldContain("ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;");
+        source.ShouldContain("ivec2 tileCoord = XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)) / ForwardPlusTileSize;");
         source.ShouldContain("tileCoord = clamp(tileCoord, ivec2(0), ivec2(tileCountX - 1, tileCountY - 1));");
         source.ShouldContain("XRENGINE_GetForwardResolvedViewIndex() * (tileCountX * tileCountY)");
+        source.ShouldNotContain("ivec2 tileCoord = ivec2(floor(gl_FragCoord.xy - ScreenOrigin)) / ForwardPlusTileSize;");
         source.ShouldNotContain("ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;");
 
         uniforms.ShouldContain("uniform float RenderTime;");
@@ -457,6 +459,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             | EUniformRequirements.Lights
             | EUniformRequirements.AmbientOcclusion
             | EUniformRequirements.ViewportDimensions
+            | EUniformRequirements.ClipSpacePolicy
             | EUniformRequirements.RenderTime);
 
         material.Parameter<ShaderFloat>("_LightDataAOStrengthR")?.Value.ShouldBe(0.0f);

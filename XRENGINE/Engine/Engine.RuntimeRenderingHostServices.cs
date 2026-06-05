@@ -58,6 +58,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public int BlendshapePrecombineDirectMinActiveShapes => Engine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes;
     public int BlendshapePrecombineMinAffectedVertices => Engine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices;
     public int ShaderConfigVersion => Engine.Rendering.Settings.ShaderConfigVersion;
+    public ERenderClipSpaceYDirection ClipSpaceYDirection => Engine.Rendering.Settings.ClipSpaceYDirection;
+    public ERenderClipDepthRange ClipDepthRange => Engine.Rendering.Settings.ClipDepthRange;
     public bool AllowBinaryProgramCaching => Engine.Rendering.Settings.AllowBinaryProgramCaching;
     public bool AsyncProgramBinaryUpload => Engine.Rendering.Settings.AsyncProgramBinaryUpload;
     public bool AsyncProgramCompilation => Engine.Rendering.Settings.AsyncProgramCompilation;

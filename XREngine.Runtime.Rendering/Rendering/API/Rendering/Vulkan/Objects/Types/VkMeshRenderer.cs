@@ -374,7 +374,8 @@ public unsafe partial class VulkanRenderer
             BlendFactor DstColorBlendFactor,
             BlendFactor SrcAlphaBlendFactor,
             BlendFactor DstAlphaBlendFactor,
-            ColorComponentFlags ColorWriteMask);
+            ColorComponentFlags ColorWriteMask,
+            bool NativeNegativeOneToOneDepth);
 
         private VkRenderProgram? _program;
         private XRRenderProgram? _generatedProgram;
@@ -383,6 +384,9 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<uint, VkDataBuffer> _vertexBuffersByBinding = new();
         private bool _buffersDirty = true;
         private bool _pipelineDirty = true;
+        private int _pipelineShaderConfigVersion = -1;
+        private bool _pipelineUsesShaderClipDepthRemap;
+        private bool _pipelineUsesNativeDepthClipControl;
         private DescriptorPool _descriptorPool;
         private DescriptorSet[][]? _descriptorSets;
         private bool _descriptorDirty = true;

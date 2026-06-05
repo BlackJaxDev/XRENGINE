@@ -1304,6 +1304,7 @@ namespace XREngine.Rendering
             if (!ui.IsScreenSpace)
                 return;
 
+            using var clipScope = AbstractRenderer.Current?.PushUiClipSpacePolicy();
             ui.RenderScreenSpace(this, targetFbo);
         }
 

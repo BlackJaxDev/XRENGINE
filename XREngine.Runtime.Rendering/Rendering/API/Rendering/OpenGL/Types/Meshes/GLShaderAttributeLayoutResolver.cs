@@ -8,6 +8,12 @@ namespace XREngine.Rendering.OpenGL
         [GeneratedRegex(@"layout\s*\((?<layout>[^)]*)\)\s*in\s+(?<declaration>[^;]+);", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
         private static partial Regex InputDeclarationRegex();
 
+        [GeneratedRegex(@"^\s*(?:layout\s*\([^)]*\)\s*)?(?:flat\s+|smooth\s+|noperspective\s+|centroid\s+|sample\s+|invariant\s+|precise\s+)*in\s+[^;]+;", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline)]
+        private static partial Regex VertexInputDeclarationRegex();
+
+        [GeneratedRegex(@"\bgl_VertexID\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+        private static partial Regex VertexIdRegex();
+
         [GeneratedRegex(@"\blocation\s*=\s*(?<loc>\d+)\b", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
         private static partial Regex LocationRegex();
 
@@ -58,6 +64,30 @@ namespace XREngine.Rendering.OpenGL
             }
 
             return locations;
+        }
+
+        public static bool UsesVertexIdWithoutVertexInputs(IEnumerable<XRShader> shaders)
+        {
+            foreach (XRShader shader in shaders)
+            {
+                if (shader is null || shader.Type != EShaderType.Vertex)
+                    continue;
+
+                if (UsesVertexIdWithoutVertexInputs(GetShaderSource(shader)))
+                    return true;
+            }
+
+            return false;
+        }
+
+        public static bool UsesVertexIdWithoutVertexInputs(string source)
+        {
+            if (string.IsNullOrWhiteSpace(source))
+                return false;
+
+            string uncommentedSource = StripComments(source);
+            return VertexIdRegex().IsMatch(uncommentedSource) &&
+                !VertexInputDeclarationRegex().IsMatch(uncommentedSource);
         }
 
         private static string GetShaderSource(XRShader shader)

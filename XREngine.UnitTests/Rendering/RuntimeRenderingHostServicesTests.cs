@@ -99,6 +99,7 @@ public sealed class RuntimeRenderingHostServicesTests
         try
         {
             Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", null);
+            EffectiveSettingsEnvOverrides.ReloadForTests();
 
             RuntimeRenderingHostServices.Current = new TestRuntimeRenderingHostServices
             {
@@ -108,11 +109,13 @@ public sealed class RuntimeRenderingHostServicesTests
             RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Bvh);
 
             Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", "Octree");
+            EffectiveSettingsEnvOverrides.ReloadForTests();
             RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
         }
         finally
         {
             Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", previousStructure);
+            EffectiveSettingsEnvOverrides.ReloadForTests();
         }
     }
 
@@ -337,6 +340,8 @@ public sealed class RuntimeRenderingHostServicesTests
         public int BlendshapePrecombineDirectMinActiveShapes { get; set; } = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineDirectMinActiveShapes;
         public int BlendshapePrecombineMinAffectedVertices { get; set; } = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineMinAffectedVertices;
         public int ShaderConfigVersion => 0;
+        public ERenderClipSpaceYDirection ClipSpaceYDirection { get; set; } = RuntimeRenderingHostServiceDefaults.ClipSpaceYDirection;
+        public ERenderClipDepthRange ClipDepthRange { get; set; } = RuntimeRenderingHostServiceDefaults.ClipDepthRange;
         public bool IsRenderThread => true;
         public bool IsRendererActive => false;
         public bool IsShadowPass => false;

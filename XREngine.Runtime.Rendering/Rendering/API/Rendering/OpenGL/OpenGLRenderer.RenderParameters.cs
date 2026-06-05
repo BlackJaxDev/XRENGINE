@@ -35,13 +35,17 @@ public partial class OpenGLRenderer
         if (parameters is null)
             return;
 
+        ApplyClipSpacePolicy();
+
         //Api.PointSize(r.PointSize);
         //Api.LineWidth(r.LineWidth.Clamp(0.0f, 1.0f));
         Api.ColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
 
         var winding = parameters.Winding;
         if (RuntimeEngine.Rendering.State.ReverseWinding)
-            winding = winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;
+            winding = FlipWinding(winding);
+        if (UsesUpperLeftClipOriginForCurrentDraws())
+            winding = FlipWinding(winding);
         Api.FrontFace(ToGLEnum(winding));
 
         ApplyCulling(parameters);
@@ -59,6 +63,9 @@ public partial class OpenGLRenderer
             EWinding.CounterClockwise => GLEnum.Ccw,
             _ => GLEnum.Ccw
         };
+
+    private static EWinding FlipWinding(EWinding winding)
+        => winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;
 
     private void ApplyStencil(RenderingParameters r)
     {

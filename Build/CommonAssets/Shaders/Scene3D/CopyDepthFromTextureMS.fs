@@ -1,5 +1,7 @@
 #version 450 core
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) in vec3 FragPos;
 layout(location = 0) out vec4 OutColor;
 
@@ -12,7 +14,7 @@ void main()
     if (clipXY.x > 1.0f || clipXY.y > 1.0f)
         discard;
 
-    ivec2 coord = ivec2(gl_FragCoord.xy);
+    ivec2 coord = XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView)));
     int sampleCount = textureSamples(DepthView);
     float resolvedDepth = texelFetch(DepthView, coord, 0).r;
 

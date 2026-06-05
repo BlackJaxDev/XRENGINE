@@ -122,7 +122,7 @@ float CausticPattern(vec2 p)
 void main()
 {
     vec2 screenSize = vec2(max(ScreenWidth, 1.0), max(ScreenHeight, 1.0));
-    vec2 uv = gl_FragCoord.xy / screenSize;
+    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, screenSize);
     vec3 normal = normalize(FragNorm);
     vec3 viewDir = normalize(CameraPosition - FragPos);
 

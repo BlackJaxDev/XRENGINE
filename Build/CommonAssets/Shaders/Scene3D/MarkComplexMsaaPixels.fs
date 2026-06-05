@@ -1,5 +1,7 @@
 #version 460
 
+#pragma snippet "ScreenSpaceUtils"
+
 // Complex pixel detection for MSAA deferred rendering.
 // Compares MSAA samples in the GBuffer; if normal or depth differ significantly
 // across any pair of samples, the pixel is "complex" (on a geometric edge).
@@ -18,7 +20,7 @@ uniform float       DepthThreshold;  // abs difference (e.g., 0.001)
 
 void main()
 {
-    ivec2 coord = ivec2(gl_FragCoord.xy);
+    ivec2 coord = XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(NormalMS)));
 
     // Sample 0 as reference.
     vec2 n0 = texelFetch(NormalMS, coord, 0).rg;

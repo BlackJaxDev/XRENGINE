@@ -1,6 +1,7 @@
 #version 450
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "ScreenSpaceUtils"
 
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
@@ -371,7 +372,7 @@ vec3 WorldPosFromDepth(in float depth, in vec2 uv)
 
 void main()
 {
-    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
     
     // Retrieve shading information from GBuffer textures
     vec3 albedo = texture(AlbedoOpacity, uv).rgb;

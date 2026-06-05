@@ -19,6 +19,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
 | Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
+| Default pipeline depth of field | Active | [todo/rendering/default-pipeline-depth-of-field-todo.md](todo/rendering/default-pipeline-depth-of-field-todo.md) | Optimization and feature roadmap for CoC, half-res near/far blur, stereo policy, debug views, and cinematic controls. |
 | Atmospheric scattering | Implemented + validation | [../features/components/atmospheric-scattering.md](../features/components/atmospheric-scattering.md), [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md), [design/rendering/atmospheric-scattering-component-design.md](design/rendering/atmospheric-scattering-component-design.md) | OpenGL mono implementation is in place; visual screenshot/profiler validation and stereo/platform parity remain follow-up validation work. |
 | Local volumetric fog | Implemented + validation | [design/rendering/volumetric-fog-production-design.md](design/rendering/volumetric-fog-production-design.md) | Half-resolution scatter, temporal reprojection, bilateral upscale, and composite are in place. Production polish, XR parity, dual-lobe HG, optional powder brightening, and future froxel work are consolidated in the design. |
 | Forward depth-normal TransformId | Active | [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md) | Shared forward prepass follow-up so depth, normal, and transform ID describe the same surface. |
@@ -78,6 +79,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/rendering/optimization/compact-zero-readback-rendering-todo.md](todo/rendering/optimization/compact-zero-readback-rendering-todo.md)
 - [todo/rendering/optimization/cpu-direct-fast-path-todo.md](todo/rendering/optimization/cpu-direct-fast-path-todo.md)
 - [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
+- [todo/rendering/default-pipeline-depth-of-field-todo.md](todo/rendering/default-pipeline-depth-of-field-todo.md)
 - [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)
 - [todo/rendering/optimization/engine-rendering-optimization-roadmap.md](todo/rendering/optimization/engine-rendering-optimization-roadmap.md)
 - [todo/rendering/dynamic-indirect-material-bindings-todo.md](todo/rendering/dynamic-indirect-material-bindings-todo.md)

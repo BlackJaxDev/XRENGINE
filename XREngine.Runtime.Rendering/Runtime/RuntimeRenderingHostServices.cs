@@ -73,6 +73,8 @@ public static class RuntimeRenderingHostServices
         public int BlendshapePrecombineDirectMinActiveShapes => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineDirectMinActiveShapes;
         public int BlendshapePrecombineMinAffectedVertices => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineMinAffectedVertices;
         public int ShaderConfigVersion => RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
+        public ERenderClipSpaceYDirection ClipSpaceYDirection => RuntimeRenderingHostServiceDefaults.ClipSpaceYDirection;
+        public ERenderClipDepthRange ClipDepthRange => RuntimeRenderingHostServiceDefaults.ClipDepthRange;
         public bool AllowBinaryProgramCaching => RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
         public bool AsyncProgramBinaryUpload => RuntimeRenderingHostServiceDefaults.AsyncProgramBinaryUpload;
         public bool AsyncProgramCompilation => RuntimeRenderingHostServiceDefaults.AsyncProgramCompilation;

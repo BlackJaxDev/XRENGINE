@@ -1,4 +1,6 @@
 #version 450
+#pragma snippet "ScreenSpaceUtils"
+
 layout (location = 0) out vec4 OutColor;
 
 uniform sampler2D Texture0;
@@ -34,20 +36,28 @@ void main()
         return;
     }
 
+    // gl_FragCoord lives in screen-space (ScreenWidth x ScreenHeight); derive the
+    // UV from that so the mapping is correct even if the grab texture was captured
+    // at a different resolution. grabSize is only used for the texel step below.
     vec2 texelSize = 1.0 / vec2(grabSize);
-    vec2 uv = gl_FragCoord.xy * texelSize;
+    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
     vec3 centerColor = texture(Texture0, uv).rgb;
 
     if (BlurStrength <= 0.001 || SampleCount <= 0)
     {
+        // Source alpha is intentionally discarded; the grab is treated as opaque.
         OutColor = vec4(centerColor, 1.0) * MatColor;
         return;
     }
 
-    vec2 blurStep = texelSize * max(BlurStrength, 0.0);
+    vec2 blurStep = texelSize * BlurStrength;
     vec2 uvMin = texelSize * 0.5;
     vec2 uvMax = vec2(1.0) - uvMin;
-    int activeTapCount = clamp(SampleCount, 0, MaxBlurTaps);
+
+    // The tap table is grouped in concentric rings (4 axis, 4 diagonal, 4 axis-2).
+    // Snap to a ring boundary so a partial SampleCount can't produce a lopsided kernel.
+    int requested = clamp(SampleCount, 0, MaxBlurTaps);
+    int activeTapCount = requested >= 12 ? 12 : (requested >= 8 ? 8 : (requested >= 4 ? 4 : 0));
 
     // Truncated 5x5 Gaussian approximation with preweighted taps.
     vec3 col = centerColor * BlurCenterWeight;
@@ -61,6 +71,6 @@ void main()
         totalWeight += weight;
     }
 
-    col /= max(totalWeight, 1e-5);
+    col /= totalWeight;
     OutColor = vec4(col, 1.0) * MatColor;
 }

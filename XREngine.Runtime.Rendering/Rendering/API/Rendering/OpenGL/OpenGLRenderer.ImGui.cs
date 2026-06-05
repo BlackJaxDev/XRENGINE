@@ -62,6 +62,7 @@ public partial class OpenGLRenderer
 
         public void Render()
         {
+            using var clipScope = _renderer.PushUiClipSpacePolicy();
             // ImGui's vertex colors and font atlas are authored in sRGB and
             // its draw shader writes those bytes directly. With
             // GL_FRAMEBUFFER_SRGB enabled (so scene rendering can rely on
@@ -75,6 +76,7 @@ public partial class OpenGLRenderer
 
         public void RenderPlatformWindows()
         {
+            using var clipScope = _renderer.PushUiClipSpacePolicy();
             using var _ = FramebufferSrgbScope.Disable(_renderer.Api);
             _renderer._imguiMultiViewportController?.RenderPlatformWindows();
         }

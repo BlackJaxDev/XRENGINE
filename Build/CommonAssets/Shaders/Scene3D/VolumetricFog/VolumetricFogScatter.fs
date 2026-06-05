@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 // Volumetric fog scatter pass.
 //
 // Phase 2: runs at half internal resolution against a pre-downsampled half-res
@@ -634,7 +636,8 @@ vec4 ComputeVolumetricFog(vec2 uv)
   // (TAA / temporal accumulation can then average it out). When 0 the per-pixel
   // pattern is stable so there is no flicker.
   float temporalSeedOffset = fract(RenderTime * 7.0f) * 64.0f * VolumetricFog.JitterStrength;
-  float ign = interleavedGradientNoise(gl_FragCoord.xy + temporalSeedOffset);
+  vec2 noiseCoord = XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(VolumetricFogHalfDepth, 0)));
+  float ign = interleavedGradientNoise(noiseCoord + temporalSeedOffset);
   float t = unionTNear + ign * stepSize;
   vec3 accumulatedScattering = vec3(0.0f);
   float transmittance = 1.0f;

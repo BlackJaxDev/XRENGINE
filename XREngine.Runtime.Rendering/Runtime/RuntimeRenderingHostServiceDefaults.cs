@@ -25,6 +25,8 @@ public static class RuntimeRenderingHostServiceDefaults
     public const int BlendshapePrecombineDirectMinActiveShapes = 8;
     public const int BlendshapePrecombineMinAffectedVertices = 1024;
     public const int ShaderConfigVersion = 0;
+    public const ERenderClipSpaceYDirection ClipSpaceYDirection = ERenderClipSpaceYDirection.YUp;
+    public const ERenderClipDepthRange ClipDepthRange = ERenderClipDepthRange.ZeroToOne;
     public const bool AllowBinaryProgramCaching = true;
     public const bool AsyncProgramBinaryUpload = true;
     public const bool AsyncProgramCompilation = true;

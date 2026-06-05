@@ -182,6 +182,9 @@ vec3 ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 bool ComputeBarycentric(vec3 p, vec3 a, vec3 b, vec3 c, vec3 d, out vec4 bary)
 {
@@ -325,14 +328,13 @@ void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices,
 }
 void main()
 {
-        vec2 uv = FragPos.xy;
-        if (uv.x > 1.0f || uv.y > 1.0f)
-                discard;
-	//Normalize uv from [-1, 1] to [0, 1]
-	uv = uv * 0.5f + 0.5f;
+        vec2 uv = clamp(
+                XRENGINE_ScreenUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+                vec2(0.0f),
+                vec2(1.0f));
 
-        ivec2 coord = ivec2(gl_FragCoord.xy);
 #ifdef XRENGINE_MSAA_DEFERRED
+        ivec2 coord = XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView)));
         vec4 albedoOpacity = texelFetch(AlbedoOpacity, coord, gl_SampleID);
         vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
         vec4 rmse = texelFetch(RMSE, coord, gl_SampleID);
