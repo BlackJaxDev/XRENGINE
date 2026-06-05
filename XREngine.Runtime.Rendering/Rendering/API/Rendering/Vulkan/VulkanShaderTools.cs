@@ -23,7 +23,8 @@ public readonly record struct DescriptorBindingInfo(
     DescriptorType DescriptorType,
     ShaderStageFlags StageFlags,
     uint Count,
-    string Name);
+    string Name,
+    ImageViewType? ExpectedImageViewType = null);
 
 public readonly record struct AutoUniformMember(
     string Name,
@@ -35,7 +36,8 @@ public readonly record struct AutoUniformMember(
     uint Offset,
     uint Size,
     AutoUniformDefaultValue? DefaultValue,
-    IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues);
+    IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues,
+    IReadOnlyList<AutoUniformMember>? StructMembers = null);
 
 public readonly record struct AutoUniformDefaultValue(
     EShaderVarType Type,
@@ -54,6 +56,16 @@ internal readonly record struct AutoUniformRewriteResult(
     string Source,
     AutoUniformBlockInfo? BlockInfo);
 
+internal sealed record GlslStructDefinition(
+    string Name,
+    IReadOnlyList<GlslStructField> Fields);
+
+internal readonly record struct GlslStructField(
+    string GlslType,
+    string Name,
+    bool IsArray,
+    uint ArrayLength);
+
 internal static class VulkanShaderAutoUniforms
 {
     private static readonly Regex FloatSuffixRegex = new(
@@ -66,10 +78,10 @@ internal static class VulkanShaderAutoUniforms
 
     private static readonly Regex ArrayRegex = new(@"\[(?<size>[A-Za-z_][A-Za-z0-9_]*|\d+u?)\]", RegexOptions.Compiled);
     private static readonly Regex ConstIntegralRegex = new(
-        @"\bconst\s+(?:uint|int)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>\d+)u?\s*;",
+        @"\bconst\s+(?:uint|int)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>[^;]+?)\s*;",
         RegexOptions.Compiled | RegexOptions.Multiline);
     private static readonly Regex DefineIntegralRegex = new(
-        @"^\s*#\s*define\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s+(?<value>\d+)u?\s*$",
+        @"^\s*#\s*define\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s+(?<value>[^\r\n]+?)\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
     private static readonly Regex LayoutQualifierRegex = new(
@@ -90,6 +102,10 @@ internal static class VulkanShaderAutoUniforms
 
     private static readonly Regex StructFieldTypeRegex = new(
         @"(?m)^\s*(?<type>[A-Za-z_][A-Za-z0-9_]*)\s+[A-Za-z_][A-Za-z0-9_]*(?:\s*\[[^\]]+\])?\s*;",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex StructFieldDeclarationRegex = new(
+        @"(?m)^\s*(?<type>[A-Za-z_][A-Za-z0-9_]*)\s+(?<declarators>[^;{}]+);",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex FunctionDefinitionRegex = new(
@@ -179,6 +195,7 @@ internal static class VulkanShaderAutoUniforms
         }
 
         Dictionary<string, uint> integralConstants = ParseIntegralConstants(source);
+        Dictionary<string, GlslStructDefinition> structDefinitions = ParseStructDefinitions(source, integralConstants);
 
         List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)> members = new();
         HashSet<string> memberNames = new(StringComparer.Ordinal);
@@ -257,10 +274,10 @@ internal static class VulkanShaderAutoUniforms
         string blockName = GetAutoUniformBlockName(shaderType);
         string instanceName = $"{blockName}_Instance";
 
-        if (!TryComputeBlockLayout(members, out var layoutMembers, out uint blockSize))
+        if (!TryComputeBlockLayout(members, structDefinitions, out var layoutMembers, out uint blockSize))
             return new AutoUniformRewriteResult(source, null);
 
-        uint binding = Math.Max(FindNextBinding(rewritten), 64u);
+        uint binding = FindAvailableAutoUniformBinding(rewritten, shaderType);
 
         foreach (var member in layoutMembers)
         {
@@ -270,9 +287,9 @@ internal static class VulkanShaderAutoUniforms
                 $"{instanceName}.{member.Name}");
         }
 
-        int insertionIndex = FindFirstFunctionDefinitionIndex(rewritten);
+        int insertionIndex = FindAutoUniformInsertionIndex(rewritten);
         List<string> movedStructDeclarations = MoveRequiredStructDeclarationsBeforeInsertion(ref rewritten, layoutMembers, insertionIndex);
-        insertionIndex = FindFirstFunctionDefinitionIndex(rewritten);
+        insertionIndex = FindAutoUniformInsertionIndex(rewritten);
 
         string block = BuildUniformBlock(blockName, instanceName, binding, layoutMembers);
         string insertionContent = movedStructDeclarations.Count == 0
@@ -300,6 +317,40 @@ internal static class VulkanShaderAutoUniforms
 
         Match match = FunctionDefinitionRegex.Match(source);
         return match.Success ? match.Index : -1;
+    }
+
+    private static int FindAutoUniformInsertionIndex(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return -1;
+
+        int index = 0;
+        while (index < source.Length)
+        {
+            int lineEnd = source.IndexOf('\n', index);
+            int nextIndex = lineEnd < 0 ? source.Length : lineEnd + 1;
+            int contentEnd = lineEnd < 0 ? source.Length : lineEnd;
+            if (contentEnd > index && source[contentEnd - 1] == '\r')
+                contentEnd--;
+
+            string line = source[index..contentEnd];
+            string trimmed = line.TrimStart();
+
+            if (trimmed.Length == 0 ||
+                trimmed.StartsWith("//", StringComparison.Ordinal) ||
+                trimmed.StartsWith("#version", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("#extension", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("#define", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("#line", StringComparison.OrdinalIgnoreCase))
+            {
+                index = nextIndex;
+                continue;
+            }
+
+            break;
+        }
+
+        return index;
     }
 
     private static List<string> MoveRequiredStructDeclarationsBeforeInsertion(
@@ -615,6 +666,52 @@ internal static class VulkanShaderAutoUniforms
         return !string.IsNullOrWhiteSpace(name);
     }
 
+    private static Dictionary<string, GlslStructDefinition> ParseStructDefinitions(string source, IReadOnlyDictionary<string, uint> integralConstants)
+    {
+        Dictionary<string, GlslStructDefinition> definitions = new(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(source))
+            return definitions;
+
+        foreach (Match declaration in StructDeclarationRegex.Matches(source))
+        {
+            if (!declaration.Success)
+                continue;
+
+            Match nameMatch = StructNameRegex.Match(declaration.Value);
+            if (!nameMatch.Success)
+                continue;
+
+            string structName = nameMatch.Groups["name"].Value;
+            int openBrace = declaration.Value.IndexOf('{');
+            int closeBrace = declaration.Value.LastIndexOf('}');
+            if (openBrace < 0 || closeBrace <= openBrace)
+                continue;
+
+            string body = declaration.Value[(openBrace + 1)..closeBrace];
+            List<GlslStructField> fields = [];
+            foreach (Match fieldMatch in StructFieldDeclarationRegex.Matches(body))
+            {
+                if (!fieldMatch.Success)
+                    continue;
+
+                string glslType = fieldMatch.Groups["type"].Value;
+                string declarators = fieldMatch.Groups["declarators"].Value;
+                foreach (string declarator in SplitDeclarators(declarators))
+                {
+                    if (!TryParseDeclarator(declarator, integralConstants, out string fieldName, out bool isArray, out uint arrayLength, out _))
+                        continue;
+
+                    fields.Add(new GlslStructField(glslType, fieldName, isArray, arrayLength));
+                }
+            }
+
+            if (fields.Count > 0)
+                definitions[structName] = new GlslStructDefinition(structName, fields);
+        }
+
+        return definitions;
+    }
+
     /// <summary>
     /// Matches top-level bare <c>in</c> / <c>out</c> declarations that lack a
     /// <c>layout(location = …)</c> qualifier and are NOT built-in interface blocks
@@ -805,9 +902,10 @@ internal static class VulkanShaderAutoUniforms
         foreach (var (_, _, line) in toHoist)
             hoisted.AppendLine(line);
 
-        // Insert before the (updated) first function definition.
+        // Insert in the top-level preamble so declarations do not land inside
+        // a conditional function block that preprocessing may remove.
         string modified = sb.ToString();
-        int insertPos = FindFirstFunctionDefinitionIndex(modified);
+        int insertPos = FindAutoUniformInsertionIndex(modified);
         if (insertPos < 0)
             insertPos = modified.Length;
 
@@ -908,6 +1006,62 @@ internal static class VulkanShaderAutoUniforms
             _ => 32u
         };
 
+    private const uint AutoUniformBindingBase = 64u;
+    private const uint AutoUniformBindingWindowSize = 8u;
+
+    private static uint FindAvailableAutoUniformBinding(string source, EShaderType shaderType)
+    {
+        uint binding = GetAutoUniformBindingBase(shaderType);
+        uint bindingEnd = binding + AutoUniformBindingWindowSize;
+        HashSet<uint> usedBindings = CollectLayoutBindings(source);
+
+        while (binding < bindingEnd && usedBindings.Contains(binding))
+            binding++;
+
+        if (binding < bindingEnd)
+            return binding;
+
+        binding = Math.Max(FindNextBinding(source), bindingEnd);
+        while (usedBindings.Contains(binding))
+            binding++;
+
+        return binding;
+    }
+
+    private static uint GetAutoUniformBindingBase(EShaderType shaderType)
+    {
+        uint stageSlot = shaderType switch
+        {
+            EShaderType.Fragment => 0u,
+            EShaderType.Vertex => 1u,
+            EShaderType.Geometry => 2u,
+            EShaderType.TessControl => 3u,
+            EShaderType.TessEvaluation => 4u,
+            EShaderType.Compute => 5u,
+            EShaderType.Task => 6u,
+            EShaderType.Mesh => 7u,
+            _ => 1u,
+        };
+
+        return AutoUniformBindingBase + (stageSlot * AutoUniformBindingWindowSize);
+    }
+
+    private static HashSet<uint> CollectLayoutBindings(string source)
+    {
+        HashSet<uint> used = [];
+        foreach (Match match in LayoutQualifierRegex.Matches(source))
+        {
+            if (!match.Success)
+                continue;
+
+            string qualifiers = match.Groups["qualifiers"].Value;
+            if (TryParseQualifier(qualifiers, "binding", out uint value))
+                used.Add(value);
+        }
+
+        return used;
+    }
+
     private static bool IsOpaque(string glslType)
     {
         if (OpaqueTypes.Contains(glslType))
@@ -923,6 +1077,7 @@ internal static class VulkanShaderAutoUniforms
     private static Dictionary<string, uint> ParseIntegralConstants(string source)
     {
         var constants = new Dictionary<string, uint>(StringComparer.Ordinal);
+        var candidates = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (Match match in ConstIntegralRegex.Matches(source))
         {
             if (!match.Success)
@@ -930,10 +1085,10 @@ internal static class VulkanShaderAutoUniforms
 
             string name = match.Groups["name"].Value;
             string valueText = match.Groups["value"].Value;
-            if (string.IsNullOrWhiteSpace(name) || !uint.TryParse(valueText, out uint value))
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(valueText))
                 continue;
 
-            constants[name] = value;
+            candidates[name] = valueText;
         }
 
         foreach (Match match in DefineIntegralRegex.Matches(source))
@@ -943,13 +1098,224 @@ internal static class VulkanShaderAutoUniforms
 
             string name = match.Groups["name"].Value;
             string valueText = match.Groups["value"].Value;
-            if (string.IsNullOrWhiteSpace(name) || !uint.TryParse(valueText, out uint value))
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(valueText))
                 continue;
 
-            constants[name] = value;
+            candidates[name] = valueText;
+        }
+
+        for (int pass = 0; pass < candidates.Count; pass++)
+        {
+            bool resolvedAny = false;
+            foreach ((string name, string expression) in candidates)
+            {
+                if (constants.ContainsKey(name))
+                    continue;
+
+                if (!TryEvaluateIntegralExpression(expression, constants, out uint value))
+                    continue;
+
+                constants[name] = value;
+                resolvedAny = true;
+            }
+
+            if (!resolvedAny)
+                break;
         }
 
         return constants;
+    }
+
+    private static bool TryEvaluateIntegralExpression(
+        string expression,
+        IReadOnlyDictionary<string, uint> constants,
+        out uint value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(expression))
+            return false;
+
+        int lineComment = expression.IndexOf("//", StringComparison.Ordinal);
+        if (lineComment >= 0)
+            expression = expression[..lineComment];
+
+        IntegralExpressionParser parser = new(expression, constants);
+        if (!parser.TryParse(out long parsed) || parsed < 0 || parsed > uint.MaxValue)
+            return false;
+
+        value = (uint)parsed;
+        return true;
+    }
+
+    private sealed class IntegralExpressionParser
+    {
+        private readonly string _expression;
+        private readonly IReadOnlyDictionary<string, uint> _constants;
+        private int _index;
+
+        public IntegralExpressionParser(string expression, IReadOnlyDictionary<string, uint> constants)
+        {
+            _expression = expression;
+            _constants = constants;
+        }
+
+        public bool TryParse(out long value)
+        {
+            _index = 0;
+            if (!TryParseAdditive(out value))
+                return false;
+
+            SkipWhitespace();
+            return _index == _expression.Length;
+        }
+
+        private bool TryParseAdditive(out long value)
+        {
+            if (!TryParseMultiplicative(out value))
+                return false;
+
+            while (true)
+            {
+                SkipWhitespace();
+                char op = Peek();
+                if (op is not ('+' or '-'))
+                    return true;
+
+                _index++;
+
+                if (!TryParseMultiplicative(out long rhs))
+                    return false;
+
+                value = op == '-' ? value - rhs : value + rhs;
+            }
+        }
+
+        private bool TryParseMultiplicative(out long value)
+        {
+            if (!TryParseUnary(out value))
+                return false;
+
+            while (true)
+            {
+                SkipWhitespace();
+                char op = Peek();
+                if (op is not ('*' or '/' or '%'))
+                    return true;
+
+                _index++;
+                if (!TryParseUnary(out long rhs))
+                    return false;
+
+                switch (op)
+                {
+                    case '*':
+                        value *= rhs;
+                        break;
+                    case '/':
+                        if (rhs == 0)
+                            return false;
+                        value /= rhs;
+                        break;
+                    case '%':
+                        if (rhs == 0)
+                            return false;
+                        value %= rhs;
+                        break;
+                }
+            }
+        }
+
+        private bool TryParseUnary(out long value)
+        {
+            SkipWhitespace();
+            if (TryConsume('+'))
+                return TryParseUnary(out value);
+
+            if (TryConsume('-'))
+            {
+                if (!TryParseUnary(out value))
+                    return false;
+
+                value = -value;
+                return true;
+            }
+
+            return TryParsePrimary(out value);
+        }
+
+        private bool TryParsePrimary(out long value)
+        {
+            SkipWhitespace();
+            value = 0;
+
+            if (TryConsume('('))
+            {
+                if (!TryParseAdditive(out value))
+                    return false;
+
+                SkipWhitespace();
+                return TryConsume(')');
+            }
+
+            char current = Peek();
+            if (char.IsDigit(current))
+                return TryParseNumber(out value);
+
+            if (current == '_' || char.IsLetter(current))
+                return TryParseIdentifier(out value);
+
+            return false;
+        }
+
+        private bool TryParseNumber(out long value)
+        {
+            int start = _index;
+            while (_index < _expression.Length && char.IsDigit(_expression[_index]))
+                _index++;
+
+            if (_index < _expression.Length && (_expression[_index] == 'u' || _expression[_index] == 'U'))
+                _index++;
+
+            string token = _expression[start.._index].TrimEnd('u', 'U');
+            return long.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+        }
+
+        private bool TryParseIdentifier(out long value)
+        {
+            int start = _index;
+            _index++;
+            while (_index < _expression.Length && (_expression[_index] == '_' || char.IsLetterOrDigit(_expression[_index])))
+                _index++;
+
+            string name = _expression[start.._index];
+            if (!_constants.TryGetValue(name, out uint constant))
+            {
+                value = 0;
+                return false;
+            }
+
+            value = constant;
+            return true;
+        }
+
+        private char Peek()
+            => _index < _expression.Length ? _expression[_index] : '\0';
+
+        private bool TryConsume(char value)
+        {
+            SkipWhitespace();
+            if (Peek() != value)
+                return false;
+
+            _index++;
+            return true;
+        }
+
+        private void SkipWhitespace()
+        {
+            while (_index < _expression.Length && char.IsWhiteSpace(_expression[_index]))
+                _index++;
+        }
     }
 
     private static uint FindNextBinding(string source)
@@ -1001,6 +1367,7 @@ internal static class VulkanShaderAutoUniforms
 
     private static bool TryComputeBlockLayout(
         List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)> members,
+        IReadOnlyDictionary<string, GlslStructDefinition> structDefinitions,
         out List<AutoUniformMember> layoutMembers,
         out uint blockSize)
     {
@@ -1010,11 +1377,20 @@ internal static class VulkanShaderAutoUniforms
 
         foreach (var (GlslType, Name, IsArray, ArrayLength, DefaultValue, DefaultArrayValues) in members)
         {
-            if (!TryGetStd140Info(GlslType, IsArray, ArrayLength, out uint alignment, out uint size, out uint arrayStride, out EShaderVarType? engineType))
+            if (!TryGetStd140Info(
+                    GlslType,
+                    IsArray,
+                    ArrayLength,
+                    structDefinitions,
+                    out uint alignment,
+                    out uint size,
+                    out uint arrayStride,
+                    out EShaderVarType? engineType,
+                    out IReadOnlyList<AutoUniformMember>? structMembers))
                 return false;
 
             offset = Align(offset, alignment);
-            layoutMembers.Add(new AutoUniformMember(Name, GlslType, engineType, IsArray, ArrayLength, arrayStride, offset, size, DefaultValue, DefaultArrayValues));
+            layoutMembers.Add(new AutoUniformMember(Name, GlslType, engineType, IsArray, ArrayLength, arrayStride, offset, size, DefaultValue, DefaultArrayValues, structMembers));
             offset += size;
         }
 
@@ -1025,14 +1401,24 @@ internal static class VulkanShaderAutoUniforms
     private static uint Align(uint value, uint alignment)
         => alignment == 0 ? value : (uint)((value + alignment - 1) / alignment * alignment);
 
-    private static bool TryGetStd140Info(string glslType, bool isArray, uint arrayLength, out uint alignment, out uint size, out uint arrayStride, out EShaderVarType? engineType)
+    private static bool TryGetStd140Info(
+        string glslType,
+        bool isArray,
+        uint arrayLength,
+        IReadOnlyDictionary<string, GlslStructDefinition> structDefinitions,
+        out uint alignment,
+        out uint size,
+        out uint arrayStride,
+        out EShaderVarType? engineType,
+        out IReadOnlyList<AutoUniformMember>? structMembers)
     {
         alignment = 0;
         size = 0;
         arrayStride = 0;
         engineType = GlslTypeMap.TryGetValue(glslType, out var mapped) ? mapped : null;
+        structMembers = null;
 
-        if (!TryGetStd140Base(glslType, out uint baseAlignment, out uint baseSize))
+        if (!TryGetStd140Base(glslType, structDefinitions, out uint baseAlignment, out uint baseSize, out structMembers))
             return false;
 
         if (!isArray)
@@ -1045,8 +1431,8 @@ internal static class VulkanShaderAutoUniforms
         if (arrayLength == 0)
             return false;
 
-        uint stride = Math.Max(baseAlignment, 16u);
-        alignment = stride;
+        uint stride = Align(baseSize, 16u);
+        alignment = Math.Max(baseAlignment, 16u);
         arrayStride = stride;
         size = stride * arrayLength;
         return true;
@@ -1291,10 +1677,16 @@ internal static class VulkanShaderAutoUniforms
         return true;
     }
 
-    private static bool TryGetStd140Base(string glslType, out uint alignment, out uint size)
+    private static bool TryGetStd140Base(
+        string glslType,
+        IReadOnlyDictionary<string, GlslStructDefinition> structDefinitions,
+        out uint alignment,
+        out uint size,
+        out IReadOnlyList<AutoUniformMember>? structMembers)
     {
         alignment = 0;
         size = 0;
+        structMembers = null;
 
         switch (glslType.ToLowerInvariant())
         {
@@ -1345,10 +1737,66 @@ internal static class VulkanShaderAutoUniforms
                 size = 64;
                 return true;
             default:
-                alignment = 16;
-                size = 64;
-                return true;
+                return TryGetStd140StructInfo(glslType, structDefinitions, out alignment, out size, out structMembers);
         }
+    }
+
+    private static bool TryGetStd140StructInfo(
+        string glslType,
+        IReadOnlyDictionary<string, GlslStructDefinition> structDefinitions,
+        out uint alignment,
+        out uint size,
+        out IReadOnlyList<AutoUniformMember>? structMembers)
+    {
+        alignment = 0;
+        size = 0;
+        structMembers = null;
+
+        if (!structDefinitions.TryGetValue(glslType, out GlslStructDefinition? definition) || definition is null)
+            return false;
+
+        List<AutoUniformMember> fields = new(definition.Fields.Count);
+        uint offset = 0;
+        uint maxAlignment = 0;
+
+        foreach (GlslStructField field in definition.Fields)
+        {
+            if (!TryGetStd140Info(
+                    field.GlslType,
+                    field.IsArray,
+                    field.ArrayLength,
+                    structDefinitions,
+                    out uint fieldAlignment,
+                    out uint fieldSize,
+                    out uint fieldArrayStride,
+                    out EShaderVarType? fieldEngineType,
+                    out IReadOnlyList<AutoUniformMember>? childStructMembers))
+            {
+                return false;
+            }
+
+            offset = Align(offset, fieldAlignment);
+            fields.Add(new AutoUniformMember(
+                field.Name,
+                field.GlslType,
+                fieldEngineType,
+                field.IsArray,
+                field.ArrayLength,
+                fieldArrayStride,
+                offset,
+                fieldSize,
+                null,
+                null,
+                childStructMembers));
+
+            offset += fieldSize;
+            maxAlignment = Math.Max(maxAlignment, fieldAlignment);
+        }
+
+        alignment = Math.Max(Align(maxAlignment, 16u), 16u);
+        size = Align(offset, alignment);
+        structMembers = fields;
+        return true;
     }
 
     internal static IReadOnlyList<string> FindOpaqueLikeTypesMissingClassification(string source)
@@ -1408,6 +1856,9 @@ internal static class VulkanShaderCompiler
     private static readonly Regex ReservedBuiltinDeclarationRegex = new(
         @"^\s*(?:layout\s*\([^)]*\)\s*)?(?:in|out|uniform|attribute|varying)\s+(?:highp|mediump|lowp\s+)?(?:[A-Za-z_]\w*\s+)*gl_[A-Za-z_]\w*(?:\s*\[[^\]]*\])?\s*;\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex GlPerVertexBlockRegex = new(
+        @"(?ms)^\s*(?:layout\s*\([^)]*\)\s*)?(?:in|out)\s+gl_PerVertex\s*\{(?<body>.*?)\}\s*(?:(?:gl_in|gl_out)\s*\[\s*\])?\s*;\s*",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex NvSecondaryPositionAssignRegex = new(
         @"^\s*gl_SecondaryPositionNV\s*=\s*.*;\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
@@ -1444,7 +1895,7 @@ internal static class VulkanShaderCompiler
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
 
         AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(source, shader.Type);
-        rewrittenSource = rewrite.Source;
+        rewrittenSource = InjectVulkanBackendDefine(rewrite.Source);
         autoUniformBlock = rewrite.BlockInfo;
 
         Compiler* compiler = ShadercApi.CompilerInitialize();
@@ -1533,6 +1984,31 @@ internal static class VulkanShaderCompiler
         Array.Resize(ref bytes, bytes.Length + 1);
         bytes[^1] = 0;
         return bytes;
+    }
+
+    private static string InjectVulkanBackendDefine(string source)
+    {
+        const string defineLine = "#define XRENGINE_VULKAN 1";
+        if (source.Contains(defineLine, StringComparison.Ordinal))
+            return source;
+
+        Match versionMatch = VersionDirectiveRegex.Match(source);
+        int insertionIndex = versionMatch.Success
+            ? versionMatch.Index + versionMatch.Length
+            : 0;
+
+        while (insertionIndex < source.Length)
+        {
+            int lineEnd = source.IndexOf('\n', insertionIndex);
+            int lineLength = (lineEnd >= 0 ? lineEnd : source.Length) - insertionIndex;
+            ReadOnlySpan<char> line = source.AsSpan(insertionIndex, lineLength).TrimStart();
+            if (!line.StartsWith("#extension", StringComparison.OrdinalIgnoreCase))
+                break;
+
+            insertionIndex = lineEnd >= 0 ? lineEnd + 1 : source.Length;
+        }
+
+        return source.Insert(insertionIndex, defineLine + Environment.NewLine);
     }
 
     private static ShaderKind ToShaderKind(EShaderType type)
@@ -1732,8 +2208,24 @@ internal static class VulkanShaderCompiler
         }
 
         source = ReservedBuiltinDeclarationRegex.Replace(source, string.Empty);
+        source = RemoveGeneratedGlPerVertexBlocksForVulkan(source);
         ValidateUnsupportedVulkanStereoSemantics(source, shaderName);
         return source;
+    }
+
+    private static string RemoveGeneratedGlPerVertexBlocksForVulkan(string source)
+    {
+        return GlPerVertexBlockRegex.Replace(source, static match =>
+        {
+            string body = match.Groups["body"].Value;
+            bool looksGenerated =
+                body.Contains("vec4 gl_Position", StringComparison.Ordinal) &&
+                body.Contains("float gl_PointSize", StringComparison.Ordinal) &&
+                body.Contains("float gl_ClipDistance[]", StringComparison.Ordinal) &&
+                !body.Contains("gl_CullDistance", StringComparison.Ordinal);
+
+            return looksGenerated ? string.Empty : match.Value;
+        });
     }
 
     private static string EnsureExtMultiviewDirective(string source)
@@ -1774,6 +2266,8 @@ internal static class VulkanShaderReflection
 
     public static IReadOnlyList<DescriptorBindingInfo> ExtractBindings(byte[] spirv, ShaderStageFlags stage, string? glslSourceFallback = null)
     {
+        IReadOnlyList<DescriptorBindingInfo> sourceBindings = Array.Empty<DescriptorBindingInfo>();
+
         if (spirv.Length > 0)
         {
             try
@@ -1781,7 +2275,10 @@ internal static class VulkanShaderReflection
                 SpirvModule module = new(spirv, stage);
                 var bindings = module.CollectDescriptorBindings();
                 if (bindings.Count > 0)
-                    return bindings;
+                {
+                    sourceBindings = ExtractBindingsFromSource(glslSourceFallback, stage);
+                    return MergeSourceDescriptorMetadata(bindings, sourceBindings);
+                }
             }
             catch (Exception ex)
             {
@@ -1789,7 +2286,56 @@ internal static class VulkanShaderReflection
             }
         }
 
-        return ExtractBindingsFromSource(glslSourceFallback, stage);
+        return sourceBindings.Count > 0
+            ? sourceBindings
+            : ExtractBindingsFromSource(glslSourceFallback, stage);
+    }
+
+    private static IReadOnlyList<DescriptorBindingInfo> MergeSourceDescriptorMetadata(
+        IReadOnlyList<DescriptorBindingInfo> reflectedBindings,
+        IReadOnlyList<DescriptorBindingInfo> sourceBindings)
+    {
+        if (sourceBindings.Count == 0)
+            return reflectedBindings;
+
+        List<DescriptorBindingInfo>? mergedBindings = null;
+        for (int i = 0; i < reflectedBindings.Count; i++)
+        {
+            DescriptorBindingInfo reflected = reflectedBindings[i];
+            DescriptorBindingInfo source = FindMatchingSourceBinding(sourceBindings, reflected.Set, reflected.Binding);
+            if (string.IsNullOrWhiteSpace(source.Name) && source.ExpectedImageViewType is null)
+                continue;
+
+            DescriptorBindingInfo merged = reflected;
+            if (string.IsNullOrWhiteSpace(merged.Name) && !string.IsNullOrWhiteSpace(source.Name))
+                merged = merged with { Name = source.Name };
+
+            if (merged.ExpectedImageViewType is null && source.ExpectedImageViewType is not null)
+                merged = merged with { ExpectedImageViewType = source.ExpectedImageViewType };
+
+            if (merged.Equals(reflected))
+                continue;
+
+            mergedBindings ??= [.. reflectedBindings];
+            mergedBindings[i] = merged;
+        }
+
+        return mergedBindings ?? reflectedBindings;
+    }
+
+    private static DescriptorBindingInfo FindMatchingSourceBinding(
+        IReadOnlyList<DescriptorBindingInfo> sourceBindings,
+        uint set,
+        uint binding)
+    {
+        for (int i = 0; i < sourceBindings.Count; i++)
+        {
+            DescriptorBindingInfo source = sourceBindings[i];
+            if (source.Set == set && source.Binding == binding)
+                return source;
+        }
+
+        return default;
     }
 
     private static IReadOnlyList<DescriptorBindingInfo> ExtractBindingsFromSource(string? source, ShaderStageFlags stage)
@@ -1818,8 +2364,9 @@ internal static class VulkanShaderReflection
             DescriptorType descriptorType = ClassifyDescriptor(storage, declaration, source, match.Index + match.Length);
             uint arraySize = ExtractArraySize(declaration);
             string name = ExtractResourceName(declaration);
+            ImageViewType? expectedImageViewType = ResolveExpectedImageViewTypeFromDeclaration(declaration);
 
-            bindings.Add(new DescriptorBindingInfo(set, binding, descriptorType, stage, arraySize == 0 ? 1u : arraySize, name));
+            bindings.Add(new DescriptorBindingInfo(set, binding, descriptorType, stage, arraySize == 0 ? 1u : arraySize, name, expectedImageViewType));
         }
 
         return bindings;
@@ -1901,6 +2448,38 @@ internal static class VulkanShaderReflection
         return tokens.Length == 0 ? string.Empty : tokens[^1];
     }
 
+    private static ImageViewType? ResolveExpectedImageViewTypeFromDeclaration(string declaration)
+    {
+        if (declaration.Contains("sampler2DArray", StringComparison.Ordinal) ||
+            declaration.Contains("image2DArray", StringComparison.Ordinal))
+            return ImageViewType.Type2DArray;
+
+        if (declaration.Contains("sampler1DArray", StringComparison.Ordinal) ||
+            declaration.Contains("image1DArray", StringComparison.Ordinal))
+            return ImageViewType.Type1DArray;
+
+        if (declaration.Contains("samplerCubeArray", StringComparison.Ordinal) ||
+            declaration.Contains("imageCubeArray", StringComparison.Ordinal))
+            return ImageViewType.TypeCubeArray;
+
+        if (declaration.Contains("samplerCube", StringComparison.Ordinal))
+            return ImageViewType.TypeCube;
+
+        if (declaration.Contains("sampler3D", StringComparison.Ordinal) ||
+            declaration.Contains("image3D", StringComparison.Ordinal))
+            return ImageViewType.Type3D;
+
+        if (declaration.Contains("sampler2D", StringComparison.Ordinal) ||
+            declaration.Contains("image2D", StringComparison.Ordinal))
+            return ImageViewType.Type2D;
+
+        if (declaration.Contains("sampler1D", StringComparison.Ordinal) ||
+            declaration.Contains("image1D", StringComparison.Ordinal))
+            return ImageViewType.Type1D;
+
+        return null;
+    }
+
     private sealed class SpirvModule
     {
         private readonly uint[] _words;
@@ -1938,6 +2517,7 @@ internal static class VulkanShaderReflection
                 uint elementTypeId = pointer.ElementTypeId.Value;
                 uint descriptorCount = ResolveDescriptorCount(elementTypeId, out uint leafTypeId);
                 DescriptorType descriptorType = ResolveDescriptorType(variable.StorageClass, leafTypeId);
+                ImageViewType? expectedImageViewType = ResolveExpectedImageViewType(leafTypeId);
 
                 uint set = decoration.DescriptorSet ?? 0;
                 uint binding = decoration.Binding ?? 0;
@@ -1949,7 +2529,7 @@ internal static class VulkanShaderReflection
                 if (string.IsNullOrEmpty(name) && _names.TryGetValue(elementTypeId, out string? typeName) && !string.IsNullOrEmpty(typeName))
                     name = typeName;
 
-                bindings.Add(new DescriptorBindingInfo(set, binding, descriptorType, _stage, descriptorCount == 0 ? 1u : descriptorCount, name));
+                bindings.Add(new DescriptorBindingInfo(set, binding, descriptorType, _stage, descriptorCount == 0 ? 1u : descriptorCount, name, expectedImageViewType));
             }
 
             return bindings;
@@ -2266,6 +2846,40 @@ internal static class VulkanShaderReflection
                 return storage ? DescriptorType.StorageTexelBuffer : DescriptorType.UniformTexelBuffer;
 
             return storage ? DescriptorType.StorageImage : DescriptorType.SampledImage;
+        }
+
+        private ImageViewType? ResolveExpectedImageViewType(uint typeId)
+        {
+            if (!_types.TryGetValue(typeId, out SpirvType? type))
+                return null;
+
+            SpirvImageInfo? info = type.Kind switch
+            {
+                SpirvTypeKind.Image => type.ImageType,
+                SpirvTypeKind.SampledImage when type.ElementTypeId is uint imageTypeId
+                    && _types.TryGetValue(imageTypeId, out SpirvType? imageType) => imageType.ImageType,
+                _ => null
+            };
+
+            return ResolveExpectedImageViewType(info);
+        }
+
+        private static ImageViewType? ResolveExpectedImageViewType(SpirvImageInfo? info)
+        {
+            if (info is null)
+                return null;
+
+            return info.Dim switch
+            {
+                SpirvDim.Dim1D => info.Arrayed != 0 ? ImageViewType.Type1DArray : ImageViewType.Type1D,
+                SpirvDim.Dim2D or SpirvDim.Rect => info.Arrayed != 0 ? ImageViewType.Type2DArray : ImageViewType.Type2D,
+                SpirvDim.Dim3D => ImageViewType.Type3D,
+                SpirvDim.Cube => info.Arrayed != 0 ? ImageViewType.TypeCubeArray : ImageViewType.TypeCube,
+                SpirvDim.Dim1DArray => ImageViewType.Type1DArray,
+                SpirvDim.Dim2DArray => ImageViewType.Type2DArray,
+                SpirvDim.CubeArray => ImageViewType.TypeCubeArray,
+                _ => null,
+            };
         }
 
         private bool IsBufferBlock(uint typeId)

@@ -50,6 +50,14 @@ namespace XREngine.Rendering.Vulkan
                 : 0;
         }
 
+        private bool TryGetBufferMemoryAllocation(Buffer buffer, out VulkanMemoryAllocation allocation)
+        {
+            if (_bufferAllocations.TryGetValue(buffer.Handle, out allocation))
+                return true;
+
+            return _legacyBufferAllocations.TryGetValue(buffer.Handle, out allocation);
+        }
+
         /// <summary>
         /// Returns the suballocation offset for a tracked image, or 0 if untracked (legacy).
         /// </summary>
@@ -124,6 +132,7 @@ namespace XREngine.Rendering.Vulkan
             /// Exposes the backing Vulkan memory handle. Primarily useful for debugging.
             /// </summary>
             public DeviceMemory? MemoryHandle => _vkMemory;
+            public ulong AllocatedByteSize => _bufferSize;
             public ulong DeviceAddress { get; private set; }
 
             public bool TryGetDeviceAddress(out ulong address)
@@ -1210,6 +1219,28 @@ namespace XREngine.Rendering.Vulkan
 
             ulong mappedLength = Math.Max(length, 1UL);
             ulong memoryOffset = GetBufferAllocationOffset(buffer) + offset;
+
+            if (TryGetBufferMemoryAllocation(buffer, out VulkanMemoryAllocation bufferAllocation))
+            {
+                ulong allocationStart = bufferAllocation.BlockId == -1 ? 0UL : bufferAllocation.Offset;
+                ulong allocationEnd = allocationStart + bufferAllocation.Size;
+                if (memoryOffset < allocationStart || memoryOffset >= allocationEnd)
+                    return false;
+
+                ulong availableLength = allocationEnd - memoryOffset;
+                if (mappedLength > availableLength)
+                {
+                    Debug.VulkanWarningEvery(
+                        "Vulkan.Readback.ClampMappedRange",
+                        TimeSpan.FromSeconds(5),
+                        "[Vulkan] Clamping readback map from {0} bytes to {1} bytes for buffer 0x{2:X}; requested range exceeds allocation.",
+                        mappedLength,
+                        availableLength,
+                        buffer.Handle);
+                    mappedLength = availableLength;
+                }
+            }
+
             void* localMappedPtr = null;
             if (Api!.MapMemory(device, memory, memoryOffset, mappedLength, 0, &localMappedPtr) != Result.Success)
                 return false;
@@ -1217,7 +1248,7 @@ namespace XREngine.Rendering.Vulkan
             mappedPtr = localMappedPtr;
             InvalidateBuffer(memory, memoryOffset, mappedLength);
             RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
-            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((long)length);
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes((long)Math.Min(length, mappedLength));
             return true;
         }
 

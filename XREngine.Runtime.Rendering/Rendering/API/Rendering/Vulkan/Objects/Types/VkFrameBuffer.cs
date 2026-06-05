@@ -122,6 +122,60 @@ public unsafe partial class VulkanRenderer
             return Renderer.GetOrCreateFrameBufferRenderPass(planned);
         }
 
+        internal bool UsesReadOnlyDepthStencilForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
+        {
+            if (_attachmentSignature is null || _attachmentSignature.Length == 0)
+                return false;
+
+            bool hasLayoutOverrides = initialLayoutOverrides is not null && initialLayoutOverrides.Length == _attachmentSignature.Length;
+            FrameBufferAttachmentSignature[] BaseSignature() => hasLayoutOverrides
+                ? ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!)
+                : _attachmentSignature;
+
+            if (passMetadata is null || passMetadata.Count == 0)
+                return UsesReadOnlyDepthStencil(BaseSignature());
+
+            string? frameBufferName = Data.Name;
+            if (string.IsNullOrWhiteSpace(frameBufferName))
+                return UsesReadOnlyDepthStencil(BaseSignature());
+
+            RenderPassMetadata? pass = null;
+            foreach (RenderPassMetadata metadata in passMetadata)
+            {
+                if (metadata.PassIndex == passIndex)
+                {
+                    pass = metadata;
+                    break;
+                }
+            }
+
+            if (pass is null)
+                return UsesReadOnlyDepthStencil(BaseSignature());
+
+            bool referencesFrameBuffer = false;
+            string prefix = $"fbo::{frameBufferName}::";
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                if (!usage.IsAttachment)
+                    continue;
+
+                if (usage.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    referencesFrameBuffer = true;
+                    break;
+                }
+            }
+
+            if (!referencesFrameBuffer)
+                return UsesReadOnlyDepthStencil(BaseSignature());
+
+            FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName);
+            if (hasLayoutOverrides)
+                planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!);
+
+            return UsesReadOnlyDepthStencil(planned);
+        }
+
         /// <summary>
         /// Returns the <see cref="FrameBufferAttachmentSignature.FinalLayout"/> for each attachment
         /// in the order they appear in the framebuffer's attachment array.
@@ -638,6 +692,20 @@ public unsafe partial class VulkanRenderer
             }
 
             return true;
+        }
+
+        private static bool UsesReadOnlyDepthStencil(FrameBufferAttachmentSignature[] signatures)
+        {
+            foreach (FrameBufferAttachmentSignature signature in signatures)
+            {
+                if (signature.Role == AttachmentRole.Color)
+                    continue;
+
+                if (signature.ReferenceLayout is ImageLayout.DepthStencilReadOnlyOptimal or ImageLayout.DepthReadOnlyOptimal)
+                    return true;
+            }
+
+            return false;
         }
 
         private AttachmentBuildInfo[] BuildAttachmentInfos()

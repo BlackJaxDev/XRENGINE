@@ -1,9 +1,9 @@
 #version 460
 
 layout(points) in;
-layout(triangle_strip, max_vertices = 4) out;
+layout(triangle_strip, max_vertices = 6) out;
 
-layout(location = 0) in int instanceID[];
+layout(location = 0) flat in int instanceID[];
 layout(location = 1) in vec3 vPos[];
 layout(location = 0) flat out vec4 LineMatColor;
 layout(location = 1) noperspective out float LineEdgeCoord;

@@ -56,6 +56,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             PopCommand.FrameBuffer = fbo;
             PopCommand.Write = Write;
+            PopCommand.RenderTargetScope = ActivePipelineInstance.RenderState.PushRenderTargetBinding(
+                name,
+                fbo,
+                Write);
 
             bool clearColor = DynamicClearColor?.Invoke() ?? ClearColor;
             bool clearDepth = DynamicClearDepth?.Invoke() ?? ClearDepth;

@@ -92,7 +92,13 @@ public unsafe partial class VulkanRenderer
 			DestroyAutoUniformBuffers();
 		}
 
-		private void ReleaseDescriptorAllocation()
+		internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction()
+		{
+			ReleaseDescriptorAllocation(destroyPoolImmediately: true);
+			_descriptorDirty = true;
+		}
+
+		private void ReleaseDescriptorAllocation(bool destroyPoolImmediately = false)
 		{
 			if (_descriptorSets is not null)
 				_descriptorSets = null;
@@ -102,7 +108,16 @@ public unsafe partial class VulkanRenderer
 
 			if (_descriptorPool.Handle != 0)
 			{
-				Renderer.RetireDescriptorPool(_descriptorPool);
+				if (destroyPoolImmediately)
+				{
+					Api!.DestroyDescriptorPool(Device, _descriptorPool, null);
+					RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+				}
+				else
+				{
+					Renderer.RetireDescriptorPool(_descriptorPool);
+				}
+
 				_descriptorPool = default;
 			}
 		}

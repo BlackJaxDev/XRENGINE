@@ -3,7 +3,7 @@
 layout(points) in;
 layout(triangle_strip, max_vertices = 4) out;
 
-layout(location = 0) in int instanceID[];
+layout(location = 0) flat in int instanceID[];
 layout(location = 0) flat out vec4 MatColor;
 
 struct Triangle

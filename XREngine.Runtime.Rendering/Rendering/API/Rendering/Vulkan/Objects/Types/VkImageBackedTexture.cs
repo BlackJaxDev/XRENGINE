@@ -123,6 +123,8 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        ImageViewType IVkImageDescriptorSource.DescriptorViewType => DefaultViewType;
+
         Sampler IVkImageDescriptorSource.DescriptorSampler
         {
             get
@@ -183,6 +185,43 @@ public unsafe partial class VulkanRenderer
             }
 
             return cached;
+        }
+
+        ImageView IVkImageDescriptorSource.GetDescriptorView(ImageViewType viewType)
+        {
+            RefreshPhysicalGroupImageIfStale();
+
+            if (viewType == DefaultViewType)
+                return _view;
+
+            if (!CanExposeDescriptorViewType(viewType))
+                return default;
+
+            var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, viewType, AspectFlags);
+            if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+            {
+                cached = CreateView(key);
+                _attachmentViews[key] = cached;
+            }
+
+            return cached;
+        }
+
+        private bool CanExposeDescriptorViewType(ImageViewType viewType)
+        {
+            if (viewType == ImageViewType.Type2DArray)
+                return TextureImageType == ImageType.Type2D && ResolvedArrayLayers >= 1;
+
+            if (viewType == ImageViewType.Type2D)
+                return TextureImageType == ImageType.Type2D && ResolvedArrayLayers == 1;
+
+            if (viewType == ImageViewType.Type1DArray)
+                return TextureImageType == ImageType.Type1D && ResolvedArrayLayers >= 1;
+
+            if (viewType == ImageViewType.Type1D)
+                return TextureImageType == ImageType.Type1D && ResolvedArrayLayers == 1;
+
+            return false;
         }
 
         /// <inheritdoc />

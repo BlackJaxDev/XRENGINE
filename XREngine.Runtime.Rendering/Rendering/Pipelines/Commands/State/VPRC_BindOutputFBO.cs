@@ -33,6 +33,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 : default;
 
             var fbo = ActivePipelineInstance.RenderState.OutputFBO;
+            PopCommand.RenderTargetScope = ActivePipelineInstance.RenderState.PushRenderTargetBinding(
+                RenderGraphResourceNames.OutputRenderTarget,
+                fbo,
+                Write);
 
             /*
             //if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DEBUG_PRESENT_CLEAR")))
@@ -79,6 +83,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             else
                 fbo.BindForReading();
 
+            PopCommand.FrameBuffer = fbo;
+            PopCommand.Write = Write;
+
             // After binding (which triggers attachment validation + completeness check),
             // bail out if the FBO is incomplete to prevent driver crashes on draw calls.
             if (!fbo.IsLastCheckComplete)
@@ -90,9 +97,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                     fbo.Name ?? fbo.GetHashCode().ToString());
                 return;
             }
-
-            PopCommand.FrameBuffer = fbo;
-            PopCommand.Write = Write;
 
             if (ClearColor || ClearDepth || ClearStencil)
                 RuntimeEngine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);

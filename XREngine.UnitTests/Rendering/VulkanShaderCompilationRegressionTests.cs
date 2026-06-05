@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.Linq;
 using NUnit.Framework;
 using Shouldly;
+using Silk.NET.Vulkan;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
@@ -42,6 +44,7 @@ public sealed class VulkanShaderCompilationRegressionTests
         "Common/UITextBatched.fs",
         "Common/LitColoredForward.fs",
         "Common/LitTexturedForward.fs",
+        "Common/LitTexturedAlphaForward.fs",
         "Common/LitTexturedNormalForward.fs",
         "Common/LitTexturedNormalSpecAlphaForward.fs",
         "Common/LitTexturedSpecAlphaForward.fs"
@@ -51,6 +54,29 @@ public sealed class VulkanShaderCompilationRegressionTests
     [
         "Common/UIQuadBatched.vs",
         "Common/UITextBatched.vs",
+    ];
+
+    private static readonly string[] DebugVertexShaders =
+    [
+        "Common/Debug/vs/InstancedDebugPrimitive.vs",
+        "Common/Debug/vs/InstancedDebugPrimitiveStereoMV2.vs",
+        "Common/Debug/vs/InstancedDebugPrimitiveStereoNV.vs",
+    ];
+
+    private static readonly string[] GeometryShaders =
+    [
+        "Common/Debug/gs/LineInstance.gs",
+        "Common/Debug/gs/LineInstanceCompressed.gs",
+        "Common/Debug/gs/PointInstance.gs",
+        "Common/Debug/gs/PointInstanceCompressed.gs",
+        "Common/Debug/gs/TriangleInstance.gs",
+        "Common/Debug/gs/TriangleInstanceCompressed.gs",
+    ];
+
+    private static readonly string[] GizmoGeometryShaders =
+    [
+        "Common/GizmoLine.gs",
+        "Common/GizmoArrowHead.gs",
     ];
 
     private static readonly string[] UberVertexShaders =
@@ -100,6 +126,137 @@ public sealed class VulkanShaderCompilationRegressionTests
         // For UITextBatched, verify gl_InstanceID was rewritten to gl_InstanceIndex
         if (shaderRelativePath.Contains("UITextBatched"))
             rewrittenSource.ShouldContain("gl_InstanceIndex");
+    }
+
+    [TestCaseSource(nameof(DebugVertexShaders))]
+    public void DebugVertexShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource(shaderRelativePath);
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Vertex, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out string? rewrittenSource);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+        rewrittenSource.ShouldNotBeNull();
+        rewrittenSource.ShouldContain("#define XRENGINE_VULKAN 1");
+        rewrittenSource.ShouldContain("flat out int instanceID");
+        rewrittenSource.ShouldContain("gl_InstanceIndex");
+        rewrittenSource.ShouldNotContain("out gl_PerVertex");
+        rewrittenSource.ShouldContain("gl_PointSize = 1.0");
+        rewrittenSource.ShouldNotContain("gl_CullDistance");
+    }
+
+    [TestCaseSource(nameof(GeometryShaders))]
+    public void GeometryShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource(shaderRelativePath);
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Geometry, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out string? rewrittenSource);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+        rewrittenSource.ShouldNotBeNull();
+        rewrittenSource.ShouldContain("#define XRENGINE_VULKAN 1");
+        rewrittenSource.ShouldContain("flat in int instanceID");
+        rewrittenSource.ShouldContain("gl_Position");
+        rewrittenSource.ShouldNotContain("in gl_PerVertex");
+        rewrittenSource.ShouldNotContain("out gl_PerVertex");
+        rewrittenSource.ShouldNotContain("gl_CullDistance");
+
+        if (shaderRelativePath.Contains("PointInstance", StringComparison.Ordinal) ||
+            shaderRelativePath.Contains("LineInstance", StringComparison.Ordinal))
+        {
+            rewrittenSource.ShouldContain("max_vertices = 6");
+        }
+
+        if (shaderRelativePath.Contains("LineInstance", StringComparison.Ordinal))
+        {
+            rewrittenSource.ShouldContain("#ifdef XRENGINE_VULKAN");
+            rewrittenSource.ShouldContain("float da = a.z;");
+        }
+    }
+
+    [TestCaseSource(nameof(GizmoGeometryShaders))]
+    public void GizmoGeometryShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource(shaderRelativePath);
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Geometry, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out string? rewrittenSource);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+        rewrittenSource.ShouldNotBeNull();
+        rewrittenSource.ShouldContain("#define XRENGINE_VULKAN 1");
+        rewrittenSource.ShouldContain("#ifdef XRENGINE_VULKAN");
+        rewrittenSource.ShouldContain("float da = a.z;");
+        rewrittenSource.ShouldNotContain("in gl_PerVertex");
+        rewrittenSource.ShouldNotContain("out gl_PerVertex");
+    }
+
+    [Test]
+    public void ForwardLightingTextureArrays_ReflectExpected2DArrayViews()
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource("Common/LitTexturedForward.fs");
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Fragment, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out _,
+            out _,
+            out string? rewrittenSource);
+
+        rewrittenSource.ShouldNotBeNull();
+        var bindings = VulkanShaderReflection.ExtractBindings(spirv, ShaderStageFlags.FragmentBit, rewrittenSource);
+
+        DescriptorBindingInfo irradiance = bindings.First(binding => binding.Binding == 7);
+        DescriptorBindingInfo prefilter = bindings.First(binding => binding.Binding == 8);
+
+        irradiance.Name.ShouldBe("IrradianceArray");
+        irradiance.ExpectedImageViewType.ShouldBe(ImageViewType.Type2DArray);
+        prefilter.Name.ShouldBe("PrefilterArray");
+        prefilter.ExpectedImageViewType.ShouldBe(ImageViewType.Type2DArray);
     }
 
     [TestCaseSource(nameof(FragmentShaders))]

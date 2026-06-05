@@ -8,6 +8,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 using Silk.NET.Vulkan;
@@ -67,6 +68,16 @@ public unsafe partial class VulkanRenderer
 
 			_generatedProgram?.Destroy();
 			_generatedProgram = new XRRenderProgram(linkNow: false, separable: false, shaders);
+			string generatedProgramName = BuildGeneratedProgramName(material, shaders);
+			_generatedProgram.Name = generatedProgramName;
+			_generatedProgram.UsageTag = $"VulkanCombinedMeshProgram | material={material.Name ?? "<unnamed>"} | mesh={Mesh?.Name ?? "<unnamed>"} | renderer={MeshRenderer?.Name ?? "<unnamed>"}";
+			_generatedProgram.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
+				material.Name,
+				MeshRenderer?.Name,
+				Data.GetType().Name,
+				"VulkanCombinedMesh",
+				Mesh?.Name,
+				BuildShaderStageList(shaders)));
 			_generatedProgram.AllowLink();
 			_program = Renderer.GenericToAPI<VkRenderProgram>(_generatedProgram);
 
@@ -94,6 +105,32 @@ public unsafe partial class VulkanRenderer
 
 			return linked;
 		}
+
+		private string BuildGeneratedProgramName(XRMaterial material, IReadOnlyList<XRShader> shaders)
+			=> $"VkCombined:{SanitizeProgramName(material.Name, "material")}:{SanitizeProgramName(Mesh?.Name, "mesh")}:{BuildShaderStageList(shaders)}";
+
+		private static string BuildShaderStageList(IReadOnlyList<XRShader> shaders)
+		{
+			if (shaders.Count == 0)
+				return "no-shaders";
+
+			return string.Join(", ", shaders.Select(static shader => $"{shader.Type}:{ResolveShaderLabel(shader)}"));
+		}
+
+		private static string ResolveShaderLabel(XRShader shader)
+		{
+			if (!string.IsNullOrWhiteSpace(shader.Source?.FilePath))
+				return Path.GetFileName(shader.Source.FilePath!);
+			if (!string.IsNullOrWhiteSpace(shader.FilePath))
+				return Path.GetFileName(shader.FilePath!);
+			if (!string.IsNullOrWhiteSpace(shader.Name))
+				return shader.Name!;
+
+			return shader.Type.ToString();
+		}
+
+		private static string SanitizeProgramName(string? value, string fallback)
+			=> string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
 		#endregion // Shader Program Management
 
@@ -180,6 +217,7 @@ public unsafe partial class VulkanRenderer
 			Format depthAttachmentFormat,
 			int passIndex,
 			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			bool depthStencilReadOnly,
 			string pipelineName,
 			out Pipeline pipeline)
 		{
@@ -193,6 +231,8 @@ public unsafe partial class VulkanRenderer
 
 			if (!EnsureProgram(material))
 				return false;
+
+			PendingMeshDraw effectiveDraw = ResolveAttachmentCompatibleDrawState(draw, passIndex, passMetadata, depthStencilReadOnly);
 
 			if (useDynamicRendering && colorAttachmentFormat == Format.Undefined && draw.ColorWriteMask != 0)
 			{
@@ -217,25 +257,25 @@ public unsafe partial class VulkanRenderer
 				useDynamicRendering ? depthAttachmentFormat : Format.Undefined,
 				programPipelineHash,
 				vertexLayoutHash,
-				draw.RasterizationSamples,
-				draw.DepthTestEnabled,
-				draw.DepthWriteEnabled,
-				draw.DepthCompareOp,
-				draw.StencilTestEnabled,
-				draw.FrontStencilState,
-				draw.BackStencilState,
-				draw.StencilWriteMask,
-				draw.CullMode,
-				draw.FrontFace,
-				draw.BlendEnabled,
-				draw.AlphaToCoverageEnabled,
-				draw.ColorBlendOp,
-				draw.AlphaBlendOp,
-				draw.SrcColorBlendFactor,
-				draw.DstColorBlendFactor,
-				draw.SrcAlphaBlendFactor,
-				draw.DstAlphaBlendFactor,
-				draw.ColorWriteMask);
+				effectiveDraw.RasterizationSamples,
+				effectiveDraw.DepthTestEnabled,
+				effectiveDraw.DepthWriteEnabled,
+				effectiveDraw.DepthCompareOp,
+				effectiveDraw.StencilTestEnabled,
+				effectiveDraw.FrontStencilState,
+				effectiveDraw.BackStencilState,
+				effectiveDraw.StencilWriteMask,
+				effectiveDraw.CullMode,
+				effectiveDraw.FrontFace,
+				effectiveDraw.BlendEnabled,
+				effectiveDraw.AlphaToCoverageEnabled,
+				effectiveDraw.ColorBlendOp,
+				effectiveDraw.AlphaBlendOp,
+				effectiveDraw.SrcColorBlendFactor,
+				effectiveDraw.DstColorBlendFactor,
+				effectiveDraw.SrcAlphaBlendFactor,
+				effectiveDraw.DstAlphaBlendFactor,
+				effectiveDraw.ColorWriteMask);
 
 			// Check pipeline cache before creating a new pipeline object
 			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0 && !_pipelineDirty)
@@ -258,11 +298,11 @@ public unsafe partial class VulkanRenderer
 				depthAttachmentFormat,
 				programPipelineHash,
 				vertexLayoutHash,
-				draw.RasterizationSamples,
-				draw.DepthTestEnabled,
-				draw.BlendEnabled,
-				draw.AlphaToCoverageEnabled,
-				draw.ColorWriteMask);
+				effectiveDraw.RasterizationSamples,
+				effectiveDraw.DepthTestEnabled,
+				effectiveDraw.BlendEnabled,
+				effectiveDraw.AlphaToCoverageEnabled,
+				effectiveDraw.ColorWriteMask);
 
 			var vertexInput = new PipelineVertexInputStateCreateInfo
 			{
@@ -299,8 +339,8 @@ public unsafe partial class VulkanRenderer
 					DepthClampEnable = Vk.False,
 					RasterizerDiscardEnable = Vk.False,
 					PolygonMode = PolygonMode.Fill,
-					CullMode = draw.CullMode,
-					FrontFace = draw.FrontFace,
+					CullMode = effectiveDraw.CullMode,
+					FrontFace = effectiveDraw.FrontFace,
 					DepthBiasEnable = Vk.False,
 					LineWidth = 1.0f,
 				};
@@ -308,33 +348,33 @@ public unsafe partial class VulkanRenderer
 				PipelineMultisampleStateCreateInfo multisampling = new()
 				{
 					SType = StructureType.PipelineMultisampleStateCreateInfo,
-					RasterizationSamples = draw.RasterizationSamples,
+					RasterizationSamples = effectiveDraw.RasterizationSamples,
 					SampleShadingEnable = Vk.False,
-					AlphaToCoverageEnable = draw.AlphaToCoverageEnabled ? Vk.True : Vk.False,
+					AlphaToCoverageEnable = effectiveDraw.AlphaToCoverageEnabled ? Vk.True : Vk.False,
 				};
 
 				PipelineDepthStencilStateCreateInfo depthStencil = new()
 				{
 					SType = StructureType.PipelineDepthStencilStateCreateInfo,
-					DepthTestEnable = draw.DepthTestEnabled ? Vk.True : Vk.False,
-					DepthWriteEnable = draw.DepthWriteEnabled ? Vk.True : Vk.False,
-					DepthCompareOp = draw.DepthCompareOp,
+					DepthTestEnable = effectiveDraw.DepthTestEnabled ? Vk.True : Vk.False,
+					DepthWriteEnable = effectiveDraw.DepthWriteEnabled ? Vk.True : Vk.False,
+					DepthCompareOp = effectiveDraw.DepthCompareOp,
 					DepthBoundsTestEnable = Vk.False,
-					StencilTestEnable = draw.StencilTestEnabled ? Vk.True : Vk.False,
-					Front = draw.FrontStencilState,
-					Back = draw.BackStencilState,
+					StencilTestEnable = effectiveDraw.StencilTestEnabled ? Vk.True : Vk.False,
+					Front = effectiveDraw.FrontStencilState,
+					Back = effectiveDraw.BackStencilState,
 				};
 
 				PipelineColorBlendAttachmentState colorBlendAttachment = new()
 				{
-					ColorWriteMask = draw.ColorWriteMask,
-					BlendEnable = draw.BlendEnabled ? Vk.True : Vk.False,
-					ColorBlendOp = draw.ColorBlendOp,
-					AlphaBlendOp = draw.AlphaBlendOp,
-					SrcColorBlendFactor = draw.SrcColorBlendFactor,
-					DstColorBlendFactor = draw.DstColorBlendFactor,
-					SrcAlphaBlendFactor = draw.SrcAlphaBlendFactor,
-					DstAlphaBlendFactor = draw.DstAlphaBlendFactor,
+					ColorWriteMask = effectiveDraw.ColorWriteMask,
+					BlendEnable = effectiveDraw.BlendEnabled ? Vk.True : Vk.False,
+					ColorBlendOp = effectiveDraw.ColorBlendOp,
+					AlphaBlendOp = effectiveDraw.AlphaBlendOp,
+					SrcColorBlendFactor = effectiveDraw.SrcColorBlendFactor,
+					DstColorBlendFactor = effectiveDraw.DstColorBlendFactor,
+					SrcAlphaBlendFactor = effectiveDraw.SrcAlphaBlendFactor,
+					DstAlphaBlendFactor = effectiveDraw.DstAlphaBlendFactor,
 				};
 
 				uint colorAttachmentCount = useDynamicRendering
@@ -428,11 +468,16 @@ public unsafe partial class VulkanRenderer
 						catch (InvalidOperationException ex)
 						{
 							string programName = program.Data.Name ?? "UnnamedProgram";
+							string shaderStages = program.DescribeShaderStages();
+							program.WriteShaderDiagnostics($"pipelineName='{pipelineName}' passIndex={passIndex} topology={topology} failed: {ex.Message}");
 							Debug.VulkanWarningEvery(
 								$"Vulkan.Pipeline.CreateFailed.{programName}",
 								TimeSpan.FromSeconds(5),
-								"[Vulkan] Pipeline creation failed for program '{0}': {1}",
+								"[Vulkan] Pipeline creation failed for program '{0}' mesh='{1}' material='{2}' stages=[{3}]: {4}",
 								programName,
+								Mesh?.Name ?? "<unnamed mesh>",
+								material.Name ?? "<unnamed material>",
+								shaderStages,
 								ex.Message);
 							pipeline = default;
 							return false;
@@ -446,6 +491,72 @@ public unsafe partial class VulkanRenderer
 
 			return success;
 		}
+
+		private static PendingMeshDraw ResolveAttachmentCompatibleDrawState(
+			in PendingMeshDraw draw,
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			bool depthStencilReadOnly)
+		{
+			if (!depthStencilReadOnly && !PassUsesReadOnlyDepthStencil(passIndex, passMetadata))
+				return draw;
+
+			bool hasStencilWrites = draw.StencilTestEnabled &&
+				(StencilStateWrites(draw.FrontStencilState) || StencilStateWrites(draw.BackStencilState) || draw.StencilWriteMask != 0);
+			if (!draw.DepthWriteEnabled && !hasStencilWrites)
+				return draw;
+
+			return draw with
+			{
+				DepthWriteEnabled = false,
+				FrontStencilState = MakeStencilReadOnly(draw.FrontStencilState),
+				BackStencilState = MakeStencilReadOnly(draw.BackStencilState),
+				StencilWriteMask = 0,
+			};
+		}
+
+		private static bool PassUsesReadOnlyDepthStencil(
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+		{
+			if (passMetadata is null || passIndex < 0)
+				return false;
+
+			foreach (RenderPassMetadata pass in passMetadata)
+			{
+				if (pass.PassIndex != passIndex)
+					continue;
+
+				foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+				{
+					if (usage.Access != ERenderGraphAccess.Read)
+						continue;
+
+					if (usage.ResourceType is ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment)
+						return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static bool StencilStateWrites(StencilOpState state)
+			=> state.WriteMask != 0 &&
+			   (state.FailOp != Silk.NET.Vulkan.StencilOp.Keep ||
+			    state.PassOp != Silk.NET.Vulkan.StencilOp.Keep ||
+			    state.DepthFailOp != Silk.NET.Vulkan.StencilOp.Keep);
+
+		private static StencilOpState MakeStencilReadOnly(StencilOpState state)
+			=> new()
+			{
+				FailOp = Silk.NET.Vulkan.StencilOp.Keep,
+				PassOp = Silk.NET.Vulkan.StencilOp.Keep,
+				DepthFailOp = Silk.NET.Vulkan.StencilOp.Keep,
+				CompareOp = state.CompareOp,
+				CompareMask = state.CompareMask,
+				WriteMask = 0,
+				Reference = state.Reference,
+			};
 
 		/// <summary>
 		/// Destroys all cached pipelines and associated descriptor resources.

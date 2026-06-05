@@ -210,8 +210,11 @@ namespace XREngine.Rendering.Vulkan
 
         private sealed class ComputeTransientResources
         {
+            public object SyncRoot { get; } = new();
             public DescriptorPool ActiveDescriptorPool;
+            public ulong ActiveDescriptorPoolSignature;
             public List<DescriptorPool> DescriptorPools { get; } = [];
+            public List<ulong> DescriptorPoolSignatures { get; } = [];
             public List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> UniformBuffers { get; } = [];
             public bool DescriptorPoolsInitialized;
         }
@@ -582,6 +585,33 @@ namespace XREngine.Rendering.Vulkan
             _computeTransientResources = null;
         }
 
+        internal int ReleaseComputeTransientDescriptorReferencesForPhysicalResourceDestruction()
+        {
+            if (_computeTransientResources is null)
+                return 0;
+
+            int poolCount = 0;
+            for (int i = 0; i < _computeTransientResources.Length; i++)
+            {
+                ComputeTransientResources? resources = _computeTransientResources[i];
+                if (resources is not null)
+                {
+                    lock (resources.SyncRoot)
+                    {
+                        for (int poolIndex = 0; poolIndex < resources.DescriptorPools.Count; poolIndex++)
+                        {
+                            if (resources.DescriptorPools[poolIndex].Handle != 0)
+                                poolCount++;
+                        }
+                    }
+                }
+
+                CleanupComputeTransientResources((uint)i);
+            }
+
+            return poolCount;
+        }
+
         private void CleanupComputeTransientResources(uint imageIndex, bool destroyPools = false)
         {
             if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
@@ -601,6 +631,8 @@ namespace XREngine.Rendering.Vulkan
                         Api!.DestroyDescriptorPool(device, descriptorPool, null);
                         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
                         resources.DescriptorPools[i] = default;
+                        if (i < resources.DescriptorPoolSignatures.Count)
+                            resources.DescriptorPoolSignatures[i] = 0;
                     }
                     else
                     {
@@ -614,15 +646,21 @@ namespace XREngine.Rendering.Vulkan
                             Api!.DestroyDescriptorPool(device, descriptorPool, null);
                             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
                             resources.DescriptorPools[i] = default;
+                            if (i < resources.DescriptorPoolSignatures.Count)
+                                resources.DescriptorPoolSignatures[i] = 0;
                         }
                     }
                 }
             }
 
             resources.ActiveDescriptorPool = default;
+            resources.ActiveDescriptorPoolSignature = 0;
             resources.DescriptorPoolsInitialized = !destroyPools && resources.DescriptorPools.Count > 0;
             if (destroyPools)
+            {
                 resources.DescriptorPools.Clear();
+                resources.DescriptorPoolSignatures.Clear();
+            }
 
             foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in resources.UniformBuffers)
                 DestroyBuffer(buffer, memory);
@@ -644,89 +682,150 @@ namespace XREngine.Rendering.Vulkan
             if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
                 return false;
 
-            ComputeTransientResources resources = _computeTransientResources[imageIndex] ??= new ComputeTransientResources();
-
-            bool TryAllocateFromPool(DescriptorPool pool, out DescriptorSet[] sets)
+            ComputeTransientResources? resources = _computeTransientResources[imageIndex];
+            if (resources is null)
             {
-                sets = new DescriptorSet[setLayouts.Length];
-                fixed (DescriptorSetLayout* layoutPtr = setLayouts)
-                fixed (DescriptorSet* setPtr = sets)
+                lock (_computeDescriptorCacheLock)
+                    resources = _computeTransientResources[imageIndex] ??= new ComputeTransientResources();
+            }
+
+            lock (resources.SyncRoot)
+            {
+                ulong poolSignature = ComputeTransientDescriptorPoolSignature(poolSizes, requireUpdateAfterBind);
+
+                bool TryAllocateFromPool(DescriptorPool pool, out DescriptorSet[] sets)
                 {
-                    DescriptorSetAllocateInfo allocInfo = new()
+                    sets = new DescriptorSet[setLayouts.Length];
+                    fixed (DescriptorSetLayout* layoutPtr = setLayouts)
+                    fixed (DescriptorSet* setPtr = sets)
                     {
-                        SType = StructureType.DescriptorSetAllocateInfo,
-                        DescriptorPool = pool,
-                        DescriptorSetCount = (uint)setLayouts.Length,
-                        PSetLayouts = layoutPtr,
+                        DescriptorSetAllocateInfo allocInfo = new()
+                        {
+                            SType = StructureType.DescriptorSetAllocateInfo,
+                            DescriptorPool = pool,
+                            DescriptorSetCount = (uint)setLayouts.Length,
+                            PSetLayouts = layoutPtr,
+                        };
+
+                        Result allocResult = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
+                        if (allocResult == Result.Success)
+                            return true;
+
+                        sets = Array.Empty<DescriptorSet>();
+                        return false;
+                    }
+                }
+
+                if (resources.ActiveDescriptorPool.Handle != 0 &&
+                    resources.ActiveDescriptorPoolSignature == poolSignature &&
+                    TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets))
+                {
+                    return true;
+                }
+
+                if (resources.DescriptorPoolsInitialized)
+                {
+                    for (int i = 0; i < resources.DescriptorPools.Count; i++)
+                    {
+                        DescriptorPool pooledDescriptorPool = resources.DescriptorPools[i];
+                        if (pooledDescriptorPool.Handle == 0)
+                            continue;
+
+                        if (i >= resources.DescriptorPoolSignatures.Count ||
+                            resources.DescriptorPoolSignatures[i] != poolSignature)
+                        {
+                            continue;
+                        }
+
+                        resources.ActiveDescriptorPool = pooledDescriptorPool;
+                        resources.ActiveDescriptorPoolSignature = poolSignature;
+                        if (TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets))
+                            return true;
+                    }
+                }
+
+                // Infer pool size class from descriptor demand to avoid uniform over-allocation.
+                EDescriptorPoolSizeClass sizeClass = InferPoolSizeClass(poolSizes, setLayouts.Length);
+                (uint maxSetsBase, uint descriptorScale) = GetPoolSizeClassParameters(sizeClass);
+
+                DescriptorPoolSize[] scaledPoolSizes = new DescriptorPoolSize[poolSizes.Length];
+                for (int i = 0; i < poolSizes.Length; i++)
+                {
+                    DescriptorPoolSize source = poolSizes[i];
+                    uint scaledCount = Math.Max(source.DescriptorCount * descriptorScale, source.DescriptorCount);
+                    scaledPoolSizes[i] = new DescriptorPoolSize
+                    {
+                        Type = source.Type,
+                        DescriptorCount = scaledCount
+                    };
+                }
+
+                DescriptorPoolCreateFlags poolFlags = requireUpdateAfterBind
+                    ? DescriptorPoolCreateFlags.UpdateAfterBindBit
+                    : 0;
+
+                fixed (DescriptorPoolSize* poolSizesPtr = scaledPoolSizes)
+                {
+                    DescriptorPoolCreateInfo poolInfo = new()
+                    {
+                        SType = StructureType.DescriptorPoolCreateInfo,
+                        Flags = poolFlags,
+                        MaxSets = Math.Max((uint)setLayouts.Length * descriptorScale, maxSetsBase),
+                        PoolSizeCount = (uint)scaledPoolSizes.Length,
+                        PPoolSizes = poolSizesPtr,
                     };
 
-                    Result allocResult = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
-                    if (allocResult == Result.Success)
-                        return true;
+                    if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
+                        return false;
 
-                    sets = Array.Empty<DescriptorSet>();
-                    return false;
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
+                    resources.DescriptorPools.Add(descriptorPool);
+                    resources.DescriptorPoolSignatures.Add(poolSignature);
+                    resources.ActiveDescriptorPool = descriptorPool;
+                    resources.ActiveDescriptorPoolSignature = poolSignature;
+                    resources.DescriptorPoolsInitialized = true;
                 }
+
+                return TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets);
             }
+        }
 
-            if (resources.ActiveDescriptorPool.Handle != 0 && TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets))
-                return true;
+        private static ulong ComputeTransientDescriptorPoolSignature(DescriptorPoolSize[] poolSizes, bool requireUpdateAfterBind)
+        {
+            HashCode hash = new();
+            hash.Add(requireUpdateAfterBind);
+            hash.Add(poolSizes.Length);
 
-            if (resources.DescriptorPoolsInitialized)
+            Span<bool> consumed = poolSizes.Length <= 32
+                ? stackalloc bool[poolSizes.Length]
+                : new bool[poolSizes.Length];
+
+            for (int sorted = 0; sorted < poolSizes.Length; sorted++)
             {
-                for (int i = 0; i < resources.DescriptorPools.Count; i++)
+                int next = -1;
+                int nextType = int.MaxValue;
+                for (int i = 0; i < poolSizes.Length; i++)
                 {
-                    DescriptorPool pooledDescriptorPool = resources.DescriptorPools[i];
-                    if (pooledDescriptorPool.Handle == 0)
+                    if (consumed[i])
                         continue;
 
-                    resources.ActiveDescriptorPool = pooledDescriptorPool;
-                    if (TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets))
-                        return true;
+                    int candidateType = (int)poolSizes[i].Type;
+                    if (candidateType >= nextType)
+                        continue;
+
+                    next = i;
+                    nextType = candidateType;
                 }
+
+                if (next < 0)
+                    break;
+
+                consumed[next] = true;
+                hash.Add(nextType);
+                hash.Add(poolSizes[next].DescriptorCount);
             }
 
-            // Infer pool size class from descriptor demand to avoid uniform over-allocation.
-            EDescriptorPoolSizeClass sizeClass = InferPoolSizeClass(poolSizes, setLayouts.Length);
-            (uint maxSetsBase, uint descriptorScale) = GetPoolSizeClassParameters(sizeClass);
-
-            DescriptorPoolSize[] scaledPoolSizes = new DescriptorPoolSize[poolSizes.Length];
-            for (int i = 0; i < poolSizes.Length; i++)
-            {
-                DescriptorPoolSize source = poolSizes[i];
-                uint scaledCount = Math.Max(source.DescriptorCount * descriptorScale, source.DescriptorCount);
-                scaledPoolSizes[i] = new DescriptorPoolSize
-                {
-                    Type = source.Type,
-                    DescriptorCount = scaledCount
-                };
-            }
-
-            DescriptorPoolCreateFlags poolFlags = requireUpdateAfterBind
-                ? DescriptorPoolCreateFlags.UpdateAfterBindBit
-                : 0;
-
-            fixed (DescriptorPoolSize* poolSizesPtr = scaledPoolSizes)
-            {
-                DescriptorPoolCreateInfo poolInfo = new()
-                {
-                    SType = StructureType.DescriptorPoolCreateInfo,
-                    Flags = poolFlags,
-                    MaxSets = Math.Max((uint)setLayouts.Length * descriptorScale, maxSetsBase),
-                    PoolSizeCount = (uint)scaledPoolSizes.Length,
-                    PPoolSizes = poolSizesPtr,
-                };
-
-                if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
-                    return false;
-
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolCreate();
-                resources.DescriptorPools.Add(descriptorPool);
-                resources.ActiveDescriptorPool = descriptorPool;
-                resources.DescriptorPoolsInitialized = true;
-            }
-
-            return TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets);
+            return unchecked((ulong)hash.ToHashCode());
         }
 
         private void RegisterComputeTransientUniformBuffers(
@@ -1111,6 +1210,7 @@ namespace XREngine.Rendering.Vulkan
             RenderPass activeRenderPass = default;
             Framebuffer activeFramebuffer = default;
             Rect2D activeRenderArea = default;
+            bool activeDepthStencilReadOnly = false;
             int activePassIndex = int.MinValue;
             int activeSchedulingIdentity = int.MinValue;
             FrameOpContext activeContext = default;
@@ -1244,6 +1344,7 @@ namespace XREngine.Rendering.Vulkan
                 activeRenderPass = default;
                 activeFramebuffer = default;
                 activeRenderArea = default;
+                activeDepthStencilReadOnly = false;
             }
 
             void BeginRenderPassForTarget(XRFrameBuffer? target, int passIndex, in FrameOpContext context)
@@ -1387,6 +1488,7 @@ namespace XREngine.Rendering.Vulkan
                         activeRenderPass = default;
                         activeFramebuffer = default;
                         activeRenderArea = renderingInfo.RenderArea;
+                        activeDepthStencilReadOnly = false;
                         swapchainClearedThisFrame = true;
                         return;
                     }
@@ -1423,6 +1525,7 @@ namespace XREngine.Rendering.Vulkan
                     activeRenderPass = selectedRenderPass;
                     activeFramebuffer = swapChainFramebuffers![imageIndex];
                     activeRenderArea = renderPassInfo.RenderArea;
+                    activeDepthStencilReadOnly = false;
                     swapchainClearedThisFrame = true;
                     return;
                 }
@@ -1455,6 +1558,7 @@ namespace XREngine.Rendering.Vulkan
                         fboLayoutTracking[target] = trackedLayouts;
                 }
                 RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts);
+                bool passDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(passIndex, context.PassMetadata, trackedLayouts);
 
                 Debug.VulkanEvery(
                     $"Vulkan.BeginRP.FBO.{fboName}.{passRenderPass.Handle:X}",
@@ -1495,6 +1599,7 @@ namespace XREngine.Rendering.Vulkan
                 activeRenderPass = passRenderPass;
                 activeFramebuffer = vkFrameBuffer.FrameBuffer;
                 activeRenderArea = fboPassInfo.RenderArea;
+                activeDepthStencilReadOnly = passDepthStencilReadOnly;
             }
 
             void EmitPassBarriers(int passIndex)
@@ -1746,22 +1851,11 @@ namespace XREngine.Rendering.Vulkan
                         {
                     case BlitOp blit:
                         EndActiveRenderPass();
-                        if (secondaryBucketByStart is not null &&
-                            secondaryBucketByStart.TryGetValue(opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket blitBucket) &&
-                            TryRecordSecondaryBucket(primaryCommandBuffer: commandBuffer, imageIndex, ops, opIndex, blitBucket, "BlitBatch"))
-                        {
-                            if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
-                                swapchainWrittenOutsideRenderPass = true;
-                            opIndex = opIndex + blitBucket.Count - 1;
-                        }
-                        else
-                        {
-                            CmdBeginLabel(commandBuffer, "Blit");
-                            RecordBlitOp(commandBuffer, imageIndex, blit);
-                            CmdEndLabel(commandBuffer);
-                            if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
-                                swapchainWrittenOutsideRenderPass = true;
-                        }
+                        CmdBeginLabel(commandBuffer, "Blit");
+                        RecordBlitOp(commandBuffer, imageIndex, blit);
+                        CmdEndLabel(commandBuffer);
+                        if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
+                            swapchainWrittenOutsideRenderPass = true;
                         break;
 
                     case ClearOp clear:
@@ -1811,6 +1905,7 @@ namespace XREngine.Rendering.Vulkan
                             _swapchainDepthFormat,
                             opPassIndex,
                             drawOp.Context.PassMetadata,
+                            activeDepthStencilReadOnly,
                             drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>");
                         break;
 

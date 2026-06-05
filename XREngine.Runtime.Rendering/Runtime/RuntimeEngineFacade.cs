@@ -106,7 +106,7 @@ internal static partial class RuntimeEngine
     public static partial class Rendering
     {
         private static readonly Stack<XRRenderPipelineInstance> PipelineStack = new();
-        private static readonly Stack<XRRenderPipelineInstance> PipelineOverrideStack = new();
+        private static readonly Stack<XRRenderPipelineInstance?> PipelineOverrideStack = new();
 
         public static RuntimeRenderSettings Settings { get; } = new();
         private static RuntimeRenderingState StateData { get; } = new();
@@ -216,13 +216,21 @@ internal static partial class RuntimeEngine
         public static IDisposable? PushRenderingPipeline(XRRenderPipelineInstance pipeline)
         {
             PipelineStack.Push(pipeline);
-            return new DisposableAction(() => PipelineStack.Pop());
+            return new DisposableAction(() =>
+            {
+                if (PipelineStack.Count != 0)
+                    PipelineStack.Pop();
+            });
         }
 
-        public static IDisposable? PushRenderingPipelineOverride(XRRenderPipelineInstance pipeline)
+        public static IDisposable? PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
         {
             PipelineOverrideStack.Push(pipeline);
-            return new DisposableAction(() => PipelineOverrideStack.Pop());
+            return new DisposableAction(() =>
+            {
+                if (PipelineOverrideStack.Count != 0)
+                    PipelineOverrideStack.Pop();
+            });
         }
 
         public static XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
@@ -2887,6 +2895,7 @@ internal sealed class DisposableAction : IDisposable
 {
     public static readonly IDisposable Empty = new DisposableAction(null);
     private readonly Action? _dispose;
+    private bool _disposed;
 
     public DisposableAction(Action? dispose)
     {
@@ -2894,5 +2903,11 @@ internal sealed class DisposableAction : IDisposable
     }
 
     public void Dispose()
-        => _dispose?.Invoke();
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _dispose?.Invoke();
+    }
 }

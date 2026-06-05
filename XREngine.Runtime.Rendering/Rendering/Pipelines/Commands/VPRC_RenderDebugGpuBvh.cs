@@ -237,7 +237,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
         ];
 
         var mat = new XRMaterial(vars, [vert, geom, frag]);
-        mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+        mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
         mat.RenderOptions.CullMode = ECullMode.None;
         mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
         mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);

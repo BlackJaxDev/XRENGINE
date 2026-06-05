@@ -48,6 +48,7 @@ namespace XREngine.Rendering.Vulkan
                     return _view;
                 }
             }
+            ImageViewType IVkImageDescriptorSource.DescriptorViewType => ResolveViewType(Data.TextureTarget);
             Sampler IVkImageDescriptorSource.DescriptorSampler
             {
                 get

@@ -280,14 +280,17 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool TryWriteAutoUniformMember(Span<byte> data, AutoUniformMember member, XRMaterial material, in PendingMeshDraw draw)
 		{
-			if (member.EngineType is null)
-				return false;
+			if (member.StructMembers is { Count: > 0 })
+				return TryWriteStructUniformValue(data, member, member.Name, member.Offset);
 
 			if (TryResolveEngineUniformValue(member.Name, draw, out object? engineValue, out EShaderVarType engineType))
 				return engineValue is not null && TryWriteAutoUniformValue(data, member, engineValue, engineType);
 
 			if (_program is not null && _program.TryGetUniformValue(member.Name, out ProgramUniformValue programValue))
 				return TryWriteProgramUniformValue(data, member, programValue);
+
+			if (member.IsArray && TryWriteIndexedProgramUniformArray(data, member, member.Name))
+				return true;
 
 			ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
 			if (parameter is not null)
@@ -305,6 +308,90 @@ public unsafe partial class VulkanRenderer
 				return TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
 
 			return false;
+		}
+
+		private bool TryWriteStructUniformValue(Span<byte> data, AutoUniformMember member, string uniformPrefix, uint baseOffset)
+		{
+			if (member.StructMembers is not { Count: > 0 } fields)
+				return false;
+
+			bool wroteAny = false;
+			foreach (AutoUniformMember field in fields)
+			{
+				uint fieldOffset = baseOffset + field.Offset;
+				string fieldName = $"{uniformPrefix}.{field.Name}";
+				AutoUniformMember absoluteField = field with { Offset = fieldOffset };
+
+				if (field.StructMembers is { Count: > 0 })
+				{
+					if (field.IsArray)
+						wroteAny |= TryWriteStructUniformArray(data, absoluteField, fieldName);
+					else
+						wroteAny |= TryWriteStructUniformValue(data, absoluteField, fieldName, fieldOffset);
+					continue;
+				}
+
+				if (field.IsArray)
+				{
+					wroteAny |= TryWriteProgramUniformArray(data, absoluteField, fieldName);
+					continue;
+				}
+
+				if (_program is not null && _program.TryGetUniformValue(fieldName, out ProgramUniformValue fieldValue))
+				{
+					wroteAny |= TryWriteProgramUniformValue(data, absoluteField, fieldValue);
+					continue;
+				}
+
+				if (field.DefaultValue is { } defaultValue)
+					wroteAny |= TryWriteAutoUniformValue(data, absoluteField, defaultValue.Value, defaultValue.Type);
+			}
+
+			return wroteAny;
+		}
+
+		private bool TryWriteStructUniformArray(Span<byte> data, AutoUniformMember member, string uniformPrefix)
+		{
+			if (!member.IsArray || member.ArrayStride == 0 || member.ArrayLength == 0)
+				return false;
+
+			bool wroteAny = false;
+			for (uint i = 0; i < member.ArrayLength; i++)
+			{
+				uint elementOffset = member.Offset + i * member.ArrayStride;
+				AutoUniformMember element = member with { Offset = elementOffset, IsArray = false, ArrayLength = 0, ArrayStride = 0 };
+				wroteAny |= TryWriteStructUniformValue(data, element, $"{uniformPrefix}[{i}]", elementOffset);
+			}
+
+			return wroteAny;
+		}
+
+		private bool TryWriteProgramUniformArray(Span<byte> data, AutoUniformMember member, string uniformName)
+		{
+			if (_program is not null && _program.TryGetUniformValue(uniformName, out ProgramUniformValue programValue))
+				return TryWriteProgramUniformValue(data, member, programValue);
+
+			return TryWriteIndexedProgramUniformArray(data, member, uniformName);
+		}
+
+		private bool TryWriteIndexedProgramUniformArray(Span<byte> data, AutoUniformMember member, string uniformName)
+		{
+			if (_program is null || !member.IsArray || member.ArrayStride == 0 || member.ArrayLength == 0)
+				return false;
+
+			bool wroteAny = false;
+			for (uint i = 0; i < member.ArrayLength; i++)
+			{
+				string elementName = $"{uniformName}[{i}]";
+				if (!_program.TryGetUniformValue(elementName, out ProgramUniformValue elementValue) || elementValue.IsArray || elementValue.Value is Array)
+					continue;
+
+				uint elementOffset = member.Offset + i * member.ArrayStride;
+				AutoUniformMember elementMember = member with { Offset = elementOffset, IsArray = false, ArrayLength = 0, ArrayStride = 0 };
+				wroteAny |= TryWriteAutoUniformValue(data, elementMember, elementValue.Value, elementValue.Type);
+			}
+
+			return wroteAny;
 		}
 
 		/// <summary>Writes a program uniform value into auto uniform buffer memory (scalar or array).</summary>

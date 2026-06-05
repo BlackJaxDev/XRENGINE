@@ -373,6 +373,25 @@ public sealed partial class XRRenderPipelineInstance
             }
         }
 
+        public readonly record struct ScopedRenderTargetBinding(string Name, XRFrameBuffer? FrameBuffer, bool Write);
+
+        public ScopedRenderTargetBinding? CurrentRenderTargetBinding
+            => _renderTargetBindings.TryPeek(out var binding) ? binding : null;
+
+        private readonly Stack<ScopedRenderTargetBinding> _renderTargetBindings = new();
+
+        public StateObject PushRenderTargetBinding(string name, XRFrameBuffer? frameBuffer, bool write)
+        {
+            _renderTargetBindings.Push(new ScopedRenderTargetBinding(name, frameBuffer, write));
+            return StateObject.New(PopRenderTargetBinding);
+        }
+
+        public void PopRenderTargetBinding()
+        {
+            if (_renderTargetBindings.Count > 0)
+                _renderTargetBindings.Pop();
+        }
+
         /// <summary>
         /// This material will be used to render all objects in the scene if set.
         /// </summary>

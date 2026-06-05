@@ -43,6 +43,7 @@ public unsafe partial class VulkanRenderer
 			Format depthAttachmentFormat,
 			int passIndex,
 			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			bool depthStencilReadOnly,
 			string pipelineName)
 		{
 			EnsureBuffers();
@@ -89,7 +90,7 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, pipelineName, out var pipeline))
+				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
 				{
 					if (verboseTrace)
 						Debug.MeshesWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colorFmt={3} depthFmt={4}",
@@ -163,7 +164,7 @@ public unsafe partial class VulkanRenderer
 					EPrimitiveType.Patches => PrimitiveTopology.PatchList,
 					_ => PrimitiveTopology.TriangleList,
 				};
-				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, pipelineName, out var pipeline))
+				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
 				{
 					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
