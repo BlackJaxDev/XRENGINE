@@ -298,8 +298,8 @@ void main()
         vec3 galacticUp = SafeNormalize3(vec3(0.35, 0.22, 0.91));
         float bandCoord = dot(dir, galacticUp);
         float band = exp(-bandCoord * bandCoord * 38.0);
-        vec2 galaxyUv = DirectionToOctahedralPlane(dir) * 5.2 + vec2(3.1, 7.4);
-        float mwDetail = smoothstep(0.35, 0.95, Fbm(galaxyUv));
+        vec3 galaxyP = dir * 5.2 + galacticUp * 3.1 + vec3(3.1, 7.4, 1.9);
+        float mwDetail = smoothstep(0.35, 0.95, Fbm3(galaxyP));
         vec3 milkyWay = mix(vec3(0.06, 0.08, 0.15), vec3(0.22, 0.18, 0.28), mwDetail) * band * mwDetail * 0.35;
 
         float starHorizonFade = smoothstep(-0.05, 0.22, dir.y);
@@ -316,10 +316,11 @@ void main()
     // --- Seamless directional clouds ---
     float timeAdvect = SkyCloudSpeed * SkyTimeOfDay * 240.0;
     float flowAngle = SkyTimeOfDay * 0.35;
-    vec2 flow = vec2(cos(flowAngle), sin(flowAngle)) * timeAdvect * 0.25;
-    vec2 cloudP = DirectionToOctahedralPlane(dir) * SkyCloudScale * 3.0 + flow;
-    float cloudBase = Fbm(cloudP);
-    float cloudDetail = Noise(cloudP * 6.5 - flow * 0.35);
+    vec3 windDir = SafeNormalize3(vec3(cos(flowAngle), 0.12, sin(flowAngle)));
+    vec3 cloudP = dir * SkyCloudScale * 3.0;
+    vec3 warped = cloudP + windDir * timeAdvect * 0.25;
+    float cloudBase = Fbm3_6(warped);
+    float cloudDetail = Noise3(warped * 6.5 - windDir * timeAdvect * 0.35);
     float cloudShape = cloudBase * 0.82 + cloudDetail * 0.18;
     float cloudMask = smoothstep(-0.08, 0.12, dir.y);
     float cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloudShape, SkyCloudSharpness)) * cloudMask;

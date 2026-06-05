@@ -141,19 +141,31 @@ public unsafe partial class VulkanRenderer
 		/// current buffer cache. Handles both interleaved and per-attribute layouts.
 		/// Also populates <c>_vertexBuffersByBinding</c> for use during draw recording.
 		/// </summary>
+		/// <remarks>
+		/// Attribute locations are resolved by semantic name from the vertex shader's
+		/// reflected inputs (mirroring the OpenGL by-name binding path) rather than by
+		/// buffer enumeration order. Enumeration order does not match the shader's
+		/// declared <c>layout(location = N)</c> order, so the legacy sequential scheme
+		/// bound the wrong vertex stream to each location, corrupting positions/normals.
+		/// </remarks>
 		private void BuildVertexInputState()
 		{
 			List<VertexInputBindingDescription> bindings = [];
 			List<VertexInputAttributeDescription> attributes = [];
 			_vertexBuffersByBinding.Clear();
 
+			bool resolveByName = _program is not null && _program.HasReflectedVertexInputs;
+
 			uint nextBinding = 0;
 			uint nextLocation = 0;
 
-			foreach (var buffer in _bufferCache.Values
-				.Where(b => b.Data.Target != EBufferTarget.ShaderStorageBuffer)
-				.OrderBy(b => b.Data.BindingIndexOverride ?? uint.MaxValue))
+			foreach (var pair in _bufferCache
+				.Where(p => p.Value.Data.Target != EBufferTarget.ShaderStorageBuffer)
+				.OrderBy(p => p.Value.Data.BindingIndexOverride ?? uint.MaxValue))
 			{
+				string bufferName = pair.Key;
+				VkDataBuffer buffer = pair.Value;
+
 				uint binding = buffer.Data.BindingIndexOverride ?? nextBinding++;
 				bool interleaved = buffer.Data.InterleavedAttributes is { Length: > 0 };
 				uint stride = interleaved && Mesh is not null ? Mesh.InterleavedStride : buffer.Data.ElementSize;
@@ -170,7 +182,9 @@ public unsafe partial class VulkanRenderer
 				{
 					foreach (var attr in buffer.Data.InterleavedAttributes)
 					{
-						uint location = attr.AttribIndexOverride ?? nextLocation++;
+						if (!TryResolveVertexAttributeLocation(attr.AttributeName, attr.AttribIndexOverride, resolveByName, ref nextLocation, out uint location))
+							continue;
+
 						attributes.Add(new VertexInputAttributeDescription
 						{
 							Location = location,
@@ -182,7 +196,9 @@ public unsafe partial class VulkanRenderer
 				}
 				else
 				{
-					uint location = nextLocation++;
+					if (!TryResolveVertexAttributeLocation(bufferName, null, resolveByName, ref nextLocation, out uint location))
+						continue;
+
 					attributes.Add(new VertexInputAttributeDescription
 					{
 						Location = location,
@@ -195,6 +211,29 @@ public unsafe partial class VulkanRenderer
 
 			_vertexBindings = [.. bindings];
 			_vertexAttributes = [.. attributes];
+		}
+
+
+		/// <summary>
+		/// Resolves the vertex attribute location for a named buffer/attribute.
+		/// Precedence: explicit override &#8594; vertex-shader reflection by name &#8594;
+		/// (legacy) sequential allocation when the shader exposes no reflected inputs.
+		/// When reflection is available but the name is not consumed, the attribute is
+		/// skipped (return false) instead of being bound to a guessed, colliding slot.
+		/// </summary>
+		private bool TryResolveVertexAttributeLocation(string? attributeName, uint? attribIndexOverride, bool resolveByName, ref uint nextLocation, out uint location)
+		{
+			if (attribIndexOverride.HasValue)
+			{
+				location = attribIndexOverride.Value;
+				return true;
+			}
+
+			if (resolveByName)
+				return _program!.TryGetVertexInputLocation(attributeName ?? string.Empty, out location);
+
+			location = nextLocation++;
+			return true;
 		}
 
 		#endregion // Vertex Input State

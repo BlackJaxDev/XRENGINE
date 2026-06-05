@@ -204,15 +204,30 @@ public unsafe partial class VulkanRenderer
                     continue; // No override for this attachment — keep existing initialLayout.
 
                 FrameBufferAttachmentSignature existing = result[i];
+
+                // A concrete tracked layout means this attachment already holds valid
+                // content from an earlier pass this frame — possibly a DIFFERENT
+                // framebuffer sharing the same image (e.g. the GBuffer depth reused by
+                // the forward pass).  Promote a DontCare load to Load so the render
+                // pass preserves that content instead of discarding it.  Passes that
+                // intend to clear still issue an explicit CmdClearAttachments, which
+                // overrides the loaded content, so this is safe for clearing passes.
+                AttachmentLoadOp preservedLoadOp = existing.LoadOp == AttachmentLoadOp.DontCare
+                    ? AttachmentLoadOp.Load
+                    : existing.LoadOp;
+                AttachmentLoadOp preservedStencilLoadOp = existing.StencilLoadOp == AttachmentLoadOp.DontCare
+                    ? AttachmentLoadOp.Load
+                    : existing.StencilLoadOp;
+
                 result[i] = new FrameBufferAttachmentSignature(
                     existing.Format,
                     existing.Samples,
                     existing.AspectMask,
                     existing.Role,
                     existing.ColorIndex,
-                    existing.LoadOp,
+                    preservedLoadOp,
                     existing.StoreOp,
-                    existing.StencilLoadOp,
+                    preservedStencilLoadOp,
                     existing.StencilStoreOp,
                     overrideLayout,
                     existing.FinalLayout,

@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
 using XREngine;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Models.Materials;
@@ -1129,20 +1130,23 @@ namespace XREngine.Rendering.Vulkan
                 if (IsCombinedDepthStencilFormat(source.DescriptorFormat) &&
                     (source.DescriptorAspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
                 {
-                    // Use a depth-only view for combined depth-stencil descriptors.
-                    ImageView depthOnlyView = source.GetDepthOnlyDescriptorView();
-                    if (depthOnlyView.Handle != 0)
+                    bool stencilOnly = RequiresStencilOnlyDescriptor(binding);
+                    ImageView aspectView = stencilOnly
+                        ? source.GetStencilOnlyDescriptorView()
+                        : source.GetDepthOnlyDescriptorView();
+                    string aspectLabel = stencilOnly ? "stencil-only" : "depth-only";
+                    if (aspectView.Handle != 0)
                     {
                         imageInfo = new DescriptorImageInfo
                         {
                             ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
-                            ImageView = depthOnlyView,
+                            ImageView = aspectView,
                             Sampler = includeSampler ? source.DescriptorSampler : default,
                         };
                         return true;
                     }
 
-                    WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' uses a combined depth-stencil format and no depth-only view is available.");
+                    WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' uses a combined depth-stencil format and no {aspectLabel} view is available.");
                     return false;
                 }
 
@@ -1177,6 +1181,9 @@ namespace XREngine.Rendering.Vulkan
 
                 return source.GetDescriptorView(expectedViewType);
             }
+
+            private static bool RequiresStencilOnlyDescriptor(DescriptorBindingInfo binding)
+                => binding.Name?.Contains("Stencil", StringComparison.OrdinalIgnoreCase) == true;
 
             /// <summary>
             /// Obtains a <see cref="BufferView"/> for the given <paramref name="texture"/> by
@@ -1279,8 +1286,26 @@ namespace XREngine.Rendering.Vulkan
                     case EShaderVarType._vec3 when value is Vector3 v3:
                         Unsafe.WriteUnaligned(ref start, new Vector4(v3, 0f));
                         return true;
+                    case EShaderVarType._vec3 when value is Vector4 v3From4:
+                        Unsafe.WriteUnaligned(ref start, v3From4);
+                        return true;
+                    case EShaderVarType._vec3 when value is ColorF3 c3:
+                        Unsafe.WriteUnaligned(ref start, new Vector4(c3.R, c3.G, c3.B, 0f));
+                        return true;
+                    case EShaderVarType._vec3 when value is ColorF4 c3From4:
+                        Unsafe.WriteUnaligned(ref start, new Vector4(c3From4.R, c3From4.G, c3From4.B, 0f));
+                        return true;
                     case EShaderVarType._vec4 when value is Vector4 v4:
                         Unsafe.WriteUnaligned(ref start, v4);
+                        return true;
+                    case EShaderVarType._vec4 when value is Vector3 v4From3:
+                        Unsafe.WriteUnaligned(ref start, new Vector4(v4From3, 0f));
+                        return true;
+                    case EShaderVarType._vec4 when value is ColorF4 c4:
+                        Unsafe.WriteUnaligned(ref start, new Vector4(c4.R, c4.G, c4.B, c4.A));
+                        return true;
+                    case EShaderVarType._vec4 when value is ColorF3 c4From3:
+                        Unsafe.WriteUnaligned(ref start, new Vector4(c4From3.R, c4From3.G, c4From3.B, 0f));
                         return true;
                     case EShaderVarType._ivec2 when value is IVector2 iv2:
                         Unsafe.WriteUnaligned(ref start, iv2);

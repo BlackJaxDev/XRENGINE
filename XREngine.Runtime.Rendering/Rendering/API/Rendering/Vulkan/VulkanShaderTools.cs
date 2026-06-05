@@ -1713,12 +1713,12 @@ internal static class VulkanShaderAutoUniforms
                 size = 16;
                 return true;
             case "vec3":
-            case "vec4":
             case "ivec3":
-            case "ivec4":
             case "uvec3":
-            case "uvec4":
             case "bvec3":
+            case "vec4":
+            case "ivec4":
+            case "uvec4":
             case "bvec4":
                 alignment = 16;
                 size = 16;

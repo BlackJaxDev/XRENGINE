@@ -12,6 +12,8 @@ public sealed class RenderPassBuilder
         _metadata = metadata;
     }
 
+    public int PassIndex => _metadata.PassIndex;
+
     public RenderPassBuilder WithStage(ERenderGraphPassStage stage)
     {
         _metadata.UpdateStage(stage);

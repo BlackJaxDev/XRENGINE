@@ -139,8 +139,30 @@ namespace XREngine.Rendering.Vulkan
             if (reqs.HasFlag(EUniformRequirements.ViewportDimensions))
             {
                 var area = RuntimeEngine.Rendering.State.RenderArea;
-                program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
-                program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
+                float screenWidth = area.Width;
+                float screenHeight = area.Height;
+                // The render-region stack can already be popped (RenderArea Empty) for
+                // deferred draws such as the debug line/point primitives, leaving the
+                // ScreenWidth/ScreenHeight geometry-shader uniforms at 0 and collapsing
+                // their pixel→NDC viewport to (1,1). Fall back to the bound draw target's
+                // actual dimensions, which are valid during command recording.
+                if (screenWidth <= 0f || screenHeight <= 0f)
+                {
+                    XRFrameBuffer? drawTarget = GetCurrentDrawFrameBuffer();
+                    if (drawTarget is not null)
+                    {
+                        screenWidth = drawTarget.Width;
+                        screenHeight = drawTarget.Height;
+                    }
+                    else
+                    {
+                        Extent2D targetExtent = GetCurrentTargetExtent();
+                        screenWidth = targetExtent.Width;
+                        screenHeight = targetExtent.Height;
+                    }
+                }
+                program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), screenWidth);
+                program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), screenHeight);
             }
 
             material.OnSettingUniforms(program);

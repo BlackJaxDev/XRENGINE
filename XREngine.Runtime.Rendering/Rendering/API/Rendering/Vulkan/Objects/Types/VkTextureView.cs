@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Vulkan
             private Image _image;
             private ImageView _view;
             private ImageView _depthOnlyView;
+            private ImageView _stencilOnlyView;
             private Sampler _sampler;
             private Format _format = Format.R8G8B8A8Unorm;
             private ImageAspectFlags _aspect = ImageAspectFlags.ColorBit;
@@ -120,21 +121,31 @@ namespace XREngine.Rendering.Vulkan
             {
                 RefreshFromViewedTextureIfStale();
 
+                return GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView);
+            }
+
+            ImageView IVkImageDescriptorSource.GetStencilOnlyDescriptorView()
+            {
+                RefreshFromViewedTextureIfStale();
+
+                return GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView);
+            }
+
+            private ImageView GetAspectOnlyDescriptorView(ImageAspectFlags aspect, ref ImageView cached)
+            {
                 if (!IsCombinedDepthStencilFormat(_format) ||
                     (_aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
-                {
                     return default;
-                }
 
-                if (_depthOnlyView.Handle != 0)
-                    return _depthOnlyView;
+                if (cached.Handle != 0)
+                    return cached;
 
                 if (_image.Handle == 0)
                     return default;
 
                 ImageSubresourceRange subresourceRange = new()
                 {
-                    AspectMask = ImageAspectFlags.DepthBit,
+                    AspectMask = aspect,
                     BaseMipLevel = Data.MinLevel,
                     LevelCount = Math.Max(Data.NumLevels, 1u),
                     BaseArrayLayer = Data.MinLayer,
@@ -150,10 +161,10 @@ namespace XREngine.Rendering.Vulkan
                     SubresourceRange = subresourceRange,
                 };
 
-                if (Api!.CreateImageView(Device, ref depthViewInfo, null, out _depthOnlyView) != Result.Success)
+                if (Api!.CreateImageView(Device, ref depthViewInfo, null, out cached) != Result.Success)
                     return default;
 
-                return _depthOnlyView;
+                return cached;
             }
             BufferView IVkTexelBufferDescriptorSource.DescriptorBufferView => _texelBufferView;
             Format IVkTexelBufferDescriptorSource.DescriptorBufferFormat => _texelBufferFormat;
@@ -178,10 +189,10 @@ namespace XREngine.Rendering.Vulkan
                     _view = default;
                 }
 
-                if (_depthOnlyView.Handle != 0)
+                if (_stencilOnlyView.Handle != 0)
                 {
-                    Api!.DestroyImageView(Device, _depthOnlyView, null);
-                    _depthOnlyView = default;
+                    Api!.DestroyImageView(Device, _stencilOnlyView, null);
+                    _stencilOnlyView = default;
                 }
 
                 _image = default;
@@ -292,6 +303,7 @@ namespace XREngine.Rendering.Vulkan
                     _texelBufferView = texelSource.DescriptorBufferView;
                     _texelBufferFormat = texelSource.DescriptorBufferFormat;
                     _depthOnlyView = default;
+                    _stencilOnlyView = default;
 
                     if (_texelBufferView.Handle == 0)
                         throw new InvalidOperationException("Failed to resolve Vulkan texel buffer view handle.");
@@ -310,6 +322,7 @@ namespace XREngine.Rendering.Vulkan
                 _texelBufferView = default;
                 _texelBufferFormat = Format.Undefined;
                 _depthOnlyView = default;
+                _stencilOnlyView = default;
 
                 if (_image.Handle == 0)
                     throw new InvalidOperationException($"Viewed texture '{viewedTexture.GetDescribingName()}' has no Vulkan image handle.");
@@ -383,6 +396,12 @@ namespace XREngine.Rendering.Vulkan
                 {
                     Api!.DestroyImageView(Device, _depthOnlyView, null);
                     _depthOnlyView = default;
+                }
+
+                if (_stencilOnlyView.Handle != 0)
+                {
+                    Api!.DestroyImageView(Device, _stencilOnlyView, null);
+                    _stencilOnlyView = default;
                 }
 
                 _image = liveImage;

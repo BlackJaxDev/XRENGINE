@@ -203,14 +203,17 @@ namespace XREngine.Components
                     float zoomFactor = 1f - (incForward * delta * OrthoZoomSpeed);
                     zoomFactor = Math.Clamp(zoomFactor, 0.9f, 1.1f); // Limit per-tick change
                     ortho.Scale(zoomFactor);
+                    LogCameraMotion("ortho-zoom", tfm.Translation, tfm.Translation);
                 }
 
                 // Scale translation by ortho view size for consistent feel
                 float translationScale = ortho.Height * 0.1f; // Scale down for reasonable speed
+                Vector3 before = tfm.Translation;
                 tfm.TranslateRelative(
                     incRight * delta * translationScale,
                     incUp * delta * translationScale,
                     0.0f); // No forward movement for ortho
+                LogCameraMotion("ortho-pan", before, tfm.Translation);
             }
             else
             {
@@ -219,6 +222,7 @@ namespace XREngine.Components
                     incRight * delta,
                     incUp * delta,
                     -incForward * delta);
+                LogCameraMotion("perspective-move", before, tfm.Translation);
 
 /*
                 float nowMove = Engine.Time.Timer.Time();
@@ -259,6 +263,7 @@ namespace XREngine.Components
                         pitch *= ShiftSpeedModifier;
                     }
                     AddYawPitch(yaw, pitch);
+                    LogCameraRotation("keyboard/gamepad");
                     rotationApplied = true;
                 }
                 else
@@ -267,6 +272,7 @@ namespace XREngine.Components
                     if (ShiftPressed)
                         pitch *= ShiftSpeedModifier;
                     Pitch += pitch;
+                    LogCameraRotation("keyboard/gamepad");
                     rotationApplied = true;
                 }
             }
@@ -276,10 +282,42 @@ namespace XREngine.Components
                 if (ShiftPressed)
                     yaw *= ShiftSpeedModifier;
                 Yaw += yaw;
+                LogCameraRotation("keyboard/gamepad");
                 rotationApplied = true;
             }
 
             return rotationApplied;
+        }
+
+        private void LogCameraMotion(string mode, Vector3 before, Vector3 after)
+        {
+            if (!CameraInputDiagnosticsEnabled)
+                return;
+
+            float now = Engine.Time.Timer.Time();
+            if (now - _lastMoveTickLogTime <= 0.25f)
+                return;
+
+            var tfm = TransformAs<Transform>();
+            if (tfm is null)
+                return;
+
+            Debug.Out($"[CameraInput] mode={mode} delta={Engine.UndilatedDelta:0.####} inc=({_incRight:0.###},{_incUp:0.###},{_incForward:0.###}) pos=({before.X:0.###},{before.Y:0.###},{before.Z:0.###})->({after.X:0.###},{after.Y:0.###},{after.Z:0.###}) basis right={tfm.LocalRight} up={tfm.LocalUp} forward={tfm.LocalForward}");
+            _lastMoveTickLogTime = now;
+        }
+
+        private void LogCameraRotation(string mode)
+        {
+            if (!CameraInputDiagnosticsEnabled)
+                return;
+
+            float now = Engine.Time.Timer.Time();
+            if (now - _lastMoveTickLogTime <= 0.25f)
+                return;
+
+            var tfm = TransformAs<Transform>();
+            Debug.Out($"[CameraInput] mode={mode} yaw={Yaw:0.###} pitch={Pitch:0.###} incYaw={_incYaw:0.###} incPitch={_incPitch:0.###} forward={tfm?.LocalForward}");
+            _lastMoveTickLogTime = now;
         }
 
         protected override void YawPitchUpdated()

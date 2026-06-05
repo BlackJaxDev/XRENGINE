@@ -117,6 +117,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
+    <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Modeling\XREngine.Modeling.csproj" />

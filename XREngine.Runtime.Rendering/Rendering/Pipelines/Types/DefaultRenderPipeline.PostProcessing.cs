@@ -1872,6 +1872,70 @@ public partial class DefaultRenderPipeline
 
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram);
+
+        if (RenderDiagnosticsFlags.DiagPostProcess)
+            LogPostProcessUniformDiagnostics(state, ResolveOutputHDR(), hoverOutlineColor, selectionOutlineColor, enableEditorOutline);
+    }
+
+    private void LogPostProcessUniformDiagnostics(
+        PipelinePostProcessState? state,
+        bool outputHdr,
+        Vector3 hoverOutlineColor,
+        Vector3 selectionOutlineColor,
+        bool enableEditorOutline)
+    {
+        var color = GetSettings<ColorGradingSettings>(state) ?? new ColorGradingSettings();
+        var bloom = GetSettings<BloomSettings>(state) ?? new BloomSettings();
+        var tonemap = GetSettings<TonemappingSettings>(state) ?? new TonemappingSettings();
+        var fog = GetSettings<FogSettings>(state) ?? new FogSettings();
+
+        string TexLabel(string textureName)
+        {
+            XRTexture? texture = GetTexture<XRTexture>(textureName);
+            if (texture is null)
+                return $"{textureName}=<null>";
+
+            string name = string.IsNullOrWhiteSpace(texture.Name) ? texture.GetType().Name : texture.Name!;
+            return $"{textureName}={name}#{texture.GetHashCode():X8}";
+        }
+
+        Debug.RenderingEvery(
+            $"PostProcess.Uniforms.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[PostProcessDiag] OutputHDR={0} Tint=({1:0.###},{2:0.###},{3:0.###}) Exposure={4:0.###} UseGpuAutoExposure={5} Contrast={6:0.###} Gamma={7:0.###} Hue={8:0.###} Saturation={9:0.###} Brightness={10:0.###} Tonemap={11} Mobius={12:0.###} BloomEnabled={13} BloomStrength={14:0.###} BloomMips={15}-{16} DebugBloomOnly={17} FogIntensity={18:0.###} Outline={19} Hover=({20:0.###},{21:0.###},{22:0.###}) Selection=({23:0.###},{24:0.###},{25:0.###}) Textures=[{26}; {27}; {28}; {29}; {30}; {31}; {32}]",
+            outputHdr,
+            color.Tint.R,
+            color.Tint.G,
+            color.Tint.B,
+            color.Exposure,
+            color.UseGpuAutoExposureThisFrame,
+            color.Contrast,
+            color.Gamma,
+            color.Hue,
+            color.Saturation,
+            color.Brightness,
+            tonemap.Tonemapping,
+            tonemap.MobiusTransition,
+            bloom.Enabled,
+            bloom.Strength,
+            bloom.StartMip,
+            bloom.EndMip,
+            bloom.DebugBloomOnly,
+            fog.DepthFogIntensity,
+            enableEditorOutline,
+            hoverOutlineColor.X,
+            hoverOutlineColor.Y,
+            hoverOutlineColor.Z,
+            selectionOutlineColor.X,
+            selectionOutlineColor.Y,
+            selectionOutlineColor.Z,
+            TexLabel(HDRSceneTextureName),
+            TexLabel(BloomBlurTextureName),
+            TexLabel(DepthViewTextureName),
+            TexLabel(StencilViewTextureName),
+            TexLabel(AutoExposureTextureName),
+            TexLabel(AtmosphereColorTextureName),
+            TexLabel(VolumetricFogColorTextureName));
     }
 
     private void FxaaFBO_SettingUniforms(XRRenderProgram materialProgram)

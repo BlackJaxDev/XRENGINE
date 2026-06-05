@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using XREngine;
@@ -21,6 +22,16 @@ public unsafe partial class VulkanRenderer
         private PipelineShaderStageCreateInfo _shaderStageCreateInfo;
         private AutoUniformBlockInfo? _autoUniformBlock;
         private string? _rewrittenSource;
+        private Dictionary<string, uint>? _vertexInputLocations;
+
+        /// <summary>
+        /// Matches a vertex shader input attribute declaration and captures its explicit
+        /// location and variable name, e.g. <c>layout(location = 1) in vec3 Normal;</c>.
+        /// Allows extra layout qualifiers and interpolation/precision qualifiers.
+        /// </summary>
+        private static readonly Regex VertexInputRegex = new(
+            @"layout\s*\([^)]*\blocation\s*=\s*(?<loc>\d+)[^)]*\)\s*(?:(?:flat|noperspective|smooth|centroid)\s+)*in\s+(?:(?:highp|mediump|lowp)\s+)?\w+\s+(?<name>[A-Za-z_]\w*)",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         public override VkObjectType Type => VkObjectType.ShaderModule;
         public override bool IsGenerated => _shaderModule.Handle != 0;
@@ -29,6 +40,14 @@ public unsafe partial class VulkanRenderer
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _descriptorBindings;
         public ShaderStageFlags StageFlags { get; private set; }
         public AutoUniformBlockInfo? AutoUniformBlock => _autoUniformBlock;
+
+        /// <summary>
+        /// Vertex stage input attribute name &#8594; location map parsed from the shader
+        /// source. Empty for non-vertex stages or sources without explicit locations.
+        /// Mirrors the OpenGL path, which binds vertex buffers to attributes by name.
+        /// </summary>
+        internal IReadOnlyDictionary<string, uint> VertexInputLocations
+            => _vertexInputLocations ??= ParseVertexInputLocations();
         internal string SourceLabel => ResolveShaderSourceLabel(Data);
         internal string StageDebugLabel => $"{Data.Type}:{SourceLabel}";
 
@@ -41,6 +60,7 @@ public unsafe partial class VulkanRenderer
         private void CompileAndCreateModule()
         {
             DestroyShaderResources();
+            _vertexInputLocations = null;
 
             try
             {
@@ -77,6 +97,29 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanException(ex, $"Vulkan shader '{Data.Name ?? "UnnamedShader"}' failed to compile.");
                 throw;
             }
+        }
+
+        private Dictionary<string, uint> ParseVertexInputLocations()
+        {
+            Dictionary<string, uint> map = new(StringComparer.Ordinal);
+            if (StageFlags != ShaderStageFlags.VertexBit)
+                return map;
+
+            string? source = _rewrittenSource ?? Data.Source?.Text;
+            if (string.IsNullOrWhiteSpace(source))
+                return map;
+
+            foreach (Match match in VertexInputRegex.Matches(source))
+            {
+                if (!uint.TryParse(match.Groups["loc"].Value, out uint location))
+                    continue;
+
+                string name = match.Groups["name"].Value;
+                if (!string.IsNullOrEmpty(name))
+                    map[name] = location;
+            }
+
+            return map;
         }
 
         internal void WriteRewrittenSourceDiagnostics(string reason)

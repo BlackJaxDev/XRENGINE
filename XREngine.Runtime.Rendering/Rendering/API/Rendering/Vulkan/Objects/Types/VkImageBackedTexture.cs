@@ -187,6 +187,24 @@ public unsafe partial class VulkanRenderer
             return cached;
         }
 
+        ImageView IVkImageDescriptorSource.GetStencilOnlyDescriptorView()
+        {
+            RefreshPhysicalGroupImageIfStale();
+
+            if (!HasStencilAspect(ResolvedFormat))
+                return default;
+
+            var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, ImageAspectFlags.StencilBit);
+
+            if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+            {
+                cached = CreateView(key);
+                _attachmentViews[key] = cached;
+            }
+
+            return cached;
+        }
+
         ImageView IVkImageDescriptorSource.GetDescriptorView(ImageViewType viewType)
         {
             RefreshPhysicalGroupImageIfStale();
@@ -731,6 +749,11 @@ public unsafe partial class VulkanRenderer
 
             return normalized;
         }
+
+        private static bool HasStencilAspect(Format format)
+            => format is Format.D16UnormS8Uint
+                or Format.D24UnormS8Uint
+                or Format.D32SfloatS8Uint;
 
         /// <summary>Destroys a single image view and resets the handle to <c>default</c>.</summary>
         private void DestroyView(ref ImageView view)

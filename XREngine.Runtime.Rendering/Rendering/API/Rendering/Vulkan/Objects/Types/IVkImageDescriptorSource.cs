@@ -41,6 +41,13 @@ public unsafe partial class VulkanRenderer
         ImageView GetDepthOnlyDescriptorView() => default;
 
         /// <summary>
+        /// Returns a stencil-only <see cref="ImageView"/> for combined depth-stencil textures,
+        /// suitable for unsigned-integer stencil sampler descriptor bindings.
+        /// Implementations that do not support this should return <c>default</c>.
+        /// </summary>
+        ImageView GetStencilOnlyDescriptorView() => default;
+
+        /// <summary>
         /// Returns a descriptor view with the requested dimensionality when the
         /// backing image can legally expose one.
         /// </summary>
