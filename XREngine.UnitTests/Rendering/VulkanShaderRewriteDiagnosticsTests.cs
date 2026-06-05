@@ -85,6 +85,73 @@ void main()
         spirv.Length.ShouldBeGreaterThan(0);
     }
 
+    [Test]
+    public void Rewrite_UsesStageSpecificBindingsForAutoUniformBlocks()
+    {
+        uint skyboxVertexBinding = RewriteForVulkanAutoUniformBinding(
+            LoadShaderSource("Scene3D/Skybox.vs").Source,
+            EShaderType.Vertex);
+        uint skyboxFragmentBinding = RewriteForVulkanAutoUniformBinding(
+            LoadShaderSource("Scene3D/SkyboxDynamic.fs").Source,
+            EShaderType.Fragment);
+        uint debugGeometryBinding = RewriteForVulkanAutoUniformBinding(
+            LoadShaderSource("Common/Debug/gs/PointInstance.gs").Source,
+            EShaderType.Geometry);
+
+        skyboxFragmentBinding.ShouldBe(64u);
+        skyboxVertexBinding.ShouldBe(72u);
+        debugGeometryBinding.ShouldBe(80u);
+        new[] { skyboxVertexBinding, skyboxFragmentBinding, debugGeometryBinding }
+            .Distinct()
+            .Count()
+            .ShouldBe(3);
+    }
+
+    [Test]
+    public void Rewrite_ComputesStd140StructAndMatrixArrayOffsets()
+    {
+        const string source = """
+#version 460
+const int MaxVolumetricFogVolumes = 4;
+struct VolumetricFogStruct
+{
+    bool Enabled;
+    float Intensity;
+    float MaxDistance;
+    float StepSize;
+    float JitterStrength;
+    int VolumeCount;
+};
+uniform VolumetricFogStruct VolumetricFog;
+uniform mat4 VolumetricFogWorldToLocal[MaxVolumetricFogVolumes];
+uniform int VolumetricFogDebugMode;
+layout(location = 0) out vec4 OutColor;
+void main()
+{
+    OutColor = VolumetricFog.Enabled
+        ? VolumetricFogWorldToLocal[0][0] + vec4(float(VolumetricFogDebugMode))
+        : vec4(0.0);
+}
+""";
+
+        object blockInfo = RewriteForVulkanAutoUniformBlockInfo(source, EShaderType.Fragment);
+        uint size = GetProperty<uint>(blockInfo, "Size");
+        object fog = GetMember(blockInfo, "VolumetricFog");
+        object matrices = GetMember(blockInfo, "VolumetricFogWorldToLocal");
+        object debugMode = GetMember(blockInfo, "VolumetricFogDebugMode");
+
+        GetProperty<uint>(fog, "Offset").ShouldBe(0u);
+        GetProperty<uint>(fog, "Size").ShouldBe(32u);
+        GetProperty<object?>(fog, "StructMembers").ShouldNotBeNull();
+
+        GetProperty<uint>(matrices, "Offset").ShouldBe(32u);
+        GetProperty<uint>(matrices, "ArrayStride").ShouldBe(64u);
+        GetProperty<uint>(matrices, "Size").ShouldBe(256u);
+
+        GetProperty<uint>(debugMode, "Offset").ShouldBe(288u);
+        size.ShouldBe(304u);
+    }
+
     private static string RewriteForVulkanFragment(string source)
     {
         Type? autoUniformType = typeof(VulkanShaderCompiler).Assembly
@@ -105,6 +172,57 @@ void main()
         string? rewrittenSource = sourceProperty!.GetValue(result) as string;
         rewrittenSource.ShouldNotBeNull();
         return rewrittenSource!;
+    }
+
+    private static uint RewriteForVulkanAutoUniformBinding(string source, EShaderType shaderType)
+    {
+        object blockInfo = RewriteForVulkanAutoUniformBlockInfo(source, shaderType);
+        return GetProperty<uint>(blockInfo, "Binding");
+    }
+
+    private static object RewriteForVulkanAutoUniformBlockInfo(string source, EShaderType shaderType)
+    {
+        Type? autoUniformType = typeof(VulkanShaderCompiler).Assembly
+            .GetType("XREngine.Rendering.Vulkan.VulkanShaderAutoUniforms", throwOnError: true);
+
+        MethodInfo? rewriteMethod = autoUniformType!.GetMethod(
+            "Rewrite",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+
+        rewriteMethod.ShouldNotBeNull();
+
+        object? result = rewriteMethod!.Invoke(null, [source, shaderType]);
+        result.ShouldNotBeNull();
+
+        PropertyInfo? blockInfoProperty = result!.GetType().GetProperty("BlockInfo", BindingFlags.Instance | BindingFlags.Public);
+        blockInfoProperty.ShouldNotBeNull();
+
+        object? blockInfo = blockInfoProperty!.GetValue(result);
+        blockInfo.ShouldNotBeNull();
+        return blockInfo!;
+    }
+
+    private static object GetMember(object blockInfo, string memberName)
+    {
+        object? members = GetProperty<object>(blockInfo, "Members");
+        members.ShouldNotBeNull();
+
+        foreach (object member in (System.Collections.IEnumerable)members!)
+        {
+            string? name = GetProperty<string>(member, "Name");
+            if (name == memberName)
+                return member;
+        }
+
+        Assert.Fail($"Auto uniform member '{memberName}' was not found.");
+        throw new InvalidOperationException($"Auto uniform member '{memberName}' was not found.");
+    }
+
+    private static T? GetProperty<T>(object instance, string propertyName)
+    {
+        PropertyInfo? property = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+        property.ShouldNotBeNull();
+        return (T?)property!.GetValue(instance);
     }
 
     private static string RewriteForVulkanCompute(string source)

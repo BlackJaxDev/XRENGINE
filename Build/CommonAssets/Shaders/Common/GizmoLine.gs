@@ -16,8 +16,13 @@ const float kEpsilon = 1e-6;
 
 bool ClipLineToNearPlane(inout vec4 a, inout vec4 b)
 {
+#ifdef XRENGINE_VULKAN
+    float da = a.z;
+    float db = b.z;
+#else
     float da = a.z + a.w;
     float db = b.z + b.w;
+#endif
 
     if (da < 0.0 && db < 0.0)
         return false;

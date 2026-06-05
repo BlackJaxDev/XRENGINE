@@ -322,7 +322,12 @@ public sealed class RenderResourceRegistry
     public void RemoveTexture(string name)
     {
         if (_textures.TryRemove(name, out RenderTextureResource? record))
+        {
+            if (record.Instance is XRTexture texture)
+                DestroyFrameBuffersReferencing(texture);
+
             record.DestroyInstance();
+        }
     }
 
     public void RemoveFrameBuffer(string name)
@@ -345,9 +350,9 @@ public sealed class RenderResourceRegistry
 
     public void DestroyAllPhysicalResources(bool retainDescriptors = false)
     {
-        foreach (RenderTextureResource record in _textures.Values)
-            record.DestroyInstance();
         foreach (RenderFrameBufferResource record in _frameBuffers.Values)
+            record.DestroyInstance();
+        foreach (RenderTextureResource record in _textures.Values)
             record.DestroyInstance();
         foreach (RenderBufferResource record in _buffers.Values)
             record.DestroyInstance();

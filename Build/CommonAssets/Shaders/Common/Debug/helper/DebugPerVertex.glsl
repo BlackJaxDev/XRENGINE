@@ -1,2 +1,6 @@
-// gl_PerVertex redeclaration is now auto-injected for separable programs.
-// This file is kept as an empty include target for backward compatibility.
+// Intentionally empty.
+//
+// Debug primitive geometry shaders only need the default gl_in[].gl_Position
+// input and gl_Position output. Explicitly redeclaring gl_PerVertex here caused
+// Vulkan/glslang to expose a different built-in block between VS and GS
+// (notably CullDistance), which invalidates graphics pipeline creation.

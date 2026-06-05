@@ -3,7 +3,7 @@
 //#extension GL_EXT_multiview_tessellation_geometry_shader : enable
 
 layout(location = 0) in vec3 Position;
-layout(location = 0) out int instanceID;
+layout(location = 0) flat out int instanceID;
 layout(location = 1) out vec3 vPos;
 
 void main()
@@ -11,4 +11,5 @@ void main()
 	instanceID = gl_InstanceID;
 	vPos = Position;
 	gl_Position = vec4(Position, 1.0f);
+	gl_PointSize = 1.0f;
 }

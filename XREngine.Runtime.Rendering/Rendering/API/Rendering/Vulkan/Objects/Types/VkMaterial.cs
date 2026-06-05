@@ -66,6 +66,11 @@ namespace XREngine.Rendering.Vulkan
                 /// </summary>
                 public required ulong SchemaFingerprint { get; init; }
 
+                /// <summary>
+                /// Hash of concrete Vulkan texture descriptor handles written into the descriptor sets.
+                /// </summary>
+                public ulong ResourceFingerprint;
+
                 /// <summary>The Vulkan descriptor pool from which all sets in this state were allocated.</summary>
                 public DescriptorPool DescriptorPool;
 
@@ -217,9 +222,14 @@ namespace XREngine.Rendering.Vulkan
                 if (!UpdateUniformBuffers(state, resolvedFrame))
                     return false;
 
+                ulong resourceFingerprint = ComputeResourceFingerprint();
+                if (state.ResourceFingerprint != resourceFingerprint)
+                    state.Dirty = true;
+
                 if ((state.Dirty || _materialDirty) && !UpdateDescriptorSets(state))
                     return false;
 
+                state.ResourceFingerprint = resourceFingerprint;
                 state.Dirty = false;
                 _materialDirty = false;
 
@@ -255,6 +265,15 @@ namespace XREngine.Rendering.Vulkan
                 {
                     foreach (ProgramDescriptorState state in _programStates.Values)
                         state.Dirty = true;
+                    _materialDirty = true;
+                }
+            }
+
+            internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction()
+            {
+                lock (_stateSync)
+                {
+                    DestroyAllProgramStates();
                     _materialDirty = true;
                 }
             }
@@ -632,6 +651,53 @@ namespace XREngine.Rendering.Vulkan
                 return unchecked((ulong)hash.ToHashCode());
             }
 
+            private ulong ComputeResourceFingerprint()
+            {
+                HashCode hash = new();
+                hash.Add(Data.Textures.Count);
+                for (int i = 0; i < Data.Textures.Count; i++)
+                    AddTextureDescriptorResourceFingerprint(ref hash, Data.Textures[i]);
+
+                return unchecked((ulong)hash.ToHashCode());
+            }
+
+            private void AddTextureDescriptorResourceFingerprint(ref HashCode hash, XRTexture? texture)
+            {
+                hash.Add(texture?.GetHashCode() ?? 0);
+                if (texture is null)
+                {
+                    hash.Add(0UL);
+                    return;
+                }
+
+                object? apiObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true);
+                if (apiObject is IVkImageDescriptorSource imageSource)
+                {
+                    hash.Add(imageSource.DescriptorImage.Handle);
+                    hash.Add(imageSource.DescriptorView.Handle);
+                    hash.Add(imageSource.DescriptorSampler.Handle);
+                    hash.Add(imageSource.DescriptorViewType);
+                    hash.Add(imageSource.DescriptorFormat);
+                    hash.Add(imageSource.DescriptorAspect);
+                    hash.Add(imageSource.DescriptorUsage);
+                    hash.Add(imageSource.TrackedImageLayout);
+                }
+                else
+                {
+                    hash.Add(0UL);
+                }
+
+                if (apiObject is IVkTexelBufferDescriptorSource texelSource)
+                {
+                    hash.Add(texelSource.DescriptorBufferView.Handle);
+                    hash.Add(texelSource.DescriptorBufferFormat);
+                }
+                else
+                {
+                    hash.Add(0UL);
+                }
+            }
+
             /// <summary>
             /// Re-writes descriptor sets for every frame in <paramref name="state"/>.
             /// Called when the material or program state is marked dirty.
@@ -958,7 +1024,7 @@ namespace XREngine.Rendering.Vulkan
                 imageInfo = default;
                 if (!TryResolveBoundTexture(binding, arrayIndex, out XRTexture? texture) || texture is null)
                 {
-                    imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType);
+                    imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                     if (imageInfo.ImageView.Handle != 0)
                     {
                         RecordDescriptorFallback(binding);
@@ -970,7 +1036,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                if (TryCreateTextureDescriptor(texture, descriptorType, out imageInfo))
+                if (TryCreateTextureDescriptor(binding, texture, descriptorType, out imageInfo))
                     return true;
 
                 RecordDescriptorFailure(binding, "material texture descriptor creation failed");
@@ -1035,7 +1101,7 @@ namespace XREngine.Rendering.Vulkan
             /// <param name="descriptorType">The Vulkan descriptor type (combined image-sampler, sampled image, or storage image).</param>
             /// <param name="imageInfo">The populated descriptor info on success.</param>
             /// <returns><c>true</c> if a valid image view with a non-zero handle was obtained.</returns>
-            private bool TryCreateTextureDescriptor(XRTexture texture, DescriptorType descriptorType, out DescriptorImageInfo imageInfo)
+            private bool TryCreateTextureDescriptor(DescriptorBindingInfo binding, XRTexture texture, DescriptorType descriptorType, out DescriptorImageInfo imageInfo)
             {
                 imageInfo = default;
 
@@ -1080,13 +1146,36 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                ImageView descriptorView = ResolveDescriptorView(binding, source);
+                if (descriptorView.Handle == 0)
+                {
+                    imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
+                    if (imageInfo.ImageView.Handle != 0)
+                    {
+                        WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' cannot provide expected view type '{binding.ExpectedImageViewType}' for binding '{binding.Name}'. Using placeholder.");
+                        RecordDescriptorFallback(binding);
+                        return true;
+                    }
+
+                    WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' cannot provide expected view type '{binding.ExpectedImageViewType}' for binding '{binding.Name}'.");
+                    return false;
+                }
+
                 imageInfo = new DescriptorImageInfo
                 {
                     ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
-                    ImageView = source.DescriptorView,
+                    ImageView = descriptorView,
                     Sampler = includeSampler ? source.DescriptorSampler : default,
                 };
                 return imageInfo.ImageView.Handle != 0;
+            }
+
+            private static ImageView ResolveDescriptorView(DescriptorBindingInfo binding, IVkImageDescriptorSource source)
+            {
+                if (binding.ExpectedImageViewType is not { } expectedViewType)
+                    return source.DescriptorView;
+
+                return source.GetDescriptorView(expectedViewType);
             }
 
             /// <summary>

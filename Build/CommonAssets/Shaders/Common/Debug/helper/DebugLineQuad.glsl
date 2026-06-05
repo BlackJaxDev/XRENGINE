@@ -11,9 +11,15 @@ const float kEpsilon = 1e-6;
 
 bool ClipLineToNearPlane(inout vec4 a, inout vec4 b)
 {
-    // OpenGL clip-space near plane: z >= -w  <=>  z + w >= 0
+#ifdef XRENGINE_VULKAN
+    // Vulkan/D3D clip-space near plane: z >= 0.
+    float da = a.z;
+    float db = b.z;
+#else
+    // OpenGL clip-space near plane: z >= -w  <=>  z + w >= 0.
     float da = a.z + a.w;
     float db = b.z + b.w;
+#endif
 
     if (da < 0.0 && db < 0.0)
         return false;
@@ -73,20 +79,35 @@ void EmitLineQuad(vec4 start, vec4 end, vec4 color)
     vec4 startOffset = vec4(offsetNdc * start.w, 0.0, 0.0);
     vec4 endOffset   = vec4(offsetNdc * end.w,   0.0, 0.0);
 
+    vec4 startPlus = start + startOffset;
+    vec4 startMinus = start - startOffset;
+    vec4 endPlus = end + endOffset;
+    vec4 endMinus = end - endOffset;
+
     LineEdgeCoord = rasterHalfWidthPixels;
-    gl_Position = start + startOffset;
+    gl_Position = startPlus;
     EmitVertex();
 
     LineEdgeCoord = -rasterHalfWidthPixels;
-    gl_Position = start - startOffset;
+    gl_Position = startMinus;
     EmitVertex();
 
     LineEdgeCoord = rasterHalfWidthPixels;
-    gl_Position = end + endOffset;
+    gl_Position = endPlus;
+    EmitVertex();
+
+    EndPrimitive();
+
+    LineEdgeCoord = rasterHalfWidthPixels;
+    gl_Position = endPlus;
     EmitVertex();
 
     LineEdgeCoord = -rasterHalfWidthPixels;
-    gl_Position = end - endOffset;
+    gl_Position = startMinus;
+    EmitVertex();
+
+    LineEdgeCoord = -rasterHalfWidthPixels;
+    gl_Position = endMinus;
     EmitVertex();
 
     EndPrimitive();

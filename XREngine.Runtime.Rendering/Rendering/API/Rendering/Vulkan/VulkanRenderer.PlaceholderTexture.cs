@@ -20,6 +20,7 @@ public unsafe partial class VulkanRenderer
     private Image _placeholderImage;
     private DeviceMemory _placeholderImageMemory;
     private ImageView _placeholderImageView;
+    private ImageView _placeholderImageView2DArray;
     private Sampler _placeholderSampler;
     private bool _placeholderTextureReady;
 
@@ -31,15 +32,16 @@ public unsafe partial class VulkanRenderer
     /// access.  If creation fails the returned <c>ImageView</c> handle will
     /// be zero.
     /// </summary>
-    internal DescriptorImageInfo GetPlaceholderImageInfo(DescriptorType descriptorType)
+    internal DescriptorImageInfo GetPlaceholderImageInfo(DescriptorType descriptorType, ImageViewType? expectedViewType = null)
     {
         EnsurePlaceholderTexture();
+        ImageView imageView = GetPlaceholderImageView(expectedViewType);
         return new DescriptorImageInfo
         {
             ImageLayout = descriptorType == DescriptorType.StorageImage
                 ? ImageLayout.General
                 : ImageLayout.ShaderReadOnlyOptimal,
-            ImageView = _placeholderImageView,
+            ImageView = imageView,
             Sampler = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler
                 ? _placeholderSampler
                 : default,
@@ -202,6 +204,48 @@ public unsafe partial class VulkanRenderer
 
     // ── Layout Transition ────────────────────────────────────────────────
 
+    private ImageView GetPlaceholderImageView(ImageViewType? expectedViewType)
+    {
+        if (!_placeholderTextureReady)
+            return default;
+
+        if (expectedViewType != ImageViewType.Type2DArray)
+            return _placeholderImageView;
+
+        if (_placeholderImageView2DArray.Handle != 0)
+            return _placeholderImageView2DArray;
+
+        return TryCreatePlaceholderImageView(ImageViewType.Type2DArray, out _placeholderImageView2DArray)
+            ? _placeholderImageView2DArray
+            : default;
+    }
+
+    private bool TryCreatePlaceholderImageView(ImageViewType viewType, out ImageView imageView)
+    {
+        ImageViewCreateInfo viewInfo = new()
+        {
+            SType = StructureType.ImageViewCreateInfo,
+            Image = _placeholderImage,
+            ViewType = viewType,
+            Format = Format.R8G8B8A8Unorm,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            },
+        };
+
+        if (Api!.CreateImageView(device, ref viewInfo, null, out imageView) == Result.Success)
+            return true;
+
+        Debug.VulkanWarning($"[Vulkan] Failed to create placeholder {viewType} image view.");
+        imageView = default;
+        return false;
+    }
+
     private void TransitionPlaceholderImage(CommandBuffer cmd, ImageLayout oldLayout, ImageLayout newLayout)
     {
         ImageMemoryBarrier barrier = new()
@@ -270,6 +314,12 @@ public unsafe partial class VulkanRenderer
         {
             Api!.DestroyImageView(device, _placeholderImageView, null);
             _placeholderImageView = default;
+        }
+
+        if (_placeholderImageView2DArray.Handle != 0)
+        {
+            Api!.DestroyImageView(device, _placeholderImageView2DArray, null);
+            _placeholderImageView2DArray = default;
         }
 
         if (_placeholderImage.Handle != 0)

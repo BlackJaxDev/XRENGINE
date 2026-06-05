@@ -25,20 +25,35 @@ void EmitPointQuad(mat4 viewProj, vec3 center, vec4 color)
 
     MatColor = color;
 
+    vec4 p1 = viewProj * vec4(center + offset1, 1.0);
+    vec4 p2 = viewProj * vec4(center + offset2, 1.0);
+    vec4 p3 = viewProj * vec4(center + offset3, 1.0);
+    vec4 p4 = viewProj * vec4(center + offset4, 1.0);
+
     FragUV = vec2(-1.0, -1.0);
-    gl_Position = viewProj * vec4(center + offset1, 1.0);
+    gl_Position = p1;
     EmitVertex();
 
     FragUV = vec2( 1.0, -1.0);
-    gl_Position = viewProj * vec4(center + offset2, 1.0);
+    gl_Position = p2;
     EmitVertex();
 
     FragUV = vec2(-1.0,  1.0);
-    gl_Position = viewProj * vec4(center + offset3, 1.0);
+    gl_Position = p3;
+    EmitVertex();
+
+    EndPrimitive();
+
+    FragUV = vec2(-1.0,  1.0);
+    gl_Position = p3;
+    EmitVertex();
+
+    FragUV = vec2( 1.0, -1.0);
+    gl_Position = p2;
     EmitVertex();
 
     FragUV = vec2( 1.0,  1.0);
-    gl_Position = viewProj * vec4(center + offset4, 1.0);
+    gl_Position = p4;
     EmitVertex();
 
     EndPrimitive();

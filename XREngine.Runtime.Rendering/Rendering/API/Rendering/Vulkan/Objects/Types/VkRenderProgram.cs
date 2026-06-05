@@ -680,6 +680,41 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        internal string DescribeShaderStages()
+        {
+            if (_shaderCache.Count == 0)
+                return "<none>";
+
+            return string.Join(", ", _shaderCache.Values
+                .OrderBy(static shader => GetShaderStageSortKey(shader.StageFlags))
+                .Select(static shader => shader.StageDebugLabel));
+        }
+
+        internal void WriteShaderDiagnostics(string reason)
+        {
+            if (!RenderDiagnosticsFlags.VkDumpShaderOnError)
+                return;
+
+            string programName = Data.Name ?? "UnnamedProgram";
+            string stageSummary = DescribeShaderStages();
+            foreach (VkShader shader in _shaderCache.Values.OrderBy(static shader => GetShaderStageSortKey(shader.StageFlags)))
+                shader.WriteRewrittenSourceDiagnostics($"program='{programName}' stages=[{stageSummary}] {reason}");
+        }
+
+        private static int GetShaderStageSortKey(ShaderStageFlags stage)
+            => stage switch
+            {
+                ShaderStageFlags.VertexBit => 0,
+                ShaderStageFlags.TessellationControlBit => 1,
+                ShaderStageFlags.TessellationEvaluationBit => 2,
+                ShaderStageFlags.GeometryBit => 3,
+                ShaderStageFlags.FragmentBit => 4,
+                ShaderStageFlags.ComputeBit => 5,
+                ShaderStageFlags.TaskBitNV => 6,
+                ShaderStageFlags.MeshBitNV => 7,
+                _ => 100,
+            };
+
         private IEnumerable<DescriptorBindingInfo> EnumerateShaderDescriptorBindings()
         {
             foreach (VkShader shader in _shaderCache.Values)
@@ -756,6 +791,9 @@ public unsafe partial class VulkanRenderer
                     colorFormats,
                     depthFormat,
                     stencilFormat);
+                Debug.RenderingWarning("[PipeCreate] prog={0} stageLabels=[{1}]",
+                    Data.Name ?? "?prog",
+                    DescribeShaderStages());
             }
             // ── END DIAGNOSTIC ──
 
@@ -767,7 +805,10 @@ public unsafe partial class VulkanRenderer
 
                 Result result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
                 if (result != Result.Success)
+                {
+                    WriteShaderDiagnostics($"vkCreateGraphicsPipelines failed result={result}");
                     throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
+                }
 
                 return pipeline;
             }
@@ -1377,11 +1418,21 @@ public unsafe partial class VulkanRenderer
             if (vkBuffer.BufferHandle is not { } handle || handle.Handle == 0)
                 return false;
 
+            ulong requestedRange = Math.Max((ulong)dataBuffer.Length, 1UL);
+            if (vkBuffer.AllocatedByteSize < requestedRange)
+            {
+                vkBuffer.PushData();
+                handle = vkBuffer.BufferHandle ?? default;
+            }
+
+            if (handle.Handle == 0 || vkBuffer.AllocatedByteSize < requestedRange)
+                return false;
+
             bufferInfo = new DescriptorBufferInfo
             {
                 Buffer = handle,
                 Offset = 0,
-                Range = Math.Max(dataBuffer.Length, 1u)
+                Range = requestedRange
             };
             return true;
         }
@@ -1917,6 +1968,7 @@ public unsafe partial class VulkanRenderer
             public uint Count { get; }
             public string Name { get; private set; }
             public ShaderStageFlags StageFlags { get; private set; }
+            public ImageViewType? ExpectedImageViewType { get; private set; }
 
             public DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo info)
             {
@@ -1926,6 +1978,7 @@ public unsafe partial class VulkanRenderer
                 Count = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(info);
                 Name = string.IsNullOrWhiteSpace(info.Name) ? string.Empty : info.Name;
                 StageFlags = info.StageFlags;
+                ExpectedImageViewType = info.ExpectedImageViewType;
             }
 
             public void Merge(DescriptorBindingInfo info)
@@ -1940,6 +1993,7 @@ public unsafe partial class VulkanRenderer
                 if (string.IsNullOrWhiteSpace(Name) && !string.IsNullOrWhiteSpace(info.Name))
                     Name = info.Name;
 
+                ExpectedImageViewType ??= info.ExpectedImageViewType;
                 StageFlags |= info.StageFlags;
             }
 
@@ -1953,7 +2007,7 @@ public unsafe partial class VulkanRenderer
                 };
 
             public DescriptorBindingInfo ToDescriptorBindingInfo()
-                => new(Set, Binding, DescriptorType, StageFlags, Count, Name);
+                => new(Set, Binding, DescriptorType, StageFlags, Count, Name, ExpectedImageViewType);
         }
 
         private readonly record struct DescriptorLayoutBuildResult(DescriptorSetLayout[] Layouts, List<DescriptorBindingInfo> Bindings, bool RequiresUpdateAfterBind, bool RequiresVariableDescriptorCount);

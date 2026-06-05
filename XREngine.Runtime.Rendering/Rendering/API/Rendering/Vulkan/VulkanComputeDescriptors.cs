@@ -67,6 +67,47 @@ public unsafe partial class VulkanRenderer
         _computeDescriptorCaches = null;
     }
 
+    internal int ReleaseComputeDescriptorReferencesForPhysicalResourceDestruction()
+    {
+        lock (_computeDescriptorCacheLock)
+        {
+            int imageCount = _computeDescriptorCaches?.Length ?? _commandBuffers?.Length ?? 0;
+            int poolCount = CountComputeDescriptorPools_NoLock();
+
+            DestroyComputeDescriptorCaches_NoLock();
+
+            if (imageCount > 0)
+            {
+                _computeDescriptorCaches = new ComputeDescriptorImageCache[imageCount];
+                for (int i = 0; i < imageCount; i++)
+                    _computeDescriptorCaches[i] = new ComputeDescriptorImageCache();
+            }
+
+            return poolCount;
+        }
+    }
+
+    private int CountComputeDescriptorPools_NoLock()
+    {
+        if (_computeDescriptorCaches is null)
+            return 0;
+
+        HashSet<ulong> poolHandles = [];
+        foreach (ComputeDescriptorImageCache cache in _computeDescriptorCaches)
+        {
+            foreach (List<ComputeDescriptorPoolBlock> blocks in cache.PoolsBySchema.Values)
+            {
+                foreach (ComputeDescriptorPoolBlock block in blocks)
+                {
+                    if (block.Pool.Handle != 0)
+                        poolHandles.Add(block.Pool.Handle);
+                }
+            }
+        }
+
+        return poolHandles.Count;
+    }
+
     internal bool TryGetOrCreateComputeDescriptorSets(
         uint imageIndex,
         ulong schemaKey,

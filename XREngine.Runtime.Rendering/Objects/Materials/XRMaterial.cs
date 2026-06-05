@@ -1592,6 +1592,15 @@ namespace XREngine.Rendering
             material.ShaderProgramPriority = EProgramPriority.Interactive;
 
             var ro = material.RenderOptions;
+            ro.CullMode = ECullMode.None;
+            ro.ExcludeFromCpuOcclusion = true;
+
+            var depth = ro.DepthTest ?? new DepthTest();
+            depth.Enabled = ERenderParamUsage.Disabled;
+            depth.UpdateDepth = false;
+            depth.Function = EComparison.Always;
+            ro.DepthTest = depth;
+
             var stencil = ro.StencilTest ?? new StencilTest();
             stencil.Enabled = ERenderParamUsage.Enabled;
             stencil.FrontFace = MakeGizmoStencilFace(stencil.FrontFace);

@@ -538,6 +538,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
 
         renderer.DeviceWaitIdle();
+        renderer.ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
         Debug.VulkanEvery(
             $"Vulkan.RenderPipeline.ResourceDestroy.WaitIdle.{reason}",
             System.TimeSpan.FromSeconds(1),

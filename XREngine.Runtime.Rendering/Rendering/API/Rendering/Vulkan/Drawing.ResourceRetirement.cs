@@ -69,8 +69,10 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void DrainRetiredDescriptorPools()
+            => DrainRetiredDescriptorPools(currentFrame);
+
+        private void DrainRetiredDescriptorPools(int frameSlot)
         {
-            int frameSlot = currentFrame;
             DescriptorPool[] retired;
 
             lock (_retiredResourceLock)
@@ -95,6 +97,48 @@ namespace XREngine.Rendering.Vulkan
                 Api!.DestroyDescriptorPool(device, pool, null);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
             }
+        }
+
+        internal void DrainAllRetiredDescriptorPools()
+        {
+            for (int frameSlot = 0; frameSlot < _retiredDescriptorPools.Length; frameSlot++)
+                DrainRetiredDescriptorPools(frameSlot);
+        }
+
+        internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction(string reason)
+        {
+            int meshRendererCount = 0;
+            int materialCount = 0;
+            int computeCachedPoolCount = ReleaseComputeDescriptorReferencesForPhysicalResourceDestruction();
+            int computeTransientPoolCount = ReleaseComputeTransientDescriptorReferencesForPhysicalResourceDestruction();
+
+            foreach (var apiObject in RenderObjectCache.Values.ToArray())
+            {
+                switch (apiObject)
+                {
+                    case VkMeshRenderer meshRenderer:
+                        meshRenderer.ReleaseDescriptorReferencesForPhysicalResourceDestruction();
+                        meshRendererCount++;
+                        break;
+                    case VkMaterial material:
+                        material.ReleaseDescriptorReferencesForPhysicalResourceDestruction();
+                        materialCount++;
+                        break;
+                }
+            }
+
+            DrainAllRetiredDescriptorPools();
+            MarkCommandBuffersDirty();
+
+            Debug.VulkanEvery(
+                $"Vulkan.ResourceDestroy.ReleaseDescriptorReferences.{reason}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Released descriptor references before physical resource destruction: reason={0} meshRenderers={1} materials={2} computeCachedPools={3} computeTransientPools={4}.",
+                reason,
+                meshRendererCount,
+                materialCount,
+                computeCachedPoolCount,
+                computeTransientPoolCount);
         }
 
         /// <summary>

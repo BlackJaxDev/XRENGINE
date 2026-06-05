@@ -912,7 +912,7 @@ namespace XREngine.Rendering.Physics.Physx
                     new ShaderInt(0, "TotalLines"),
                 ];
                 var mat = new XRMaterial(vars, [.. vertexShaders, geomShader, fragShader]);
-                mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+                mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
                 mat.EnableTransparency((int)EDefaultRenderPass.OnTopForward);

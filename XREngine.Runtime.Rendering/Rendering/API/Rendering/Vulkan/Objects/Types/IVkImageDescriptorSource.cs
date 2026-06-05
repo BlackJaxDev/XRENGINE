@@ -7,6 +7,7 @@ public unsafe partial class VulkanRenderer
     {
         Image DescriptorImage { get; }
         ImageView DescriptorView { get; }
+        ImageViewType DescriptorViewType { get; }
         Sampler DescriptorSampler { get; }
         Format DescriptorFormat { get; }
         ImageAspectFlags DescriptorAspect { get; }
@@ -38,5 +39,12 @@ public unsafe partial class VulkanRenderer
         /// Implementations that do not support this should return <c>default</c>.
         /// </summary>
         ImageView GetDepthOnlyDescriptorView() => default;
+
+        /// <summary>
+        /// Returns a descriptor view with the requested dimensionality when the
+        /// backing image can legally expose one.
+        /// </summary>
+        ImageView GetDescriptorView(ImageViewType viewType)
+            => viewType == DescriptorViewType ? DescriptorView : default;
     }
 }

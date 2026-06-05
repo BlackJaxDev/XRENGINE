@@ -74,8 +74,27 @@ namespace XREngine.Rendering.Pipelines.Commands
         private string ResolveDestinationLabel(XRRenderPipelineInstance? activeInstance)
             => DestinationFBOName
                 ?? (RenderToSourceFrameBuffer ? SourceQuadFBOName : null)
+                ?? activeInstance?.RenderState.CurrentRenderTargetBinding?.Name
                 ?? activeInstance?.RenderState.OutputFBO?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
+
+        private XRFrameBuffer? ResolveDestinationFbo(XRRenderPipelineInstance? activeInstance, XRQuadFrameBuffer? sourceFBO)
+        {
+            if (DestinationFBOName is not null)
+                return activeInstance?.GetFBO<XRFrameBuffer>(DestinationFBOName);
+
+            if (RenderToSourceFrameBuffer)
+                return sourceFBO ?? (SourceQuadFBOName is not null
+                    ? activeInstance?.GetFBO<XRFrameBuffer>(SourceQuadFBOName)
+                    : null);
+
+            // Null destination means "draw into the current render target".  Use
+            // the logical pipeline target stack, not the backend's physical FBO
+            // stack, because Vulkan records these operations after command
+            // execution has already produced frame ops.
+            return activeInstance?.RenderState.CurrentRenderTargetBinding?.FrameBuffer
+                ?? activeInstance?.RenderState.OutputFBO;
+        }
 
         private string ResolveShaderLabel(XRRenderPipelineInstance? activeInstance)
         {
@@ -130,10 +149,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            string destination = DestinationFBOName
-                ?? (RenderToSourceFrameBuffer ? SourceQuadFBOName : null)
-                ?? activeInstance.RenderState.OutputFBO?.Name
-                ?? RenderGraphResourceNames.OutputRenderTarget;
+            string destination = ResolveDestinationLabel(activeInstance);
 
             string passName = $"QuadBlit_{SourceQuadFBOName}_to_{destination}";
             int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
@@ -159,9 +175,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var destFBO = DestinationFBOName is not null
-                ? activeInstance.GetFBO<XRFrameBuffer>(DestinationFBOName)
-                : RenderToSourceFrameBuffer ? sourceFBO : null;
+            XRFrameBuffer? destFBO = ResolveDestinationFbo(activeInstance, sourceFBO);
             if (_diagEnabled && DestinationFBOName is not null && destFBO is null)
                 Debug.RenderingWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
 

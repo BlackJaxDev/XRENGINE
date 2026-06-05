@@ -185,7 +185,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
         ];
 
         var material = new XRMaterial(vars, [vert, geom, frag]);
-        material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+        material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
         material.RenderOptions.CullMode = ECullMode.None;
         material.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
         material.EnableTransparency((int)EDefaultRenderPass.OnTopForward);

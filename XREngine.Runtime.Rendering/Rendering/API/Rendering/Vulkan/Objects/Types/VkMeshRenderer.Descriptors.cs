@@ -187,7 +187,7 @@ public unsafe partial class VulkanRenderer
 			for (int i = 0; i < material.Textures.Count; i++)
 			{
 				XRTexture? texture = material.Textures[i];
-				hash.Add(texture?.GetHashCode() ?? 0);
+				AddTextureDescriptorResourceFingerprint(ref hash, texture);
 			}
 
 			foreach (var pair in _engineUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
@@ -211,6 +211,43 @@ public unsafe partial class VulkanRenderer
 			}
 
 			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private void AddTextureDescriptorResourceFingerprint(ref HashCode hash, XRTexture? texture)
+		{
+			hash.Add(texture?.GetHashCode() ?? 0);
+			if (texture is null)
+			{
+				hash.Add(0UL);
+				return;
+			}
+
+			object? apiObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true);
+			if (apiObject is IVkImageDescriptorSource imageSource)
+			{
+				hash.Add(imageSource.DescriptorImage.Handle);
+				hash.Add(imageSource.DescriptorView.Handle);
+				hash.Add(imageSource.DescriptorSampler.Handle);
+				hash.Add(imageSource.DescriptorViewType);
+				hash.Add(imageSource.DescriptorFormat);
+				hash.Add(imageSource.DescriptorAspect);
+				hash.Add(imageSource.DescriptorUsage);
+				hash.Add(imageSource.TrackedImageLayout);
+			}
+			else
+			{
+				hash.Add(0UL);
+			}
+
+			if (apiObject is IVkTexelBufferDescriptorSource texelSource)
+			{
+				hash.Add(texelSource.DescriptorBufferView.Handle);
+				hash.Add(texelSource.DescriptorBufferFormat);
+			}
+			else
+			{
+				hash.Add(0UL);
+			}
 		}
 
 		/// <summary>Resolves one or more buffer descriptors for a binding, duplicating for array bindings.</summary>
@@ -534,11 +571,24 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
+			ulong requestedRange = Math.Max((ulong)buffer.Data.Length, 1UL);
+			if (buffer.AllocatedByteSize < requestedRange)
+			{
+				buffer.PushData();
+				bufferHandle = buffer.BufferHandle ?? default;
+			}
+
+			if (bufferHandle.Handle == 0 || buffer.AllocatedByteSize < requestedRange)
+			{
+				WarnOnce($"[BufferResolve] Buffer '{binding.Name}' resolved (set={binding.Set}, binding={binding.Binding}) but allocation is too small (Requested={requestedRange}, Allocated={buffer.AllocatedByteSize}, Target={buffer.Data.Target}).");
+				return false;
+			}
+
 			bufferInfo = new DescriptorBufferInfo
 			{
 				Buffer = bufferHandle,
 				Offset = 0,
-				Range = Math.Max(buffer.Data.Length, 1u),
+				Range = requestedRange,
 			};
 
 			return true;
@@ -556,12 +606,21 @@ public unsafe partial class VulkanRenderer
 				return true;
 			}
 
+			string aliasName = string.Empty;
+			if (TryGetDebugPrimitiveBufferAlias(bindingName, out aliasName) &&
+				_bufferCache.TryGetValue(aliasName, out buffer))
+			{
+				return true;
+			}
+
 			foreach (VkDataBuffer candidate in _bufferCache.Values)
 			{
 				string attributeName = candidate.Data.AttributeName;
 				if (string.Equals(attributeName, bindingName, StringComparison.Ordinal) ||
 					(!string.Equals(trimmedName, bindingName, StringComparison.Ordinal) &&
-					 string.Equals(attributeName, trimmedName, StringComparison.Ordinal)))
+					 string.Equals(attributeName, trimmedName, StringComparison.Ordinal)) ||
+					(!string.IsNullOrEmpty(aliasName) &&
+					 string.Equals(attributeName, aliasName, StringComparison.Ordinal)))
 				{
 					buffer = candidate;
 					return true;
@@ -570,6 +629,19 @@ public unsafe partial class VulkanRenderer
 
 			buffer = null;
 			return false;
+		}
+
+		private static bool TryGetDebugPrimitiveBufferAlias(string bindingName, out string aliasName)
+		{
+			aliasName = bindingName switch
+			{
+				"PointData" or "Points" => "PointsBuffer",
+				"LineData" or "Lines" => "LinesBuffer",
+				"TriData" or "TriangleData" or "Triangles" => "TrianglesBuffer",
+				_ => string.Empty,
+			};
+
+			return aliasName.Length > 0;
 		}
 
 		private static string TrimDescriptorBufferSuffix(string bindingName)
@@ -632,7 +704,7 @@ public unsafe partial class VulkanRenderer
 			{
 				// Use a 1×1 magenta placeholder to satisfy the descriptor binding
 				// instead of failing the entire descriptor set write.
-				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType);
+				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
 				if (imageInfo.ImageView.Handle != 0)
 				{
 					RecordDescriptorFallback(binding);
@@ -687,13 +759,37 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
+			ImageView descriptorView = ResolveDescriptorView(binding, source);
+			if (descriptorView.Handle == 0)
+			{
+				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
+				if (imageInfo.ImageView.Handle != 0)
+				{
+					WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'. Using placeholder.");
+					RecordDescriptorFallback(binding);
+					return true;
+				}
+
+				WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'.");
+				RecordDescriptorFailure(binding, "texture view type mismatch");
+				return false;
+			}
+
 			imageInfo = new DescriptorImageInfo
 			{
 				ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
-				ImageView = source.DescriptorView,
+				ImageView = descriptorView,
 				Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
 			};
 			return imageInfo.ImageView.Handle != 0;
+		}
+
+		private ImageView ResolveDescriptorView(DescriptorBindingInfo binding, IVkImageDescriptorSource source)
+		{
+			if (binding.ExpectedImageViewType is not { } expectedViewType)
+				return source.DescriptorView;
+
+			return source.GetDescriptorView(expectedViewType);
 		}
 
 		/// <summary>Returns true if the Vulkan format is a combined depth+stencil format.</summary>
