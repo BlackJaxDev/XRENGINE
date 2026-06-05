@@ -301,7 +301,25 @@ public unsafe partial class VulkanRenderer
         XRCamera? Camera,
         XRCamera? StereoRightEyeCamera,
         bool IsStereoPass,
-        bool UseUnjitteredProjection);
+        bool UseUnjitteredProjection,
+        // Camera transform-derived matrices/vectors are snapshotted at enqueue time
+        // while the camera is still the active rendering camera. The command buffer is
+        // recorded later, after the pipeline camera stack has been popped, so reading
+        // Camera.Transform.* at record time would yield stale/identity values.
+        Matrix4x4 ViewMatrix,
+        Matrix4x4 InverseViewMatrix,
+        Matrix4x4 RightEyeInverseViewMatrix,
+        Vector3 CameraPosition,
+        Vector3 CameraForward,
+        Vector3 CameraUp,
+        Vector3 CameraRight,
+        // Render-area dimensions snapshotted at enqueue time. The live
+        // RuntimeEngine.Rendering.State.RenderArea is derived from the pipeline's
+        // CurrentRenderRegion, which is reset to Empty by the time the command buffer
+        // is recorded, so ScreenWidth/ScreenHeight engine uniforms (used by the debug
+        // line/point geometry shaders) must read these snapshots instead.
+        int RenderAreaWidth,
+        int RenderAreaHeight);
 
     private static bool ViewportEquals(in Viewport a, in Viewport b)
         => a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height && a.MinDepth == b.MinDepth && a.MaxDepth == b.MaxDepth;
@@ -620,6 +638,41 @@ public unsafe partial class VulkanRenderer
                 ? ToVulkanColorWriteMask(matOpts)
                 : Renderer.GetColorWriteMask();
 
+            // Snapshot camera transform-derived matrices/vectors now, while the
+            // rendering camera is active. The command buffer is recorded later (after
+            // the camera stack is popped), so reading Camera.Transform.* at record time
+            // would resolve to stale/identity values and collapse all geometry.
+            XRCamera? snapshotCamera = RuntimeEngine.Rendering.State.RenderingCamera;
+            XRCamera? snapshotRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+            Matrix4x4 viewMatrixSnapshot = snapshotCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 inverseViewMatrixSnapshot = snapshotCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 rightEyeInverseViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrixSnapshot;
+            Vector3 cameraPositionSnapshot = snapshotCamera?.Transform.RenderTranslation ?? Vector3.Zero;
+            Vector3 cameraForwardSnapshot = snapshotCamera?.Transform.RenderForward ?? Vector3.UnitZ;
+            Vector3 cameraUpSnapshot = snapshotCamera?.Transform.RenderUp ?? Vector3.UnitY;
+            Vector3 cameraRightSnapshot = snapshotCamera?.Transform.RenderRight ?? Vector3.UnitX;
+            // Snapshot the render-area dimensions now (the live RenderArea is reset to Empty by
+            // deferred record time). For debug-primitive draws the pipeline render-region can
+            // already be Empty even at enqueue time, so fall back to the bound draw framebuffer's
+            // dimensions, which reflect the actual target the geometry shaders rasterize into.
+            var renderAreaSnapshot = RuntimeEngine.Rendering.State.RenderArea;
+            int renderAreaWidthSnapshot = renderAreaSnapshot.Width;
+            int renderAreaHeightSnapshot = renderAreaSnapshot.Height;
+            if (renderAreaWidthSnapshot <= 0 || renderAreaHeightSnapshot <= 0)
+            {
+                if (target is not null)
+                {
+                    renderAreaWidthSnapshot = (int)target.Width;
+                    renderAreaHeightSnapshot = (int)target.Height;
+                }
+                else
+                {
+                    Extent2D targetExtent = Renderer.GetCurrentTargetExtent();
+                    renderAreaWidthSnapshot = (int)targetExtent.Width;
+                    renderAreaHeightSnapshot = (int)targetExtent.Height;
+                }
+            }
+
             var draw = new PendingMeshDraw(
                 this,
                 Renderer.GetCurrentViewport(),
@@ -648,10 +701,19 @@ public unsafe partial class VulkanRenderer
                 effectiveMaterial,
                 instances,
                 billboardMode,
-                RuntimeEngine.Rendering.State.RenderingCamera,
-                RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera,
+                snapshotCamera,
+                snapshotRightEyeCamera,
                 RuntimeEngine.Rendering.State.IsStereoPass,
-                RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false);
+                RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false,
+                viewMatrixSnapshot,
+                inverseViewMatrixSnapshot,
+                rightEyeInverseViewMatrixSnapshot,
+                cameraPositionSnapshot,
+                cameraForwardSnapshot,
+                cameraUpSnapshot,
+                cameraRightSnapshot,
+                renderAreaWidthSnapshot,
+                renderAreaHeightSnapshot);
 
             Renderer.EnqueueFrameOp(new MeshDrawOp(
                 Renderer.EnsureValidPassIndex(passIndex, "MeshDraw"),

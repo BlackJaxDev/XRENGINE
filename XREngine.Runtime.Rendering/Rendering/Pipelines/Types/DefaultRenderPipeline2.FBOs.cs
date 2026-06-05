@@ -76,6 +76,7 @@ public partial class DefaultRenderPipeline2
             }
         };
         var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
+        PostProcessFBO.SettingUniforms += ApplyPostProcessProgramBindings;
         return PostProcessFBO;
     }
 

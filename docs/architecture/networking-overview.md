@@ -2,6 +2,8 @@
 
 This document describes the engine networking code that lives in XRENGINE today. The engine owns realtime connections only. Directory, matchmaking, room creation/join orchestration, host capacity, admission token issuance, and world artifact delivery live in the adjacent control-plane app.
 
+For local development and tests, `XREngine.ControlPlane` now provides an in-process control-plane DLL with basic host registration, instance creation/listing, join handoff generation, opaque session tokens, and local world package manifest verification. It is a reusable control-plane substrate, not an engine realtime transport.
+
 For the stable feature guide, see [XRENGINE Networking](../features/networking.md). Planned peer-to-peer host switching is tracked in [Peer-To-Peer Host Switching Implementation](../work/design/peer-to-peer-host-switching.md).
 
 ## Roles And Startup
@@ -58,6 +60,8 @@ At startup XRENGINE maps this to client settings, validates the expected `WorldA
 ## Boundary
 
 XRENGINE does not browse, create, allocate, manage, download, or cache multiplayer instances/world artifacts.
+
+The local-dev `XREngine.ControlPlane` DLL can perform these orchestration steps for tests or launchers, then hand the engine the concrete realtime settings below. This keeps the boundary intact while giving editor/server workflows a basic implementation to call.
 
 The external control-plane app should hand XRENGINE concrete realtime connection data only:
 
@@ -222,8 +226,12 @@ The ImGui networking panel exposes direct realtime controls:
 - RTT/data/packet diagnostics
 - connected server clients and kick action
 - local player assignment status
+- local control-plane controls for editor-to-editor smoke tests:
+  - create/start an editor-hosted server instance
+  - issue/copy a realtime handoff payload
+  - paste/join from a handoff payload in another editor process
 
-It does not browse, create, or join public rooms.
+It still does not browse, create, or join public rooms. The embedded control-plane panel is an in-process local-dev helper, not a public matchmaking or room directory service.
 
 ## Operational Notes
 

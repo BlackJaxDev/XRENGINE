@@ -1539,35 +1539,38 @@ namespace XREngine.Rendering.Vulkan
                 CmdBeginLabel(commandBuffer, $"RenderPass:{fboName}");
                 renderPassLabelActive = true;
 
-                // Look up tracked layouts from a previous render pass on this FBO
-                // within the current frame.  If present, the render pass will use
-                // those as initialLayout (preserving content from earlier passes)
-                // instead of Undefined (which discards content).
+                // Look up the CURRENT tracked layout of each attachment so the render
+                // pass can use those as initialLayout (preserving content) instead of
+                // Undefined (which discards content).
                 //
-                // We query the CURRENT tracked layout of each attachment rather than
-                // relying on the static finalLayout stored previously.  This accounts
-                // for barrier-planner transitions or blit operations that may have
+                // We always query — not just when this FBO was previously bound this
+                // frame — because attachments can be SHARED across framebuffers (e.g.
+                // the deferred GBuffer and the forward pass share the depth/stencil
+                // texture).  The forward pass deliberately does not clear depth and
+                // relies on the GBuffer-written depth; if we only preserved content
+                // for FBOs already seen this frame, the first forward-pass bind would
+                // discard the GBuffer depth and every depth-tested draw (skybox,
+                // forward meshes, gizmo) would fail.  Querying the per-image tracked
+                // layout also accounts for barrier-planner transitions or blits that
                 // changed the actual image layout since the last render pass ended.
-                ImageLayout[]? trackedLayouts = null;
-                if (fboLayoutTracking.ContainsKey(target))
-                {
-                    trackedLayouts = QueryCurrentAttachmentLayouts(target, vkFrameBuffer);
-                    // Update the tracking dict so that subsequent users see the
-                    // same layouts we resolved here.
-                    if (trackedLayouts is not null)
-                        fboLayoutTracking[target] = trackedLayouts;
-                }
+                ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(target, vkFrameBuffer);
+                // Update the tracking dict so that subsequent users see the
+                // same layouts we resolved here.
+                if (trackedLayouts is not null)
+                    fboLayoutTracking[target] = trackedLayouts;
                 RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts);
                 bool passDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(passIndex, context.PassMetadata, trackedLayouts);
 
                 Debug.VulkanEvery(
                     $"Vulkan.BeginRP.FBO.{fboName}.{passRenderPass.Handle:X}",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan] BeginRenderPassForTarget FBO='{0}' pass={1} renderPass=0x{2:X} attachments={3} trackedLayouts={4}",
+                    "[Vulkan] BeginRenderPassForTarget FBO='{0}' pass={1} renderPass=0x{2:X} attachments={3} fbDims={4}x{5} trackedLayouts={6}",
                     fboName,
                     passIndex,
                     passRenderPass.Handle,
                     vkFrameBuffer.AttachmentCount,
+                    vkFrameBuffer.FramebufferWidth,
+                    vkFrameBuffer.FramebufferHeight,
                     trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null");
                 RenderPassBeginInfo fboPassInfo = new()
                 {
@@ -1859,6 +1862,14 @@ namespace XREngine.Rendering.Vulkan
                         break;
 
                     case ClearOp clear:
+                        if (clear.Target?.Name == "ForwardPassFBO")
+                        {
+                            Debug.VulkanEvery(
+                                "Vulkan.FwdClear",
+                                TimeSpan.FromSeconds(2),
+                                "[Vulkan][FwdClear] ForwardPassFBO clear pass={0} color={1} depth={2} stencil={3}",
+                                opPassIndex, clear.ClearColor, clear.ClearDepth, clear.ClearStencil);
+                        }
                         if (!renderPassActive || activeTarget != clear.Target)
                         {
                             EndActiveRenderPass();
@@ -1895,6 +1906,17 @@ namespace XREngine.Rendering.Vulkan
                         Api!.CmdSetViewport(commandBuffer, 0, 1, &viewport);
                         Rect2D scissor = drawOp.Draw.Scissor;
                         Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+                        if (drawOp.Target?.Name == "ForwardPassFBO")
+                        {
+                            Debug.VulkanEvery(
+                                "Vulkan.FwdDraw." + opPassIndex,
+                                TimeSpan.FromSeconds(2),
+                                "[Vulkan][FwdDraw] pipe='{0}' pass={1} rp=0x{2:X} vp=(x={3},y={4},w={5},h={6})",
+                                drawOp.Context.PipelineInstance?.DebugName ?? "?",
+                                opPassIndex, activeRenderPass.Handle,
+                                viewport.X, viewport.Y, viewport.Width, viewport.Height);
+                        }
 
                         drawOp.Draw.Renderer.RecordDraw(
                             commandBuffer,

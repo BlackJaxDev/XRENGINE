@@ -16,6 +16,7 @@ using Silk.NET.Vulkan;
 
 using XREngine;
 using XREngine.Data;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
@@ -501,8 +502,11 @@ public unsafe partial class VulkanRenderer
 			Matrix4x4 inverseModel = Matrix4x4.Identity;
 			Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
 
-			Matrix4x4 viewMatrix = camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
-			Matrix4x4 inverseViewMatrix = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+			// Transform-derived camera matrices/vectors come from the draw snapshot captured
+			// at enqueue time. Reading camera.Transform.* here (deferred record time) would be
+			// stale/identity because the pipeline camera stack has already been popped.
+			Matrix4x4 viewMatrix = draw.ViewMatrix;
+			Matrix4x4 inverseViewMatrix = draw.InverseViewMatrix;
 			Matrix4x4 projMatrix = useUnjittered && camera is not null
 				? camera.ProjectionMatrixUnjittered
 				: camera?.ProjectionMatrix ?? Matrix4x4.Identity;
@@ -582,7 +586,7 @@ public unsafe partial class VulkanRenderer
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.RightEyeInverseViewMatrix):
-					value = rightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrix;
+					value = draw.RightEyeInverseViewMatrix;
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.RightEyeInverseProjMatrix):
@@ -602,19 +606,19 @@ public unsafe partial class VulkanRenderer
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.CameraPosition):
-					value = ToVector4(camera?.Transform.RenderTranslation ?? Vector3.Zero);
+					value = ToVector4(draw.CameraPosition);
 					type = EShaderVarType._vec4;
 					return true;
 				case nameof(EEngineUniform.CameraForward):
-					value = ToVector4(camera?.Transform.RenderForward ?? Vector3.UnitZ);
+					value = ToVector4(draw.CameraForward);
 					type = EShaderVarType._vec4;
 					return true;
 				case nameof(EEngineUniform.CameraUp):
-					value = ToVector4(camera?.Transform.RenderUp ?? Vector3.UnitY);
+					value = ToVector4(draw.CameraUp);
 					type = EShaderVarType._vec4;
 					return true;
 				case nameof(EEngineUniform.CameraRight):
-					value = ToVector4(camera?.Transform.RenderRight ?? Vector3.UnitX);
+					value = ToVector4(draw.CameraRight);
 					type = EShaderVarType._vec4;
 					return true;
 				case nameof(EEngineUniform.CameraNearZ):
@@ -643,8 +647,25 @@ public unsafe partial class VulkanRenderer
 					return true;
 				case nameof(EEngineUniform.ScreenWidth):
 				case nameof(EEngineUniform.ScreenHeight):
-					var area = RuntimeEngine.Rendering.State.RenderArea;
-					value = normalized.Equals(nameof(EEngineUniform.ScreenWidth), StringComparison.Ordinal) ? (float)area.Width : (float)area.Height;
+					// Resolve from the render-area snapshotted at enqueue time. Reading the live
+					// RuntimeEngine.Rendering.State.RenderArea here (deferred record time) yields
+					// 0 because the pipeline render-region stack has already been popped, which
+					// would collapse the debug-line geometry-shader viewport to (1,1) and
+					// explode every line into a screen-spanning quad.
+					float screenW = draw.RenderAreaWidth;
+					float screenH = draw.RenderAreaHeight;
+					if (screenW <= 0f || screenH <= 0f)
+					{
+						screenW = draw.Viewport.Width;
+						screenH = MathF.Abs(draw.Viewport.Height);
+					}
+					if (screenW <= 0f || screenH <= 0f)
+					{
+						var area = RuntimeEngine.Rendering.State.RenderArea;
+						screenW = area.Width;
+						screenH = area.Height;
+					}
+					value = normalized.Equals(nameof(EEngineUniform.ScreenWidth), StringComparison.Ordinal) ? screenW : screenH;
 					type = EShaderVarType._float;
 					return true;
 				case nameof(EEngineUniform.ScreenOrigin):
@@ -816,13 +837,13 @@ public unsafe partial class VulkanRenderer
 
 		private static bool TryWriteVector3(Span<byte> data, uint offset, object value)
 		{
-			if (value is Vector3 v3)
+			if (TryConvertVector3(value, out Vector3 v3))
 			{
 				Vector4 v4 = new(v3, 0f);
 				Unsafe.WriteUnaligned(ref data[(int)offset], v4);
 				return true;
 			}
-			if (value is Vector4 v4b)
+			if (TryConvertVector4(value, out Vector4 v4b))
 			{
 				Unsafe.WriteUnaligned(ref data[(int)offset], v4b);
 				return true;
@@ -832,18 +853,62 @@ public unsafe partial class VulkanRenderer
 
 		private static bool TryWriteVector4(Span<byte> data, uint offset, object value)
 		{
-			if (value is Vector4 v)
+			if (TryConvertVector4(value, out Vector4 v))
 			{
 				Unsafe.WriteUnaligned(ref data[(int)offset], v);
 				return true;
 			}
-			if (value is Vector3 v3)
+			if (TryConvertVector3(value, out Vector3 v3))
 			{
 				Vector4 v4 = new(v3, 0f);
 				Unsafe.WriteUnaligned(ref data[(int)offset], v4);
 				return true;
 			}
 			return false;
+		}
+
+		private static bool TryConvertVector3(object value, out Vector3 vector)
+		{
+			switch (value)
+			{
+				case Vector3 v:
+					vector = v;
+					return true;
+				case Vector4 v:
+					vector = new Vector3(v.X, v.Y, v.Z);
+					return true;
+				case ColorF3 c:
+					vector = new Vector3(c.R, c.G, c.B);
+					return true;
+				case ColorF4 c:
+					vector = new Vector3(c.R, c.G, c.B);
+					return true;
+				default:
+					vector = default;
+					return false;
+			}
+		}
+
+		private static bool TryConvertVector4(object value, out Vector4 vector)
+		{
+			switch (value)
+			{
+				case Vector4 v:
+					vector = v;
+					return true;
+				case Vector3 v:
+					vector = new Vector4(v, 0f);
+					return true;
+				case ColorF4 c:
+					vector = new Vector4(c.R, c.G, c.B, c.A);
+					return true;
+				case ColorF3 c:
+					vector = new Vector4(c.R, c.G, c.B, 0f);
+					return true;
+				default:
+					vector = default;
+					return false;
+			}
 		}
 
 		private static bool TryWriteIVector2(Span<byte> data, uint offset, object value)
@@ -959,8 +1024,11 @@ public unsafe partial class VulkanRenderer
 			Matrix4x4 inverseModel = Matrix4x4.Identity;
 			Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
 
-			Matrix4x4 viewMatrix = camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
-			Matrix4x4 inverseViewMatrix = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+			// Transform-derived camera matrices/vectors come from the draw snapshot captured
+			// at enqueue time. Reading camera.Transform.* here (deferred record time) would be
+			// stale/identity because the pipeline camera stack has already been popped.
+			Matrix4x4 viewMatrix = draw.ViewMatrix;
+			Matrix4x4 inverseViewMatrix = draw.InverseViewMatrix;
 			Matrix4x4 projMatrix = useUnjittered && camera is not null
 				? camera.ProjectionMatrixUnjittered
 				: camera?.ProjectionMatrix ?? Matrix4x4.Identity;
@@ -1018,7 +1086,7 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.LeftEyeInverseProjMatrix):
 					return UploadUniform(buffer, inverseProjMatrix);
 				case nameof(EEngineUniform.RightEyeInverseViewMatrix):
-					return UploadUniform(buffer, rightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrix);
+					return UploadUniform(buffer, draw.RightEyeInverseViewMatrix);
 				case nameof(EEngineUniform.RightEyeInverseProjMatrix):
 					return UploadUniform(buffer, rightEyeInverseProjMatrix);
 				case nameof(EEngineUniform.RightEyeViewProjectionMatrix):
@@ -1028,13 +1096,13 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.RightEyeProjMatrix):
 					return UploadUniform(buffer, rightEyeProjMatrix);
 				case nameof(EEngineUniform.CameraPosition):
-					return UploadUniform(buffer, ToVector4(camera?.Transform.RenderTranslation ?? Vector3.Zero));
+					return UploadUniform(buffer, ToVector4(draw.CameraPosition));
 				case nameof(EEngineUniform.CameraForward):
-					return UploadUniform(buffer, ToVector4(camera?.Transform.RenderForward ?? Vector3.UnitZ));
+					return UploadUniform(buffer, ToVector4(draw.CameraForward));
 				case nameof(EEngineUniform.CameraUp):
-					return UploadUniform(buffer, ToVector4(camera?.Transform.RenderUp ?? Vector3.UnitY));
+					return UploadUniform(buffer, ToVector4(draw.CameraUp));
 				case nameof(EEngineUniform.CameraRight):
-					return UploadUniform(buffer, ToVector4(camera?.Transform.RenderRight ?? Vector3.UnitX));
+					return UploadUniform(buffer, ToVector4(draw.CameraRight));
 				case nameof(EEngineUniform.CameraNearZ):
 					return UploadUniform(buffer, camera?.NearZ ?? 0f);
 				case nameof(EEngineUniform.CameraFarZ):
@@ -1049,8 +1117,22 @@ public unsafe partial class VulkanRenderer
 					return UploadUniform(buffer, (int)(camera?.DepthMode ?? XRCamera.EDepthMode.Normal));
 				case nameof(EEngineUniform.ScreenWidth):
 				case nameof(EEngineUniform.ScreenHeight):
-					var area = RuntimeEngine.Rendering.State.RenderArea;
-					return UploadUniform(buffer, normalized.Equals(nameof(EEngineUniform.ScreenWidth), StringComparison.Ordinal) ? (float)area.Width : (float)area.Height);
+					// Prefer the enqueue-time render-area snapshot; the live RenderArea is empty
+					// at deferred record time (see the matching note in TryResolveEngineUniformValue).
+					float screenW = draw.RenderAreaWidth;
+					float screenH = draw.RenderAreaHeight;
+					if (screenW <= 0f || screenH <= 0f)
+					{
+						screenW = draw.Viewport.Width;
+						screenH = MathF.Abs(draw.Viewport.Height);
+					}
+					if (screenW <= 0f || screenH <= 0f)
+					{
+						var area = RuntimeEngine.Rendering.State.RenderArea;
+						screenW = area.Width;
+						screenH = area.Height;
+					}
+					return UploadUniform(buffer, normalized.Equals(nameof(EEngineUniform.ScreenWidth), StringComparison.Ordinal) ? screenW : screenH);
 				case nameof(EEngineUniform.ScreenOrigin):
 					return UploadUniform(buffer, new Vector2(0f, 0f));
 				case nameof(EEngineUniform.BillboardMode):
@@ -1181,8 +1263,8 @@ public unsafe partial class VulkanRenderer
 				EShaderVarType._uint => UploadUniform(buffer, Convert.ToUInt32(value.Value)),
 				EShaderVarType._bool => UploadUniform(buffer, Convert.ToBoolean(value.Value) ? 1 : 0),
 				EShaderVarType._vec2 when value.Value is Vector2 v2 => UploadUniform(buffer, v2),
-				EShaderVarType._vec3 when value.Value is Vector3 v3 => UploadUniform(buffer, new Vector4(v3, 0f)),
-				EShaderVarType._vec4 when value.Value is Vector4 v4 => UploadUniform(buffer, v4),
+				EShaderVarType._vec3 when TryConvertVector3(value.Value, out Vector3 v3) => UploadUniform(buffer, new Vector4(v3, 0f)),
+				EShaderVarType._vec4 when TryConvertVector4(value.Value, out Vector4 v4) => UploadUniform(buffer, v4),
 				EShaderVarType._ivec2 when value.Value is IVector2 iv2 => UploadUniform(buffer, iv2),
 				EShaderVarType._ivec3 when value.Value is IVector3 iv3 => UploadUniform(buffer, new IVector4(iv3.X, iv3.Y, iv3.Z, 0)),
 				EShaderVarType._ivec4 when value.Value is IVector4 iv4 => UploadUniform(buffer, iv4),

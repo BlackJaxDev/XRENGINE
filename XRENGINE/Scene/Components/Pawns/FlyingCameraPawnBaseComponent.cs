@@ -7,6 +7,10 @@ namespace XREngine.Components
 {
     public abstract class FlyingCameraPawnBaseComponent : PawnComponent
     {
+        protected static readonly bool CameraInputDiagnosticsEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_DEBUG_CAMERA_INPUT"), "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Environment.GetEnvironmentVariable("XRE_CAMERA_INPUT_DIAG"), "1", StringComparison.OrdinalIgnoreCase);
+
         protected float
             _incRight = 0.0f,
             _incForward = 0.0f,
@@ -143,33 +147,45 @@ namespace XREngine.Components
 
         protected virtual void MoveDown(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incUp += KeyboardTranslateSpeed * (pressed ? -1.0f : 1.0f);
+            LogKeyboardInput(nameof(MoveDown), pressed, allowed);
         }
         protected virtual void MoveUp(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incUp += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(MoveUp), pressed, allowed);
         }
         protected virtual void MoveLeft(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incRight += KeyboardTranslateSpeed * (pressed ? -1.0f : 1.0f);
+            LogKeyboardInput(nameof(MoveLeft), pressed, allowed);
         }
         protected virtual void MoveRight(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incRight += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(MoveRight), pressed, allowed);
         }
         protected virtual void MoveBackward(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incForward += KeyboardTranslateSpeed * (pressed ? -1.0f : 1.0f);
+            LogKeyboardInput(nameof(MoveBackward), pressed, allowed);
         }
         protected virtual void MoveForward(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incForward += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(MoveForward), pressed, allowed);
         }
 
         protected virtual void OnLeftStickX(float value)
@@ -183,23 +199,39 @@ namespace XREngine.Components
 
         protected virtual void YawRight(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incYaw -= KeyboardRotateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(YawRight), pressed, allowed);
         }
         protected virtual void YawLeft(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incYaw += KeyboardRotateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(YawLeft), pressed, allowed);
         }
         protected virtual void PitchDown(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incPitch -= KeyboardRotateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(PitchDown), pressed, allowed);
         }
         protected virtual void PitchUp(bool pressed)
         {
-            if (AllowKeyboardInput)
+            bool allowed = AllowKeyboardInput;
+            if (allowed)
                 _incPitch += KeyboardRotateSpeed * (pressed ? 1.0f : -1.0f);
+            LogKeyboardInput(nameof(PitchUp), pressed, allowed);
+        }
+
+        protected void LogKeyboardInput(string action, bool pressed, bool allowed)
+        {
+            if (!CameraInputDiagnosticsEnabled)
+                return;
+
+            Debug.Out($"[CameraInput] action={action} pressed={pressed} allowed={allowed} incRight={_incRight:0.###} incUp={_incUp:0.###} incForward={_incForward:0.###} incYaw={_incYaw:0.###} incPitch={_incPitch:0.###}");
         }
 
         protected void OnShift(bool pressed)

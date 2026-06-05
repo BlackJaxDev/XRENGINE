@@ -43,6 +43,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Runtime.InputInteg
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Runtime.ModelingBridge", "XREngine.Runtime.ModelingBridge\XREngine.Runtime.ModelingBridge.csproj", "{915A66F7-1343-437B-BA12-17CEB92DA4F7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.ControlPlane", "XREngine.ControlPlane\XREngine.ControlPlane.csproj", "{AA566099-FF67-4717-A9C1-E3002D2474C8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -293,6 +295,18 @@ Global
 		{915A66F7-1343-437B-BA12-17CEB92DA4F7}.Release|x64.Build.0 = Release|x64
 		{915A66F7-1343-437B-BA12-17CEB92DA4F7}.Release|x86.ActiveCfg = Release|Any CPU
 		{915A66F7-1343-437B-BA12-17CEB92DA4F7}.Release|x86.Build.0 = Release|Any CPU
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|x64.ActiveCfg = Debug|x64
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|x64.Build.0 = Debug|x64
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Debug|x86.Build.0 = Debug|Any CPU
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Release|x64.ActiveCfg = Release|x64
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Release|x64.Build.0 = Release|x64
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Release|x86.ActiveCfg = Release|Any CPU
+		{AA566099-FF67-4717-A9C1-E3002D2474C8}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

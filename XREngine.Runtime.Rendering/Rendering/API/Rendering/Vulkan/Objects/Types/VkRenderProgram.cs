@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
 using XREngine;
+using XREngine.Data.Colors;
 using XREngine.Data.Vectors;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
@@ -76,6 +77,7 @@ public unsafe partial class VulkanRenderer
         private readonly object _bindingLock = new();
         private readonly Dictionary<string, ProgramUniformValue> _uniformValues = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, XRTexture> _samplersByUnit = new();
+        private readonly Dictionary<string, XRTexture> _samplersByName = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, ProgramImageBinding> _imagesByUnit = new();
         private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
         private readonly HashSet<string> _computeWarnings = new(StringComparer.Ordinal);
@@ -307,6 +309,7 @@ public unsafe partial class VulkanRenderer
             {
                 _uniformValues.Clear();
                 _samplersByUnit.Clear();
+                _samplersByName.Clear();
                 _imagesByUnit.Clear();
                 _buffersByBinding.Clear();
             }
@@ -419,7 +422,11 @@ public unsafe partial class VulkanRenderer
 
             uint unit = textureUnit < 0 ? 0u : (uint)textureUnit;
             lock (_bindingLock)
+            {
                 _samplersByUnit[unit] = xrTexture;
+                if (!string.IsNullOrWhiteSpace(name))
+                    _samplersByName[name] = xrTexture;
+            }
         }
 
         private void Sampler(int location, IRenderTextureResource texture, int textureUnit)
@@ -514,6 +521,78 @@ public unsafe partial class VulkanRenderer
                     continue;
 
                 _stageLookup[mask] = shader;
+            }
+        }
+
+        /// <summary>
+        /// True when the vertex stage exposes at least one reflected input attribute
+        /// location, enabling semantic (by-name) vertex buffer binding.
+        /// </summary>
+        internal bool HasReflectedVertexInputs
+            => _stageLookup.TryGetValue(EProgramStageMask.VertexShaderBit, out VkShader? vertexShader)
+               && vertexShader.VertexInputLocations.Count > 0;
+
+        /// <summary>
+        /// Resolves the vertex input attribute location declared in the vertex shader
+        /// for the given attribute name. Mirrors the OpenGL by-name binding path.
+        /// </summary>
+        internal bool TryGetVertexInputLocation(string attributeName, out uint location)
+        {
+            location = 0;
+            if (string.IsNullOrEmpty(attributeName))
+                return false;
+
+            return _stageLookup.TryGetValue(EProgramStageMask.VertexShaderBit, out VkShader? vertexShader)
+                && vertexShader.VertexInputLocations.TryGetValue(attributeName, out location);
+        }
+
+        /// <summary>
+        /// Resolves a program-bound sampler texture by its shader uniform name. These are
+        /// registered via <see cref="Sampler(string, IRenderTextureResource, int)"/> and
+        /// cover both material textures and engine/FBO blit bindings.
+        /// </summary>
+        internal bool TryGetSamplerTexture(string samplerName, out XRTexture? texture)
+        {
+            texture = null;
+            if (string.IsNullOrEmpty(samplerName))
+                return false;
+
+            lock (_bindingLock)
+            {
+                if (_samplersByName.TryGetValue(samplerName, out XRTexture? found))
+                {
+                    texture = found;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Folds the program-bound named samplers into a descriptor resource fingerprint so
+        /// descriptor sets are rewritten when an FBO/engine sampler binding changes.
+        /// </summary>
+        internal void AddSamplerResourceFingerprint(ref HashCode hash)
+        {
+            lock (_bindingLock)
+            {
+                hash.Add(_samplersByName.Count);
+                foreach (KeyValuePair<string, XRTexture> pair in _samplersByName)
+                {
+                    hash.Add(pair.Key);
+                    XRTexture? texture = pair.Value;
+                    hash.Add(texture?.GetHashCode() ?? 0);
+                    if (texture is not null && Renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
+                    {
+                        hash.Add(source.DescriptorView.Handle);
+                        hash.Add(source.DescriptorSampler.Handle);
+                    }
+                    else
+                    {
+                        hash.Add(0UL);
+                    }
+                }
             }
         }
 
@@ -1787,11 +1866,41 @@ public unsafe partial class VulkanRenderer
                         Unsafe.WriteUnaligned(ref start, new Vector4(v3, 0f));
                         return true;
                     }
+                    if (value is Vector4 v3From4)
+                    {
+                        Unsafe.WriteUnaligned(ref start, v3From4);
+                        return true;
+                    }
+                    if (value is ColorF3 c3)
+                    {
+                        Unsafe.WriteUnaligned(ref start, new Vector4(c3.R, c3.G, c3.B, 0f));
+                        return true;
+                    }
+                    if (value is ColorF4 c3From4)
+                    {
+                        Unsafe.WriteUnaligned(ref start, new Vector4(c3From4.R, c3From4.G, c3From4.B, 0f));
+                        return true;
+                    }
                     break;
                 case EShaderVarType._vec4:
                     if (value is Vector4 v4)
                     {
                         Unsafe.WriteUnaligned(ref start, v4);
+                        return true;
+                    }
+                    if (value is Vector3 v4From3)
+                    {
+                        Unsafe.WriteUnaligned(ref start, new Vector4(v4From3, 0f));
+                        return true;
+                    }
+                    if (value is ColorF4 c4)
+                    {
+                        Unsafe.WriteUnaligned(ref start, new Vector4(c4.R, c4.G, c4.B, c4.A));
+                        return true;
+                    }
+                    if (value is ColorF3 c4From3)
+                    {
+                        Unsafe.WriteUnaligned(ref start, new Vector4(c4From3.R, c4From3.G, c4From3.B, 0f));
                         return true;
                     }
                     break;

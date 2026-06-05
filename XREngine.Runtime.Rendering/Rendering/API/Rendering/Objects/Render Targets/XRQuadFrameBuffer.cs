@@ -1,3 +1,4 @@
+using System.IO;
 using System.Numerics;
 using XREngine.Data.Rendering;
 
@@ -59,6 +60,11 @@ namespace XREngine.Rendering
             : base(mat, deriveRenderTargetsFromMaterial)
         {
             mat.RenderOptions.CullMode = ECullMode.None;
+            if (mat.VertexShaders.Count == 0)
+                mat.SetShader(
+                    EShaderType.Vertex,
+                    XRShader.EngineShader(Path.Combine("Scene3D", "FullscreenTri.vs"), EShaderType.Vertex));
+
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
             FullScreenMesh.Name = $"FullscreenQuad:{mat.Name ?? "Material"}";
             FullScreenMesh.GenerateAsync = false;

@@ -6,6 +6,8 @@ XRENGINE's networking layer owns the low-latency realtime data plane. It does no
 
 Current runtime support is direct client/server UDP. Peer-to-peer networking with dynamic connection-host switching is a planned feature tracked in [Peer-To-Peer Host Switching Implementation](../work/design/peer-to-peer-host-switching.md).
 
+For local-dev orchestration and tests, `XREngine.ControlPlane` provides an in-process control-plane DLL that can create/list/join instances, issue opaque session tokens, track basic host capacity, verify local world package manifests, and generate server/client launch environment variables. See [XRENGINE Control Plane](control-plane.md).
+
 ## Runtime Roles
 
 `GameStartupSettings.NetworkingType` selects the runtime role:
@@ -58,6 +60,8 @@ The handoff maps to:
 - `worldAsset` -> `GameStartupSettings.ExpectedMultiplayerWorldAsset`
 
 Session tokens are opaque to XRENGINE. The engine can compare a supplied token with the server's configured value, but it does not mint, refresh, or authorize tokens.
+
+`XREngine.ControlPlane` can mint local-dev session tokens and serialize this handoff payload for editor/server smoke paths. Production token policy still belongs to the external service layer.
 
 ## World Compatibility
 

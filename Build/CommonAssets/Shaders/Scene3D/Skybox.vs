@@ -31,6 +31,5 @@ void main()
     vec2 clipXY = Position.xy;
     FragClipPos = Position;
     FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));
-    // Output at maximum depth (z=1) so skybox is behind everything
     gl_Position = vec4(clipXY, 1.0, 1.0);
 }

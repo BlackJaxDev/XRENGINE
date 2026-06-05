@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using XREngine.Core.Attributes;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -249,6 +250,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             var builder = context.GetOrCreateSyntheticPass($"QuadBlit_{SourceQuadFBOName}_to_{destination}");
             builder.WithStage(ERenderGraphPassStage.Graphics);
             builder.SampleTexture(MakeFboColorResource(SourceQuadFBOName));
+
+            if (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) &&
+                string.Equals(destination, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal))
+            {
+                builder.DependsOn((int)EDefaultRenderPass.DeferredDecals);
+                context.Metadata
+                    .ForPass((int)EDefaultRenderPass.Background, EDefaultRenderPass.Background.ToString(), ERenderGraphPassStage.Graphics)
+                    .DependsOn(builder.PassIndex);
+            }
 
             ERenderPassLoadOp colorLoad = ERenderPassLoadOp.Load;
             ERenderPassStoreOp colorStore = ERenderPassStoreOp.Store;

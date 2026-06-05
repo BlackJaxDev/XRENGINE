@@ -2691,24 +2691,32 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (!EditorImGuiUI.IsHierarchyWindowKeyboardFocused)
             base.YawRight(pressed);
+        else
+            LogKeyboardInput(nameof(YawRight), pressed, allowed: false);
     }
 
     protected override void YawLeft(bool pressed)
     {
         if (!EditorImGuiUI.IsHierarchyWindowKeyboardFocused)
             base.YawLeft(pressed);
+        else
+            LogKeyboardInput(nameof(YawLeft), pressed, allowed: false);
     }
 
     protected override void PitchUp(bool pressed)
     {
         if (!EditorImGuiUI.IsHierarchyWindowKeyboardFocused)
             base.PitchUp(pressed);
+        else
+            LogKeyboardInput(nameof(PitchUp), pressed, allowed: false);
     }
 
     protected override void PitchDown(bool pressed)
     {
         if (!EditorImGuiUI.IsHierarchyWindowKeyboardFocused)
             base.PitchDown(pressed);
+        else
+            LogKeyboardInput(nameof(PitchDown), pressed, allowed: false);
     }
 
     private void SetTransformModeParent() => TransformTool3D.TransformSpace = ETransformSpace.Parent;

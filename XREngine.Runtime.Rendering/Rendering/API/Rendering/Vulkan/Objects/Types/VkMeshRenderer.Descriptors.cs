@@ -210,6 +210,11 @@ public unsafe partial class VulkanRenderer
 				}
 			}
 
+			// Program-bound named samplers (material textures, engine/FBO blit bindings)
+			// participate in image descriptor resolution, so changes to them must rewrite
+			// the descriptor sets.
+			_program?.AddSamplerResourceFingerprint(ref hash);
+
 			return unchecked((ulong)hash.ToHashCode());
 		}
 
@@ -691,9 +696,20 @@ public unsafe partial class VulkanRenderer
 			imageInfo = default;
 			XRTexture? texture = null;
 
-			if (material.Textures is { Count: > 0 })
+			bool bindless = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding);
+
+			// Prefer resolving by the shader sampler uniform name. This mirrors OpenGL
+			// (which binds samplers by name) and covers program-bound textures such as
+			// FBO/engine blit samplers that are not present in material.Textures.
+			if (!bindless && _program is not null && !string.IsNullOrWhiteSpace(binding.Name) &&
+				_program.TryGetSamplerTexture(binding.Name, out XRTexture? namedTexture))
 			{
-				int idx = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding)
+				texture = namedTexture;
+			}
+
+			if (texture is null && material.Textures is { Count: > 0 })
+			{
+				int idx = bindless
 					? arrayIndex
 					: (int)binding.Binding + arrayIndex;
 				if (idx >= 0 && idx < material.Textures.Count)
@@ -707,6 +723,7 @@ public unsafe partial class VulkanRenderer
 				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
 				if (imageInfo.ImageView.Handle != 0)
 				{
+					LogPostProcessDescriptor(binding, arrayIndex, null, imageInfo, "placeholder-missing-texture");
 					RecordDescriptorFallback(binding);
 					return true;
 				}
@@ -741,21 +758,25 @@ public unsafe partial class VulkanRenderer
 			if (IsCombinedDepthStencilFormat(source.DescriptorFormat) &&
 				(source.DescriptorAspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
 			{
-				// Use a depth-only view for combined depth-stencil descriptors.
-				ImageView depthOnlyView = source.GetDepthOnlyDescriptorView();
-				if (depthOnlyView.Handle != 0)
+				bool stencilOnly = RequiresStencilOnlyDescriptor(binding);
+				ImageView aspectView = stencilOnly
+					? source.GetStencilOnlyDescriptorView()
+					: source.GetDepthOnlyDescriptorView();
+				string aspectLabel = stencilOnly ? "stencil-only" : "depth-only";
+				if (aspectView.Handle != 0)
 				{
 					imageInfo = new DescriptorImageInfo
 					{
 						ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
-						ImageView = depthOnlyView,
+						ImageView = aspectView,
 						Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
 					};
+					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}/{aspectLabel}");
 					return true;
 				}
 
-				WarnOnce($"Texture for descriptor binding '{binding.Name}' uses a combined depth-stencil format and no depth-only view is available.");
-				RecordDescriptorFailure(binding, "combined depth-stencil texture has no depth-only view");
+				WarnOnce($"Texture for descriptor binding '{binding.Name}' uses a combined depth-stencil format and no {aspectLabel} view is available.");
+				RecordDescriptorFailure(binding, $"combined depth-stencil texture has no {aspectLabel} view");
 				return false;
 			}
 
@@ -766,6 +787,7 @@ public unsafe partial class VulkanRenderer
 				if (imageInfo.ImageView.Handle != 0)
 				{
 					WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'. Using placeholder.");
+					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, "placeholder-view-type");
 					RecordDescriptorFallback(binding);
 					return true;
 				}
@@ -781,8 +803,51 @@ public unsafe partial class VulkanRenderer
 				ImageView = descriptorView,
 				Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
 			};
+			LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
 			return imageInfo.ImageView.Handle != 0;
 		}
+
+		private void LogPostProcessDescriptor(
+			DescriptorBindingInfo binding,
+			int arrayIndex,
+			XRTexture? texture,
+			DescriptorImageInfo imageInfo,
+			string detail)
+		{
+			if (!RenderDiagnosticsFlags.DiagPostProcess || !IsPostProcessSampler(binding.Name))
+				return;
+
+			string textureLabel = texture is null
+				? "<null>"
+				: $"{(string.IsNullOrWhiteSpace(texture.Name) ? texture.GetType().Name : texture.Name)}#{texture.GetHashCode():X8}";
+
+			Debug.VulkanEvery(
+				$"PostProcess.Descriptor.{GetHashCode()}.{binding.Name}.{binding.Binding}.{arrayIndex}",
+				TimeSpan.FromSeconds(1),
+				"[PostProcessDiag] Descriptor name={0} set={1} binding={2} index={3} type={4} texture={5} layout={6} view=0x{7:X} sampler=0x{8:X} detail={9}",
+				binding.Name,
+				binding.Set,
+				binding.Binding,
+				arrayIndex,
+				binding.DescriptorType,
+				textureLabel,
+				imageInfo.ImageLayout,
+				imageInfo.ImageView.Handle,
+				imageInfo.Sampler.Handle,
+				detail);
+		}
+
+		private static bool IsPostProcessSampler(string? name)
+			=> string.Equals(name, "HDRSceneTex", StringComparison.Ordinal)
+			|| string.Equals(name, "BloomBlurTexture", StringComparison.Ordinal)
+			|| string.Equals(name, "DepthView", StringComparison.Ordinal)
+			|| string.Equals(name, "StencilView", StringComparison.Ordinal)
+			|| string.Equals(name, "AutoExposureTex", StringComparison.Ordinal)
+			|| string.Equals(name, "AtmosphereColor", StringComparison.Ordinal)
+			|| string.Equals(name, "VolumetricFogColor", StringComparison.Ordinal);
+
+		private static bool RequiresStencilOnlyDescriptor(DescriptorBindingInfo binding)
+			=> binding.Name?.Contains("Stencil", StringComparison.OrdinalIgnoreCase) == true;
 
 		private ImageView ResolveDescriptorView(DescriptorBindingInfo binding, IVkImageDescriptorSource source)
 		{

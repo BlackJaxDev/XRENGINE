@@ -49,6 +49,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Shader and snippet optimization | Active | [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md) | Active shader performance and preprocessing tracker. |
 | Resolved shader source optimization | Active | [todo/rendering/resolved-shader-source-optimization-todo.md](todo/rendering/resolved-shader-source-optimization-todo.md) | Architectural restructuring to resolve all shader includes/snippets first, then prune compiler-facing source generically for every shader family. |
 | OpenGL shader program deduplication | Active | [todo/rendering/opengl-shader-program-deduplication-todo.md](todo/rendering/opengl-shader-program-deduplication-todo.md) | Tracker for reducing duplicate logical shader-program wrappers and adding grouped Shader Program Links diagnostics. |
+| Vulkan wrapper parity | Active | [todo/rendering/vulkan-wrapper-parity/README.md](todo/rendering/vulkan-wrapper-parity/README.md) | Per-wrapper parity trackers for Vulkan mesh renderer, mesh ownership, material, shader, texture, and data buffer behavior against OpenGL. |
 | GPU softbody rigging | Active | [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
 | Voxel cone tracing / VXAO | Active | [todo/voxel-cone-tracing-and-vxao-implementation-todo.md](todo/voxel-cone-tracing-and-vxao-implementation-todo.md) | Shared-voxel roadmap item. |
 | DDGI integration | Active | [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md) | Execution tracker derived from the [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md) roadmap. |
@@ -95,6 +96,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md](todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md)
 - [todo/rendering/resolved-shader-source-optimization-todo.md](todo/rendering/resolved-shader-source-optimization-todo.md)
 - [todo/rendering/optimization/rendering-profiler-and-benchmarking-todo.md](todo/rendering/optimization/rendering-profiler-and-benchmarking-todo.md)
+- [todo/rendering/vulkan-wrapper-parity/README.md](todo/rendering/vulkan-wrapper-parity/README.md)
 - [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md)
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
 - [todo/rendering/shadows/shadow-atlas-overhaul-todo.md](todo/rendering/shadows/shadow-atlas-overhaul-todo.md)
