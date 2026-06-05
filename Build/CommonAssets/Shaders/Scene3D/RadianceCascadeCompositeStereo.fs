@@ -1,6 +1,7 @@
 #version 450 core
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "ScreenSpaceUtils"
 
 layout(location = 0) out vec4 OutColor;
 
@@ -68,7 +69,7 @@ void main()
         return;
     }
 
-    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
     vec3 gi = DepthAwareUpscale(uv, ViewIndex);
     OutColor = vec4(gi, 0.0);
 }

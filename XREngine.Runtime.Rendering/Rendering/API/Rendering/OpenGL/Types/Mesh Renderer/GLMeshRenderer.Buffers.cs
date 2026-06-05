@@ -514,8 +514,11 @@ namespace XREngine.Rendering.OpenGL
                 Dbg(mesh is null ? "BindBuffers: binding renderer buffers (mesh=null)" : "BindBuffers: binding attribute & index buffers", "Buffers");
 
                 // Track whether at least one vertex attribute was successfully bound.
-                // If none bind (e.g. wrong program or OOM-corrupted state), we must not mark BuffersBound.
-                int attributesBound = 0;
+                // If none bind (e.g. wrong program or OOM-corrupted state), we must not mark BuffersBound
+                // unless the vertex shader intentionally derives positions from gl_VertexID.
+                bool usesVertexIdOnlyVertexInput = program.UsesVertexIdOnlyVertexInput();
+                int arrayBuffersSeen = 0;
+                int vertexAttributesBound = 0;
                 using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.BindAttributes", ProfilerScopeKind.ConditionalLoop))
                 {
                     foreach (GLDataBuffer buffer in _bufferCache.Values)
@@ -523,10 +526,19 @@ namespace XREngine.Rendering.OpenGL
                         using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.Buffer", ProfilerScopeKind.ConditionalLoop))
                         {
                             buffer.Generate();
-                            if (buffer.TryGetAttributeLocation(program, out _))
-                                attributesBound++;
+                            bool isArrayBuffer = buffer.Data.Target == EBufferTarget.ArrayBuffer;
+                            bool hasProgramBinding = buffer.TryGetAttributeLocation(program, out _);
+                            if (isArrayBuffer)
+                            {
+                                arrayBuffersSeen++;
+                                if (hasProgramBinding)
+                                    vertexAttributesBound++;
+                                else if (usesVertexIdOnlyVertexInput)
+                                    continue;
+                            }
+
                             buffer.BindToRenderer(program, this);
-                            if (buffer.Data.Target == EBufferTarget.ArrayBuffer)
+                            if (isArrayBuffer)
                                 RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.ArrayBufferBinds);
                             else if (buffer.Data.Target == EBufferTarget.UniformBuffer)
                                 RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.UboBinds);
@@ -536,7 +548,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                if (attributesBound == 0 && _bufferCache.Count > 0)
+                if (vertexAttributesBound == 0 && arrayBuffersSeen > 0 && !usesVertexIdOnlyVertexInput)
                 {
                     string programName = program.Data?.Name ?? program.BindingId.ToString();
                     Debug.OpenGLWarning($"[GLMeshRenderer] BindBuffers: no vertex attributes found in program '{programName}'. Skipping VAO setup to prevent rendering with corrupt state.");
@@ -544,6 +556,8 @@ namespace XREngine.Rendering.OpenGL
                     Renderer.BindMeshRenderer(null);
                     return;
                 }
+                if (vertexAttributesBound == 0 && arrayBuffersSeen > 0)
+                    Dbg("BindBuffers: program uses gl_VertexID without vertex attributes; binding index buffers only", "Buffers");
 
                 using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.BindIndexBuffers", ProfilerScopeKind.ConditionalLoop))
                 {

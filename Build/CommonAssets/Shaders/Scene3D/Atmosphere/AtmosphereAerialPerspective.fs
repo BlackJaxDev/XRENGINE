@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
@@ -63,7 +65,8 @@ void main()
   }
 
   vec3 rayDir = rayVector / rayLength;
-  float jitter = (InterleavedGradientNoise(gl_FragCoord.xy + RenderTime) - 0.5f) * Atmosphere.JitterStrength;
+  vec2 noiseCoord = XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(AtmosphereHalfDepth, 0)));
+  float jitter = (InterleavedGradientNoise(noiseCoord + RenderTime) - 0.5f) * Atmosphere.JitterStrength;
   float maxDistance = min(rayLength, Atmosphere.MaxDistance + jitter);
   vec4 atmosphere = XRENGINE_Atmosphere_ComputeScattering(CameraPosition, rayDir, maxDistance, false);
   OutColor = XRENGINE_Atmosphere_DebugOutput(CameraPosition, rayDir, maxDistance, atmosphere);

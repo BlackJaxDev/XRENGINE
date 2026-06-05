@@ -84,6 +84,9 @@ public unsafe partial class VulkanRenderer
         private Pipeline _computePipeline;
         private bool _descriptorSetsRequireUpdateAfterBind;
         private bool _descriptorSetsRequireVariableDescriptorCount;
+        private int _linkedShaderConfigVersion = -1;
+        private bool _linkedUsesVulkanClipDepthRemap;
+        private EShaderType? _linkedVulkanClipDepthRemapStage;
 
         public override VkObjectType Type => VkObjectType.Program;
         public override bool IsGenerated => IsActive;
@@ -472,8 +475,17 @@ public unsafe partial class VulkanRenderer
 
         public bool Link()
         {
-            if (IsLinked)
+            int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+            bool usesVulkanClipDepthRemap = RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap;
+            EShaderType? vulkanClipDepthRemapStage = ResolveVulkanClipDepthRemapStage();
+            if (IsLinked &&
+                _linkedShaderConfigVersion == shaderConfigVersion &&
+                _linkedUsesVulkanClipDepthRemap == usesVulkanClipDepthRemap &&
+                _linkedVulkanClipDepthRemapStage == vulkanClipDepthRemapStage)
                 return true;
+
+            if (IsLinked)
+                DestroyLayouts();
 
             if (!Renderer.IsLogicalDeviceReady)
             {
@@ -498,6 +510,10 @@ public unsafe partial class VulkanRenderer
 
             foreach (VkShader shader in _shaderCache.Values)
             {
+                shader.SetVulkanClipDepthRemapEnabled(
+                    vulkanClipDepthRemapStage.HasValue &&
+                    shader.Data.Type == vulkanClipDepthRemapStage.Value);
+                shader.EnsureCompilePolicyCurrent();
                 shader.Generate();
 
                 if (!shader.IsGenerated)
@@ -508,7 +524,38 @@ public unsafe partial class VulkanRenderer
             BuildDescriptorLayouts();
 
             IsLinked = true;
+            _linkedShaderConfigVersion = shaderConfigVersion;
+            _linkedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
+            _linkedVulkanClipDepthRemapStage = vulkanClipDepthRemapStage;
             return true;
+        }
+
+        private EShaderType? ResolveVulkanClipDepthRemapStage()
+        {
+            if (!RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap)
+                return null;
+
+            if (HasShaderStage(EShaderType.Mesh))
+                return EShaderType.Mesh;
+            if (HasShaderStage(EShaderType.Geometry))
+                return EShaderType.Geometry;
+            if (HasShaderStage(EShaderType.TessEvaluation))
+                return EShaderType.TessEvaluation;
+            if (HasShaderStage(EShaderType.Vertex))
+                return EShaderType.Vertex;
+
+            return null;
+        }
+
+        private bool HasShaderStage(EShaderType shaderType)
+        {
+            foreach (VkShader shader in _shaderCache.Values)
+            {
+                if (shader.Data.Type == shaderType)
+                    return true;
+            }
+
+            return false;
         }
 
         private void BuildStageLookup()
@@ -1793,6 +1840,12 @@ public unsafe partial class VulkanRenderer
                     return true;
                 case EEngineUniform.DepthMode:
                     value = new ProgramUniformValue(EShaderVarType._int, (int)(camera?.DepthMode ?? XRCamera.EDepthMode.Normal), false);
+                    return true;
+                case EEngineUniform.ClipSpaceYDirection:
+                    value = new ProgramUniformValue(EShaderVarType._int, (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection, false);
+                    return true;
+                case EEngineUniform.ClipDepthRange:
+                    value = new ProgramUniformValue(EShaderVarType._int, (int)RuntimeEngine.Rendering.EffectiveClipDepthRange, false);
                     return true;
                 case EEngineUniform.VRMode:
                     value = new ProgramUniformValue(EShaderVarType._int, stereo ? 1 : 0, false);

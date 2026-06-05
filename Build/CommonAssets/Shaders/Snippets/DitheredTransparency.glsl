@@ -10,9 +10,22 @@
 //   ...
 //   XRENGINE_DitheredAlphaDiscard(opacity, gl_FragCoord.xy);
 
+#ifndef XRENGINE_CLIP_SPACE_Y_DIRECTION_UNIFORM
+#define XRENGINE_CLIP_SPACE_Y_DIRECTION_UNIFORM
+uniform int ClipSpaceYDirection;
+#endif
+
+vec2 XRENGINE_DitherCoord(vec2 fragCoord)
+{
+    if (ClipSpaceYDirection == 1)
+        fragCoord.y = -fragCoord.y;
+    return fragCoord;
+}
+
 // 4x4 Bayer ordered-dither threshold matrix (values in [0, 1]).
 float XRENGINE_BayerDither4x4(vec2 fragCoord)
 {
+    fragCoord = XRENGINE_DitherCoord(fragCoord);
     int x = int(fragCoord.x) & 3;
     int y = int(fragCoord.y) & 3;
 

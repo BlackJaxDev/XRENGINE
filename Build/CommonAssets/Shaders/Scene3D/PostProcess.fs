@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
@@ -503,7 +505,8 @@ void main()
     // wash out the image.
     //
     // Fix subtle banding by applying fine noise in linear space.
-    sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, interleavedGradientNoise(gl_FragCoord.xy));
+    vec2 noiseCoord = XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(HDRSceneTex, 0)));
+    sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, interleavedGradientNoise(noiseCoord));
   }
 
 	OutColor = vec4(sceneColor, 1.0f);

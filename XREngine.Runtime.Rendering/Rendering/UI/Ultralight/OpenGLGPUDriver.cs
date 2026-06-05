@@ -504,6 +504,8 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
             _loggedFirstCommandList = true;
         }
 
+        using var clipScope = XREngine.Rendering.AbstractRenderer.Current?.PushUiClipSpacePolicy();
+
         _gl.GetInteger(GetPName.CurrentProgram, (int*)&glLastProgram);
         glProgram = glLastProgram;
         _gl.Disable(EnableCap.ScissorTest);
@@ -623,21 +625,26 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
                 if (rebindFramebuffer)
                     _gl.BindFramebuffer(FramebufferTarget.Framebuffer, currentFramebuffer);
 
-                if (currentScissors is not null != gpuState.EnableScissor)
+                if (gpuState.EnableScissor)
                 {
-                    if (gpuState.EnableScissor)
+                    if (currentScissors is null)
+                        _gl.Enable(EnableCap.ScissorTest);
+
+                    if (currentScissors is null || !currentScissors.Value.Equals(gpuState.ScissorRect))
                     {
-                        if (currentScissors is null) _gl.Enable(EnableCap.ScissorTest);
-                        _gl.Scissor(gpuState.ScissorRect.Left, gpuState.ScissorRect.Top,
-                            (uint)(gpuState.ScissorRect.Right - gpuState.ScissorRect.Left),
-                            (uint)(gpuState.ScissorRect.Bottom - gpuState.ScissorRect.Top));
-                        currentScissors = gpuState.ScissorRect;
+                        int scissorWidth = Math.Max(0, gpuState.ScissorRect.Right - gpuState.ScissorRect.Left);
+                        int scissorHeight = Math.Max(0, gpuState.ScissorRect.Bottom - gpuState.ScissorRect.Top);
+                        int viewportHeight = gpuState.ViewportHeight > int.MaxValue ? int.MaxValue : (int)gpuState.ViewportHeight;
+                        int scissorY = Math.Max(0, viewportHeight - gpuState.ScissorRect.Bottom);
+                        _gl.Scissor(gpuState.ScissorRect.Left, scissorY, (uint)scissorWidth, (uint)scissorHeight);
                     }
-                    else
-                    {
-                        _gl.Disable(EnableCap.ScissorTest);
-                        currentScissors = null;
-                    }
+
+                    currentScissors = gpuState.ScissorRect;
+                }
+                else if (currentScissors is not null)
+                {
+                    _gl.Disable(EnableCap.ScissorTest);
+                    currentScissors = null;
                 }
 
                 if (currentBlend != gpuState.EnableBlend)

@@ -77,6 +77,8 @@ namespace XREngine.Rendering.OpenGL
             private readonly ConcurrentBag<string> _failedAttributes = [];
             private readonly ConcurrentDictionary<string, byte> _failedUniforms = new();
             private bool _explicitAttributeLocationsResolved;
+            private bool _vertexIdOnlyVertexInputResolved;
+            private bool _usesVertexIdOnlyVertexInput;
 
             private readonly record struct UniformInfo(GLEnum Type, int Size);
             private readonly record struct SamplerUniformInfo(string Name, GLEnum Type);
@@ -230,6 +232,16 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            internal bool UsesVertexIdOnlyVertexInput()
+            {
+                if (_vertexIdOnlyVertexInputResolved)
+                    return _usesVertexIdOnlyVertexInput;
+
+                _usesVertexIdOnlyVertexInput = GLShaderAttributeLayoutResolver.UsesVertexIdWithoutVertexInputs(Data.Shaders);
+                _vertexIdOnlyVertexInputResolved = true;
+                return _usesVertexIdOnlyVertexInput;
+            }
+
             public bool LinkReady => Data.LinkReady;
 
             private void Reset()
@@ -276,6 +288,8 @@ namespace XREngine.Rendering.OpenGL
                 _samplerBindings = 0;
                 ResetEngineUniformBindingState();
                 _explicitAttributeLocationsResolved = false;
+                _vertexIdOnlyVertexInputResolved = false;
+                _usesVertexIdOnlyVertexInput = false;
             }
 
             public override void Destroy()

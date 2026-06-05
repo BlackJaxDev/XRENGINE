@@ -148,6 +148,7 @@ public partial class OpenGLRenderer
             RuntimeEngine.Rendering.State.HasVulkanCopyMemoryIndirect = false;
             RuntimeEngine.Rendering.State.HasVulkanRtxIo = false;
             RuntimeEngine.Rendering.State.HasVulkanMultiView = false;
+            RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = false;
         }
 
         RuntimeEngine.Rendering.RefreshVulkanUpscaleBridgeCapabilitySnapshot(this);
@@ -165,7 +166,7 @@ public partial class OpenGLRenderer
         // Dithering is enabled by default in OpenGL but isn't meaningful for integer attachments.
         api.Disable(EnableCap.Dither);
 
-        api.ClipControl(GLEnum.LowerLeft, GLEnum.NegativeOneToOne);
+        ApplyClipSpacePolicy(api);
 
         // Enable framebuffer-sRGB: only sRGB-formatted color attachments
         // (e.g. AlbedoOpacityTexture as Srgb8Alpha8) get linear<->sRGB

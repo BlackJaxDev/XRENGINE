@@ -91,6 +91,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>
         OVRMultiView = api.TryGetExtension(out OvrMultiview ext7) ? ext7 : null;
         RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = OVRMultiView is not null;
         RuntimeEngine.Rendering.State.HasVulkanMultiView = false;
+        RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = false;
         NVMeshShader = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVMeshShader ext8) ? ext8 : null;
         NVGpuShader5 = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVGpuShader5 ext9) ? ext9 : null;
         NVViewportArray = ESApi.TryGetExtension(out NVViewportArray ext10) ? ext10 : null;

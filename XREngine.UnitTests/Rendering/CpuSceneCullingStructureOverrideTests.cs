@@ -3,6 +3,7 @@ using Shouldly;
 using System;
 using XREngine.Data.Core;
 using XREngine.Data.Trees;
+using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Scene;
 
@@ -22,6 +23,7 @@ public sealed class CpuSceneCullingStructureOverrideTests
         try
         {
             Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", null);
+            EffectiveSettingsEnvOverrides.ReloadForTests();
             Engine.GameSettings = new GameStartupSettings();
             Engine.Rendering.Settings.CpuSceneCullingStructure = ECpuSceneCullingStructure.Octree;
 
@@ -32,11 +34,13 @@ public sealed class CpuSceneCullingStructureOverrideTests
             Engine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Bvh);
 
             Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", "Octree");
+            EffectiveSettingsEnvOverrides.ReloadForTests();
             Engine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
         }
         finally
         {
             Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", originalEnv);
+            EffectiveSettingsEnvOverrides.ReloadForTests();
             Engine.Rendering.Settings.CpuSceneCullingStructure = originalStructure;
             Engine.GameSettings = originalGameSettings;
         }

@@ -351,6 +351,11 @@ namespace XREngine
                 public static bool HasVulkanRtxIo { get; internal set; }
 
                 /// <summary>
+                /// True when Vulkan can use VK_EXT_depth_clip_control to accept OpenGL-style -1..1 clip depth natively.
+                /// </summary>
+                public static bool HasVulkanDepthClipControl { get; internal set; }
+
+                /// <summary>
                 /// If true, GL_ARB_parallel_shader_compile or GL_KHR_parallel_shader_compile is available.
                 /// Shader compilation and program linking can be non-blocking when the OpenGL renderer
                 /// selects the driver-parallel link strategy.

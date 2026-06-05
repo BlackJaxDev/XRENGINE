@@ -238,10 +238,18 @@ public partial class OpenGLRenderer
     }
 
     public override void SetRenderArea(BoundingRectangle region)
-        => Api.Viewport(region.X, region.Y, (uint)region.Width, (uint)region.Height);
+    {
+        ApplyClipSpacePolicy();
+        region.CheckProperDimensions();
+        Api.Viewport(region.X, region.Y, (uint)region.Width, (uint)region.Height);
+    }
 
     public override void CropRenderArea(BoundingRectangle region)
-        => Api.Scissor(region.X, region.Y, (uint)region.Width, (uint)region.Height);
+    {
+        ApplyClipSpacePolicy();
+        region.CheckProperDimensions();
+        Api.Scissor(region.X, region.Y, (uint)region.Width, (uint)region.Height);
+    }
 
     public override bool SetIndexedViewportScissors(
         ReadOnlySpan<BoundingRectangle> viewports,
@@ -255,10 +263,13 @@ public partial class OpenGLRenderer
             return false;
         }
 
+        ApplyClipSpacePolicy();
         for (int i = 0; i < count; i++)
         {
             BoundingRectangle viewport = viewports[i];
             BoundingRectangle scissor = scissors[i];
+            viewport.CheckProperDimensions();
+            scissor.CheckProperDimensions();
             Api.ViewportIndexed(
                 (uint)i,
                 viewport.X,
@@ -281,12 +292,14 @@ public partial class OpenGLRenderer
         if (count <= 1)
             return;
 
+        ApplyClipSpacePolicy();
         BoundingRectangle region = RuntimeEngine.Rendering.State.RenderArea;
         if (region.Width <= 0 || region.Height <= 0)
             region = new BoundingRectangle(0, 0, Window.Size.X, Window.Size.Y);
 
         for (int i = 1; i < Math.Min(count, RuntimeEngine.Rendering.State.MaxOpenGLViewports); i++)
         {
+            region.CheckProperDimensions();
             Api.ViewportIndexed((uint)i, region.X, region.Y, region.Width, region.Height);
             Api.ScissorIndexed((uint)i, region.X, region.Y, (uint)region.Width, (uint)region.Height);
         }

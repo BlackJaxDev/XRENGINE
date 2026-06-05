@@ -1,6 +1,7 @@
 #version 450 core
 
 #pragma snippet "HashColor"
+#pragma snippet "ScreenSpaceUtils"
 
 layout(location = 0) out vec4 OutColor;
 
@@ -16,7 +17,7 @@ void main()
         return;
     }
 
-    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
     uint id = texture(TransformId, uv).r;
 
     if (id == 0u)

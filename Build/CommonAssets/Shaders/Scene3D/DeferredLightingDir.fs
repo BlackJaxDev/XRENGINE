@@ -881,7 +881,7 @@ in float viewDepth)
 }
 void main()
 {
-		vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;
+		vec2 fragCoordLocal = XRENGINE_ScreenCoordLocal(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight));
 		vec2 uv = clamp(fragCoordLocal / vec2(ScreenWidth, ScreenHeight), vec2(0.0f), vec2(1.0f));
 #ifdef XRENGINE_MSAA_DEFERRED
 		ivec2 coord = ivec2(floor(fragCoordLocal));

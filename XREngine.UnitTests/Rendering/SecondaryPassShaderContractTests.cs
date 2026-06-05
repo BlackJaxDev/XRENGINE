@@ -16,8 +16,11 @@ public sealed class SecondaryPassShaderContractTests
         source.ShouldContain("const int MaxBlurTaps = 12;");
         source.ShouldContain("const vec2 BlurTapOffsets[MaxBlurTaps] = vec2[](");
         source.ShouldContain("const float BlurTapWeights[MaxBlurTaps] = float[](");
-        source.ShouldContain("int activeTapCount = clamp(SampleCount, 0, MaxBlurTaps);");
-        source.ShouldContain("vec2 blurStep = texelSize * max(BlurStrength, 0.0);");
+        source.ShouldContain("#pragma snippet \"ScreenSpaceUtils\"");
+        source.ShouldContain("vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));");
+        source.ShouldContain("int requested = clamp(SampleCount, 0, MaxBlurTaps);");
+        source.ShouldContain("int activeTapCount = requested >= 12 ? 12 : (requested >= 8 ? 8 : (requested >= 4 ? 4 : 0));");
+        source.ShouldContain("vec2 blurStep = texelSize * BlurStrength;");
         source.ShouldNotContain("gaussian(");
         source.ShouldNotContain("sqrt(");
         source.ShouldNotContain("cos(");
@@ -25,13 +28,17 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
-    public void FullscreenTri_GeneratesClipSpaceWithoutVertexAttributes()
+    public void FullscreenTri_UsesAttributeLessVertexIdPath()
     {
         string source = LoadShaderSource(Path.Combine("Scene3D", "FullscreenTri.vs"));
 
-        source.ShouldContain("gl_VertexIndex");
-        source.ShouldContain("layout(location = 0) out vec3 FragPos;");
+        source.ShouldContain("gl_VertexID");
+        source.ShouldNotContain("gl_VertexIndex");
+        source.ShouldNotContain("#ifdef XRENGINE_VULKAN");
+        source.ShouldNotContain("layout(location = 0) in");
         source.ShouldNotContain("in vec3 Position");
+        source.ShouldNotContain("Position.xy");
+        source.ShouldContain("layout(location = 0) out vec3 FragPos;");
     }
 
     [Test]
@@ -48,6 +55,207 @@ public sealed class SecondaryPassShaderContractTests
 
         source.ShouldContain("mat.VertexShaders.Count == 0");
         source.ShouldContain("FullscreenTri.vs");
+    }
+
+    [Test]
+    public void VulkanShaderFixups_RewriteOpenGlVertexIdBuiltIn()
+    {
+        string source = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "Vulkan",
+            "VulkanShaderTools.cs"));
+
+        source.ShouldContain("Replace(\"gl_VertexID\", \"gl_VertexIndex\"");
+    }
+
+    [Test]
+    public void OpenGlBindBuffers_AllowsAttributeLessVertexIdPrograms()
+    {
+        string meshRenderer = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "OpenGL",
+            "Types",
+            "Mesh Renderer",
+            "GLMeshRenderer.Buffers.cs"));
+        string renderProgram = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "OpenGL",
+            "Types",
+            "Meshes",
+            "GLRenderProgram.cs"));
+        string layoutResolver = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "OpenGL",
+            "Types",
+            "Meshes",
+            "GLShaderAttributeLayoutResolver.cs"));
+
+        meshRenderer.ShouldContain("program.UsesVertexIdOnlyVertexInput()");
+        meshRenderer.ShouldContain("vertexAttributesBound == 0 && arrayBuffersSeen > 0 && !usesVertexIdOnlyVertexInput");
+        meshRenderer.ShouldContain("else if (usesVertexIdOnlyVertexInput)");
+        meshRenderer.ShouldContain("program uses gl_VertexID without vertex attributes");
+        renderProgram.ShouldContain("internal bool UsesVertexIdOnlyVertexInput()");
+        layoutResolver.ShouldContain("UsesVertexIdWithoutVertexInputs");
+        layoutResolver.ShouldContain("\\bgl_VertexID\\b");
+        layoutResolver.ShouldContain("VertexInputDeclarationRegex");
+    }
+
+    [Test]
+    public void DeferredLightCombine_UsesScreenSpaceUvForGBufferComposite()
+    {
+        string source = LoadShaderSource(Path.Combine("Scene3D", "DeferredLightCombine.fs"));
+
+        source.ShouldContain("uniform float ScreenWidth;");
+        source.ShouldContain("uniform float ScreenHeight;");
+        source.ShouldContain("uniform vec2 ScreenOrigin;");
+        source.ShouldContain("XRENGINE_ScreenUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))");
+        source.ShouldContain("XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView)))");
+        source.ShouldNotContain("vec2 uv = FragPos.xy;");
+        source.ShouldNotContain("uv = uv * 0.5f + 0.5f;");
+    }
+
+    [Test]
+    public void ClipSpacePolicy_SynchronizesBackendStateAndDepthUtilities()
+    {
+        string uniforms = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Resources",
+            "Shaders",
+            "EEngineUniform.cs"));
+        string uniformRequirements = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Materials",
+            "Options",
+            "EUniformRequirements.cs"));
+        string openGlClipSpace = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "OpenGL",
+            "OpenGLRenderer.ClipSpace.cs"));
+        string openGlFramebuffer = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "OpenGL",
+            "OpenGLRenderer.Framebuffer.cs"));
+        string screenSpaceUiCommand = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "Pipelines",
+            "Commands",
+            "VPRC_RenderScreenSpaceUI.cs"));
+        string xrViewport = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "XRViewport.cs"));
+        string ultralightGlDriver = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "UI",
+            "Ultralight",
+            "OpenGLGPUDriver.cs"));
+        string vulkanState = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "Vulkan",
+            "VulkanRenderer.State.cs"));
+        string vulkanImGui = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "Vulkan",
+            "VulkanRenderer.ImGui.cs"));
+        string vulkanExtensions = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "Vulkan",
+            "Extensions.cs"));
+        string vulkanDepthClipControl = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "Vulkan",
+            "VulkanDepthClipControlExt.cs"));
+        string vulkanPipeline = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "Vulkan",
+            "Objects",
+            "Types",
+            "VkMeshRenderer.Pipeline.cs"));
+        string vulkanShaderTools = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "Vulkan",
+            "VulkanShaderTools.cs"));
+        string depthUtils = LoadShaderSource(Path.Combine("Snippets", "DepthUtils.glsl"));
+        string plan = ReadWorkspaceFile(Path.Combine(
+            "docs",
+            "architecture",
+            "rendering",
+            "vulkan-default-pipeline-issue-plan.md"));
+
+        uniforms.ShouldContain("ClipSpaceYDirection");
+        uniforms.ShouldContain("ClipDepthRange");
+        uniformRequirements.ShouldContain("ClipSpacePolicy = 64");
+        uniformRequirements.ShouldContain("[nameof(EEngineUniform.ClipSpaceYDirection)] = EUniformRequirements.ClipSpacePolicy");
+        openGlClipSpace.ShouldContain("api.ClipControl(ToGLClipOrigin(yDirection), ToGLClipDepthRange(depthRange));");
+        vulkanState.ShouldContain("ClipDepthRange=NegativeOneToOne was requested");
+        vulkanState.ShouldContain("remapping vertex shader gl_Position.z");
+        vulkanState.ShouldContain("Height = -(float)extent.Height");
+        vulkanState.ShouldContain("ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown");
+        vulkanExtensions.ShouldContain("VulkanDepthClipControlExt.ExtensionName");
+        vulkanDepthClipControl.ShouldContain("PhysicalDeviceDepthClipControlFeaturesEXTNative");
+        vulkanDepthClipControl.ShouldContain("PipelineViewportDepthClipControlCreateInfoEXTNative");
+        vulkanPipeline.ShouldContain("viewportState.PNext = &depthClipControlInfo;");
+        vulkanShaderTools.ShouldContain("XRENGINE_ApplyVulkanClipDepthRemap");
+        vulkanShaderTools.ShouldContain("gl_Position.z = gl_Position.z * 0.5 + gl_Position.w * 0.5;");
+        depthUtils.ShouldContain("uniform int ClipDepthRange;");
+        depthUtils.ShouldContain("uniform int ClipSpaceYDirection;");
+        depthUtils.ShouldContain("float XRENGINE_DepthToClipZ(float depth)");
+        depthUtils.ShouldContain("vec2 XRENGINE_ScreenCoordLocal");
+        depthUtils.ShouldContain("ClipDepthRange == 1 ? depth * 2.0 - 1.0 : depth");
+        openGlClipSpace.ShouldContain("PushUiClipSpacePolicy");
+        openGlClipSpace.ShouldContain("ReapplyActiveOpenGLRenderAreaState");
+        openGlFramebuffer.ShouldContain("Api.Viewport(region.X, region.Y, (uint)region.Width, (uint)region.Height);");
+        openGlFramebuffer.ShouldContain("Api.Scissor(region.X, region.Y, (uint)region.Width, (uint)region.Height);");
+        openGlFramebuffer.ShouldNotContain("ConvertEngineRectangleToOpenGLClipOrigin");
+        screenSpaceUiCommand.ShouldContain("PushUiClipSpacePolicy");
+        xrViewport.ShouldContain("PushUiClipSpacePolicy");
+        ultralightGlDriver.ShouldContain("viewportHeight - gpuState.ScissorRect.Bottom");
+        vulkanImGui.ShouldContain("Viewport imguiViewport = CreateImGuiViewport(fbWidth, fbHeight);");
+        vulkanImGui.ShouldContain("Api.CmdSetViewport(commandBuffer, 0, 1, &imguiViewport);");
+        vulkanImGui.ShouldContain("private static Viewport CreateImGuiViewport(uint framebufferWidth, uint framebufferHeight)");
+        vulkanImGui.ShouldContain("Height = framebufferHeight");
+        vulkanShaderTools.ShouldContain("ApplyVulkanClipDepthRemapBeforeGeometryEmit");
+        vulkanShaderTools.ShouldContain("ApplyVulkanClipDepthRemapToMeshPositionAssignments");
+        plan.ShouldContain("VK_EXT_depth_clip_control");
+        plan.ShouldContain("shader-position remap");
     }
 
     [Test]

@@ -437,7 +437,7 @@ float SamplePointAtlasCubeVogel(vec3 shadowDir, float receiverDepth, float bias,
 	vec3 bitangent;
 	XRENGINE_BuildOrthonormalBasis(baseDir, tangent, bitangent);
 	float radius = max(sampleRadius, 0.000001f);
-	float rotation = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy) * XRENGINE_ShadowPi * 2.0f;
+	float rotation = XRENGINE_InterleavedGradientNoise(XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))) * XRENGINE_ShadowPi * 2.0f;
 	float lit = 0.0f;
 
 	for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
@@ -463,7 +463,7 @@ float BlockerSearchPointAtlasCube(vec3 shadowDir, float receiverDepth, float sam
 	vec3 bitangent;
 	XRENGINE_BuildOrthonormalBasis(baseDir, tangent, bitangent);
 	float radius = max(sampleRadius, 0.000001f);
-	float rotation = XRENGINE_InterleavedGradientNoise(gl_FragCoord.xy) * XRENGINE_ShadowPi * 2.0f;
+	float rotation = XRENGINE_InterleavedGradientNoise(XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))) * XRENGINE_ShadowPi * 2.0f;
 
 	for (int i = 0; i < XRENGINE_MaxVogelShadowTaps; ++i)
 	{
@@ -889,7 +889,7 @@ in vec3 rms)
 }
 void main()
 {
-    vec2 fragCoordLocal = gl_FragCoord.xy - ScreenOrigin;
+    vec2 fragCoordLocal = XRENGINE_ScreenCoordLocal(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight));
     vec2 uv = clamp(fragCoordLocal / vec2(ScreenWidth, ScreenHeight), vec2(0.0f), vec2(1.0f));
 #ifdef XRENGINE_MSAA_DEFERRED
 	ivec2 coord = ivec2(floor(fragCoordLocal));

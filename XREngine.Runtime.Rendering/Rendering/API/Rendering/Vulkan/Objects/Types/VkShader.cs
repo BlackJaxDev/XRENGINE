@@ -23,6 +23,9 @@ public unsafe partial class VulkanRenderer
         private AutoUniformBlockInfo? _autoUniformBlock;
         private string? _rewrittenSource;
         private Dictionary<string, uint>? _vertexInputLocations;
+        private int _compiledShaderConfigVersion = -1;
+        private bool _compiledUsesVulkanClipDepthRemap;
+        private bool? _requestedVulkanClipDepthRemap;
 
         /// <summary>
         /// Matches a vertex shader input attribute declaration and captures its explicit
@@ -61,10 +64,17 @@ public unsafe partial class VulkanRenderer
         {
             DestroyShaderResources();
             _vertexInputLocations = null;
+            int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+            bool usesVulkanClipDepthRemap = UsesVulkanClipDepthRemap();
 
             try
             {
-                byte[] spirv = VulkanShaderCompiler.Compile(Data, out _entryPoint, out _autoUniformBlock, out string? rewrittenSource);
+                byte[] spirv = VulkanShaderCompiler.Compile(
+                    Data,
+                    usesVulkanClipDepthRemap,
+                    out _entryPoint,
+                    out _autoUniformBlock,
+                    out string? rewrittenSource);
                 _rewrittenSource = rewrittenSource;
 
                 StageFlags = ToVulkan(Data.Type);
@@ -91,6 +101,9 @@ public unsafe partial class VulkanRenderer
                     Module = _shaderModule,
                     PName = (byte*)SilkMarshal.StringToPtr(_entryPoint)
                 };
+
+                _compiledShaderConfigVersion = shaderConfigVersion;
+                _compiledUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
             }
             catch (Exception ex)
             {
@@ -275,6 +288,33 @@ public unsafe partial class VulkanRenderer
         private void OnSourceTextChanged()
             => Invalidate();
 
+        internal void EnsureCompilePolicyCurrent()
+        {
+            if (!IsGenerated)
+                return;
+
+            int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+            bool usesVulkanClipDepthRemap = UsesVulkanClipDepthRemap();
+            if (_compiledShaderConfigVersion == shaderConfigVersion &&
+                _compiledUsesVulkanClipDepthRemap == usesVulkanClipDepthRemap)
+                return;
+
+            Invalidate();
+        }
+
+        private bool UsesVulkanClipDepthRemap()
+            => RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap &&
+               (_requestedVulkanClipDepthRemap ?? Data.Type == EShaderType.Vertex);
+
+        internal void SetVulkanClipDepthRemapEnabled(bool enabled)
+        {
+            if (_requestedVulkanClipDepthRemap == enabled)
+                return;
+
+            _requestedVulkanClipDepthRemap = enabled;
+            Invalidate();
+        }
+
         private void Invalidate()
         {
             DestroyShaderResources();
@@ -282,6 +322,8 @@ public unsafe partial class VulkanRenderer
             _entryPoint = "main";
             _autoUniformBlock = null;
             _rewrittenSource = null;
+            _compiledShaderConfigVersion = -1;
+            _compiledUsesVulkanClipDepthRemap = false;
             _bindingId = null;
             ResetGenerationFailure();
         }

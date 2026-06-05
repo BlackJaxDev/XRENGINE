@@ -127,6 +127,12 @@ namespace XREngine.Rendering
             ReadOnlySpan<BoundingRectangle> scissors)
             => false;
         public virtual void ClearIndexedViewportScissors(int count) { }
+
+        /// <summary>
+        /// Temporarily applies the renderer's UI-safe clip-space policy for raw UI backend draws.
+        /// </summary>
+        public virtual IDisposable? PushUiClipSpacePolicy()
+            => null;
         #endregion
 
         #region ImGui

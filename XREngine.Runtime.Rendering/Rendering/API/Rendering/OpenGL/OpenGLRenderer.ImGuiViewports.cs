@@ -1014,6 +1014,7 @@ namespace XREngine.Rendering.OpenGL
                         return;
 
                     window.Window.MakeCurrent();
+                    using var clipScope = _renderer.PushUiClipSpacePolicy();
                     Vector2D<int> framebufferSize = window.Window.FramebufferSize;
                     _renderer.Api.Viewport(0, 0, (uint)Math.Max(1, framebufferSize.X), (uint)Math.Max(1, framebufferSize.Y));
 
@@ -1091,6 +1092,7 @@ namespace XREngine.Rendering.OpenGL
                     if (drawData.NativePtr is null)
                         return;
 
+                    using var clipScope = _renderer.PushUiClipSpacePolicy();
                     RenderImDrawData!(_controller, drawData);
                 }
                 catch (Exception ex)

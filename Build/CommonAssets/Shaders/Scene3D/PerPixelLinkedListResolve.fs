@@ -1,5 +1,7 @@
 #version 460
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 1) out float OutFragmentCount;
 layout(location = 0) in vec3 FragPos;
@@ -38,7 +40,7 @@ void main()
     int storedCount = 0;
     int actualCount = 0;
 
-    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    ivec2 pixel = XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(PpllHeadPointerTex, 0)));
     uint nodeIndex = texelFetch(PpllHeadPointerTex, pixel, 0).r;
     while (nodeIndex != 0xFFFFFFFFu && actualCount < 256)
     {

@@ -38,21 +38,34 @@ public static class BootstrapRenderSettings
         var debug = Engine.EditorPreferences.Debug;
         ApplyOpenGLShaderLinkSettings(settings);
 
-        debug.RenderMesh3DBounds = settings.RenderMeshBounds;
-        debug.RenderTransformDebugInfo = settings.RenderTransformDebugInfo;
-        debug.RenderTransformLines = settings.RenderTransformLines;
-        debug.RenderTransformCapsules = settings.RenderTransformCapsules;
-        debug.RenderTransformPoints = settings.RenderTransformPoints;
-        debug.Preview3DWorldOctree = settings.VisualizeOctree;
-        debug.Preview2DWorldQuadtree = settings.VisualizeQuadtree;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderMeshBounds)))
+            debug.RenderMesh3DBounds = settings.RenderMeshBounds;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderTransformDebugInfo)))
+            debug.RenderTransformDebugInfo = settings.RenderTransformDebugInfo;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderTransformLines)))
+            debug.RenderTransformLines = settings.RenderTransformLines;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderTransformCapsules)))
+            debug.RenderTransformCapsules = settings.RenderTransformCapsules;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderTransformPoints)))
+            debug.RenderTransformPoints = settings.RenderTransformPoints;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VisualizeOctree)))
+            debug.Preview3DWorldOctree = settings.VisualizeOctree;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VisualizeQuadtree)))
+            debug.Preview2DWorldQuadtree = settings.VisualizeQuadtree;
         debug.RenderCullingVolumes = false;
 
-        renderSettings.RecalcChildMatricesLoopType = settings.RecalcChildMatricesType;
-        renderSettings.TickGroupedItemsInParallel = settings.TickGroupedItemsInParallel;
-        renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR;
-        renderSettings.AllowShaderPipelines = settings.AllowShaderPipelines;
-        renderSettings.AllowSkinning = settings.AllowSkinning;
-        renderSettings.RenderVRSinglePassStereo = settings.SinglePassStereoVR;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RecalcChildMatricesType)))
+            renderSettings.RecalcChildMatricesLoopType = settings.RecalcChildMatricesType;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.TickGroupedItemsInParallel)))
+            renderSettings.TickGroupedItemsInParallel = settings.TickGroupedItemsInParallel;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)))
+            renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
+            renderSettings.AllowShaderPipelines = settings.AllowShaderPipelines;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowSkinning)))
+            renderSettings.AllowSkinning = settings.AllowSkinning;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
+            renderSettings.RenderVRSinglePassStereo = settings.SinglePassStereoVR;
         Debug.Out($"[BootstrapRenderSettings] Applied AllowSkinning={renderSettings.AllowSkinning} AllowShaderPipelines={renderSettings.AllowShaderPipelines}");
         if (settings.RenderPhysicsDebug)
             renderSettings.PhysicsVisualizeSettings.SetAllTrue();
@@ -67,20 +80,74 @@ public static class BootstrapRenderSettings
     public static void ApplyOpenGLShaderLinkSettings(UnitTestingWorldSettings settings)
     {
         var renderSettings = Engine.Rendering.Settings;
-        int rawCompilerThreadCount = settings.OpenGLShaderCompilerThreadCount;
-        int compilerThreadCount = ResolveOpenGLShaderCompilerThreadCount(settings.OpenGLShaderLinkStrategy, rawCompilerThreadCount);
+        bool applied = false;
 
-        renderSettings.AllowBinaryProgramCaching = settings.AllowBinaryProgramCaching;
-        renderSettings.AsyncProgramBinaryUpload = settings.AsyncProgramBinaryUpload;
-        renderSettings.AsyncProgramCompilation = settings.AsyncProgramCompilation;
-        renderSettings.OpenGLProgramCompileLinkWorkerCount = settings.OpenGLProgramCompileLinkWorkerCount;
-        renderSettings.MaxAsyncShaderProgramsPerFrame = settings.MaxAsyncShaderProgramsPerFrame;
-        renderSettings.OpenGLShaderLinkStrategy = settings.OpenGLShaderLinkStrategy;
-        renderSettings.OpenGLShaderCompilerThreadCount = compilerThreadCount;
-        renderSettings.OpenGLParallelShaderCompileProbeEnabled = settings.OpenGLParallelShaderCompileProbeEnabled;
-        renderSettings.OpenGLParallelShaderCompileProbeTimeoutMs = settings.OpenGLParallelShaderCompileProbeTimeoutMs;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowBinaryProgramCaching)))
+        {
+            renderSettings.AllowBinaryProgramCaching = settings.AllowBinaryProgramCaching;
+            applied = true;
+        }
 
-        LogOpenGLShaderLinkSettings(settings, rawCompilerThreadCount, compilerThreadCount);
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AsyncProgramBinaryUpload)))
+        {
+            renderSettings.AsyncProgramBinaryUpload = settings.AsyncProgramBinaryUpload;
+            applied = true;
+        }
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AsyncProgramCompilation)))
+        {
+            renderSettings.AsyncProgramCompilation = settings.AsyncProgramCompilation;
+            applied = true;
+        }
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLProgramCompileLinkWorkerCount)))
+        {
+            renderSettings.OpenGLProgramCompileLinkWorkerCount = settings.OpenGLProgramCompileLinkWorkerCount;
+            applied = true;
+        }
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.MaxAsyncShaderProgramsPerFrame)))
+        {
+            renderSettings.MaxAsyncShaderProgramsPerFrame = settings.MaxAsyncShaderProgramsPerFrame;
+            applied = true;
+        }
+
+        bool strategySpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLShaderLinkStrategy));
+        bool compilerThreadCountSpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLShaderCompilerThreadCount));
+        int rawCompilerThreadCount = compilerThreadCountSpecified
+            ? settings.OpenGLShaderCompilerThreadCount
+            : renderSettings.OpenGLShaderCompilerThreadCount;
+        EOpenGLShaderLinkStrategy linkStrategy = strategySpecified
+            ? settings.OpenGLShaderLinkStrategy
+            : renderSettings.OpenGLShaderLinkStrategy;
+        int compilerThreadCount = ResolveOpenGLShaderCompilerThreadCount(linkStrategy, rawCompilerThreadCount);
+
+        if (strategySpecified)
+        {
+            renderSettings.OpenGLShaderLinkStrategy = settings.OpenGLShaderLinkStrategy;
+            applied = true;
+        }
+
+        if (strategySpecified || compilerThreadCountSpecified)
+        {
+            renderSettings.OpenGLShaderCompilerThreadCount = compilerThreadCount;
+            applied = true;
+        }
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeEnabled)))
+        {
+            renderSettings.OpenGLParallelShaderCompileProbeEnabled = settings.OpenGLParallelShaderCompileProbeEnabled;
+            applied = true;
+        }
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeTimeoutMs)))
+        {
+            renderSettings.OpenGLParallelShaderCompileProbeTimeoutMs = settings.OpenGLParallelShaderCompileProbeTimeoutMs;
+            applied = true;
+        }
+
+        if (applied)
+            LogOpenGLShaderLinkSettings(rawCompilerThreadCount, compilerThreadCount);
     }
 
     private static int ResolveOpenGLShaderCompilerThreadCount(EOpenGLShaderLinkStrategy strategy, int configuredThreadCount)
@@ -95,18 +162,18 @@ public static class BootstrapRenderSettings
     }
 
     private static void LogOpenGLShaderLinkSettings(
-        UnitTestingWorldSettings settings,
         int rawCompilerThreadCount,
         int appliedCompilerThreadCount)
     {
+        var renderSettings = Engine.Rendering.Settings;
         string compilerThreads = rawCompilerThreadCount == appliedCompilerThreadCount
             ? appliedCompilerThreadCount.ToString()
             : $"{rawCompilerThreadCount}->{appliedCompilerThreadCount}";
 
         string summary =
-            $"strategy={settings.OpenGLShaderLinkStrategy}, cache={settings.AllowBinaryProgramCaching}, asyncBinaryUpload={settings.AsyncProgramBinaryUpload}, " +
-            $"asyncSource={settings.AsyncProgramCompilation}, sharedWorkers={settings.OpenGLProgramCompileLinkWorkerCount}, maxAsyncPerFrame={settings.MaxAsyncShaderProgramsPerFrame}, " +
-            $"compilerThreads={compilerThreads}, probe={settings.OpenGLParallelShaderCompileProbeEnabled}, probeTimeoutMs={settings.OpenGLParallelShaderCompileProbeTimeoutMs}";
+            $"strategy={renderSettings.OpenGLShaderLinkStrategy}, cache={renderSettings.AllowBinaryProgramCaching}, asyncBinaryUpload={renderSettings.AsyncProgramBinaryUpload}, " +
+            $"asyncSource={renderSettings.AsyncProgramCompilation}, sharedWorkers={renderSettings.OpenGLProgramCompileLinkWorkerCount}, maxAsyncPerFrame={renderSettings.MaxAsyncShaderProgramsPerFrame}, " +
+            $"compilerThreads={compilerThreads}, probe={renderSettings.OpenGLParallelShaderCompileProbeEnabled}, probeTimeoutMs={renderSettings.OpenGLParallelShaderCompileProbeTimeoutMs}";
 
         if (string.Equals(_lastOpenGLShaderLinkSettingsLog, summary, StringComparison.Ordinal))
             return;

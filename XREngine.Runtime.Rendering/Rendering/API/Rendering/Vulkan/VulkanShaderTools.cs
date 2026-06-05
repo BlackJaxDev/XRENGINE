@@ -72,6 +72,16 @@ internal static class VulkanShaderAutoUniforms
         @"(?<![A-Za-z0-9_])(?<num>(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)[fF](?![A-Za-z0-9_])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex ShaderMainFunctionRegex = new(
+        @"(?m)\bvoid\s+main\s*\(\s*(?:void\s*)?\)\s*\{",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex GeometryEmitVertexRegex = new(
+        @"(?m)^(?<indent>\s*)EmitVertex\s*\(\s*\)\s*;",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex MeshPositionAssignmentRegex = new(
+        @"(?<target>gl_MeshVertices(?:EXT|NV)\s*\[[^\]]+\]\s*\.\s*gl_Position\s*)=\s*(?<expr>[^;]+);",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly Regex UniformStatementRegex = new(
         @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline);
@@ -179,11 +189,14 @@ internal static class VulkanShaderAutoUniforms
     };
 
     public static AutoUniformRewriteResult Rewrite(string source, EShaderType shaderType)
+        => Rewrite(source, shaderType, RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap);
+
+    public static AutoUniformRewriteResult Rewrite(string source, EShaderType shaderType, bool useVulkanClipDepthRemap)
     {
         if (string.IsNullOrWhiteSpace(source))
             return new AutoUniformRewriteResult(source, null);
 
-        source = ApplyVulkanSourceFixups(source);
+        source = ApplyVulkanSourceFixups(source, shaderType, useVulkanClipDepthRemap);
 
         bool enableAutoUniformRewrite = XREngine.Rendering.RenderDiagnosticsFlags.VkEnableAutoUniformRewrite;
 
@@ -912,13 +925,104 @@ internal static class VulkanShaderAutoUniforms
         return InsertAtPreferredLocation(modified, hoisted.ToString().TrimEnd(), insertPos);
     }
 
-    private static string ApplyVulkanSourceFixups(string source)
+    private static string ApplyVulkanSourceFixups(string source, EShaderType shaderType, bool useVulkanClipDepthRemap)
     {
         string rewritten = source.Replace("gl_InstanceID", "gl_InstanceIndex", StringComparison.Ordinal);
         rewritten = rewritten.Replace("gl_VertexID", "gl_VertexIndex", StringComparison.Ordinal);
         rewritten = FloatSuffixRegex.Replace(rewritten, "${num}");
         rewritten = EnsureIOLocationQualifiers(rewritten);
+        rewritten = ApplyVulkanClipDepthRemap(rewritten, shaderType, useVulkanClipDepthRemap);
         return rewritten;
+    }
+
+    private static string ApplyVulkanClipDepthRemap(string source, EShaderType shaderType, bool useVulkanClipDepthRemap)
+    {
+        if (!useVulkanClipDepthRemap)
+            return source;
+
+        if (source.Contains("XRENGINE_ApplyVulkanClipDepthRemap", StringComparison.Ordinal) ||
+            source.Contains("XRENGINE_RemapVulkanClipDepth", StringComparison.Ordinal))
+            return source;
+
+        return shaderType switch
+        {
+            EShaderType.Vertex or EShaderType.TessEvaluation => ApplyVulkanClipDepthRemapAfterMain(source),
+            EShaderType.Geometry => ApplyVulkanClipDepthRemapBeforeGeometryEmit(source),
+            EShaderType.Mesh => ApplyVulkanClipDepthRemapToMeshPositionAssignments(source),
+            _ => source,
+        };
+    }
+
+    private static string ApplyVulkanClipDepthRemapAfterMain(string source)
+    {
+        Match mainMatch = ShaderMainFunctionRegex.Match(source);
+        if (!mainMatch.Success)
+            return source;
+
+        StringBuilder builder = new(source.Length + 256);
+        builder.Append(source, 0, mainMatch.Index);
+        builder.Append("void XRENGINE_UserMain()\n{");
+        builder.Append(source, mainMatch.Index + mainMatch.Length, source.Length - (mainMatch.Index + mainMatch.Length));
+        builder.AppendLine();
+        builder.AppendLine();
+        builder.AppendLine("void XRENGINE_ApplyVulkanClipDepthRemap()");
+        builder.AppendLine("{");
+        builder.AppendLine("    gl_Position.z = gl_Position.z * 0.5 + gl_Position.w * 0.5;");
+        builder.AppendLine("}");
+        builder.AppendLine();
+        builder.AppendLine("void main()");
+        builder.AppendLine("{");
+        builder.AppendLine("    XRENGINE_UserMain();");
+        builder.AppendLine("    XRENGINE_ApplyVulkanClipDepthRemap();");
+        builder.AppendLine("}");
+        return builder.ToString();
+    }
+
+    private static string ApplyVulkanClipDepthRemapBeforeGeometryEmit(string source)
+    {
+        if (!GeometryEmitVertexRegex.IsMatch(source))
+            return source;
+
+        int insertIndex = FindAutoUniformInsertionIndex(source);
+        if (insertIndex < 0)
+            insertIndex = 0;
+
+        const string helper = """
+void XRENGINE_ApplyVulkanClipDepthRemap()
+{
+    gl_Position.z = gl_Position.z * 0.5 + gl_Position.w * 0.5;
+}
+
+""";
+
+        string withHelper = source.Insert(insertIndex, helper);
+        return GeometryEmitVertexRegex.Replace(
+            withHelper,
+            match => $"{match.Groups["indent"].Value}XRENGINE_ApplyVulkanClipDepthRemap();\n{match.Groups["indent"].Value}EmitVertex();");
+    }
+
+    private static string ApplyVulkanClipDepthRemapToMeshPositionAssignments(string source)
+    {
+        if (!MeshPositionAssignmentRegex.IsMatch(source))
+            return source;
+
+        int insertIndex = FindAutoUniformInsertionIndex(source);
+        if (insertIndex < 0)
+            insertIndex = 0;
+
+        const string helper = """
+vec4 XRENGINE_RemapVulkanClipDepth(vec4 position)
+{
+    position.z = position.z * 0.5 + position.w * 0.5;
+    return position;
+}
+
+""";
+
+        string withHelper = source.Insert(insertIndex, helper);
+        return MeshPositionAssignmentRegex.Replace(
+            withHelper,
+            match => $"{match.Groups["target"].Value}= XRENGINE_RemapVulkanClipDepth({match.Groups["expr"].Value});");
     }
 
     private static string RewriteOpaqueUniformBindings(string source, EShaderType shaderType)
@@ -1880,6 +1984,14 @@ internal static class VulkanShaderCompiler
         out string entryPoint,
         out AutoUniformBlockInfo? autoUniformBlock,
         out string? rewrittenSource)
+        => Compile(shader, RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap, out entryPoint, out autoUniformBlock, out rewrittenSource);
+
+    public static unsafe byte[] Compile(
+        XRShader shader,
+        bool useVulkanClipDepthRemap,
+        out string entryPoint,
+        out AutoUniformBlockInfo? autoUniformBlock,
+        out string? rewrittenSource)
     {
         entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
@@ -1894,7 +2006,7 @@ internal static class VulkanShaderCompiler
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
 
-        AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(source, shader.Type);
+        AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(source, shader.Type, useVulkanClipDepthRemap);
         rewrittenSource = InjectVulkanBackendDefine(rewrite.Source);
         autoUniformBlock = rewrite.BlockInfo;
 

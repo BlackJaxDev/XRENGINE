@@ -135,6 +135,16 @@ public interface IRuntimeRenderingHostServices
     int ShaderConfigVersion { get; }
 
     /// <summary>
+    /// Gets the requested logical clip-space Y direction.
+    /// </summary>
+    ERenderClipSpaceYDirection ClipSpaceYDirection { get; }
+
+    /// <summary>
+    /// Gets the requested clip-space depth range.
+    /// </summary>
+    ERenderClipDepthRange ClipDepthRange { get; }
+
+    /// <summary>
     /// Gets whether linked OpenGL shader programs may be cached as driver binaries.
     /// </summary>
     bool AllowBinaryProgramCaching { get; }

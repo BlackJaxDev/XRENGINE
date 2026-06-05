@@ -2041,15 +2041,7 @@ namespace XREngine.Rendering.Vulkan
 
                 // For presentation we want deterministic full-surface state regardless of prior per-viewport scissor.
                 // This also makes resize issues obvious (the clear should cover the entire swapchain extent).
-                Viewport swapViewport = new()
-                {
-                    X = 0f,
-                    Y = 0f,
-                    Width = swapChainExtent.Width,
-                    Height = swapChainExtent.Height,
-                    MinDepth = 0f,
-                    MaxDepth = 1f
-                };
+                Viewport swapViewport = CreateVulkanViewport(swapChainExtent);
 
                 Rect2D swapScissor = new()
                 {

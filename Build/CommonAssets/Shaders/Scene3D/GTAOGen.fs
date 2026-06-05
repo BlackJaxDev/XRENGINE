@@ -161,8 +161,9 @@ void main()
 
     int sliceCount = clamp(SliceCount, 1, 8);
     int stepCount = clamp(StepsPerSlice, 1, 16);
-    float baseAngle = (InterleavedGradientNoise(floor(gl_FragCoord.xy)) - 0.5f) * (PI / float(sliceCount));
-    float stepJitter = InterleavedGradientNoise(floor(gl_FragCoord.xy) + vec2(17.0f, 43.0f));
+    vec2 noiseCoord = XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView, 0)));
+    float baseAngle = (InterleavedGradientNoise(noiseCoord) - 0.5f) * (PI / float(sliceCount));
+    float stepJitter = InterleavedGradientNoise(noiseCoord + vec2(17.0f, 43.0f));
 
     float visibility = 0.0f;
 

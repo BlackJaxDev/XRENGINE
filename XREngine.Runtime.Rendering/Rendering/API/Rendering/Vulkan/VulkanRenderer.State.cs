@@ -134,6 +134,91 @@ public unsafe partial class VulkanRenderer
     internal Extent2D GetCurrentTargetExtent()
         => _state.GetCurrentTargetExtent();
 
+    private static bool _reportedNativeNegativeOneToOneDepth;
+    private static bool _reportedShaderRemappedNegativeOneToOneDepth;
+
+    private static ERenderClipDepthRange ResolveEffectiveVulkanClipDepthRange()
+    {
+        ERenderClipDepthRange requested = RuntimeEngine.Rendering.Settings.ClipDepthRange;
+        if (requested != ERenderClipDepthRange.NegativeOneToOne)
+            return requested;
+
+        if (RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl)
+        {
+            if (!_reportedNativeNegativeOneToOneDepth)
+            {
+                _reportedNativeNegativeOneToOneDepth = true;
+                Debug.Vulkan(
+                    "[Vulkan] ClipDepthRange=NegativeOneToOne is using {0}.",
+                    VulkanDepthClipControlExt.ExtensionName);
+            }
+
+            return requested;
+        }
+
+        if (!_reportedShaderRemappedNegativeOneToOneDepth)
+        {
+            _reportedShaderRemappedNegativeOneToOneDepth = true;
+            Debug.VulkanWarning(
+                "[Vulkan] ClipDepthRange=NegativeOneToOne was requested, but {0} is unavailable. " +
+                "Keeping the engine's -1..1 clip-depth policy and remapping vertex shader gl_Position.z to Vulkan 0..w clip depth.",
+                VulkanDepthClipControlExt.ExtensionName);
+        }
+
+        return requested;
+    }
+
+    private static Viewport CreateVulkanViewport(Extent2D extent)
+    {
+        _ = ResolveEffectiveVulkanClipDepthRange();
+        return RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown
+            ? new Viewport
+            {
+                X = 0f,
+                Y = 0f,
+                Width = extent.Width,
+                Height = extent.Height,
+                MinDepth = 0f,
+                MaxDepth = 1f
+            }
+            : new Viewport
+            {
+                X = 0f,
+                Y = extent.Height,
+                Width = extent.Width,
+                Height = -(float)extent.Height,
+                MinDepth = 0f,
+                MaxDepth = 1f
+            };
+    }
+
+    private static Viewport CreateVulkanViewport(BoundingRectangle region, Extent2D targetExtent)
+    {
+        _ = ResolveEffectiveVulkanClipDepthRange();
+        if (RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown)
+        {
+            return new Viewport
+            {
+                X = region.X,
+                Y = targetExtent.Height - (region.Y + region.Height),
+                Width = region.Width,
+                Height = region.Height,
+                MinDepth = 0.0f,
+                MaxDepth = 1.0f
+            };
+        }
+
+        return new Viewport
+        {
+            X = region.X,
+            Y = targetExtent.Height - region.Y,
+            Width = region.Width,
+            Height = -region.Height,
+            MinDepth = 0.0f,
+            MaxDepth = 1.0f
+        };
+    }
+
     private sealed class VulkanStateTracker
     {
         private Extent2D _swapchainExtent;
@@ -258,19 +343,9 @@ public unsafe partial class VulkanRenderer
 
         public void SetViewport(BoundingRectangle region)
         {
-            // Engine regions are specified in OpenGL-style bottom-left coordinates.
-            // Vulkan's viewport/scissor use top-left framebuffer coordinates, so we flip Y.
-            // Negative viewport height flips the coordinate system to match OpenGL.
-            float viewportY = _currentTargetExtent.Height - region.Y;
-            _viewport = new Viewport
-            {
-                X = region.X,
-                Y = viewportY,
-                Width = region.Width,
-                Height = -region.Height,
-                MinDepth = 0.0f,
-                MaxDepth = 1.0f
-            };
+            // Engine regions remain bottom-left rectangles. The clip-space policy chooses
+            // whether Vulkan uses a negative-height GL-style viewport or native Y-down mapping.
+            _viewport = CreateVulkanViewport(region, _currentTargetExtent);
             _viewportExplicitlySet = true;
         }
 
@@ -331,15 +406,7 @@ public unsafe partial class VulkanRenderer
         public StencilOpState GetBackStencilState() => BackStencilState;
 
         private static Viewport DefaultViewport(Extent2D extent)
-            => new()
-            {
-                X = 0f,
-                Y = 0f,
-                Width = extent.Width,
-                Height = extent.Height,
-                MinDepth = 0f,
-                MaxDepth = 1f
-            };
+            => CreateVulkanViewport(extent);
 
         private static Rect2D DefaultScissor(Extent2D extent)
             => new()

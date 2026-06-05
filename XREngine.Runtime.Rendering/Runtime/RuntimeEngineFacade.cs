@@ -236,6 +236,20 @@ internal static partial class RuntimeEngine
         public static XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()
             => RuntimeRenderingHostServices.Current.ResolveSceneCameraDepthModePreference();
 
+        public static ERenderClipDepthRange ResolveEffectiveClipDepthRange(RuntimeGraphicsApiKind backend)
+            => Settings.ClipDepthRange;
+
+        public static ERenderClipDepthRange EffectiveClipDepthRange
+            => ResolveEffectiveClipDepthRange(RuntimeRenderingHostServices.Current.CurrentRenderBackend);
+
+        public static bool ShouldUseNativeVulkanDepthClipControl
+            => Settings.ClipDepthRange == ERenderClipDepthRange.NegativeOneToOne &&
+               State.HasVulkanDepthClipControl;
+
+        public static bool ShouldUseVulkanShaderClipDepthRemap
+            => Settings.ClipDepthRange == ERenderClipDepthRange.NegativeOneToOne &&
+               !State.HasVulkanDepthClipControl;
+
         public static void PrepareVulkanUpscaleBridgeForFrame(VulkanRenderer renderer, XRViewport? viewport, int width, int height)
         {
         }
@@ -1805,6 +1819,7 @@ internal static partial class RuntimeEngine
             public static bool HasVulkanMemoryDecompression { get; internal set; }
             public static bool HasVulkanCopyMemoryIndirect { get; internal set; }
             public static bool HasVulkanRtxIo { get; internal set; }
+            public static bool HasVulkanDepthClipControl { get; internal set; }
             public static bool HasParallelShaderCompile { get; internal set; }
             public static string OpenGLParallelShaderCompileExtension { get; internal set; } = string.Empty;
             public static bool OpenGLParallelShaderCompileProbePassed { get; internal set; }
@@ -2035,6 +2050,8 @@ internal sealed class RuntimeRenderSettings
     private uint _minShadowAtlasTileResolution = 128u;
     private uint _maxShadowAtlasTileResolution = 4096u;
     private int _shaderConfigVersion = RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
+    private ERenderClipSpaceYDirection _clipSpaceYDirection = RuntimeRenderingHostServiceDefaults.ClipSpaceYDirection;
+    private ERenderClipDepthRange _clipDepthRange = RuntimeRenderingHostServiceDefaults.ClipDepthRange;
     private bool _openXrCullWithFrustum = RuntimeRenderingHostServiceDefaults.OpenXrCullWithFrustum;
     private bool _openXrDebugClearOnly = RuntimeRenderingHostServiceDefaults.OpenXrDebugClearOnly;
     private bool _openXrDebugGl = RuntimeRenderingHostServiceDefaults.OpenXrDebugGl;
@@ -2383,6 +2400,20 @@ internal sealed class RuntimeRenderSettings
             RuntimeEngine.Rendering.RaiseSettingsChanged();
         }
     }
+    public ERenderClipSpaceYDirection ClipSpaceYDirection
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.ClipSpaceYDirection
+            : _clipSpaceYDirection;
+        set => SetShaderSetting(ref _clipSpaceYDirection, value);
+    }
+    public ERenderClipDepthRange ClipDepthRange
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.ClipDepthRange
+            : _clipDepthRange;
+        set => SetShaderSetting(ref _clipDepthRange, value);
+    }
     public uint ShadowAtlasPageSize
     {
         get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
@@ -2450,6 +2481,21 @@ internal sealed class RuntimeRenderSettings
             return;
 
         field = value;
+        BumpShaderConfigVersion();
+    }
+
+    private void SetShaderSetting<T>(ref T field, T value)
+        where T : struct, Enum
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value))
+            return;
+
+        field = value;
+        BumpShaderConfigVersion();
+    }
+
+    private void BumpShaderConfigVersion()
+    {
         unchecked
         {
             _shaderConfigVersion++;

@@ -1394,6 +1394,9 @@ public unsafe partial class VulkanRenderer
         if (fbWidth == 0 || fbHeight == 0)
             return;
 
+        Viewport imguiViewport = CreateImGuiViewport(fbWidth, fbHeight);
+        Api.CmdSetViewport(commandBuffer, 0, 1, &imguiViewport);
+
         uint globalVtxOffset = 0;
         uint globalIdxOffset = 0;
 
@@ -1450,6 +1453,17 @@ public unsafe partial class VulkanRenderer
             globalVtxOffset += (uint)cmdList.Vertices.Length;
         }
     }
+
+    private static Viewport CreateImGuiViewport(uint framebufferWidth, uint framebufferHeight)
+        => new()
+        {
+            X = 0f,
+            Y = 0f,
+            Width = framebufferWidth,
+            Height = framebufferHeight,
+            MinDepth = 0f,
+            MaxDepth = 1f
+        };
 
     private DescriptorSet ResolveImGuiDescriptorSet(nint textureId)
     {

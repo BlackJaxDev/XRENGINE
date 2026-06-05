@@ -1517,6 +1517,7 @@ namespace XREngine
                     | EUniformRequirements.Lights
                     | EUniformRequirements.AmbientOcclusion
                     | EUniformRequirements.ViewportDimensions
+                    | EUniformRequirements.ClipSpacePolicy
                     | EUniformRequirements.RenderTime,
             };
 

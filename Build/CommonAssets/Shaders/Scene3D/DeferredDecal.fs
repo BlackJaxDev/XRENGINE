@@ -25,7 +25,7 @@ uniform vec3 BoxHalfScale;
 
 void main()
 {
-	vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+	vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
 
 	//Retrieve shading information from GBuffer textures
 	vec4 albedo = texture(AlbedoOpacity, uv);

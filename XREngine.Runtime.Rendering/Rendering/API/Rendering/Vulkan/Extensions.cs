@@ -39,6 +39,7 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsDynamicRendering;
         private bool _supportsIndexTypeUint8;
         private bool _supportsSynchronization2;
+        private bool _supportsDepthClipControl;
         private bool _supportsFragmentStoresAndAtomics;
         private bool _supportsVertexPipelineStoresAndAtomics;
         private bool _supportsGeometryShader;
@@ -56,6 +57,7 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsDynamicRendering => _supportsDynamicRendering;
         public bool SupportsIndexTypeUint8 => _supportsIndexTypeUint8;
         public bool SupportsSynchronization2 => _supportsSynchronization2;
+        public bool SupportsDepthClipControl => _supportsDepthClipControl;
         public bool SupportsFragmentStoresAndAtomics => _supportsFragmentStoresAndAtomics;
         public bool SupportsVertexPipelineStoresAndAtomics => _supportsVertexPipelineStoresAndAtomics;
         public bool SupportsGeometryShader => _supportsGeometryShader;
@@ -119,6 +121,7 @@ namespace XREngine.Rendering.Vulkan
             "VK_KHR_buffer_device_address",
             "VK_KHR_dynamic_rendering",
             "VK_KHR_maintenance4",
+            VulkanDepthClipControlExt.ExtensionName,
             "VK_EXT_mesh_shader",
             "VK_NV_memory_decompression",
             "VK_NV_copy_memory_indirect"

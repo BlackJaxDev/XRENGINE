@@ -89,6 +89,16 @@ public enum LightProbeCaptureMode
 
 public class UnitTestingWorldSettings
 {
+    [JsonIgnore]
+    public bool TracksExplicitJsonProperties { get; internal set; }
+
+    [JsonIgnore]
+    public IReadOnlySet<string> ExplicitJsonProperties { get; internal set; } =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    public bool IsJsonPropertySpecified(string propertyName)
+        => !TracksExplicitJsonProperties || ExplicitJsonProperties.Contains(propertyName);
+
     public UnitTestWorldKind WorldKind { get; set; } = UnitTestWorldKind.Default;
 
     public bool VisualizeOctree = false;

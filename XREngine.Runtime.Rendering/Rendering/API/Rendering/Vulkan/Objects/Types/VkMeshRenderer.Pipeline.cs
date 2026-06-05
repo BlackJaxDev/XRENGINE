@@ -262,6 +262,8 @@ public unsafe partial class VulkanRenderer
 		{
 			pipeline = default;
 
+			RefreshClipDepthPipelinePolicy();
+
 			if (_pipelineDirty)
 			{
 				DestroyPipelines();
@@ -287,6 +289,7 @@ public unsafe partial class VulkanRenderer
 
 			ulong programPipelineHash = _program!.ComputeGraphicsPipelineFingerprint();
 			ulong vertexLayoutHash = ComputeVertexLayoutHash();
+			bool useNativeNegativeOneToOneDepth = RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;
 
 			PipelineKey key = new(
 				topology,
@@ -314,7 +317,8 @@ public unsafe partial class VulkanRenderer
 				effectiveDraw.DstColorBlendFactor,
 				effectiveDraw.SrcAlphaBlendFactor,
 				effectiveDraw.DstAlphaBlendFactor,
-				effectiveDraw.ColorWriteMask);
+				effectiveDraw.ColorWriteMask,
+				useNativeNegativeOneToOneDepth);
 
 			// Check pipeline cache before creating a new pipeline object
 			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0 && !_pipelineDirty)
@@ -371,6 +375,16 @@ public unsafe partial class VulkanRenderer
 					ViewportCount = 1,
 					ScissorCount = 1,
 				};
+
+				PipelineViewportDepthClipControlCreateInfoEXTNative depthClipControlInfo = new()
+				{
+					SType = VulkanDepthClipControlExt.PipelineViewportCreateInfoSType,
+					PNext = null,
+					NegativeOneToOne = useNativeNegativeOneToOneDepth,
+				};
+
+				if (useNativeNegativeOneToOneDepth)
+					viewportState.PNext = &depthClipControlInfo;
 
 				PipelineRasterizationStateCreateInfo rasterizer = new()
 				{
@@ -552,6 +566,23 @@ public unsafe partial class VulkanRenderer
 				BackStencilState = MakeStencilReadOnly(draw.BackStencilState),
 				StencilWriteMask = 0,
 			};
+		}
+
+		private void RefreshClipDepthPipelinePolicy()
+		{
+			int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+			bool usesShaderClipDepthRemap = RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap;
+			bool usesNativeDepthClipControl = RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;
+			if (_pipelineShaderConfigVersion == shaderConfigVersion &&
+				_pipelineUsesShaderClipDepthRemap == usesShaderClipDepthRemap &&
+				_pipelineUsesNativeDepthClipControl == usesNativeDepthClipControl)
+				return;
+
+			_pipelineShaderConfigVersion = shaderConfigVersion;
+			_pipelineUsesShaderClipDepthRemap = usesShaderClipDepthRemap;
+			_pipelineUsesNativeDepthClipControl = usesNativeDepthClipControl;
+			_pipelineDirty = true;
+			_descriptorDirty = true;
 		}
 
 		private static bool PassUsesReadOnlyDepthStencil(

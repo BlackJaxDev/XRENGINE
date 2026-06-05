@@ -1183,13 +1183,16 @@ namespace XREngine.Rendering
                     var markerRegion = new BoundingRectangle(0, 0, markerWidth, markerHeight);
 
                     Renderer.BindFrameBuffer(EFramebufferTarget.Framebuffer, null);
-                    Renderer.SetRenderArea(fullRegion);
-                    Renderer.SetCroppingEnabled(true);
-                    Renderer.CropRenderArea(markerRegion);
-                    Renderer.ClearColor(RuntimeEngine.StartupPresentationClearColor);
-                    Renderer.Clear(color: true, depth: false, stencil: false);
-                    Renderer.SetCroppingEnabled(false);
-                    Renderer.SetRenderArea(fullRegion);
+                    using (Renderer.PushUiClipSpacePolicy())
+                    {
+                        Renderer.SetRenderArea(fullRegion);
+                        Renderer.SetCroppingEnabled(true);
+                        Renderer.CropRenderArea(markerRegion);
+                        Renderer.ClearColor(RuntimeEngine.StartupPresentationClearColor);
+                        Renderer.Clear(color: true, depth: false, stencil: false);
+                        Renderer.SetCroppingEnabled(false);
+                        Renderer.SetRenderArea(fullRegion);
+                    }
                 }
 
                 // Allow the renderer to perform any per-window end-of-frame work (e.g., Vulkan acquire/submit/present).

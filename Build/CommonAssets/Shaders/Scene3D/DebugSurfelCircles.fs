@@ -1,6 +1,7 @@
 #version 450 core
 
 #pragma snippet "HashColor"
+#pragma snippet "ScreenSpaceUtils"
 
 // Surfel Debug Visualization: Renders surfels as colored circles on the scene
 layout(location = 0) out vec4 OutColor;
@@ -122,7 +123,7 @@ void main()
         return;
     }
 
-    vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
+    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
     
     // Get base scene color
     vec3 sceneColor = texture(HDRSceneTex, uv).rgb;

@@ -1,4 +1,6 @@
 #version 450
+#pragma snippet "ScreenSpaceUtils"
+
 layout (location = 0) out vec4 OutColor;
 
 uniform int MaxSteps;
@@ -61,7 +63,7 @@ void main()
 {
     float xOffset = 1.0f / ScreenWidth;
     float yOffset = 1.0f / ScreenHeight;
-    vec2 vTexCoord = vec2(gl_FragCoord.x * xOffset, gl_FragCoord.y * yOffset);
+    vec2 vTexCoord = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
     vec3 col = texture(Texture0, vTexCoord).rgb * gaussian(0.0, BlurStrength);
 
     for (int i = 1; i < SampleCount; i++)

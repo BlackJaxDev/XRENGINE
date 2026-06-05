@@ -165,12 +165,12 @@ internal class Program
             TraceBootstrapStep("BeforeCreateWindows.UnitTest_Init", UnitTest_Init);
             TraceBootstrapStep("BeforeCreateWindows.ApplyStartupProfilerPreferences", ApplyStartupProfilerPreferences);
 
-            // LoadSandboxSettings() replaces Engine.UserSettings with persisted values,
-            // which may differ from the unit-test settings file overrides. Re-apply them
-            // so that RenderAPI/PhysicsAPI from UnitTestingWorldSettings.jsonc win.
-            XREngine.Engine.UserSettings.RenderLibrary = EditorUnitTests.Toggles.RenderAPI;
-            XREngine.Engine.UserSettings.PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI;
-            WriteBootstrapTrace($"Applied unit-test overrides: Render={EditorUnitTests.Toggles.RenderAPI}, Physics={EditorUnitTests.Toggles.PhysicsAPI}");
+            // LoadSandboxSettings() replaces Engine.UserSettings with persisted values.
+            // Re-apply only the render/physics values that were actually present in JSONC.
+            if (UnitTestingWorldSettingsStore.ApplyUserSettingsOverrides(XREngine.Engine.UserSettings, RuntimeBootstrapState.Settings))
+                WriteBootstrapTrace($"Applied explicit unit-test user setting overrides: Render={XREngine.Engine.UserSettings.RenderLibrary}, Physics={XREngine.Engine.UserSettings.PhysicsLibrary}");
+            else
+                WriteBootstrapTrace("No unit-test RenderAPI/PhysicsAPI overrides were specified; keeping loaded user settings.");
             TraceBootstrapStep("BeforeCreateWindows.StartStartupFontPrewarm", StartStartupFontPrewarm);
             TraceBootstrapStep("BeforeCreateWindows.StartStartupTextShaderPrewarm", StartStartupTextShaderPrewarm);
             
@@ -824,10 +824,6 @@ internal class Program
         var unitTestSettings = RuntimeBootstrapState.Settings;
         const int defaultWindowWidth = 1920;
         const int defaultWindowHeight = 1080;
-        float updateHz = unitTestSettings.UpdateFPS;
-        float renderHz = unitTestSettings.RenderFPS;
-        float fixedHz = unitTestSettings.FixedFPS;
-
         int primaryX = NativeMethods.GetSystemMetrics(0);
         int primaryY = NativeMethods.GetSystemMetrics(1);
         EngineDebug.Out("Primary monitor size: {0}x{1}", primaryX, primaryY);
@@ -891,18 +887,11 @@ internal class Program
             DefaultUserSettings = new UserSettings()
             {
                 VSync = EVSyncMode.Off,
-                RenderLibrary = unitTestSettings.RenderAPI,
-                PhysicsLibrary = unitTestSettings.PhysicsAPI,
             },
-            GPURenderDispatch = unitTestSettings.GPURenderDispatch,
-            TargetUpdatesPerSecond = updateHz,
-            TargetFramesPerSecond = renderHz,
-            FixedFramesPerSecond = fixedHz,
             NetworkingType = ENetworkingType.Client,
-            AudioArchitectureV2Override = unitTestSettings.AudioArchitectureV2,
-            AudioTransportOverride = unitTestSettings.AudioTransport,
-            AudioEffectsOverride = unitTestSettings.AudioEffects,
         };
+
+        UnitTestingWorldSettingsStore.ApplyStartupOverrides(settings, unitTestSettings);
 
         // Allow overriding the window title for multi-instance local testing.
         // Example: launch a 2nd client with XRE_WINDOW_TITLE="XRE Editor (Client 2)".
