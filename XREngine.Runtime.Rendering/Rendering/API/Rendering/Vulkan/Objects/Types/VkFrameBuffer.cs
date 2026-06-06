@@ -325,7 +325,7 @@ public unsafe partial class VulkanRenderer
                 for (int i = 0; i < _attachmentSignature.Length; i++)
                 {
                     var sig = _attachmentSignature[i];
-                    if (sig.Role is AttachmentRole.Depth or AttachmentRole.Stencil)
+                    if (sig.Role is AttachmentRole.Depth or AttachmentRole.Stencil or AttachmentRole.DepthStencil)
                     {
                         supportedDepthStencilAspects = sig.AspectMask;
                         break;

@@ -6,6 +6,8 @@ layout(location = 1) out vec3 FragWorldDir;
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
+uniform int DepthMode;
+uniform int ClipDepthRange;
 uniform float SkyboxRotation = 0.0;
 
 vec3 GetWorldRay(vec2 clipXY)
@@ -26,10 +28,18 @@ vec3 RotateSkyDirection(vec3 dir)
         dir.x * sinRot + dir.z * cosRot);
 }
 
+float GetFarClipZ()
+{
+    if (DepthMode == 1)
+        return ClipDepthRange == 1 ? -1.0 : 0.0;
+
+    return 1.0;
+}
+
 void main()
 {
     vec2 clipXY = Position.xy;
     FragClipPos = Position;
     FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));
-    gl_Position = vec4(clipXY, 1.0, 1.0);
+    gl_Position = vec4(clipXY, GetFarClipZ(), 1.0);
 }

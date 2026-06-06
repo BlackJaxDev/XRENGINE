@@ -183,6 +183,8 @@ namespace XREngine.Rendering.Vulkan
                     _depthOnlyView = default;
                 }
 
+                DestroySampler();
+
                 if (_view.Handle != 0)
                 {
                     Api!.DestroyImageView(Device, _view, null);
@@ -278,6 +280,14 @@ namespace XREngine.Rendering.Vulkan
                             Generate();
                         }
                         break;
+                    case nameof(XRTextureViewBase.MinFilter):
+                    case nameof(XRTextureViewBase.MagFilter):
+                    case nameof(XRTextureViewBase.UWrap):
+                    case nameof(XRTextureViewBase.VWrap):
+                    case nameof(XRTextureViewBase.LodBias):
+                        if (IsActive && _texelBufferView.Handle == 0)
+                            RecreateSampler();
+                        break;
                 }
             }
 
@@ -314,7 +324,6 @@ namespace XREngine.Rendering.Vulkan
                     throw new InvalidOperationException($"Viewed texture '{viewedTexture.GetType().Name}' is not backed by a Vulkan image.");
 
                 _image = source.DescriptorImage;
-                _sampler = source.DescriptorSampler;
                 _format = source.DescriptorFormat;
                 _usage = source.DescriptorUsage;
                 _aspect = NormalizeAspectMaskForFormat(_format, source.DescriptorAspect);
@@ -364,6 +373,8 @@ namespace XREngine.Rendering.Vulkan
                     if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
                         throw new InvalidOperationException("Failed to create depth-only descriptor view for texture view.");
                 }
+
+                CreateSampler();
             }
 
             private void RefreshFromViewedTextureIfStale()
@@ -384,7 +395,11 @@ namespace XREngine.Rendering.Vulkan
                     return;
 
                 if (liveImage.Handle == _image.Handle && _view.Handle != 0)
+                {
+                    if (_sampler.Handle == 0)
+                        CreateSampler();
                     return;
+                }
 
                 if (_view.Handle != 0)
                 {
@@ -404,8 +419,9 @@ namespace XREngine.Rendering.Vulkan
                     _stencilOnlyView = default;
                 }
 
+                DestroySampler();
+
                 _image = liveImage;
-                _sampler = source.DescriptorSampler;
                 _format = source.DescriptorFormat;
                 _usage = source.DescriptorUsage;
                 _aspect = NormalizeAspectMaskForFormat(_format, source.DescriptorAspect);
@@ -432,6 +448,66 @@ namespace XREngine.Rendering.Vulkan
 
                 if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                     _view = default;
+
+                if (_view.Handle != 0)
+                    CreateSampler();
+            }
+
+            private void RecreateSampler()
+            {
+                DestroySampler();
+                if (_image.Handle != 0 && _texelBufferView.Handle == 0)
+                    CreateSampler();
+            }
+
+            private void CreateSampler()
+            {
+                DestroySampler();
+
+                (Filter minFilter, SamplerMipmapMode mipmapMode) = SamplerConversions.FromMinFilter(Data.MinFilter);
+                Filter magFilter = SamplerConversions.FromMagFilter(Data.MagFilter);
+
+                SamplerCreateInfo samplerInfo = new()
+                {
+                    SType = StructureType.SamplerCreateInfo,
+                    MagFilter = magFilter,
+                    MinFilter = minFilter,
+                    MipmapMode = mipmapMode,
+                    AddressModeU = SamplerConversions.FromWrap(Data.UWrap),
+                    AddressModeV = SamplerConversions.FromWrap(Data.VWrap),
+                    AddressModeW = SamplerConversions.FromWrap(Data.VWrap),
+                    MipLodBias = Data.LodBias,
+                    MinLod = 0f,
+                    MaxLod = Math.Max(0f, Math.Max(Data.NumLevels, 1u) - 1u),
+                    BorderColor = BorderColor.IntOpaqueBlack,
+                    AnisotropyEnable = Vk.False,
+                    MaxAnisotropy = 1f,
+                    CompareEnable = Vk.False,
+                    CompareOp = CompareOp.Always,
+                    UnnormalizedCoordinates = Vk.False,
+                };
+
+                if (Renderer.SamplerAnisotropyEnabled && Data.NumLevels > 1)
+                {
+                    Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
+                    if (props.Limits.MaxSamplerAnisotropy > 1f)
+                    {
+                        samplerInfo.AnisotropyEnable = Vk.True;
+                        samplerInfo.MaxAnisotropy = MathF.Min(props.Limits.MaxSamplerAnisotropy, 16f);
+                    }
+                }
+
+                if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
+                    throw new Exception("Failed to create Vulkan texture-view sampler.");
+            }
+
+            private void DestroySampler()
+            {
+                if (_sampler.Handle == 0)
+                    return;
+
+                Api!.DestroySampler(Device, _sampler, null);
+                _sampler = default;
             }
 
             private static bool IsCombinedDepthStencilFormat(Format format)

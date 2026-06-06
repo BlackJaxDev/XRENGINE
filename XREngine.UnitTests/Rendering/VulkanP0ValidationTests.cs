@@ -317,6 +317,104 @@ public sealed class VulkanP0ValidationTests
         depthStencil.HasFlag(stencil).ShouldBeTrue("DepthStencil combo should include StencilBit");
     }
 
+    [Test]
+    public void VkFrameBuffer_ClearAttachments_ClearsCombinedDepthStencilAttachments()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkFrameBuffer.cs");
+        string method = SliceMethod(source, "internal uint WriteClearAttachments");
+
+        method.Contains("AttachmentRole.DepthStencil", StringComparison.Ordinal).ShouldBeTrue(
+            "Depth24Stencil8 FBOs must emit vkCmdClearAttachments depth/stencil clears for combined attachments.");
+    }
+
+    [Test]
+    public void VulkanPresentTextureShaders_FlipTextureYForVulkanBackend()
+    {
+        string renderToWindow = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderToWindow.cs");
+        string vendorUpscale = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs");
+
+        renderToWindow.Contains("#ifdef XRENGINE_VULKAN", StringComparison.Ordinal).ShouldBeTrue(
+            "Vulkan window presentation samples FBO textures through Vulkan image coordinates, which require a present-time Y flip.");
+        renderToWindow.ShouldContain("uv.y = 1.0 - uv.y;");
+        renderToWindow.ShouldContain("vec2 uv = ResolvePresentTextureUv(clipXY);");
+
+        vendorUpscale.Contains("#ifdef XRENGINE_VULKAN", StringComparison.Ordinal).ShouldBeTrue(
+            "The default pipeline's vendor-upscale fallback is also a final-present texture shader.");
+        vendorUpscale.ShouldContain("uv.y = 1.0 - uv.y;");
+        vendorUpscale.ShouldContain("vec2 uv = ResolvePresentTextureUv(clipXY);");
+    }
+
+    [Test]
+    public void VulkanAutoExposure_ClampsPlannerBackedSourcesToBaseMip()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanAutoExposure.cs");
+        string readbackSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Readback.cs");
+
+        source.ShouldContain("sampledSmallestMip = 0;");
+        source.ShouldContain("Vulkan.AutoExposure.PlannerMip0Fallback2D");
+        source.ShouldContain("Vulkan.AutoExposure.PlannerMip0Fallback2DArray");
+        source.ShouldContain("program.Uniform(\"SmallestMip\", sampledSmallestMip);");
+        source.ShouldContain("meteringMip = Math.Clamp(sampledSmallestMip - offset, 0, sampledSmallestMip);");
+
+        readbackSource.ShouldContain("LogPlannerMipReadbackFallback");
+        readbackSource.ShouldContain("Vulkan.LuminanceReadback.PlannerMip0Fallback2D");
+        readbackSource.ShouldContain("Vulkan.LuminanceReadback.PlannerMip0Fallback2DArray");
+        readbackSource.ShouldContain("? 0");
+    }
+
+    [Test]
+    public void VulkanImGui_ConvertsSrgbUiColorsForSrgbSwapchain()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.ImGui.cs");
+        string swapChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/SwapChain.cs");
+
+        source.ShouldContain("ShouldEmulateOpenGlImGuiSrgbPassthrough()");
+        source.ShouldContain("private static bool IsSrgbSwapchainFormat(Format format)");
+        source.ShouldContain("Format.B8G8R8A8Srgb");
+        source.ShouldContain("Format.R8G8B8A8Srgb");
+        source.ShouldContain("vec3 SrgbToLinear(vec3 c)");
+        source.ShouldContain("color.rgb = SrgbToLinear(color.rgb * color.a);");
+        source.ShouldContain("SrcColorBlendFactor = emulateOpenGlSrgbPassthrough ? BlendFactor.One : BlendFactor.SrcAlpha");
+        swapChainSource.ShouldContain("swapChainImageColorSpace");
+        swapChainSource.ShouldContain("imguiSrgbPassthroughEmulation={6}");
+        swapChainSource.ShouldContain("ShouldEmulateOpenGlImGuiSrgbPassthrough()");
+    }
+
+    [Test]
+    public void VulkanFramebufferAttachments_TrackMipLayoutsIndependently()
+    {
+        string attachmentSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/IVkFrameBufferAttachmentSource.cs");
+        string imageBackedTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkImageBackedTexture.cs");
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+
+        attachmentSource.ShouldContain("GetAttachmentTrackedLayout(int mipLevel, int layerIndex)");
+        attachmentSource.ShouldContain("UpdateAttachmentTrackedLayout(ImageLayout layout, int mipLevel, int layerIndex)");
+
+        imageBackedTexture.ShouldContain("_attachmentLayouts");
+        imageBackedTexture.ShouldContain("_hasPartialAttachmentLayouts");
+        imageBackedTexture.ShouldContain("BuildAttachmentLayoutKey(mipLevel, layerIndex)");
+        imageBackedTexture.ShouldContain("return ImageLayout.Undefined;");
+        imageBackedTexture.ShouldContain("ResetAttachmentLayoutTracking();");
+
+        commandBuffers.ShouldContain("attSrc.UpdateAttachmentTrackedLayout(finalLayout, mipLevel, layerIndex);");
+        commandBuffers.ShouldContain("attSrc.GetAttachmentTrackedLayout(mipLevel, layerIndex);");
+    }
+
+    [Test]
+    public void VulkanTextureViews_UseViewLocalSamplerState()
+    {
+        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkTextureView.cs");
+        string bloomPass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_BloomPass.cs");
+
+        textureView.ShouldNotContain("_sampler = source.DescriptorSampler;");
+        textureView.ShouldContain("private void CreateSampler()");
+        textureView.ShouldContain("SamplerConversions.FromMinFilter(Data.MinFilter)");
+        textureView.ShouldContain("MaxLod = Math.Max(0f, Math.Max(Data.NumLevels, 1u) - 1u)");
+        textureView.ShouldContain("case nameof(XRTextureViewBase.MinFilter):");
+
+        bloomPass.ShouldContain("MinFilter = ETexMinFilter.Linear,");
+    }
+
     #endregion
 
     #region VulkanOutOfMemoryException
@@ -467,6 +565,29 @@ public sealed class VulkanP0ValidationTests
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
         return File.ReadAllText(path);
+    }
+
+    private static string SliceMethod(string source, string signature)
+    {
+        int start = source.IndexOf(signature, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"Could not find method signature '{signature}'.");
+
+        int openBrace = source.IndexOf('{', start);
+        openBrace.ShouldBeGreaterThanOrEqualTo(start, $"Could not find method body for '{signature}'.");
+
+        int depth = 0;
+        for (int i = openBrace; i < source.Length; i++)
+        {
+            if (source[i] == '{')
+                depth++;
+            else if (source[i] == '}')
+                depth--;
+
+            if (depth == 0)
+                return source[start..(i + 1)];
+        }
+
+        throw new InvalidOperationException($"Could not find method end for '{signature}'.");
     }
 
     private static string ResolveRepoRoot()

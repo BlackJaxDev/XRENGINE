@@ -22,13 +22,22 @@ layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D SourceTexture;
 
+vec2 ResolvePresentTextureUv(vec2 clipXY)
+{
+    vec2 uv = clipXY * 0.5 + 0.5;
+#ifdef XRENGINE_VULKAN
+    uv.y = 1.0 - uv.y;
+#endif
+    return uv;
+}
+
 void main()
 {
     vec2 clipXY = FragPos.xy;
     if (clipXY.x < -1.0 || clipXY.x > 1.0 || clipXY.y < -1.0 || clipXY.y > 1.0)
         discard;
 
-    vec2 uv = clipXY * 0.5 + 0.5;
+    vec2 uv = ResolvePresentTextureUv(clipXY);
     OutColor = texture(SourceTexture, uv);
 }
 """;

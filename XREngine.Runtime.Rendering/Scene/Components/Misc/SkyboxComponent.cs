@@ -1122,8 +1122,8 @@ namespace XREngine.Components.Scene.Mesh
                     UpdateDepth = false,
                     Function = EComparison.Lequal,
                 },
-                // Skybox shaders reconstruct and rotate view rays in the vertex stage, so they require camera matrices.
-                RequiredEngineUniforms = EUniformRequirements.Camera,
+                // Skybox shaders reconstruct and rotate view rays in the vertex stage, so they require camera matrices and clip-space policy.
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
                 // Skybox uses a specialized vertex shader that outputs clip-space positions directly.
                 // GPU indirect dispatch would replace it with a model-matrix-based shader, breaking rendering.
                 ExcludeFromGpuIndirect = true,
@@ -1426,6 +1426,8 @@ layout(location = 1) out vec3 FragWorldDir;
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
+uniform int DepthMode;
+uniform int ClipDepthRange;
 uniform float SkyboxRotation = 0.0;
 
 vec3 GetWorldRay(vec2 clipXY)
@@ -1446,13 +1448,20 @@ vec3 RotateSkyDirection(vec3 dir)
         dir.x * sinRot + dir.z * cosRot);
 }
 
+float GetFarClipZ()
+{
+    if (DepthMode == 1)
+        return ClipDepthRange == 1 ? -1.0 : 0.0;
+
+    return 1.0;
+}
+
 void main()
 {
     vec2 clipXY = Position.xy;
     FragClipPos = Position;
     FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));
-    // Output at maximum depth (z=1) so skybox is behind everything
-    gl_Position = vec4(clipXY, 1.0, 1.0);
+    gl_Position = vec4(clipXY, GetFarClipZ(), 1.0);
 }
 ";
 
