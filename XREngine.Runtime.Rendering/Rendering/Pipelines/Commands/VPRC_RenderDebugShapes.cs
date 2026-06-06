@@ -1,5 +1,7 @@
+using System;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -7,6 +9,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderDebugShapes : ViewportRenderCommand
     {
+        public string? RenderGraphPassName { get; set; }
+
         protected override void Execute()
         {
             if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass)
@@ -20,7 +24,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     ?? instance.LastSceneCamera
                     ?? instance.LastRenderingCamera;
 
-                using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
+                using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
                 using (instance.RenderState.PushRenderingCamera(camera))
                 {
                     RenderEnabledSpatialTreeDebug(instance, camera);
@@ -63,5 +67,46 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static IRuntimeRenderWorld? ResolveWorld(XRRenderPipelineInstance instance)
             => instance.RenderState.WindowViewport?.World ?? RuntimeEngine.Rendering.State.RenderingWorld;
+
+        private int ResolveRenderGraphPassIndex()
+        {
+            if (!string.IsNullOrWhiteSpace(RenderGraphPassName) &&
+                ParentPipeline?.PassMetadata is { } metadata)
+            {
+                foreach (RenderPassMetadata pass in metadata)
+                {
+                    if (string.Equals(pass.Name, RenderGraphPassName, StringComparison.OrdinalIgnoreCase))
+                        return pass.PassIndex;
+                }
+            }
+
+            return (int)EDefaultRenderPass.OnTopForward;
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            if (string.IsNullOrWhiteSpace(RenderGraphPassName))
+                return;
+
+            var builder = context.GetOrCreateSyntheticPass(RenderGraphPassName, ERenderGraphPassStage.Graphics)
+                .UseEngineDescriptors()
+                .UseMaterialDescriptors();
+
+            if (context.CurrentRenderTarget is { } target)
+            {
+                builder.UseColorAttachment(
+                    MakeFboColorResource(target.Name),
+                    target.ColorAccess,
+                    ERenderPassLoadOp.Load,
+                    target.GetColorStoreOp());
+                builder.UseDepthAttachment(
+                    MakeFboDepthResource(target.Name),
+                    target.DepthAccess,
+                    ERenderPassLoadOp.Load,
+                    target.GetDepthStoreOp());
+            }
+        }
     }
 }

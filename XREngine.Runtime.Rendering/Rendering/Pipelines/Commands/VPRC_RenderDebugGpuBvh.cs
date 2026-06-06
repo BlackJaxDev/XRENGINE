@@ -33,6 +33,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
     public string ReadyVariableName { get; set; } = "AccelerationStructureReady";
     public string NodeCountVariableName { get; set; } = "AccelerationStructureNodeCount";
     public string NodeBufferVariableName { get; set; } = "AccelerationStructureNodes";
+    public string? RenderGraphPassName { get; set; }
 
     /// <summary>Hard cap on the number of nodes whose AABBs are emitted per frame.</summary>
     public uint MaxNodes { get; set; } = 16384u;
@@ -131,7 +132,7 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
             material?.SetFloat(0, lineWidth);
             material?.SetInt(1, (int)visualizedLines);
 
-            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.OnTopForward))
+            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {
                 _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines, forceNoStereo: true);
@@ -149,6 +150,21 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
         RuntimeEngine.Rendering.State.StencilMask(0xFF);
         RuntimeEngine.Rendering.State.StencilFunc(EComparison.Always, 0, 0xFF);
         RuntimeEngine.Rendering.State.StencilOp(EStencilOp.Keep, EStencilOp.Keep, EStencilOp.Keep);
+    }
+
+    private int ResolveRenderGraphPassIndex()
+    {
+        if (!string.IsNullOrWhiteSpace(RenderGraphPassName) &&
+            ParentPipeline?.PassMetadata is { } metadata)
+        {
+            foreach (RenderPassMetadata pass in metadata)
+            {
+                if (string.Equals(pass.Name, RenderGraphPassName, StringComparison.OrdinalIgnoreCase))
+                    return pass.PassIndex;
+            }
+        }
+
+        return (int)EDefaultRenderPass.OnTopForward;
     }
 
     private bool EnsureResources(uint requiredLineCapacity)
@@ -249,7 +265,29 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
     {
         base.DescribeRenderPass(context);
 
-        var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RenderDebugGpuBvh), ERenderGraphPassStage.Compute);
-        builder.ReadBuffer(NodeBufferVariableName);
+        var compute = context.GetOrCreateSyntheticPass(nameof(VPRC_RenderDebugGpuBvh), ERenderGraphPassStage.Compute);
+        compute.ReadBuffer(NodeBufferVariableName);
+
+        if (string.IsNullOrWhiteSpace(RenderGraphPassName))
+            return;
+
+        var graphics = context.GetOrCreateSyntheticPass(RenderGraphPassName, ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .UseMaterialDescriptors()
+            .DependsOn(compute.PassIndex);
+
+        if (context.CurrentRenderTarget is { } target)
+        {
+            graphics.UseColorAttachment(
+                MakeFboColorResource(target.Name),
+                target.ColorAccess,
+                ERenderPassLoadOp.Load,
+                target.GetColorStoreOp());
+            graphics.UseDepthAttachment(
+                MakeFboDepthResource(target.Name),
+                target.DepthAccess,
+                ERenderPassLoadOp.Load,
+                target.GetDepthStoreOp());
+        }
     }
 }

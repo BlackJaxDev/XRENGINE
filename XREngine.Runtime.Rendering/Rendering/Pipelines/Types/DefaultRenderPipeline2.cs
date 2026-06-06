@@ -537,6 +537,15 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         return HasTextureAttachment(fbo.Targets[0], textureName, EFrameBufferAttachment.ColorAttachment0);
     }
 
+    private bool HasColorDepthStencilTargets(XRFrameBuffer fbo, string colorTextureName, string depthStencilTextureName)
+    {
+        if (fbo.Targets is not { Length: 2 } targets)
+            return false;
+
+        return HasTextureAttachment(targets[0], colorTextureName, EFrameBufferAttachment.ColorAttachment0)
+            && HasTextureAttachment(targets[1], depthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
+    }
+
     private bool HasMsaaGBufferTargets(XRFrameBuffer fbo)
     {
         if (fbo.Targets is not { Length: 5 } targets)
@@ -579,15 +588,20 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
             return true;
 
-        return !HasSingleColorTarget(fbo, PostProcessOutputTextureName);
+        return !HasColorDepthStencilTargets(fbo, PostProcessOutputTextureName, DepthStencilTextureName);
     }
 
-    private bool NeedsRecreateFxaaFbo(XRFrameBuffer fbo)
+    private bool NeedsRecreateFinalPostProcessOutputFbo(XRFrameBuffer fbo)
     {
         if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
             return true;
 
-        if (!HasSingleColorTarget(fbo, FxaaOutputTextureName))
+        return !HasSingleColorTarget(fbo, FinalPostProcessOutputTextureName);
+    }
+
+    private bool NeedsRecreateFinalPostProcessFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
             return true;
 
         if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
@@ -608,9 +622,17 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             return true;
 
         XRShader expectedShader = XRShader.EngineShader(
-            Path.Combine(SceneShaderPath, "FXAA.fs"),
+            Path.Combine(SceneShaderPath, FinalPostProcessShaderName()),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateFxaaFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        return !HasSingleColorTarget(fbo, FxaaOutputTextureName);
     }
 
     private bool NeedsRecreateTsrHistoryColorFbo(XRFrameBuffer fbo)
@@ -626,7 +648,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
             return true;
 
-        if (!HasSingleColorTarget(fbo, FxaaOutputTextureName))
+        if (!HasSingleColorTarget(fbo, TsrOutputTextureName))
             return true;
 
         if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
@@ -639,7 +661,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         if (textures.Count != 6)
             return true;
 
-        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName))
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(FinalPostProcessOutputTextureName))
             || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VelocityTextureName))
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
@@ -1160,6 +1182,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         Stereo ? "PostProcessStereo.fs" : 
         "PostProcess.fs";
 
+    private string FinalPostProcessShaderName() =>
+        Stereo ? "FinalPostProcessStereo.fs" : "FinalPostProcess.fs";
+
     private string DeferredLightCombineShaderName() => 
         Stereo ? "DeferredLightCombineStereo.fs" : 
         "DeferredLightCombine.fs";
@@ -1220,6 +1245,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
+    public const string FinalPostProcessFBOName = "FinalPostProcessFBO";
+    public const string FinalPostProcessOutputTextureName = "FinalPostProcessOutputTexture";
+    public const string FinalPostProcessOutputFBOName = "FinalPostProcessOutputFBO";
     public const string AtmosphereColorTextureName = "AtmosphereColor";
     public const string AtmosphereHalfDepthTextureName = "AtmosphereHalfDepth";
     public const string AtmosphereHalfScatterTextureName = "AtmosphereHalfScatter";
@@ -1272,6 +1300,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
+    public const string TsrOutputTextureName = "TsrOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";

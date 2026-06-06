@@ -7,8 +7,10 @@ internal static class RenderPipelineAntiAliasingResources
     internal static readonly string[] AntiAliasingTextureDependencies =
     [
         DefaultRenderPipeline.PostProcessOutputTextureName,
+        DefaultRenderPipeline.FinalPostProcessOutputTextureName,
         DefaultRenderPipeline.FxaaOutputTextureName,
         DefaultRenderPipeline.SmaaOutputTextureName,
+        DefaultRenderPipeline.TsrOutputTextureName,
         DefaultRenderPipeline.HistoryColorTextureName,
         DefaultRenderPipeline.HistoryDepthStencilTextureName,
         DefaultRenderPipeline.HistoryDepthViewTextureName,
@@ -35,6 +37,8 @@ internal static class RenderPipelineAntiAliasingResources
         DefaultRenderPipeline.ForwardPassFBOName,
         DefaultRenderPipeline.PostProcessOutputFBOName,
         DefaultRenderPipeline.PostProcessFBOName,
+        DefaultRenderPipeline.FinalPostProcessFBOName,
+        DefaultRenderPipeline.FinalPostProcessOutputFBOName,
         DefaultRenderPipeline.FxaaFBOName,
         DefaultRenderPipeline.SmaaFBOName,
         DefaultRenderPipeline.TsrHistoryColorFBOName,

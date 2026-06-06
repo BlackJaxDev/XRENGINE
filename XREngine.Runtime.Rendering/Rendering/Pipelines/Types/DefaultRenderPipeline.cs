@@ -538,6 +538,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
             && ReferenceEquals(target, GetTexture<XRTexture>(textureName));
     }
 
+    private bool HasColorDepthStencilTargets(XRFrameBuffer fbo, string colorTextureName, string depthStencilTextureName)
+    {
+        if (fbo.Targets is not { Length: 2 } targets)
+            return false;
+
+        return HasTextureAttachment(targets[0], colorTextureName, EFrameBufferAttachment.ColorAttachment0)
+            && HasTextureAttachment(targets[1], depthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
+    }
+
     private bool HasTextureAttachment(
         (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex) target,
         string textureName,
@@ -589,15 +598,20 @@ public partial class DefaultRenderPipeline : RenderPipeline
         if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
             return true;
 
-        return !HasSingleColorTarget(fbo, PostProcessOutputTextureName);
+        return !HasColorDepthStencilTargets(fbo, PostProcessOutputTextureName, DepthStencilTextureName);
     }
 
-    private bool NeedsRecreateFxaaFbo(XRFrameBuffer fbo)
+    private bool NeedsRecreateFinalPostProcessOutputFbo(XRFrameBuffer fbo)
     {
         if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
             return true;
 
-        if (!HasSingleColorTarget(fbo, FxaaOutputTextureName))
+        return !HasSingleColorTarget(fbo, FinalPostProcessOutputTextureName);
+    }
+
+    private bool NeedsRecreateFinalPostProcessFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
             return true;
 
         if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
@@ -618,9 +632,17 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return true;
 
         XRShader expectedShader = XRShader.EngineShader(
-            Path.Combine(SceneShaderPath, "FXAA.fs"),
+            Path.Combine(SceneShaderPath, FinalPostProcessShaderName()),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateFxaaFbo(XRFrameBuffer fbo)
+    {
+        if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
+            return true;
+
+        return !HasSingleColorTarget(fbo, FxaaOutputTextureName);
     }
 
     private bool NeedsRecreateTsrHistoryColorFbo(XRFrameBuffer fbo)
@@ -636,7 +658,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
             return true;
 
-        if (!HasSingleColorTarget(fbo, FxaaOutputTextureName))
+        if (!HasSingleColorTarget(fbo, TsrOutputTextureName))
             return true;
 
         if (fbo is not XRQuadFrameBuffer quadFbo || quadFbo.Material is not XRMaterial material)
@@ -649,7 +671,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         if (textures.Count != 6)
             return true;
 
-        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(PostProcessOutputTextureName))
+        if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(FinalPostProcessOutputTextureName))
             || !ReferenceEquals(textures[1], GetTexture<XRTexture>(VelocityTextureName))
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
@@ -1161,6 +1183,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
         Stereo ? "PostProcessStereo.fs" : 
         "PostProcess.fs";
 
+    private string FinalPostProcessShaderName() =>
+        Stereo ? "FinalPostProcessStereo.fs" : "FinalPostProcess.fs";
+
     private string DeferredLightCombineShaderName() => 
         Stereo ? "DeferredLightCombineStereo.fs" : 
         "DeferredLightCombine.fs";
@@ -1221,6 +1246,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
+    public const string FinalPostProcessFBOName = "FinalPostProcessFBO";
+    public const string FinalPostProcessOutputTextureName = "FinalPostProcessOutputTexture";
+    public const string FinalPostProcessOutputFBOName = "FinalPostProcessOutputFBO";
     public const string AtmosphereColorTextureName = "AtmosphereColor";
     public const string AtmosphereHalfDepthTextureName = "AtmosphereHalfDepth";
     public const string AtmosphereHalfScatterTextureName = "AtmosphereHalfScatter";
@@ -1273,6 +1301,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
+    public const string TsrOutputTextureName = "TsrOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
@@ -2327,11 +2356,36 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 GetDesiredFBOSizeInternal,
                 NeedsRecreatePostProcessOutputFbo);
 
+            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+                FinalPostProcessOutputTextureName,
+                CreateFinalPostProcessOutputTexture,
+                NeedsRecreatePostProcessTextureInternalSize,
+                ResizeTextureInternalSize);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                FinalPostProcessFBOName,
+                CreateFinalPostProcessFBO,
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateFinalPostProcessFbo)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                FinalPostProcessOutputFBOName,
+                CreateFinalPostProcessOutputFBO,
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateFinalPostProcessOutputFbo);
+
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 FxaaFBOName,
                 CreateFxaaFBO,
                 GetDesiredFBOSizeFull,
                 NeedsRecreateFxaaFbo);
+
+            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+                TsrOutputTextureName,
+                CreateTsrOutputTexture,
+                NeedsRecreatePostProcessTextureFullSize,
+                ResizeTextureFullSize);
 
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 TsrHistoryColorTextureName,
@@ -2374,6 +2428,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
         }
 
+        AppendLateDebugOverlay(c);
+        AppendFinalPostProcess(c);
+
         // Post-AA chain: FXAA and SMAA run against the post-process output, while TSR
         // resolves from internal resolution and writes a full-resolution result.
         {
@@ -2383,45 +2440,46 @@ public partial class DefaultRenderPipeline : RenderPipeline
             {
                 var upscaleCmds = new ViewportRenderCommandContainer(this);
 
-                // Apply the selected anti-aliasing path.
-                using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
+                // Apply the selected anti-aliasing path. These passes render to
+                // offscreen full-size FBOs, so each command pushes an origin-zero
+                // destination render area instead of the window viewport region.
+                var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
+                tsrOrPostAa.Label = "TSR Or Post AA";
+                tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
                 {
-                    var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
-                    tsrOrPostAa.Label = "TSR Or Post AA";
-                    tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+                    var tsrUpscale = new ViewportRenderCommandContainer(this);
+                    tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true);
+                    tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                        TsrUpscaleFBOName,
+                        TsrHistoryColorFBOName,
+                        EReadBufferMode.ColorAttachment0,
+                        blitColor: true,
+                        blitDepth: false,
+                        blitStencil: false,
+                        linearFilter: false);
+                    tsrOrPostAa.TrueCommands = tsrUpscale;
+                }
+                {
+                    var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
+                    var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
+                    postAaChoice.Label = "FXAA Or SMAA";
+                    postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
                     {
-                            var tsrUpscale = new ViewportRenderCommandContainer(this);
-                            tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
-                            tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                                TsrUpscaleFBOName,
-                                TsrHistoryColorFBOName,
-                                EReadBufferMode.ColorAttachment0,
-                                blitColor: true,
-                                blitDepth: false,
-                                blitStencil: false,
-                                linearFilter: false);
-                            tsrOrPostAa.TrueCommands = tsrUpscale;
+                        var fxaaUpscale = new ViewportRenderCommandContainer(this);
+                        var fxaa = fxaaUpscale.Add<VPRC_FXAA>();
+                        fxaa.SourceTextureName = FinalPostProcessOutputTextureName;
+                        fxaa.DestinationFBOName = FxaaFBOName;
+                        postAaChoice.TrueCommands = fxaaUpscale;
                     }
                     {
-                            var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
-                            var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
-                            postAaChoice.Label = "FXAA Or SMAA";
-                            postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
-                            {
-                                var fxaaUpscale = new ViewportRenderCommandContainer(this);
-                                fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
-                                postAaChoice.TrueCommands = fxaaUpscale;
-                            }
-                            {
-                                var smaaUpscale = new ViewportRenderCommandContainer(this);
-                                var smaa = smaaUpscale.Add<VPRC_SMAA>();
-                                smaa.SourceTextureName = PostProcessOutputTextureName;
-                                smaa.OutputTextureName = SmaaOutputTextureName;
-                                smaa.OutputFBOName = SmaaFBOName;
-                                postAaChoice.FalseCommands = smaaUpscale;
-                            }
-                            tsrOrPostAa.FalseCommands = fxaaOrSmaa;
+                        var smaaUpscale = new ViewportRenderCommandContainer(this);
+                        var smaa = smaaUpscale.Add<VPRC_SMAA>();
+                        smaa.SourceTextureName = FinalPostProcessOutputTextureName;
+                        smaa.OutputTextureName = SmaaOutputTextureName;
+                        smaa.OutputFBOName = SmaaFBOName;
+                        postAaChoice.FalseCommands = smaaUpscale;
                     }
+                    tsrOrPostAa.FalseCommands = fxaaOrSmaa;
                 }
 
                 upscaleChoice.TrueCommands = upscaleCmds;
@@ -2475,16 +2533,21 @@ public partial class DefaultRenderPipeline : RenderPipeline
         vendorBlit.MotionTextureName = VelocityTextureName;
         vendorBlit.MotionFrameBufferName = VelocityFBOName;
         vendorBlit.ForceFallbackBlit = bypassVendorUpscale;
+        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
         return cmds;
     }
+
+    private static bool ShouldFlipVulkanPresentSourceY(string sourceFboName)
+        => sourceFboName is not (FxaaFBOName or SmaaFBOName or TsrUpscaleFBOName);
 
     private static string? ResolveVendorUpscaleSourceTextureName(string sourceFboName)
         => sourceFboName switch
         {
             PostProcessOutputFBOName => PostProcessOutputTextureName,
+            FinalPostProcessOutputFBOName => FinalPostProcessOutputTextureName,
             FxaaFBOName => FxaaOutputTextureName,
             SmaaFBOName => SmaaOutputTextureName,
-            TsrUpscaleFBOName => FxaaOutputTextureName,
+            TsrUpscaleFBOName => TsrOutputTextureName,
             _ => null,
         };
 
@@ -2510,6 +2573,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
         vendorBlit.MotionTextureName = VelocityTextureName;
         vendorBlit.MotionFrameBufferName = VelocityFBOName;
+        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
         return c;
     }
 

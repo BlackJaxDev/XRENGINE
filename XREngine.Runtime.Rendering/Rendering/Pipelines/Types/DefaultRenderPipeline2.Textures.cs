@@ -1298,7 +1298,8 @@ public partial class DefaultRenderPipeline2
 
     private XRTexture CreatePostProcessOutputTexture()
     {
-        // Use internal resolution - FXAA pass will upscale to full resolution
+        // Use internal resolution. The late final-post pass and optional AA/upscale
+        // stages consume this after debug overlays are composited into it.
         var (width, height) = GetDesiredFBOSizeInternal();
         EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
         EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
@@ -1319,6 +1320,31 @@ public partial class DefaultRenderPipeline2
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.SamplerName = PostProcessOutputTextureName;
         texture.Name = PostProcessOutputTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateFinalPostProcessOutputTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeInternal();
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = sized;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = FinalPostProcessOutputTextureName;
+        texture.Name = FinalPostProcessOutputTextureName;
         return texture;
     }
 
@@ -1371,6 +1397,31 @@ public partial class DefaultRenderPipeline2
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.SamplerName = FxaaOutputTextureName;
         texture.Name = FxaaOutputTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateTsrOutputTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = sized;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = TsrOutputTextureName;
+        texture.Name = TsrOutputTextureName;
         return texture;
     }
 

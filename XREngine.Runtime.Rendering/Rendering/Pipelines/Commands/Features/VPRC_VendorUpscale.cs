@@ -26,6 +26,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string? MotionTextureName { get; set; }
         public string? MotionFrameBufferName { get; set; }
         public bool ForceFallbackBlit { get; set; }
+        public bool FlipSourceYOnVulkanFallback { get; set; } = true;
         public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
         private static bool _reportedDlssFailure;
@@ -76,13 +77,15 @@ layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D SourceTexture;
 uniform bool ApplySharpen;
+uniform bool FlipSourceYOnVulkanFallback;
 uniform float SharpenStrength;
 
 vec2 ResolvePresentTextureUv(vec2 clipXY)
 {
     vec2 uv = clipXY * 0.5 + 0.5;
 #ifdef XRENGINE_VULKAN
-    uv.y = 1.0 - uv.y;
+    if (FlipSourceYOnVulkanFallback)
+        uv.y = 1.0 - uv.y;
 #endif
     return uv;
 }
@@ -312,6 +315,7 @@ void main()
             }
 
             program.Uniform("ApplySharpen", _fallbackApplySharpen);
+            program.Uniform("FlipSourceYOnVulkanFallback", FlipSourceYOnVulkanFallback);
             program.Uniform("SharpenStrength", _fallbackSharpenStrength);
         }
 

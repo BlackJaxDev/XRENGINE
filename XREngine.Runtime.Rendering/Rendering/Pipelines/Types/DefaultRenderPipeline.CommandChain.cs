@@ -134,6 +134,8 @@ public partial class DefaultRenderPipeline
         }
 
         AppendExposureUpdate(c);
+        AppendLateDebugOverlay(c);
+        AppendFinalPostProcess(c);
         AppendFxaaTsrUpscaleChain(c);
         AppendTemporalCommit(c);
         AppendFinalOutput(c, bypassVendorUpscale);
@@ -715,10 +717,6 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_RenderMeshletDebugDisplay>();
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
-            // GPU BVH wireframe overlay; no-op unless toggled via the
-            // GpuBvhDebugSettings post-process stage on the active camera.
-            c.Add<VPRC_RenderDebugGpuBvh>();
-            c.Add<VPRC_RenderDebugShapes>();
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
             c.Add<VPRC_DepthWrite>().Allow = true;
             c.Add<VPRC_ColorMask>().Set(true, true, true, true);
@@ -830,11 +828,36 @@ public partial class DefaultRenderPipeline
             GetDesiredFBOSizeInternal,
             NeedsRecreatePostProcessOutputFbo);
 
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            FinalPostProcessOutputTextureName,
+            CreateFinalPostProcessOutputTexture,
+            NeedsRecreatePostProcessTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            FinalPostProcessFBOName,
+            CreateFinalPostProcessFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateFinalPostProcessFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            FinalPostProcessOutputFBOName,
+            CreateFinalPostProcessOutputFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateFinalPostProcessOutputFbo);
+
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             FxaaFBOName,
             CreateFxaaFBO,
             GetDesiredFBOSizeFull,
             NeedsRecreateFxaaFbo);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TsrOutputTextureName,
+            CreateTsrOutputTexture,
+            NeedsRecreatePostProcessTextureFullSize,
+            ResizeTextureFullSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             TsrHistoryColorTextureName,
@@ -862,42 +885,41 @@ public partial class DefaultRenderPipeline
         {
             var upscaleCmds = new ViewportRenderCommandContainer(this);
 
-            using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
+            var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
+            tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
             {
-                var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
-                tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+                var tsrUpscale = new ViewportRenderCommandContainer(this);
+                tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true);
+                tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                    TsrUpscaleFBOName,
+                    TsrHistoryColorFBOName,
+                    EReadBufferMode.ColorAttachment0,
+                    blitColor: true,
+                    blitDepth: false,
+                    blitStencil: false,
+                    linearFilter: false);
+                tsrOrPostAa.TrueCommands = tsrUpscale;
+            }
+            {
+                var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
+                var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
+                postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
                 {
-                    var tsrUpscale = new ViewportRenderCommandContainer(this);
-                    tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
-                    tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                        TsrUpscaleFBOName,
-                        TsrHistoryColorFBOName,
-                        EReadBufferMode.ColorAttachment0,
-                        blitColor: true,
-                        blitDepth: false,
-                        blitStencil: false,
-                        linearFilter: false);
-                    tsrOrPostAa.TrueCommands = tsrUpscale;
+                    var fxaaUpscale = new ViewportRenderCommandContainer(this);
+                    var fxaa = fxaaUpscale.Add<VPRC_FXAA>();
+                    fxaa.SourceTextureName = FinalPostProcessOutputTextureName;
+                    fxaa.DestinationFBOName = FxaaFBOName;
+                    postAaChoice.TrueCommands = fxaaUpscale;
                 }
                 {
-                    var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
-                    var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
-                    postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
-                    {
-                        var fxaaUpscale = new ViewportRenderCommandContainer(this);
-                        fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
-                        postAaChoice.TrueCommands = fxaaUpscale;
-                    }
-                    {
-                        var smaaUpscale = new ViewportRenderCommandContainer(this);
-                        var smaa = smaaUpscale.Add<VPRC_SMAA>();
-                        smaa.SourceTextureName = PostProcessOutputTextureName;
-                        smaa.OutputTextureName = SmaaOutputTextureName;
-                        smaa.OutputFBOName = SmaaFBOName;
-                        postAaChoice.FalseCommands = smaaUpscale;
-                    }
-                    tsrOrPostAa.FalseCommands = fxaaOrSmaa;
+                    var smaaUpscale = new ViewportRenderCommandContainer(this);
+                    var smaa = smaaUpscale.Add<VPRC_SMAA>();
+                    smaa.SourceTextureName = FinalPostProcessOutputTextureName;
+                    smaa.OutputTextureName = SmaaOutputTextureName;
+                    smaa.OutputFBOName = SmaaFBOName;
+                    postAaChoice.FalseCommands = smaaUpscale;
                 }
+                tsrOrPostAa.FalseCommands = fxaaOrSmaa;
             }
 
             upscaleChoice.TrueCommands = upscaleCmds;
@@ -912,6 +934,39 @@ public partial class DefaultRenderPipeline
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
+        }
+    }
+
+    private void AppendLateDebugOverlay(ViewportRenderCommandContainer c)
+    {
+        const string lateDebugPassName = "LateDebugOverlay";
+        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        {
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(
+                PostProcessOutputFBOName,
+                write: true,
+                clearColor: false,
+                clearDepth: false,
+                clearStencil: false)))
+            {
+                c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                c.Add<VPRC_DepthTest>().Enable = false;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
+                c.Add<VPRC_RenderDebugGpuBvh>().RenderGraphPassName = lateDebugPassName;
+                c.Add<VPRC_RenderDebugShapes>().RenderGraphPassName = lateDebugPassName;
+                c.Add<VPRC_RenderDebugPhysics>().RenderGraphPassName = lateDebugPassName;
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+            }
+        }
+    }
+
+    private void AppendFinalPostProcess(ViewportRenderCommandContainer c)
+    {
+        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        {
+            c.Add<VPRC_RenderQuadToFBO>().SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName);
         }
     }
 
@@ -1245,7 +1300,6 @@ public partial class DefaultRenderPipeline
     {
         var commands = new ViewportRenderCommandContainer(this);
         commands.Add<VPRC_RenderQuadToFBO>().SetTargets(FullOverdrawDebugFBOName, null);
-        AppendDebugOverlay(commands, visible: false);
         return commands;
     }
 
@@ -1255,17 +1309,14 @@ public partial class DefaultRenderPipeline
         if (EnableTransformIdVisualization)
         {
             commands.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
-            AppendDebugOverlay(commands, visible: false);
         }
         else if (ActiveTransparencyDebugFboName is not null)
         {
             commands.Add<VPRC_RenderQuadToFBO>().SetTargets(ActiveTransparencyDebugFboName, null);
-            AppendDebugOverlay(commands, visible: false);
         }
         else
         {
             AppendViewportFinalOutputSourceCommands(commands, bypassVendorUpscale);
-            AppendDebugOverlay(commands);
         }
 
         return commands;
@@ -1321,7 +1372,7 @@ public partial class DefaultRenderPipeline
             }
             upscaleOutputChoice.TrueCommands = upscaleOutput;
         }
-        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessOutputFBOName, bypassVendorUpscale);
+        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(FinalPostProcessOutputFBOName, bypassVendorUpscale);
     }
 
     private ViewportRenderCommandContainer CreateOutputSourceOverrideCommands(string sourceFboName, bool bypassVendorUpscale)
@@ -1340,6 +1391,7 @@ public partial class DefaultRenderPipeline
             vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
             vendorBlit.MotionTextureName = VelocityTextureName;
             vendorBlit.MotionFrameBufferName = VelocityFBOName;
+            vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
         }
 
         return commands;
