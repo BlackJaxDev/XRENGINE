@@ -64,6 +64,14 @@ Vulkan keeps using backend viewport/scissor adaptation:
 - `YDown` -> positive-height viewport
 - scissors are converted from engine bottom-left rectangles to Vulkan top-left rectangles
 
+Presentation paths must not add an unconditional Vulkan source-texture Y flip. Scene/world rendering owns Vulkan Y policy through the viewport transform; editor texture display is backend-specific, with OpenGL scene-panel images flipped for ImGui and Vulkan scene-panel images displayed unflipped. The vendor-upscale fallback blit keeps the source-specific Y-up behavior for post-AA outputs, but forces the fallback source flip when `ClipSpaceYDirection=YDown` so none/TAA, FXAA, SMAA, TSR, and MSAA final output orientation agree.
+
+Late debug primitive overlays are a special case: the shared line/point/triangle visualizer expands world-space primitives in geometry shaders after the post-process source texture has been normalized by full-screen passes. Its Vulkan helper follows `ClipSpaceYDirection`, mirroring final geometry-shader clip Y only for the OpenGL-style `YUp` Vulkan path; explicit `YDown` is handled by the final fallback blit so debug shapes match skybox and post-AA output without changing mesh or viewport policy.
+
+TSR samples are clamped to texel-center margins and the oversized fullscreen triangle is discarded on all clip edges. This prevents border texels from clamp-sampling into the temporal resolve and drawing streaks across the frame.
+
+MSAA depth resolve shaders that use `ScreenSpaceUtils.glsl` must request `ClipSpacePolicy`. The forward MSAA depth preload depends on `ClipSpaceYDirection` so skybox/background refill samples the correct depth texels under Vulkan `YDown`.
+
 Vulkan ImGui is not part of scene clip-space policy. Its backend resets a positive-height top-left viewport before drawing so docked editor UI stays upright under either scene Y direction.
 
 Depth range remains a clip-space policy. Camera projection reacts to depth range, not Y direction.
@@ -102,6 +110,16 @@ git diff --check
 ```
 
 The focused contract suite passed 23/23, and the full solution build reported 0 warnings and 0 errors. `git diff --check` reported no whitespace errors, only Git's existing CRLF normalization warnings.
+
+Additional Vulkan AA/final-output orientation validation (2026-06-06):
+
+```powershell
+dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~VulkanP0ValidationTests --no-restore --logger "trx;LogFileName=VulkanP0ValidationTests.trx" -- NUnit.NumberOfTestWorkers=1
+git diff --check
+```
+
+The editor build reported 0 warnings and 0 errors. The focused Vulkan P0 suite passed 36/36 after updating stale source-path and presentation-orientation assertions. `git diff --check` reported no whitespace errors, only Git's existing CRLF normalization warnings.
 
 ## Remaining Manual Retest
 

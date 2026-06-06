@@ -57,9 +57,32 @@ bool IsValidUV(vec2 uv)
     return all(greaterThanEqual(uv, vec2(0.0f))) && all(lessThanEqual(uv, vec2(1.0f)));
 }
 
+vec2 ClampUvToTexels(vec2 uv, vec2 texelSize)
+{
+    vec2 halfTexel = texelSize * 0.5f;
+    return clamp(uv, halfTexel, vec2(1.0f) - halfTexel);
+}
+
+vec2 TextureTexelSize(sampler2D tex)
+{
+    return 1.0f / vec2(max(textureSize(tex, 0), ivec2(1)));
+}
+
+vec2 ClampSourceUv(vec2 uv)
+{
+    return ClampUvToTexels(uv, TextureTexelSize(PostProcessOutputTexture));
+}
+
+vec2 ClampHistoryUv(vec2 uv)
+{
+    return ClampUvToTexels(uv, TextureTexelSize(TsrHistoryColor));
+}
+
 // ── 5-tap bicubic Catmull-Rom (Jimenez/Karis) ────────────────────
 vec3 SampleCatmullRom(sampler2D tex, vec2 uv, vec2 texelSize)
 {
+    uv = ClampUvToTexels(uv, texelSize);
+
     vec2 texSize = 1.0f / texelSize;
     vec2 position = uv * texSize;
     vec2 center = floor(position - 0.5f) + 0.5f;
@@ -78,11 +101,11 @@ vec3 SampleCatmullRom(sampler2D tex, vec2 uv, vec2 texelSize)
     vec2 tc3  = (center + 2.0f) * texelSize;
 
     vec3 result =
-        texture(tex, vec2(tc12.x, tc12.y)).rgb * (w12.x * w12.y) +
-        texture(tex, vec2(tc0.x,  tc12.y)).rgb * (w0.x  * w12.y) +
-        texture(tex, vec2(tc3.x,  tc12.y)).rgb * (w3.x  * w12.y) +
-        texture(tex, vec2(tc12.x, tc0.y )).rgb * (w12.x * w0.y ) +
-        texture(tex, vec2(tc12.x, tc3.y )).rgb * (w12.x * w3.y );
+        texture(tex, ClampUvToTexels(vec2(tc12.x, tc12.y), texelSize)).rgb * (w12.x * w12.y) +
+        texture(tex, ClampUvToTexels(vec2(tc0.x,  tc12.y), texelSize)).rgb * (w0.x  * w12.y) +
+        texture(tex, ClampUvToTexels(vec2(tc3.x,  tc12.y), texelSize)).rgb * (w3.x  * w12.y) +
+        texture(tex, ClampUvToTexels(vec2(tc12.x, tc0.y ), texelSize)).rgb * (w12.x * w0.y ) +
+        texture(tex, ClampUvToTexels(vec2(tc12.x, tc3.y ), texelSize)).rgb * (w12.x * w3.y );
 
     float totalWeight = (w12.x * w12.y) + (w0.x * w12.y) + (w3.x * w12.y)
                        + (w12.x * w0.y) + (w12.x * w3.y);
@@ -94,17 +117,19 @@ vec3 SampleCatmullRom(sampler2D tex, vec2 uv, vec2 texelSize)
 // obvious immediately.
 vec3 SampleCurrentReconstruction(sampler2D tex, vec2 uv, vec2 texelSize)
 {
+    uv = ClampUvToTexels(uv, texelSize);
+
     vec3 center = texture(tex, uv).rgb * 4.0f;
     vec3 axial =
-        texture(tex, uv + vec2(-1.0f, 0.0f) * texelSize).rgb +
-        texture(tex, uv + vec2( 1.0f, 0.0f) * texelSize).rgb +
-        texture(tex, uv + vec2(0.0f, -1.0f) * texelSize).rgb +
-        texture(tex, uv + vec2(0.0f,  1.0f) * texelSize).rgb;
+        texture(tex, ClampUvToTexels(uv + vec2(-1.0f, 0.0f) * texelSize, texelSize)).rgb +
+        texture(tex, ClampUvToTexels(uv + vec2( 1.0f, 0.0f) * texelSize, texelSize)).rgb +
+        texture(tex, ClampUvToTexels(uv + vec2(0.0f, -1.0f) * texelSize, texelSize)).rgb +
+        texture(tex, ClampUvToTexels(uv + vec2(0.0f,  1.0f) * texelSize, texelSize)).rgb;
     vec3 diagonal =
-        texture(tex, uv + vec2(-1.0f, -1.0f) * texelSize).rgb +
-        texture(tex, uv + vec2( 1.0f, -1.0f) * texelSize).rgb +
-        texture(tex, uv + vec2(-1.0f,  1.0f) * texelSize).rgb +
-        texture(tex, uv + vec2( 1.0f,  1.0f) * texelSize).rgb;
+        texture(tex, ClampUvToTexels(uv + vec2(-1.0f, -1.0f) * texelSize, texelSize)).rgb +
+        texture(tex, ClampUvToTexels(uv + vec2( 1.0f, -1.0f) * texelSize, texelSize)).rgb +
+        texture(tex, ClampUvToTexels(uv + vec2(-1.0f,  1.0f) * texelSize, texelSize)).rgb +
+        texture(tex, ClampUvToTexels(uv + vec2( 1.0f,  1.0f) * texelSize, texelSize)).rgb;
     return (center + axial * 2.0f + diagonal) * (1.0f / 16.0f);
 }
 
@@ -125,8 +150,9 @@ void ComputePostTemporalForwardAA(vec2 uv, out float centerMask, out float cover
     }
 
     coverage = centerMask;
+    uv = ClampSourceUv(uv);
     vec3 rawOverlay = texture(PostProcessOutputTexture, uv).rgb;
-    vec3 filteredOverlay = SampleCurrentReconstruction(PostProcessOutputTexture, uv, SourceTexelSize);
+    vec3 filteredOverlay = SampleCurrentReconstruction(PostProcessOutputTexture, uv, TextureTexelSize(PostProcessOutputTexture));
     overlayColor = mix(rawOverlay, filteredOverlay, 0.25f);
 }
 
@@ -146,13 +172,14 @@ vec2 FindClosestVelocity(vec2 uv)
 {
     vec2 closestOffset = vec2(0.0f);
     float closestDepth = 1e20f;
+    vec2 depthTexelSize = TextureTexelSize(DepthView);
 
     for (int x = -1; x <= 1; ++x)
     {
         for (int y = -1; y <= 1; ++y)
         {
-            vec2 offset = vec2(float(x), float(y)) * SourceTexelSize;
-            float depth = texture(DepthView, uv + offset).r;
+            vec2 offset = vec2(float(x), float(y)) * depthTexelSize;
+            float depth = texture(DepthView, ClampSourceUv(uv + offset)).r;
             if (depth < closestDepth)
             {
                 closestDepth = depth;
@@ -161,7 +188,7 @@ vec2 FindClosestVelocity(vec2 uv)
         }
     }
 
-    return texture(Velocity, uv + closestOffset).xy;
+    return texture(Velocity, ClampSourceUv(uv + closestOffset)).xy;
 }
 
 // ── Neighborhood bounds in YCoCg (source resolution) ──────────────
@@ -169,12 +196,14 @@ void ComputeNeighborhoodBounds(vec2 uv, out vec3 minColor, out vec3 maxColor, ou
 {
     vec3 m1 = vec3(0.0f);
     vec3 m2 = vec3(0.0f);
+    vec2 sourceTexelSize = TextureTexelSize(PostProcessOutputTexture);
 
     for (int x = -1; x <= 1; ++x)
     {
         for (int y = -1; y <= 1; ++y)
         {
-            vec3 s = RGBToYCoCg(texture(PostProcessOutputTexture, uv + vec2(float(x), float(y)) * SourceTexelSize).rgb);
+            vec2 sampleUv = ClampSourceUv(uv + vec2(float(x), float(y)) * sourceTexelSize);
+            vec3 s = RGBToYCoCg(texture(PostProcessOutputTexture, sampleUv).rgb);
             m1 += s;
             m2 += s * s;
         }
@@ -189,13 +218,16 @@ void ComputeNeighborhoodBounds(vec2 uv, out vec3 minColor, out vec3 maxColor, ou
 
 float EvaluateDepthDiscontinuity(vec2 uv)
 {
+    uv = ClampSourceUv(uv);
+    vec2 depthTexelSize = TextureTexelSize(DepthView);
+
     float centerDepth = texture(DepthView, uv).r;
     float minDepth = centerDepth;
     float maxDepth = centerDepth;
     const vec2 offsets[4] = vec2[](vec2(1.0f, 0.0f), vec2(-1.0f, 0.0f), vec2(0.0f, 1.0f), vec2(0.0f, -1.0f));
     for (int i = 0; i < 4; ++i)
     {
-        float d = texture(DepthView, uv + offsets[i] * SourceTexelSize).r;
+        float d = texture(DepthView, ClampSourceUv(uv + offsets[i] * depthTexelSize)).r;
         minDepth = min(minDepth, d);
         maxDepth = max(maxDepth, d);
     }
@@ -218,10 +250,10 @@ vec3 EncodeVelocityDebug(vec2 velocity)
 void main()
 {
     vec2 clipXY = FragPos.xy;
-    if (clipXY.x > 1.0f || clipXY.y > 1.0f)
+    if (clipXY.x < -1.0f || clipXY.x > 1.0f || clipXY.y < -1.0f || clipXY.y > 1.0f)
         discard;
 
-    vec2 uv = clipXY * 0.5f + 0.5f;
+    vec2 uv = ClampSourceUv(clipXY * 0.5f + 0.5f);
 
     // MotionVectors.fs writes unjittered current-minus-previous NDC, so do
     // not apply the temporal jitter delta again here.
@@ -240,9 +272,11 @@ void main()
         velocity = vec2(0.0f);
 
     vec2 historyUV = uv - velocity * 0.5f;
+    vec2 sourceTexelSize = TextureTexelSize(PostProcessOutputTexture);
+    vec2 historyTexelSize = TextureTexelSize(TsrHistoryColor);
 
     vec3 currentColorRaw = texture(PostProcessOutputTexture, uv).rgb;
-    vec3 currentColorFiltered = SampleCurrentReconstruction(PostProcessOutputTexture, uv, SourceTexelSize);
+    vec3 currentColorFiltered = SampleCurrentReconstruction(PostProcessOutputTexture, uv, sourceTexelSize);
     vec3 currentColor = mix(currentColorRaw, currentColorFiltered, 0.25f);
     vec3 currentYCoCg = RGBToYCoCg(currentColor);
     float currentLuma = currentYCoCg.x;
@@ -257,11 +291,12 @@ void main()
 
     if (canUseHistory)
     {
-        float historyDepth = texture(HistoryDepth, historyUV).r;
+        vec2 historySampleUv = ClampHistoryUv(historyUV);
+        float historyDepth = texture(HistoryDepth, historySampleUv).r;
         if (abs(historyDepth - currentDepth) <= DepthRejectThreshold)
         {
             // Bicubic Catmull-Rom on full-resolution history
-            vec3 historyRGB = SampleCatmullRom(TsrHistoryColor, historyUV, HistoryTexelSize);
+            vec3 historyRGB = SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize);
             historyYCoCg = RGBToYCoCg(historyRGB);
         }
         else
@@ -330,10 +365,10 @@ void main()
     if (postTemporalCoverage <= 0.0f)
     {
         vec3 neighbors =
-            texture(PostProcessOutputTexture, uv + vec2(-1.0f, 0.0f) * SourceTexelSize).rgb +
-            texture(PostProcessOutputTexture, uv + vec2( 1.0f, 0.0f) * SourceTexelSize).rgb +
-            texture(PostProcessOutputTexture, uv + vec2(0.0f, -1.0f) * SourceTexelSize).rgb +
-            texture(PostProcessOutputTexture, uv + vec2(0.0f,  1.0f) * SourceTexelSize).rgb;
+            texture(PostProcessOutputTexture, ClampSourceUv(uv + vec2(-1.0f, 0.0f) * sourceTexelSize)).rgb +
+            texture(PostProcessOutputTexture, ClampSourceUv(uv + vec2( 1.0f, 0.0f) * sourceTexelSize)).rgb +
+            texture(PostProcessOutputTexture, ClampSourceUv(uv + vec2(0.0f, -1.0f) * sourceTexelSize)).rgb +
+            texture(PostProcessOutputTexture, ClampSourceUv(uv + vec2(0.0f,  1.0f) * sourceTexelSize)).rgb;
         vec3 highFreq = currentColorRaw - neighbors * 0.25f;
         float sharpenStrength = 0.18f * (1.0f - historyWeight) * (1.0f - 0.5f * reactiveMask);
         result += highFreq * sharpenStrength;

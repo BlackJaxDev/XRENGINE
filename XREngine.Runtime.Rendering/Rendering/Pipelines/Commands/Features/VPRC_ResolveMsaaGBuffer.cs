@@ -69,6 +69,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                         Function = EComparison.Always,
                         UpdateDepth = true,
                     },
+                    RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
                     WriteRed = false,
                     WriteGreen = false,
                     WriteBlue = false,

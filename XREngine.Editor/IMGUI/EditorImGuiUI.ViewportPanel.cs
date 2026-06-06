@@ -79,6 +79,7 @@ public static partial class EditorImGuiUI
             return;
 
         nint handle;
+        bool flipTextureY = false;
         if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
         {
             IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
@@ -107,6 +108,7 @@ public static partial class EditorImGuiUI
                 return;
 
             handle = (nint)glTexture.BindingId;
+            flipTextureY = true;
             if (!_scenePanelPathLogged)
             {
                 _scenePanelPathLogged = true;
@@ -123,9 +125,8 @@ public static partial class EditorImGuiUI
         if (contentSize.X <= 1 || contentSize.Y <= 1)
             return;
 
-        // Display the image with flipped UVs (OpenGL textures are bottom-up, ImGui expects top-down)
-        Vector2 uv0 = new(0.0f, 1.0f); // bottom-left
-        Vector2 uv1 = new(1.0f, 0.0f); // top-right
+        Vector2 uv0 = flipTextureY ? new Vector2(0.0f, 1.0f) : new Vector2(0.0f, 0.0f);
+        Vector2 uv1 = flipTextureY ? new Vector2(1.0f, 0.0f) : new Vector2(1.0f, 1.0f);
         ImGui.Image(handle, contentSize, uv0, uv1);
 
         // Handle asset drop on the scene image - must be right after ImGui.Image()

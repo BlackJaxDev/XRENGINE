@@ -25,8 +25,8 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void VulkanBlackFrameDiagnostics_AreStructuredAndProfilerVisible()
     {
-        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
-        string commandBufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
         string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
         string profilerSenderSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
@@ -55,8 +55,8 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void VulkanValidationLayerMessages_FeedFrameDiagnostics()
     {
-        string validationSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Validation.cs");
-        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
+        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Validation.cs");
+        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
 
         validationSource.ShouldContain("RecordVulkanValidationMessage");
         statsSource.ShouldContain("VulkanLastValidationMessage");
@@ -70,8 +70,8 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void DefaultPipelineFinalOutput_ValidatesEnvOverrideBeforeRecordingFinalBlit()
     {
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
-        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
 
         foreach (string source in new[] { pipelineSource, pipeline2Source })
         {
@@ -89,7 +89,9 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void DefaultPipelineFinalOutput_CoversDebugOverrideAaAndFallbackSources()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string source =
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs") +
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
 
         source.ShouldContain("TransformIdDebugQuadFBOName");
         source.ShouldContain("ActiveTransparencyDebugFboName");
@@ -101,6 +103,27 @@ public sealed class VulkanP0ValidationTests
         source.ShouldContain("ForceFallbackBlit = bypassVendorUpscale");
     }
 
+    [Test]
+    public void FullOverdrawDebug_UsesVulkanClipSpaceAwareSourceUvs()
+    {
+        string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/FullOverdrawDebug.fs");
+        string pipelineFbos = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs");
+        string pipeline2Fbos = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs");
+
+        shader.ShouldContain("#pragma snippet \"ScreenSpaceUtils\"");
+        shader.ShouldContain("ResolveSceneUv");
+        shader.ShouldContain("ResolveCountUv");
+        shader.ShouldContain("#ifdef XRENGINE_VULKAN");
+        shader.ShouldContain("ClipSpaceYDirection == 1");
+        shader.ShouldContain("texture(FullOverdrawCountTex, ResolveCountUv(uv))");
+        shader.ShouldContain("texture(PostProcessOutputTexture, ResolveSceneUv(uv))");
+
+        SliceMethod(pipelineFbos, "private XRFrameBuffer CreateFullOverdrawDebugFBO()")
+            .ShouldContain("RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy");
+        SliceMethod(pipeline2Fbos, "private XRFrameBuffer CreateFullOverdrawDebugFBO()")
+            .ShouldContain("RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy");
+    }
+
     #endregion
 
     #region Frame-Op And Planner Contracts
@@ -108,11 +131,11 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void FrameOpContracts_RejectUndocumentedMinValuePassAtRecording()
     {
-        string commandBufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
-        string meshSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
 
-        commandBufferSource.ShouldContain("System.Diagnostics.Debug.Assert");
-        commandBufferSource.ShouldContain("op.PassIndex != int.MinValue || activePassIndex != int.MinValue");
+        commandBufferSource.ShouldContain("op.PassIndex == int.MinValue && activePassIndex != int.MinValue");
+        commandBufferSource.ShouldContain("EnsureValidPassIndex(op.PassIndex");
         commandBufferSource.ShouldContain("Dropping op");
         meshSource.ShouldContain("EnsureValidFrameOpPassIndex");
         meshSource.ShouldContain("EnsureValidPassIndex(op.PassIndex");
@@ -121,9 +144,9 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void CommandBufferReuse_InvalidatesOnFrameOpsPlannerRevisionResourcesAndViewport()
     {
-        string commandBufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
-        string stateSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
-        string meshSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
 
         commandBufferSource.ShouldContain("_commandBufferFrameOpSignatures");
         commandBufferSource.ShouldContain("_commandBufferPlannerRevisions");
@@ -141,7 +164,7 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void DefaultCommandChain_DocumentsCommonDynamicBranchesForVulkanCoverage()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
 
         source.ShouldContain("RuntimeEnableMsaa");
         source.ShouldContain("RuntimeEnableMsaaDeferred");
@@ -328,20 +351,36 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
-    public void VulkanPresentTextureShaders_FlipTextureYForVulkanBackend()
+    public void VulkanPresentTextureShaders_KeepWindowAndFallbackOrientationPoliciesSeparate()
     {
         string renderToWindow = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderToWindow.cs");
         string vendorUpscale = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs");
 
-        renderToWindow.Contains("#ifdef XRENGINE_VULKAN", StringComparison.Ordinal).ShouldBeTrue(
-            "Vulkan window presentation samples FBO textures through Vulkan image coordinates, which require a present-time Y flip.");
-        renderToWindow.ShouldContain("uv.y = 1.0 - uv.y;");
+        renderToWindow.Contains("#ifdef XRENGINE_VULKAN", StringComparison.Ordinal).ShouldBeFalse(
+            "Window presentation uses backend-specific viewport/image display policy; it must not add an unconditional Vulkan texture flip.");
+        renderToWindow.ShouldContain("return clipXY * 0.5 + 0.5;");
         renderToWindow.ShouldContain("vec2 uv = ResolvePresentTextureUv(clipXY);");
 
         vendorUpscale.Contains("#ifdef XRENGINE_VULKAN", StringComparison.Ordinal).ShouldBeTrue(
-            "The default pipeline's vendor-upscale fallback is also a final-present texture shader.");
+            "The default pipeline's vendor-upscale fallback still resolves source-FBO orientation for final output.");
+        vendorUpscale.ShouldContain("if (FlipSourceYOnVulkanFallback)");
         vendorUpscale.ShouldContain("uv.y = 1.0 - uv.y;");
+        vendorUpscale.ShouldContain("FlipSourceYOnVulkanFallback ||");
+        vendorUpscale.ShouldContain("RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown");
         vendorUpscale.ShouldContain("vec2 uv = ResolvePresentTextureUv(clipXY);");
+    }
+
+    [Test]
+    public void MsaaDepthResolve_UsesClipSpacePolicyForScreenSpaceSampling()
+    {
+        string command = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ResolveMsaaGBuffer.cs");
+        string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/CopyDepthFromTextureMS.fs");
+
+        command.ShouldContain("RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy");
+        shader.ShouldContain("#pragma snippet \"ScreenSpaceUtils\"");
+        shader.ShouldContain("clipXY.x < -1.0f || clipXY.x > 1.0f || clipXY.y < -1.0f || clipXY.y > 1.0f");
+        shader.ShouldContain("XRENGINE_ScreenPixelLocal");
+        shader.ShouldContain("clamp(");
     }
 
     [Test]

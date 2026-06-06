@@ -315,7 +315,10 @@ void main()
             }
 
             program.Uniform("ApplySharpen", _fallbackApplySharpen);
-            program.Uniform("FlipSourceYOnVulkanFallback", FlipSourceYOnVulkanFallback);
+            program.Uniform(
+                "FlipSourceYOnVulkanFallback",
+                FlipSourceYOnVulkanFallback ||
+                RuntimeEngine.Rendering.Settings.ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown);
             program.Uniform("SharpenStrength", _fallbackSharpenStrength);
         }
 

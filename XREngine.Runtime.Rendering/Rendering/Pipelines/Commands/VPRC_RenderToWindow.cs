@@ -24,11 +24,7 @@ uniform sampler2D SourceTexture;
 
 vec2 ResolvePresentTextureUv(vec2 clipXY)
 {
-    vec2 uv = clipXY * 0.5 + 0.5;
-#ifdef XRENGINE_VULKAN
-    uv.y = 1.0 - uv.y;
-#endif
-    return uv;
+    return clipXY * 0.5 + 0.5;
 }
 
 void main()

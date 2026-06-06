@@ -50,7 +50,8 @@ void EmitLineQuad(vec4 start, vec4 end, vec4 color)
     if (!ClipLineToNearPlane(start, end))
         return;
 
-    LineMatColor = color;
+    start = XRENGINE_DebugOutputPosition(start);
+    end = XRENGINE_DebugOutputPosition(end);
 
     vec2 ndcStart = start.xy / start.w;
     vec2 ndcEnd   = end.xy   / end.w;
@@ -72,7 +73,6 @@ void EmitLineQuad(vec4 start, vec4 end, vec4 color)
     float minDim = min(w, h);
     float halfWidthPixels = max(0.5, LineWidth * (minDim * 0.5));
     float rasterHalfWidthPixels = halfWidthPixels + 2.0;
-    LineHalfWidthPixels = halfWidthPixels;
 
     vec2 offsetNdc = (perpScreen * rasterHalfWidthPixels) * (2.0 / viewport);
 
@@ -84,28 +84,26 @@ void EmitLineQuad(vec4 start, vec4 end, vec4 color)
     vec4 endPlus = end + endOffset;
     vec4 endMinus = end - endOffset;
 
+    LineMatColor = color;
+    LineHalfWidthPixels = halfWidthPixels;
     LineEdgeCoord = rasterHalfWidthPixels;
     gl_Position = startPlus;
     EmitVertex();
 
+    LineMatColor = color;
+    LineHalfWidthPixels = halfWidthPixels;
     LineEdgeCoord = -rasterHalfWidthPixels;
     gl_Position = startMinus;
     EmitVertex();
 
+    LineMatColor = color;
+    LineHalfWidthPixels = halfWidthPixels;
     LineEdgeCoord = rasterHalfWidthPixels;
     gl_Position = endPlus;
     EmitVertex();
 
-    EndPrimitive();
-
-    LineEdgeCoord = rasterHalfWidthPixels;
-    gl_Position = endPlus;
-    EmitVertex();
-
-    LineEdgeCoord = -rasterHalfWidthPixels;
-    gl_Position = startMinus;
-    EmitVertex();
-
+    LineMatColor = color;
+    LineHalfWidthPixels = halfWidthPixels;
     LineEdgeCoord = -rasterHalfWidthPixels;
     gl_Position = endMinus;
     EmitVertex();

@@ -519,6 +519,7 @@ public partial class DefaultRenderPipeline2
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
 
