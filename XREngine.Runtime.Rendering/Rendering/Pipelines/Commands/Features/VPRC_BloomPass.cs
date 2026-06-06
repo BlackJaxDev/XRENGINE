@@ -486,7 +486,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = $"{BloomOutputTextureName}.Mip{mip}.SourceView",
                 SamplerName = BloomSourceSamplerName,
                 MagFilter = texture.MagFilter,
-                MinFilter = texture.MinFilter,
+                MinFilter = ETexMinFilter.Linear,
                 UWrap = texture.UWrap,
                 VWrap = texture.VWrap,
             };
@@ -508,7 +508,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = $"{BloomOutputTextureName}.Mip{mip}.SourceView",
                 SamplerName = BloomSourceSamplerName,
                 MagFilter = texture.MagFilter,
-                MinFilter = texture.MinFilter,
+                MinFilter = ETexMinFilter.Linear,
                 UWrap = texture.UWrap,
                 VWrap = texture.VWrap,
             };

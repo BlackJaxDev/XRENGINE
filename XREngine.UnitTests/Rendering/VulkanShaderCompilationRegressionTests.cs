@@ -128,6 +128,31 @@ public sealed class VulkanShaderCompilationRegressionTests
             rewrittenSource.ShouldContain("gl_InstanceIndex");
     }
 
+    [Test]
+    public void SkyboxVertexShader_CompilesToSpirv_ForVulkan()
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource("Scene3D/Skybox.vs");
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Vertex, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out string? rewrittenSource);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+        rewrittenSource.ShouldNotBeNull();
+        rewrittenSource.ShouldContain("GetFarClipZ");
+    }
+
     [TestCaseSource(nameof(DebugVertexShaders))]
     public void DebugVertexShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
     {
@@ -223,8 +248,8 @@ public sealed class VulkanShaderCompilationRegressionTests
         spirv.Length.ShouldBeGreaterThan(0);
         rewrittenSource.ShouldNotBeNull();
         rewrittenSource.ShouldContain("#define XRENGINE_VULKAN 1");
-        rewrittenSource.ShouldContain("#ifdef XRENGINE_VULKAN");
-        rewrittenSource.ShouldContain("float da = a.z;");
+        rewrittenSource.ShouldContain("uniform XREngine_AutoUniforms");
+        rewrittenSource.ShouldContain("int ClipDepthRange;");
         rewrittenSource.ShouldNotContain("in gl_PerVertex");
         rewrittenSource.ShouldNotContain("out gl_PerVertex");
     }

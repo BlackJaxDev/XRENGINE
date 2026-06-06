@@ -47,6 +47,7 @@ public unsafe partial class VulkanRenderer
 
         XRRenderProgram? program;
         int smallestMip;
+        int sampledSmallestMip;
         int layerCount = 1;
 
         if (sourceTex is XRTexture2D source2D)
@@ -72,6 +73,16 @@ public unsafe partial class VulkanRenderer
             }
 
             smallestMip = XRTexture.GetSmallestMipmapLevel(source2D.Width, source2D.Height, source2D.SmallestAllowedMipmapLevel);
+            sampledSmallestMip = smallestMip;
+            if (GetOrCreateAPIRenderObject(source2D, generateNow: true) is VkTexture2D { UsesAllocatorImage: true })
+            {
+                sampledSmallestMip = 0;
+                Debug.VulkanWarningEvery(
+                    "Vulkan.AutoExposure.PlannerMip0Fallback2D",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Auto exposure is sampling mip 0 for planner-backed source texture '{0}' because render-graph mip generation is not available yet.",
+                    source2D.Name ?? "<unnamed>");
+            }
             program = _autoExposureComputeProgram2D;
         }
         else if (sourceTex is XRTexture2DArray source2DArray)
@@ -97,6 +108,16 @@ public unsafe partial class VulkanRenderer
             }
 
             smallestMip = XRTexture.GetSmallestMipmapLevel(source2DArray.Width, source2DArray.Height, source2DArray.SmallestAllowedMipmapLevel);
+            sampledSmallestMip = smallestMip;
+            if (GetOrCreateAPIRenderObject(source2DArray, generateNow: true) is VkTexture2DArray { UsesAllocatorImage: true })
+            {
+                sampledSmallestMip = 0;
+                Debug.VulkanWarningEvery(
+                    "Vulkan.AutoExposure.PlannerMip0Fallback2DArray",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Auto exposure is sampling mip 0 for planner-backed array source texture '{0}' because render-graph mip generation is not available yet.",
+                    source2DArray.Name ?? "<unnamed>");
+            }
             layerCount = (int)Math.Max(source2DArray.Depth, 1u);
             program = _autoExposureComputeProgram2DArray;
         }
@@ -108,13 +129,13 @@ public unsafe partial class VulkanRenderer
         if (program is null)
             return false;
 
-        int meteringMip = smallestMip;
+        int meteringMip = sampledSmallestMip;
         if (settings.AutoExposureMetering != ColorGradingSettings.AutoExposureMeteringMode.Average)
         {
             int targetSize = Math.Clamp(settings.AutoExposureMeteringTargetSize, 1, 64);
             uint pow2 = 1u << BitOperations.Log2((uint)targetSize);
             int offset = BitOperations.Log2(pow2);
-            meteringMip = Math.Clamp(smallestMip - offset, 0, smallestMip);
+            meteringMip = Math.Clamp(sampledSmallestMip - offset, 0, sampledSmallestMip);
         }
 
         float alpha = 1.0f - MathF.Exp(-settings.ExposureTransitionSpeed * deltaTime);
@@ -127,7 +148,7 @@ public unsafe partial class VulkanRenderer
                 vkExposure.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.General);
         }
 
-        program.Uniform("SmallestMip", smallestMip);
+        program.Uniform("SmallestMip", sampledSmallestMip);
         program.Uniform("LuminanceWeights", settings.AutoExposureLuminanceWeights);
         program.Uniform("AutoExposureBias", settings.AutoExposureBias);
         program.Uniform("AutoExposureScale", settings.AutoExposureScale);

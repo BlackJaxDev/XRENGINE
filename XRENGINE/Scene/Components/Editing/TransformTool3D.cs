@@ -430,7 +430,10 @@ namespace XREngine.Scene.Components.Editing
             XRShader geometryShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoLine.gs"), EShaderType.Geometry);
             XRShader fragmentShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoLine.fs"), EShaderType.Fragment);
             XRMaterial material = new(parameters, [geometryShader, fragmentShader]);
-            material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            material.RenderOptions.RequiredEngineUniforms =
+                EUniformRequirements.Camera |
+                EUniformRequirements.ViewportDimensions |
+                EUniformRequirements.ClipSpacePolicy;
             material.RenderOptions.CullMode = ECullMode.None;
             ConfigurePremultipliedGizmoTransparency(material);
             XRMaterial.ConfigureGizmoMaterial(material);
@@ -449,7 +452,10 @@ namespace XREngine.Scene.Components.Editing
             XRShader geometryShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoArrowHead.gs"), EShaderType.Geometry);
             XRShader fragmentShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoTriangle.fs"), EShaderType.Fragment);
             XRMaterial material = new(parameters, [geometryShader, fragmentShader]);
-            material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+            material.RenderOptions.RequiredEngineUniforms =
+                EUniformRequirements.Camera |
+                EUniformRequirements.ViewportDimensions |
+                EUniformRequirements.ClipSpacePolicy;
             material.RenderOptions.CullMode = ECullMode.None;
             ConfigurePremultipliedGizmoTransparency(material);
             XRMaterial.ConfigureGizmoMaterial(material);

@@ -72,8 +72,10 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (genMipmapsNow)
+            if (genMipmapsNow && !vkTex.UsesAllocatorImage)
                 texture.GenerateMipmapsGPU();
+            else if (genMipmapsNow)
+                LogPlannerMipReadbackFallback(texture.Name, isArray: false);
 
             // Synchronous path: read smallest mip and compute luminance
             if (CalcDotLuminance(texture, luminance, out float dotLuminance, false))
@@ -97,8 +99,10 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (genMipmapsNow)
+            if (genMipmapsNow && !vkTex.UsesAllocatorImage)
                 texture.GenerateMipmapsGPU();
+            else if (genMipmapsNow)
+                LogPlannerMipReadbackFallback(texture.Name, isArray: true);
 
             // Synchronous path: read smallest mip and compute luminance
             if (CalcDotLuminance(texture, luminance, out float dotLuminance, false))
@@ -867,14 +871,18 @@ namespace XREngine.Rendering.Vulkan
             if (vkTex is null || !vkTex.IsGenerated)
                 return false;
 
-            if (genMipmapsNow)
+            if (genMipmapsNow && !vkTex.UsesAllocatorImage)
                 texture.GenerateMipmapsGPU();
+            else if (genMipmapsNow)
+                LogPlannerMipReadbackFallback(texture.Name, isArray: true);
 
             int layerCount = (int)texture.Depth;
             if (layerCount <= 0)
                 return false;
 
-            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
+            int mipLevel = vkTex.UsesAllocatorImage
+                ? 0
+                : XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
 
             // Read one RGBA pixel per layer from the smallest mip
             ulong pixelSize = 16; // sizeof(Vector4) = 4 floats
@@ -958,10 +966,14 @@ namespace XREngine.Rendering.Vulkan
             if (vkTex is null || !vkTex.IsGenerated)
                 return false;
 
-            if (genMipmapsNow)
+            if (genMipmapsNow && !vkTex.UsesAllocatorImage)
                 texture.GenerateMipmapsGPU();
+            else if (genMipmapsNow)
+                LogPlannerMipReadbackFallback(texture.Name, isArray: false);
 
-            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
+            int mipLevel = vkTex.UsesAllocatorImage
+                ? 0
+                : XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
 
             // Read a single RGBA pixel from the smallest mip
             ulong pixelSize = 16; // sizeof(Vector4) = 4 floats
@@ -1031,6 +1043,16 @@ namespace XREngine.Rendering.Vulkan
                 DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }
+
+        private static void LogPlannerMipReadbackFallback(string? textureName, bool isArray)
+            => Debug.VulkanWarningEvery(
+                isArray
+                    ? "Vulkan.LuminanceReadback.PlannerMip0Fallback2DArray"
+                    : "Vulkan.LuminanceReadback.PlannerMip0Fallback2D",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Luminance readback is sampling mip 0 for planner-backed {0}source texture '{1}' because render-graph mip generation is not available yet.",
+                isArray ? "array " : string.Empty,
+                textureName ?? "<unnamed>");
 
         // =========== Texture Mip Readback ===========
 

@@ -7,6 +7,7 @@ uniform vec4 MatColor;
 uniform float LineWidth;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+uniform int ClipDepthRange;
 
 layout(location = 0) flat out vec4 GizmoLineColor;
 layout(location = 1) noperspective out float GizmoLineDistancePixels;
@@ -16,13 +17,8 @@ const float kEpsilon = 1e-6;
 
 bool ClipLineToNearPlane(inout vec4 a, inout vec4 b)
 {
-#ifdef XRENGINE_VULKAN
-    float da = a.z;
-    float db = b.z;
-#else
-    float da = a.z + a.w;
-    float db = b.z + b.w;
-#endif
+    float da = ClipDepthRange == 1 ? a.z + a.w : a.z;
+    float db = ClipDepthRange == 1 ? b.z + b.w : b.z;
 
     if (da < 0.0 && db < 0.0)
         return false;

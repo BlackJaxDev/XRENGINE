@@ -51,6 +51,7 @@ public unsafe partial class VulkanRenderer
     private uint _lastPresentedImageIndex;
     //private VkBuffer<UniformBufferObject>[]? uniformBuffers;
     private Format swapChainImageFormat;
+    private ColorSpaceKHR swapChainImageColorSpace;
     private Extent2D swapChainExtent;
 
     private Image _swapchainDepthImage;
@@ -292,7 +293,19 @@ public unsafe partial class VulkanRenderer
         }
 
         swapChainImageFormat = surfaceFormat.Format;
+        swapChainImageColorSpace = surfaceFormat.ColorSpace;
         swapChainExtent = extent;
+        Debug.VulkanWarningEvery(
+            "Vulkan.Swapchain.SelectedSurfaceFormat",
+            TimeSpan.FromSeconds(10),
+            "[Vulkan] Swapchain surface selected: format={0} colorSpace={1} presentMode={2} extent={3}x{4} images={5} imguiSrgbPassthroughEmulation={6}",
+            swapChainImageFormat,
+            swapChainImageColorSpace,
+            presentMode,
+            swapChainExtent.Width,
+            swapChainExtent.Height,
+            imageCount,
+            ShouldEmulateOpenGlImGuiSrgbPassthrough());
         OnSwapchainExtentChanged(swapChainExtent);
     }
 

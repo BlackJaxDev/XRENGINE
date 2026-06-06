@@ -29,6 +29,15 @@ public unsafe partial class VulkanRenderer
         /// <summary>Cache of per-attachment image views keyed by mip/layer/viewType/aspect.</summary>
         private readonly Dictionary<AttachmentViewKey, ImageView> _attachmentViews = new();
 
+        /// <summary>Layout tracking for framebuffer writes that touch only one mip/layer at a time.</summary>
+        private readonly Dictionary<AttachmentLayoutKey, ImageLayout> _attachmentLayouts = new();
+
+        /// <summary>
+        /// Set after a render pass writes only part of the image. When active, unknown
+        /// attachment mips/layers must stay Undefined instead of inheriting the whole-image layout.
+        /// </summary>
+        private bool _hasPartialAttachmentLayouts;
+
         /// <summary>Normalised texture dimensions, layers, and mip levels derived from <see cref="DescribeTexture"/>.</summary>
         private TextureLayout _layout;
 
@@ -281,6 +290,37 @@ public unsafe partial class VulkanRenderer
             if (_physicalGroup is not null)
                 _physicalGroup.LastKnownLayout = layout;
             _currentImageLayout = layout;
+            ResetAttachmentLayoutTracking();
+        }
+
+        /// <inheritdoc />
+        ImageLayout IVkFrameBufferAttachmentSource.GetAttachmentTrackedLayout(int mipLevel, int layerIndex)
+        {
+            RefreshPhysicalGroupImageIfStale();
+
+            if (!_hasPartialAttachmentLayouts)
+                return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;
+
+            AttachmentLayoutKey key = BuildAttachmentLayoutKey(mipLevel, layerIndex);
+            if (_attachmentLayouts.TryGetValue(key, out ImageLayout layout))
+                return layout;
+
+            if (layerIndex < 0 && TryResolveAllLayerAttachmentLayout((uint)Math.Max(mipLevel, 0), out layout))
+                return layout;
+
+            return ImageLayout.Undefined;
+        }
+
+        /// <inheritdoc />
+        void IVkFrameBufferAttachmentSource.UpdateAttachmentTrackedLayout(ImageLayout layout, int mipLevel, int layerIndex)
+        {
+            BeginPartialAttachmentLayoutTracking();
+
+            if (_physicalGroup is not null)
+                _physicalGroup.LastKnownLayout = layout;
+
+            _currentImageLayout = layout;
+            _attachmentLayouts[BuildAttachmentLayoutKey(mipLevel, layerIndex)] = layout;
         }
 
         #endregion
@@ -435,6 +475,7 @@ public unsafe partial class VulkanRenderer
             _arrayLayersOverride = null;
             _mipLevelsOverride = null;
             _currentImageLayout = ImageLayout.Undefined;
+            ResetAttachmentLayoutTracking();
         }
 
         #endregion
@@ -497,6 +538,7 @@ public unsafe partial class VulkanRenderer
                 _ownsImageMemory = false;
                 AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
                 _currentImageLayout = group.LastKnownLayout;
+                ResetAttachmentLayoutTracking();
                 return;
             }
 
@@ -528,6 +570,7 @@ public unsafe partial class VulkanRenderer
             _ownsImageMemory = true;
             AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
             _currentImageLayout = ImageLayout.Undefined;
+            ResetAttachmentLayoutTracking();
         }
 
         /// <summary>
@@ -597,6 +640,7 @@ public unsafe partial class VulkanRenderer
                     Api!.DestroyImageView(Device, attachmentView, null);
             }
             _attachmentViews.Clear();
+            ResetAttachmentLayoutTracking();
             CreateImageView(default);
             _currentImageLayout = _physicalGroup.LastKnownLayout;
 
@@ -828,6 +872,69 @@ public unsafe partial class VulkanRenderer
                 return default;
 
             return new AttachmentViewKey(baseMip, 1, 0, 1, ImageViewType.Type2D, AspectFlags);
+        }
+
+        private AttachmentLayoutKey BuildAttachmentLayoutKey(int mipLevel, int layerIndex)
+        {
+            uint baseMip = (uint)Math.Max(mipLevel, 0);
+            if (layerIndex < 0)
+                return new AttachmentLayoutKey(baseMip, 0u, Math.Max(ResolvedArrayLayers, 1u));
+
+            return new AttachmentLayoutKey(baseMip, (uint)layerIndex, 1u);
+        }
+
+        private bool TryResolveAllLayerAttachmentLayout(uint mipLevel, out ImageLayout layout)
+        {
+            layout = ImageLayout.Undefined;
+
+            ImageLayout? common = null;
+            uint layerCount = Math.Max(ResolvedArrayLayers, 1u);
+            for (uint layer = 0; layer < layerCount; layer++)
+            {
+                AttachmentLayoutKey key = new(mipLevel, layer, 1u);
+                if (!_attachmentLayouts.TryGetValue(key, out ImageLayout layerLayout))
+                    return false;
+
+                if (common.HasValue && common.Value != layerLayout)
+                    return false;
+
+                common = layerLayout;
+            }
+
+            if (!common.HasValue)
+                return false;
+
+            layout = common.Value;
+            return true;
+        }
+
+        private void BeginPartialAttachmentLayoutTracking()
+        {
+            if (_hasPartialAttachmentLayouts)
+                return;
+
+            _hasPartialAttachmentLayouts = true;
+            _attachmentLayouts.Clear();
+
+            ImageLayout wholeImageLayout = _physicalGroup is not null
+                ? _physicalGroup.LastKnownLayout
+                : _currentImageLayout;
+            if (wholeImageLayout == ImageLayout.Undefined)
+                return;
+
+            uint mipCount = Math.Max(ResolvedMipLevels, 1u);
+            uint layerCount = Math.Max(ResolvedArrayLayers, 1u);
+            for (uint mip = 0; mip < mipCount; mip++)
+            {
+                for (uint layer = 0; layer < layerCount; layer++)
+                    _attachmentLayouts[new AttachmentLayoutKey(mip, layer, 1u)] = wholeImageLayout;
+            }
+        }
+
+        private void ResetAttachmentLayoutTracking()
+        {
+            _attachmentLayouts.Clear();
+            _hasPartialAttachmentLayouts = false;
         }
 
         #endregion
@@ -1079,6 +1186,7 @@ public unsafe partial class VulkanRenderer
             _currentImageLayout = newLayout;
             if (_physicalGroup is not null)
                 _physicalGroup.LastKnownLayout = newLayout;
+            ResetAttachmentLayoutTracking();
         }
 
         /// <summary>
@@ -1477,6 +1585,9 @@ public unsafe partial class VulkanRenderer
 
         /// <summary>Key identifying a unique image-view configuration for attachment use.</summary>
         protected internal readonly record struct AttachmentViewKey(uint BaseMipLevel, uint LevelCount, uint BaseArrayLayer, uint LayerCount, ImageViewType ViewType, ImageAspectFlags AspectMask);
+
+        /// <summary>Key identifying the layout state for one framebuffer attachment range.</summary>
+        private readonly record struct AttachmentLayoutKey(uint BaseMipLevel, uint BaseArrayLayer, uint LayerCount);
 
         /// <summary>
         /// Uploads texture pixel data to the GPU via staging buffers.

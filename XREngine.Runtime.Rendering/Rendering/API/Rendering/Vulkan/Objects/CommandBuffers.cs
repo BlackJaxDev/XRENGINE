@@ -2992,7 +2992,7 @@ namespace XREngine.Rendering.Vulkan
             ImageLayout[]? finalLayouts = vkFbo?.GetFinalLayouts();
 
             int attachmentIndex = 0;
-            foreach (var (target, attachment, _, _) in targets)
+            foreach (var (target, attachment, mipLevel, layerIndex) in targets)
             {
                 ImageLayout finalLayout = (finalLayouts is not null && attachmentIndex < finalLayouts.Length)
                     ? finalLayouts[attachmentIndex]
@@ -3013,7 +3013,7 @@ namespace XREngine.Rendering.Vulkan
                     case XRTexture tex:
                     {
                         if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
-                            attSrc.UpdateTrackedLayout(finalLayout);
+                            attSrc.UpdateAttachmentTrackedLayout(finalLayout, mipLevel, layerIndex);
                         break;
                     }
                 }
@@ -3035,7 +3035,7 @@ namespace XREngine.Rendering.Vulkan
             ImageLayout[] layouts = new ImageLayout[count];
 
             int i = 0;
-            foreach (var (target, _, _, _) in targets)
+            foreach (var (target, _, mipLevel, layerIndex) in targets)
             {
                 if (i >= layouts.Length)
                     break;
@@ -3051,7 +3051,9 @@ namespace XREngine.Rendering.Vulkan
                     }
                     case XRTexture tex:
                     {
-                        if (GetOrCreateAPIRenderObject(tex, true) is IVkImageDescriptorSource imgSrc)
+                        if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
+                            layout = attSrc.GetAttachmentTrackedLayout(mipLevel, layerIndex);
+                        else if (GetOrCreateAPIRenderObject(tex, true) is IVkImageDescriptorSource imgSrc)
                             layout = imgSrc.TrackedImageLayout;
                         break;
                     }

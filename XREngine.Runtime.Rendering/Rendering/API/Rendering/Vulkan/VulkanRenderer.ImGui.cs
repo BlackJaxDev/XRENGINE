@@ -1025,14 +1025,26 @@ public unsafe partial class VulkanRenderer
             + "    gl_Position = vec4(inPos * pc.scale + pc.translate, 0.0, 1.0);\n"
             + "}\n";
 
-        const string fragSource = "#version 450\n"
+        bool emulateOpenGlSrgbPassthrough = ShouldEmulateOpenGlImGuiSrgbPassthrough();
+        string fragSource = "#version 450\n"
             + "layout(set = 0, binding = 0) uniform sampler2D sTexture;\n"
             + "layout(location = 0) in vec2 inUv;\n"
             + "layout(location = 1) in vec4 inColor;\n"
             + "layout(location = 0) out vec4 outColor;\n"
+            + "vec3 SrgbToLinear(vec3 c)\n"
+            + "{\n"
+            + "    bvec3 cutoff = lessThanEqual(c, vec3(0.04045));\n"
+            + "    vec3 low = c / 12.92;\n"
+            + "    vec3 high = pow((c + vec3(0.055)) / 1.055, vec3(2.4));\n"
+            + "    return mix(high, low, cutoff);\n"
+            + "}\n"
             + "void main()\n"
             + "{\n"
-            + "    outColor = inColor * texture(sTexture, inUv);\n"
+            + "    vec4 color = inColor * texture(sTexture, inUv);\n"
+            + (emulateOpenGlSrgbPassthrough
+                ? "    color.rgb = SrgbToLinear(color.rgb * color.a);\n"
+                : string.Empty)
+            + "    outColor = color;\n"
             + "}\n";
 
         XRShader vs = new(EShaderType.Vertex, vertSource) { Name = "VkImGui.vs" };
@@ -1187,7 +1199,7 @@ public unsafe partial class VulkanRenderer
             PipelineColorBlendAttachmentState colorAttachment = new()
             {
                 BlendEnable = Vk.True,
-                SrcColorBlendFactor = BlendFactor.SrcAlpha,
+                SrcColorBlendFactor = emulateOpenGlSrgbPassthrough ? BlendFactor.One : BlendFactor.SrcAlpha,
                 DstColorBlendFactor = BlendFactor.OneMinusSrcAlpha,
                 ColorBlendOp = BlendOp.Add,
                 SrcAlphaBlendFactor = BlendFactor.One,
@@ -1464,6 +1476,12 @@ public unsafe partial class VulkanRenderer
             MinDepth = 0f,
             MaxDepth = 1f
         };
+
+    private bool ShouldEmulateOpenGlImGuiSrgbPassthrough()
+        => IsSrgbSwapchainFormat(swapChainImageFormat);
+
+    private static bool IsSrgbSwapchainFormat(Format format)
+        => format is Format.B8G8R8A8Srgb or Format.R8G8B8A8Srgb;
 
     private DescriptorSet ResolveImGuiDescriptorSet(nint textureId)
     {

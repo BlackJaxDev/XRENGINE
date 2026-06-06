@@ -72,6 +72,35 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
+    public void TransformToolGizmoShaders_RequestViewportAndClipPolicyUniforms()
+    {
+        string gizmoLine = LoadShaderSource(Path.Combine("Common", "GizmoLine.gs"));
+        string gizmoArrowHead = LoadShaderSource(Path.Combine("Common", "GizmoArrowHead.gs"));
+        string transformTool = ReadWorkspaceFile(Path.Combine(
+            "XREngine",
+            "Scene",
+            "Components",
+            "Editing",
+            "TransformTool3D.cs"));
+
+        gizmoLine.ShouldContain("uniform float ScreenWidth;");
+        gizmoLine.ShouldContain("uniform float ScreenHeight;");
+        gizmoLine.ShouldContain("uniform int ClipDepthRange;");
+        gizmoLine.ShouldContain("ClipDepthRange == 1 ? a.z + a.w : a.z");
+        gizmoLine.ShouldContain("ClipDepthRange == 1 ? b.z + b.w : b.z");
+
+        gizmoArrowHead.ShouldContain("uniform float ScreenWidth;");
+        gizmoArrowHead.ShouldContain("uniform float ScreenHeight;");
+        gizmoArrowHead.ShouldContain("uniform int ClipDepthRange;");
+        gizmoArrowHead.ShouldContain("ClipDepthRange == 1 ? a.z + a.w : a.z");
+        gizmoArrowHead.ShouldContain("ClipDepthRange == 1 ? b.z + b.w : b.z");
+
+        transformTool.ShouldContain("EUniformRequirements.Camera |");
+        transformTool.ShouldContain("EUniformRequirements.ViewportDimensions |");
+        transformTool.ShouldContain("EUniformRequirements.ClipSpacePolicy");
+    }
+
+    [Test]
     public void OpenGlBindBuffers_AllowsAttributeLessVertexIdPrograms()
     {
         string meshRenderer = ReadWorkspaceFile(Path.Combine(
@@ -266,12 +295,16 @@ public sealed class SecondaryPassShaderContractTests
         source.ShouldContain("layout(location = 1) out vec3 FragWorldDir;");
         source.ShouldContain("uniform mat4 InverseViewMatrix;");
         source.ShouldContain("uniform mat4 InverseProjMatrix;");
+        source.ShouldContain("uniform int DepthMode;");
+        source.ShouldContain("uniform int ClipDepthRange;");
         source.ShouldContain("uniform float SkyboxRotation = 0.0;");
         source.ShouldContain("vec3 GetWorldRay(vec2 clipXY)");
         source.ShouldContain("vec3 RotateSkyDirection(vec3 dir)");
+        source.ShouldContain("float GetFarClipZ()");
+        source.ShouldContain("return ClipDepthRange == 1 ? -1.0 : 0.0;");
         source.ShouldContain("FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));");
         source.ShouldContain("vec2 clipXY = Position.xy;");
-        source.ShouldContain("gl_Position = vec4(clipXY, 1.0, 1.0);");
+        source.ShouldContain("gl_Position = vec4(clipXY, GetFarClipZ(), 1.0);");
         source.ShouldNotContain("gl_VertexIndex");
     }
 
@@ -339,9 +372,14 @@ public sealed class SecondaryPassShaderContractTests
             || source.Contains("vec3 dir = SafeNormalize3(FragWorldDir);", StringComparison.Ordinal);
 
         source.ShouldContain("Skybox shaders reconstruct and rotate view rays in the vertex stage");
+        source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy");
         source.ShouldContain("layout(location = 1) out vec3 FragWorldDir;");
+        source.ShouldContain("uniform int DepthMode;");
+        source.ShouldContain("uniform int ClipDepthRange;");
+        source.ShouldContain("float GetFarClipZ()");
+        source.ShouldContain("return ClipDepthRange == 1 ? -1.0 : 0.0;");
         source.ShouldContain("FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));");
-        source.ShouldContain("gl_Position = vec4(clipXY, 1.0, 1.0);");
+        source.ShouldContain("gl_Position = vec4(clipXY, GetFarClipZ(), 1.0);");
         source.ShouldContain("layout (location = 1) in vec3 FragWorldDir;");
         normalizesWorldDirection.ShouldBeTrue();
     }
