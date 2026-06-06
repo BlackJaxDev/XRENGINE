@@ -1796,7 +1796,7 @@ public partial class DefaultRenderPipeline2
         program.Uniform("Luminance", RuntimeEngine.Rendering.Settings.DefaultLuminance);
     }
 
-    private static void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program)
+    private static void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program, bool applyLensDistortion)
     {
         var vignette = GetSettings<VignetteSettings>(state);
         (vignette ?? new VignetteSettings()).SetUniforms(program);
@@ -1816,6 +1816,17 @@ public partial class DefaultRenderPipeline2
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
         (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(program);
 
+        ApplyLensDistortionUniforms(state, program, applyLensDistortion);
+
+        var bloom = GetSettings<BloomSettings>(state);
+        (bloom ?? new BloomSettings()).SetCombineUniforms(program);
+
+        var tonemapping = GetSettings<TonemappingSettings>(state);
+        (tonemapping ?? new TonemappingSettings()).SetUniforms(program);
+    }
+
+    private static void ApplyLensDistortionUniforms(PipelinePostProcessState? state, XRRenderProgram program, bool enabled)
+    {
         var lens = GetSettings<LensDistortionSettings>(state);
         float widthPx = Math.Max(1, InternalWidth);
         float heightPx = Math.Max(1, InternalHeight);
@@ -1843,13 +1854,21 @@ public partial class DefaultRenderPipeline2
                 }
                 break;
         }
-        (lens ?? new LensDistortionSettings()).SetUniforms(program, cameraFov, aspectRatio, distortionCenterUv);
 
-        var bloom = GetSettings<BloomSettings>(state);
-        (bloom ?? new BloomSettings()).SetCombineUniforms(program);
+        if (enabled)
+        {
+            (lens ?? new LensDistortionSettings()).SetUniforms(program, cameraFov, aspectRatio, distortionCenterUv);
+            return;
+        }
 
-        var tonemapping = GetSettings<TonemappingSettings>(state);
-        (tonemapping ?? new TonemappingSettings()).SetUniforms(program);
+        program.Uniform("LensDistortionMode", (int)ELensDistortionMode.None);
+        program.Uniform("LensDistortionCenter", distortionCenterUv);
+        program.Uniform("LensDistortionIntensity", 0.0f);
+        program.Uniform("PaniniDistance", 0.0f);
+        program.Uniform("PaniniCrop", 1.0f);
+        program.Uniform("PaniniViewExtents", Vector2.One);
+        program.Uniform("BrownConradyRadial", Vector3.Zero);
+        program.Uniform("BrownConradyTangential", Vector2.Zero);
     }
 
     private void ApplyPostProcessProgramBindings(XRRenderProgram materialProgram)
@@ -1870,11 +1889,25 @@ public partial class DefaultRenderPipeline2
         materialProgram.Uniform("EnableEditorOutline", enableEditorOutline);
 
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
-        ApplyPostProcessUniforms(state, materialProgram);
+        ApplyPostProcessUniforms(state, materialProgram, applyLensDistortion: false);
+    }
+
+    private void ApplyFinalPostProcessProgramBindings(XRRenderProgram materialProgram)
+    {
+        XRTexture? source = GetTexture<XRTexture>(PostProcessOutputTextureName);
+        if (source is not null)
+            materialProgram.Sampler(PostProcessOutputTextureName, source, 0);
+
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        ApplyLensDistortionUniforms(state, materialProgram, enabled: true);
     }
 
     private void ApplyFxaaProgramBindings(XRRenderProgram materialProgram)
     {
+        XRTexture? source = GetTexture<XRTexture>(FinalPostProcessOutputTextureName);
+        if (source is not null)
+            materialProgram.Sampler(PostProcessOutputTextureName, source, 0);
+
         float width = Math.Max(1u, FullWidth);
         float height = Math.Max(1u, FullHeight);
         var texelStep = new Vector2(1.0f / width, 1.0f / height);
@@ -1902,6 +1935,10 @@ public partial class DefaultRenderPipeline2
 
     private void ApplyTsrUpscaleProgramBindings(XRRenderProgram program)
     {
+        XRTexture? source = GetTexture<XRTexture>(FinalPostProcessOutputTextureName);
+        if (source is not null)
+            program.Sampler(PostProcessOutputTextureName, source, 0);
+
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
         bool historyReady = false;

@@ -74,6 +74,16 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
                 return;
         }
 
+        if (_material is not null)
+        {
+            _material.Textures.Clear();
+            _material.Textures.Add(sourceTexture);
+        }
+
+        using var renderAreaScope = destination is { Width: > 0, Height: > 0 }
+            ? instance.RenderState.PushRenderArea((int)destination.Width, (int)destination.Height)
+            : default;
+
         _quad.Render(destination);
     }
 
@@ -110,39 +120,39 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             || sourceTexture is null)
             return;
 
-        program.Sampler("Texture0", sourceTexture, 0);
+        program.Sampler("PostProcessOutputTexture", sourceTexture, 0);
 
-        Vector2 texelStep = ResolveTexelStep(instance);
+        Vector2 texelStep = ResolveTexelStep(instance, sourceTexture);
         program.Uniform("FxaaTexelStep", texelStep);
     }
 
-    private Vector2 ResolveTexelStep(XRRenderPipelineInstance instance)
+    private Vector2 ResolveTexelStep(XRRenderPipelineInstance instance, XRTexture sourceTexture)
     {
-        float width = 1.0f;
-        float height = 1.0f;
+        Vector3 sourceSize = sourceTexture.WidthHeightDepth;
+        float width = sourceSize.X;
+        float height = sourceSize.Y;
 
-        if (!string.IsNullOrWhiteSpace(DestinationFBOName) &&
-            instance.GetFBO<XRFrameBuffer>(DestinationFBOName!) is XRFrameBuffer destination)
-        {
-            width = Math.Max(1u, destination.Width);
-            height = Math.Max(1u, destination.Height);
-        }
-        else if (instance.RenderState.CurrentRenderRegion is { Width: > 0, Height: > 0 } region)
+        if ((width <= 0.0f || height <= 0.0f) &&
+            instance.RenderState.CurrentRenderRegion is { Width: > 0, Height: > 0 } region)
         {
             width = region.Width;
             height = region.Height;
         }
-        else if (instance.RenderState.OutputFBO is XRFrameBuffer output)
+        else if ((width <= 0.0f || height <= 0.0f) &&
+            instance.RenderState.OutputFBO is XRFrameBuffer output)
         {
-            width = Math.Max(1u, output.Width);
-            height = Math.Max(1u, output.Height);
+            width = output.Width;
+            height = output.Height;
         }
-        else if ((instance.RenderState.WindowViewport ?? instance.LastWindowViewport) is XRViewport viewport)
+        else if ((width <= 0.0f || height <= 0.0f) &&
+            (instance.RenderState.WindowViewport ?? instance.LastWindowViewport) is XRViewport viewport)
         {
-            width = Math.Max(1, viewport.Width);
-            height = Math.Max(1, viewport.Height);
+            width = viewport.Width;
+            height = viewport.Height;
         }
 
+        width = Math.Max(1.0f, width);
+        height = Math.Max(1.0f, height);
         return new Vector2(1.0f / width, 1.0f / height);
     }
 }

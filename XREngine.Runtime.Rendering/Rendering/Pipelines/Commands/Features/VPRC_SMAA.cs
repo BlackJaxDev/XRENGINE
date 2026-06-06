@@ -313,6 +313,7 @@ void main()
         try
         {
             _resolvedSourceTexture = sourceTexture;
+            using var renderAreaScope = instance.RenderState.PushRenderArea((int)targetWidth, (int)targetHeight);
 
             if (sourceTexture is XRTexture2D)
             {
@@ -572,11 +573,15 @@ void main()
 
     private (uint Width, uint Height) ResolveTargetSize(XRRenderPipelineInstance instance, XRTexture sourceTexture)
     {
-        if (instance.RenderState.CurrentRenderRegion is { Width: > 0, Height: > 0 } region)
-            return ((uint)region.Width, (uint)region.Height);
+        if (instance.GetFBO<XRFrameBuffer>(ResolvedOutputFboName) is XRFrameBuffer outputFbo &&
+            outputFbo.Width > 0 &&
+            outputFbo.Height > 0)
+        {
+            return (outputFbo.Width, outputFbo.Height);
+        }
 
-        if (instance.RenderState.OutputFBO is XRFrameBuffer output && output.Width > 0 && output.Height > 0)
-            return (output.Width, output.Height);
+        if (instance.RenderState.CurrentRenderRegion is { X: 0, Y: 0, Width: > 0, Height: > 0 } region)
+            return ((uint)region.Width, (uint)region.Height);
 
         if ((instance.RenderState.WindowViewport ?? instance.LastWindowViewport) is XRViewport viewport &&
             viewport.Width > 0 &&
@@ -584,6 +589,9 @@ void main()
         {
             return ((uint)viewport.Width, (uint)viewport.Height);
         }
+
+        if (instance.RenderState.OutputFBO is XRFrameBuffer output && output.Width > 0 && output.Height > 0)
+            return (output.Width, output.Height);
 
         Vector3 sourceSize = sourceTexture.WidthHeightDepth;
         return ((uint)Math.Max(1.0f, sourceSize.X), (uint)Math.Max(1.0f, sourceSize.Y));

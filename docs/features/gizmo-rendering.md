@@ -82,7 +82,7 @@ Current cleanup points include:
 - `VPRC_RenderDebugGpuBvh`
 - `VPRC_PopStencilState`
 
-`VPRC_RenderDebugShapes` intentionally runs after `OnTopForward` in the default pipelines, so it also protects transform tool and light probe gizmo draws that happened earlier in the same post-temporal block.
+`VPRC_RenderDebugShapes` intentionally runs once in the late debug overlay, after the scene postprocess pass has produced `PostProcessOutputTexture` and before the final optical pass. This keeps debug shapes out of bloom, AO, depth of field, fog, tone mapping, and color grading while still letting final lens distortion affect them.
 
 Debug primitives are bucketed by active visual scene before they reach the instanced visualizer. Calls made while rendering a `VisualScene3D` draw only in the 3D scene pipeline, and calls made while rendering a `VisualScene2D` draw only in the UI pipeline. Keep that separation intact so screen-space UI debug lines/points cannot leak into the world view and world gizmos cannot leak into screen-space UI.
 

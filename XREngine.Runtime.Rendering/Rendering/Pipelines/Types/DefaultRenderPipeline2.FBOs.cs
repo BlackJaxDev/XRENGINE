@@ -83,10 +83,49 @@ public partial class DefaultRenderPipeline2
     private XRFrameBuffer CreatePostProcessOutputFBO()
     {
         IFrameBufferAttachement attach = EnsureTextureAttachment(PostProcessOutputTextureName, CreatePostProcessOutputTexture);
+        IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
+
+        return new XRFrameBuffer(
+            (attach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = PostProcessOutputFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateFinalPostProcessFBO()
+    {
+        XRTexture source = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
+        XRShader shader = XRShader.EngineShader(Path.Combine(SceneShaderPath, FinalPostProcessShaderName()), EShaderType.Fragment);
+        XRMaterial material = new([source], shader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                RequiredEngineUniforms = EUniformRequirements.Camera,
+            }
+        };
+
+        XRQuadFrameBuffer fbo = new(material, deriveRenderTargetsFromMaterial: false)
+        {
+            Name = FinalPostProcessFBOName
+        };
+        fbo.SettingUniforms += ApplyFinalPostProcessProgramBindings;
+        return fbo;
+    }
+
+    private XRFrameBuffer CreateFinalPostProcessOutputFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(FinalPostProcessOutputTextureName, CreateFinalPostProcessOutputTexture);
 
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
-            Name = PostProcessOutputFBOName
+            Name = FinalPostProcessOutputFBOName
         };
     }
 
@@ -284,46 +323,27 @@ public partial class DefaultRenderPipeline2
 
     private XRFrameBuffer CreateFxaaFBO()
     {
-        XRTexture fxaaSource = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
-        XRTexture fxaaOutput = GetTexture<XRTexture>(FxaaOutputTextureName)!;
-        XRShader fxaaShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "FXAA.fs"), EShaderType.Fragment);
-        XRMaterial fxaaMaterial = new([fxaaSource], fxaaShader)
-        {
-            RenderOptions = new RenderingParameters()
-            {
-                DepthTest = new DepthTest()
-                {
-                    Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                }
-            }
-        };
-        XRQuadFrameBuffer fxaaFbo = new(fxaaMaterial, deriveRenderTargetsFromMaterial: false)
+        IFrameBufferAttachement fxaaAttach = EnsureTextureAttachment(FxaaOutputTextureName, CreateFxaaOutputTexture);
+        return new XRFrameBuffer((fxaaAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
             Name = FxaaFBOName
         };
-        if (fxaaOutput is not IFrameBufferAttachement fxaaAttach)
-            throw new InvalidOperationException("FXAA output texture is not an FBO-attachable texture.");
-
-        fxaaFbo.SetRenderTargets((fxaaAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-        return fxaaFbo;
     }
 
     /// <summary>
     /// Creates the TSR resolve FBO.
-    /// Reads the internal-resolution post-process result plus temporal inputs and writes
-    /// the reconstructed full-resolution output to <see cref="FxaaOutputTextureName"/>.
+    /// Reads the internal-resolution final post-process result plus temporal inputs and writes
+    /// the reconstructed full-resolution output to <see cref="TsrOutputTextureName"/>.
     /// </summary>
     private XRFrameBuffer CreateTsrUpscaleFBO()
     {
-        XRTexture sourceTexture = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
+        XRTexture sourceTexture = GetTexture<XRTexture>(FinalPostProcessOutputTextureName)!;
         XRTexture velocityTexture = GetTexture<XRTexture>(VelocityTextureName)!;
         XRTexture depthTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
         XRTexture historyDepthTexture = GetTexture<XRTexture>(HistoryDepthViewTextureName)!;
         XRTexture historyColorTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
         XRTexture stencilTexture = GetTexture<XRTexture>(StencilViewTextureName)!;
-        XRTexture outputTexture = GetTexture<XRTexture>(FxaaOutputTextureName)!;
+        XRTexture outputTexture = GetTexture<XRTexture>(TsrOutputTextureName)!;
         XRShader upscaleShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"), EShaderType.Fragment);
         XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture, stencilTexture], upscaleShader)
         {
