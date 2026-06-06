@@ -1,5 +1,6 @@
 #version 460
 
+// Debug primitive outputs must be rewritten before every EmitVertex for Vulkan.
 layout(points) in;
 layout(triangle_strip, max_vertices = 4) out;
 

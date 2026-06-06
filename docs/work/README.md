@@ -117,6 +117,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/affine-matrix-integration-plan.md](design/affine-matrix-integration-plan.md)
 - [design/advanced-flat-mirror-rendering-design.md](design/advanced-flat-mirror-rendering-design.md)
 - [design/rendering/atmospheric-scattering-component-design.md](design/rendering/atmospheric-scattering-component-design.md)
+- [design/cuda-usage-opportunities-design.md](design/cuda-usage-opportunities-design.md)
 - [design/default-render-pipeline-improvement-plan.md](design/default-render-pipeline-improvement-plan.md)
 - [design/ddgi-integration-plan.md](design/ddgi-integration-plan.md)
 - [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)

@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
@@ -25,11 +27,28 @@ vec3 Heat(float t)
     return mix(warm, hot, (t - 0.75) * 4.0);
 }
 
+vec2 ResolveSceneUv(vec2 uv)
+{
+#ifdef XRENGINE_VULKAN
+    if (ClipSpaceYDirection == 1)
+        uv.y = 1.0 - uv.y;
+#endif
+    return uv;
+}
+
+vec2 ResolveCountUv(vec2 uv)
+{
+#ifdef XRENGINE_VULKAN
+    uv.y = 1.0 - uv.y;
+#endif
+    return uv;
+}
+
 void main()
 {
     vec2 uv = FragPos.xy * 0.5 + 0.5;
-    float count = texture(FullOverdrawCountTex, uv).r;
-    vec3 scene = texture(PostProcessOutputTexture, uv).rgb;
+    float count = texture(FullOverdrawCountTex, ResolveCountUv(uv)).r;
+    vec3 scene = texture(PostProcessOutputTexture, ResolveSceneUv(uv)).rgb;
 
     float maxCount = max(OverdrawMaxCount, 1.0);
     float heatValue = clamp((count - 1.0) / max(maxCount - 1.0, 1.0), 0.0, 1.0);

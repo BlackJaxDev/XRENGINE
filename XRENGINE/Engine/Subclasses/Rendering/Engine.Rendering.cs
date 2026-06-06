@@ -225,6 +225,7 @@ namespace XREngine
                 bool VulkanFeatureProfileActive,
                 EVulkanGpuDrivenProfile ActiveVulkanProfile,
                 bool EnforceStrictNoFallbacks,
+                bool GpuRenderDispatchAllowed,
                 bool SupportsIndirectCountDraw,
                 EMeshShaderDialect MeshShaderDialect,
                 bool SupportsDirectMeshTaskDispatch,
@@ -297,6 +298,9 @@ namespace XREngine
                 }
 
                 if (!inputs.RequestedGpuDispatch)
+                    return EMeshSubmissionStrategy.CpuDirect;
+
+                if (inputs.VulkanFeatureProfileActive && !inputs.GpuRenderDispatchAllowed)
                     return EMeshSubmissionStrategy.CpuDirect;
 
                 bool diagnosticsProfile = inputs.VulkanFeatureProfileActive &&
@@ -392,6 +396,7 @@ namespace XREngine
                     VulkanFeatureProfileActive: VulkanFeatureProfile.IsActive,
                     ActiveVulkanProfile: VulkanFeatureProfile.ActiveProfile,
                     EnforceStrictNoFallbacks: VulkanFeatureProfile.EnforceStrictNoFallbacks,
+                    GpuRenderDispatchAllowed: VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(true),
                     SupportsIndirectCountDraw: rendererKnown ? supportsIndirectCount : true,
                     MeshShaderDialect: meshShaderDialect,
                     SupportsDirectMeshTaskDispatch: supportsDirectMeshTaskDispatch,
@@ -441,6 +446,17 @@ namespace XREngine
 
                 if (inputs.ForcedStrategy.HasValue)
                     return;
+
+                if (inputs.VulkanFeatureProfileActive && !inputs.GpuRenderDispatchAllowed)
+                {
+                    XREngine.Debug.RenderingWarningEvery(
+                        "RenderDispatch.MeshSubmissionStrategy.VulkanGpuDispatchDisabled",
+                        TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] GPU mesh submission requested but Vulkan feature profile {0} has GPU render dispatch disabled. Effective={1}.",
+                        inputs.ActiveVulkanProfile,
+                        strategy);
+                    return;
+                }
 
                 bool wantedZeroReadback = (inputs.VulkanFeatureProfileActive &&
                         inputs.ActiveVulkanProfile == EVulkanGpuDrivenProfile.ShippingFast)

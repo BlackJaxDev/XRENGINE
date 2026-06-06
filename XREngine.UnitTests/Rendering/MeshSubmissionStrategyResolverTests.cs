@@ -159,6 +159,17 @@ public sealed class MeshSubmissionStrategyResolverTests
     }
 
     [Test]
+    public void ResolveMeshSubmissionStrategy_VulkanProfileDisablesGpuRenderDispatch_UsesCpuDirect()
+    {
+        Resolve(
+                activeProfile: EVulkanGpuDrivenProfile.ShippingFast,
+                vulkanProfileActive: true,
+                gpuRenderDispatchAllowed: false,
+                supportsIndirectCountDraw: true)
+            .ShouldBe(EMeshSubmissionStrategy.CpuDirect);
+    }
+
+    [Test]
     public void ResolveMeshSubmissionStrategy_ShippingFastWithoutCountDrawStrict_DowngradesToCpuDirect()
     {
         Resolve(
@@ -191,6 +202,7 @@ public sealed class MeshSubmissionStrategyResolverTests
         bool vulkanProfileActive = false,
         EVulkanGpuDrivenProfile activeProfile = EVulkanGpuDrivenProfile.DevParity,
         bool enforceStrictNoFallbacks = false,
+        bool gpuRenderDispatchAllowed = true,
         bool supportsIndirectCountDraw = true,
         EMeshShaderDialect meshShaderDialect = EMeshShaderDialect.None,
         bool supportsDirectMeshTaskDispatch = false,
@@ -208,6 +220,7 @@ public sealed class MeshSubmissionStrategyResolverTests
             VulkanFeatureProfileActive: vulkanProfileActive,
             ActiveVulkanProfile: activeProfile,
             EnforceStrictNoFallbacks: enforceStrictNoFallbacks,
+            GpuRenderDispatchAllowed: gpuRenderDispatchAllowed,
             SupportsIndirectCountDraw: supportsIndirectCountDraw,
             MeshShaderDialect: meshShaderDialect,
             SupportsDirectMeshTaskDispatch: supportsDirectMeshTaskDispatch,

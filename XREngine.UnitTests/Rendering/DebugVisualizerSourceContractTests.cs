@@ -114,6 +114,63 @@ public sealed class DebugVisualizerSourceContractTests
             "base.RenderDebug();");
     }
 
+    [Test]
+    public void DebugLineAndPointQuads_EmitOneFourVertexTriangleStrip()
+    {
+        string lineHelper = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/Debug/helper/DebugLineQuad.glsl").Replace("\r\n", "\n");
+        string pointHelper = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/Debug/helper/DebugPointQuad.glsl").Replace("\r\n", "\n");
+        string triangleHelper = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/Debug/helper/DebugTriangle.glsl").Replace("\r\n", "\n");
+
+        AssertDebugGeometryShaderUsesFourVertices("Build/CommonAssets/Shaders/Common/Debug/gs/LineInstance.gs");
+        AssertDebugGeometryShaderUsesFourVertices("Build/CommonAssets/Shaders/Common/Debug/gs/LineInstanceCompressed.gs");
+        AssertDebugGeometryShaderUsesFourVertices("Build/CommonAssets/Shaders/Common/Debug/gs/PointInstance.gs");
+        AssertDebugGeometryShaderUsesFourVertices("Build/CommonAssets/Shaders/Common/Debug/gs/PointInstanceCompressed.gs");
+
+        CountOccurrences(lineHelper, "EndPrimitive();").ShouldBe(1);
+        CountOccurrences(pointHelper, "EndPrimitive();").ShouldBe(1);
+
+        CountOccurrences(lineHelper, "LineMatColor = color;").ShouldBe(4);
+        CountOccurrences(lineHelper, "LineHalfWidthPixels = halfWidthPixels;").ShouldBe(4);
+        CountOccurrences(pointHelper, "MatColor = color;").ShouldBe(4);
+        CountOccurrences(triangleHelper, "MatColor = color;").ShouldBe(3);
+
+        AssertContainsInOrder(
+            lineHelper,
+            "LineMatColor = color;\n    LineHalfWidthPixels = halfWidthPixels;",
+            "gl_Position = startPlus;\n    EmitVertex();",
+            "LineMatColor = color;\n    LineHalfWidthPixels = halfWidthPixels;",
+            "gl_Position = startMinus;\n    EmitVertex();",
+            "LineMatColor = color;\n    LineHalfWidthPixels = halfWidthPixels;",
+            "gl_Position = endPlus;\n    EmitVertex();",
+            "LineMatColor = color;\n    LineHalfWidthPixels = halfWidthPixels;",
+            "gl_Position = endMinus;\n    EmitVertex();",
+            "EndPrimitive();");
+
+        AssertContainsInOrder(
+            pointHelper,
+            "MatColor = color;",
+            "gl_Position = p1;\n    EmitVertex();",
+            "MatColor = color;",
+            "gl_Position = p2;\n    EmitVertex();",
+            "MatColor = color;",
+            "gl_Position = p3;\n    EmitVertex();",
+            "MatColor = color;",
+            "gl_Position = p4;\n    EmitVertex();",
+            "EndPrimitive();");
+
+        AssertContainsInOrder(
+            triangleHelper,
+            "MatColor = color;\n    gl_Position = XRENGINE_DebugOutputPosition(viewProj * vec4(p0, 1.0));\n    EmitVertex();",
+            "MatColor = color;\n    gl_Position = XRENGINE_DebugOutputPosition(viewProj * vec4(p1, 1.0));\n    EmitVertex();",
+            "MatColor = color;\n    gl_Position = XRENGINE_DebugOutputPosition(viewProj * vec4(p2, 1.0));\n    EmitVertex();");
+    }
+
+    private static void AssertDebugGeometryShaderUsesFourVertices(string relativePath)
+    {
+        string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
+        source.ShouldContain("layout(triangle_strip, max_vertices = 4) out;");
+    }
+
     private static void AssertContainsInOrder(string source, params string[] expected)
     {
         int previousIndex = -1;
@@ -123,6 +180,20 @@ public sealed class DebugVisualizerSourceContractTests
             index.ShouldBeGreaterThan(previousIndex, $"Expected '{text}' after index {previousIndex}.");
             previousIndex = index;
         }
+    }
+
+    private static int CountOccurrences(string source, string text)
+    {
+        int count = 0;
+        int index = 0;
+
+        while ((index = source.IndexOf(text, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += text.Length;
+        }
+
+        return count;
     }
 
     private static string SliceMethod(string source, string signature)

@@ -215,7 +215,7 @@ public sealed class VulkanShaderCompilationRegressionTests
         if (shaderRelativePath.Contains("PointInstance", StringComparison.Ordinal) ||
             shaderRelativePath.Contains("LineInstance", StringComparison.Ordinal))
         {
-            rewrittenSource.ShouldContain("max_vertices = 6");
+            rewrittenSource.ShouldContain("max_vertices = 4");
         }
 
         if (shaderRelativePath.Contains("LineInstance", StringComparison.Ordinal))

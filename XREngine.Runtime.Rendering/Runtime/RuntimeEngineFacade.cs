@@ -376,6 +376,9 @@ internal static partial class RuntimeEngine
             if (!(requestedGpuDispatch ?? RuntimeEngine.EffectiveSettings.GPURenderDispatch))
                 return EMeshSubmissionStrategy.CpuDirect;
 
+            if (VulkanFeatureProfile.IsActive && !VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(true))
+                return EMeshSubmissionStrategy.CpuDirect;
+
             bool diagnosticsProfile = VulkanFeatureProfile.IsActive &&
                 VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
             bool shippingFastProfile = VulkanFeatureProfile.IsActive &&
