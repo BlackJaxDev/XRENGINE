@@ -140,6 +140,14 @@ namespace XREngine.Rendering
             @"layout\s*\([^)]*\)",
             RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
+        private static readonly Regex BufferBlockDeclarationRegex = new(
+            @"layout\s*\((?<layout>[^)]*)\)\s*(?<qualifiers>(?:\b(?:readonly|writeonly|coherent|volatile|restrict|shared)\b\s+)*)?(?<kind>buffer|uniform)\s+(?<name>[A-Za-z_]\w*)\s*\{",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        private static readonly Regex LayoutBindingRegex = new(
+            @"(?:^|,)\s*binding\s*=\s*(?<binding>\d+)\s*(?:,|$)",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
         private static readonly Regex SingleLineCommentRegex = new(
             @"//.*?$",
             RegexOptions.Compiled | RegexOptions.Multiline);
@@ -322,15 +330,23 @@ namespace XREngine.Rendering
 
             XRPropertyChangedEventHandler propertyChanged = (sender, args) =>
             {
-                if (!string.Equals(args.PropertyName, nameof(XRShader.Source), StringComparison.Ordinal))
+                bool sourceChanged = string.Equals(args.PropertyName, nameof(XRShader.Source), StringComparison.Ordinal);
+                bool typeChanged = string.Equals(args.PropertyName, nameof(XRShader.Type), StringComparison.Ordinal);
+                if (!sourceChanged && !typeChanged)
                     return;
 
-                AttachToShaderSource(subscription, shader.Source);
+                if (sourceChanged)
+                    AttachToShaderSource(subscription, shader.Source);
+
                 MarkShaderInterfaceDirty();
             };
 
             shader.PropertyChanged += propertyChanged;
             subscription.PropertyChangedHandler = propertyChanged;
+
+            Action<XRShader> sourceChangedHandler = _ => MarkShaderInterfaceDirty();
+            shader.SourceChanged += sourceChangedHandler;
+            subscription.SourceChangedHandler = sourceChangedHandler;
 
             AttachToShaderSource(subscription, shader.Source);
 
@@ -374,6 +390,9 @@ namespace XREngine.Rendering
             if (subscription.PropertyChangedHandler is not null)
                 shader.PropertyChanged -= subscription.PropertyChangedHandler;
 
+            if (subscription.SourceChangedHandler is not null)
+                shader.SourceChanged -= subscription.SourceChangedHandler;
+
             _shaderSourceSubscriptions.Remove(shader);
         }
 
@@ -386,6 +405,9 @@ namespace XREngine.Rendering
 
                 if (subscription.PropertyChangedHandler is not null)
                     shader.PropertyChanged -= subscription.PropertyChangedHandler;
+
+                if (subscription.SourceChangedHandler is not null)
+                    shader.SourceChanged -= subscription.SourceChangedHandler;
             }
 
             _shaderSourceSubscriptions.Clear();
@@ -1084,11 +1106,73 @@ namespace XREngine.Rendering
         public bool HasUniform(string uniformName)
             => Shaders.Any(x => x.HasUniform(uniformName));
 
+        public EUniformRequirements GetActiveEngineUniformRequirements()
+        {
+            EUniformRequirements requirements = EUniformRequirements.None;
+
+            foreach (string uniformName in UniformBindings.Keys)
+                requirements |= UniformRequirementsDetection.GetAutoDetectedRequirement(uniformName);
+
+            foreach (string samplerName in TextureBindings.Keys)
+                requirements |= UniformRequirementsDetection.GetAutoDetectedRequirement(samplerName);
+
+            return requirements;
+        }
+
         public void BindBuffer(XRDataBuffer buffer, uint location)
         {
             if (buffer is null)
                 throw new ArgumentNullException(nameof(buffer), "Cannot bind a null buffer to the shader program.");
             BindBufferRequested?.Invoke(location, buffer);
+        }
+
+        public bool TryResolveShaderStorageBufferBinding(string blockName, out uint binding)
+            => TryResolveBufferBlockBinding(blockName, "buffer", out binding);
+
+        public bool TryResolveUniformBlockBinding(string blockName, out uint binding)
+            => TryResolveBufferBlockBinding(blockName, "uniform", out binding);
+
+        private bool TryResolveBufferBlockBinding(string blockName, string blockKind, out uint binding)
+        {
+            binding = 0;
+            if (string.IsNullOrWhiteSpace(blockName))
+                return false;
+
+            foreach (XRShader shader in Shaders)
+            {
+                if (shader is null)
+                    continue;
+
+                if (!shader.TryGetOptimizedSource(out string source, logFailures: false) &&
+                    string.IsNullOrWhiteSpace(source))
+                {
+                    continue;
+                }
+
+                string sanitized = StripComments(source);
+                foreach (Match match in BufferBlockDeclarationRegex.Matches(sanitized))
+                {
+                    if (!string.Equals(match.Groups["kind"].Value, blockKind, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!string.Equals(match.Groups["name"].Value, blockName, StringComparison.Ordinal))
+                        continue;
+                    if (TryParseLayoutBinding(match.Groups["layout"].Value, out binding))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryParseLayoutBinding(string layout, out uint binding)
+        {
+            binding = 0;
+            if (string.IsNullOrWhiteSpace(layout))
+                return false;
+
+            Match match = LayoutBindingRegex.Match(layout);
+            return match.Success &&
+                   uint.TryParse(match.Groups["binding"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out binding);
         }
 
         /// <summary>
@@ -1529,6 +1613,7 @@ namespace XREngine.Rendering
             public TextFile? Source;
             public Action? TextChangedHandler;
             public XRPropertyChangedEventHandler? PropertyChangedHandler;
+            public Action<XRShader>? SourceChangedHandler;
             public int ReferenceCount;
         }
 

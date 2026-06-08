@@ -694,27 +694,21 @@ public unsafe partial class VulkanRenderer
 		private bool TryResolveImage(DescriptorBindingInfo binding, XRMaterial material, DescriptorType descriptorType, out DescriptorImageInfo imageInfo, int arrayIndex = 0)
 		{
 			imageInfo = default;
-			XRTexture? texture = null;
-
 			bool bindless = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding);
+			MaterialTextureBindingResolution textureBinding = MaterialTextureBindingResolver.Resolve(
+				material,
+				binding.Name,
+				(int)binding.Binding,
+				arrayIndex,
+				bindless,
+				samplerName =>
+				{
+					if (_program is not null && _program.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture))
+						return namedTexture;
 
-			// Prefer resolving by the shader sampler uniform name. This mirrors OpenGL
-			// (which binds samplers by name) and covers program-bound textures such as
-			// FBO/engine blit samplers that are not present in material.Textures.
-			if (!bindless && _program is not null && !string.IsNullOrWhiteSpace(binding.Name) &&
-				_program.TryGetSamplerTexture(binding.Name, out XRTexture? namedTexture))
-			{
-				texture = namedTexture;
-			}
-
-			if (texture is null && material.Textures is { Count: > 0 })
-			{
-				int idx = bindless
-					? arrayIndex
-					: (int)binding.Binding + arrayIndex;
-				if (idx >= 0 && idx < material.Textures.Count)
-					texture = material.Textures[idx];
-			}
+					return null;
+				});
+			XRTexture? texture = textureBinding.Texture;
 
 			if (texture is null)
 			{
@@ -870,14 +864,20 @@ public unsafe partial class VulkanRenderer
 		private bool TryResolveTexelBuffer(DescriptorBindingInfo binding, XRMaterial material, out BufferView texelView, int arrayIndex = 0)
 		{
 			texelView = default;
-			XRTexture? texture = null;
+			MaterialTextureBindingResolution textureBinding = MaterialTextureBindingResolver.Resolve(
+				material,
+				binding.Name,
+				(int)binding.Binding,
+				arrayIndex,
+				bindlessMaterialArray: false,
+				samplerName =>
+				{
+					if (_program is not null && _program.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture))
+						return namedTexture;
 
-			if (material.Textures is { Count: > 0 })
-			{
-				int idx = (int)binding.Binding + arrayIndex;
-				if (idx >= 0 && idx < material.Textures.Count)
-					texture = material.Textures[idx];
-			}
+					return null;
+				});
+			XRTexture? texture = textureBinding.Texture;
 
 			if (texture is null)
 			{

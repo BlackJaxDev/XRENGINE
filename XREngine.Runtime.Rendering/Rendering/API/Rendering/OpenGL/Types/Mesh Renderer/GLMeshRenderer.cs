@@ -37,6 +37,7 @@ namespace XREngine.Rendering.OpenGL
             /// Flat list of all buffer values for fast iteration in CheckBuffersReady.
             /// </summary>
             private List<GLDataBuffer> _allBuffersList = [];
+            private MeshGeometryLayoutSignature _geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
             private XRMesh.BufferCollection? _subscribedMeshBuffers;
             private XRMesh.BufferCollection? _subscribedRendererBuffers;
             private int _bufferCollectionsDirty;

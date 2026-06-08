@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        public class VkTextureView(VulkanRenderer api, XRTextureViewBase data) : VkObject<XRTextureViewBase>(api, data), IVkFrameBufferAttachmentSource, IVkTexelBufferDescriptorSource
+        public class VkTextureView(VulkanRenderer api, XRTextureViewBase data) : VkTexture<XRTextureViewBase>(api, data), IVkFrameBufferAttachmentSource, IVkTexelBufferDescriptorSource
         {
             private Image _image;
             private ImageView _view;
@@ -205,16 +205,20 @@ namespace XREngine.Rendering.Vulkan
                 _samples = SampleCountFlags.Count1Bit;
                 _texelBufferView = default;
                 _texelBufferFormat = Format.Undefined;
+
+                InvalidateTextureData();
             }
 
-            protected override void LinkData()
+            protected override void LinkTextureData()
             {
                 Data.ViewedTextureChanged += OnViewedTextureChanged;
                 Data.PropertyChanged += OnTextureViewPropertyChanged;
+                SubscribeViewedTextureEvents(Data.GetViewedTexture());
             }
 
-            protected override void UnlinkData()
+            protected override void UnlinkTextureData()
             {
+                UnsubscribeViewedTextureEvents(Data.GetViewedTexture());
                 Data.ViewedTextureChanged -= OnViewedTextureChanged;
                 Data.PropertyChanged -= OnTextureViewPropertyChanged;
             }
@@ -257,6 +261,9 @@ namespace XREngine.Rendering.Vulkan
 
             private void OnViewedTextureChanged()
             {
+                UnsubscribeViewedTextureEvents(_subscribedViewedTexture);
+                SubscribeViewedTextureEvents(Data.GetViewedTexture());
+                InvalidateTextureData();
                 if (IsActive)
                 {
                     Destroy();
@@ -274,6 +281,7 @@ namespace XREngine.Rendering.Vulkan
                     case nameof(XRTextureViewBase.MinLayer):
                     case nameof(XRTextureViewBase.NumLayers):
                     case nameof(XRTextureViewBase.InternalFormat):
+                        InvalidateTextureData();
                         if (IsActive)
                         {
                             Destroy();
@@ -285,11 +293,160 @@ namespace XREngine.Rendering.Vulkan
                     case nameof(XRTextureViewBase.UWrap):
                     case nameof(XRTextureViewBase.VWrap):
                     case nameof(XRTextureViewBase.LodBias):
+                    case nameof(XRTexture.MinLOD):
+                    case nameof(XRTexture.MaxLOD):
+                    case nameof(XRTexture.LargestMipmapLevel):
+                    case nameof(XRTexture.SmallestAllowedMipmapLevel):
+                        MarkDescriptorDirty();
                         if (IsActive && _texelBufferView.Handle == 0)
                             RecreateSampler();
                         break;
                 }
             }
+
+            public override void PushData()
+            {
+                XRTexture viewedTexture = Data.GetViewedTexture();
+                viewedTexture?.PushData();
+                Generate();
+                if (IsGenerated)
+                    MarkUploaded();
+            }
+
+            public override void Bind()
+            {
+                PushData();
+                if (!IsGenerated)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.TextureView.BindNotReady.{Data.GetHashCode()}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Texture view BindRequested could not create a descriptor view for '{0}'.",
+                        Data.Name ?? Data.GetDescribingName());
+                    return;
+                }
+
+                MarkDescriptorClean();
+            }
+
+            private XRTexture? _subscribedViewedTexture;
+
+            private void SubscribeViewedTextureEvents(XRTexture? texture)
+            {
+                if (texture is null || ReferenceEquals(texture, _subscribedViewedTexture))
+                    return;
+
+                _subscribedViewedTexture = texture;
+                SubscribeViewedTextureResize(texture);
+                texture.PropertyChanged += OnViewedTexturePropertyChanged;
+            }
+
+            private void UnsubscribeViewedTextureEvents(XRTexture? texture)
+            {
+                texture ??= _subscribedViewedTexture;
+                if (texture is null)
+                    return;
+
+                UnsubscribeViewedTextureResize(texture);
+                texture.PropertyChanged -= OnViewedTexturePropertyChanged;
+                if (ReferenceEquals(texture, _subscribedViewedTexture))
+                    _subscribedViewedTexture = null;
+            }
+
+            private void SubscribeViewedTextureResize(XRTexture texture)
+            {
+                switch (texture)
+                {
+                    case XRTexture1D tex1D:
+                        tex1D.Resized += OnViewedTextureResized;
+                        break;
+                    case XRTexture1DArray tex1DArray:
+                        tex1DArray.Resized += OnViewedTextureResized;
+                        break;
+                    case XRTexture2D tex2D:
+                        tex2D.Resized += OnViewedTextureResized;
+                        break;
+                    case XRTexture2DArray tex2DArray:
+                        tex2DArray.Resized += OnViewedTextureResized;
+                        break;
+                    case XRTexture3D tex3D:
+                        tex3D.Resized += OnViewedTextureResized;
+                        break;
+                    case XRTextureCube texCube:
+                        texCube.Resized += OnViewedTextureResized;
+                        break;
+                    case XRTextureCubeArray texCubeArray:
+                        texCubeArray.Resized += OnViewedTextureResized;
+                        break;
+                    case XRTextureRectangle rectangle:
+                        rectangle.Resized += OnViewedTextureResized;
+                        break;
+                }
+            }
+
+            private void UnsubscribeViewedTextureResize(XRTexture texture)
+            {
+                switch (texture)
+                {
+                    case XRTexture1D tex1D:
+                        tex1D.Resized -= OnViewedTextureResized;
+                        break;
+                    case XRTexture1DArray tex1DArray:
+                        tex1DArray.Resized -= OnViewedTextureResized;
+                        break;
+                    case XRTexture2D tex2D:
+                        tex2D.Resized -= OnViewedTextureResized;
+                        break;
+                    case XRTexture2DArray tex2DArray:
+                        tex2DArray.Resized -= OnViewedTextureResized;
+                        break;
+                    case XRTexture3D tex3D:
+                        tex3D.Resized -= OnViewedTextureResized;
+                        break;
+                    case XRTextureCube texCube:
+                        texCube.Resized -= OnViewedTextureResized;
+                        break;
+                    case XRTextureCubeArray texCubeArray:
+                        texCubeArray.Resized -= OnViewedTextureResized;
+                        break;
+                    case XRTextureRectangle rectangle:
+                        rectangle.Resized -= OnViewedTextureResized;
+                        break;
+                }
+            }
+
+            private void OnViewedTextureResized()
+            {
+                InvalidateTextureData();
+                if (IsActive)
+                {
+                    Destroy();
+                    Generate();
+                }
+            }
+
+            private void OnViewedTexturePropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+            {
+                if (IsViewedTextureStorageProperty(e.PropertyName))
+                {
+                    InvalidateTextureData();
+                    if (IsActive)
+                    {
+                        Destroy();
+                        Generate();
+                    }
+                }
+            }
+
+            private static bool IsViewedTextureStorageProperty(string? propertyName)
+                => propertyName is nameof(XRTexture.MinLOD)
+                    or nameof(XRTexture.MaxLOD)
+                    or nameof(XRTexture.LargestMipmapLevel)
+                    or nameof(XRTexture.SmallestAllowedMipmapLevel)
+                    or nameof(XRTexture2D.SizedInternalFormat)
+                    or nameof(XRTexture2D.Mipmaps)
+                    or nameof(XRTexture2DArray.Textures)
+                    or nameof(XRTextureCubeArray.Cubes);
 
             private void CreateView()
             {

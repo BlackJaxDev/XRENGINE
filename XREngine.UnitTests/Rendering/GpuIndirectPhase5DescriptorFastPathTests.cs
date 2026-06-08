@@ -29,7 +29,7 @@ public sealed class GpuIndirectPhase5DescriptorFastPathTests
     [Test]
     public void Phase5_MaterialTableAndResidency_SourceContracts_ArePresent()
     {
-        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
         string tableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs");
 
         passSource.ShouldContain("PrepareMaterialTableAndValidateResidency");

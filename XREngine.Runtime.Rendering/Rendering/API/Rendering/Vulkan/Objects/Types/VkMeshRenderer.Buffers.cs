@@ -5,6 +5,8 @@
 // determines the effective material for each draw call.
 // ──────────────────────────────────────────────────────────────────────────────
 
+using System;
+
 using Silk.NET.Vulkan;
 
 using XREngine;
@@ -63,21 +65,70 @@ public unsafe partial class VulkanRenderer
 
 		private void AddRuntimeDeformationBuffers()
 		{
-			AddRuntimeBuffer(ComputeInterleavedBufferName, MeshRenderer.SkinnedInterleavedBuffer, ComputeInterleavedBinding);
-			AddRuntimeBuffer(ComputePositionBufferName, MeshRenderer.SkinnedPositionsBuffer, ComputePositionBinding);
-			AddRuntimeBuffer(ComputeNormalBufferName, MeshRenderer.SkinnedNormalsBuffer, ComputeNormalBinding);
-			AddRuntimeBuffer(ComputeTangentBufferName, MeshRenderer.SkinnedTangentsBuffer, ComputeTangentBinding);
-			AddRuntimeBuffer(PrecombinedBlendshapePositionBufferName, MeshRenderer.PrecombinedBlendshapePositionsBuffer, PrecombinedBlendshapePositionBinding);
-			AddRuntimeBuffer(PrecombinedBlendshapeNormalBufferName, MeshRenderer.PrecombinedBlendshapeNormalsBuffer, PrecombinedBlendshapeNormalBinding);
-			AddRuntimeBuffer(PrecombinedBlendshapeTangentBufferName, MeshRenderer.PrecombinedBlendshapeTangentsBuffer, PrecombinedBlendshapeTangentBinding);
+			XRMesh? mesh = MeshRenderer.Mesh;
+			bool useComputeSkinning = mesh?.HasSkinning == true
+				&& RuntimeEngine.Rendering.Settings.AllowSkinning
+				&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
+			bool useComputeBlendshapes = mesh?.BlendshapeCount > 0
+				&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
+				&& (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+
+			if (useComputeSkinning || useComputeBlendshapes)
+			{
+				AddRuntimeBuffer(ComputeInterleavedBufferName, MeshRenderer.SkinnedInterleavedBuffer, ComputeInterleavedBinding);
+				AddRuntimeBuffer(ComputePositionBufferName, MeshRenderer.SkinnedPositionsBuffer, ComputePositionBinding);
+				AddRuntimeBuffer(ComputeNormalBufferName, MeshRenderer.SkinnedNormalsBuffer, ComputeNormalBinding);
+				AddRuntimeBuffer(ComputeTangentBufferName, MeshRenderer.SkinnedTangentsBuffer, ComputeTangentBinding);
+				AddMeshDeformSourceBuffers();
+			}
+
+			bool directBlendshapePath = mesh?.BlendshapeCount > 0
+				&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
+				&& !useComputeBlendshapes;
+			if (directBlendshapePath
+				&& RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
+				&& MeshRenderer.HasValidPrecombinedBlendshapeDeltas)
+			{
+				AddRuntimeBuffer(PrecombinedBlendshapePositionBufferName, MeshRenderer.PrecombinedBlendshapePositionsBuffer, PrecombinedBlendshapePositionBinding);
+				if (mesh?.HasNormals == true)
+					AddRuntimeBuffer(PrecombinedBlendshapeNormalBufferName, MeshRenderer.PrecombinedBlendshapeNormalsBuffer, PrecombinedBlendshapeNormalBinding);
+				if (mesh?.HasTangents == true)
+					AddRuntimeBuffer(PrecombinedBlendshapeTangentBufferName, MeshRenderer.PrecombinedBlendshapeTangentsBuffer, PrecombinedBlendshapeTangentBinding);
+			}
 		}
 
-		private void AddRuntimeBuffer(string shaderName, XRDataBuffer? dataBuffer, uint binding)
+		private void AddMeshDeformSourceBuffers()
+		{
+			if (MeshRenderer.DeformerPositionsBuffer is null || MeshRenderer.DeformMeshRenderer is null || MeshRenderer.MeshDeformInfluences is null)
+				return;
+
+			XRMeshRenderer deformerRenderer = MeshRenderer.DeformMeshRenderer;
+			if (deformerRenderer.SkinnedInterleavedBuffer is not null)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.MeshDeform.InterleavedSourceAlias.{MeshRenderer.Name ?? "UnnamedRenderer"}",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] Mesh deform source aliases are skipped for renderer='{0}' because the deformer output is interleaved.",
+					MeshRenderer.Name ?? "<unnamed renderer>");
+				return;
+			}
+
+			AddRuntimeBuffer("DeformerPositionsBuffer", deformerRenderer.SkinnedPositionsBuffer, 0u, assignBindingOverride: false);
+
+			uint nextBinding = 2u;
+			if (MeshRenderer.DeformerNormalsBuffer is not null)
+				AddRuntimeBuffer("DeformerNormalsBuffer", deformerRenderer.SkinnedNormalsBuffer, nextBinding++, assignBindingOverride: false);
+			if (MeshRenderer.DeformerTangentsBuffer is not null)
+				AddRuntimeBuffer("DeformerTangentsBuffer", deformerRenderer.SkinnedTangentsBuffer, nextBinding, assignBindingOverride: false);
+		}
+
+		private void AddRuntimeBuffer(string shaderName, XRDataBuffer? dataBuffer, uint binding, bool assignBindingOverride = true)
 		{
 			if (dataBuffer is null)
 				return;
 
-			dataBuffer.BindingIndexOverride = binding;
+			if (assignBindingOverride)
+				dataBuffer.BindingIndexOverride = binding;
 			if (Renderer.GenericToAPI<VkDataBuffer>(dataBuffer) is { } vkBuffer)
 				_bufferCache[shaderName] = vkBuffer;
 		}
@@ -148,9 +199,18 @@ public unsafe partial class VulkanRenderer
 
 		private void OnAsyncIndexBufferReady(XRDataBuffer buffer, IndexSize elementSize)
 		{
-			// The callback may fire from a background thread. A plain bool write is safe here;
-			// worst case the render thread misses the flip by one frame and re-checks next tick.
+			RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+				MarkIndexBuffersDirty,
+				"VkMeshRenderer.AsyncIndexBufferReady");
+		}
+
+		private void MarkIndexBuffersDirty()
+		{
 			_buffersDirty = true;
+			_pipelineDirty = true;
+			_descriptorDirty = true;
+			_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
+			Renderer.MarkCommandBuffersDirty();
 		}
 
 		/// <summary>
@@ -249,28 +309,12 @@ public unsafe partial class VulkanRenderer
 		/// in priority order: global override > pipeline override > local override >
 		/// MeshRenderer.Material > pipeline invalid material > fallback.
 		/// </summary>
-		private XRMaterial ResolveMaterial(XRMaterial? localOverride)
-		{
-			var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
-			var globalMaterialOverride = renderState?.GlobalMaterialOverride;
-			var pipelineOverride = renderState?.OverrideMaterial;
-
-			if (renderState?.ShadowPass ?? false)
-			{
-				XRMaterial? shadowSourceMaterial = localOverride ?? MeshRenderer.Material;
-				XRMaterial? shadowVariant = shadowSourceMaterial?.ShadowCasterVariant;
-				if (shadowVariant is not null)
-					return shadowVariant;
-			}
-
-			return (globalMaterialOverride
-					?? pipelineOverride
-					?? localOverride
-					?? MeshRenderer.Material
-					?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial
-					?? XRMaterial.InvalidMaterial)
-				   ?? new XRMaterial();
-		}
+		private XRMaterial ResolveMaterial(XRMaterial? localOverride, uint instances)
+			=> MeshRenderMaterialResolver.Resolve(
+				MeshRenderer,
+				localOverride,
+				instances,
+				RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InvalidMaterial).Material;
 
 		#endregion // Material Resolution
 	}

@@ -135,7 +135,7 @@ Goal: make material diversity data-driven instead of CPU-binding-driven.
   reporting in
   [Material Table And Texture Binding Ladder TODO](material-table-and-texture-binding-ladder-todo.md).
 - [ ] Coordinate with
-  [Dynamic Indirect Material Bindings TODO](../dynamic-indirect-material-bindings-todo.md)
+  [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md)
   so pass-declared material row layouts remain the source of truth.
 - [ ] Ensure texture arrays are used only for compatible homogeneous groups.
 - [ ] Ensure bindless texture handles are runtime-probed and never assumed.

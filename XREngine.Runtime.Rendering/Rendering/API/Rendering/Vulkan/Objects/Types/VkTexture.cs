@@ -1,4 +1,7 @@
 using Silk.NET.Vulkan;
+using XREngine.Data.Colors;
+using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
@@ -6,6 +9,212 @@ public unsafe partial class VulkanRenderer
     public abstract class VkTexture<T>(VulkanRenderer api, T data) : VkObject<T>(api, data) where T : XRTexture
     {
         public override VkObjectType Type => VkObjectType.Image;
+
+        /// <summary>
+        /// Tracks CPU-side data invalidation separately from Vulkan handle generation.
+        /// </summary>
+        public bool IsInvalidated { get; protected set; } = true;
+
+        /// <summary>
+        /// True after this wrapper has completed an upload or otherwise marked its backing
+        /// resource as ready for descriptor use. This is intentionally separate from
+        /// <see cref="IsGenerated"/>, which only answers whether backend handles exist.
+        /// </summary>
+        public bool HasUploadedData { get; protected set; }
+
+        /// <summary>
+        /// Set when sampler/view-affecting state changes and descriptor users should
+        /// refresh their cached image or texel-buffer info.
+        /// </summary>
+        public bool IsDescriptorDirty { get; protected set; } = true;
+
+        /// <summary>
+        /// Generic Vulkan texture readiness for descriptor use. Attachment/pass readiness
+        /// is still owned by the render pass and framebuffer planner.
+        /// </summary>
+        public virtual bool IsDescriptorReady => IsGenerated && !IsDescriptorDirty;
+
+        protected override void LinkData()
+        {
+            Data.AttachToFBORequested += AttachToFBO;
+            Data.DetachFromFBORequested += DetachFromFBO;
+            Data.PushDataRequested += PushData;
+            Data.BindRequested += Bind;
+            Data.UnbindRequested += Unbind;
+            Data.ClearRequested += Clear;
+            Data.GenerateMipmapsRequested += GenerateMipmaps;
+            Data.PropertyChanged += DataPropertyChanged;
+            Data.PropertyChanging += DataPropertyChanging;
+            LinkTextureData();
+        }
+
+        protected override void UnlinkData()
+        {
+            UnlinkTextureData();
+            Data.AttachToFBORequested -= AttachToFBO;
+            Data.DetachFromFBORequested -= DetachFromFBO;
+            Data.PushDataRequested -= PushData;
+            Data.BindRequested -= Bind;
+            Data.UnbindRequested -= Unbind;
+            Data.ClearRequested -= Clear;
+            Data.GenerateMipmapsRequested -= GenerateMipmaps;
+            Data.PropertyChanged -= DataPropertyChanged;
+            Data.PropertyChanging -= DataPropertyChanging;
+        }
+
+        protected virtual void LinkTextureData()
+        {
+        }
+
+        protected virtual void UnlinkTextureData()
+        {
+        }
+
+        protected virtual void DataPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
+        {
+        }
+
+        protected virtual void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (IsSamplerAffectingProperty(e.PropertyName))
+                MarkDescriptorDirty();
+
+            if (IsStorageAffectingProperty(e.PropertyName))
+                InvalidateTextureData();
+        }
+
+        protected virtual bool IsSamplerAffectingProperty(string? propertyName)
+            => propertyName is null
+                or ""
+                or nameof(XRTexture.MinLOD)
+                or nameof(XRTexture.MaxLOD)
+                or nameof(XRTexture.LargestMipmapLevel)
+                or nameof(XRTexture.SmallestAllowedMipmapLevel)
+                or nameof(XRTexture.AutoGenerateMipmaps);
+
+        protected virtual bool IsStorageAffectingProperty(string? propertyName)
+            => propertyName is null
+                or ""
+                or nameof(XRTexture.RequiresStorageUsage)
+                or nameof(XRTexture.FrameBufferAttachment);
+
+        protected void InvalidateTextureData()
+        {
+            IsInvalidated = true;
+            HasUploadedData = false;
+            MarkDescriptorDirty();
+        }
+
+        protected void MarkDescriptorDirty()
+            => IsDescriptorDirty = true;
+
+        protected void MarkDescriptorClean()
+            => IsDescriptorDirty = false;
+
+        protected void MarkUploaded()
+        {
+            HasUploadedData = true;
+            IsInvalidated = false;
+            MarkDescriptorClean();
+        }
+
+        public virtual void PushData()
+        {
+            Generate();
+            if (IsGenerated)
+                MarkUploaded();
+        }
+
+        public virtual void Bind()
+        {
+            EnsureDescriptorReadyForVulkanUse("BindRequested");
+        }
+
+        public virtual void Unbind()
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.Texture.Unbind.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] Texture UnbindRequested for '{0}' is a compatibility no-op; Vulkan texture state is descriptor/pass owned.",
+                Data.Name ?? Data.GetDescribingName());
+        }
+
+        public virtual void Clear(ColorF4 color, int level = 0)
+            => Debug.VulkanWarningEvery(
+                $"Vulkan.Texture.ClearUnsupported.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] ClearRequested for texture '{0}' has no image-backed clear path in wrapper '{1}'.",
+                Data.Name ?? Data.GetDescribingName(),
+                GetType().Name);
+
+        public virtual void GenerateMipmaps()
+            => Debug.VulkanWarningEvery(
+                $"Vulkan.Texture.MipmapUnsupported.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] GenerateMipmapsRequested for texture '{0}' is unsupported by wrapper '{1}'.",
+                Data.Name ?? Data.GetDescribingName(),
+                GetType().Name);
+
+        public virtual void AttachToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
+        {
+            Generate();
+            if (!IsGenerated)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.AttachNotGenerated.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] AttachToFBORequested could not generate texture '{0}' for framebuffer '{1}' attachment={2} mip={3}.",
+                    Data.Name ?? Data.GetDescribingName(),
+                    fbo.Name ?? fbo.GetDescribingName(),
+                    attachment,
+                    mipLevel);
+                return;
+            }
+
+            if (Renderer.GetOrCreateAPIRenderObject(fbo, generateNow: true) is not VkFrameBuffer vkFrameBuffer || !vkFrameBuffer.IsGenerated)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.AttachFboUnavailable.{fbo.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] AttachToFBORequested for texture '{0}' could not resolve Vulkan framebuffer '{1}'. Vulkan framebuffer attachments are rebuilt from XRFrameBuffer targets.",
+                    Data.Name ?? Data.GetDescribingName(),
+                    fbo.Name ?? fbo.GetDescribingName());
+            }
+        }
+
+        public virtual void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
+            => Debug.VulkanEvery(
+                $"Vulkan.Texture.Detach.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] DetachFromFBORequested for texture '{0}' framebuffer '{1}' attachment={2} mip={3}; Vulkan framebuffer attachments are immutable and rebuilt from XRFrameBuffer targets.",
+                Data.Name ?? Data.GetDescribingName(),
+                fbo.Name ?? fbo.GetDescribingName(),
+                attachment,
+                mipLevel);
+
+        protected void EnsureDescriptorReadyForVulkanUse(string reason)
+        {
+            Generate();
+
+            if (IsInvalidated)
+                PushData();
+
+            if (!IsGenerated)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.DescriptorNotGenerated.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Texture descriptor readiness failed for '{0}' ({1}): wrapper={2} generated=false uploaded={3} descriptorDirty={4}.",
+                    Data.Name ?? Data.GetDescribingName(),
+                    reason,
+                    GetType().Name,
+                    HasUploadedData,
+                    IsDescriptorDirty);
+                return;
+            }
+
+            MarkDescriptorClean();
+        }
 
         protected virtual string? ResolveLogicalResourceName()
         {

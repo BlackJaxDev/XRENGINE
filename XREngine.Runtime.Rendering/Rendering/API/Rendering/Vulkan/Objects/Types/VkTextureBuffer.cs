@@ -49,20 +49,35 @@ public unsafe partial class VulkanRenderer
                 Api!.DestroyBufferView(Device, _view, null);
                 _view = default;
             }
+
+            InvalidateTextureData();
         }
 
         /// <summary>
         /// Subscribes to <see cref="XRTextureBuffer.PropertyChanged"/> so the buffer view
         /// is recreated when the underlying data buffer, format, or texel count changes.
         /// </summary>
-        protected override void LinkData()
-            => Data.PropertyChanged += OnTextureBufferPropertyChanged;
+        protected override void LinkTextureData()
+        {
+            Data.PropertyChanged += OnTextureBufferPropertyChanged;
+            SubscribeSourceBufferEvents(Data.DataBuffer);
+        }
 
         /// <summary>
         /// Unsubscribes from property-change notifications.
         /// </summary>
-        protected override void UnlinkData()
-            => Data.PropertyChanged -= OnTextureBufferPropertyChanged;
+        protected override void UnlinkTextureData()
+        {
+            UnsubscribeSourceBufferEvents(Data.DataBuffer);
+            Data.PropertyChanged -= OnTextureBufferPropertyChanged;
+        }
+
+        protected override void DataPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
+        {
+            base.DataPropertyChanging(sender, e);
+            if (e.PropertyName == nameof(XRTextureBuffer.DataBuffer) && e.CurrentValue is XRDataBuffer currentBuffer)
+                UnsubscribeSourceBufferEvents(currentBuffer);
+        }
 
         /// <summary>
         /// Handles property changes on the engine texture buffer. When the data buffer,
@@ -74,8 +89,12 @@ public unsafe partial class VulkanRenderer
             switch (e.PropertyName)
             {
                 case nameof(XRTextureBuffer.DataBuffer):
+                    if (e.NewValue is XRDataBuffer newBuffer)
+                        SubscribeSourceBufferEvents(newBuffer);
+                    goto case nameof(XRTextureBuffer.SizedInternalFormat);
                 case nameof(XRTextureBuffer.SizedInternalFormat):
                 case nameof(XRTextureBuffer.TexelCount):
+                    InvalidateTextureData();
                     if (IsActive)
                     {
                         Destroy();
@@ -83,6 +102,52 @@ public unsafe partial class VulkanRenderer
                     }
                     break;
             }
+        }
+
+        public override void PushData()
+        {
+            Generate();
+
+            if (_view.Handle != 0)
+                MarkUploaded();
+        }
+
+        public override void Bind()
+        {
+            PushData();
+            if (_view.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.TextureBuffer.BindNoView.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Texture buffer BindRequested could not create a texel-buffer descriptor for '{0}'.",
+                    Data.Name ?? Data.GetDescribingName());
+                return;
+            }
+
+            MarkDescriptorClean();
+        }
+
+        private void OnSourceBufferPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            InvalidateTextureData();
+            if (IsActive)
+            {
+                Destroy();
+                Generate();
+            }
+        }
+
+        private void SubscribeSourceBufferEvents(XRDataBuffer? buffer)
+        {
+            if (buffer is not null)
+                buffer.PropertyChanged += OnSourceBufferPropertyChanged;
+        }
+
+        private void UnsubscribeSourceBufferEvents(XRDataBuffer? buffer)
+        {
+            if (buffer is not null)
+                buffer.PropertyChanged -= OnSourceBufferPropertyChanged;
         }
 
         /// <summary>

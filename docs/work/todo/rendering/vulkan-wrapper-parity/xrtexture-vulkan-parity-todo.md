@@ -1,7 +1,7 @@
 # XRTexture Vulkan Parity TODO
 
-Last Updated: 2026-06-05
-Status: Active.
+Last Updated: 2026-06-08
+Status: Source parity implemented; hardware/runtime validation remains.
 
 ## Goal
 
@@ -49,6 +49,9 @@ Vulkan:
   generation.
 - `VkTextureBuffer` supports Vulkan texel-buffer descriptors.
 - `VkTextureView` can create image views and texel-buffer view passthroughs.
+- Vulkan texture wrappers now share the generic `XRTexture` event contract
+  through `VkTexture<T>` and keep generated, uploaded, layout-ready, and
+  descriptor-ready state separate.
 
 ## Generation Contract
 
@@ -63,57 +66,64 @@ state.
 ## Common Missing Parity TODO
 
 1. Align texture generation and readiness state.
-   - [ ] Fix image-backed Vulkan texture `IsGenerated` semantics so it reports
+   - [x] Fix image-backed Vulkan texture `IsGenerated` semantics so it reports
          handle existence, not data upload validity and not a permanent false
          default.
-   - [ ] Keep upload validity, descriptor freshness, layout state, and mip
+   - [x] Keep upload validity, descriptor freshness, layout state, and mip
          residency separate from `IsGenerated`.
-   - [ ] Add source/unit tests for generate, push, resize/recreate, and destroy
+   - [x] Add source/unit tests for generate, push, resize/recreate, and destroy
          state transitions for image-backed textures, texture buffers, and
          texture views.
 
 2. Match base texture event wiring.
-   - [ ] Subscribe/unsubscribe Vulkan wrappers to `AttachToFBORequested`,
+   - [x] Subscribe/unsubscribe Vulkan wrappers to `AttachToFBORequested`,
          `DetachFromFBORequested`, `BindRequested`, `UnbindRequested`,
          `ClearRequested`, `PropertyChanged`, and `PropertyChanging` where the
          generic texture contract exposes those events.
-   - [ ] Keep native Vulkan framebuffer ownership where appropriate, but make
+   - [x] Keep native Vulkan framebuffer ownership where appropriate, but make
          engine event behavior equivalent.
-   - [ ] Add source tests for event subscription symmetry.
+   - [x] Add source tests for event subscription symmetry.
 
 3. Match property invalidation and sampler updates.
-   - [ ] Recreate or update Vulkan samplers when filter, wrap, LOD, anisotropy,
-         depth-stencil mode, or compare settings change.
-   - [ ] Apply `MinLOD`, `MaxLOD`, `LargestMipmapLevel`, and
+   - [x] Recreate or update Vulkan samplers when filter, wrap, LOD, or compare
+         settings change.
+   - [ ] Extend property-driven sampler recreation to future per-texture
+         anisotropy and depth-stencil-mode knobs if they are exposed.
+   - [x] Apply `MinLOD`, `MaxLOD`, `LargestMipmapLevel`, and
          `SmallestAllowedMipmapLevel` to Vulkan sampler `MinLod` and `MaxLod`
          or document the native equivalent.
-   - [ ] Fix `XRTexture2DArray.LodBias` omission in Vulkan sampler settings.
-   - [ ] Mark descriptors dirty when sampler/image-view-affecting properties
+   - [x] Fix `XRTexture2DArray.LodBias` omission in Vulkan sampler settings.
+   - [x] Mark descriptors dirty when sampler/image-view-affecting properties
          change.
 
 4. Match upload hooks and auto-push behavior.
    - [ ] Implement equivalents for OpenGL `OnPrePushData` and
          `OnPostPushData`.
-   - [ ] Ensure invalidated texture data is pushed before first descriptor use,
+   - [x] Ensure invalidated texture data is pushed before first descriptor use,
          not only when `PushDataRequested` is explicitly raised.
-   - [ ] Keep upload-side diagnostics for missing data, invalid dimensions,
+   - [x] Keep upload-side diagnostics for missing data, invalid dimensions,
          unsupported format, and allocation failure.
 
 5. Match clear/bind/unbind semantics.
-   - [ ] Implement `ClearRequested` through Vulkan clear commands or an
+   - [x] Implement `ClearRequested` through Vulkan clear commands or an
          explicit unsupported diagnostic when no command context exists.
-   - [ ] Decide what `BindRequested` and `UnbindRequested` mean for Vulkan:
+   - [x] Decide what `BindRequested` and `UnbindRequested` mean for Vulkan:
          descriptor registration, current-program sampler binding, or no-op
          with diagnostics.
-   - [ ] Ensure existing engine calls to `Bind()` or `Unbind()` do not silently
+   - [x] Prefer descriptor registration/readiness semantics for Vulkan
+         `BindRequested`; do not emulate OpenGL texture-unit current state unless
+         a backend-neutral caller still requires that contract.
+   - [x] Document any remaining `BindRequested`/`UnbindRequested` no-op as an
+         explicit compatibility behavior with diagnostics.
+   - [x] Ensure existing engine calls to `Bind()` or `Unbind()` do not silently
          skip required descriptor/image initialization.
 
 6. Match framebuffer attachment behavior.
-   - [ ] Verify all FBO attachment events have a Vulkan path through
+   - [x] Verify generic FBO attachment events have a Vulkan path through
          `VkFrameBuffer` or texture attachment-view creation.
    - [ ] Support per-layer, per-face, and OVR multiview attachment requests
          where the engine exposes them.
-   - [ ] Add diagnostics when a requested attachment view cannot be created.
+   - [x] Add diagnostics when a requested attachment view cannot be created.
 
 7. Match mipmap behavior.
    - [ ] Add a Vulkan equivalent to OpenGL's detail-preserving 2D compute
@@ -130,19 +140,58 @@ state.
    - [ ] Include texture name, type, dimensions, mip count, layer count, format,
          usage flags, and descriptor view type in failures.
 
+## Vulkan-Native Acceptance Additions
+
+- [ ] Require every Vulkan texture allocation or import path to declare its
+      intended image usage up front: sampled, storage, attachment, transfer
+      source/destination, transient, sparse, and any mutable-view requirement.
+- [ ] Validate `VkFormatFeatureFlags` before choosing upload, blit, mipmap,
+      storage-image, attachment, depth/stencil, filtering, linear-tiling,
+      sampled-image, and texel-buffer paths.
+- [ ] Move layout transitions toward render-graph/pass ownership. Texture
+      `BindRequested` should not be the hidden authority for image layouts when
+      pass metadata can declare the sampled/storage/attachment use.
+- [ ] Track layout readiness and queue-family ownership separately from
+      descriptor readiness so sampled, storage, transfer, and attachment uses
+      can report different not-ready reasons.
+- [ ] Include image usage, current/expected layout, queue ownership, format
+      feature support, residency tier, sparse page state, and mutable-view
+      compatibility in texture diagnostics.
+- [ ] Keep sparse residency, partial mip residency, and memory decompression
+      paths feature-gated and diagnostic; missing support should visibly select
+      the non-sparse/non-decompressed residency path.
+- [ ] Treat render-target textures as pass resources with explicit load/store
+      decisions, not only as FBO-like attachment side effects.
+
+## OpenGL Backfill Additions
+
+- [ ] Report OpenGL texture readiness with the shared categories from
+      `README.md`: generated, uploaded, resident, descriptor/binding ready, and
+      pass ready.
+- [ ] Add sampler fingerprint and texture-view compatibility diagnostics that
+      match the Vulkan descriptor/image-view readiness report shape.
+- [ ] Extend `log_textures.log` entries so OpenGL and Vulkan both report
+      residency tier, upload route, fallback texture role, VRAM pressure, and
+      descriptor/bindless binding rung.
+- [ ] Validate OpenGL FBO/post textures through the same pass-declared
+      attachment intent that Vulkan barrier planning consumes, even while the
+      OpenGL executor remains sequential.
+- [ ] Keep OpenGL sparse/progressive streaming behavior on the same logical
+      residency contract planned for Vulkan sparse or partial-residency paths.
+
 ## Type-Specific TODO
 
 ### `XRTexture1D`
 
-- [ ] Track mipmap property changes and resized-data state like `GLTexture1D`.
-- [ ] Recreate Vulkan image and descriptors when width, format, mip count, or
+- [x] Track mipmap property changes and resized-data state like `GLTexture1D`.
+- [x] Recreate Vulkan image and descriptors when width, format, mip count, or
       sampler properties change.
 - [ ] Validate upload of empty/missing mip levels against OpenGL behavior.
 
 ### `XRTexture1DArray`
 
-- [ ] Track child texture and mipmap property changes.
-- [ ] Recreate when layer count, layer dimensions, format, or mip count changes.
+- [x] Track child texture and mipmap property changes.
+- [x] Recreate when layer count, layer dimensions, format, or mip count changes.
 - [ ] Validate array-layer upload ordering and per-layer missing-data handling.
 
 ### `XRTexture2D`
@@ -159,14 +208,14 @@ state.
 
 - [ ] Add OVR multiview attach/detach event parity.
 - [ ] Add per-layer attach/detach event parity.
-- [ ] Track child `XRTexture2D` layer property changes and resize events.
-- [ ] Recreate when layer dimensions diverge, layer count changes, or mip range
+- [x] Track child `XRTexture2D` layer property changes and resize events.
+- [x] Recreate when layer dimensions diverge, layer count changes, or mip range
       changes.
-- [ ] Fix sampler LOD bias.
+- [x] Fix sampler LOD bias.
 
 ### `XRTextureRectangle`
 
-- [ ] Add resize subscription in `VkImageBackedTexture.SubscribeResizeEvents`
+- [x] Add resize subscription in `VkImageBackedTexture.SubscribeResizeEvents`
       and `UnsubscribeResizeEvents`.
 - [ ] Confirm rectangle-specific sampler constraints map to Vulkan's 2D image
       view behavior.
@@ -174,54 +223,71 @@ state.
 
 ### `XRTexture3D`
 
-- [ ] Track mipmap property changes and volume dimension changes.
+- [x] Track mipmap property changes and volume dimension changes.
 - [ ] Validate 3D image upload row/slice layout against OpenGL.
-- [ ] Expand alternate descriptor view support if shader contracts require
+- [x] Expand alternate descriptor view support if shader contracts require
       2D/2D-array slices over 3D images.
 
 ### `XRTextureCube`
 
 - [ ] Add face attach/detach event parity.
-- [ ] Track face mipmap property changes and resized-data state.
+- [x] Track face mipmap property changes and resized-data state.
 - [ ] Validate face ordering and layer indices match OpenGL cubemap face
       behavior.
 - [ ] Ensure depth-only and per-face attachment views work for point shadows.
 
 ### `XRTextureCubeArray`
 
-- [ ] Track child cube, face, and mipmap property changes.
-- [ ] Recreate when cube count, face dimensions, format, or mip count changes.
-- [ ] Validate descriptor view compatibility for cube-array, cube, 2D-array,
+- [x] Track child cube, face, and mipmap property changes.
+- [x] Recreate when cube count, face dimensions, format, or mip count changes.
+- [x] Validate descriptor view compatibility for cube-array, cube, 2D-array,
       and 2D view expectations.
 
 ### `XRTextureBuffer`
 
-- [ ] Mirror `GLTextureBuffer.PushData` by ensuring the underlying
+- [x] Mirror `GLTextureBuffer.PushData` by ensuring the underlying
       `XRDataBuffer` is uploaded before creating/binding the Vulkan buffer view.
-- [ ] Recreate buffer views when source buffer, format, or texel count changes.
+- [x] Recreate buffer views when source buffer, format, or texel count changes.
 - [ ] Validate uniform texel buffer and storage texel buffer descriptors.
 - [ ] Add diagnostics when the source buffer lacks required Vulkan usage flags.
 
 ### `XRTextureView`
 
-- [ ] Subscribe to viewed texture resize/data/property changes when they affect
+- [x] Subscribe to viewed texture resize/data/property changes when they affect
       view validity.
-- [ ] Match OpenGL compatibility checks for cube-to-2D, cube-array-to-2D,
+- [x] Match OpenGL compatibility checks for cube-to-2D, cube-array-to-2D,
       cube-array-to-2D-array, and 2D-array-to-2D views.
 - [ ] Support depth/stencil view mode parity where Vulkan aspect masks differ
       from OpenGL `DepthStencilTextureMode`.
-- [ ] Expand `IVkImageDescriptorSource.GetDescriptorView` alternate view support
+- [x] Expand `IVkImageDescriptorSource.GetDescriptorView` alternate view support
       for cube, cube array, and 3D where needed.
-- [ ] Add diagnostics for incompatible target, format, mip, and layer ranges.
+- [x] Add diagnostics for incompatible target, format, mip, and layer ranges.
 
 ## Validation
 
-- [ ] Source test: every texture wrapper subscribes/unsubscribes all required
+- [x] Source test: every texture wrapper subscribes/unsubscribes all required
       generic events.
-- [ ] Source test: sampler-affecting property changes dirty/recreate Vulkan
+- [x] Source test: sampler-affecting property changes dirty/recreate Vulkan
       samplers and descriptors.
-- [ ] Source test: `XRTextureRectangle` resize recreates Vulkan image resources.
+- [x] Source test: `XRTextureRectangle` resize recreates Vulkan image resources.
 - [ ] Unit/source test: texture view compatibility matrix matches OpenGL.
 - [ ] Hardware: compare default pipeline FBO/post textures, point shadows,
       cascaded shadows, cube captures, 2D array captures, UI textures, texture
       buffers, and texture views against OpenGL.
+
+## Implementation Notes
+
+2026-06-08:
+
+- Added shared Vulkan texture event wiring and readiness state in `VkTexture<T>`.
+- Updated image-backed textures to recreate sampler/image resources on relevant
+  property and child-texture changes, track rectangle resize events, clear via
+  Vulkan commands, and expose broader alternate descriptor views.
+- Updated texture buffers and texture views to push source data, track source or
+  viewed texture changes, and dirty descriptors when view validity changes.
+- Added `XRTexture2DArray.LodBias` and `XRTextureRectangle.Resized` support.
+- Added source-contract validation in
+  `XREngine.UnitTests/Rendering/XRTextureVulkanParityContractTests.cs`.
+- Validation run:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter XRTextureVulkanParityContractTests`
+  passed with 6 tests.

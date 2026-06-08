@@ -7,7 +7,6 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 using System;
-using System.Linq;
 using System.Numerics;
 
 using Silk.NET.Vulkan;
@@ -48,9 +47,17 @@ public unsafe partial class VulkanRenderer
 		{
 			EnsureBuffers();
 
-			var material = ResolveMaterial(draw.MaterialOverride);
+			var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+			if (!TryPrepareForRendering(material, out string prepareReason))
+			{
+				if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw)
+					Debug.MeshesWarning("[DrawTrace] {0}: skipped before command recording because preparation failed: {1} {2}", Mesh?.Name ?? "?", prepareReason, LastPrepareDetail);
+				return;
+			}
+
 			var drawCopy = draw; // struct copy required for capture in local function closures
 			uint drawInstances = draw.Instances;
+			bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
 
 			// Trace swapchain (dynamic rendering) draws only.
 			bool traceSwapchain = useDynamicRendering && renderPass.Handle == 0;
@@ -109,11 +116,7 @@ public unsafe partial class VulkanRenderer
 
 				if (!uniformsNotified && _program?.Data is { } programData)
 				{
-					if (drawCopy.Camera is not null)
-						Renderer.SetEngineUniforms(programData, drawCopy.Camera);
-					Renderer.SetMaterialUniforms(material, programData);
-					MeshRenderer.OnSettingUniforms(programData, programData);
-					material.OnSettingUniforms(programData);
+					NotifyDrawUniforms(material, programData, drawCopy);
 					uniformsNotified = true;
 				}
 
@@ -146,10 +149,22 @@ public unsafe partial class VulkanRenderer
 			bool drew = false;
 			if (_triangleIndexBuffer?.BufferHandle is { } triHandle && triHandle.Handle != 0)
 				drew |= DrawIndexed(_triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList, count => RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(count / 3 * drawInstances)));
-			if (_lineIndexBuffer?.BufferHandle is { } lineHandle && lineHandle.Handle != 0)
-				drew |= DrawIndexed(_lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList, _ => { });
-			if (_pointIndexBuffer?.BufferHandle is { } pointHandle && pointHandle.Handle != 0)
-				drew |= DrawIndexed(_pointIndexBuffer, _pointIndexSize, PrimitiveTopology.PointList, _ => { });
+			if (!skipLinePointDraws)
+			{
+				if (_lineIndexBuffer?.BufferHandle is { } lineHandle && lineHandle.Handle != 0)
+					drew |= DrawIndexed(_lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList, _ => { });
+				if (_pointIndexBuffer?.BufferHandle is { } pointHandle && pointHandle.Handle != 0)
+					drew |= DrawIndexed(_pointIndexBuffer, _pointIndexSize, PrimitiveTopology.PointList, _ => { });
+			}
+			else if ((_lineIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL || (_pointIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.MeshRenderer.ShadowTriangleOnly.{Mesh?.Name ?? "UnnamedMesh"}",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] Suppressed line/point index draws for shadow geometry pass. mesh='{0}' layout={1}",
+					Mesh?.Name ?? "<unnamed mesh>",
+					_geometryLayoutSignature.DebugSummary);
+			}
 
 			if (!drew && Mesh is not null)
 			{
@@ -164,6 +179,19 @@ public unsafe partial class VulkanRenderer
 					EPrimitiveType.Patches => PrimitiveTopology.PatchList,
 					_ => PrimitiveTopology.TriangleList,
 				};
+
+				if (skipLinePointDraws && !IsTriangleClassTopology(fallbackTopology))
+				{
+					Debug.VulkanWarningEvery(
+						$"Vulkan.MeshRenderer.ShadowTriangleOnlyFallback.{Mesh?.Name ?? "UnnamedMesh"}",
+						TimeSpan.FromSeconds(2),
+						"[Vulkan] Suppressed non-indexed {0} fallback for shadow geometry pass. mesh='{1}' layout={2}",
+						fallbackTopology,
+						Mesh?.Name ?? "<unnamed mesh>",
+						_geometryLayoutSignature.DebugSummary);
+					return;
+				}
+
 				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
 				{
 					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
@@ -173,11 +201,7 @@ public unsafe partial class VulkanRenderer
 
 					if (!uniformsNotified && _program?.Data is { } programData)
 					{
-						if (drawCopy.Camera is not null)
-							Renderer.SetEngineUniforms(programData, drawCopy.Camera);
-						Renderer.SetMaterialUniforms(material, programData);
-						MeshRenderer.OnSettingUniforms(programData, programData);
-						material.OnSettingUniforms(programData);
+						NotifyDrawUniforms(material, programData, drawCopy);
 						uniformsNotified = true;
 					}
 
@@ -193,6 +217,22 @@ public unsafe partial class VulkanRenderer
 			}
 		}
 
+		private void NotifyDrawUniforms(XRMaterial material, XRRenderProgram programData, in PendingMeshDraw draw)
+		{
+			if (draw.Camera is not null)
+				Renderer.SetEngineUniforms(programData, draw.Camera);
+
+			Renderer.SetMaterialUniforms(material, programData);
+			MeshRenderer.OnSettingUniforms(programData, programData);
+			MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);
+		}
+
+		private static bool IsTriangleClassTopology(PrimitiveTopology topology)
+			=> topology is PrimitiveTopology.TriangleList or
+				PrimitiveTopology.TriangleStrip or
+				PrimitiveTopology.TriangleFan or
+				PrimitiveTopology.PatchList;
+
 		/// <summary>
 		/// Binds all vertex buffers required by the current pipeline's input bindings.
 		/// Returns false (and warns) if any binding has no backing buffer.
@@ -202,7 +242,7 @@ public unsafe partial class VulkanRenderer
 			if (_vertexBindings.Length == 0)
 				return true;
 
-			foreach (VertexInputBindingDescription binding in _vertexBindings.OrderBy(b => b.Binding))
+			foreach (VertexInputBindingDescription binding in _vertexBindings)
 			{
 				if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
 				{
@@ -217,7 +257,8 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				Renderer.BindVertexBuffersTracked(commandBuffer, binding.Binding, [handle], [0UL]);
+				_singleVertexBindingBuffer[0] = handle;
+				Renderer.BindVertexBuffersTracked(commandBuffer, binding.Binding, _singleVertexBindingBuffer, _singleVertexBindingOffset);
 			}
 
 			return true;
@@ -353,6 +394,9 @@ public unsafe partial class VulkanRenderer
 		private ulong ComputeVertexLayoutHash()
 		{
 			HashCode hash = new();
+			hash.Add(_geometryLayoutSignature.StableHash);
+			hash.Add(_geometryLayoutSignature.VertexBufferCount);
+			hash.Add(_geometryLayoutSignature.VertexAttributeCount);
 			hash.Add(_vertexBindings.Length);
 			hash.Add(_vertexAttributes.Length);
 

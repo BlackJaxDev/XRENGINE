@@ -134,6 +134,8 @@ Avoid generic names such as `Helpers`, `Misc`, `Temp`, or stage names without su
 - `Traditional` and `Meshlet` may depend on `Shared` but not on each other directly.
 - Backend-specific Vulkan/OpenGL implementation files stay under backend API paths.
 - Backend-agnostic interfaces/contracts stay in shared rendering paths.
+- `XRMesh` has no standalone OpenGL or Vulkan API wrapper. `GLMeshRenderer` and `VkMeshRenderer` own mesh draw readiness, mesh data invalidation, vertex/index/deformation buffer collection, and topology-specific draw submission; `GLDataBuffer` and `VkDataBuffer` own the underlying buffer upload/readiness state.
+- Keep the no-standalone-wrapper decision until geometry layout lifetime is duplicated across CPU direct, GPU indirect, material-table, and meshlet paths enough that a real backend mesh resource is cleaner.
 
 Recommended dependency direction:
 

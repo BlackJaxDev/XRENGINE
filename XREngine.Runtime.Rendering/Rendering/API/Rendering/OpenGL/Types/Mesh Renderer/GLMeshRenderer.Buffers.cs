@@ -1,4 +1,5 @@
 using Silk.NET.OpenGL;
+using System.Collections.Generic;
 using System.Linq;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -197,7 +198,32 @@ namespace XREngine.Rendering.OpenGL
                     RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer");
                 }
 
-                Dbg($"CollectBuffers end. Total={_bufferCache.Count}, SSBOs={_ssboBufferCache.Count}", "Buffers");
+                _geometryLayoutSignature = CaptureGeometryLayoutSignature();
+                Dbg($"CollectBuffers end. Total={_bufferCache.Count}, SSBOs={_ssboBufferCache.Count}, layout={_geometryLayoutSignature.DebugSummary}", "Buffers");
+            }
+
+            private MeshGeometryLayoutSignature CaptureGeometryLayoutSignature()
+            {
+                List<KeyValuePair<string, XRDataBuffer>> layoutBuffers = [];
+                foreach (KeyValuePair<string, GLDataBuffer> pair in _bufferCache)
+                    layoutBuffers.Add(new(pair.Key, pair.Value.Data));
+
+                bool hasIndexBuffers = (TriangleIndicesBuffer?.Data?.ElementCount ?? 0u) > 0u ||
+                    (LineIndicesBuffer?.Data?.ElementCount ?? 0u) > 0u ||
+                    (PointIndicesBuffer?.Data?.ElementCount ?? 0u) > 0u;
+                IndexSize primaryIndexSize =
+                    (TriangleIndicesBuffer?.Data?.ElementCount ?? 0u) > 0u ? _trianglesElementType :
+                    (LineIndicesBuffer?.Data?.ElementCount ?? 0u) > 0u ? _lineIndicesElementType :
+                    (PointIndicesBuffer?.Data?.ElementCount ?? 0u) > 0u ? _pointIndicesElementType :
+                    IndexSize.FourBytes;
+
+                return MeshGeometryLayoutSignatureBuilder.Create(
+                    Mesh,
+                    MeshRenderer,
+                    layoutBuffers,
+                    primaryIndexSize,
+                    hasIndexBuffers,
+                    hasIndexBuffers ? "IndexBuffer" : "VertexCount");
             }
 
             private void AddCollectedBuffer(string key, XRDataBuffer xrBuffer)
@@ -551,7 +577,7 @@ namespace XREngine.Rendering.OpenGL
                 if (vertexAttributesBound == 0 && arrayBuffersSeen > 0 && !usesVertexIdOnlyVertexInput)
                 {
                     string programName = program.Data?.Name ?? program.BindingId.ToString();
-                    Debug.OpenGLWarning($"[GLMeshRenderer] BindBuffers: no vertex attributes found in program '{programName}'. Skipping VAO setup to prevent rendering with corrupt state.");
+                    Debug.OpenGLWarning($"[GLMeshRenderer] BindBuffers: no vertex attributes found in program '{programName}'. Skipping VAO setup to prevent rendering with corrupt state. layout={_geometryLayoutSignature.DebugSummary}");
 
                     Renderer.BindMeshRenderer(null);
                     return;

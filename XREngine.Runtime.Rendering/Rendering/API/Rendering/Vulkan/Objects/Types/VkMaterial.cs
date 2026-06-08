@@ -223,7 +223,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!UpdateUniformBuffers(state, resolvedFrame))
                     return false;
 
-                ulong resourceFingerprint = ComputeResourceFingerprint();
+                ulong resourceFingerprint = ComputeResourceFingerprint(program);
                 if (state.ResourceFingerprint != resourceFingerprint)
                     state.Dirty = true;
 
@@ -534,6 +534,7 @@ namespace XREngine.Rendering.Vulkan
                     switch (binding.DescriptorType)
                     {
                         case DescriptorType.CombinedImageSampler:
+                        case DescriptorType.Sampler:
                         case DescriptorType.SampledImage:
                         case DescriptorType.StorageImage:
                         case DescriptorType.InputAttachment:
@@ -652,12 +653,14 @@ namespace XREngine.Rendering.Vulkan
                 return unchecked((ulong)hash.ToHashCode());
             }
 
-            private ulong ComputeResourceFingerprint()
+            private ulong ComputeResourceFingerprint(VkRenderProgram program)
             {
                 HashCode hash = new();
                 hash.Add(Data.Textures.Count);
                 for (int i = 0; i < Data.Textures.Count; i++)
                     AddTextureDescriptorResourceFingerprint(ref hash, Data.Textures[i]);
+
+                program.AddSamplerResourceFingerprint(ref hash);
 
                 return unchecked((ulong)hash.ToHashCode());
             }
@@ -777,7 +780,7 @@ namespace XREngine.Rendering.Vulkan
                             int imageStart = imageInfos.Count;
                             for (int i = 0; i < descriptorCount; i++)
                             {
-                                if (!TryResolveTextureInfo(binding, binding.DescriptorType, i, out DescriptorImageInfo info))
+                                if (!TryResolveTextureInfo(state.Program, binding, binding.DescriptorType, i, out DescriptorImageInfo info))
                                     return false;
                                 imageInfos.Add(info);
                             }
@@ -800,7 +803,7 @@ namespace XREngine.Rendering.Vulkan
                             int texelStart = texelBufferViews.Count;
                             for (int i = 0; i < descriptorCount; i++)
                             {
-                                if (!TryResolveTexelBufferInfo(binding, i, out BufferView texelView))
+                                if (!TryResolveTexelBufferInfo(state.Program, binding, i, out BufferView texelView))
                                     return false;
                                 texelBufferViews.Add(texelView);
                             }
@@ -1020,10 +1023,10 @@ namespace XREngine.Rendering.Vulkan
             /// and creates a <see cref="DescriptorImageInfo"/> suitable for an image descriptor write.
             /// </summary>
             /// <returns><c>true</c> if a valid image view was obtained.</returns>
-            private bool TryResolveTextureInfo(DescriptorBindingInfo binding, DescriptorType descriptorType, int arrayIndex, out DescriptorImageInfo imageInfo)
+            private bool TryResolveTextureInfo(VkRenderProgram program, DescriptorBindingInfo binding, DescriptorType descriptorType, int arrayIndex, out DescriptorImageInfo imageInfo)
             {
                 imageInfo = default;
-                if (!TryResolveBoundTexture(binding, arrayIndex, out XRTexture? texture) || texture is null)
+                if (!TryResolveBoundTexture(program, binding, arrayIndex, out XRTexture? texture) || texture is null)
                 {
                     imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                     if (imageInfo.ImageView.Handle != 0)
@@ -1049,10 +1052,10 @@ namespace XREngine.Rendering.Vulkan
             /// and obtains a <see cref="BufferView"/> for a texel buffer descriptor write.
             /// </summary>
             /// <returns><c>true</c> if a valid buffer view was obtained.</returns>
-            private bool TryResolveTexelBufferInfo(DescriptorBindingInfo binding, int arrayIndex, out BufferView texelView)
+            private bool TryResolveTexelBufferInfo(VkRenderProgram program, DescriptorBindingInfo binding, int arrayIndex, out BufferView texelView)
             {
                 texelView = default;
-                if (!TryResolveBoundTexture(binding, arrayIndex, out XRTexture? texture) || texture is null)
+                if (!TryResolveBoundTexture(program, binding, arrayIndex, out XRTexture? texture) || texture is null)
                 {
                     WarnOnce($"No texture available for material texel descriptor binding '{binding.Name}'.");
                     RecordDescriptorFailure(binding, "missing material texel texture");
@@ -1075,21 +1078,23 @@ namespace XREngine.Rendering.Vulkan
             /// <param name="arrayIndex">Offset within an array binding.</param>
             /// <param name="texture">The resolved texture, or <c>null</c> if none is available.</param>
             /// <returns><c>true</c> if a non-null texture was found.</returns>
-            private bool TryResolveBoundTexture(DescriptorBindingInfo binding, int arrayIndex, out XRTexture? texture)
+            private bool TryResolveBoundTexture(VkRenderProgram program, DescriptorBindingInfo binding, int arrayIndex, out XRTexture? texture)
             {
-                texture = null;
-                if (Data.Textures.Count <= 0)
-                    return false;
+                MaterialTextureBindingResolution textureBinding = MaterialTextureBindingResolver.Resolve(
+                    Data,
+                    binding.Name,
+                    (int)binding.Binding,
+                    arrayIndex,
+                    VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding),
+                    samplerName =>
+                    {
+                        if (program.TryGetSamplerTexture(samplerName, out XRTexture? namedTexture))
+                            return namedTexture;
 
-                // Bindless material arrays are a global descriptor-space view, so their array index maps
-                // directly to the material texture slot. Traditional bindings keep the old binding+offset rule.
-                int index = VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding)
-                    ? arrayIndex
-                    : (int)binding.Binding + arrayIndex;
-                if (index < 0 || index >= Data.Textures.Count)
-                    return false;
+                        return null;
+                    });
 
-                texture = Data.Textures[index];
+                texture = textureBinding.Texture;
                 return texture is not null;
             }
 
@@ -1239,14 +1244,38 @@ namespace XREngine.Rendering.Vulkan
             /// Returns <c>0</c> for unsupported types.
             /// </summary>
             private static uint GetShaderVarSize(ShaderVar parameter)
-                => parameter.TypeName switch
+            {
+                if (parameter is ShaderArrayBase array)
                 {
-                    EShaderVarType._float or EShaderVarType._int or EShaderVarType._uint or EShaderVarType._bool => 4,   // 32-bit scalar
-                    EShaderVarType._vec2 or EShaderVarType._ivec2 or EShaderVarType._uvec2 => 8,                          // 2 x 32-bit
-                    EShaderVarType._vec3 or EShaderVarType._vec4 or EShaderVarType._ivec3 or EShaderVarType._ivec4 or EShaderVarType._uvec3 or EShaderVarType._uvec4 => 16,  // 4 x 32-bit (vec3 padded)
-                    EShaderVarType._mat4 => 64,                                                                           // 4 x vec4 = 16 floats
+                    uint stride = GetShaderVarArrayStride(parameter.TypeName);
+                    return stride == 0 ? 0 : stride * (uint)Math.Max(array.Length, 0);
+                }
+
+                return GetShaderVarElementSize(parameter.TypeName);
+            }
+
+            private static uint GetShaderVarElementSize(EShaderVarType type)
+                => type switch
+                {
+                    EShaderVarType._float or EShaderVarType._int or EShaderVarType._uint or EShaderVarType._bool => 4,
+                    EShaderVarType._double => 8,
+                    EShaderVarType._vec2 or EShaderVarType._ivec2 or EShaderVarType._uvec2 or EShaderVarType._bvec2 => 8,
+                    EShaderVarType._vec3 or EShaderVarType._vec4 or EShaderVarType._ivec3 or EShaderVarType._ivec4 or EShaderVarType._uvec3 or EShaderVarType._uvec4 or EShaderVarType._bvec3 or EShaderVarType._bvec4 => 16,
+                    EShaderVarType._dvec2 => 16,
+                    EShaderVarType._dvec3 or EShaderVarType._dvec4 => 32,
+                    EShaderVarType._mat3 => 48,
+                    EShaderVarType._mat4 => 64,
                     _ => 0,
                 };
+
+            private static uint GetShaderVarArrayStride(EShaderVarType type)
+            {
+                uint elementSize = GetShaderVarElementSize(type);
+                return elementSize == 0 ? 0 : Align(elementSize, 16u);
+            }
+
+            private static uint Align(uint value, uint alignment)
+                => alignment == 0 ? value : (value + alignment - 1u) / alignment * alignment;
 
             /// <summary>
             /// Serializes the current value of <paramref name="parameter"/> into <paramref name="destination"/>.
@@ -1262,6 +1291,9 @@ namespace XREngine.Rendering.Vulkan
                 uint requiredSize = GetShaderVarSize(parameter);
                 if (requiredSize == 0 || destination.Length < requiredSize)
                     return false;
+
+                if (parameter is ShaderArrayBase array)
+                    return TryWriteShaderArray(destination, array);
 
                 ref byte start = ref destination[0];
                 object value = parameter.GenericValue;
@@ -1279,6 +1311,9 @@ namespace XREngine.Rendering.Vulkan
                         return true;
                     case EShaderVarType._bool:
                         Unsafe.WriteUnaligned(ref start, Convert.ToBoolean(value) ? 1 : 0);
+                        return true;
+                    case EShaderVarType._double:
+                        Unsafe.WriteUnaligned(ref start, Convert.ToDouble(value));
                         return true;
                     case EShaderVarType._vec2 when value is Vector2 v2:
                         Unsafe.WriteUnaligned(ref start, v2);
@@ -1325,12 +1360,93 @@ namespace XREngine.Rendering.Vulkan
                     case EShaderVarType._uvec4 when value is UVector4 uv4:
                         Unsafe.WriteUnaligned(ref start, uv4);
                         return true;
+                    case EShaderVarType._bvec2 when value is BoolVector2 bv2:
+                        WriteBoolVector2(destination, bv2);
+                        return true;
+                    case EShaderVarType._bvec3 when value is BoolVector3 bv3:
+                        WriteBoolVector3(destination, bv3);
+                        return true;
+                    case EShaderVarType._bvec4 when value is BoolVector4 bv4:
+                        WriteBoolVector4(destination, bv4);
+                        return true;
+                    case EShaderVarType._dvec2 when value is DVector2 dv2:
+                        Unsafe.WriteUnaligned(ref start, dv2);
+                        return true;
+                    case EShaderVarType._dvec3 when value is DVector3 dv3:
+                        Unsafe.WriteUnaligned(ref start, new DVector4(dv3.X, dv3.Y, dv3.Z, 0.0));
+                        return true;
+                    case EShaderVarType._dvec4 when value is DVector4 dv4:
+                        Unsafe.WriteUnaligned(ref start, dv4);
+                        return true;
+                    case EShaderVarType._mat3 when value is Matrix4x4 mat3:
+                        WriteMatrix3x3Std140(destination, mat3);
+                        return true;
                     case EShaderVarType._mat4 when value is Matrix4x4 mat:
                         Unsafe.WriteUnaligned(ref start, mat);
                         return true;
                     default:
                         return false;
                 }
+            }
+
+            private static bool TryWriteShaderArray(Span<byte> destination, ShaderArrayBase array)
+            {
+                uint stride = GetShaderVarArrayStride(array.TypeName);
+                if (stride == 0)
+                    return false;
+
+                object value = array.GenericValue;
+                if (value.GetType().GetProperty(nameof(IUniformableArray<ShaderVar>.Values))?.GetValue(value) is not Array values)
+                    return array.Length == 0;
+
+                int count = Math.Min(array.Length, values.Length);
+                for (int i = 0; i < count; i++)
+                {
+                    if (values.GetValue(i) is not ShaderVar element)
+                        continue;
+
+                    int offset = checked((int)(stride * (uint)i));
+                    if (offset >= destination.Length)
+                        return false;
+
+                    Span<byte> elementDestination = destination[offset..Math.Min(destination.Length, offset + (int)stride)];
+                    if (!TryWriteShaderVar(elementDestination, element))
+                        return false;
+                }
+
+                return true;
+            }
+
+            private static void WriteBoolVector2(Span<byte> destination, BoolVector2 value)
+            {
+                ref byte start = ref destination[0];
+                Unsafe.WriteUnaligned(ref start, value.X ? 1 : 0);
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 4), value.Y ? 1 : 0);
+            }
+
+            private static void WriteBoolVector3(Span<byte> destination, BoolVector3 value)
+            {
+                ref byte start = ref destination[0];
+                Unsafe.WriteUnaligned(ref start, value.X ? 1 : 0);
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 4), value.Y ? 1 : 0);
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 8), value.Z ? 1 : 0);
+            }
+
+            private static void WriteBoolVector4(Span<byte> destination, BoolVector4 value)
+            {
+                ref byte start = ref destination[0];
+                Unsafe.WriteUnaligned(ref start, value.X ? 1 : 0);
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 4), value.Y ? 1 : 0);
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 8), value.Z ? 1 : 0);
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 12), value.W ? 1 : 0);
+            }
+
+            private static void WriteMatrix3x3Std140(Span<byte> destination, Matrix4x4 value)
+            {
+                ref byte start = ref destination[0];
+                Unsafe.WriteUnaligned(ref start, new Vector4(value.M11, value.M12, value.M13, 0f));
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 16), new Vector4(value.M21, value.M22, value.M23, 0f));
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref start, 32), new Vector4(value.M31, value.M32, value.M33, 0f));
             }
 
             #endregion

@@ -1,6 +1,6 @@
 # Material Binding Policy
 
-Last updated: 2026-05-14
+Last updated: 2026-06-08
 
 ## Production Rule
 
@@ -12,7 +12,7 @@ General scene materials use the GPU material table:
 
 The current material row is the standard opaque-deferred row. Its canonical contract is `MaterialBindingLayouts.OpaqueDeferred`; `GPUMaterialTable`, the generated material-table draw shader, and the shared GLSL material table header must agree on that layout hash and 48-byte row shape.
 
-The broader upgrade for additional pass-declared layouts and shader annotation-driven conversion is tracked in [Dynamic Indirect Material Bindings](../../work/design/rendering/dynamic-indirect-material-bindings.md) and [Dynamic Indirect Material Bindings TODO](../../work/todo/rendering/dynamic-indirect-material-bindings-todo.md).
+The broader upgrade for additional pass-declared layouts and shader annotation-driven conversion is tracked in [Dynamic Indirect Material Bindings](../../work/design/rendering/dynamic-indirect-material-bindings.md), with runtime ladder work tracked by the material-table TODOs.
 
 Texture arrays are not the fallback for arbitrary material diversity. They are allowed only for genuinely homogeneous resource classes where every layer has the same semantic, dimensions, format, sampling policy, and lifetime pattern:
 
@@ -30,6 +30,26 @@ OpenGL `BindlessMaterialTable` uses `GL_ARB_bindless_texture` handles made resid
 `MaterialEntry -> handle index -> 64-bit OpenGL handle`
 
 Vulkan uses the same material entry indices as descriptor indices into the descriptor-indexed material texture array. Shaders that use that path must read through `nonuniformEXT`.
+
+## Per-Draw Texture Binding Ladder
+
+Classic per-draw material binding is a compatibility rung under the same logical
+material contract as the material table. Vulkan and OpenGL resolve material
+textures in this order:
+
+1. Program-bound sampler name, for render-target, engine, or FBO bindings that
+   are supplied directly to the active program.
+2. Material texture sampler name from `XRTexture.ResolveSamplerName(...)`.
+3. Indexed `TextureN` alias from the stable material texture slot.
+4. Numeric descriptor binding index plus array index for legacy shaders.
+5. Bindless or descriptor-indexed material arrays, where the array index is a
+   logical material texture index and must not be mixed with current per-draw
+   sampler state.
+
+Null material texture slots remain stable. A missing slot may use a visible
+placeholder/fallback descriptor, but later texture indices must not shift.
+Program-bound samplers participate in Vulkan descriptor fingerprints so FBO or
+engine texture changes rewrite affected descriptor sets.
 
 ## Dynamic Layout Compatibility
 
