@@ -1374,8 +1374,6 @@ namespace XREngine.Rendering
                 if (!GpuMeshBvhPickRayIntersectsRequestBounds(mesh, worldSegment, out float boundsDistance))
                     return false;
 
-                QueueGpuMeshBvhInteractionRefresh(component, mesh, worldSegment);
-
                 GpuMeshBvhPickCandidate candidate = QueueGpuMeshBvhPick(component, info, mesh, worldSegment, boundsDistance, hitMode, out GpuMeshBvhPickCandidate? lastHit);
 
                 if (candidate.IsComplete)
@@ -1548,24 +1546,6 @@ namespace XREngine.Rendering
             return false;
         }
 
-        private static void QueueGpuMeshBvhInteractionRefresh(RenderableComponent component, RenderableMesh mesh, Segment worldSegment)
-        {
-            if (component is not ModelComponent model ||
-                !model.TryGetSourceSubMesh(mesh, out SubMesh? subMesh) ||
-                !subMesh.UseGpuMeshBvh)
-            {
-                return;
-            }
-
-            bool skinned = (mesh.CurrentLODMesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
-            if (skinned && !subMesh.RealtimeGpuMeshBvhForSkinnedMeshes)
-                return;
-
-            // Caller (TryIntersectRenderableComponent) already confirmed the pick ray intersects
-            // the request bounds via GpuMeshBvhPickRayIntersectsRequestBounds, so refresh directly.
-            mesh.RequestGpuMeshBvhRefresh();
-        }
-
         /// <summary>
         /// Returns true when the component/mesh pair carries an opted-in GPU mesh BVH
         /// (<see cref="SubMesh.UseGpuMeshBvh"/>), exposing the owning <see cref="SubMesh"/>.
@@ -1607,6 +1587,10 @@ namespace XREngine.Rendering
             out GpuMeshBvhPickCandidate? lastHit)
         {
             GpuMeshBvhPickState state = GpuMeshBvhPickStates.GetValue(mesh, static _ => new GpuMeshBvhPickState());
+            GpuMeshBvhPickCandidate? superseded = null;
+            bool enqueueDispatch = false;
+
+            GpuMeshBvhPickCandidate candidate;
             lock (state)
             {
                 lastHit = state.LastHit;
@@ -1614,18 +1598,54 @@ namespace XREngine.Rendering
                 if (state.Candidate is { } existing && GpuPickSegmentsMatch(existing.WorldSegment, worldSegment) && existing.HitMode == hitMode)
                     return existing;
 
-                GpuMeshBvhPickCandidate candidate = new(component, mesh, info, worldSegment, candidateDistance, hitMode);
-                state.Candidate = candidate;
-                int generation = ++state.Generation;
+                if (state.Candidate is { IsComplete: false } pending)
+                    superseded = pending;
 
-                Engine.EnqueueMainThreadTask(
-                    () => DispatchGpuMeshBvhPick(component, info, mesh, worldSegment, candidate, state, generation),
-                    "XRWorldInstance.GpuMeshBvhPick");
-                return candidate;
+                candidate = new(component, mesh, info, worldSegment, candidateDistance, hitMode);
+                state.Candidate = candidate;
+                ++state.Generation;
+
+                if (!state.DispatchQueued && !state.RaycastInFlight)
+                {
+                    state.DispatchQueued = true;
+                    enqueueDispatch = true;
+                }
             }
+
+            superseded?.CompleteMiss();
+
+            if (enqueueDispatch)
+                EnqueueGpuMeshBvhPickDispatch(state);
+
+            return candidate;
         }
 
-        private static void DispatchGpuMeshBvhPick(
+        private static void EnqueueGpuMeshBvhPickDispatch(GpuMeshBvhPickState state)
+            => Engine.EnqueueMainThreadTask(
+                () => DispatchLatestGpuMeshBvhPick(state),
+                "XRWorldInstance.GpuMeshBvhPick");
+
+        private static void DispatchLatestGpuMeshBvhPick(GpuMeshBvhPickState state)
+        {
+            GpuMeshBvhPickCandidate? candidate;
+            int generation;
+            lock (state)
+            {
+                state.DispatchQueued = false;
+                candidate = state.Candidate;
+                generation = state.Generation;
+
+                if (candidate is null || candidate.IsComplete || state.RaycastInFlight)
+                    return;
+
+                state.RaycastInFlight = true;
+            }
+
+            if (!DispatchGpuMeshBvhPick(candidate.Component, candidate.RenderInfo, candidate.Mesh, candidate.WorldSegment, candidate, state, generation))
+                FinishGpuMeshBvhPick(state, generation);
+        }
+
+        private static bool DispatchGpuMeshBvhPick(
             RenderableComponent component,
             RenderInfo3D info,
             RenderableMesh mesh,
@@ -1640,7 +1660,7 @@ namespace XREngine.Rendering
                 {
                     GpuPickLog("dispatch aborted: GpuMeshBvhClickPickEnabled is false.");
                     candidate.CompleteMiss();
-                    return;
+                    return false;
                 }
 
                 var worldInstance = info.WorldInstance as XRWorldInstance;
@@ -1648,7 +1668,7 @@ namespace XREngine.Rendering
                 {
                     GpuPickLog("dispatch aborted: info.WorldInstance is not an XRWorldInstance.");
                     candidate.CompleteMiss();
-                    return;
+                    return false;
                 }
 
                 var renderer = mesh.GetCurrentOrFirstLodRenderer();
@@ -1657,15 +1677,15 @@ namespace XREngine.Rendering
                 {
                     GpuPickLog("dispatch aborted: renderer or mesh is null.");
                     candidate.CompleteMiss();
-                    return;
+                    return false;
                 }
 
                 bool skinned = xrMesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
-                if (!mesh.PrepareGpuMeshBvh(realtimeSkinned: skinned, forceRebuild: mesh.HasGpuMeshBvhRefreshRequest))
+                if (!mesh.PrepareGpuMeshBvh(realtimeSkinned: skinned))
                 {
                     GpuPickLog($"dispatch aborted: PrepareGpuMeshBvh returned false (skinned={skinned}, tris={xrMesh.Triangles?.Count ?? 0}).");
                     candidate.CompleteMiss();
-                    return;
+                    return false;
                 }
 
                 mesh.ClearGpuMeshBvhRefreshRequestIfPrepared();
@@ -1675,14 +1695,14 @@ namespace XREngine.Rendering
                 {
                     GpuPickLog($"dispatch aborted: BVH not ready (bvh={(bvh is null ? "null" : "set")}, ready={bvh?.IsBvhReady}, nodeBuf={(bvh?.BvhNodeBuffer is null ? "null" : "set")}, packedBuf={(bvh?.PackedTriangleBuffer is null ? "null" : "set")}).");
                     candidate.CompleteMiss();
-                    return;
+                    return false;
                 }
 
                 if (!Matrix4x4.Invert(bvh.LocalToWorldMatrix, out Matrix4x4 worldToLocal))
                 {
                     GpuPickLog("dispatch aborted: LocalToWorldMatrix is not invertible.");
                     candidate.CompleteMiss();
-                    return;
+                    return false;
                 }
 
                 Vector3 localStart = Vector3.Transform(worldSegment.Start, worldToLocal);
@@ -1693,7 +1713,7 @@ namespace XREngine.Rendering
                 {
                     GpuPickLog("dispatch aborted: degenerate local ray length.");
                     candidate.CompleteMiss();
-                    return;
+                    return false;
                 }
 
                 Vector3 localDirection = localDelta / localLength;
@@ -1701,14 +1721,14 @@ namespace XREngine.Rendering
                 {
                     GpuPickLog("dispatch aborted: EnsureBuffers failed.");
                     candidate.CompleteMiss();
-                    return;
+                    return false;
                 }
 
                 state.UploadRay(localStart, localDirection, localLength);
 
                 GpuPickLog($"dispatch enqueued: tris={bvh.TriangleCount}, nodes={bvh.BvhNodeCount}, gpuSkinned={bvh.LastUpdateUsedGpuSkinning}, localStart={localStart}, localDir={localDirection}, localLen={localLength:F3}.");
 
-                worldInstance.VisualScene.BvhRaycasts.Enqueue(new BvhRaycastRequest
+                bool enqueued = worldInstance.VisualScene.BvhRaycasts.Enqueue(new BvhRaycastRequest
                 {
                     RayBuffer = state.RayBuffer,
                     NodeBuffer = bvh.BvhNodeBuffer,
@@ -1719,11 +1739,17 @@ namespace XREngine.Rendering
                     Variant = BvhRaycastVariant.ClosestHit,
                     Completed = result => CompleteGpuMeshBvhPick(component, mesh, worldSegment, bvh.LocalToWorldMatrix, localStart, localDirection, candidate, state, generation, result),
                 });
+
+                if (!enqueued)
+                    candidate.CompleteMiss();
+
+                return enqueued;
             }
             catch (Exception ex)
             {
                 Debug.RenderingException(ex, "GPU mesh BVH pick dispatch failed.");
                 candidate.CompleteMiss();
+                return false;
             }
         }
 
@@ -1784,9 +1810,11 @@ namespace XREngine.Rendering
 
                 lock (state)
                 {
-                    state.LastHit = candidate;
                     if (state.Generation == generation)
+                    {
+                        state.LastHit = candidate;
                         state.Candidate = candidate;
+                    }
                 }
             }
             catch (Exception ex)
@@ -1794,6 +1822,29 @@ namespace XREngine.Rendering
                 Debug.RenderingException(ex, "GPU mesh BVH pick completion failed.");
                 candidate.CompleteMiss();
             }
+            finally
+            {
+                FinishGpuMeshBvhPick(state, generation);
+            }
+        }
+
+        private static void FinishGpuMeshBvhPick(GpuMeshBvhPickState state, int generation)
+        {
+            bool enqueueNext = false;
+            lock (state)
+            {
+                state.RaycastInFlight = false;
+                if (state.Generation != generation &&
+                    state.Candidate is { IsComplete: false } &&
+                    !state.DispatchQueued)
+                {
+                    state.DispatchQueued = true;
+                    enqueueNext = true;
+                }
+            }
+
+            if (enqueueNext)
+                EnqueueGpuMeshBvhPickDispatch(state);
         }
 
         private static void ClearGpuMeshBvhLastHit(GpuMeshBvhPickState state, int generation)
@@ -1849,6 +1900,8 @@ namespace XREngine.Rendering
             public XRDataBuffer? RayBuffer { get; private set; }
             public XRDataBuffer? HitBuffer { get; private set; }
             public GpuMeshBvhPickCandidate? Candidate { get; set; }
+            public bool DispatchQueued { get; set; }
+            public bool RaycastInFlight { get; set; }
 
             /// <summary>
             /// Most recent completed candidate that produced a hit. Surfaced as the placeholder

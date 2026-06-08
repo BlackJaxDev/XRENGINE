@@ -22,6 +22,7 @@ call :AddBootstrap
 call :AddSep
 call :AddTool "Build" "Tools\Build-DocFx.bat" "Build the DocFX API documentation site"
 call :AddTool "Build" "Tools\Build-Submodules.bat" "Compile third-party submodules (Debug by default)"
+call :AddTool "Build" "Tools\Build-VulkanMemoryAllocatorBridge.ps1" "Build the Vulkan Memory Allocator native bridge"
 call :AddTool "Build" "Tools\Test-CookCommonAssets.ps1" "Cook CommonAssets into a .pak archive (builds editor first)"
 call :AddTool "Build" "Tools\Get-PixelFurnaceTextures.ps1" "Download free Pixel-Furnace texture ZIPs into Build\CommonAssets\Textures\Samples"
 call :AddTool "Build" "Tools\Get-FreePbrTextures.ps1" "Download FreePBR BL texture ZIPs into Build\CommonAssets\Textures\Samples\FreePBR"
@@ -49,6 +50,7 @@ call :AddTool "Reports" "Tools\Reports\Generate-Dependencies.ps1" "Regenerate do
 call :AddTool "Reports" "Tools\Reports\generate_mcp_docs.ps1" "Regenerate MCP tool table in docs\features\mcp-server.md"
 call :AddRunAll "Reports"
 call :AddSep
+call :AddTool "Deps" "Tools\Dependencies\Get-VulkanMemoryAllocator.ps1" "Download pinned Vulkan Memory Allocator header and license"
 call :AddTool "Deps" "Tools\Dependencies\Get-CoACD.ps1" "Download CoACD convex decomposition native library"
 call :AddTool "Deps" "Tools\Dependencies\Build-CoACD.ps1" "Build CoACD from source (requires CMake + C++ compiler)"
 call :AddTool "Deps" "Tools\Dependencies\Get-FfmpegFromFlyleaf.ps1" "Download FFmpeg DLLs from Flyleaf GitHub repo"

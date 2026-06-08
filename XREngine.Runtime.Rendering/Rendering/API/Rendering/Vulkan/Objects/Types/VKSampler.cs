@@ -107,7 +107,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (_sampler.Handle == 0)
                     return;
-                Api!.DestroySampler(Device, _sampler, null);
+                Renderer.RetireSampler(_sampler);
                 _sampler = default;
             }
 

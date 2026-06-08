@@ -58,6 +58,52 @@ namespace XREngine.Rendering.Vulkan
             return _legacyBufferAllocations.TryGetValue(buffer.Handle, out allocation);
         }
 
+        internal bool TryMapBufferMemory(
+            Buffer buffer,
+            DeviceMemory memory,
+            ulong bufferOffset,
+            ulong length,
+            out void* mappedPtr)
+        {
+            mappedPtr = null;
+            ulong mappedLength = Math.Max(length, 1UL);
+
+            if (TryGetBufferMemoryAllocation(buffer, out VulkanMemoryAllocation allocation))
+                return MemoryAllocator.TryMap(Api!, device, allocation, bufferOffset, mappedLength, out mappedPtr);
+
+            void* localPtr = null;
+            Result result = Api!.MapMemory(device, memory, bufferOffset, mappedLength, 0, &localPtr);
+            if (result != Result.Success)
+                return false;
+
+            mappedPtr = localPtr;
+            return true;
+        }
+
+        internal void UnmapBufferMemory(Buffer buffer, DeviceMemory memory)
+        {
+            if (TryGetBufferMemoryAllocation(buffer, out VulkanMemoryAllocation allocation))
+            {
+                MemoryAllocator.Unmap(Api!, device, allocation);
+                return;
+            }
+
+            Api!.UnmapMemory(device, memory);
+        }
+
+        internal void* MapBufferMemoryOrThrow(
+            Buffer buffer,
+            DeviceMemory memory,
+            ulong bufferOffset,
+            ulong length,
+            string failureMessage)
+        {
+            if (!TryMapBufferMemory(buffer, memory, bufferOffset, length, out void* mappedPtr))
+                throw new InvalidOperationException(failureMessage);
+
+            return mappedPtr;
+        }
+
         /// <summary>
         /// Returns the suballocation offset for a tracked image, or 0 if untracked (legacy).
         /// </summary>
@@ -69,6 +115,8 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         public class VkDataBuffer(VulkanRenderer renderer, XRDataBuffer buffer) : VkObject<XRDataBuffer>(renderer, buffer), IApiDataBuffer
         {
+            private const ulong IndirectCopyDeviceAddressThresholdBytes = 256UL * 1024UL;
+
             // --- Resource handles ---
             private Buffer? _vkBuffer; // Device-local or host-visible buffer
             private DeviceMemory? _vkMemory;
@@ -204,6 +252,7 @@ namespace XREngine.Rendering.Vulkan
                     // and trigger redundant Generate() cycles on every draw call.
                     if (_vkBuffer.HasValue || _vkMemory.HasValue)
                     {
+                        ReleasePersistentMappingBeforeResourceRetire();
                         if (_vkBuffer.HasValue && _vkMemory.HasValue)
                             Renderer.RetireBuffer(_vkBuffer.Value, _vkMemory.Value);
                         else
@@ -216,7 +265,6 @@ namespace XREngine.Rendering.Vulkan
                         }
                         _vkBuffer = null;
                         _vkMemory = null;
-                        _persistentMappedPtr = null;
                         _uploadedByteCount = 0ul;
                         DeviceAddress = 0ul;
                     }
@@ -236,8 +284,9 @@ namespace XREngine.Rendering.Vulkan
                     // --- Staging buffer pattern for device-local ---
                     if (ShouldUseDeviceLocal(Data))
                     {
-                        bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
-                        bool createDeviceAddress = preferIndirectCopy || enableDeviceAddress;
+                        bool canUseGpuDecompression = CanUseGpuDecompressionUpload();
+                        bool preferIndirectCopy = ShouldUseDeviceAddressForIndirectCopy(_bufferSize);
+                        bool createDeviceAddress = preferIndirectCopy || enableDeviceAddress || canUseGpuDecompression;
                         _lastUploadRoute = createDeviceAddress
                             ? "DeviceLocalStagingDeviceAddress"
                             : "DeviceLocalStaging";
@@ -434,7 +483,7 @@ namespace XREngine.Rendering.Vulkan
                     if (!TryGetUploadSlice(offset, clampedLength, out VoidPtr sourceSlice))
                         return;
 
-                    bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
+                    bool preferIndirectCopy = ShouldUseDeviceAddressForIndirectCopy(clampedLength);
                     _lastUploadRoute = preferIndirectCopy
                         ? "DeviceLocalSubDataStagingDeviceAddress"
                         : "DeviceLocalSubDataStaging";
@@ -480,13 +529,7 @@ namespace XREngine.Rendering.Vulkan
 
             private bool TryUploadGpuCompressedPayload(Buffer deviceBuffer)
             {
-                if (!Data.HasGpuCompressedPayload || Data.GpuCompressedSource is null)
-                    return false;
-
-                if (Data.GpuCompressionCodec != XRDataBuffer.EBufferCompressionCodec.GDeflate)
-                    return false;
-
-                if (!Renderer.SupportsNvMemoryDecompression || !Renderer.SupportsBufferDeviceAddress)
+                if (!CanUseGpuDecompressionUpload() || Data.GpuCompressedSource is null)
                     return false;
 
                 ulong decodedLength = _bufferSize;
@@ -524,6 +567,16 @@ namespace XREngine.Rendering.Vulkan
                     Renderer.DestroyBuffer(compressedBuffer, compressedMemory);
                 }
             }
+
+            private bool CanUseGpuDecompressionUpload()
+                => Data.HasGpuCompressedPayload &&
+                   Data.GpuCompressionCodec == XRDataBuffer.EBufferCompressionCodec.GDeflate &&
+                   Renderer.SupportsNvMemoryDecompression &&
+                   Renderer.SupportsBufferDeviceAddress;
+
+            private bool ShouldUseDeviceAddressForIndirectCopy(ulong byteCount)
+                => byteCount >= IndirectCopyDeviceAddressThresholdBytes &&
+                   Renderer.CanUseNvIndirectBufferCopyUploads;
             public void PushSubData() => PushSubData(0, Data.Length);
 
             private void RefreshDeviceAddress()
@@ -607,12 +660,13 @@ namespace XREngine.Rendering.Vulkan
                 GPUSideSource?.Dispose();
                 // Persistent mapping for dynamic buffers
                 if (_persistentMappedPtr == null)
-                    _persistentMappedPtr = Renderer.MapBuffer(_vkMemory, GetMappedMemoryOffset(0), Math.Max(_bufferSize, 1UL));
+                    _persistentMappedPtr = Renderer.MapBuffer(_vkBuffer, _vkMemory, 0, Math.Max(_bufferSize, 1UL));
                 if (_persistentMappedPtr == null)
                     return;
                 GPUSideSource = new DataSource(_persistentMappedPtr, (uint)_bufferSize);
                 RecordMappedReadbackBytes(_bufferSize);
-                Data.ActivelyMapping.Add(this);
+                if (!Data.ActivelyMapping.Contains(this))
+                    Data.ActivelyMapping.Add(this);
             }
             public void MapToClientSide(int offset, uint length)
             {
@@ -634,12 +688,13 @@ namespace XREngine.Rendering.Vulkan
                 WarnUnsupportedMappingFlags();
                 GPUSideSource?.Dispose();
                 if (_persistentMappedPtr == null)
-                    _persistentMappedPtr = Renderer.MapBuffer(_vkMemory, memoryOffset, mappedLength);
+                    _persistentMappedPtr = Renderer.MapBuffer(_vkBuffer, _vkMemory, (ulong)offset, mappedLength);
                 if (_persistentMappedPtr == null)
                     return;
                 GPUSideSource = new DataSource(_persistentMappedPtr, (uint)mappedLength);
                 RecordMappedReadbackBytes(mappedLength);
-                Data.ActivelyMapping.Add(this);
+                if (!Data.ActivelyMapping.Contains(this))
+                    Data.ActivelyMapping.Add(this);
             }
 
             private ulong GetMappedMemoryOffset(ulong bufferOffset)
@@ -680,10 +735,37 @@ namespace XREngine.Rendering.Vulkan
                         Renderer.InvalidateBuffer(_vkMemory, GetMappedMemoryOffset(0), _bufferSize);
                     }
 
-                    Renderer.UnmapBuffer(_vkMemory);
+                    Renderer.UnmapBuffer(_vkBuffer, _vkMemory);
                     _persistentMappedPtr = null;
                 }
                 Data.ActivelyMapping.Remove(this);
+                GPUSideSource?.Dispose();
+                GPUSideSource = null;
+            }
+
+            private void ReleasePersistentMappingBeforeResourceRetire()
+            {
+                if (_persistentMappedPtr != null)
+                {
+                    if (_vkBuffer.HasValue && _vkMemory.HasValue)
+                    {
+                        if (Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Read) ||
+                            Data.RangeFlags.HasFlag(EBufferMapRangeFlags.InvalidateRange) ||
+                            Data.RangeFlags.HasFlag(EBufferMapRangeFlags.InvalidateBuffer))
+                        {
+                            Renderer.InvalidateBuffer(_vkMemory, GetMappedMemoryOffset(0), _bufferSize);
+                        }
+
+                        Renderer.UnmapBuffer(_vkBuffer, _vkMemory);
+                    }
+
+                    _persistentMappedPtr = null;
+                }
+
+                while (Data.ActivelyMapping.Remove(this))
+                {
+                }
+
                 GPUSideSource?.Dispose();
                 GPUSideSource = null;
             }
@@ -1034,6 +1116,7 @@ namespace XREngine.Rendering.Vulkan
                 // Retire buffer handles for deferred destruction — a command buffer
                 // recorded this frame (or still in-flight on the GPU) may still
                 // reference this buffer.
+                ReleasePersistentMappingBeforeResourceRetire();
                 if (_vkBuffer.HasValue && _vkMemory.HasValue)
                 {
                     Renderer.RetireBuffer(_vkBuffer.Value, _vkMemory.Value);
@@ -1049,21 +1132,18 @@ namespace XREngine.Rendering.Vulkan
 
                 _vkBuffer = null;
                 _vkMemory = null;
-                _persistentMappedPtr = null;
                 DeviceAddress = 0ul;
             }
         }
 
-        private void* MapBuffer(DeviceMemory? vkMemory, ulong offset, ulong length)
+        private void* MapBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length)
         {
+            if (vkBuffer is null)
+                throw new ArgumentNullException(nameof(vkBuffer), "Cannot map null Vulkan buffer.");
             if (vkMemory is null)
                 throw new ArgumentNullException(nameof(vkMemory), "Cannot map null Vulkan memory.");
 
-            void* mappedPtr;
-            if (Api!.MapMemory(device, vkMemory.Value, offset, length, 0, &mappedPtr) != Result.Success)
-                throw new Exception("Failed to map Vulkan buffer memory.");
-
-            return mappedPtr; // Return the mapped pointer
+            return MapBufferMemoryOrThrow(vkBuffer.Value, vkMemory.Value, offset, length, "Failed to map Vulkan buffer memory.");
         }
 
         private void CopyBuffer(Buffer? stagingBuffer, Buffer? vkBuffer, uint length, ulong offset)
@@ -1082,22 +1162,23 @@ namespace XREngine.Rendering.Vulkan
             if (vkBuffer is null || vkMemory is null || addr is null)
                 throw new ArgumentNullException("Buffer, memory, or address cannot be null for update operation.");
 
-            ulong memoryOffset = GetBufferAllocationOffset(vkBuffer.Value) + offset;
             void* mappedPtr;
-            if (Api!.MapMemory(device, vkMemory.Value, memoryOffset, length, 0, &mappedPtr) != Result.Success)
+            if (!TryMapBufferMemory(vkBuffer.Value, vkMemory.Value, offset, length, out mappedPtr))
                 throw new Exception("Failed to map Vulkan buffer memory.");
 
             Unsafe.CopyBlock(mappedPtr, addr, (uint)length);
-            FlushBuffer(vkMemory.Value, memoryOffset, length);
-            Api.UnmapMemory(device, vkMemory.Value); // Unmap after copying
+            FlushBuffer(vkMemory.Value, GetBufferAllocationOffset(vkBuffer.Value) + offset, length);
+            UnmapBufferMemory(vkBuffer.Value, vkMemory.Value); // Unmap after copying
         }
 
-        private void UnmapBuffer(DeviceMemory? vkMemory)
+        private void UnmapBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)
         {
+            if (vkBuffer is null)
+                throw new ArgumentNullException(nameof(vkBuffer), "Cannot unmap null Vulkan buffer.");
             if (vkMemory is null)
                 throw new ArgumentNullException(nameof(vkMemory), "Cannot unmap null Vulkan memory.");
 
-            Api!.UnmapMemory(device, vkMemory.Value);
+            UnmapBufferMemory(vkBuffer.Value, vkMemory.Value);
         }
 
         public void CopyBuffer(
@@ -1267,13 +1348,12 @@ namespace XREngine.Rendering.Vulkan
             // Map the buffer if needed.
             if (dataPtr != null && requestedSize > 0)
             {
-                ulong memoryOffset = GetBufferAllocationOffset(stagingBuffer);
                 void* mappedPtr = null;
-                if (Api!.MapMemory(device, stagingMemory, memoryOffset, requestedSize, 0, &mappedPtr) != Result.Success)
+                if (!TryMapBufferMemory(stagingBuffer, stagingMemory, 0, requestedSize, out mappedPtr))
                     throw new Exception("Failed to map Vulkan memory.");
                 Unsafe.CopyBlock(mappedPtr, dataPtr.Pointer, (uint)requestedSize);
-                FlushBuffer(stagingMemory, memoryOffset, requestedSize);
-                Api.UnmapMemory(device, stagingMemory);
+                FlushBuffer(stagingMemory, GetBufferAllocationOffset(stagingBuffer), requestedSize);
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
             }
 
             return (stagingBuffer, stagingMemory);
@@ -1301,11 +1381,12 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
                 throw new Exception("Failed to create Vulkan buffer.");
 
-            // Device-address buffers require special MemoryAllocateFlags and bypass the allocator.
-            if (enableDeviceAddress)
+            // VMA knows how to allocate buffer-device-address resources when the
+            // allocator was created with VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT.
+            if (enableDeviceAddress && MemoryAllocator is not VulkanVmaAllocator)
                 return CreateBufferRawLegacy(buffer, usage, properties, bufferSize);
 
-            // Route through the allocator (Legacy or Suballocator based on settings).
+            // Route through the selected allocator backend.
             VulkanMemoryAllocation allocation = AllocateBufferMemoryWithFallback(buffer, properties);
             _bufferAllocations[buffer.Handle] = allocation;
 
@@ -1324,7 +1405,7 @@ namespace XREngine.Rendering.Vulkan
             return (buffer, allocation.Memory);
         }
 
-        /// <summary>Legacy path for device-address buffers that need special allocation flags.</summary>
+        /// <summary>Legacy path for non-VMA device-address buffers that need special allocation flags.</summary>
         private (Buffer buffer, DeviceMemory memory) CreateBufferRawLegacy(
             Buffer buffer,
             BufferUsageFlags usage,
@@ -1383,19 +1464,18 @@ namespace XREngine.Rendering.Vulkan
             if (source == null || size == 0)
                 return;
 
-            ulong memoryOffset = GetBufferAllocationOffset(buffer);
             void* mappedPtr = null;
-            if (Api!.MapMemory(device, memory, memoryOffset, size, 0, &mappedPtr) != Result.Success)
+            if (!TryMapBufferMemory(buffer, memory, 0, size, out mappedPtr))
                 throw new Exception("Failed to map Vulkan memory for staging upload.");
 
             try
             {
                 Unsafe.CopyBlock(mappedPtr, source, (uint)size);
-                FlushBuffer(memory, memoryOffset, size);
+                FlushBuffer(memory, GetBufferAllocationOffset(buffer), size);
             }
             finally
             {
-                Api.UnmapMemory(device, memory);
+                UnmapBufferMemory(buffer, memory);
             }
         }
 
@@ -1431,9 +1511,8 @@ namespace XREngine.Rendering.Vulkan
                 BufferUsageFlags.TransferSrcBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
-            ulong memoryOffset = GetBufferAllocationOffset(stagingBuffer);
             void* mappedPtr = null;
-            if (Api!.MapMemory(device, stagingMemory, memoryOffset, (ulong)length, 0, &mappedPtr) != Result.Success)
+            if (!TryMapBufferMemory(stagingBuffer, stagingMemory, 0, (ulong)length, out mappedPtr))
             {
                 DestroyBufferRaw(stagingBuffer, stagingMemory);
                 stagingBuffer = default;
@@ -1447,14 +1526,14 @@ namespace XREngine.Rendering.Vulkan
             }
             catch
             {
-                Api.UnmapMemory(device, stagingMemory);
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBufferRaw(stagingBuffer, stagingMemory);
                 stagingBuffer = default;
                 stagingMemory = default;
                 return false;
             }
 
-            Api.UnmapMemory(device, stagingMemory);
+            UnmapBufferMemory(stagingBuffer, stagingMemory);
             return true;
         }
 
@@ -1613,8 +1692,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            void* localMappedPtr = null;
-            if (Api!.MapMemory(device, memory, memoryOffset, mappedLength, 0, &localMappedPtr) != Result.Success)
+            if (!TryMapBufferMemory(buffer, memory, offset, mappedLength, out void* localMappedPtr))
                 return false;
 
             mappedPtr = localMappedPtr;

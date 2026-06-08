@@ -761,7 +761,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                Api!.UnmapMemory(device, stagingMemory);
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }
@@ -853,7 +853,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                Api!.UnmapMemory(device, stagingMemory);
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }
@@ -1121,7 +1121,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             depth = ReadDepthValue(mappedPtr, source.Format);
-            Api!.UnmapMemory(device, stagingMemory);
+            UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
             return true;
         }
@@ -1206,7 +1206,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             stencil = ReadStencilValue(mappedPtr, source.Format);
-            Api!.UnmapMemory(device, stagingMemory);
+            UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
             return true;
         }

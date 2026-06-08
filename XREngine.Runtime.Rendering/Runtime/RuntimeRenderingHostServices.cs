@@ -84,6 +84,10 @@ public static class RuntimeRenderingHostServices
         public int OpenGLShaderCompilerThreadCount => RuntimeRenderingHostServiceDefaults.OpenGLShaderCompilerThreadCount;
         public bool OpenGLParallelShaderCompileProbeEnabled => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeEnabled;
         public int OpenGLParallelShaderCompileProbeTimeoutMs => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeTimeoutMs;
+        public EVulkanAllocatorBackend VulkanAllocatorBackend => RuntimeRenderingHostServiceDefaults.VulkanAllocatorBackend;
+        public EVulkanSynchronizationBackend VulkanSynchronizationBackend => RuntimeRenderingHostServiceDefaults.VulkanSynchronizationBackend;
+        public EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend => RuntimeRenderingHostServiceDefaults.VulkanDescriptorUpdateBackend;
+        public bool VulkanDynamicUniformBufferEnabled => RuntimeRenderingHostServiceDefaults.VulkanDynamicUniformBufferEnabled;
 
         public void SubscribeRenderingSettingsChanged(Action callback)
         {

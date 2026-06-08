@@ -45,7 +45,6 @@ public class InspectorPanel : EditorPanel
     protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
-        SceneNode.Transform.Clear();
         Selection.SelectionChanged -= OnSelectionChanged;
     }
 

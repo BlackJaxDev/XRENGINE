@@ -119,7 +119,6 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         base.OnComponentDeactivated();
         Selection.SelectionChanged -= OnSelectionChanged;
         UnsubscribeRightClick();
-        SceneNode.Transform.Clear();
     }
 
     private void SubscribeRightClick()
@@ -945,6 +944,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
                 {
                     EnqueueSceneEdit(() =>
                     {
+                        using var _ = Undo.TrackChange("Toggle Node Active", capturedToggleNode);
                         capturedToggleNode.IsActiveSelf = !capturedToggleNode.IsActiveSelf;
                         capturedToggleGlyph.Text = capturedToggleNode.IsActiveSelf ? "\u2713" : string.Empty;
                         capturedToggleGlyph.Color = capturedToggleNode.IsActiveSelf ? ColorF4.White : new ColorF4(0.5f, 0.5f, 0.5f, 1.0f);

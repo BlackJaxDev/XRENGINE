@@ -36,6 +36,10 @@ public static class RuntimeRenderingHostServiceDefaults
     public const int OpenGLShaderCompilerThreadCount = 1;
     public const bool OpenGLParallelShaderCompileProbeEnabled = true;
     public const int OpenGLParallelShaderCompileProbeTimeoutMs = 25;
+    public const EVulkanAllocatorBackend VulkanAllocatorBackend = EVulkanAllocatorBackend.Vma;
+    public const EVulkanSynchronizationBackend VulkanSynchronizationBackend = EVulkanSynchronizationBackend.Sync2;
+    public const EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend = EVulkanDescriptorUpdateBackend.Template;
+    public const bool VulkanDynamicUniformBufferEnabled = true;
 
     public const bool IsRenderThread = true;
     public const bool IsRendererActive = false;

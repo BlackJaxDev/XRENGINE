@@ -490,7 +490,18 @@ public class LightProbeGridSpawnerComponent : XRComponent
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
-        RequestGridBuild(replaceExistingGrid: false, restartSequentialCapture: AutoSequentialCaptureOnBeginPlay);
+
+        if (_spawnedNodes.Count == 0)
+        {
+            RequestGridBuild(replaceExistingGrid: false, restartSequentialCapture: AutoSequentialCaptureOnBeginPlay);
+            return;
+        }
+
+        RefreshPlacementModelSubscriptions();
+        ApplyDefaultsToExistingProbes();
+
+        if (AutoSequentialCaptureOnBeginPlay)
+            BeginSequentialCapture();
     }
 
     protected override void OnComponentDeactivated()
@@ -500,7 +511,6 @@ public class LightProbeGridSpawnerComponent : XRComponent
         UnregisterDeferredSpawnRetry();
         UnregisterPlacementModelRebuild();
         UnsubscribeModelChangedEvents();
-        CleanupGrid();
         base.OnComponentDeactivated();
     }
 

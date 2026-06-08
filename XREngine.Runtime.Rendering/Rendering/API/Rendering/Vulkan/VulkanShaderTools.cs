@@ -1980,6 +1980,13 @@ internal static class VulkanShaderCompiler
         @"(?m)(?<shader>[A-Za-z0-9_./\\-]+):(?<line>\d+):",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    public sealed record PreparedSource(
+        string EntryPoint,
+        string OriginalSource,
+        string OptimizedSource,
+        string RewrittenSource,
+        AutoUniformBlockInfo? AutoUniformBlock);
+
     public static unsafe byte[] Compile(
         XRShader shader,
         out string entryPoint,
@@ -1994,7 +2001,16 @@ internal static class VulkanShaderCompiler
         out AutoUniformBlockInfo? autoUniformBlock,
         out string? rewrittenSource)
     {
-        entryPoint = "main";
+        PreparedSource prepared = Prepare(shader, useVulkanClipDepthRemap);
+        entryPoint = prepared.EntryPoint;
+        autoUniformBlock = prepared.AutoUniformBlock;
+        rewrittenSource = prepared.RewrittenSource;
+        return CompilePrepared(shader, prepared);
+    }
+
+    public static PreparedSource Prepare(XRShader shader, bool useVulkanClipDepthRemap)
+    {
+        string entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
         source = ShaderSourcePreprocessor.ResolveSource(source, shader.Source?.FilePath, annotateIncludes: true);
         source = ResolvedShaderSourceOptimizer.Optimize(
@@ -2008,9 +2024,12 @@ internal static class VulkanShaderCompiler
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
 
         AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(source, shader.Type, useVulkanClipDepthRemap);
-        rewrittenSource = InjectVulkanBackendDefine(rewrite.Source);
-        autoUniformBlock = rewrite.BlockInfo;
+        string rewrittenSource = InjectVulkanBackendDefine(rewrite.Source);
+        return new PreparedSource(entryPoint, shader.Source?.Text ?? string.Empty, source, rewrittenSource, rewrite.BlockInfo);
+    }
 
+    public static unsafe byte[] CompilePrepared(XRShader shader, PreparedSource prepared)
+    {
         Compiler* compiler = ShadercApi.CompilerInitialize();
         if (compiler is null)
             throw new InvalidOperationException("Failed to initialize the shaderc compiler instance.");
@@ -2025,9 +2044,9 @@ internal static class VulkanShaderCompiler
         ShadercApi.CompileOptionsSetSourceLanguage(options, SourceLanguage.Glsl);
         ShadercApi.CompileOptionsSetOptimizationLevel(options, OptimizationLevel.Performance);
 
-        byte[] sourceBytes = Encoding.UTF8.GetBytes(rewrittenSource);
+        byte[] sourceBytes = Encoding.UTF8.GetBytes(prepared.RewrittenSource);
         byte[] nameBytes = GetNullTerminatedUtf8(shader.Name ?? $"Shader_{shader.GetHashCode():X8}");
-        byte[] entryPointBytes = GetNullTerminatedUtf8(entryPoint);
+        byte[] entryPointBytes = GetNullTerminatedUtf8(prepared.EntryPoint);
 
         CompilationResult* result;
         fixed (byte* sourcePtr = sourceBytes)
@@ -2053,7 +2072,7 @@ internal static class VulkanShaderCompiler
             if (status != CompilationStatus.Success)
             {
                 string message = SilkMarshal.PtrToString((nint)ShadercApi.ResultGetErrorMessage(result)) ?? "Unknown error";
-                string diagnostics = BuildCompileFailureDiagnostics(shader, source, rewrittenSource, autoUniformBlock, message);
+                string diagnostics = BuildCompileFailureDiagnostics(shader, prepared.OptimizedSource, prepared.RewrittenSource, prepared.AutoUniformBlock, message);
                 Debug.VulkanWarningEvery(
                     $"Vulkan.ShaderCompileDiagnostics.{shader.Name ?? "UnnamedShader"}.{shader.Type}",
                     TimeSpan.FromSeconds(2),
@@ -2062,7 +2081,7 @@ internal static class VulkanShaderCompiler
 
                 if (includePreview)
                 {
-                    string preview = BuildSourcePreview(rewrittenSource, 120);
+                    string preview = BuildSourcePreview(prepared.RewrittenSource, 120);
                     throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' failed to compile: {message}{Environment.NewLine}{preview}");
                 }
 

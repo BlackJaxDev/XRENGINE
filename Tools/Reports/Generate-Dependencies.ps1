@@ -924,6 +924,7 @@ function Get-BinaryOwner([string]$fileOrPath) {
 
     switch -Regex ($name) {
         '^FastGltfBridge\.Native\.dll$' { return 'Sean Apeler (fastgltf) / simdjson authors' }
+        '^VulkanMemoryAllocatorBridge\.Native\.dll$' { return 'Advanced Micro Devices, Inc. (GPUOpen)' }
         '^openvr_api\.dll$' { return 'Valve (OpenVR/SteamVR)' }
         '^openxr_loader\.dll$' { return 'Valve (SteamVR) / Khronos (OpenXR loader)' }
         '^OVRLipSync\.dll$' { return 'Meta/Oculus (OVR LipSync)' }
@@ -953,6 +954,7 @@ function Get-BinaryLicense([string]$fileOrPath) {
 
     switch -Regex ($name) {
         '^FastGltfBridge\.Native\.dll$' { return 'MIT (fastgltf) + Apache-2.0 (simdjson)' }
+        '^VulkanMemoryAllocatorBridge\.Native\.dll$' { return 'MIT (Vulkan Memory Allocator)' }
         '^sl\.nis\.dll$' { return 'MIT (see XRENGINE/nis.license.txt)' }
         '^nvngx_.*\.dll$' { return 'NVIDIA RTX SDKs License (see XRENGINE/nvngx_dlss.license.txt)' }
         '^NvLowLatencyVk\.dll$' { return 'NVIDIA SDK License Agreement (see XRENGINE/reflex.license.txt)' }
@@ -974,6 +976,7 @@ function Get-BinaryLicenseLink([string]$fileOrPath) {
     $name = [System.IO.Path]::GetFileName($fileOrPath)
 
     switch -Regex ($name) {
+        '^VulkanMemoryAllocatorBridge\.Native\.dll$' { return '../Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator/LICENSE.txt' }
         '^sl\.nis\.dll$' { return '../XRENGINE/nis.license.txt' }
         '^nvngx_.*\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt' }
         '^NvLowLatencyVk\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/reflex.license.txt' }
@@ -1094,6 +1097,8 @@ if (Test-Path $gitmodulesPath) {
 $submodulesDir = Join-Path $root 'Build\Submodules'
 if (Test-Path $submodulesDir) {
     Get-ChildItem -LiteralPath $submodulesDir -Directory | ForEach-Object {
+        if ($_.Name -eq 'Build') { return }
+
         $origin = Get-GitOriginUrl $_.FullName
         $licInfo = Get-SubmoduleLicenseInfo -fullPath $_.FullName
         $lic = $null
@@ -1207,6 +1212,19 @@ try {
             Url = 'https://github.com/simdjson/simdjson/tree/v3.12.3'
             License = if ($simdJsonLicenseInfo -and $simdJsonLicenseInfo.License) { $simdJsonLicenseInfo.License } else { '(unknown)' }
             LicenseSourcePath = if ($simdJsonLicenseInfo) { $simdJsonLicenseInfo.SourcePath } else { $null }
+        })
+    }
+
+    $vmaVendorDir = Join-Path $root 'Build\Native\VulkanMemoryAllocatorBridge\vendor\VulkanMemoryAllocator'
+    if (Test-Path $vmaVendorDir) {
+        $vmaLicenseInfo = Get-SubmoduleLicenseInfo -fullPath $vmaVendorDir
+        $nested.Add([pscustomobject]@{
+            Name = 'Vulkan Memory Allocator v3.3.0'
+            UsedBy = 'VulkanMemoryAllocatorBridge'
+            Owner = 'Advanced Micro Devices, Inc. (GPUOpen)'
+            Url = 'https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/tree/v3.3.0'
+            License = if ($vmaLicenseInfo -and $vmaLicenseInfo.License) { $vmaLicenseInfo.License } else { 'MIT' }
+            LicenseSourcePath = if ($vmaLicenseInfo) { $vmaLicenseInfo.SourcePath } else { $null }
         })
     }
 } catch {

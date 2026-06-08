@@ -19,6 +19,7 @@ That bootstrap flow covers the standard repo bootstrap path, but it should be tr
 ### Usually handled by the build
 
 - CoACD build and staging
+- Vulkan Memory Allocator bridge build and staging
 - MagicPhysX runtime copy to output
 - FFmpeg runtime copy to output when present
 - `yt-dlp.exe` copy to executable output when installed in the repo-standard location
@@ -76,6 +77,50 @@ dotnet build .\XREngine.Gltf\XREngine.Gltf.csproj
 Or build the native project itself with Visual Studio MSBuild if you are working on the bridge implementation.
 
 Export smoke coverage lives in `XREngine.UnitTests/Rendering/NativeInteropSmokeTests.cs` and should be kept green whenever the bridge ABI changes.
+
+### Vulkan Memory Allocator
+
+Used by the default Vulkan allocator backend.
+
+VMA is not retrieved from upstream as a prebuilt DLL. GPUOpen VMA is a header-only C++ library, so the repository vendors a pinned `vk_mem_alloc.h` snapshot and builds our own native P/Invoke bridge DLL around it.
+
+- Native project: `Build/Native/VulkanMemoryAllocatorBridge/VulkanMemoryAllocatorBridge.vcxproj`
+- Runtime DLL: `VulkanMemoryAllocatorBridge.Native.dll`
+- Managed staging location: `XREngine.Runtime.Rendering/runtimes/win-x64/native`
+- Vendored source snapshot: `Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator` (VMA v3.3.0, MIT)
+- Fetch script: `Tools/Dependencies/Get-VulkanMemoryAllocator.ps1`
+- Direct build script: `Tools/Build-VulkanMemoryAllocatorBridge.ps1`
+- Requirements: LunarG Vulkan SDK with `VULKAN_SDK` set, plus Visual Studio Build Tools with Desktop development with C++
+
+For a fresh checkout:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-VulkanMemoryAllocator.ps1
+dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
+```
+
+The managed project builds the native bridge automatically on Windows before preparing build output. The native DLL is generated under `XREngine.Runtime.Rendering/runtimes/win-x64/native`, then copied beside the managed output as `VulkanMemoryAllocatorBridge.Native.dll` for P/Invoke loading.
+
+If you are changing the native bridge and want to rebuild it directly:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Build-VulkanMemoryAllocatorBridge.ps1 -RestoreVma
+```
+
+VS Code tasks are also available:
+
+- `Install-VulkanMemoryAllocator`
+- `Build-VulkanMemoryAllocatorBridge`
+
+`ExecTool --bootstrap` runs the VMA fetch script with the other dependency installers. The normal editor/runtime build then compiles and stages the wrapper.
+
+To intentionally update the VMA version, fetch the new tag, rebuild, and regenerate dependency docs:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-VulkanMemoryAllocator.ps1 -Version vX.Y.Z -ForceDownload
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Build-VulkanMemoryAllocatorBridge.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Reports\Generate-Dependencies.ps1
+```
 
 ### MagicPhysX
 
@@ -190,6 +235,8 @@ If present, it is copied into app outputs.
 ## Useful tasks and scripts
 
 - `ExecTool --bootstrap`
+- `Install-VulkanMemoryAllocator`
+- `Build-VulkanMemoryAllocatorBridge`
 - `Install-YtDlp`
 - `Install-MsdfAtlasGen`
 - `Install-NvComp`
@@ -230,6 +277,7 @@ That updates:
 - `docs/licenses/`
 
 This includes vendored native-source changes such as fastgltf or simdjson snapshot updates inside `Build/Native/FastGltfBridge/vendor/`.
+It also includes Vulkan Memory Allocator snapshot updates inside `Build/Native/VulkanMemoryAllocatorBridge/vendor/`.
 
 Review the results for unknown or incompatible licenses before merging.
 

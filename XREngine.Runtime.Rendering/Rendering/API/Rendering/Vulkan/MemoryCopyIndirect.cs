@@ -7,6 +7,13 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private const bool EnableNvIndirectCopyUploads = false;
+
+    internal bool CanUseNvIndirectBufferCopyUploads
+        => EnableNvIndirectCopyUploads &&
+           SupportsNvCopyMemoryIndirect &&
+           SupportsBufferDeviceAddress;
+
     private ulong GetBufferDeviceAddress(Buffer buffer)
     {
         if (!SupportsBufferDeviceAddress)
@@ -44,7 +51,7 @@ public unsafe partial class VulkanRenderer
                 enableDeviceAddress: true);
 
             void* mappedPtr = null;
-            if (Api!.MapMemory(device, commandMemory, 0, commandSize, 0, &mappedPtr) != Result.Success)
+            if (!TryMapBufferMemory(commandBuffer, commandMemory, 0, commandSize, out mappedPtr))
             {
                 DestroyBufferRaw(commandBuffer, commandMemory);
                 commandBuffer = default;
@@ -58,7 +65,7 @@ public unsafe partial class VulkanRenderer
             }
             finally
             {
-                Api.UnmapMemory(device, commandMemory);
+                UnmapBufferMemory(commandBuffer, commandMemory);
             }
 
             commandAddress = GetBufferDeviceAddress(commandBuffer);
@@ -89,9 +96,7 @@ public unsafe partial class VulkanRenderer
         ulong srcOffset = 0,
         ulong dstOffset = 0)
     {
-        // DIAGNOSTIC: bypass NV indirect copy to test if it's causing VBO data issues
-        bool bypassIndirectCopy = true;
-        if (bypassIndirectCopy)
+        if (!CanUseNvIndirectBufferCopyUploads)
             return false;
 
         ulong srcAddress = GetBufferDeviceAddress(srcBuffer);

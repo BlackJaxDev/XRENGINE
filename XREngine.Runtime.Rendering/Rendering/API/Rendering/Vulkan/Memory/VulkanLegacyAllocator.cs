@@ -10,16 +10,11 @@ namespace XREngine.Rendering.Vulkan;
 /// Each buffer/image receives its own dedicated <see cref="DeviceMemory"/>.
 /// This is the baseline. The block suballocator provides the modern path.
 /// </summary>
-internal sealed unsafe class VulkanLegacyAllocator : IVulkanMemoryAllocator
+internal sealed unsafe class VulkanLegacyAllocator(VulkanRenderer renderer) : IVulkanMemoryAllocator
 {
-    private readonly VulkanRenderer _renderer;
+    private readonly VulkanRenderer _renderer = renderer;
     private int _activeVkAllocationCount;
     private long _totalAllocatedBytes;
-
-    public VulkanLegacyAllocator(VulkanRenderer renderer)
-    {
-        _renderer = renderer;
-    }
 
     public int ActiveVkAllocationCount => _activeVkAllocationCount;
     public long TotalAllocatedBytes => _totalAllocatedBytes;
@@ -105,6 +100,33 @@ internal sealed unsafe class VulkanLegacyAllocator : IVulkanMemoryAllocator
         api.FreeMemory(device, allocation.Memory, null);
         Interlocked.Decrement(ref _activeVkAllocationCount);
         Interlocked.Add(ref _totalAllocatedBytes, -(long)allocation.Size);
+    }
+
+    public bool TryMap(
+        Vk api,
+        Device device,
+        VulkanMemoryAllocation allocation,
+        ulong offset,
+        ulong length,
+        out void* mappedPtr)
+    {
+        mappedPtr = null;
+        if (allocation.IsNull)
+            return false;
+
+        void* localPtr = null;
+        Result result = api.MapMemory(device, allocation.Memory, allocation.Offset + offset, length, 0, &localPtr);
+        if (result != Result.Success)
+            return false;
+
+        mappedPtr = localPtr;
+        return true;
+    }
+
+    public void Unmap(Vk api, Device device, VulkanMemoryAllocation allocation)
+    {
+        if (!allocation.IsNull)
+            api.UnmapMemory(device, allocation.Memory);
     }
 
     public void Dispose()

@@ -536,6 +536,8 @@ These wrappers manage Vulkan-specific resources (descriptor sets, pipeline layou
 - **Release**: Return a buffer to the pool for reuse
 - **Trim**: Called each frame after queue submission to free idle buffers, preventing unbounded memory growth
 
+Buffer-device-address staging is only requested when the NV indirect-copy upload path is explicitly enabled through `CanUseNvIndirectBufferCopyUploads`. When that path is disabled, normal staging uploads avoid `ShaderDeviceAddressBit` and the extra memory requirements that come with it.
+
 ### Pipeline Cache
 
 `VulkanPipelineCache.cs` provides persistent pipeline caching:
@@ -546,7 +548,37 @@ Save location: %LOCALAPPDATA%/XREngine/Vulkan/PipelineCache/pcache_v{vendor}_{de
 
 - Loaded at device creation to skip pipeline compilation on subsequent runs
 - Saved during `CleanUp()` to persist newly compiled pipelines
+- Auto-saved after batches of newly created graphics/compute pipelines during editor sessions
 - Cache key includes vendor, device, driver version, and API version to invalidate on driver updates
+- Logs the cache path, loaded byte count, saved byte count, and save duration
+
+Mesh renderers also keep a small per-renderer cache of generated combined `XRRenderProgram` instances keyed by material shader revision, Vulkan feature axes, shader stages, and generated vertex source identity. Pipeline invalidation can retire/recreate `VkPipeline` objects, but it must not destroy and relink the same shader program just because geometry, descriptors, or fixed-function state changed.
+
+### SPIR-V Shader Artifact Cache
+
+`VulkanShaderArtifactCache.cs` provides a persistent cache for the source-to-SPIR-V stage:
+
+```
+Save location: Build/Cache/Vulkan/ShaderArtifacts/{artifactIdentity}.spv
+Metadata:      Build/Cache/Vulkan/ShaderArtifacts/{artifactIdentity}.spv.json
+```
+
+- `VulkanShaderCompiler.Prepare()` resolves includes, optimizes source, applies Vulkan shader rewrites, and computes the rewritten source used for identity validation.
+- `VulkanShaderCompiler.CompilePrepared()` runs shaderc only after the artifact cache misses or rejects an entry.
+- `VkShader` rehydrates cached SPIR-V, descriptor binding metadata, vertex input locations, and the rewritten-source identity, then creates `VkShaderModule` on the Vulkan device thread.
+- Metadata carries a schema version and runtime/compiler fingerprint so stale, corrupt, or incompatible entries are deleted instead of reused.
+- Cold compile misses write `.spv` payloads asynchronously, similar to the OpenGL binary shader cache pattern.
+- For `XRMeshRenderer.GenerateAsync` renderers, CPU shader preparation and shaderc compilation run on a worker task. Command-buffer recording sees the renderer as pending until the worker artifact is ready and the device-thread module/layout work completes.
+
+### Pipeline Prewarm Manifest
+
+`VulkanPipelinePrewarmDatabase.cs` records semantic pipeline misses for startup prewarm analysis:
+
+- Capture is enabled with `XRE_VK_PIPELINE_PREWARM_CAPTURE=1`.
+- The manifest is stored under `%LOCALAPPDATA%/XREngine/Vulkan/PipelinePrewarm/`.
+- Persistent keys use shader artifact identities, descriptor/vertex/material/pass fingerprints, fixed-function state, attachment formats, and render-pass semantic signatures.
+- Persistent keys do not include transient Vulkan handles such as `VkRenderPass`, `VkShaderModule`, or `VkPipelineLayout`.
+- The manifest currently records and classifies known startup misses. Concrete ahead-of-first-draw pipeline creation still requires scene/material-specific prewarm orchestration.
 
 ### Descriptor Management
 
@@ -557,6 +589,8 @@ Multiple files handle descriptor set management:
 - **`VulkanComputeDescriptors`** — Specialized descriptor management for compute shaders
 - **Per-swapchain descriptor pools/sets** — Allocated in `CreateAllSwapChainObjects()`, rebuilt on swapchain recreation
 
+Compute auto-uniform and unresolved fallback uniform buffers are cached per program/image/set/binding. They are updated in place and destroyed with the program instead of being allocated as one-frame transient buffers.
+
 ### Resource Allocator
 
 `VulkanResourceAllocator.cs` manages physical GPU resource allocation:
@@ -564,8 +598,9 @@ Multiple files handle descriptor set management:
 - Allocates `VkImage` and `VkBuffer` objects with appropriate memory types
 - Uses `FindMemoryType()` to select appropriate memory heaps (device-local, host-visible, host-coherent)
 - Tracks all allocations for cleanup during shutdown or swapchain recreation
+- `VulkanRobustnessSettings.AllocatorBackend` defaults to `Vma`, the native Vulkan Memory Allocator P/Invoke backend. `Managed` remains selectable as the C# block allocator, and `Legacy` remains selectable for diagnostics but should not be used for normal editor profiling because it issues one Vulkan memory allocation per resource.
 
-> **Note:** The codebase acknowledges that per-object `vkAllocateMemory` is not ideal for production. The `maxMemoryAllocationCount` limit can be as low as 4096. The resource allocator is designed to eventually use sub-allocation from larger memory blocks.
+> **Note:** The legacy per-object allocator is allocation-heavy and exists primarily as a fallback/debug path. The VMA backend is the intended default path; choose `Managed` when debugging the C# allocator or native wrapper deployment.
 
 ---
 
@@ -616,6 +651,8 @@ RenderImGui(commandBuffer, imageIndex)
 ```
 
 ### Custom Textures
+
+ImGui draw vertex/index buffers grow with capacity headroom and are retired only when the current capacity is exceeded. They should not be recreated at the exact byte count of every fluctuating UI frame.
 
 The ImGui integration supports registering custom textures (e.g., scene render targets displayed in editor panels). Each custom texture gets a dedicated descriptor set allocated from a per-texture pool.
 

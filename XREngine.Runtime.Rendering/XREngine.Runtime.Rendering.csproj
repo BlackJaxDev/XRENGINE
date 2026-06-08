@@ -134,6 +134,45 @@
 
   <ItemGroup>
     <None Include="Rendering\API\Rendering\Vulkan\VulkanRaytracing.cs" />
+    <None Include="runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>VulkanMemoryAllocatorBridge.Native.dll</TargetPath>
+    </None>
+    <None Include="runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.pdb" Condition="Exists('runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.pdb')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>VulkanMemoryAllocatorBridge.Native.pdb</TargetPath>
+    </None>
   </ItemGroup>
+
+  <Target Name="BuildVulkanMemoryAllocatorBridge" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('..\Build\Native\VulkanMemoryAllocatorBridge\VulkanMemoryAllocatorBridge.vcxproj')">
+    <PropertyGroup>
+      <VmaBridgeProject>..\Build\Native\VulkanMemoryAllocatorBridge\VulkanMemoryAllocatorBridge.vcxproj</VmaBridgeProject>
+      <VmaBridgeNativeDll>runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll</VmaBridgeNativeDll>
+      <VsWhereExe>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWhereExe>
+      <VmaBridgeMsBuildPathFile>$(BaseIntermediateOutputPath)vma-bridge-msbuild-path.txt</VmaBridgeMsBuildPathFile>
+    </PropertyGroup>
+
+    <MakeDir Directories="$(BaseIntermediateOutputPath)" />
+    <Exec Condition="Exists('$(VsWhereExe)')" Command="&quot;$(VsWhereExe)&quot; -latest -requires Microsoft.Component.MSBuild -find &quot;MSBuild\**\Bin\MSBuild.exe&quot; &gt; &quot;$(VmaBridgeMsBuildPathFile)&quot;" />
+    <ReadLinesFromFile Condition="Exists('$(VmaBridgeMsBuildPathFile)')" File="$(VmaBridgeMsBuildPathFile)">
+      <Output TaskParameter="Lines" PropertyName="VmaBridgeMsBuildPath" />
+    </ReadLinesFromFile>
+
+    <PropertyGroup>
+      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
+      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
+      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
+      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
+      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
+      <VmaBridgeMsBuildPath Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe</VmaBridgeMsBuildPath>
+    </PropertyGroup>
+
+    <Message Condition="'$(VmaBridgeMsBuildPath)' == '' and Exists('$(VmaBridgeNativeDll)')" Importance="high" Text="Skipping VulkanMemoryAllocatorBridge native rebuild because Visual Studio MSBuild.exe was not found; using existing $(VmaBridgeNativeDll)." />
+    <Error Condition="'$(VmaBridgeMsBuildPath)' == '' and !Exists('$(VmaBridgeNativeDll)')" Text="Could not locate Visual Studio MSBuild.exe required to build VulkanMemoryAllocatorBridge.vcxproj, and $(VmaBridgeNativeDll) is missing." />
+    <Message Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' == '' and Exists('$(VmaBridgeNativeDll)')" Importance="high" Text="Skipping VulkanMemoryAllocatorBridge native rebuild because VULKAN_SDK is not set; using existing $(VmaBridgeNativeDll)." />
+    <Error Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' == '' and !Exists('$(VmaBridgeNativeDll)')" Text="VULKAN_SDK must be set to build VulkanMemoryAllocatorBridge.vcxproj, and $(VmaBridgeNativeDll) is missing." />
+
+    <Exec Condition="'$(VmaBridgeMsBuildPath)' != '' and '$(VULKAN_SDK)' != ''" Command="&quot;$(VmaBridgeMsBuildPath)&quot; &quot;$(VmaBridgeProject)&quot; /m /nologo /p:Configuration=$(Configuration);Platform=x64" />
+  </Target>
 
 </Project>

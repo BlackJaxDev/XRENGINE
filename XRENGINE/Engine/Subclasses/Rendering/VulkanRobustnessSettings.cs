@@ -5,14 +5,14 @@ namespace XREngine;
 
 public class VulkanRobustnessSettings : XRBase
 {
-    private EVulkanAllocatorBackend _allocatorBackend = EVulkanAllocatorBackend.Legacy;
-    private EVulkanSynchronizationBackend _syncBackend = EVulkanSynchronizationBackend.Legacy;
-    private EVulkanDescriptorUpdateBackend _descriptorUpdateBackend = EVulkanDescriptorUpdateBackend.Legacy;
-    private bool _dynamicUniformBufferEnabled;
+    private EVulkanAllocatorBackend _allocatorBackend = EVulkanAllocatorBackend.Vma;
+    private EVulkanSynchronizationBackend _syncBackend = EVulkanSynchronizationBackend.Sync2;
+    private EVulkanDescriptorUpdateBackend _descriptorUpdateBackend = EVulkanDescriptorUpdateBackend.Template;
+    private bool _dynamicUniformBufferEnabled = true;
 
     [Category("Vulkan")]
     [DisplayName("Allocator Backend")]
-    [Description("Selects the Vulkan allocation backend. Legacy uses per-resource allocations; Suballocator enables pooled block allocation.")]
+    [Description("Selects the Vulkan allocation backend. Legacy uses per-resource allocations; Managed uses the C# block allocator; VMA uses the native Vulkan Memory Allocator wrapper when available.")]
     public EVulkanAllocatorBackend AllocatorBackend
     {
         get => _allocatorBackend;

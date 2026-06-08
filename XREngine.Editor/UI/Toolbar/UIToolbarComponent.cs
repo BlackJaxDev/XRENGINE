@@ -54,7 +54,6 @@ public partial class UIToolbarComponent : UIComponent
     protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
-        SceneNode.Transform.Clear();
     }
 
     public void RemakeToolbarItems()

@@ -1,3 +1,4 @@
+using System;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.EXT;
@@ -44,6 +45,9 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsVertexPipelineStoresAndAtomics;
         private bool _supportsGeometryShader;
         private readonly Dictionary<ulong, uint> _renderPassColorAttachmentCounts = new();
+        private readonly Dictionary<ulong, Format[]> _renderPassColorAttachmentFormats = new();
+        private readonly Dictionary<ulong, string> _renderPassSemanticSignatures = new();
+        private readonly Dictionary<Format, bool> _formatColorBlendSupport = new();
         private MemoryDecompressionMethodFlagsNV _nvMemoryDecompressionMethods;
         private ulong _nvMaxMemoryDecompressionIndirectCount;
         private ulong _nvCopyMemoryIndirectSupportedQueues;
@@ -65,12 +69,26 @@ namespace XREngine.Rendering.Vulkan
         public ulong NvMaxMemoryDecompressionIndirectCount => _nvMaxMemoryDecompressionIndirectCount;
         public ulong NvCopyMemoryIndirectSupportedQueues => _nvCopyMemoryIndirectSupportedQueues;
 
-        internal void RegisterRenderPassColorAttachmentCount(RenderPass renderPass, uint colorAttachmentCount)
+        internal void RegisterRenderPassColorAttachmentCount(RenderPass renderPass, uint colorAttachmentCount, string? semanticSignature = null)
         {
             if (renderPass.Handle == 0)
                 return;
 
             _renderPassColorAttachmentCounts[renderPass.Handle] = colorAttachmentCount;
+            _renderPassColorAttachmentFormats.Remove(renderPass.Handle);
+            if (!string.IsNullOrWhiteSpace(semanticSignature))
+                _renderPassSemanticSignatures[renderPass.Handle] = semanticSignature!;
+        }
+
+        internal void RegisterRenderPassColorAttachmentFormats(RenderPass renderPass, ReadOnlySpan<Format> colorAttachmentFormats, string? semanticSignature = null)
+        {
+            if (renderPass.Handle == 0)
+                return;
+
+            _renderPassColorAttachmentCounts[renderPass.Handle] = (uint)colorAttachmentFormats.Length;
+            _renderPassColorAttachmentFormats[renderPass.Handle] = colorAttachmentFormats.ToArray();
+            if (!string.IsNullOrWhiteSpace(semanticSignature))
+                _renderPassSemanticSignatures[renderPass.Handle] = semanticSignature!;
         }
 
         internal void UnregisterRenderPass(RenderPass renderPass)
@@ -79,6 +97,8 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             _renderPassColorAttachmentCounts.Remove(renderPass.Handle);
+            _renderPassColorAttachmentFormats.Remove(renderPass.Handle);
+            _renderPassSemanticSignatures.Remove(renderPass.Handle);
         }
 
         internal uint GetRenderPassColorAttachmentCount(RenderPass renderPass)
@@ -96,6 +116,44 @@ namespace XREngine.Rendering.Vulkan
                 _renderPassColorAttachmentCounts.Count);
 
             return 1u;
+        }
+
+        internal Format GetRenderPassColorAttachmentFormat(RenderPass renderPass, uint attachmentIndex)
+        {
+            if (renderPass.Handle != 0 &&
+                _renderPassColorAttachmentFormats.TryGetValue(renderPass.Handle, out Format[]? formats) &&
+                attachmentIndex < formats.Length)
+            {
+                return formats[attachmentIndex];
+            }
+
+            return Format.Undefined;
+        }
+
+        internal bool SupportsColorAttachmentBlend(Format format)
+        {
+            if (format == Format.Undefined || VkFormatConversions.IsDepthStencilFormat(format))
+                return false;
+
+            if (_formatColorBlendSupport.TryGetValue(format, out bool supported))
+                return supported;
+
+            Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, format, out FormatProperties properties);
+            supported = (properties.OptimalTilingFeatures & FormatFeatureFlags.ColorAttachmentBlendBit) != 0;
+            _formatColorBlendSupport[format] = supported;
+            return supported;
+        }
+
+        internal string GetRenderPassSemanticSignature(RenderPass renderPass)
+        {
+            if (renderPass.Handle != 0 &&
+                _renderPassSemanticSignatures.TryGetValue(renderPass.Handle, out string? signature) &&
+                !string.IsNullOrWhiteSpace(signature))
+            {
+                return signature;
+            }
+
+            return $"RenderPass:Unregistered:ColorCount={GetRenderPassColorAttachmentCount(renderPass)}";
         }
 
         private readonly string[] deviceExtensions =

@@ -975,9 +975,8 @@ namespace XREngine.Rendering.Vulkan
                         return false;
 
                     Silk.NET.Vulkan.Buffer buffer = resource.Buffers[frameIndex];
-                    ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer);
                     void* mapped;
-                    if (Api!.MapMemory(Device, memory, memoryOffset, resource.Size, 0, &mapped) != Result.Success)
+                    if (!Renderer.TryMapBufferMemory(buffer, memory, 0, resource.Size, out mapped))
                         return false;
 
                     try
@@ -989,7 +988,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                     finally
                     {
-                        Api.UnmapMemory(Device, memory);
+                        Renderer.UnmapBufferMemory(buffer, memory);
                     }
                 }
 
@@ -1111,7 +1110,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 imageInfo = default;
 
-                bool includeSampler = descriptorType == DescriptorType.CombinedImageSampler;
+                bool includeSampler = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
 
                 if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
                 {
@@ -1142,11 +1141,14 @@ namespace XREngine.Rendering.Vulkan
                     string aspectLabel = stencilOnly ? "stencil-only" : "depth-only";
                     if (aspectView.Handle != 0)
                     {
+                        if (!TryResolveDescriptorSampler(binding, includeSampler, source, out Sampler sampler))
+                            return false;
+
                         imageInfo = new DescriptorImageInfo
                         {
                             ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
                             ImageView = aspectView,
-                            Sampler = includeSampler ? source.DescriptorSampler : default,
+                            Sampler = sampler,
                         };
                         return true;
                     }
@@ -1170,13 +1172,38 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                if (!TryResolveDescriptorSampler(binding, includeSampler, source, out Sampler descriptorSampler))
+                    return false;
+
                 imageInfo = new DescriptorImageInfo
                 {
                     ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
                     ImageView = descriptorView,
-                    Sampler = includeSampler ? source.DescriptorSampler : default,
+                    Sampler = descriptorSampler,
                 };
                 return imageInfo.ImageView.Handle != 0;
+            }
+
+            private bool TryResolveDescriptorSampler(DescriptorBindingInfo binding, bool includeSampler, IVkImageDescriptorSource source, out Sampler sampler)
+            {
+                sampler = default;
+                if (!includeSampler)
+                    return true;
+
+                sampler = source.DescriptorSampler;
+                if (sampler.Handle != 0)
+                    return true;
+
+                sampler = Renderer.GetPlaceholderSampler();
+                if (sampler.Handle != 0)
+                {
+                    WarnOnce($"Material texture for binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
+                    RecordDescriptorFallback(binding);
+                    return true;
+                }
+
+                WarnOnce($"Material texture for binding '{binding.Name}' has no Vulkan sampler and placeholder sampler is unavailable.");
+                return false;
             }
 
             private static ImageView ResolveDescriptorView(DescriptorBindingInfo binding, IVkImageDescriptorSource source)

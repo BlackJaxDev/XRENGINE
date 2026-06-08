@@ -32,13 +32,14 @@ It does not automatically guarantee:
 
 - proprietary SDK setup
 - every optional dependency exposed only through separate VS Code tasks
-- workstation prerequisites such as missing Visual Studio C++ workloads
+- workstation prerequisites such as the Vulkan SDK or missing Visual Studio C++ workloads
 - every feature-specific external tool you might need for specialized workflows
 
 Examples of things you may still need to install separately depending on what you are working on:
 
 - NVIDIA SDK binaries
 - CUDA / TensorRT / Audio2Face-related prerequisites
+- LunarG Vulkan SDK and Visual Studio C++ workload for rebuilding the Vulkan Memory Allocator native bridge
 - optional media or tooling dependencies not included in the `Deps` group
 
 ## Recommended first-time setup flow
@@ -74,6 +75,13 @@ Then build the solution:
 ```powershell
 dotnet restore
 dotnet build XRENGINE.slnx
+```
+
+The Vulkan Memory Allocator header is retrieved by the `Deps` installer path, and the native bridge is built automatically by the runtime rendering project. If you need to run those pieces manually:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-VulkanMemoryAllocator.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Build-VulkanMemoryAllocatorBridge.ps1
 ```
 
 ## Verifying that bootstrap worked

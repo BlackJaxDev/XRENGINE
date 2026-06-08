@@ -40,6 +40,9 @@ public unsafe partial class VulkanRenderer
         if (descriptorSet.Handle == 0 || descriptorSetLayout.Handle == 0 || writes.Length == 0)
             return false;
 
+        if (ContainsImageDescriptorWrites(writes))
+            return false;
+
         DescriptorUpdateTemplateEntry[] entries = new DescriptorUpdateTemplateEntry[writes.Length];
         DescriptorUpdateTemplateSignature[] signature = new DescriptorUpdateTemplateSignature[writes.Length];
         nuint totalSize = 0;
@@ -121,6 +124,24 @@ public unsafe partial class VulkanRenderer
                 => write.PTexelBufferView is not null,
             _ => false,
         };
+
+    private static bool ContainsImageDescriptorWrites(ReadOnlySpan<WriteDescriptorSet> writes)
+    {
+        for (int i = 0; i < writes.Length; i++)
+        {
+            if (IsImageDescriptorType(writes[i].DescriptorType))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsImageDescriptorType(DescriptorType descriptorType)
+        => descriptorType is DescriptorType.CombinedImageSampler
+            or DescriptorType.Sampler
+            or DescriptorType.SampledImage
+            or DescriptorType.StorageImage
+            or DescriptorType.InputAttachment;
 
     private bool TryGetOrCreateDescriptorUpdateTemplate(
         DescriptorSetLayout descriptorSetLayout,

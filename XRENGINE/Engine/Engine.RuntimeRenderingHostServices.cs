@@ -69,6 +69,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public int OpenGLShaderCompilerThreadCount => Engine.Rendering.Settings.OpenGLShaderCompilerThreadCount;
     public bool OpenGLParallelShaderCompileProbeEnabled => Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled;
     public int OpenGLParallelShaderCompileProbeTimeoutMs => Engine.Rendering.Settings.OpenGLParallelShaderCompileProbeTimeoutMs;
+    public EVulkanAllocatorBackend VulkanAllocatorBackend => Engine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
+    public EVulkanSynchronizationBackend VulkanSynchronizationBackend => Engine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
+    public EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend => Engine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend;
+    public bool VulkanDynamicUniformBufferEnabled => Engine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled;
 
     public void SubscribeRenderingSettingsChanged(Action callback)
         => Engine.Rendering.SettingsChanged += callback;

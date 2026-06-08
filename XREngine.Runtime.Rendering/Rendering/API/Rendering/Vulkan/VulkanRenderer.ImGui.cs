@@ -1290,11 +1290,12 @@ public unsafe partial class VulkanRenderer
             if (_imguiVertexBuffer.Handle != 0)
                 RetireBuffer(_imguiVertexBuffer, _imguiVertexBufferMemory);
 
+            ulong capacity = ComputeImGuiBufferCapacity(_imguiVertexBufferSize, requiredVertexBytes);
             (_imguiVertexBuffer, _imguiVertexBufferMemory) = CreateBufferRaw(
-                requiredVertexBytes,
+                capacity,
                 BufferUsageFlags.VertexBufferBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-            _imguiVertexBufferSize = requiredVertexBytes;
+            _imguiVertexBufferSize = capacity;
         }
 
         if (_imguiIndexBuffer.Handle == 0 || _imguiIndexBufferSize < requiredIndexBytes)
@@ -1302,12 +1303,39 @@ public unsafe partial class VulkanRenderer
             if (_imguiIndexBuffer.Handle != 0)
                 RetireBuffer(_imguiIndexBuffer, _imguiIndexBufferMemory);
 
+            ulong capacity = ComputeImGuiBufferCapacity(_imguiIndexBufferSize, requiredIndexBytes);
             (_imguiIndexBuffer, _imguiIndexBufferMemory) = CreateBufferRaw(
-                requiredIndexBytes,
+                capacity,
                 BufferUsageFlags.IndexBufferBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-            _imguiIndexBufferSize = requiredIndexBytes;
+            _imguiIndexBufferSize = capacity;
         }
+    }
+
+    private static ulong ComputeImGuiBufferCapacity(ulong currentCapacity, ulong requiredBytes)
+    {
+        const ulong MinimumCapacity = 64UL * 1024UL;
+        ulong target = Math.Max(requiredBytes, MinimumCapacity);
+
+        if (currentCapacity > 0)
+            target = Math.Max(target, currentCapacity <= ulong.MaxValue / 2UL ? currentCapacity * 2UL : ulong.MaxValue);
+
+        return AlignUpToPowerOfTwoBucket(target);
+    }
+
+    private static ulong AlignUpToPowerOfTwoBucket(ulong value)
+    {
+        if (value <= 1UL)
+            return 1UL;
+
+        value--;
+        value |= value >> 1;
+        value |= value >> 2;
+        value |= value >> 4;
+        value |= value >> 8;
+        value |= value >> 16;
+        value |= value >> 32;
+        return value == ulong.MaxValue ? ulong.MaxValue : value + 1UL;
     }
 
     private static void CopyImGuiSnapshot(ImGuiFrameSnapshot snapshot, void* vertexDst, void* indexDst)
@@ -1352,15 +1380,12 @@ public unsafe partial class VulkanRenderer
         void* mappedVertex = null;
         void* mappedIndex = null;
 
-        ulong vertexMemoryOffset = GetBufferAllocationOffset(_imguiVertexBuffer);
-        ulong indexMemoryOffset = GetBufferAllocationOffset(_imguiIndexBuffer);
-
-        if (Api!.MapMemory(device, _imguiVertexBufferMemory, vertexMemoryOffset, vertexBytes, 0, &mappedVertex) != Result.Success)
+        if (!TryMapBufferMemory(_imguiVertexBuffer, _imguiVertexBufferMemory, 0, vertexBytes, out mappedVertex))
             throw new InvalidOperationException("Failed to map ImGui vertex buffer.");
 
-        if (Api.MapMemory(device, _imguiIndexBufferMemory, indexMemoryOffset, indexBytes, 0, &mappedIndex) != Result.Success)
+        if (!TryMapBufferMemory(_imguiIndexBuffer, _imguiIndexBufferMemory, 0, indexBytes, out mappedIndex))
         {
-            Api.UnmapMemory(device, _imguiVertexBufferMemory);
+            UnmapBufferMemory(_imguiVertexBuffer, _imguiVertexBufferMemory);
             throw new InvalidOperationException("Failed to map ImGui index buffer.");
         }
 
@@ -1370,8 +1395,8 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            Api.UnmapMemory(device, _imguiIndexBufferMemory);
-            Api.UnmapMemory(device, _imguiVertexBufferMemory);
+            UnmapBufferMemory(_imguiIndexBuffer, _imguiIndexBufferMemory);
+            UnmapBufferMemory(_imguiVertexBuffer, _imguiVertexBufferMemory);
         }
 
         Api.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _imguiPipeline);

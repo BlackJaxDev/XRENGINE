@@ -190,6 +190,26 @@ public interface IRuntimeRenderingHostServices
     int OpenGLParallelShaderCompileProbeTimeoutMs { get; }
 
     /// <summary>
+    /// Gets the Vulkan memory allocation backend requested by the host.
+    /// </summary>
+    EVulkanAllocatorBackend VulkanAllocatorBackend { get; }
+
+    /// <summary>
+    /// Gets the Vulkan synchronization backend requested by the host.
+    /// </summary>
+    EVulkanSynchronizationBackend VulkanSynchronizationBackend { get; }
+
+    /// <summary>
+    /// Gets the Vulkan descriptor update backend requested by the host.
+    /// </summary>
+    EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend { get; }
+
+    /// <summary>
+    /// Gets whether Vulkan dynamic uniform ring buffers should be enabled.
+    /// </summary>
+    bool VulkanDynamicUniformBufferEnabled { get; }
+
+    /// <summary>
     /// Subscribes a callback to host rendering setting changes.
     /// </summary>
     void SubscribeRenderingSettingsChanged(Action callback);

@@ -468,12 +468,107 @@ public unsafe partial class VulkanRenderer
 
 				if (writeArray.Length > 0)
 				{
+					if (!ValidateDescriptorWrites(writePtr, writeArray.Length))
+						return false;
+
 					if (!TryUpdateDescriptorSetsWithTemplates(frameSets, writeArray))
 						Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
 				}
 			}
 
 			return true;
+		}
+
+		private bool ValidateDescriptorWrites(WriteDescriptorSet* writes, int count)
+		{
+			for (int i = 0; i < count; i++)
+			{
+				WriteDescriptorSet write = writes[i];
+				switch (write.DescriptorType)
+				{
+					case DescriptorType.CombinedImageSampler:
+						if (!ValidateImageDescriptors(write, requireImageView: true, requireSampler: true, i))
+							return false;
+						break;
+					case DescriptorType.Sampler:
+						if (!ValidateImageDescriptors(write, requireImageView: false, requireSampler: true, i))
+							return false;
+						break;
+					case DescriptorType.SampledImage:
+					case DescriptorType.StorageImage:
+					case DescriptorType.InputAttachment:
+						if (!ValidateImageDescriptors(write, requireImageView: true, requireSampler: false, i))
+							return false;
+						break;
+					case DescriptorType.UniformBuffer:
+					case DescriptorType.StorageBuffer:
+						if (write.PBufferInfo is null || HasZeroBuffer(write.PBufferInfo, write.DescriptorCount))
+						{
+							WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{i}] has an invalid buffer descriptor.");
+							return false;
+						}
+						break;
+					case DescriptorType.UniformTexelBuffer:
+					case DescriptorType.StorageTexelBuffer:
+						if (write.PTexelBufferView is null || HasZeroBufferView(write.PTexelBufferView, write.DescriptorCount))
+						{
+							WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{i}] has an invalid texel buffer view.");
+							return false;
+						}
+						break;
+				}
+			}
+
+			return true;
+		}
+
+		private bool ValidateImageDescriptors(WriteDescriptorSet write, bool requireImageView, bool requireSampler, int writeIndex)
+		{
+			if (write.PImageInfo is null)
+			{
+				WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}] has no image descriptor data.");
+				return false;
+			}
+
+			for (uint i = 0; i < write.DescriptorCount; i++)
+			{
+				DescriptorImageInfo info = write.PImageInfo[i];
+				if (requireImageView && info.ImageView.Handle == 0)
+				{
+					WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] has no image view.");
+					return false;
+				}
+
+				if (requireSampler && info.Sampler.Handle == 0)
+				{
+					WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] has no sampler.");
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		private static bool HasZeroBuffer(DescriptorBufferInfo* buffers, uint count)
+		{
+			for (uint i = 0; i < count; i++)
+			{
+				if (buffers[i].Buffer.Handle == 0)
+					return true;
+			}
+
+			return false;
+		}
+
+		private static bool HasZeroBufferView(BufferView* views, uint count)
+		{
+			for (uint i = 0; i < count; i++)
+			{
+				if (views[i].Handle == 0)
+					return true;
+			}
+
+			return false;
 		}
 
 		private bool TryUpdateDescriptorSetsWithTemplates(DescriptorSet[] frameSets, WriteDescriptorSet[] writeArray)
@@ -759,11 +854,14 @@ public unsafe partial class VulkanRenderer
 				string aspectLabel = stencilOnly ? "stencil-only" : "depth-only";
 				if (aspectView.Handle != 0)
 				{
+					if (!TryResolveDescriptorSampler(binding, descriptorType, source, out Sampler sampler))
+						return false;
+
 					imageInfo = new DescriptorImageInfo
 					{
 						ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
 						ImageView = aspectView,
-						Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
+						Sampler = sampler,
 					};
 					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}/{aspectLabel}");
 					return true;
@@ -791,14 +889,40 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
+			if (!TryResolveDescriptorSampler(binding, descriptorType, source, out Sampler descriptorSampler))
+				return false;
+
 			imageInfo = new DescriptorImageInfo
 			{
 				ImageLayout = Renderer.ResolveDescriptorImageLayout(source, descriptorType),
 				ImageView = descriptorView,
-				Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
+				Sampler = descriptorSampler,
 			};
 			LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
 			return imageInfo.ImageView.Handle != 0;
+		}
+
+		private bool TryResolveDescriptorSampler(DescriptorBindingInfo binding, DescriptorType descriptorType, IVkImageDescriptorSource source, out Sampler sampler)
+		{
+			sampler = default;
+			if (descriptorType is not (DescriptorType.CombinedImageSampler or DescriptorType.Sampler))
+				return true;
+
+			sampler = source.DescriptorSampler;
+			if (sampler.Handle != 0)
+				return true;
+
+			sampler = Renderer.GetPlaceholderSampler();
+			if (sampler.Handle != 0)
+			{
+				WarnOnce($"Texture for descriptor binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
+				RecordDescriptorFallback(binding);
+				return true;
+			}
+
+			WarnOnce($"Texture for descriptor binding '{binding.Name}' has no Vulkan sampler and placeholder sampler is unavailable.");
+			RecordDescriptorFailure(binding, "texture sampler unavailable");
+			return false;
 		}
 
 		private void LogPostProcessDescriptor(

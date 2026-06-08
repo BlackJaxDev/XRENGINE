@@ -1,0 +1,350 @@
+using System;
+using System.Collections.Concurrent;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using Silk.NET.Vulkan;
+using Buffer = Silk.NET.Vulkan.Buffer;
+
+namespace XREngine.Rendering.Vulkan;
+
+/// <summary>
+/// Native Vulkan Memory Allocator backend accessed through the XRE VMA bridge.
+/// </summary>
+internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
+{
+    private const uint AllocatorCreateBufferDeviceAddressBit = 0x00000020;
+    private const int VmaBlockId = -2;
+
+    private nint _allocator;
+    private int _activeAllocationCount;
+    private long _totalAllocatedBytes;
+    private bool _disposed;
+    private readonly ConcurrentDictionary<nint, int> _mapCounts = new();
+
+    public VulkanVmaAllocator(
+        Instance instance,
+        PhysicalDevice physicalDevice,
+        Device device,
+        uint vulkanApiVersion,
+        bool enableBufferDeviceAddress)
+    {
+        uint allocatorFlags = enableBufferDeviceAddress
+            ? AllocatorCreateBufferDeviceAddressBit
+            : 0u;
+
+        VulkanVmaNative.AllocatorCreateInfo createInfo = new()
+        {
+            Instance = ToUInt64(instance.Handle),
+            PhysicalDevice = ToUInt64(physicalDevice.Handle),
+            Device = ToUInt64(device.Handle),
+            VulkanApiVersion = vulkanApiVersion,
+            AllocatorFlags = allocatorFlags
+        };
+
+        try
+        {
+            uint bridgeVersion = VulkanVmaNative.GetVersion();
+            Result result = VulkanVmaNative.CreateAllocator(ref createInfo, out _allocator);
+            if (result != Result.Success || _allocator == 0)
+                throw new InvalidOperationException($"VMA allocator creation failed ({result}).");
+
+            string expectedDllPath = Path.Combine(AppContext.BaseDirectory, $"{VulkanVmaNative.LibraryName}.dll");
+            Debug.Vulkan(
+                $"[Vulkan] VMA allocator initialized: version={FormatVersion(bridgeVersion)} flags=0x{allocatorFlags:X8} " +
+                $"bufferDeviceAddress={enableBufferDeviceAddress} dll='{expectedDllPath}'.");
+        }
+        catch (Exception ex) when (IsNativeBridgeException(ex))
+        {
+            throw CreateBridgeUnavailableException(ex);
+        }
+    }
+
+    public int ActiveVkAllocationCount => _activeAllocationCount;
+    public long TotalAllocatedBytes => _totalAllocatedBytes;
+
+    public VulkanMemoryAllocation AllocateForBuffer(
+        Vk api, Device device, Buffer buffer, MemoryPropertyFlags requiredProperties)
+    {
+        if (!TryAllocateForBuffer(api, device, buffer, requiredProperties, out VulkanMemoryAllocation allocation))
+            throw new VulkanOutOfMemoryException("Failed to allocate Vulkan buffer memory through VMA.", requiredProperties);
+        return allocation;
+    }
+
+    public VulkanMemoryAllocation AllocateForImage(
+        Vk api, Device device, Image image, MemoryPropertyFlags requiredProperties)
+    {
+        if (!TryAllocateForImage(api, device, image, requiredProperties, out VulkanMemoryAllocation allocation))
+            throw new VulkanOutOfMemoryException("Failed to allocate Vulkan image memory through VMA.", requiredProperties);
+        return allocation;
+    }
+
+    public bool TryAllocateForBuffer(
+        Vk api, Device device, Buffer buffer,
+        MemoryPropertyFlags requiredProperties,
+        out VulkanMemoryAllocation allocation)
+    {
+        ThrowIfDisposed();
+        allocation = VulkanMemoryAllocation.Null;
+
+        try
+        {
+            Result result = VulkanVmaNative.AllocateForBuffer(
+                _allocator,
+                ToUInt64(buffer.Handle),
+                (uint)requiredProperties,
+                out VulkanVmaNative.AllocationInfo nativeAllocation);
+
+            return TryCreateManagedAllocation(result, requiredProperties, nativeAllocation, out allocation);
+        }
+        catch (Exception ex) when (IsNativeBridgeException(ex))
+        {
+            throw CreateBridgeUnavailableException(ex);
+        }
+    }
+
+    public bool TryAllocateForImage(
+        Vk api, Device device, Image image,
+        MemoryPropertyFlags requiredProperties,
+        out VulkanMemoryAllocation allocation)
+    {
+        ThrowIfDisposed();
+        allocation = VulkanMemoryAllocation.Null;
+
+        try
+        {
+            Result result = VulkanVmaNative.AllocateForImage(
+                _allocator,
+                ToUInt64(image.Handle),
+                (uint)requiredProperties,
+                out VulkanVmaNative.AllocationInfo nativeAllocation);
+
+            return TryCreateManagedAllocation(result, requiredProperties, nativeAllocation, out allocation);
+        }
+        catch (Exception ex) when (IsNativeBridgeException(ex))
+        {
+            throw CreateBridgeUnavailableException(ex);
+        }
+    }
+
+    public void Free(Vk api, Device device, VulkanMemoryAllocation allocation)
+    {
+        if (allocation.IsNull)
+            return;
+
+        if (allocation.NativeAllocation == 0)
+        {
+            api.FreeMemory(device, allocation.Memory, null);
+            return;
+        }
+
+        ThrowIfDisposed();
+
+        try
+        {
+            DrainMappedAllocation(allocation.NativeAllocation);
+            VulkanVmaNative.Free(_allocator, allocation.NativeAllocation);
+        }
+        catch (Exception ex) when (IsNativeBridgeException(ex))
+        {
+            throw CreateBridgeUnavailableException(ex);
+        }
+
+        Interlocked.Decrement(ref _activeAllocationCount);
+        Interlocked.Add(ref _totalAllocatedBytes, -ClampToLong(allocation.Size));
+    }
+
+    public bool TryMap(
+        Vk api,
+        Device device,
+        VulkanMemoryAllocation allocation,
+        ulong offset,
+        ulong length,
+        out void* mappedPtr)
+    {
+        mappedPtr = null;
+        if (allocation.IsNull)
+            return false;
+
+        if (allocation.NativeAllocation == 0)
+        {
+            void* localPtr = null;
+            Result rawResult = api.MapMemory(device, allocation.Memory, allocation.Offset + offset, length, 0, &localPtr);
+            if (rawResult != Result.Success)
+                return false;
+
+            mappedPtr = localPtr;
+            return true;
+        }
+
+        ThrowIfDisposed();
+
+        try
+        {
+            Result result = VulkanVmaNative.MapMemory(_allocator, allocation.NativeAllocation, out nint allocationPtr);
+            if (result != Result.Success || allocationPtr == 0)
+                return false;
+
+            _mapCounts.AddOrUpdate(allocation.NativeAllocation, 1, static (_, count) => count + 1);
+            mappedPtr = (byte*)allocationPtr + offset;
+            return true;
+        }
+        catch (Exception ex) when (IsNativeBridgeException(ex))
+        {
+            throw CreateBridgeUnavailableException(ex);
+        }
+    }
+
+    public void Unmap(Vk api, Device device, VulkanMemoryAllocation allocation)
+    {
+        if (allocation.IsNull)
+            return;
+
+        if (allocation.NativeAllocation == 0)
+        {
+            api.UnmapMemory(device, allocation.Memory);
+            return;
+        }
+
+        ThrowIfDisposed();
+
+        try
+        {
+            if (_mapCounts.TryGetValue(allocation.NativeAllocation, out int count))
+            {
+                if (count <= 1)
+                    _mapCounts.TryRemove(allocation.NativeAllocation, out _);
+                else
+                    _mapCounts[allocation.NativeAllocation] = count - 1;
+            }
+            else
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.VMA.UnmapUntracked.{allocation.NativeAllocation}",
+                    TimeSpan.FromSeconds(5),
+                    "[Vulkan] VMA unmap requested for allocation 0x{0:X} without a tracked map count.",
+                    allocation.NativeAllocation);
+                return;
+            }
+
+            VulkanVmaNative.UnmapMemory(_allocator, allocation.NativeAllocation);
+        }
+        catch (Exception ex) when (IsNativeBridgeException(ex))
+        {
+            throw CreateBridgeUnavailableException(ex);
+        }
+    }
+
+    public string? BuildStatsString(bool detailedMap)
+    {
+        ThrowIfDisposed();
+
+        nint statsPtr = VulkanVmaNative.BuildStatsString(_allocator, detailedMap ? 1 : 0);
+        if (statsPtr == 0)
+            return null;
+
+        try
+        {
+            return Marshal.PtrToStringUTF8(statsPtr);
+        }
+        finally
+        {
+            VulkanVmaNative.FreeStatsString(_allocator, statsPtr);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        if (_allocator != 0)
+        {
+            DrainAllMappedAllocations();
+            VulkanVmaNative.DestroyAllocator(_allocator);
+            _allocator = 0;
+        }
+    }
+
+    private void DrainMappedAllocation(nint allocation)
+    {
+        if (allocation == 0 || !_mapCounts.TryRemove(allocation, out int mapCount))
+            return;
+
+        for (int i = 0; i < mapCount; i++)
+            VulkanVmaNative.UnmapMemory(_allocator, allocation);
+
+        Debug.VulkanWarning(
+            $"[Vulkan] Unmapped VMA allocation 0x{allocation:X} {mapCount} time(s) during free; caller leaked a map scope.");
+    }
+
+    private void DrainAllMappedAllocations()
+    {
+        foreach (nint allocation in _mapCounts.Keys)
+            DrainMappedAllocation(allocation);
+    }
+
+    private bool TryCreateManagedAllocation(
+        Result result,
+        MemoryPropertyFlags requiredProperties,
+        VulkanVmaNative.AllocationInfo nativeAllocation,
+        out VulkanMemoryAllocation allocation)
+    {
+        allocation = VulkanMemoryAllocation.Null;
+
+        if (result == Result.ErrorOutOfDeviceMemory || result == Result.ErrorOutOfHostMemory)
+            return false;
+
+        if (result != Result.Success)
+            throw new InvalidOperationException($"VMA allocation failed ({result}). Requested={requiredProperties}.");
+
+        if (nativeAllocation.Allocation == 0 || nativeAllocation.Memory == 0)
+            throw new InvalidOperationException("VMA allocation succeeded without returning memory handles.");
+
+        MemoryPropertyFlags properties = nativeAllocation.MemoryPropertyFlags == 0
+            ? requiredProperties
+            : (MemoryPropertyFlags)nativeAllocation.MemoryPropertyFlags;
+
+        allocation = new VulkanMemoryAllocation(
+            Memory: new DeviceMemory { Handle = nativeAllocation.Memory },
+            Offset: nativeAllocation.Offset,
+            Size: nativeAllocation.Size,
+            MemoryTypeIndex: nativeAllocation.MemoryTypeIndex,
+            Properties: properties,
+            BlockId: VmaBlockId,
+            NativeAllocation: nativeAllocation.Allocation);
+
+        Interlocked.Increment(ref _activeAllocationCount);
+        Interlocked.Add(ref _totalAllocatedBytes, ClampToLong(nativeAllocation.Size));
+        return true;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed || _allocator == 0)
+            throw new ObjectDisposedException(nameof(VulkanVmaAllocator));
+    }
+
+    private static bool IsNativeBridgeException(Exception ex)
+        => ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException;
+
+    private static NotSupportedException CreateBridgeUnavailableException(Exception innerException)
+        => new(
+            "The VMA allocator backend requires VulkanMemoryAllocatorBridge.Native.dll in the runtime native output directory. " +
+            "Build XREngine.Runtime.Rendering on Windows with VULKAN_SDK set, or select the Managed allocator backend.",
+            innerException);
+
+    private static string FormatVersion(uint version)
+        => $"{(version >> 16) & 0xFF}.{(version >> 8) & 0xFF}.{version & 0xFF}";
+
+    private static ulong ToUInt64(nint handle)
+        => unchecked((ulong)handle);
+
+    private static ulong ToUInt64(ulong handle)
+        => handle;
+
+    private static long ClampToLong(ulong value)
+        => value > long.MaxValue ? long.MaxValue : (long)value;
+}

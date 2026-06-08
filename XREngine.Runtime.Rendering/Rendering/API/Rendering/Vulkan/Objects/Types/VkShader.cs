@@ -26,7 +26,8 @@ public unsafe partial class VulkanRenderer
         IReadOnlyDictionary<string, uint> VertexInputLocations,
         ShaderStageFlags StageFlags,
         int ShaderConfigVersion,
-        bool UsesVulkanClipDepthRemap);
+        bool UsesVulkanClipDepthRemap,
+        bool LoadedFromDiskCache = false);
 
     public sealed record VulkanShaderCompileFailure(
         string? ArtifactIdentity,
@@ -48,6 +49,12 @@ public unsafe partial class VulkanRenderer
         private int _compiledShaderConfigVersion = -1;
         private bool _compiledUsesVulkanClipDepthRemap;
         private bool? _requestedVulkanClipDepthRemap;
+        private readonly object _asyncCompileLock = new();
+        private Task<VulkanShaderArtifact>? _asyncCompileTask;
+        private int _asyncCompileShaderConfigVersion = -1;
+        private bool _asyncCompileUsesVulkanClipDepthRemap;
+        private int _failedShaderConfigVersion = -1;
+        private bool _failedUsesVulkanClipDepthRemap;
 
         /// <summary>
         /// Matches a vertex shader input attribute declaration and captures its explicit
@@ -105,85 +112,244 @@ public unsafe partial class VulkanRenderer
 
             try
             {
-                byte[] spirv = VulkanShaderCompiler.Compile(
-                    Data,
-                    usesVulkanClipDepthRemap,
-                    out _entryPoint,
-                    out _autoUniformBlock,
-                    out rewrittenSource);
-                _rewrittenSource = rewrittenSource;
-                artifactIdentity = VulkanShaderCompiler.BuildArtifactIdentity(
-                    Data,
-                    shaderConfigVersion,
-                    usesVulkanClipDepthRemap,
-                    rewrittenSource);
-
-                StageFlags = ToVulkan(Data.Type);
-                failureKind = EShaderCompileFailureKind.Reflection;
-                _descriptorBindings.Clear();
-                _descriptorBindings.AddRange(VulkanShaderReflection.ExtractBindings(spirv, StageFlags, rewrittenSource ?? Data.Source?.Text));
-
+                VulkanShaderArtifact artifact = BuildCpuArtifact(shaderConfigVersion, usesVulkanClipDepthRemap);
+                artifactIdentity = artifact.Identity;
+                rewrittenSource = artifact.RewrittenSource;
                 failureKind = EShaderCompileFailureKind.ShaderModuleCreation;
-                ShaderModuleCreateInfo createInfo = new()
-                {
-                    SType = StructureType.ShaderModuleCreateInfo,
-                    CodeSize = (nuint)spirv.Length,
-                };
-
-                fixed (byte* codePtr = spirv)
-                {
-                    createInfo.PCode = (uint*)codePtr;
-                    if (Api!.CreateShaderModule(Device, ref createInfo, null, out _shaderModule) != Result.Success)
-                        throw new InvalidOperationException($"Failed to create shader module for '{Data.Name ?? "UnnamedShader"}'.");
-                }
-
-                _shaderStageCreateInfo = new()
-                {
-                    SType = StructureType.PipelineShaderStageCreateInfo,
-                    Stage = StageFlags,
-                    Module = _shaderModule,
-                    PName = (byte*)SilkMarshal.StringToPtr(_entryPoint)
-                };
-
-                _compiledShaderConfigVersion = shaderConfigVersion;
-                _compiledUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
-                IsCompiled = true;
-                IsCompilePending = false;
-                CompileStatus = ShaderCompileStatus.Ready("Vulkan", artifactIdentity);
-                LastArtifact = new VulkanShaderArtifact(
-                    artifactIdentity,
-                    Data.Type,
-                    _entryPoint,
-                    Data.Source?.FilePath ?? Data.FilePath,
-                    rewrittenSource,
-                    spirv,
-                    _descriptorBindings.ToArray(),
-                    _autoUniformBlock,
-                    VertexInputLocations.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal),
-                    StageFlags,
-                    shaderConfigVersion,
-                    usesVulkanClipDepthRemap);
+                ApplyCompiledArtifact(artifact);
+                RuntimeEngine.Rendering.Stats.RecordShaderVariant(
+                    linked: true,
+                    loadedFromDiskCache: artifact.LoadedFromDiskCache,
+                    generatedThisRun: !artifact.LoadedFromDiskCache);
             }
             catch (Exception ex)
             {
-                artifactIdentity ??= VulkanShaderCompiler.BuildArtifactIdentity(
-                    Data,
-                    shaderConfigVersion,
-                    usesVulkanClipDepthRemap,
-                    rewrittenSource ?? _rewrittenSource ?? Data.Source?.Text);
-                string? diagnosticPath = WriteCompileFailureDiagnosticsFile(ex, failureKind, artifactIdentity, rewrittenSource ?? _rewrittenSource);
-                IsCompilePending = false;
-                IsCompiled = false;
-                LastCompileFailure = new VulkanShaderCompileFailure(
-                    artifactIdentity,
-                    failureKind,
-                    ex.Message,
-                    diagnosticPath,
-                    rewrittenSource ?? _rewrittenSource);
-                CompileStatus = ShaderCompileStatus.Failed("Vulkan", failureKind, ex.Message, artifactIdentity, diagnosticPath);
+                SetCompileFailure(ex, failureKind, shaderConfigVersion, usesVulkanClipDepthRemap, artifactIdentity, rewrittenSource ?? _rewrittenSource);
                 Debug.VulkanException(ex, $"Vulkan shader '{Data.Name ?? "UnnamedShader"}' failed to compile.");
                 throw;
             }
+        }
+
+        internal bool TryGenerateFromAsyncCompile(bool enableVulkanClipDepthRemap, out string reason)
+        {
+            reason = "Ready";
+
+            SetVulkanClipDepthRemapEnabled(enableVulkanClipDepthRemap);
+            EnsureCompilePolicyCurrent();
+            if (IsGenerated && IsCompiled)
+                return true;
+
+            int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+            bool usesVulkanClipDepthRemap = UsesVulkanClipDepthRemap();
+            if (LastCompileFailure is not null &&
+                _failedShaderConfigVersion == shaderConfigVersion &&
+                _failedUsesVulkanClipDepthRemap == usesVulkanClipDepthRemap)
+            {
+                reason = "ShaderCompileFailed";
+                return false;
+            }
+
+            Task<VulkanShaderArtifact> task;
+            lock (_asyncCompileLock)
+            {
+                if (_asyncCompileTask is null ||
+                    _asyncCompileShaderConfigVersion != shaderConfigVersion ||
+                    _asyncCompileUsesVulkanClipDepthRemap != usesVulkanClipDepthRemap)
+                {
+                    _asyncCompileShaderConfigVersion = shaderConfigVersion;
+                    _asyncCompileUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
+                    IsCompilePending = true;
+                    IsCompiled = false;
+                    CompileStatus = ShaderCompileStatus.Pending("Vulkan", null);
+                    LastCompileFailure = null;
+                    LastArtifact = null;
+                    _asyncCompileTask = Task.Run(() => BuildCpuArtifact(shaderConfigVersion, usesVulkanClipDepthRemap));
+                }
+
+                task = _asyncCompileTask;
+            }
+
+            if (!task.IsCompleted)
+            {
+                reason = "ShaderCompilePending";
+                return false;
+            }
+
+            VulkanShaderArtifact artifact;
+            try
+            {
+                artifact = task.GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                SetCompileFailure(
+                    ex,
+                    EShaderCompileFailureKind.SpirvCompilation,
+                    shaderConfigVersion,
+                    usesVulkanClipDepthRemap,
+                    null,
+                    _rewrittenSource);
+                reason = "ShaderCompileFailed";
+                return false;
+            }
+            finally
+            {
+                lock (_asyncCompileLock)
+                {
+                    if (ReferenceEquals(_asyncCompileTask, task))
+                        _asyncCompileTask = null;
+                }
+            }
+
+            try
+            {
+                bool wasActive = IsActive;
+                if (!wasActive)
+                    PreGenerated();
+
+                DestroyShaderResources();
+                ApplyCompiledArtifact(artifact);
+
+                if (!wasActive)
+                {
+                    _bindingId = CacheObject(this);
+                    PostGenerated();
+                }
+
+                RuntimeEngine.Rendering.Stats.RecordShaderVariant(
+                    linked: true,
+                    loadedFromDiskCache: artifact.LoadedFromDiskCache,
+                    generatedThisRun: !artifact.LoadedFromDiskCache);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SetCompileFailure(
+                    ex,
+                    EShaderCompileFailureKind.ShaderModuleCreation,
+                    shaderConfigVersion,
+                    usesVulkanClipDepthRemap,
+                    artifact.Identity,
+                    artifact.RewrittenSource);
+                reason = "ShaderModuleCreateFailed";
+                return false;
+            }
+        }
+
+        private VulkanShaderArtifact BuildCpuArtifact(int shaderConfigVersion, bool usesVulkanClipDepthRemap)
+        {
+            VulkanShaderCompiler.PreparedSource prepared = VulkanShaderCompiler.Prepare(Data, usesVulkanClipDepthRemap);
+            string artifactIdentity = VulkanShaderCompiler.BuildArtifactIdentity(
+                Data,
+                shaderConfigVersion,
+                usesVulkanClipDepthRemap,
+                prepared.RewrittenSource);
+            ShaderStageFlags stageFlags = ToVulkan(Data.Type);
+
+            if (VulkanShaderArtifactCache.TryRead(
+                artifactIdentity,
+                Data,
+                shaderConfigVersion,
+                usesVulkanClipDepthRemap,
+                prepared.RewrittenSource,
+                prepared.AutoUniformBlock,
+                stageFlags,
+                out VulkanShaderArtifact cachedArtifact))
+            {
+                RuntimeEngine.Rendering.Stats.RecordShaderVariant(warming: true, loadedFromDiskCache: true);
+                return cachedArtifact;
+            }
+
+            byte[] spirv = VulkanShaderCompiler.CompilePrepared(Data, prepared);
+            IReadOnlyList<DescriptorBindingInfo> bindings = VulkanShaderReflection.ExtractBindings(spirv, stageFlags, prepared.RewrittenSource);
+            Dictionary<string, uint> vertexInputLocations = ParseVertexInputLocations(prepared.RewrittenSource, stageFlags);
+
+            VulkanShaderArtifact artifact = new(
+                artifactIdentity,
+                Data.Type,
+                prepared.EntryPoint,
+                Data.Source?.FilePath ?? Data.FilePath,
+                prepared.RewrittenSource,
+                spirv,
+                bindings,
+                prepared.AutoUniformBlock,
+                vertexInputLocations,
+                stageFlags,
+                shaderConfigVersion,
+                usesVulkanClipDepthRemap);
+
+            VulkanShaderArtifactCache.QueueWrite(artifact);
+            Debug.Vulkan("[VulkanShaderCache] MISS key={0} stage={1} bytes={2}.", artifactIdentity, Data.Type, spirv.Length);
+            return artifact;
+        }
+
+        private void ApplyCompiledArtifact(VulkanShaderArtifact artifact)
+        {
+            _entryPoint = artifact.EntryPoint;
+            _autoUniformBlock = artifact.AutoUniformBlock;
+            _rewrittenSource = artifact.RewrittenSource;
+            StageFlags = artifact.StageFlags;
+            _descriptorBindings.Clear();
+            _descriptorBindings.AddRange(artifact.DescriptorBindings);
+            _vertexInputLocations = new Dictionary<string, uint>(artifact.VertexInputLocations, StringComparer.Ordinal);
+
+            ShaderModuleCreateInfo createInfo = new()
+            {
+                SType = StructureType.ShaderModuleCreateInfo,
+                CodeSize = (nuint)artifact.SpirV.Length,
+            };
+
+            fixed (byte* codePtr = artifact.SpirV)
+            {
+                createInfo.PCode = (uint*)codePtr;
+                if (Api!.CreateShaderModule(Device, ref createInfo, null, out _shaderModule) != Result.Success)
+                    throw new InvalidOperationException($"Failed to create shader module for '{Data.Name ?? "UnnamedShader"}'.");
+            }
+
+            _shaderStageCreateInfo = new()
+            {
+                SType = StructureType.PipelineShaderStageCreateInfo,
+                Stage = StageFlags,
+                Module = _shaderModule,
+                PName = (byte*)SilkMarshal.StringToPtr(_entryPoint)
+            };
+
+            _compiledShaderConfigVersion = artifact.ShaderConfigVersion;
+            _compiledUsesVulkanClipDepthRemap = artifact.UsesVulkanClipDepthRemap;
+            _failedShaderConfigVersion = -1;
+            _failedUsesVulkanClipDepthRemap = false;
+            IsCompiled = true;
+            IsCompilePending = false;
+            CompileStatus = ShaderCompileStatus.Ready("Vulkan", artifact.Identity);
+            LastArtifact = artifact;
+        }
+
+        private void SetCompileFailure(
+            Exception exception,
+            EShaderCompileFailureKind failureKind,
+            int shaderConfigVersion,
+            bool usesVulkanClipDepthRemap,
+            string? artifactIdentity,
+            string? rewrittenSource)
+        {
+            artifactIdentity ??= VulkanShaderCompiler.BuildArtifactIdentity(
+                Data,
+                shaderConfigVersion,
+                usesVulkanClipDepthRemap,
+                rewrittenSource ?? _rewrittenSource ?? Data.Source?.Text);
+            string? diagnosticPath = WriteCompileFailureDiagnosticsFile(exception, failureKind, artifactIdentity, rewrittenSource ?? _rewrittenSource);
+            IsCompilePending = false;
+            IsCompiled = false;
+            _failedShaderConfigVersion = shaderConfigVersion;
+            _failedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
+            LastCompileFailure = new VulkanShaderCompileFailure(
+                artifactIdentity,
+                failureKind,
+                exception.Message,
+                diagnosticPath,
+                rewrittenSource ?? _rewrittenSource);
+            CompileStatus = ShaderCompileStatus.Failed("Vulkan", failureKind, exception.Message, artifactIdentity, diagnosticPath);
+            RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
         }
 
         private Dictionary<string, uint> ParseVertexInputLocations()
@@ -193,7 +359,16 @@ public unsafe partial class VulkanRenderer
                 return map;
 
             string? source = _rewrittenSource ?? Data.Source?.Text;
+            return ParseVertexInputLocations(source, StageFlags);
+        }
+
+        private static Dictionary<string, uint> ParseVertexInputLocations(string? source, ShaderStageFlags stageFlags)
+        {
             if (string.IsNullOrWhiteSpace(source))
+                return new Dictionary<string, uint>(StringComparer.Ordinal);
+
+            Dictionary<string, uint> map = new(StringComparer.Ordinal);
+            if (stageFlags != ShaderStageFlags.VertexBit)
                 return map;
 
             foreach (Match match in VertexInputRegex.Matches(source))
@@ -439,12 +614,16 @@ public unsafe partial class VulkanRenderer
         private void Invalidate()
         {
             DestroyShaderResources();
+            lock (_asyncCompileLock)
+                _asyncCompileTask = null;
             _descriptorBindings.Clear();
             _entryPoint = "main";
             _autoUniformBlock = null;
             _rewrittenSource = null;
             _compiledShaderConfigVersion = -1;
             _compiledUsesVulkanClipDepthRemap = false;
+            _failedShaderConfigVersion = -1;
+            _failedUsesVulkanClipDepthRemap = false;
             IsCompiled = false;
             IsCompilePending = false;
             CompileStatus = ShaderCompileStatus.Empty;

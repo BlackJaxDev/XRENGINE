@@ -3,6 +3,7 @@ using System.Reflection;
 using NUnit.Framework;
 using XREngine;
 using XREngine.Components;
+using XREngine.Components.Capture;
 using XREngine.Components.Lights;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -348,6 +349,110 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void DeactivatingTrackedParent_PreservesChildrenAndRecordsSingleUndo()
+    {
+        Undo.ClearHistory();
+
+        try
+        {
+            SceneNode parent = new("Parent");
+            SceneNode child = new(parent, "Child");
+            SceneNode grandChild = new(child, "GrandChild");
+            LifecycleTrackingComponent childComponent = child.AddComponent<LifecycleTrackingComponent>()!;
+            StubRuntimeWorldContext world = new(isPlaySessionActive: false);
+
+            SetWorld(parent, world);
+            Undo.TrackSceneNode(parent);
+            Undo.ClearHistory();
+
+            using (Undo.TrackChange("Toggle Node Active", parent))
+                parent.IsActiveSelf = false;
+
+            IReadOnlyList<Undo.UndoEntry> undoEntries = Undo.PendingUndo;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(parent.IsActiveSelf, Is.False);
+                Assert.That(child.IsDestroyed, Is.False);
+                Assert.That(grandChild.IsDestroyed, Is.False);
+                Assert.That(child.Parent, Is.SameAs(parent));
+                Assert.That(grandChild.Parent, Is.SameAs(child));
+                Assert.That(parent.Transform.Children.Single().SceneNode, Is.SameAs(child));
+                Assert.That(child.Transform.Children.Single().SceneNode, Is.SameAs(grandChild));
+                Assert.That(childComponent.DeactivationCount, Is.EqualTo(1));
+                Assert.That(undoEntries.Count, Is.EqualTo(1));
+                Assert.That(undoEntries[0].Description, Is.EqualTo("Toggle Node Active"));
+                Assert.That(undoEntries[0].Changes, Has.Count.EqualTo(1));
+                Assert.That(undoEntries[0].Changes[0].TargetDisplayName, Is.EqualTo("Parent"));
+                Assert.That(undoEntries[0].Changes[0].PropertyName, Is.EqualTo(nameof(SceneNode.IsActiveSelf)));
+            });
+
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(parent.IsActiveSelf, Is.True);
+                Assert.That(child.Parent, Is.SameAs(parent));
+                Assert.That(grandChild.Parent, Is.SameAs(child));
+                Assert.That(child.IsDestroyed, Is.False);
+                Assert.That(grandChild.IsDestroyed, Is.False);
+            });
+
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(parent.IsActiveSelf, Is.False);
+                Assert.That(child.Parent, Is.SameAs(parent));
+                Assert.That(grandChild.Parent, Is.SameAs(child));
+                Assert.That(child.IsDestroyed, Is.False);
+                Assert.That(grandChild.IsDestroyed, Is.False);
+            });
+        }
+        finally
+        {
+            Undo.ClearHistory();
+        }
+    }
+
+    [Test]
+    public void DeactivatingLightProbeGridSpawnerParent_PreservesSpawnedChildrenAndRecordsSingleUndo()
+    {
+        Undo.ClearHistory();
+
+        try
+        {
+            SceneNode parent = new("LightProbeGridParent");
+            LightProbeGridSpawnerComponent spawner = parent.AddComponent<LightProbeGridSpawnerComponent>()!;
+            SceneNode spawnedProbe = new(parent, "LightProbe[0,0,0]");
+            AddSpawnedGridNode(spawner, spawnedProbe);
+            StubRuntimeWorldContext world = new(isPlaySessionActive: false);
+
+            SetWorld(parent, world);
+            Undo.TrackSceneNode(parent);
+            Undo.ClearHistory();
+
+            using (Undo.TrackChange("Toggle Node Active", parent))
+                parent.IsActiveSelf = false;
+
+            XRObjectBase.ProcessPendingDestructions();
+            IReadOnlyList<Undo.UndoEntry> undoEntries = Undo.PendingUndo;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(parent.IsActiveSelf, Is.False);
+                Assert.That(spawnedProbe.IsDestroyed, Is.False);
+                Assert.That(spawnedProbe.Parent, Is.SameAs(parent));
+                Assert.That(parent.Transform.Children.Single().SceneNode, Is.SameAs(spawnedProbe));
+                Assert.That(undoEntries.Count, Is.EqualTo(1));
+                Assert.That(undoEntries[0].Description, Is.EqualTo("Toggle Node Active"));
+            });
+        }
+        finally
+        {
+            Undo.ClearHistory();
+        }
+    }
+
+    [Test]
     public void NonDeactivatableNode_RejectsActiveSelfFalse()
     {
         SceneNode node = new("ProtectedEditorNode")
@@ -576,6 +681,14 @@ public class SceneNodeLifecycleTests
 
     private sealed class TestDestroyUndoAsset(string name) : XRAsset(name)
     {
+    }
+
+    private static void AddSpawnedGridNode(LightProbeGridSpawnerComponent spawner, SceneNode node)
+    {
+        FieldInfo field = typeof(LightProbeGridSpawnerComponent).GetField(
+            "_spawnedNodes",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        ((List<SceneNode>)field.GetValue(spawner)!).Add(node);
     }
 
     private sealed class TrackingSceneNodeServices(
