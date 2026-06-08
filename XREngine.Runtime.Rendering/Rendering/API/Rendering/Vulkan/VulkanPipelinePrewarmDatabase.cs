@@ -13,7 +13,7 @@ internal enum VulkanPipelinePrewarmEntryKind
 
 internal sealed class VulkanPipelinePrewarmDatabase
 {
-    internal const int CurrentVersion = 1;
+    internal const int CurrentVersion = 2;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -119,7 +119,7 @@ internal sealed class VulkanPipelinePrewarmDatabase
         string effectName,
         PrimitiveTopology topology,
         bool useDynamicRendering,
-        RenderPass renderPass,
+        string renderPassSignature,
         Format colorAttachmentFormat,
         Format depthAttachmentFormat,
         ulong programPipelineHash,
@@ -140,7 +140,7 @@ internal sealed class VulkanPipelinePrewarmDatabase
             effectName,
             topology.ToString(),
             useDynamicRendering.ToString(),
-            renderPass.Handle.ToString("X"),
+            renderPassSignature,
             colorAttachmentFormat.ToString(),
             depthAttachmentFormat.ToString(),
             programPipelineHash.ToString("X16"),
@@ -165,7 +165,7 @@ internal sealed class VulkanPipelinePrewarmDatabase
             EffectName = effectName,
             Topology = topology.ToString(),
             UseDynamicRendering = useDynamicRendering,
-            RenderPassHandle = renderPass.Handle,
+            RenderPassSignature = renderPassSignature,
             ColorAttachmentFormat = colorAttachmentFormat.ToString(),
             DepthAttachmentFormat = depthAttachmentFormat.ToString(),
             ProgramPipelineHash = programPipelineHash,
@@ -231,7 +231,7 @@ internal sealed class VulkanPipelinePrewarmEntry
     public string EffectName { get; set; } = string.Empty;
     public string Topology { get; set; } = string.Empty;
     public bool UseDynamicRendering { get; set; }
-    public ulong RenderPassHandle { get; set; }
+    public string RenderPassSignature { get; set; } = string.Empty;
     public string ColorAttachmentFormat { get; set; } = string.Empty;
     public string DepthAttachmentFormat { get; set; } = string.Empty;
     public ulong ProgramPipelineHash { get; set; }
@@ -346,6 +346,9 @@ public unsafe partial class VulkanRenderer
         string materialName = string.IsNullOrWhiteSpace(material.Name) ? "UnnamedMaterial" : material.Name!;
         string effectName = ResolveMaterialEffectName(material);
         string profileName = VulkanFeatureProfile.ActiveProfile.ToString();
+        string renderPassSignature = useDynamicRendering
+            ? BuildDynamicRenderingSignature(colorAttachmentFormat, depthAttachmentFormat)
+            : GetRenderPassSemanticSignature(renderPass);
 
         VulkanPipelinePrewarmEntry entry = VulkanPipelinePrewarmDatabase.CreateGraphicsEntry(
             passIndex,
@@ -357,7 +360,7 @@ public unsafe partial class VulkanRenderer
             effectName,
             topology,
             useDynamicRendering,
-            renderPass,
+            renderPassSignature,
             colorAttachmentFormat,
             depthAttachmentFormat,
             programPipelineHash,
@@ -424,4 +427,11 @@ public unsafe partial class VulkanRenderer
             shader.Source?.Name ??
             shader.Type.ToString()));
     }
+
+    private static string BuildDynamicRenderingSignature(Format colorAttachmentFormat, Format depthAttachmentFormat)
+        => string.Join(
+            "|",
+            "RenderPass:DynamicRendering",
+            $"color={colorAttachmentFormat}",
+            $"depth={depthAttachmentFormat}");
 }

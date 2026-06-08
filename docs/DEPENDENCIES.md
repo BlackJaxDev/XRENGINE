@@ -1,6 +1,6 @@
 ﻿# Dependency Inventory
 
-Generated: 2026-05-28T14:16:25-07:00
+Generated: 2026-06-08T13:37:47-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
@@ -26,6 +26,7 @@ Notes:
 | CDT | CoACD | artem-ogre | [MPL-2.0](licenses/github/CDT-MPL-2.0.txt) | https://github.com/artem-ogre/CDT |
 | fastgltf v0.9.0 | FastGltfBridge | Sean Apeler | [MIT](licenses/nested/fastgltf v0.9.0-MIT.md) | https://github.com/spnda/fastgltf/tree/v0.9.0 |
 | simdjson v3.12.3 | FastGltfBridge | simdjson authors | [Apache-2.0](licenses/nested/simdjson v3.12.3-Apache-2.0.txt) | https://github.com/simdjson/simdjson/tree/v3.12.3 |
+| Vulkan Memory Allocator v3.3.0 | VulkanMemoryAllocatorBridge | Advanced Micro Devices, Inc. (GPUOpen) | [MIT](licenses/nested/Vulkan Memory Allocator v3.3.0-MIT.txt) | https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/tree/v3.3.0 |
 
 ## NuGet packages (direct)
 | Package | Version(s) | Owner (best-effort) | License (best-effort) | Used by |
@@ -186,6 +187,7 @@ Notes:
 | XREngine.csproj | runtimes\win-x64\native\rive.dll | Rive | [MIT](licenses/fetched/rive-MIT.txt) |  | PreserveNewest |
 | XREngine.Editor.csproj | C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll | Khronos Group (OpenXR loader), distributed via Valve/SteamVR | [Apache-2.0](https://github.com/KhronosGroup/OpenXR-SDK-Source/blob/master/LICENSE) | openxr_loader.dll | PreserveNewest |
 | XREngine.Gltf.csproj | runtimes\win-x64\native\FastGltfBridge.Native.dll | Sean Apeler (fastgltf) / simdjson authors | [MIT (fastgltf) + Apache-2.0 (simdjson)](licenses/notes/binary-item-XREngine.Gltf.csproj-FastGltfBridge.Native.dll.txt) |  | PreserveNewest |
+| XREngine.Runtime.Rendering.csproj | runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll | Advanced Micro Devices, Inc. (GPUOpen) | [MIT (Vulkan Memory Allocator)](../Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator/LICENSE.txt) |  | PreserveNewest |
 | XREngine.VRClient.csproj | openvr_api.dll | Valve (OpenVR/SteamVR) | [BSD-3-Clause](licenses/fetched/openvr_api-BSD-3-Clause.txt) |  | PreserveNewest |
 
 ## Checked-in native/managed binaries (filesystem)

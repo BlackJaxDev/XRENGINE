@@ -7,9 +7,11 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 
 using Silk.NET.Vulkan;
 
@@ -34,11 +36,9 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool EnsureProgram(XRMaterial material)
 		{
-			if (!_pipelineDirty && _program is not null)
-				return true;
-
 			var shaders = new List<XRShader>();
 			bool hasVertex = false;
+			string? generatedVertexIdentity = null;
 
 			foreach (var shader in material.Shaders)
 			{
@@ -63,37 +63,72 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				shaders.Add(new XRShader(EShaderType.Vertex, vsSource));
+				generatedVertexIdentity = XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(vsSource);
+				shaders.Add(GenerateVertexShader(vsSource));
 			}
 
-			_generatedProgram?.Destroy();
-			_generatedProgram = new XRRenderProgram(linkNow: false, separable: false, shaders);
 			string generatedProgramName = BuildGeneratedProgramName(material, shaders);
 			string generatedProgramAxes = BuildGeneratedProgramAxes(material);
-			_generatedProgram.Name = generatedProgramName;
-			_generatedProgram.UsageTag = $"VulkanCombinedMeshProgram | material={material.Name ?? "<unnamed>"} | mesh={Mesh?.Name ?? "<unnamed>"} | renderer={MeshRenderer?.Name ?? "<unnamed>"} | axes={generatedProgramAxes}";
-			_generatedProgram.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
-				material.Name,
-				MeshRenderer?.Name,
-				Data.GetType().Name,
-				"VulkanCombinedMesh",
-				Mesh?.Name,
-				BuildShaderStageList(shaders)));
-			_generatedProgram.AllowLink();
-			_program = Renderer.GenericToAPI<VkRenderProgram>(_generatedProgram);
-
-			if (_program is null)
+			string shaderStageList = BuildShaderStageList(shaders);
+			string programIdentity = BuildGeneratedProgramIdentity(material, generatedProgramAxes, shaderStageList, generatedVertexIdentity);
+			if (!_programCache.TryGetValue(programIdentity, out GeneratedProgramCacheEntry? entry))
 			{
-				Debug.VulkanWarningEvery(
-					$"Vulkan.MeshRenderer.{GetHashCode()}.ProgramWrapperNull",
-					TimeSpan.FromSeconds(2),
-					"[Vulkan] MeshRenderer '{0}' cannot render: failed to create VkRenderProgram wrapper.",
-					MeshRenderer?.Name ?? "<unnamed>");
-				return false;
+				XRRenderProgramDescriptor descriptor = XRRenderProgramDescriptor.FromShaders(
+					shaders,
+					separable: false,
+					renderSettingsVersion: RuntimeEngine.Rendering.Settings.ShaderConfigVersion,
+					generatedVertexIdentity: generatedVertexIdentity,
+					materialVariantKind: material.ActiveUberVariant.IsEmpty ? null : "MaterialVariant",
+					materialVariantHash: material.ActiveUberVariant.VariantHash,
+					vertexLayoutIdentity: Data.GetType().Name,
+					topologyKind: "VulkanCombinedMesh");
+
+				XRRenderProgram generatedProgram = new(linkNow: false, separable: false, shaders)
+				{
+					Name = generatedProgramName,
+					UsageTag = $"VulkanCombinedMeshProgram | material={material.Name ?? "<unnamed>"} | mesh={Mesh?.Name ?? "<unnamed>"} | renderer={MeshRenderer?.Name ?? "<unnamed>"} | axes={generatedProgramAxes}",
+					ProgramDescriptor = descriptor,
+				};
+				generatedProgram.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
+					material.Name,
+					MeshRenderer?.Name,
+					Data.GetType().Name,
+					"VulkanCombinedMesh",
+					Mesh?.Name,
+					shaderStageList));
+				generatedProgram.AllowLink();
+
+				VkRenderProgram? vkProgram = Renderer.GenericToAPI<VkRenderProgram>(generatedProgram);
+				if (vkProgram is null)
+				{
+					generatedProgram.Destroy();
+					Debug.VulkanWarningEvery(
+						$"Vulkan.MeshRenderer.{GetHashCode()}.ProgramWrapperNull",
+						TimeSpan.FromSeconds(2),
+						"[Vulkan] MeshRenderer '{0}' cannot render: failed to create VkRenderProgram wrapper.",
+						MeshRenderer?.Name ?? "<unnamed>");
+					return false;
+				}
+
+				entry = new GeneratedProgramCacheEntry
+				{
+					Data = generatedProgram,
+					Program = vkProgram,
+				};
+				_programCache[programIdentity] = entry;
 			}
 
+			if (!string.Equals(_activeProgramIdentity, programIdentity, StringComparison.Ordinal))
+			{
+				_activeProgramIdentity = programIdentity;
+				_pipelineDirty = true;
+				_descriptorDirty = true;
+			}
+
+			_generatedProgram = entry.Data;
+			_program = entry.Program;
 			_program.Generate();
-			bool linked = _program.Link();
+			bool linked = _program.Link(MeshRenderer?.GenerateAsync ?? false);
 			if (!linked)
 			{
 				Debug.VulkanWarningEvery(
@@ -106,6 +141,28 @@ public unsafe partial class VulkanRenderer
 
 			return linked;
 		}
+
+		private static readonly ConcurrentDictionary<string, XRShader> _generatedVertexShaderCache = new(StringComparer.Ordinal);
+
+		private static XRShader GenerateVertexShader(string source)
+			=> _generatedVertexShaderCache.GetOrAdd(source ?? string.Empty, static src => new XRShader(EShaderType.Vertex, src));
+
+		private string BuildGeneratedProgramIdentity(
+			XRMaterial material,
+			string generatedProgramAxes,
+			string shaderStageList,
+			string? generatedVertexIdentity)
+			=> string.Concat(
+				"material=",
+				RuntimeHelpers.GetHashCode(material).ToString("X8"),
+				";shaderRevision=",
+				material.ShaderStateRevision.ToString(System.Globalization.CultureInfo.InvariantCulture),
+				";axes=",
+				generatedProgramAxes,
+				";stages=",
+				shaderStageList,
+				";generatedVertex=",
+				generatedVertexIdentity ?? string.Empty);
 
 		private string BuildGeneratedProgramName(XRMaterial material, IReadOnlyList<XRShader> shaders)
 			=> $"VkCombined:{SanitizeProgramName(material.Name, "material")}:{SanitizeProgramName(Mesh?.Name, "mesh")}:{BuildGeneratedProgramAxes(material)}:{BuildShaderStageList(shaders)}";
@@ -451,15 +508,10 @@ public unsafe partial class VulkanRenderer
 
 			RefreshClipDepthPipelinePolicy();
 
-			if (_pipelineDirty)
-			{
-				DestroyPipelines();
-				_descriptorDirty = true;
-			}
-
 			if (!EnsureProgram(material))
 				return false;
 
+			bool pipelineInvalidated = _pipelineDirty;
 			PendingMeshDraw effectiveDraw = ResolveAttachmentCompatibleDrawState(draw, passIndex, passMetadata, depthStencilReadOnly);
 
 			if (useDynamicRendering && colorAttachmentFormat == Format.Undefined && draw.ColorWriteMask != 0)
@@ -518,10 +570,14 @@ public unsafe partial class VulkanRenderer
 				effectiveDraw.ColorWriteMask,
 				useNativeNegativeOneToOneDepth);
 
+			if (pipelineInvalidated && _pipelines.Count > 256)
+				DestroyPipelines();
+
 			// Check pipeline cache before creating a new pipeline object
-			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0 && !_pipelineDirty)
+			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0)
 			{
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: true);
+				_pipelineDirty = false;
 				return true;
 			}
 
@@ -646,7 +702,16 @@ public unsafe partial class VulkanRenderer
 					: new PipelineColorBlendAttachmentState[colorAttachmentCount];
 
 				for (int i = 0; i < blendAttachments.Length; i++)
-					blendAttachments[i] = colorBlendAttachment;
+				{
+					PipelineColorBlendAttachmentState attachmentBlend = colorBlendAttachment;
+					Format attachmentFormat = useDynamicRendering
+						? colorAttachmentFormat
+						: Renderer.GetRenderPassColorAttachmentFormat(renderPass, (uint)i);
+					if (!Renderer.SupportsColorAttachmentBlend(attachmentFormat))
+						attachmentBlend.BlendEnable = Vk.False;
+
+					blendAttachments[i] = attachmentBlend;
+				}
 
 				PipelineColorBlendStateCreateInfo colorBlending = new()
 				{
@@ -837,10 +902,21 @@ public unsafe partial class VulkanRenderer
 			foreach (var pipe in _pipelines.Values)
 			{
 				if (pipe.Handle != 0)
-					Api!.DestroyPipeline(Device, pipe, null);
+					Renderer.RetirePipeline(pipe);
 			}
 
 			_pipelines.Clear();
+		}
+
+		private void DestroyGeneratedPrograms()
+		{
+			foreach (GeneratedProgramCacheEntry entry in _programCache.Values)
+				entry.Data.Destroy();
+
+			_programCache.Clear();
+			_program = null;
+			_generatedProgram = null;
+			_activeProgramIdentity = null;
 		}
 
 		#endregion // Pipeline Management

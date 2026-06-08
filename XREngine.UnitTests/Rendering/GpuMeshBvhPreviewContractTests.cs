@@ -98,6 +98,13 @@ public sealed class GpuMeshBvhPreviewContractTests
         pickSource.ShouldContain("BvhRaycastRequest");
         pickSource.ShouldContain("TriangleBuffer = bvh.PackedTriangleBuffer");
         pickSource.ShouldContain("GpuMeshBvhPickCandidate");
+        pickSource.ShouldContain("DispatchLatestGpuMeshBvhPick");
+        pickSource.ShouldContain("FinishGpuMeshBvhPick(state, generation)");
+        pickSource.ShouldContain("DispatchQueued");
+        pickSource.ShouldContain("RaycastInFlight");
+        pickSource.ShouldContain("state.Candidate is { IsComplete: false } pending");
+        pickSource.ShouldNotContain("forceRebuild: mesh.HasGpuMeshBvhRefreshRequest");
+        pickSource.ShouldNotContain("QueueGpuMeshBvhInteractionRefresh");
 
         // The pick setting is a boolean toggle and the CPU triangle-test fallback was removed.
         pickSource.ShouldContain("GpuMeshBvhClickPickEnabled");
@@ -125,6 +132,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         visualSceneSource.ShouldNotContain("BvhRaycasts.SetEnabled(false, \"initial settings disabled\")");
         visualSceneSource.ShouldNotContain("BvhRaycasts.SetEnabled(false, \"disabled by settings\")");
 
+        raycastDispatcherSource.ShouldContain("public bool Enqueue(BvhRaycastRequest request)");
         raycastDispatcherSource.ShouldContain("program.Uniform(\"uRayCount\", request.RayCount);");
         raycastDispatcherSource.ShouldContain("program.Uniform(\"uRootIndex\", request.RootNodeIndex);");
         raycastDispatcherSource.ShouldContain("program.Uniform(\"uPacketWidth\", packetWidth);");

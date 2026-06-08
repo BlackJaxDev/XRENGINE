@@ -68,6 +68,24 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "Build-VulkanMemoryAllocatorBridge",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Build-VulkanMemoryAllocatorBridge.ps1",
+				"-RestoreVma"
+			],
+			"group": "build",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Generate-UnitTestingWorldSettings",
 			"type": "shell",
 			"command": "powershell",
@@ -890,6 +908,22 @@
 				"Bypass",
 				"-File",
 				"${workspaceFolder}\\Tools\\Dependencies\\Get-YtDlp.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Install-VulkanMemoryAllocator",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-VulkanMemoryAllocator.ps1"
 			],
 			"presentation": {
 				"reveal": "always"

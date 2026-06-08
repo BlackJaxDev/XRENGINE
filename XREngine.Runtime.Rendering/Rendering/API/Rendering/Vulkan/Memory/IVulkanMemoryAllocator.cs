@@ -52,6 +52,20 @@ internal unsafe interface IVulkanMemoryAllocator : IDisposable
     /// <summary>Frees a previously-made allocation.</summary>
     void Free(Vk api, Device device, VulkanMemoryAllocation allocation);
 
+    /// <summary>
+    /// Maps a previously-made allocation and returns a pointer relative to the requested allocation offset.
+    /// </summary>
+    bool TryMap(
+        Vk api,
+        Device device,
+        VulkanMemoryAllocation allocation,
+        ulong offset,
+        ulong length,
+        out void* mappedPtr);
+
+    /// <summary>Unmaps a previously mapped allocation.</summary>
+    void Unmap(Vk api, Device device, VulkanMemoryAllocation allocation);
+
     /// <summary>Reports total number of active Vulkan memory allocations (vkAllocateMemory calls).</summary>
     int ActiveVkAllocationCount { get; }
 

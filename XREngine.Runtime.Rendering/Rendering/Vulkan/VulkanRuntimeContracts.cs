@@ -3,7 +3,8 @@ namespace XREngine;
 public enum EVulkanAllocatorBackend
 {
     Legacy,
-    Suballocator,
+    Managed,
+    Vma,
 }
 
 public enum EVulkanSynchronizationBackend

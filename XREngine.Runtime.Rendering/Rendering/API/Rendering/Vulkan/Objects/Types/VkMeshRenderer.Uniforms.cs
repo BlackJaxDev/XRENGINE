@@ -50,15 +50,9 @@ public unsafe partial class VulkanRenderer
 		}
 
 		if (buffer.Handle != 0)
-		{
-			Api!.DestroyBuffer(device, buffer, null);
-			if (_bufferAllocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation alloc))
-				FreeMemoryAllocation(alloc);
-			else if (memory.Handle != 0)
-				Api!.FreeMemory(device, memory, null);
-		}
+			RetireBuffer(buffer, memory);
 		else if (memory.Handle != 0)
-			Api!.FreeMemory(device, memory, null);
+			RetireBuffer(default, memory);
 	}
 
 	private void DestroyRemainingTrackedMeshUniformBuffers()
@@ -249,9 +243,8 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool TryWriteAutoUniformBlock(AutoUniformBlockInfo block, AutoUniformBuffer buffer, XRMaterial material, in PendingMeshDraw draw)
 		{
-			ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer.Buffer);
 			void* mapped;
-			if (Api!.MapMemory(Device, buffer.Memory, memoryOffset, buffer.Size, 0, &mapped) != Result.Success)
+			if (!Renderer.TryMapBufferMemory(buffer.Buffer, buffer.Memory, 0, buffer.Size, out mapped))
 				return false;
 
 			try
@@ -269,7 +262,7 @@ public unsafe partial class VulkanRenderer
 			}
 			finally
 			{
-				Api.UnmapMemory(Device, buffer.Memory);
+				Renderer.UnmapBufferMemory(buffer.Buffer, buffer.Memory);
 			}
 
 			return true;
@@ -1236,22 +1229,20 @@ public unsafe partial class VulkanRenderer
 			uint size = (uint)Unsafe.SizeOf<T>();
 			uint copySize = Math.Min(buffer.Size, size);
 
-			ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer.Buffer);
 			void* mapped;
-			if (Api!.MapMemory(Device, buffer.Memory, memoryOffset, buffer.Size, 0, &mapped) != Result.Success)
+			if (!Renderer.TryMapBufferMemory(buffer.Buffer, buffer.Memory, 0, buffer.Size, out mapped))
 				return false;
 
 			T localValue = value;
 			Unsafe.CopyBlock(mapped, Unsafe.AsPointer(ref localValue), copySize);
-			Api.UnmapMemory(Device, buffer.Memory);
+			Renderer.UnmapBufferMemory(buffer.Buffer, buffer.Memory);
 			return true;
 		}
 
 		private bool ClearEngineUniformBuffer(EngineUniformBuffer buffer)
 		{
-			ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer.Buffer);
 			void* mapped;
-			if (Api!.MapMemory(Device, buffer.Memory, memoryOffset, buffer.Size, 0, &mapped) != Result.Success)
+			if (!Renderer.TryMapBufferMemory(buffer.Buffer, buffer.Memory, 0, buffer.Size, out mapped))
 				return false;
 
 			try
@@ -1261,7 +1252,7 @@ public unsafe partial class VulkanRenderer
 			}
 			finally
 			{
-				Api.UnmapMemory(Device, buffer.Memory);
+				Renderer.UnmapBufferMemory(buffer.Buffer, buffer.Memory);
 			}
 		}
 

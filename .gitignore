@@ -423,6 +423,7 @@ Build/TempValidation/
 Build/Dependencies/MsdfAtlasGen/
 Cache/
 XREngine.Gltf/runtimes/
+XREngine.Runtime.Rendering/runtimes/
 _verify_temp/
 XREngine.Runtime.Rendering/Rendering/GI/build/
 yt-dlp.exe

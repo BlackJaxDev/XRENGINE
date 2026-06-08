@@ -920,6 +920,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new InvalidOperationException("Command buffer planner revisions are not initialised correctly.");
 
             bool dirty = _commandBufferDirtyFlags[imageIndex];
+            bool gpuPipelineProfilingActive = RenderPipelineGpuProfiler.Instance.IsProfilingActive;
             var ops = DrainFrameOps(out ulong frameOpsSignature);
             bool hasFrameOps = ops.Length > 0;
 
@@ -936,6 +937,9 @@ namespace XREngine.Rendering.Vulkan
             if (!dirty && _commandBufferPlannerRevisions[imageIndex] != plannerRevision)
                 dirty = true;
 
+            if (!dirty && IsVulkanGpuProfilerCommandBufferStateDirty(imageIndex, gpuPipelineProfilingActive, currentFrame))
+                dirty = true;
+
             if (!dirty)
                 return;
 
@@ -943,6 +947,7 @@ namespace XREngine.Rendering.Vulkan
             _commandBufferDirtyFlags[imageIndex] = false;
             _commandBufferFrameOpSignatures[imageIndex] = frameOpsSignature;
             _commandBufferPlannerRevisions[imageIndex] = plannerRevision;
+            UpdateVulkanGpuProfilerCommandBufferState(imageIndex, gpuPipelineProfilingActive, currentFrame);
         }
 
         private void RecordCommandBuffer(uint imageIndex, FrameOp[] ops)
@@ -966,6 +971,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception("Failed to begin recording command buffer.");
 
             BeginFrameTimingQueries(commandBuffer, currentFrame);
+            BeginVulkanGpuProfilerQueries(commandBuffer, currentFrame);
 
             ResetCommandBufferBindState(commandBuffer);
 
@@ -1850,6 +1856,8 @@ namespace XREngine.Rendering.Vulkan
                             activeSchedulingIdentity = opSchedulingIdentity;
                         }
 
+                        using var vulkanGpuScope = TryBeginVulkanGpuProfilerScope(commandBuffer, op, opPassIndex);
+
                         switch (op)
                         {
                     case BlitOp blit:
@@ -2119,6 +2127,11 @@ namespace XREngine.Rendering.Vulkan
 
                 if (SupportsImGui && !skipImGui)
                 {
+                    using var imguiGpuScope = TryBeginVulkanGpuProfilerScope(
+                        commandBuffer,
+                        hasActiveContext ? activeContext : initialContext,
+                        activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
+                        "ImGui");
                     CmdBeginLabel(commandBuffer, "ImGui");
                     RenderImGui(commandBuffer, imageIndex);
                     CmdEndLabel(commandBuffer);

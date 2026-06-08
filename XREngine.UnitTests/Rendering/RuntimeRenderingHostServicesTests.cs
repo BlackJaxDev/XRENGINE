@@ -321,6 +321,10 @@ public sealed class RuntimeRenderingHostServicesTests
         public int OpenGLShaderCompilerThreadCount => RuntimeRenderingHostServiceDefaults.OpenGLShaderCompilerThreadCount;
         public bool OpenGLParallelShaderCompileProbeEnabled => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeEnabled;
         public int OpenGLParallelShaderCompileProbeTimeoutMs => RuntimeRenderingHostServiceDefaults.OpenGLParallelShaderCompileProbeTimeoutMs;
+        public EVulkanAllocatorBackend VulkanAllocatorBackend => RuntimeRenderingHostServiceDefaults.VulkanAllocatorBackend;
+        public EVulkanSynchronizationBackend VulkanSynchronizationBackend => RuntimeRenderingHostServiceDefaults.VulkanSynchronizationBackend;
+        public EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend => RuntimeRenderingHostServiceDefaults.VulkanDescriptorUpdateBackend;
+        public bool VulkanDynamicUniformBufferEnabled => RuntimeRenderingHostServiceDefaults.VulkanDynamicUniformBufferEnabled;
         public bool EnableExactTransparencyTechniques => false;
         public bool UseInterleavedMeshBuffer => false;
         public bool UseIntegerUniformsInShaders => false;

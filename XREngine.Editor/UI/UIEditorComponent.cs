@@ -59,8 +59,6 @@ public partial class UIEditorComponent : UIComponent
     protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
-        DeactivateChildSubtrees();
-        SceneNode.Transform.Clear();
     }
 
     /// <summary>

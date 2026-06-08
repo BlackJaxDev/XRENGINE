@@ -385,6 +385,8 @@ public unsafe partial class VulkanRenderer
 
         private VkRenderProgram? _program;
         private XRRenderProgram? _generatedProgram;
+        private string? _activeProgramIdentity;
+        private readonly Dictionary<string, GeneratedProgramCacheEntry> _programCache = new(StringComparer.Ordinal);
         private VertexInputBindingDescription[] _vertexBindings = [];
         private VertexInputAttributeDescription[] _vertexAttributes = [];
         private MeshGeometryLayoutSignature _geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
@@ -427,6 +429,12 @@ public unsafe partial class VulkanRenderer
         private const string PrecombinedBlendshapeNormalBufferName = "PrecombinedBlendshapeNormalDeltas";
         private const string PrecombinedBlendshapeTangentBufferName = "PrecombinedBlendshapeTangentDeltas";
 
+        private sealed class GeneratedProgramCacheEntry
+        {
+            public required XRRenderProgram Data { get; init; }
+            public required VkRenderProgram Program { get; init; }
+        }
+
         private static bool IsStencilCapableFormat(Format format)
             => format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
 
@@ -454,6 +462,7 @@ public unsafe partial class VulkanRenderer
         protected override void DeleteObjectInternal()
         {
             DestroyPipelines();
+            DestroyGeneratedPrograms();
             RemoveCachedObject(BindingId);
         }
 
@@ -483,6 +492,7 @@ public unsafe partial class VulkanRenderer
             SubscribeMeshBufferCollection(null);
 
             DestroyPipelines();
+            DestroyGeneratedPrograms();
             _bufferCache.Clear();
             _triangleIndexBuffer = null;
             _lineIndexBuffer = null;

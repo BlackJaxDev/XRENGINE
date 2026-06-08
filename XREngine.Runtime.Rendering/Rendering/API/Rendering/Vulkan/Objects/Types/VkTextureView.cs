@@ -177,25 +177,7 @@ namespace XREngine.Rendering.Vulkan
 
             protected override void DeleteObjectInternal()
             {
-                if (_depthOnlyView.Handle != 0)
-                {
-                    Api!.DestroyImageView(Device, _depthOnlyView, null);
-                    _depthOnlyView = default;
-                }
-
-                DestroySampler();
-
-                if (_view.Handle != 0)
-                {
-                    Api!.DestroyImageView(Device, _view, null);
-                    _view = default;
-                }
-
-                if (_stencilOnlyView.Handle != 0)
-                {
-                    Api!.DestroyImageView(Device, _stencilOnlyView, null);
-                    _stencilOnlyView = default;
-                }
+                RetireOwnedViewsAndSampler();
 
                 _image = default;
                 _sampler = default;
@@ -558,25 +540,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                if (_view.Handle != 0)
-                {
-                    Api!.DestroyImageView(Device, _view, null);
-                    _view = default;
-                }
-
-                if (_depthOnlyView.Handle != 0)
-                {
-                    Api!.DestroyImageView(Device, _depthOnlyView, null);
-                    _depthOnlyView = default;
-                }
-
-                if (_stencilOnlyView.Handle != 0)
-                {
-                    Api!.DestroyImageView(Device, _stencilOnlyView, null);
-                    _stencilOnlyView = default;
-                }
-
-                DestroySampler();
+                RetireOwnedViewsAndSampler();
 
                 _image = liveImage;
                 _format = source.DescriptorFormat;
@@ -615,6 +579,43 @@ namespace XREngine.Rendering.Vulkan
                 DestroySampler();
                 if (_image.Handle != 0 && _texelBufferView.Handle == 0)
                     CreateSampler();
+            }
+
+            private void RetireOwnedViewsAndSampler()
+            {
+                if (_view.Handle == 0 &&
+                    _depthOnlyView.Handle == 0 &&
+                    _stencilOnlyView.Handle == 0 &&
+                    _sampler.Handle == 0)
+                {
+                    return;
+                }
+
+                int attachmentCount = 0;
+                if (_depthOnlyView.Handle != 0)
+                    attachmentCount++;
+                if (_stencilOnlyView.Handle != 0)
+                    attachmentCount++;
+
+                ImageView[] attachmentViews = attachmentCount == 0 ? [] : new ImageView[attachmentCount];
+                int index = 0;
+                if (_depthOnlyView.Handle != 0)
+                    attachmentViews[index++] = _depthOnlyView;
+                if (_stencilOnlyView.Handle != 0)
+                    attachmentViews[index] = _stencilOnlyView;
+
+                Renderer.RetireImageResources(new RetiredImageResources(
+                    default,
+                    default,
+                    _view,
+                    attachmentViews,
+                    _sampler,
+                    0));
+
+                _view = default;
+                _depthOnlyView = default;
+                _stencilOnlyView = default;
+                _sampler = default;
             }
 
             private void CreateSampler()
@@ -663,7 +664,7 @@ namespace XREngine.Rendering.Vulkan
                 if (_sampler.Handle == 0)
                     return;
 
-                Api!.DestroySampler(Device, _sampler, null);
+                Renderer.RetireSampler(_sampler);
                 _sampler = default;
             }
 

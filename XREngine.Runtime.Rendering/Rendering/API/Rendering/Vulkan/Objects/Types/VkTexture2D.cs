@@ -115,9 +115,8 @@ public unsafe partial class VulkanRenderer
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
             // Map → memcpy → unmap.
-            ulong memoryOffset = Renderer.GetBufferAllocationOffset(stagingBuffer);
             void* mapped = null;
-            if (Api!.MapMemory(Device, stagingMemory, memoryOffset, requiredBytes, 0, &mapped) != Result.Success)
+            if (!Renderer.TryMapBufferMemory(stagingBuffer, stagingMemory, 0, requiredBytes, out mapped))
             {
                 Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
                 return false;
@@ -128,7 +127,7 @@ public unsafe partial class VulkanRenderer
                 System.Buffer.MemoryCopy(srcPtr, mapped, (long)requiredBytes, (long)requiredBytes);
             }
 
-            Api.UnmapMemory(Device, stagingMemory);
+            Renderer.UnmapBufferMemory(stagingBuffer, stagingMemory);
 
             // Transition → copy → transition.
             try

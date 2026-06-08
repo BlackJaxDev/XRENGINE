@@ -421,6 +421,56 @@ internal sealed class RenderPipelineGpuProfiler
         }
     }
 
+    public void RecordBackendGpuTimingSample(ulong frameId, string backendName, IReadOnlyList<string> path, ulong nanoseconds)
+    {
+        if (!IsProfilingRequested() ||
+            frameId == 0UL ||
+            string.IsNullOrWhiteSpace(backendName) ||
+            path.Count == 0 ||
+            nanoseconds == 0UL)
+        {
+            return;
+        }
+
+        lock (_lock)
+        {
+            _lastBackendName = backendName;
+            FrameCapture frame = GetOrCreateFrameNoLock(frameId);
+            frame.Supported = true;
+            frame.BackendName = backendName;
+            frame.StatusMessage = string.Empty;
+            frame.AddSample(path, nanoseconds);
+            if (!_latestSnapshot.Enabled)
+                _latestSnapshot = RenderStatsGpuPipelineSnapshot.Pending(GetLastBackendNameNoLock(), "Waiting for the first resolved GPU command frame.");
+        }
+    }
+
+    public void RecordBackendGpuTimingStatus(ulong frameId, string backendName, string statusMessage, int skippedSamples = 0)
+    {
+        if (!IsProfilingRequested() ||
+            string.IsNullOrWhiteSpace(backendName) ||
+            string.IsNullOrWhiteSpace(statusMessage))
+        {
+            return;
+        }
+
+        lock (_lock)
+        {
+            _lastBackendName = backendName;
+            if (frameId != 0UL)
+            {
+                FrameCapture frame = GetOrCreateFrameNoLock(frameId);
+                frame.Supported = true;
+                frame.BackendName = backendName;
+                frame.StatusMessage = statusMessage;
+                frame.SkippedSamples += Math.Max(0, skippedSamples);
+            }
+
+            if (!_latestSnapshot.Enabled || !_latestSnapshot.Ready)
+                _latestSnapshot = RenderStatsGpuPipelineSnapshot.Pending(GetLastBackendNameNoLock(), statusMessage);
+        }
+    }
+
     public void BeginFrame(ulong frameId, bool enabled)
     {
         Volatile.Write(ref _enabled, enabled ? 1 : 0);
@@ -474,8 +524,17 @@ internal sealed class RenderPipelineGpuProfiler
 
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
         {
-            lock (_lock)
-                _latestSnapshot = RenderStatsGpuPipelineSnapshot.Unsupported(GetBackendName(), "GPU render-pipeline command timing is currently available on OpenGL.");
+            string backendName = GetBackendName();
+            if (string.Equals(backendName, "Vulkan", StringComparison.Ordinal))
+                RecordBackendGpuTimingStatus(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    backendName,
+                    "Vulkan GPU timings are collected from recorded command buffers.");
+            else
+            {
+                lock (_lock)
+                    _latestSnapshot = RenderStatsGpuPipelineSnapshot.Unsupported(backendName, "GPU render-pipeline command timing is currently available on OpenGL and Vulkan.");
+            }
             return default;
         }
 
@@ -525,8 +584,17 @@ internal sealed class RenderPipelineGpuProfiler
 
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
         {
-            lock (_lock)
-                _latestSnapshot = RenderStatsGpuPipelineSnapshot.Unsupported(GetBackendName(), "GPU render-pipeline command timing is currently available on OpenGL.");
+            string backendName = GetBackendName();
+            if (string.Equals(backendName, "Vulkan", StringComparison.Ordinal))
+                RecordBackendGpuTimingStatus(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    backendName,
+                    "Vulkan GPU timings are collected from recorded command buffers.");
+            else
+            {
+                lock (_lock)
+                    _latestSnapshot = RenderStatsGpuPipelineSnapshot.Unsupported(backendName, "GPU render-pipeline command timing is currently available on OpenGL and Vulkan.");
+            }
             return false;
         }
 

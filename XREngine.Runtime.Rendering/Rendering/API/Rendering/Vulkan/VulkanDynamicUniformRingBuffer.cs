@@ -46,10 +46,9 @@ public unsafe partial class VulkanRenderer
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
             void* mapped;
-            if (renderer.Api.MapMemory(renderer.device, _memory, 0, capacity, 0, &mapped) != Result.Success)
+            if (!renderer.TryMapBufferMemory(_buffer, _memory, 0, capacity, out mapped))
             {
-                renderer.Api.DestroyBuffer(renderer.device, _buffer, null);
-                renderer.Api.FreeMemory(renderer.device, _memory, null);
+                renderer.DestroyBuffer(_buffer, _memory);
                 throw new InvalidOperationException("Failed to persistently map dynamic UBO ring buffer.");
             }
             _mappedPtr = mapped;
@@ -100,7 +99,7 @@ public unsafe partial class VulkanRenderer
 
             if (_mappedPtr != null)
             {
-                _renderer.Api!.UnmapMemory(_renderer.device, _memory);
+                _renderer.UnmapBufferMemory(_buffer, _memory);
                 _mappedPtr = null;
             }
 

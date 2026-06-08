@@ -224,7 +224,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                Api!.UnmapMemory(device, stagingMemory);
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }
@@ -336,7 +336,7 @@ namespace XREngine.Rendering.Vulkan
 
             float depth = ReadDepthValue(mappedPtr, _swapchainDepthFormat);
 
-            Api!.UnmapMemory(device, stagingMemory);
+            UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
 
             return depth;
@@ -544,15 +544,14 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     // Map and read depth value
-                    void* mappedPtr;
-                    if (api!.MapMemory(dev, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+                    if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
                     {
                         depthCallback?.Invoke(1.0f);
                         return;
                     }
 
                     float depth = ReadDepthValue(mappedPtr, depthFormat);
-                    api!.UnmapMemory(dev, stagingMemory);
+                    UnmapBufferMemory(stagingBuffer, stagingMemory);
 
                     depthCallback?.Invoke(depth);
                 }
@@ -563,7 +562,7 @@ namespace XREngine.Rendering.Vulkan
 
                     CommandBuffer cmdToFree = capturedCommandBuffer;
                     api!.FreeCommandBuffers(dev, pool, 1, ref cmdToFree);
-                    DestroyBufferStatic(api, dev, stagingBuffer, stagingMemory);
+                    DestroyBuffer(stagingBuffer, stagingMemory);
                 }
             });
 
@@ -701,7 +700,7 @@ namespace XREngine.Rendering.Vulkan
             byte[] rgba = new byte[4];
             bool converted = TryConvertColorPixelsToRgba8(mappedPtr, swapChainImageFormat, 1, rgba);
 
-            Api!.UnmapMemory(device, stagingMemory);
+            UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
 
             colorCallback?.Invoke(converted
@@ -856,7 +855,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                Api!.UnmapMemory(device, stagingMemory);
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }
@@ -954,7 +953,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                Api!.UnmapMemory(device, stagingMemory);
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }
@@ -1039,7 +1038,7 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                Api!.UnmapMemory(device, stagingMemory);
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }

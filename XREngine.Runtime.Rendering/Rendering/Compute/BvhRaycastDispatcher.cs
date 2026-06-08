@@ -38,17 +38,18 @@ public sealed class BvhRaycastDispatcher
     /// <summary>
     /// Enqueues a raycast request. Thread-safe; actual dispatch occurs on the render thread.
     /// </summary>
-    public void Enqueue(BvhRaycastRequest request)
+    public bool Enqueue(BvhRaycastRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
         if (!_enabled)
-            return;
+            return false;
 
         if (request.RayCount == 0 || request.HitBuffer is null || request.RayBuffer is null || request.NodeBuffer is null || request.TriangleBuffer is null)
-            return;
+            return false;
 
         _pendingRequests.Enqueue(request);
+        return true;
     }
 
     /// <summary>

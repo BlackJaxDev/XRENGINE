@@ -52,6 +52,61 @@ namespace XREngine.Rendering.Vulkan
         private readonly HashSet<ulong>[] _retiredDescriptorPoolHandles =
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
+        // =========== Pipeline Retirement ===========
+
+        /// <summary>
+        /// Per-frame-slot retirement queue for pipelines whose handles may still
+        /// be referenced by command buffers recorded earlier in the same frame or
+        /// by previously submitted frame slots.
+        /// </summary>
+        private readonly List<Pipeline>[] _retiredPipelines =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        private readonly HashSet<ulong>[] _retiredPipelineHandles =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        internal void RetirePipeline(Pipeline pipeline)
+        {
+            if (pipeline.Handle == 0)
+                return;
+
+            int frameSlot = currentFrame;
+
+            lock (_retiredResourceLock)
+            {
+                if (!_retiredPipelineHandles[frameSlot].Add(pipeline.Handle))
+                    return;
+
+                _retiredPipelines[frameSlot].Add(pipeline);
+            }
+        }
+
+        private void DrainRetiredPipelines()
+        {
+            int frameSlot = currentFrame;
+            Pipeline[] retired;
+
+            lock (_retiredResourceLock)
+            {
+                var list = _retiredPipelines[frameSlot];
+                if (list.Count == 0)
+                    return;
+
+                retired = [.. list];
+                list.Clear();
+                _retiredPipelineHandles[frameSlot].Clear();
+            }
+
+            if (Api is null || device.Handle == 0)
+                return;
+
+            foreach (Pipeline pipeline in retired)
+            {
+                if (pipeline.Handle != 0)
+                    Api!.DestroyPipeline(device, pipeline, null);
+            }
+        }
+
         internal void RetireDescriptorPool(DescriptorPool descriptorPool)
         {
             if (descriptorPool.Handle == 0)
@@ -304,6 +359,20 @@ namespace XREngine.Rendering.Vulkan
         internal void RetireImageResources(in RetiredImageResources resources)
             => _retiredImages[currentFrame].Add(resources);
 
+        internal void RetireSampler(Sampler sampler)
+        {
+            if (sampler.Handle == 0)
+                return;
+
+            RetireImageResources(new RetiredImageResources(
+                default,
+                default,
+                default,
+                [],
+                sampler,
+                0));
+        }
+
         /// <summary>
         /// Destroys all image resources that were retired during the last use of
         /// the current frame slot.  Called immediately after <c>WaitForFences</c>.
@@ -371,6 +440,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 currentFrame = i;
                 DrainRetiredDescriptorPools();
+                DrainRetiredPipelines();
                 DrainRetiredBuffers();
                 DrainRetiredImages();
                 DrainRetiredFramebuffers();

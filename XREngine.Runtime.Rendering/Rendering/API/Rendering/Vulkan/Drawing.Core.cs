@@ -273,6 +273,7 @@ namespace XREngine.Rendering.Vulkan
             // Now that the GPU has finished all work for this frame slot, destroy
             // resources that were retired during its previous recording.
             DrainRetiredDescriptorPools();
+            DrainRetiredPipelines();
             DrainRetiredBuffers();
             DrainRetiredImages();
             DrainRetiredFramebuffers();

@@ -38,6 +38,9 @@ public unsafe partial class VulkanRenderer
         AttachmentReference[] colorRefs = colorCount > 0
             ? new AttachmentReference[colorCount]
             : Array.Empty<AttachmentReference>();
+        Format[] colorFormats = colorCount > 0
+            ? new Format[colorCount]
+            : Array.Empty<Format>();
 
         AttachmentReference depthRef = default;
         bool depthAssigned = false;
@@ -48,6 +51,7 @@ public unsafe partial class VulkanRenderer
             FrameBufferAttachmentSignature attachment = signature[i];
             if (attachment.Role == AttachmentRole.Color)
             {
+                colorFormats[colorIndex] = attachment.Format;
                 colorRefs[colorIndex++] = attachment.ToAttachmentReference((uint)i);
             }
             else if (!depthAssigned)
@@ -83,10 +87,41 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateRenderPass(device, ref createInfo, null, out RenderPass renderPass) != Result.Success)
                 throw new Exception("Failed to create framebuffer render pass.");
 
-            RegisterRenderPassColorAttachmentCount(renderPass, (uint)colorRefs.Length);
+            RegisterRenderPassColorAttachmentFormats(
+                renderPass,
+                colorFormats,
+                BuildFrameBufferRenderPassSignature(signature));
 
             return renderPass;
         }
+    }
+
+    private static string BuildFrameBufferRenderPassSignature(FrameBufferAttachmentSignature[] signature)
+    {
+        if (signature.Length == 0)
+            return "RenderPass:FrameBuffer:<empty>";
+
+        string[] attachments = new string[signature.Length];
+        for (int i = 0; i < signature.Length; i++)
+        {
+            FrameBufferAttachmentSignature attachment = signature[i];
+            attachments[i] = string.Join(
+                ",",
+                attachment.Role,
+                $"fmt={attachment.Format}",
+                $"samples={attachment.Samples}",
+                $"aspect={attachment.AspectMask}",
+                $"color={attachment.ColorIndex}",
+                $"load={attachment.LoadOp}",
+                $"store={attachment.StoreOp}",
+                $"stencilLoad={attachment.StencilLoadOp}",
+                $"stencilStore={attachment.StencilStoreOp}",
+                $"initial={attachment.InitialLayout}",
+                $"final={attachment.FinalLayout}",
+                $"ref={attachment.ReferenceLayout}");
+        }
+
+        return $"RenderPass:FrameBuffer:{string.Join("|", attachments)}";
     }
 
     private void DestroyFrameBufferRenderPasses()

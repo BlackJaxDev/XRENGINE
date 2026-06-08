@@ -12,12 +12,16 @@ internal readonly record struct VulkanMemoryAllocation(
     ulong Size,
     uint MemoryTypeIndex,
     MemoryPropertyFlags Properties,
-    int BlockId)
+    int BlockId,
+    nint NativeAllocation = 0)
 {
     /// <summary>A sentinel allocation representing a failed or empty allocation.</summary>
     public static VulkanMemoryAllocation Null => default;
 
     public bool IsNull => Memory.Handle == 0;
+
+    /// <summary>Whether this allocation is owned by a native allocator handle such as VMA.</summary>
+    public bool IsNativeBacked => NativeAllocation != 0;
 
     /// <summary>Whether this allocation is host-visible and can be mapped.</summary>
     public bool IsHostVisible => Properties.HasFlag(MemoryPropertyFlags.HostVisibleBit);

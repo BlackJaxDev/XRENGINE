@@ -16,11 +16,16 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private const uint PlaceholderTextureLayerCount = 6;
+    private const ImageCreateFlags PlaceholderCubeCompatibleFlag = (ImageCreateFlags)0x10;
+
     // ── Fields ───────────────────────────────────────────────────────────
     private Image _placeholderImage;
     private DeviceMemory _placeholderImageMemory;
     private ImageView _placeholderImageView;
     private ImageView _placeholderImageView2DArray;
+    private ImageView _placeholderImageViewCube;
+    private ImageView _placeholderImageViewCubeArray;
     private Sampler _placeholderSampler;
     private bool _placeholderTextureReady;
 
@@ -48,6 +53,12 @@ public unsafe partial class VulkanRenderer
         };
     }
 
+    internal Sampler GetPlaceholderSampler()
+    {
+        EnsurePlaceholderTexture();
+        return _placeholderSampler;
+    }
+
     /// <summary>Whether the placeholder texture has been successfully created.</summary>
     internal bool PlaceholderTextureReady => _placeholderTextureReady;
 
@@ -61,15 +72,17 @@ public unsafe partial class VulkanRenderer
         const uint width = 1;
         const uint height = 1;
         const ulong pixelSize = 4; // RGBA8
+        const ulong uploadSize = pixelSize * PlaceholderTextureLayerCount;
 
         // ── Image ────────────────────────────────────────────────────────
         ImageCreateInfo imageInfo = new()
         {
             SType = StructureType.ImageCreateInfo,
+            Flags = PlaceholderCubeCompatibleFlag,
             ImageType = ImageType.Type2D,
             Extent = new Extent3D(width, height, 1),
             MipLevels = 1,
-            ArrayLayers = 1,
+            ArrayLayers = PlaceholderTextureLayerCount,
             Format = Format.R8G8B8A8Unorm,
             Tiling = ImageTiling.Optimal,
             InitialLayout = ImageLayout.Undefined,
@@ -99,20 +112,24 @@ public unsafe partial class VulkanRenderer
         }
 
         // ── Upload magenta pixel via staging buffer ──────────────────────
-        byte* pixel = stackalloc byte[4];
-        pixel[0] = 255; // R
-        pixel[1] = 0;   // G
-        pixel[2] = 255; // B
-        pixel[3] = 255; // A
+        byte* pixel = stackalloc byte[(int)uploadSize];
+        for (uint layer = 0; layer < PlaceholderTextureLayerCount; layer++)
+        {
+            int offset = (int)(layer * pixelSize);
+            pixel[offset] = 255;     // R
+            pixel[offset + 1] = 0;   // G
+            pixel[offset + 2] = 255; // B
+            pixel[offset + 3] = 255; // A
+        }
 
         (Buffer staging, DeviceMemory stagingMem) = CreateBufferRaw(
-            pixelSize,
+            uploadSize,
             BufferUsageFlags.TransferSrcBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
         try
         {
-            UploadBufferMemory(staging, stagingMem, pixelSize, pixel);
+            UploadBufferMemory(staging, stagingMem, uploadSize, pixel);
 
             using (var scope = NewCommandScope())
             {
@@ -130,7 +147,7 @@ public unsafe partial class VulkanRenderer
                         AspectMask = ImageAspectFlags.ColorBit,
                         MipLevel = 0,
                         BaseArrayLayer = 0,
-                        LayerCount = 1,
+                        LayerCount = PlaceholderTextureLayerCount,
                     },
                     ImageOffset = default,
                     ImageExtent = new Extent3D(width, height, 1),
@@ -209,19 +226,41 @@ public unsafe partial class VulkanRenderer
         if (!_placeholderTextureReady)
             return default;
 
-        if (expectedViewType != ImageViewType.Type2DArray)
-            return _placeholderImageView;
+        return expectedViewType switch
+        {
+            null or ImageViewType.Type2D => _placeholderImageView,
+            ImageViewType.Type2DArray => GetOrCreatePlaceholderImageView(ImageViewType.Type2DArray, ref _placeholderImageView2DArray),
+            ImageViewType.TypeCube => GetOrCreatePlaceholderImageView(ImageViewType.TypeCube, ref _placeholderImageViewCube),
+            ImageViewType.TypeCubeArray => GetOrCreatePlaceholderImageView(ImageViewType.TypeCubeArray, ref _placeholderImageViewCubeArray),
+            _ => default,
+        };
+    }
 
-        if (_placeholderImageView2DArray.Handle != 0)
-            return _placeholderImageView2DArray;
+    private ImageView GetOrCreatePlaceholderImageView(ImageViewType viewType, ref ImageView cachedView)
+    {
+        if (cachedView.Handle != 0)
+            return cachedView;
 
-        return TryCreatePlaceholderImageView(ImageViewType.Type2DArray, out _placeholderImageView2DArray)
-            ? _placeholderImageView2DArray
+        return TryCreatePlaceholderImageView(viewType, out cachedView)
+            ? cachedView
             : default;
     }
 
     private bool TryCreatePlaceholderImageView(ImageViewType viewType, out ImageView imageView)
     {
+        uint layerCount = viewType switch
+        {
+            ImageViewType.Type2D => 1,
+            ImageViewType.Type2DArray or ImageViewType.TypeCube or ImageViewType.TypeCubeArray => PlaceholderTextureLayerCount,
+            _ => 0,
+        };
+
+        if (layerCount == 0)
+        {
+            imageView = default;
+            return false;
+        }
+
         ImageViewCreateInfo viewInfo = new()
         {
             SType = StructureType.ImageViewCreateInfo,
@@ -234,7 +273,7 @@ public unsafe partial class VulkanRenderer
                 BaseMipLevel = 0,
                 LevelCount = 1,
                 BaseArrayLayer = 0,
-                LayerCount = 1,
+                LayerCount = layerCount,
             },
         };
 
@@ -262,7 +301,7 @@ public unsafe partial class VulkanRenderer
                 BaseMipLevel = 0,
                 LevelCount = 1,
                 BaseArrayLayer = 0,
-                LayerCount = 1,
+                LayerCount = PlaceholderTextureLayerCount,
             },
         };
 
@@ -320,6 +359,18 @@ public unsafe partial class VulkanRenderer
         {
             Api!.DestroyImageView(device, _placeholderImageView2DArray, null);
             _placeholderImageView2DArray = default;
+        }
+
+        if (_placeholderImageViewCube.Handle != 0)
+        {
+            Api!.DestroyImageView(device, _placeholderImageViewCube, null);
+            _placeholderImageViewCube = default;
+        }
+
+        if (_placeholderImageViewCubeArray.Handle != 0)
+        {
+            Api!.DestroyImageView(device, _placeholderImageViewCubeArray, null);
+            _placeholderImageViewCubeArray = default;
         }
 
         if (_placeholderImage.Handle != 0)

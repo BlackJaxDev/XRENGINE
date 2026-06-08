@@ -25,6 +25,8 @@ If you want the fastest way in: build the editor, launch the Unit Testing World,
 - .NET 10 SDK
 - Windows 10/11 with an OpenGL 4.6 capable GPU
 - Git (submodules are used for third-party deps)
+- LunarG Vulkan SDK with `VULKAN_SDK` set, used to build the VMA native bridge
+- Visual Studio 2022 or Build Tools with Desktop development with C++, used for native bridge builds
 - Optional: SteamVR or an OpenXR headset for XR testing
 
 ## Quick start

@@ -30,6 +30,7 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
     /// buffer and image allocations for bufferImageGranularity compliance.
     /// </summary>
     private readonly Dictionary<(uint memTypeIndex, bool isImage), List<MemoryBlock>> _pools = new();
+    private readonly Dictionary<ulong, MappedMemoryBlock> _mappedBlocks = new();
     private readonly object _lock = new();
 
     private int _activeVkAllocationCount;
@@ -260,6 +261,59 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
         }
     }
 
+    public bool TryMap(
+        Vk api,
+        Device device,
+        VulkanMemoryAllocation allocation,
+        ulong offset,
+        ulong length,
+        out void* mappedPtr)
+    {
+        _ = length;
+        mappedPtr = null;
+        if (allocation.IsNull)
+            return false;
+
+        lock (_lock)
+        {
+            ulong memoryHandle = allocation.Memory.Handle;
+            if (!_mappedBlocks.TryGetValue(memoryHandle, out MappedMemoryBlock? mappedBlock))
+            {
+                void* basePtr = null;
+                Result result = api.MapMemory(device, allocation.Memory, 0, Vk.WholeSize, 0, &basePtr);
+                if (result != Result.Success)
+                    return false;
+
+                mappedBlock = new MappedMemoryBlock(basePtr);
+                _mappedBlocks[memoryHandle] = mappedBlock;
+            }
+
+            mappedBlock.RefCount++;
+            mappedPtr = (byte*)mappedBlock.BasePtr + allocation.Offset + offset;
+            return true;
+        }
+    }
+
+    public void Unmap(Vk api, Device device, VulkanMemoryAllocation allocation)
+    {
+        if (allocation.IsNull)
+            return;
+
+        lock (_lock)
+        {
+            ulong memoryHandle = allocation.Memory.Handle;
+            if (!_mappedBlocks.TryGetValue(memoryHandle, out MappedMemoryBlock? mappedBlock))
+                return;
+
+            mappedBlock.RefCount--;
+            if (mappedBlock.RefCount > 0)
+                return;
+
+            _mappedBlocks.Remove(memoryHandle);
+            api.UnmapMemory(device, allocation.Memory);
+        }
+    }
+
     public void Dispose()
     {
         // Blocks are freed during renderer teardown which calls DestroyAllBlocks.
@@ -279,9 +333,16 @@ internal sealed unsafe class VulkanBlockAllocator : IVulkanMemoryAllocator
                 kvp.Value.Clear();
             }
             _pools.Clear();
+            _mappedBlocks.Clear();
             _activeVkAllocationCount = 0;
             _totalAllocatedBytes = 0;
         }
+    }
+
+    private sealed unsafe class MappedMemoryBlock(void* basePtr)
+    {
+        public readonly void* BasePtr = basePtr;
+        public int RefCount;
     }
 
     /// <summary>

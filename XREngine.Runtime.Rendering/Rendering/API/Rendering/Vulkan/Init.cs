@@ -64,8 +64,18 @@ namespace XREngine.Rendering.Vulkan
             EVulkanAllocatorBackend backend = RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
             _memoryAllocator = backend switch
             {
-                EVulkanAllocatorBackend.Suballocator => new VulkanBlockAllocator(this),
-                _ => new VulkanLegacyAllocator(this),
+                EVulkanAllocatorBackend.Legacy => new VulkanLegacyAllocator(this),
+                EVulkanAllocatorBackend.Managed => new VulkanBlockAllocator(this),
+                EVulkanAllocatorBackend.Vma => new VulkanVmaAllocator(
+                    instance,
+                    _physicalDevice,
+                    device,
+                    Vk.Version13,
+                    SupportsBufferDeviceAddress),
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(backend),
+                    backend,
+                    "Unknown Vulkan allocator backend.")
             };
             Debug.Vulkan($"[Vulkan] Memory allocator initialized: {backend} (lazyAlloc={SupportsLazyAllocation})");
         }
@@ -100,9 +110,9 @@ namespace XREngine.Rendering.Vulkan
             _stagingManager.Destroy(this);
             DestroyDynamicUniformRingBuffers();
 
-            // Teardown paths above may create or retain late-bound GPU buffers.
+            // Teardown paths above may create or retain late-bound GPU resources.
             // Sweep wrappers and deferred queues before disposing the allocator so
-            // buffer destruction can still free through the correct allocation path.
+            // final destruction can still free through the correct allocation path.
             DestroyDanglingMaterialWrappers();
             DestroyDanglingMeshRendererWrappers();
             DestroyDanglingRenderProgramPipelineWrappers();
@@ -111,6 +121,7 @@ namespace XREngine.Rendering.Vulkan
             DestroyRemainingTrackedMeshUniformBuffers();
             ForceFlushAllRetiredResources();
             DestroyRemainingTrackedBufferAllocations();
+            DestroyRemainingTrackedImageAllocations();
 
             if (_memoryAllocator is VulkanBlockAllocator blockAllocator)
                 blockAllocator.DestroyAllBlocks(Api!, device);
@@ -232,6 +243,21 @@ namespace XREngine.Rendering.Vulkan
 
                 if (allocation.Memory.Handle != 0)
                     Api!.FreeMemory(device, allocation.Memory, null);
+            }
+        }
+
+        private void DestroyRemainingTrackedImageAllocations()
+        {
+            foreach (var pair in _imageAllocations.ToArray())
+            {
+                if (!_imageAllocations.TryRemove(pair.Key, out VulkanMemoryAllocation allocation))
+                    continue;
+
+                Image image = new() { Handle = pair.Key };
+                if (image.Handle != 0)
+                    Api!.DestroyImage(device, image, null);
+
+                FreeMemoryAllocation(allocation);
             }
         }
 

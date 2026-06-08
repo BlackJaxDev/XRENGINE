@@ -25,10 +25,10 @@ public unsafe partial class VulkanRenderer
     private void CreateRenderPass()
     {
         _renderPass = CreateSwapchainRenderPass(AttachmentLoadOp.Clear);
-        RegisterRenderPassColorAttachmentCount(_renderPass, 1u);
+        RegisterRenderPassColorAttachmentFormats(_renderPass, [swapChainImageFormat], BuildSwapchainRenderPassSignature(AttachmentLoadOp.Clear));
 
         _renderPassLoad = CreateSwapchainRenderPass(AttachmentLoadOp.Load);
-        RegisterRenderPassColorAttachmentCount(_renderPassLoad, 1u);
+        RegisterRenderPassColorAttachmentFormats(_renderPassLoad, [swapChainImageFormat], BuildSwapchainRenderPassSignature(AttachmentLoadOp.Load));
     }
 
     private RenderPass CreateSwapchainRenderPass(AttachmentLoadOp colorLoadOp)
@@ -111,4 +111,17 @@ public unsafe partial class VulkanRenderer
         // This prevents stale contents / partial clears when the engine only clears viewport regions.
         return (AttachmentLoadOp.Clear, AttachmentStoreOp.Store);
     }
+
+    private string BuildSwapchainRenderPassSignature(AttachmentLoadOp colorLoadOp)
+        => string.Join(
+            "|",
+            "RenderPass:Swapchain",
+            $"color={swapChainImageFormat}",
+            $"depth={_swapchainDepthFormat}",
+            "samples=Count1Bit",
+            $"colorLoad={colorLoadOp}",
+            "colorStore=Store",
+            "depthLoad=Clear",
+            "depthStore=DontCare",
+            "final=PresentSrcKhr");
 }

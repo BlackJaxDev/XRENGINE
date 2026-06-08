@@ -633,18 +633,15 @@ public unsafe partial class VulkanRenderer
             if (Data.RequiresStorageUsage)
                 Usage |= ImageUsageFlags.StorageBit;
             bool isAttachmentTexture = Data.FrameBufferAttachment.HasValue;
-            if (isAttachmentTexture)
+            if (VkFormatConversions.IsDepthStencilFormat(ResolvedFormat))
             {
-                if (VkFormatConversions.IsDepthStencilFormat(ResolvedFormat))
-                {
-                    Usage &= ~ImageUsageFlags.ColorAttachmentBit;
-                    Usage |= ImageUsageFlags.DepthStencilAttachmentBit;
-                }
-                else
-                {
-                    Usage &= ~ImageUsageFlags.DepthStencilAttachmentBit;
-                    Usage |= ImageUsageFlags.ColorAttachmentBit;
-                }
+                Usage &= ~ImageUsageFlags.ColorAttachmentBit;
+                Usage |= ImageUsageFlags.DepthStencilAttachmentBit;
+            }
+            else if (isAttachmentTexture)
+            {
+                Usage &= ~ImageUsageFlags.DepthStencilAttachmentBit;
+                Usage |= ImageUsageFlags.ColorAttachmentBit;
             }
             CreateDedicatedImage();
             _physicalGroup = null;
@@ -1031,7 +1028,7 @@ public unsafe partial class VulkanRenderer
         {
             if (_sampler.Handle != 0)
             {
-                Api!.DestroySampler(Device, _sampler, null);
+                Renderer.RetireSampler(_sampler);
                 _sampler = default;
             }
         }
@@ -2152,9 +2149,8 @@ public unsafe partial class VulkanRenderer
                 preferIndirectCopy);
 
             // Map the staging buffer memory.
-            ulong memoryOffset = Renderer.GetBufferAllocationOffset(buffer);
             void* mappedPtr = null;
-            if (Api!.MapMemory(Device, memory, memoryOffset, (ulong)length, 0, &mappedPtr) != Result.Success)
+            if (!Renderer.TryMapBufferMemory(buffer, memory, 0, (ulong)length, out mappedPtr))
             {
                 Renderer.DestroyBuffer(buffer, memory);
                 buffer = default;
@@ -2170,14 +2166,14 @@ public unsafe partial class VulkanRenderer
             }
             catch
             {
-                Api.UnmapMemory(Device, memory);
+                Renderer.UnmapBufferMemory(buffer, memory);
                 Renderer.DestroyBuffer(buffer, memory);
                 buffer = default;
                 memory = default;
                 return false;
             }
 
-            Api.UnmapMemory(Device, memory);
+            Renderer.UnmapBufferMemory(buffer, memory);
             return true;
         }
 

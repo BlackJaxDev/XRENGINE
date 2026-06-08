@@ -494,6 +494,12 @@ internal sealed class VulkanResourceAllocator
             usage |= ImageUsageFlags.SampledBit;
         }
 
+        if (IsDepthStencilFormat(resolvedFormat))
+        {
+            usage &= ~ImageUsageFlags.ColorAttachmentBit;
+            usage |= ImageUsageFlags.DepthStencilAttachmentBit;
+        }
+
         return usage;
     }
 
