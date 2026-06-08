@@ -329,9 +329,11 @@ public unsafe partial class VulkanRenderer
 
     #endregion
 
-    public partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(api, data)
+    public partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(api, data), IRenderPreparationState
     {
         private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
+        private XRMesh.BufferCollection? _subscribedRendererBuffers;
+        private XRMesh.BufferCollection? _subscribedMeshBuffers;
         private XRDataBuffer? _cachedSkinnedPositionsBuffer;
         private XRDataBuffer? _cachedSkinnedNormalsBuffer;
         private XRDataBuffer? _cachedSkinnedTangentsBuffer;
@@ -356,6 +358,10 @@ public unsafe partial class VulkanRenderer
             Format DepthAttachmentFormat,
             ulong ProgramPipelineHash,
             ulong VertexLayoutHash,
+            ulong DescriptorLayoutHash,
+            ulong MaterialLayoutHash,
+            ulong PassMetadataHash,
+            ulong FeatureProfileHash,
             SampleCountFlags RasterizationSamples,
             bool DepthTestEnabled,
             bool DepthWriteEnabled,
@@ -381,9 +387,15 @@ public unsafe partial class VulkanRenderer
         private XRRenderProgram? _generatedProgram;
         private VertexInputBindingDescription[] _vertexBindings = [];
         private VertexInputAttributeDescription[] _vertexAttributes = [];
+        private MeshGeometryLayoutSignature _geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
         private readonly Dictionary<uint, VkDataBuffer> _vertexBuffersByBinding = new();
+        private readonly Silk.NET.Vulkan.Buffer[] _singleVertexBindingBuffer = new Silk.NET.Vulkan.Buffer[1];
+        private readonly ulong[] _singleVertexBindingOffset = [0UL];
         private bool _buffersDirty = true;
         private bool _pipelineDirty = true;
+        private XRMaterial? _lastPreparedMaterial;
+        private string _lastPrepareResult = "NeverCalled";
+        private string _lastPrepareDetail = string.Empty;
         private int _pipelineShaderConfigVersion = -1;
         private bool _pipelineUsesShaderClipDepthRemap;
         private bool _pipelineUsesNativeDepthClipControl;
@@ -449,16 +461,12 @@ public unsafe partial class VulkanRenderer
         {
             Data.RenderRequested += OnRenderRequested;
             MeshRenderer.PropertyChanged += OnMeshRendererPropertyChanged;
+            MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;
+            SubscribeRendererBuffers(MeshRenderer.Buffers);
 
             if (Mesh is not null)
                 Mesh.DataChanged += OnMeshChanged;
-
-            // Subscribe to buffer collection changes so SSBOs added after
-            // construction (e.g. InstancedDebugVisualizer.LinesBuffer) are picked up.
-            if (MeshRenderer.Buffers is not null)
-                MeshRenderer.Buffers.Changed += OnBuffersChanged;
-            if (Mesh?.Buffers is not null)
-                Mesh.Buffers.Changed += OnMeshBuffersChanged;
+            SubscribeMeshBufferCollection(Mesh?.Buffers);
 
             CollectBuffers();
         }
@@ -467,14 +475,12 @@ public unsafe partial class VulkanRenderer
         {
             Data.RenderRequested -= OnRenderRequested;
             MeshRenderer.PropertyChanged -= OnMeshRendererPropertyChanged;
+            MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;
+            SubscribeRendererBuffers(null);
 
             if (Mesh is not null)
                 Mesh.DataChanged -= OnMeshChanged;
-
-            if (MeshRenderer.Buffers is not null)
-                MeshRenderer.Buffers.Changed -= OnBuffersChanged;
-            if (Mesh?.Buffers is not null)
-                Mesh.Buffers.Changed -= OnMeshBuffersChanged;
+            SubscribeMeshBufferCollection(null);
 
             DestroyPipelines();
             _bufferCache.Clear();
@@ -483,45 +489,86 @@ public unsafe partial class VulkanRenderer
             _pointIndexBuffer = null;
         }
 
-        private void OnBuffersChanged() => CollectBuffers();
-        private void OnMeshBuffersChanged() => CollectBuffers();
+        private void OnBuffersChanged() => InvalidateGeometryLayout("RendererBuffersChanged", collectBuffers: true);
+        private void OnMeshBuffersChanged() => InvalidateGeometryLayout("MeshBuffersChanged", collectBuffers: true);
 
         private void OnMeshRendererPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             switch (e.PropertyName)
             {
                 case nameof(XRMeshRenderer.Mesh):
-                    if (Mesh is not null)
-                    {
-                        Mesh.DataChanged -= OnMeshChanged;
-                        if (Mesh.Buffers is not null)
-                            Mesh.Buffers.Changed -= OnMeshBuffersChanged;
-                    }
-
                     if (MeshRenderer.Mesh is not null)
-                    {
                         MeshRenderer.Mesh.DataChanged += OnMeshChanged;
-                        if (MeshRenderer.Mesh.Buffers is not null)
-                            MeshRenderer.Mesh.Buffers.Changed += OnMeshBuffersChanged;
-                    }
 
-                    _pipelineDirty = true;
-                    _buffersDirty = true;
-                    _descriptorDirty = true;
-                    CollectBuffers();
+                    SubscribeMeshBufferCollection(MeshRenderer.Mesh?.Buffers);
+                    InvalidateGeometryLayout("MeshChanged", collectBuffers: true);
                     break;
                 case nameof(XRMeshRenderer.Material):
                     _pipelineDirty = true;
                     _descriptorDirty = true;
+                    _lastPreparedMaterial = null;
                     break;
             }
         }
 
+        private void OnMeshRendererPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
+        {
+            if (e.PropertyName == nameof(XRMeshRenderer.Mesh) && e.CurrentValue is XRMesh currentMesh)
+            {
+                currentMesh.DataChanged -= OnMeshChanged;
+                if (ReferenceEquals(_subscribedMeshBuffers, currentMesh.Buffers))
+                    SubscribeMeshBufferCollection(null);
+            }
+        }
+
         private void OnMeshChanged(XRMesh? mesh)
+            => InvalidateGeometryLayout("MeshDataChanged", collectBuffers: true);
+
+        private void SubscribeRendererBuffers(XRMesh.BufferCollection? buffers)
+        {
+            if (ReferenceEquals(_subscribedRendererBuffers, buffers))
+                return;
+
+            if (_subscribedRendererBuffers is not null)
+                _subscribedRendererBuffers.Changed -= OnBuffersChanged;
+
+            _subscribedRendererBuffers = buffers;
+
+            if (_subscribedRendererBuffers is not null)
+                _subscribedRendererBuffers.Changed += OnBuffersChanged;
+        }
+
+        private void SubscribeMeshBufferCollection(XRMesh.BufferCollection? buffers)
+        {
+            if (ReferenceEquals(_subscribedMeshBuffers, buffers))
+                return;
+
+            if (_subscribedMeshBuffers is not null)
+                _subscribedMeshBuffers.Changed -= OnMeshBuffersChanged;
+
+            _subscribedMeshBuffers = buffers;
+
+            if (_subscribedMeshBuffers is not null)
+                _subscribedMeshBuffers.Changed += OnMeshBuffersChanged;
+        }
+
+        private void InvalidateGeometryLayout(string reason, bool collectBuffers)
         {
             _pipelineDirty = true;
             _buffersDirty = true;
             _descriptorDirty = true;
+            _lastPreparedMaterial = null;
+            _triangleIndexBuffer = null;
+            _lineIndexBuffer = null;
+            _pointIndexBuffer = null;
+            _geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
+            _lastPrepareResult = reason;
+            _lastPrepareDetail = "Geometry layout changed.";
+
+            if (collectBuffers)
+                CollectBuffers();
+            else
+                Renderer.MarkCommandBuffersDirty();
         }
 
         private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode)
@@ -542,7 +589,22 @@ public unsafe partial class VulkanRenderer
             // Resolve the effective material and its render options so the
             // pipeline key captures per-material state (CullMode, DepthTest, etc.)
             // instead of inheriting stale values from the global state tracker.
-            XRMaterial effectiveMaterial = ResolveMaterial(materialOverride);
+            XRMaterial effectiveMaterial = ResolveMaterial(materialOverride, instances);
+            uint drawInstances = MeshRenderMaterialResolver.ResolveLayeredShadowInstanceCount(effectiveMaterial, instances);
+            if (!TryPrepareForRendering(effectiveMaterial, out string prepareReason))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.MeshRenderer.PrepareSkip.{MeshRenderer.Name ?? "UnnamedRenderer"}.{prepareReason}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping mesh draw enqueue for renderer='{0}' mesh='{1}' material='{2}' because render preparation is not ready: {3}. {4}",
+                    MeshRenderer.Name ?? "<unnamed renderer>",
+                    Mesh?.Name ?? "<unnamed mesh>",
+                    effectiveMaterial.Name ?? "<unnamed material>",
+                    prepareReason,
+                    LastPrepareDetail);
+                return;
+            }
+
             RenderingParameters? matOpts = renderOptionsOverride ?? effectiveMaterial.RenderOptions;
 
             // ── CullMode ──
@@ -703,7 +765,7 @@ public unsafe partial class VulkanRenderer
                 modelMatrix,
                 prevModelMatrix,
                 effectiveMaterial,
-                instances,
+                drawInstances,
                 billboardMode,
                 snapshotCamera,
                 snapshotRightEyeCamera,

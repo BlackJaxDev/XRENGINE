@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Numerics;
@@ -2088,6 +2089,51 @@ internal static class VulkanShaderCompiler
             ShadercApi.CompileOptionsRelease(options);
             ShadercApi.CompilerRelease(compiler);
         }
+    }
+
+    public static string BuildArtifactIdentity(
+        XRShader shader,
+        int shaderConfigVersion,
+        bool useVulkanClipDepthRemap,
+        string? rewrittenSource)
+    {
+        StringBuilder builder = new(512);
+        builder.AppendLine("Backend=Vulkan");
+        builder.AppendLine("XRENGINE_VULKAN=1");
+        builder.Append("ShaderType=").Append(shader.Type).Append('\n');
+        builder.Append("ShaderName=").Append(shader.Name ?? "UnnamedShader").Append('\n');
+        builder.Append("SourcePath=").Append(shader.Source?.FilePath ?? shader.FilePath ?? string.Empty).Append('\n');
+        builder.Append("IsGeneratedUberVariant=").Append(shader.IsGeneratedUberVariant).Append('\n');
+        builder.Append("GeneratedUberVariantHash=").Append(shader.GeneratedUberVariantHash).Append('\n');
+        builder.Append("ShaderConfigVersion=").Append(shaderConfigVersion.ToString(CultureInfo.InvariantCulture)).Append('\n');
+        builder.Append("useVulkanClipDepthRemap=").Append(useVulkanClipDepthRemap ? '1' : '0').Append('\n');
+        builder.Append("Optimizer=").Append(ResolvedShaderSourceOptimizer.BuildIdentitySegment()).Append('\n');
+        builder.AppendLine("Rewrite=VulkanShaderAutoUniforms+InjectVulkanBackendDefine:v1");
+
+        if (shader.TryGetResolvedShaderSource(out ResolvedShaderSource resolved, annotateIncludes: false, logFailures: false))
+        {
+            builder.Append("ResolvedSourceIdentity=").Append(resolved.SourceIdentity).Append('\n');
+            builder.Append("Defines=").AppendJoin('|', resolved.MacroSummary.Defines).Append('\n');
+            builder.Append("Undefines=").AppendJoin('|', resolved.MacroSummary.Undefines).Append('\n');
+            builder.Append("Pragmas=").AppendJoin('|', resolved.MacroSummary.Pragmas).Append('\n');
+            foreach (ShaderSourceFileDependency dependency in resolved.FileDependencies.OrderBy(static x => x.Path, StringComparer.OrdinalIgnoreCase))
+            {
+                builder.Append("Dependency=")
+                    .Append(dependency.Path)
+                    .Append('|')
+                    .Append(dependency.LastWriteTimeUtcTicks)
+                    .Append('|')
+                    .Append(dependency.Length)
+                    .Append('\n');
+            }
+        }
+
+        string source = rewrittenSource ?? shader.Source?.Text ?? string.Empty;
+        builder.Append("RewrittenSourceHash=")
+            .Append(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))))
+            .Append('\n');
+
+        return "VKSHD-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())), 0, 12);
     }
 
     private static byte[] GetNullTerminatedUtf8(string value)

@@ -45,6 +45,91 @@ Vulkan has a better native model. The contract is engine-visible parity.
       upload paths.
 - [ ] Update this folder as parity gaps close; do not leave stale TODOs behind.
 
+## Shared Readiness Vocabulary
+
+Use the same readiness categories in every wrapper doc and diagnostic path. The
+categories are intentionally backend-neutral even when one backend satisfies a
+category through a native mechanism.
+
+- `Generated`: the backend API object or wrapper cache handle exists. This is
+  the only state `IsGenerated` should report.
+- `Uploaded`: CPU-provided bytes or pixels have reached backend-owned storage,
+  or the wrapper has a queued upload completion that can be observed.
+- `Resident`: the resource has enough GPU-visible memory/pages/mips/rows for
+  the requested use. Streaming and sparse paths may be generated and uploaded
+  without being fully resident.
+- `DescriptorReady`: descriptors, sampler/image views, buffer ranges, bindless
+  handles, or equivalent binding records are valid for the active binding
+  layout.
+- `PipelineReady`: shader/program/pipeline objects are valid for the selected
+  render state, material layout, vertex input, pass attachment metadata, and
+  feature profile.
+- `PassReady`: render-graph pass metadata, attachment formats, layouts, load
+  and store decisions, queue ownership, and barriers are valid for command
+  recording.
+- `Retired`: backend resources that were replaced or destroyed are no longer
+  referenced by in-flight GPU work and may be physically freed.
+
+## Explicit Non-Parity
+
+These are Vulkan-led capabilities. Parity work should preserve the same
+engine-visible behavior and diagnostics without forcing OpenGL to expose Vulkan
+handles or forcing Vulkan into OpenGL-shaped state changes.
+
+- Descriptor indexing, update-after-bind descriptor arrays, descriptor-set
+  layout fingerprints, and material-table descriptor rows.
+- Buffer device address scene data and GPU-resident draw/material databases.
+- `VK_EXT_mesh_shader` task/mesh dispatch, especially indirect-count dispatch
+  from GPU-written task records.
+- Vulkan sparse residency, memory decompression, indirect copy, ray tracing,
+  Sync2, timeline/fence-retired resource lifetime, and dynamic rendering.
+- Render-graph barrier planning, explicit load/store decisions, and dynamic
+  rendering attachment metadata.
+- Pipeline keys, prewarm manifests, persistent pipeline caches, and structured
+  pipeline miss diagnostics.
+
+## Vulkan-Native Parity Rules
+
+Vulkan parity is engine-visible parity, not an OpenGL-shaped implementation. A
+Vulkan wrapper may choose a different native model when it preserves the generic
+`XR*` contract and reports the difference clearly.
+
+- [ ] Prefer descriptor readiness, descriptor-set/layout fingerprints, and
+      material binding layouts over emulating OpenGL current binding state.
+- [ ] Prefer render-graph resource declarations, barrier planning, dynamic
+      rendering attachment metadata, and explicit load/store decisions over
+      order-dependent framebuffer side effects.
+- [ ] Prefer pipeline keys, pipeline prewarm manifests, and structured pipeline
+      miss diagnostics over late draw-time pipeline creation.
+- [ ] Prefer timeline/fence-retired destruction over global idle points for
+      wrapper resource replacement.
+- [ ] Keep Vulkan-only accelerants such as descriptor indexing,
+      buffer-device-address scene data, mesh-task dispatch, sparse residency,
+      memory decompression, and indirect copy explicitly feature-gated and
+      diagnostic.
+- [ ] Treat CPU fallback from missing Vulkan GPU paths as a visible policy
+      decision, never as an implicit success path.
+
+## OpenGL Backfill For Vulkan-Led Contracts
+
+OpenGL remains the primary tested backend, but it should converge on the same
+engine-facing contracts that make Vulkan dependable.
+
+- [ ] Validate render-graph pass metadata in OpenGL even when the executor still
+      runs the existing sequential command chain.
+- [ ] Report preparation/readiness state with the same categories Vulkan uses:
+      buffers, shader/program, descriptors/material bindings, pipeline/render
+      state, and texture residency.
+- [ ] Keep OpenGL material-table and bindless texture behavior aligned with the
+      same pass-declared material layout and texture-binding rung that Vulkan
+      descriptor indexing consumes.
+- [ ] Expose profiler counters comparable to Vulkan for readback bytes, material
+      table row updates, texture binding rung, shader/program cache misses, and
+      fallback reasons.
+- [ ] Keep `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` no-readback
+      rules backend-neutral; only instrumented strategies may read back counts
+      or visibility buffers.
+
 ## Baseline Source Map
 
 - OpenGL wrapper registration:

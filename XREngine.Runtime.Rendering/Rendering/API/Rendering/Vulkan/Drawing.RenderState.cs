@@ -4,6 +4,7 @@ using System.Numerics;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Scene;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -12,6 +13,10 @@ namespace XREngine.Rendering.Vulkan
         // =========== Render Parameters ===========
 
         private float _materialUniformSecondsLive;
+        private XRMaterial? _vulkanShadowBindingSourceMaterial;
+        private XRRenderProgram? _vulkanShadowBindingProgram;
+        private ulong _vulkanShadowBindingSourceLayoutVersion = ulong.MaxValue;
+        private MaterialShadowBindingPlan? _vulkanShadowBindingPlan;
 
         public override void ApplyRenderParameters(RenderingParameters parameters)
         {
@@ -104,21 +109,36 @@ namespace XREngine.Rendering.Vulkan
             if (material.RenderOptions is not null)
                 ApplyRenderParameters(material.RenderOptions);
 
-            foreach (ShaderVar param in material.Parameters)
-                param.SetUniform(program, forceUpdate: true);
-
-            for (int i = 0; i < material.Textures.Count; i++)
+            XRMaterial? shadowBindingSource = null;
+            MaterialShadowBindingPlan? shadowBindingPlan = null;
+            if (RuntimeEngine.Rendering.State.IsShadowPass)
             {
-                XRTexture? texture = material.Textures[i];
-                if (texture is null)
-                    continue;
-
-                string samplerName = texture.ResolveSamplerName(i, null);
-                program.Sampler(samplerName, texture, i);
+                shadowBindingSource = material.ShadowBindingSourceMaterial;
+                if (shadowBindingSource is not null)
+                    shadowBindingPlan = GetOrCreateVulkanShadowBindingPlan(program, shadowBindingSource);
             }
 
+            XRMaterialBase uniformSource = shadowBindingPlan is not null ? shadowBindingSource! : material;
+            if (shadowBindingPlan is not null)
+            {
+                foreach (ShaderVar param in shadowBindingPlan.Parameters)
+                    param.SetUniform(program, forceUpdate: true);
+            }
+            else
+            {
+                foreach (ShaderVar param in uniformSource.Parameters)
+                    param.SetUniform(program, forceUpdate: true);
+            }
+
+            if (shadowBindingPlan is not null)
+                SetTextureUniforms(program, shadowBindingSource!, shadowBindingPlan.TextureIndices);
+            else
+                SetTextureUniforms(program, uniformSource);
+
             _materialUniformSecondsLive += RuntimeEngine.Time.Timer.Update.Delta;
-            var reqs = material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None;
+            EUniformRequirements reqs =
+                (material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
+                program.GetActiveEngineUniformRequirements();
 
             if (reqs.HasFlag(EUniformRequirements.Camera))
             {
@@ -126,8 +146,15 @@ namespace XREngine.Rendering.Vulkan
                 RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program, false);
             }
 
+            bool lightingUniformsBound = false;
             if (reqs.HasFlag(EUniformRequirements.Lights))
+            {
                 RuntimeEngine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program);
+                lightingUniformsBound = RuntimeEngine.Rendering.State.RenderingWorld?.Lights is not null;
+            }
+
+            if (reqs.HasFlag(EUniformRequirements.AmbientOcclusion) && !lightingUniformsBound)
+                Lights3DCollection.SetForwardAmbientOcclusionUniforms(program);
 
             if (reqs.HasFlag(EUniformRequirements.RenderTime))
             {
@@ -163,6 +190,7 @@ namespace XREngine.Rendering.Vulkan
                 }
                 program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), screenWidth);
                 program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), screenHeight);
+                program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
             }
 
             if (reqs.HasFlag(EUniformRequirements.ClipSpacePolicy))
@@ -171,8 +199,59 @@ namespace XREngine.Rendering.Vulkan
                 program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
             }
 
-            material.OnSettingUniforms(program);
-            RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
+            if (!RuntimeEngine.Rendering.State.IsShadowPass)
+            {
+                material.OnSettingUniforms(program);
+                RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
+            }
+        }
+
+        private MaterialShadowBindingPlan GetOrCreateVulkanShadowBindingPlan(XRRenderProgram program, XRMaterial sourceMaterial)
+        {
+            ulong bindingLayoutVersion = sourceMaterial.BindingLayoutVersion;
+            if (_vulkanShadowBindingPlan is not null
+                && ReferenceEquals(_vulkanShadowBindingSourceMaterial, sourceMaterial)
+                && ReferenceEquals(_vulkanShadowBindingProgram, program)
+                && _vulkanShadowBindingSourceLayoutVersion == bindingLayoutVersion)
+                return _vulkanShadowBindingPlan;
+
+            _vulkanShadowBindingPlan = MaterialTextureBindingResolver.BuildShadowBindingPlan(program, sourceMaterial);
+            _vulkanShadowBindingSourceMaterial = sourceMaterial;
+            _vulkanShadowBindingProgram = program;
+            _vulkanShadowBindingSourceLayoutVersion = bindingLayoutVersion;
+            return _vulkanShadowBindingPlan;
+        }
+
+        private static void SetTextureUniforms(XRRenderProgram program, XRMaterialBase material)
+        {
+            for (int textureIndex = 0; textureIndex < material.Textures.Count; textureIndex++)
+                SetTextureUniform(program, material, textureIndex);
+        }
+
+        private static void SetTextureUniforms(XRRenderProgram program, XRMaterialBase material, int[] textureIndices)
+        {
+            foreach (int textureIndex in textureIndices)
+                SetTextureUniform(program, material, textureIndex);
+        }
+
+        private static void SetTextureUniform(XRRenderProgram program, XRMaterialBase material, int textureIndex)
+        {
+            if ((uint)textureIndex >= (uint)material.Textures.Count)
+                return;
+
+            XRTexture? texture = material.Textures[textureIndex];
+            if (texture is null)
+                return;
+
+            string resolvedSamplerName = texture.ResolveSamplerName(textureIndex, null);
+            program.Sampler(resolvedSamplerName, texture, textureIndex);
+
+            string indexedSamplerName = XRTexture.GetIndexedSamplerName(textureIndex);
+            if (string.Equals(resolvedSamplerName, indexedSamplerName, StringComparison.Ordinal))
+                return;
+
+            if (!program.HasUniform(resolvedSamplerName) && program.HasUniform(indexedSamplerName))
+                program.Sampler(indexedSamplerName, texture, textureIndex);
         }
 
         private static void PassCameraUniforms(XRRenderProgram program, XRCamera? camera, EEngineUniform viewName, EEngineUniform inverseViewName, EEngineUniform inverseProjectionName, EEngineUniform projectionName, EEngineUniform viewProjectionName)

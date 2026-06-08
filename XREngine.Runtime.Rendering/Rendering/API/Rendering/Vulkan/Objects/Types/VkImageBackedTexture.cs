@@ -1,5 +1,7 @@
 using Silk.NET.Vulkan;
 using XREngine.Core.Files;
+using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using Buffer = Silk.NET.Vulkan.Buffer;
@@ -83,7 +85,30 @@ public unsafe partial class VulkanRenderer
         #region Properties
 
         /// <inheritdoc />
-        public override bool IsGenerated { get; }
+        public override bool IsGenerated
+        {
+            get
+            {
+                RefreshPhysicalGroupImageIfStale();
+                return _image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0;
+            }
+        }
+
+        public override bool IsDescriptorReady
+        {
+            get
+            {
+                RefreshPhysicalGroupImageIfStale();
+                return base.IsDescriptorReady
+                    && _view.Handle != 0
+                    && (!CreateSampler || _sampler.Handle != 0);
+            }
+        }
+
+        public bool IsLayoutReadyForSampling
+            => CurrentImageLayout is ImageLayout.ShaderReadOnlyOptimal
+                or ImageLayout.DepthStencilReadOnlyOptimal
+                or ImageLayout.General;
 
         /// <summary>The raw Vulkan image handle.</summary>
         internal Image Image => _image;
@@ -221,10 +246,9 @@ public unsafe partial class VulkanRenderer
             if (viewType == DefaultViewType)
                 return _view;
 
-            if (!CanExposeDescriptorViewType(viewType))
+            if (!TryBuildDescriptorViewKey(viewType, out AttachmentViewKey key))
                 return default;
 
-            var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, viewType, AspectFlags);
             if (!_attachmentViews.TryGetValue(key, out ImageView cached))
             {
                 cached = CreateView(key);
@@ -234,19 +258,76 @@ public unsafe partial class VulkanRenderer
             return cached;
         }
 
-        private bool CanExposeDescriptorViewType(ImageViewType viewType)
+        private bool TryBuildDescriptorViewKey(ImageViewType viewType, out AttachmentViewKey key)
         {
+            key = default;
+
             if (viewType == ImageViewType.Type2DArray)
-                return TextureImageType == ImageType.Type2D && ResolvedArrayLayers >= 1;
+            {
+                if (TextureImageType != ImageType.Type2D || ResolvedArrayLayers < 1)
+                    return false;
+
+                key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, viewType, AspectFlags);
+                return true;
+            }
 
             if (viewType == ImageViewType.Type2D)
-                return TextureImageType == ImageType.Type2D && ResolvedArrayLayers == 1;
+            {
+                if (TextureImageType != ImageType.Type2D || ResolvedArrayLayers < 1)
+                    return false;
+
+                key = new AttachmentViewKey(0, ResolvedMipLevels, 0, 1, viewType, AspectFlags);
+                return true;
+            }
 
             if (viewType == ImageViewType.Type1DArray)
-                return TextureImageType == ImageType.Type1D && ResolvedArrayLayers >= 1;
+            {
+                if (TextureImageType != ImageType.Type1D || ResolvedArrayLayers < 1)
+                    return false;
+
+                key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, viewType, AspectFlags);
+                return true;
+            }
 
             if (viewType == ImageViewType.Type1D)
-                return TextureImageType == ImageType.Type1D && ResolvedArrayLayers == 1;
+            {
+                if (TextureImageType != ImageType.Type1D || ResolvedArrayLayers < 1)
+                    return false;
+
+                key = new AttachmentViewKey(0, ResolvedMipLevels, 0, 1, viewType, AspectFlags);
+                return true;
+            }
+
+            if (viewType == ImageViewType.TypeCube)
+            {
+                if (TextureImageType != ImageType.Type2D || ResolvedArrayLayers < 6)
+                    return false;
+
+                key = new AttachmentViewKey(0, ResolvedMipLevels, 0, 6, viewType, AspectFlags);
+                return true;
+            }
+
+            if (viewType == ImageViewType.TypeCubeArray)
+            {
+                if (TextureImageType != ImageType.Type2D || ResolvedArrayLayers < 6)
+                    return false;
+
+                uint cubeCompatibleLayerCount = ResolvedArrayLayers - (ResolvedArrayLayers % 6u);
+                if (cubeCompatibleLayerCount < 6)
+                    return false;
+
+                key = new AttachmentViewKey(0, ResolvedMipLevels, 0, cubeCompatibleLayerCount, viewType, AspectFlags);
+                return true;
+            }
+
+            if (viewType == ImageViewType.Type3D)
+            {
+                if (TextureImageType != ImageType.Type3D)
+                    return false;
+
+                key = new AttachmentViewKey(0, ResolvedMipLevels, 0, 1, viewType, AspectFlags);
+                return true;
+            }
 
             return false;
         }
@@ -290,6 +371,8 @@ public unsafe partial class VulkanRenderer
             if (_physicalGroup is not null)
                 _physicalGroup.LastKnownLayout = layout;
             _currentImageLayout = layout;
+            HasUploadedData = true;
+            MarkDescriptorClean();
             ResetAttachmentLayoutTracking();
         }
 
@@ -321,6 +404,8 @@ public unsafe partial class VulkanRenderer
 
             _currentImageLayout = layout;
             _attachmentLayouts[BuildAttachmentLayoutKey(mipLevel, layerIndex)] = layout;
+            HasUploadedData = true;
+            MarkDescriptorClean();
         }
 
         #endregion
@@ -390,21 +475,19 @@ public unsafe partial class VulkanRenderer
         /// <remarks>
         /// Subscribes to push-data, mipmap-generation, and resize events on the engine texture.
         /// </remarks>
-        protected override void LinkData()
+        protected override void LinkTextureData()
         {
-            Data.PushDataRequested += OnPushDataRequested;
-            Data.GenerateMipmapsRequested += OnGenerateMipmapsRequested;
             SubscribeResizeEvents();
+            SubscribeChildTextureEvents();
         }
 
         /// <inheritdoc />
         /// <remarks>
         /// Unsubscribes all engine-texture events wired up in <see cref="LinkData"/>.
         /// </remarks>
-        protected override void UnlinkData()
+        protected override void UnlinkTextureData()
         {
-            Data.PushDataRequested -= OnPushDataRequested;
-            Data.GenerateMipmapsRequested -= OnGenerateMipmapsRequested;
+            UnsubscribeChildTextureEvents();
             UnsubscribeResizeEvents();
         }
 
@@ -420,6 +503,7 @@ public unsafe partial class VulkanRenderer
             CreateImageView(default);
             if (CreateSampler)
                 CreateSamplerInternal();
+            MarkDescriptorClean();
             return CacheObject(this);
         }
 
@@ -476,6 +560,7 @@ public unsafe partial class VulkanRenderer
             _mipLevelsOverride = null;
             _currentImageLayout = ImageLayout.Undefined;
             ResetAttachmentLayoutTracking();
+            InvalidateTextureData();
         }
 
         #endregion
@@ -1086,7 +1171,7 @@ public unsafe partial class VulkanRenderer
                     break;
                 case XRTexture2DArray t:
                     engineMin = t.MinFilter; engineMag = t.MagFilter;
-                    engineU = t.UWrap; engineV = t.VWrap;
+                    engineU = t.UWrap; engineV = t.VWrap; lodBias = t.LodBias;
                     break;
                 case XRTexture3D t:
                     engineMin = t.MinFilter; engineMag = t.MagFilter;
@@ -1127,6 +1212,8 @@ public unsafe partial class VulkanRenderer
 
             // Read sampler settings from the engine-side XRTexture data source.
             var (minFilter, magFilter, mipmapMode, uWrap, vWrap, wWrap, lodBias) = ReadSamplerSettingsFromData();
+            var (minLod, maxLod) = ResolveSamplerLodRange();
+            var (compareEnable, compareOp) = ReadCompareSettingsFromData();
 
             // Determine whether anisotropic filtering is available.
             var anisotropyEnable = Vk.False;
@@ -1153,16 +1240,44 @@ public unsafe partial class VulkanRenderer
                 MaxAnisotropy = maxAnisotropy,
                 BorderColor = BorderColor.IntOpaqueBlack,
                 UnnormalizedCoordinates = Vk.False,
-                CompareEnable = Vk.False,
-                CompareOp = CompareOp.Always,
+                CompareEnable = compareEnable,
+                CompareOp = compareOp,
                 MipmapMode = mipmapMode,
                 MipLodBias = lodBias,
-                MinLod = 0f,
-                MaxLod = ResolvedMipLevels,
+                MinLod = minLod,
+                MaxLod = maxLod,
             };
 
             if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
                 throw new Exception("Failed to create sampler.");
+        }
+
+        private (float minLod, float maxLod) ResolveSamplerLodRange()
+        {
+            float maxMip = Math.Max(0f, ResolvedMipLevels - 1u);
+            float min = Math.Clamp(Math.Max(Data.MinLOD, Data.LargestMipmapLevel), 0f, maxMip);
+            float max = Math.Clamp(Math.Min(Data.MaxLOD, Data.SmallestAllowedMipmapLevel), min, maxMip);
+            return (min, max);
+        }
+
+        private (uint compareEnable, CompareOp compareOp) ReadCompareSettingsFromData()
+        {
+            bool enabled = false;
+            ETextureCompareFunc func = ETextureCompareFunc.LessOrEqual;
+
+            switch (Data)
+            {
+                case XRTexture2D texture2D:
+                    enabled = texture2D.EnableComparison;
+                    func = texture2D.CompareFunc;
+                    break;
+                case XRTexture2DArray texture2DArray:
+                    enabled = texture2DArray.EnableComparison;
+                    func = texture2DArray.CompareFunc;
+                    break;
+            }
+
+            return (enabled ? Vk.True : Vk.False, enabled ? SamplerConversions.FromCompareOp(func) : CompareOp.Always);
         }
 
         #endregion
@@ -1608,28 +1723,197 @@ public unsafe partial class VulkanRenderer
 
         #region Event Handlers
 
-        /// <summary>
-        /// Deferred handler for push-data requests from the engine texture.
-        /// Ensures execution on the main thread before uploading.
-        /// </summary>
-        private void OnPushDataRequested()
+        protected override void DataPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
         {
-            if (RuntimeEngine.InvokeOnMainThread(OnPushDataRequested, "VkTexture2D.PushData"))
-                return;
+            base.DataPropertyChanging(sender, e);
 
-            PushTextureData();
+            if (e.PropertyName is nameof(XRTexture1DArray.Textures)
+                or nameof(XRTexture2DArray.Textures)
+                or nameof(XRTextureCubeArray.Cubes))
+            {
+                UnsubscribeChildTextureEvents(e.CurrentValue);
+            }
+        }
+
+        protected override void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            base.DataPropertyChanged(sender, e);
+
+            if (IsSamplerDataProperty(e.PropertyName))
+                RecreateSamplerForPropertyChange();
+
+            if (IsStorageDataProperty(e.PropertyName))
+                RecreateImageForPropertyChange();
+
+            if (e.PropertyName is nameof(XRTexture1DArray.Textures)
+                or nameof(XRTexture2DArray.Textures)
+                or nameof(XRTextureCubeArray.Cubes))
+            {
+                SubscribeChildTextureEvents(e.NewValue);
+            }
         }
 
         /// <summary>
-        /// Deferred handler for mipmap-generation requests from the engine texture.
-        /// Ensures execution on the main thread.
+        /// Uploads invalidated texture data on the render thread.
         /// </summary>
-        private void OnGenerateMipmapsRequested()
+        public override void PushData()
         {
-            if (RuntimeEngine.InvokeOnMainThread(OnGenerateMipmapsRequested, "VkTexture2D.GenerateMipmaps"))
+            if (RuntimeEngine.InvokeOnMainThread(PushData, "VkTexture.PushData"))
+                return;
+
+            PushTextureData();
+            if (IsGenerated)
+                MarkUploaded();
+        }
+
+        /// <summary>
+        /// Generates mipmaps on the render thread.
+        /// </summary>
+        public override void GenerateMipmaps()
+        {
+            if (RuntimeEngine.InvokeOnMainThread(GenerateMipmaps, "VkTexture.GenerateMipmaps"))
                 return;
 
             GenerateMipmapsGPU();
+            if (IsGenerated)
+                MarkUploaded();
+        }
+
+        public override void Bind()
+        {
+            EnsureDescriptorReadyForVulkanUse("BindRequested");
+            if (IsGenerated && _view.Handle != 0 && (!CreateSampler || _sampler.Handle != 0))
+                MarkDescriptorClean();
+        }
+
+        public override void Clear(ColorF4 color, int level = 0)
+        {
+            if (RuntimeEngine.InvokeOnMainThread(() => Clear(color, level), "VkTexture.Clear"))
+                return;
+
+            Generate();
+            if (!IsGenerated || _image.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.ClearNotGenerated.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] ClearRequested could not generate image-backed texture '{0}' level={1}.",
+                    Data.Name ?? Data.GetDescribingName(),
+                    level);
+                return;
+            }
+
+            uint baseMip = (uint)Math.Clamp(level, 0, Math.Max((int)ResolvedMipLevels - 1, 0));
+            ImageLayout previousLayout = _currentImageLayout;
+            if (_currentImageLayout != ImageLayout.TransferDstOptimal)
+                TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+
+            ImageSubresourceRange range = new()
+            {
+                AspectMask = AspectFlags,
+                BaseMipLevel = baseMip,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = ResolvedArrayLayers,
+            };
+
+            using var scope = Renderer.NewCommandScope();
+            if ((AspectFlags & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0)
+            {
+                ClearDepthStencilValue clearDepthStencil = new()
+                {
+                    Depth = color.R,
+                    Stencil = (uint)Math.Clamp((int)color.G, 0, 255),
+                };
+                Api!.CmdClearDepthStencilImage(scope.CommandBuffer, _image, ImageLayout.TransferDstOptimal, ref clearDepthStencil, 1, ref range);
+            }
+            else
+            {
+                ClearColorValue clearColor = new()
+                {
+                    Float32_0 = color.R,
+                    Float32_1 = color.G,
+                    Float32_2 = color.B,
+                    Float32_3 = color.A,
+                };
+                Api!.CmdClearColorImage(scope.CommandBuffer, _image, ImageLayout.TransferDstOptimal, ref clearColor, 1, ref range);
+            }
+
+            ImageLayout targetLayout = previousLayout == ImageLayout.Undefined
+                ? ImageLayout.ShaderReadOnlyOptimal
+                : previousLayout;
+            if (targetLayout != ImageLayout.TransferDstOptimal)
+                TransitionImageLayout(ImageLayout.TransferDstOptimal, targetLayout);
+
+            MarkUploaded();
+        }
+
+        private void RecreateSamplerForPropertyChange()
+        {
+            MarkDescriptorDirty();
+            if (!IsActive || !CreateSampler)
+                return;
+
+            DestroySampler();
+            if (_image.Handle != 0)
+                CreateSamplerInternal();
+        }
+
+        private void RecreateImageForPropertyChange()
+        {
+            InvalidateTextureData();
+            _layoutInitialized = false;
+            if (!IsActive)
+                return;
+
+            Destroy();
+            Generate();
+        }
+
+        private static bool IsSamplerDataProperty(string? propertyName)
+            => propertyName is null
+                or ""
+                or nameof(XRTexture.MinLOD)
+                or nameof(XRTexture.MaxLOD)
+                or nameof(XRTexture.LargestMipmapLevel)
+                or nameof(XRTexture.SmallestAllowedMipmapLevel)
+                or nameof(XRTexture1D.MinFilter)
+                or nameof(XRTexture1D.MagFilter)
+                or nameof(XRTexture1D.UWrap)
+                or nameof(XRTexture1D.LodBias)
+                or nameof(XRTexture2D.VWrap)
+                or nameof(XRTexture3D.WWrap)
+                or nameof(XRTexture2D.EnableComparison)
+                or nameof(XRTexture2D.CompareFunc);
+
+        private static bool IsStorageDataProperty(string? propertyName)
+            => propertyName is null
+                or ""
+                or nameof(XRTexture.RequiresStorageUsage)
+                or nameof(XRTexture.FrameBufferAttachment)
+                or nameof(XRTexture1D.Mipmaps)
+                or nameof(XRTexture1D.SizedInternalFormat)
+                or nameof(XRTexture1DArray.Textures)
+                or nameof(XRTexture2DArray.Textures)
+                or nameof(XRTextureCubeArray.Cubes)
+                or nameof(XRTexture2D.MultiSampleCount)
+                or nameof(XRTexture2D.FixedSampleLocations)
+                or nameof(XRTextureRectangle.Width)
+                or nameof(XRTextureRectangle.Height)
+                or nameof(XRTextureRectangle.Data)
+                or nameof(XRTextureRectangle.PixelFormat)
+                or nameof(XRTextureRectangle.PixelType);
+
+        private void OnChildTextureResized()
+            => OnTextureResized();
+
+        private void OnChildTexturePropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (IsSamplerDataProperty(e.PropertyName))
+                RecreateSamplerForPropertyChange();
+
+            if (IsStorageDataProperty(e.PropertyName))
+                RecreateImageForPropertyChange();
         }
 
         /// <summary>
@@ -1660,6 +1944,9 @@ public unsafe partial class VulkanRenderer
                     break;
                 case XRTexture3D tex3D:
                     tex3D.Resized += OnTextureResized;
+                    break;
+                case XRTextureRectangle rectangle:
+                    rectangle.Resized += OnTextureResized;
                     break;
             }
         }
@@ -1692,6 +1979,86 @@ public unsafe partial class VulkanRenderer
                 case XRTexture3D tex3D:
                     tex3D.Resized -= OnTextureResized;
                     break;
+                case XRTextureRectangle rectangle:
+                    rectangle.Resized -= OnTextureResized;
+                    break;
+            }
+        }
+
+        private void SubscribeChildTextureEvents()
+            => SubscribeChildTextureEvents(Data);
+
+        private void UnsubscribeChildTextureEvents()
+            => UnsubscribeChildTextureEvents(Data);
+
+        private void SubscribeChildTextureEvents(object? value)
+        {
+            foreach (XRTexture texture in EnumerateChildTextures(value))
+            {
+                SubscribeChildResize(texture);
+                texture.PropertyChanged += OnChildTexturePropertyChanged;
+            }
+        }
+
+        private void UnsubscribeChildTextureEvents(object? value)
+        {
+            foreach (XRTexture texture in EnumerateChildTextures(value))
+            {
+                UnsubscribeChildResize(texture);
+                texture.PropertyChanged -= OnChildTexturePropertyChanged;
+            }
+        }
+
+        private static IEnumerable<XRTexture> EnumerateChildTextures(object? value)
+        {
+            switch (value)
+            {
+                case XRTexture1DArray tex1DArray:
+                    return tex1DArray.Textures;
+                case XRTexture2DArray tex2DArray:
+                    return tex2DArray.Textures;
+                case XRTextureCubeArray texCubeArray:
+                    return texCubeArray.Cubes;
+                case XRTexture1D[] tex1D:
+                    return tex1D;
+                case XRTexture2D[] tex2D:
+                    return tex2D;
+                case XRTextureCube[] texCube:
+                    return texCube;
+                default:
+                    return [];
+            }
+        }
+
+        private void SubscribeChildResize(XRTexture texture)
+        {
+            switch (texture)
+            {
+                case XRTexture1D tex1D:
+                    tex1D.Resized += OnChildTextureResized;
+                    break;
+                case XRTexture2D tex2D:
+                    tex2D.Resized += OnChildTextureResized;
+                    break;
+                case XRTextureCube texCube:
+                    texCube.Resized += OnChildTextureResized;
+                    break;
+            }
+        }
+
+        private void UnsubscribeChildResize(XRTexture texture)
+        {
+            switch (texture)
+            {
+                case XRTexture1D tex1D:
+                    tex1D.Resized -= OnChildTextureResized;
+                    break;
+                case XRTexture2D tex2D:
+                    tex2D.Resized -= OnChildTextureResized;
+                    break;
+                case XRTextureCube texCube:
+                    texCube.Resized -= OnChildTextureResized;
+                    break;
             }
         }
 
@@ -1704,6 +2071,7 @@ public unsafe partial class VulkanRenderer
             Destroy();
             _layoutInitialized = false;
             _currentImageLayout = ImageLayout.Undefined;
+            InvalidateTextureData();
         }
 
         #endregion

@@ -130,6 +130,17 @@ namespace XREngine.Rendering
                     texture.VWrap = value;
             }
         }
+
+        public float LodBias
+        {
+            get => Textures.Length > 0 ? Textures[0].LodBias : 0.0f;
+            set
+            {
+                foreach (XRTexture2D texture in Textures)
+                    texture.LodBias = value;
+            }
+        }
+
         /// <summary>
         /// When true, sampling this texture performs a depth comparison (hardware PCF).
         /// Delegates to the underlying <see cref="XRTexture2D"/> slices.

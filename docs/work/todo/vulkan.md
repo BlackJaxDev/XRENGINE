@@ -120,6 +120,88 @@ Swapchain and presentation:
 - [ ] Capture screenshot/readback after resize and compare against the visible frame.
 - [ ] Confirm dynamic rendering transitions the swapchain image to `PresentSrcKhr` exactly once per submitted frame.
 
+## Vulkan-Native Acceptance
+
+These checks prevent the Vulkan path from stopping at OpenGL-shaped parity. The
+goal is the same engine-visible behavior as OpenGL while using Vulkan's explicit
+resource, synchronization, descriptor, and submission model where it is better.
+
+Steady-state frame contract:
+
+- [ ] No CPU readbacks in `GpuIndirectZeroReadback` or
+      `GpuMeshletZeroReadback` steady-state frames.
+- [ ] No implicit CPU mesh fallback in strict Vulkan GPU-driven profiles.
+- [ ] No command-buffer recording for renderers already known not ready through
+      preparation diagnostics.
+- [ ] No per-frame allocations in descriptor resolution, material row lookup,
+      vertex input generation, draw-op emission, or barrier planning.
+- [ ] No routine `DeviceWaitIdle` in resize/recreate or resource retirement
+      paths except explicit emergency/device-lost recovery.
+- [ ] Timeline/fence-retired resources are destroyed only after the owning frame
+      slot has completed.
+
+Descriptor and material model:
+
+- [ ] Descriptor-indexed material texture arrays render the same logical
+      material table as OpenGL bindless handle tables.
+- [ ] `nonuniformEXT` usage is present in every shader path that indexes a
+      descriptor array with per-draw or per-material data.
+- [ ] Descriptor update CPU time is bounded and reported for legacy and template
+      update backends.
+- [ ] Descriptor fallback counters stay at zero after material/texture warmup in
+      default scenes.
+- [ ] Dynamic material row layouts, layout hashes, and generated shader variants
+      match the pass-declared material binding layout.
+
+Pipeline and synchronization:
+
+- [ ] Pipeline prewarm drives pipeline miss summaries to zero after warmup for
+      default editor workflows.
+- [ ] Pipeline keys include render-pass formats, MSAA state, dynamic rendering
+      attachment formats, shader identity, material layout hash, descriptor
+      layout, specialization/push-constant axes, and render-state axes.
+- [ ] Sync2 and legacy sync paths produce equivalent output, with Sync2 captures
+      showing no extra waits, redundant ownership transfers, or unnecessary
+      full-pipeline barriers.
+- [ ] GPU captures show avoidable layout transitions and full-frame barriers have
+      been removed or justified.
+
+Vulkan-only acceleration:
+
+- [ ] At least one production Vulkan draw path consumes a resolved
+      `VkDataBuffer.DeviceAddress` for a scene-database buffer instead of binding
+      that buffer through a classic descriptor.
+- [ ] Vulkan meshlet dispatch uses `VK_EXT_mesh_shader` with GPU-written task
+      records and indirect-count dispatch when the hardware supports it.
+- [ ] Vulkan-only features such as memory decompression, indirect copy, sparse
+      residency, or ray tracing remain explicitly gated and diagnostic when
+      unavailable; they must not create silent CPU fallback behavior.
+
+## OpenGL Backfill For Vulkan-Led Contracts
+
+OpenGL is still the day-to-day renderer, but the Vulkan implementation should
+pull OpenGL toward the same explicit engine contracts where that improves
+correctness and diagnostics.
+
+- [ ] `OpenGLRenderGraphExecutor` validates the same pass metadata that Vulkan
+      uses for resource hazards, descriptor schemas, transient lifetimes, and
+      pass dependencies.
+- [ ] OpenGL wrapper readiness stays separate from `IsGenerated` and reports the
+      same not-ready categories as Vulkan: buffer data, shader/program,
+      material/texture bindings, render-state/pipeline, and texture residency.
+- [ ] OpenGL material-table and bindless paths use the same pass-declared
+      material layouts, layout hashes, dirty-row updates, and texture-binding
+      rung diagnostics as Vulkan descriptor-indexed material paths.
+- [ ] OpenGL shader/program warmup reports cache hits, misses, backend choice,
+      and failure state in a shape comparable to Vulkan pipeline prewarm and
+      pipeline miss summaries.
+- [ ] OpenGL no-readback strategy rules match Vulkan: shipping
+      `GpuIndirectZeroReadback` / `GpuMeshletZeroReadback` paths do not read
+      count, visibility, or indirect buffers; only instrumented strategies do.
+- [ ] OpenGL VR/multiview paths expose diagnostics comparable to Vulkan:
+      per-eye/multiview target identity, mirror output status, readback bytes,
+      dropped ops, material fallback, and shader/program miss counters.
+
 ## Rendering Parity Matrix
 
 Compare each item against OpenGL using the same scene, camera, and resolution where possible.
@@ -174,6 +256,15 @@ GPU-driven paths:
 - [ ] Indirect count path on supported hardware.
 - [ ] Non-count fallback path.
 - [ ] GPU culling.
+- [ ] `GpuIndirectZeroReadback` with zero steady-state readback bytes.
+- [ ] `GpuIndirectInstrumented` with expected diagnostic readback counters.
+- [ ] Material-table draw path with Vulkan descriptor indexing.
+- [ ] Bindless/descriptor-indexed material texture path with high material
+      diversity.
+- [ ] Dynamic material row layout compatibility and fallback diagnostics.
+- [ ] `VkDataBuffer.DeviceAddress` scene-database consumer path.
+- [ ] `GpuMeshletZeroReadback` on `VK_EXT_mesh_shader` hardware.
+- [ ] `GpuMeshletInstrumented` with explicit diagnostic readback counters.
 - [ ] Occlusion culling diagnostics.
 - [ ] Secondary command buffer recording.
 - [ ] Parallel secondary command buffer recording thresholds.
@@ -185,6 +276,15 @@ XR / VR:
 - [ ] OpenXR path.
 - [ ] SteamVR/OpenVR tested path.
 - [ ] Mirror-to-window behavior while in VR.
+- [ ] VR render-target array layers, layouts, and attachment metadata validate
+      cleanly under validation layers.
+- [ ] OpenXR/OpenVR compositor submission timing is recorded with acquire,
+      render, submit, and present/compositor phases separated.
+- [ ] Mirror-to-window output remains synchronized with the submitted eye frame
+      and does not force extra GPU readback or full-queue idle.
+- [ ] Stereo and multiview paths expose the same frame diagnostics as mono:
+      scene writer count, dropped op count, descriptor fallback count, and
+      pipeline miss summary.
 
 Optional high-end features:
 
@@ -261,6 +361,10 @@ Vulkan can move from opt-in to regular development use when:
 - [ ] Sync2 and legacy sync are visually equivalent on the default world and Unit Testing World.
 - [ ] P1 stress passes without validation errors, device loss, or unbounded allocation growth.
 - [ ] Rendering parity matrix has no unexplained visual differences from OpenGL.
+- [ ] Vulkan-native acceptance passes for steady-state GPU-driven frames,
+      descriptor/material binding, pipeline prewarm, and resource retirement.
+- [ ] `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` record zero
+      steady-state readback bytes under Release validation captures.
 - [ ] Pipeline miss summaries are quiet after warmup in common editor workflows.
 - [ ] GPU captures show no obvious avoidable oversynchronization or bandwidth blowups in default scenes.
 - [ ] Black-frame diagnostics have not been needed to explain routine failures across repeated validation runs.

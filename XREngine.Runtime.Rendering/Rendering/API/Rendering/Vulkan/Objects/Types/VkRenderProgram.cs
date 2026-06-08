@@ -265,15 +265,34 @@ public unsafe partial class VulkanRenderer
                 return;
 
             _shaderCache.Add(shader, vkShader);
+            vkShader.ShaderInvalidated += OnShaderInvalidated;
             IsLinked = false;
         }
 
         private void ShaderRemoved(XRShader shader)
         {
             if (_shaderCache.Remove(shader, out VkShader? vkShader) && vkShader is not null)
+            {
+                vkShader.ShaderInvalidated -= OnShaderInvalidated;
                 vkShader.Destroy();
+            }
 
             IsLinked = false;
+        }
+
+        private void OnShaderInvalidated(VkShader shader)
+        {
+            DestroyLayouts();
+            _stageLookup.Clear();
+            _autoUniformBlocks.Clear();
+            Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                XRRenderProgram.EShaderProgramBackendStage.SourceQueued,
+                0.0,
+                0.0,
+                null,
+                Backend: "Vulkan",
+                Detail: $"shader invalidated: {shader.StageDebugLabel}",
+                Fingerprint: shader.CompileStatus.ArtifactIdentity));
         }
 
         private void OnLinkRequested(XRRenderProgram program)
@@ -475,6 +494,8 @@ public unsafe partial class VulkanRenderer
 
         public bool Link()
         {
+            global::System.Diagnostics.Stopwatch buildWatch = global::System.Diagnostics.Stopwatch.StartNew();
+            double compileMilliseconds = 0.0;
             int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
             bool usesVulkanClipDepthRemap = RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap;
             EShaderType? vulkanClipDepthRemapStage = ResolveVulkanClipDepthRemapStage();
@@ -505,28 +526,109 @@ public unsafe partial class VulkanRenderer
             if (_shaderCache.Count == 0)
             {
                 Debug.VulkanWarning($"Cannot link Vulkan program '{Data.Name ?? "UnnamedProgram"}' because it contains no shaders.");
+                Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                    XRRenderProgram.EShaderProgramBackendStage.Failed,
+                    0.0,
+                    0.0,
+                    "program contains no shaders",
+                    Backend: "Vulkan",
+                    Detail: Data.Name));
                 return false;
             }
 
+            Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                XRRenderProgram.EShaderProgramBackendStage.Compiling,
+                0.0,
+                0.0,
+                null,
+                Backend: "Vulkan",
+                Detail: DescribeShaderStages()));
+
             foreach (VkShader shader in _shaderCache.Values)
             {
-                shader.SetVulkanClipDepthRemapEnabled(
-                    vulkanClipDepthRemapStage.HasValue &&
-                    shader.Data.Type == vulkanClipDepthRemapStage.Value);
-                shader.EnsureCompilePolicyCurrent();
-                shader.Generate();
-
-                if (!shader.IsGenerated)
+                try
+                {
+                    global::System.Diagnostics.Stopwatch shaderWatch = global::System.Diagnostics.Stopwatch.StartNew();
+                    shader.SetVulkanClipDepthRemapEnabled(
+                        vulkanClipDepthRemapStage.HasValue &&
+                        shader.Data.Type == vulkanClipDepthRemapStage.Value);
+                    shader.EnsureCompilePolicyCurrent();
+                    shader.Generate();
+                    shaderWatch.Stop();
+                    compileMilliseconds += shaderWatch.Elapsed.TotalMilliseconds;
+                }
+                catch (Exception ex)
+                {
+                    IsLinked = false;
+                    Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                        XRRenderProgram.EShaderProgramBackendStage.Failed,
+                        compileMilliseconds,
+                        0.0,
+                        shader.CompileStatus.FailureReason ?? ex.Message,
+                        Backend: "Vulkan",
+                        Detail: shader.StageDebugLabel,
+                        Fingerprint: shader.CompileStatus.ArtifactIdentity));
                     return false;
+                }
+
+                if (!shader.IsGenerated || !shader.IsCompiled)
+                {
+                    IsLinked = false;
+                    Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                        XRRenderProgram.EShaderProgramBackendStage.Failed,
+                        compileMilliseconds,
+                        0.0,
+                        shader.CompileStatus.FailureReason ?? "shader module was not generated",
+                        Backend: "Vulkan",
+                        Detail: shader.StageDebugLabel,
+                        Fingerprint: shader.CompileStatus.ArtifactIdentity));
+                    return false;
+                }
             }
 
-            BuildStageLookup();
-            BuildDescriptorLayouts();
+            global::System.Diagnostics.Stopwatch linkWatch = global::System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                    XRRenderProgram.EShaderProgramBackendStage.Linking,
+                    compileMilliseconds,
+                    0.0,
+                    null,
+                    Backend: "Vulkan",
+                    Detail: DescribeShaderStages()));
+
+                BuildStageLookup();
+                BuildDescriptorLayouts();
+            }
+            catch (Exception ex)
+            {
+                linkWatch.Stop();
+                IsLinked = false;
+                Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                    XRRenderProgram.EShaderProgramBackendStage.Failed,
+                    compileMilliseconds,
+                    linkWatch.Elapsed.TotalMilliseconds,
+                    ex.Message,
+                    Backend: "Vulkan",
+                    Detail: "descriptor layout or pipeline interface build failed",
+                    Fingerprint: DescribeShaderStages()));
+                return false;
+            }
 
             IsLinked = true;
             _linkedShaderConfigVersion = shaderConfigVersion;
             _linkedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
             _linkedVulkanClipDepthRemapStage = vulkanClipDepthRemapStage;
+            linkWatch.Stop();
+            buildWatch.Stop();
+            Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                XRRenderProgram.EShaderProgramBackendStage.Ready,
+                compileMilliseconds,
+                linkWatch.Elapsed.TotalMilliseconds,
+                null,
+                Backend: "Vulkan",
+                Detail: DescribeShaderStages(),
+                Fingerprint: ComputeProgramArtifactFingerprint()));
             return true;
         }
 
@@ -1002,6 +1104,9 @@ public unsafe partial class VulkanRenderer
 
             return unchecked((ulong)hash.ToHashCode());
         }
+
+        private string ComputeProgramArtifactFingerprint()
+            => $"VKPROG-{ComputeGraphicsPipelineFingerprint():X16}-{ComputeComputePipelineFingerprint():X16}";
 
         public Pipeline GetOrCreateComputePipeline(
             int passIndex = int.MinValue,

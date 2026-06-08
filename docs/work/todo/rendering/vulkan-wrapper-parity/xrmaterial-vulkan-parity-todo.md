@@ -1,7 +1,8 @@
 # XRMaterial Vulkan Parity TODO
 
-Last Updated: 2026-06-05
-Status: Active.
+Last Updated: 2026-06-08
+Status: Active; per-material Vulkan wrapper/runtime parity pass implemented,
+with material-table and hardware-validation work still open.
 
 ## Goal
 
@@ -30,6 +31,17 @@ Vulkan:
 - Material-owned uniform buffers are supported for a limited set of scalar,
   vector, and matrix parameter types.
 - Image descriptors can use placeholders instead of failing the whole set.
+- `VkMaterial` and `VkMeshRenderer.Descriptors` now share
+  `MaterialTextureBindingResolver` for sampler-name, `TextureN`, numeric-slot,
+  and bindless material-array texture resolution.
+- Vulkan material uniform upload now supports shadow binding source filtering,
+  active engine uniform auto-detection, AO uniforms, sampler aliases, and scoped
+  bindings through the shared shadow resolver.
+- Vulkan material-owned UBO serialization now covers bool vectors, doubles,
+  dvecs, mat3 packing, and fixed-stride shader arrays in addition to the older
+  scalar/vector/mat4 set.
+- Vulkan shader/material contract source tests cover the implemented parity
+  hooks.
 
 ## Generation Contract
 
@@ -43,43 +55,47 @@ per-program material readiness.
 ## Missing Parity TODO
 
 1. Define ownership between `VkMaterial` and `VkMeshRenderer`.
-   - [ ] Decide which wrapper owns engine uniforms, material parameters,
+   - [x] Decide which wrapper owns engine uniforms, material parameters,
          textures, shadow source material binding, and custom setting hooks.
-   - [ ] Remove duplicated or divergent descriptor-resolution rules between
+   - [x] Remove duplicated or divergent descriptor-resolution rules between
          `VkMaterial` and `VkMeshRenderer.Descriptors`.
-   - [ ] Document the final binding flow in `vulkan-renderer.md` or a material
+   - [x] Document the final binding flow in `vulkan-renderer.md` or a material
          binding policy doc.
 
 2. Match OpenGL texture binding semantics.
-   - [ ] Resolve textures by shader sampler name before numeric binding index.
-   - [ ] Support `XRTexture.ResolveSamplerName(...)` and indexed `TextureN`
+   - [x] Resolve textures by shader sampler name before numeric binding index.
+   - [x] Support `XRTexture.ResolveSamplerName(...)` and indexed `TextureN`
          aliases consistently.
-   - [ ] Keep null texture slots stable so material texture index and descriptor
+   - [x] Keep null texture slots stable so material texture index and descriptor
          index do not shift.
-   - [ ] Fold program-bound samplers into descriptor resource fingerprints.
-   - [ ] Keep bindless material array behavior explicitly separate from classic
+   - [x] Fold program-bound samplers into descriptor resource fingerprints.
+   - [x] Keep bindless material array behavior explicitly separate from classic
          sampler-name binding.
+   - [ ] When the material-table path is active, resolve texture references as
+         material-row descriptor indices, not as per-draw current sampler state.
+   - [ ] Require `nonuniformEXT` in Vulkan shader variants that index
+         descriptor arrays from per-draw or per-material values.
 
 3. Port shadow binding plans.
-   - [ ] Support `ShadowBindingSourceMaterial` for shadow-pass parameters.
-   - [ ] Support `ShadowBindingSourceMaterial` for shadow-pass textures.
-   - [ ] Match OpenGL's active-uniform filtering so only parameters/textures
+   - [x] Support `ShadowBindingSourceMaterial` for shadow-pass parameters.
+   - [x] Support `ShadowBindingSourceMaterial` for shadow-pass textures.
+   - [x] Match OpenGL's active-uniform filtering so only parameters/textures
          required by the shadow program are bound.
-   - [ ] Invalidate cached plans when source material parameters, textures, or
+   - [x] Invalidate cached plans when source material parameters, textures, or
          active program bindings change.
 
 4. Port shadow/custom material hooks.
-   - [ ] Call `ShadowUniformSourceMaterial.OnSettingShadowUniforms` when set.
-   - [ ] Call `ShadowBindingSourceMaterial.OnSettingShadowUniforms` when it has
+   - [x] Call `ShadowUniformSourceMaterial.OnSettingShadowUniforms` when set.
+   - [x] Call `ShadowBindingSourceMaterial.OnSettingShadowUniforms` when it has
          shadow handlers.
-   - [ ] Fall back to `OnSettingUniforms` only when OpenGL would do the same.
-   - [ ] Call `Data.OnSettingShadowUniforms` during shadow passes when the
+   - [x] Fall back to `OnSettingUniforms` only when OpenGL would do the same.
+   - [x] Call `Data.OnSettingShadowUniforms` during shadow passes when the
          material itself supplies shadow handlers.
-   - [ ] Apply scoped program bindings after hooks if Vulkan keeps an
+   - [x] Apply scoped program bindings after hooks if Vulkan keeps an
          equivalent program-level hook.
 
 5. Match render option handling.
-   - [ ] Ensure material `RenderOptions` affect Vulkan pipeline state and
+   - [x] Ensure material `RenderOptions` affect Vulkan pipeline state and
          dynamic state exactly once per draw.
    - [ ] Verify local render-options overrides take priority over material
          options like OpenGL.
@@ -87,37 +103,87 @@ per-program material readiness.
          Vulkan pipeline state.
 
 6. Expand supported material parameter types.
-   - [ ] Audit `ShaderVar.SetUniform` coverage in OpenGL.
-   - [ ] Add Vulkan serialization for every shader var type that OpenGL can
+   - [x] Audit `ShaderVar.SetUniform` coverage in OpenGL.
+   - [x] Add Vulkan serialization for every shader var type that OpenGL can
          bind and that Vulkan shaders can legally consume.
-   - [ ] Include arrays, non-`mat4` matrices, booleans, integer vectors,
+   - [x] Include arrays, non-`mat4` matrices, booleans, integer vectors,
          unsigned vectors, and future struct/block-backed parameters.
    - [ ] Align std140/std430 layout packing with the reflected descriptor block
          layout instead of hardcoding only type sizes.
 
 7. Match engine uniform behavior.
-   - [ ] Compare OpenGL `SetEngineUniforms` requirements with Vulkan auto
+   - [x] Compare OpenGL `SetEngineUniforms` requirements with Vulkan auto
          uniform block generation.
-   - [ ] Bind camera, stereo, lighting, AO, viewport, render-time, and material
+   - [x] Bind camera, stereo, lighting, AO, viewport, render-time, and material
          required engine uniforms through one consistent Vulkan path.
-   - [ ] Ensure material required engine uniforms are honored even when the
+   - [x] Ensure material required engine uniforms are honored even when the
          program does not expose a reflected auto-uniform block.
 
-8. Match finalization diagnostics.
-   - [ ] Add Vulkan equivalent of fallback sampler binding diagnostics.
+8. Keep Vulkan-native material-table behavior explicit.
+   - [ ] Use pass-declared material binding layouts and layout hashes for Vulkan
+         descriptor-indexed material paths.
+   - [ ] Keep material table row uploads dirty-range based; editing one material
+         must not rewrite unrelated rows.
+   - [ ] Report active texture binding rung, descriptor-indexing availability,
+         material-table layout hash, and fallback reason in renderer diagnostics.
+   - [ ] Keep OpenGL bindless handle tables and Vulkan descriptor-indexed
+         texture arrays on the same logical material/texture index contract.
+
+9. Match finalization diagnostics.
+   - [x] Add Vulkan equivalent of fallback sampler binding diagnostics.
    - [ ] Warn when a material program has no parameter or sampler bindings after
          descriptor resolution.
    - [ ] Add rate-limited texture-risk diagnostics equivalent to OpenGL's
          runtime material texture checks.
 
+## Vulkan-Native Acceptance Additions
+
+- [ ] Make the material binding layout a first-class Vulkan artifact derived
+      from pass intent, shader reflection, material parameters, texture slots,
+      engine uniforms, shadow binding source, descriptor-indexing availability,
+      and material-table policy.
+- [ ] Have `VkMaterial` populate a prepared binding plan instead of rediscovering
+      descriptor rules during draw recording. The plan should include descriptor
+      set layout, descriptor writes, uniform/storage block offsets, push
+      constants, texture array indices, fallback resources, and material row
+      layout hash.
+- [ ] Treat descriptor layout signature, material row layout hash, texture
+      binding rung, render options, shader artifact identity, and shadow source
+      material as pipeline/material readiness inputs.
+- [ ] Validate std140/std430/scalar layout offsets from reflection data before
+      serializing material parameters into Vulkan uniform/storage buffers.
+- [ ] Require `nonuniformEXT` or an equivalent validated shader variant whenever
+      material or draw data indexes descriptor arrays.
+- [ ] Keep material table updates dirty-range based and report the exact rows,
+      byte ranges, texture indices, and descriptor writes touched by a material
+      edit.
+- [ ] Make placeholder texture use visible by role and reason: missing asset,
+      not resident, unsupported format, descriptor allocation failure,
+      incompatible sampler/view, or warmup not complete.
+
+## OpenGL Backfill Additions
+
+- [ ] Give OpenGL bindless and material-table paths the same pass-declared
+      material layout hash used by Vulkan descriptor-indexed material paths.
+- [ ] Treat classic OpenGL sampler binding as one texture binding rung under the
+      shared material contract, not as the conceptual source of material
+      texture identity.
+- [ ] Update OpenGL material tables with dirty rows and dirty byte ranges so
+      editing one material does not rewrite unrelated rows.
+- [ ] Report OpenGL bindless handle table state, residency, fallback role,
+      material row index, texture logical index, and binding rung in profiler
+      counters comparable to Vulkan descriptor diagnostics.
+- [ ] Keep OpenGL shader uniform/block packing diagnostics comparable to Vulkan
+      reflection-based material parameter serialization diagnostics.
+
 ## Validation
 
-- [ ] Source test: sampler-name texture binding wins over numeric texture slot.
-- [ ] Source test: `TextureN` aliases resolve consistently for OpenGL and
+- [x] Source test: sampler-name texture binding wins over numeric texture slot.
+- [x] Source test: `TextureN` aliases resolve consistently for OpenGL and
       Vulkan.
-- [ ] Source test: shadow binding source material supplies parameters and
+- [x] Source test: shadow binding source material supplies parameters and
       textures for a shadow program.
-- [ ] Source test: unsupported material parameter types produce diagnostics,
+- [x] Source test: unsupported material parameter types produce diagnostics,
       not silent zeros.
 - [ ] Hardware: compare ordinary, shadow, depth-normal, FBO/post, and
       bindless-material paths against OpenGL.

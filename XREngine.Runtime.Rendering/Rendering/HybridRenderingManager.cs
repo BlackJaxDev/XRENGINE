@@ -9,11 +9,13 @@ using System.Text.RegularExpressions;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Shaders.Generator;
+using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;
 
 namespace XREngine.Rendering
@@ -30,6 +32,10 @@ namespace XREngine.Rendering
         private const uint DrawMetadataSsboBinding = 12;
         private const uint LodTransitionSsboBinding = 16;
         private const uint MaterialTextureHandleTableSsboBinding = MaterialBindingLayouts.MaterialTextureHandleTableSsboBinding;
+        private const string SceneDatabaseDrawMetadataAddressUniform = "XRE_DrawMetadataBufferAddress";
+        private const string SceneDatabaseDrawMetadataCountUniform = "XRE_DrawMetadataCount";
+        private const string SceneDatabaseTransformAddressUniform = "XRE_TransformBufferAddress";
+        private const string SceneDatabaseTransformFloatCountUniform = "XRE_TransformFloatCount";
         private const int IndirectCommandFloatCount = GPUScene.CommandFloatCount;
         private const uint IndirectTextGlyphOffsetSsboBinding = 3;
         private const uint MeshletMeshDataSsboBinding = 3;
@@ -114,7 +120,7 @@ namespace XREngine.Rendering
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
-        private readonly Dictionary<(bool bindless, int rendererKey, string layoutHash), MaterialTableProgramCache> _materialTablePrograms = [];
+        private readonly Dictionary<(bool bindless, bool sceneDatabaseBda, int rendererKey, string layoutHash), MaterialTableProgramCache> _materialTablePrograms = [];
         private readonly Dictionary<(bool bindless, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
@@ -2709,14 +2715,16 @@ namespace XREngine.Rendering
         private XRRenderProgram? EnsureMaterialTableDrawProgram(XRMeshRenderer? vaoRenderer, bool bindless, MaterialBindingLayout layout)
         {
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
-            (bool bindless, int rendererKey, string layoutHash) cacheKey = (bindless, rendererKey, layout.LayoutHash);
+            bool sceneDatabaseBda = ShouldUseVulkanSceneDatabaseDeviceAddresses();
+            (bool bindless, bool sceneDatabaseBda, int rendererKey, string layoutHash) cacheKey = (bindless, sceneDatabaseBda, rendererKey, layout.LayoutHash);
 
             if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
             {
                 GpuDebug(
                     LogCategory.Validation,
-                    "Material-table program cache hit bindless={0} rendererKey={1} layout={2} hash={3}",
+                    "Material-table program cache hit bindless={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4}",
                     bindless,
+                    sceneDatabaseBda,
                     rendererKey,
                     layout.Name,
                     layout.LayoutHash);
@@ -2728,7 +2736,8 @@ namespace XREngine.Rendering
                 vaoRenderer,
                 emitTransformId: true,
                 emitLodTransitionRole: false,
-                emitMaterialId: true);
+                emitMaterialId: true,
+                useSceneDatabaseDeviceAddresses: sceneDatabaseBda);
             if (generatedVertexShader is null)
                 return null;
 
@@ -2742,14 +2751,20 @@ namespace XREngine.Rendering
             _materialTablePrograms[cacheKey] = cacheEntry;
             GpuDebug(
                 LogCategory.Validation,
-                "Material-table program cache miss bindless={0} rendererKey={1} layout={2} hash={3} rowBytes={4}",
+                "Material-table program cache miss bindless={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4} rowBytes={5}",
                 bindless,
+                sceneDatabaseBda,
                 rendererKey,
                 layout.Name,
                 layout.LayoutHash,
                 layout.RowByteCount);
             return program;
         }
+
+        private static bool ShouldUseVulkanSceneDatabaseDeviceAddresses()
+            => AbstractRenderer.Current is VulkanRenderer renderer &&
+               renderer.SupportsBufferDeviceAddress &&
+               VulkanFeatureProfile.ActiveGeometryFetchMode == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype;
 
         private static bool SupportsOpenGLBindlessMaterialTable()
         {
@@ -2765,7 +2780,7 @@ namespace XREngine.Rendering
                 AbstractRenderer.Current is OpenGLRenderer { SupportsBindlessTextureHandles: true };
         }
 
-        private static void AppendDrawMetadataGlsl(StringBuilder sb)
+        private static void AppendDrawMetadataStructGlsl(StringBuilder sb)
         {
             sb.AppendLine("struct DrawMetadata");
             sb.AppendLine("{");
@@ -2786,7 +2801,54 @@ namespace XREngine.Rendering
             sb.AppendLine("    uint LogicalMeshID;");
             sb.AppendLine("    uint BoundsID;");
             sb.AppendLine("};");
+            sb.AppendLine();
+            sb.AppendLine("DrawMetadata XRE_DefaultDrawMetadata(uint drawID)");
+            sb.AppendLine("{");
+            sb.AppendLine("    return DrawMetadata(drawID, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);");
+            sb.AppendLine("}");
+        }
+
+        private static void AppendDrawMetadataGlsl(StringBuilder sb)
+        {
+            AppendDrawMetadataStructGlsl(sb);
             sb.AppendLine($"layout(std430, binding = {DrawMetadataSsboBinding}) readonly buffer DrawMetadataBuffer {{ DrawMetadata Draws[]; }};");
+            sb.AppendLine();
+            sb.AppendLine("DrawMetadata XRE_LoadDrawMetadata(uint drawID)");
+            sb.AppendLine("{");
+            sb.AppendLine("    if (drawID < uint(Draws.length()))");
+            sb.AppendLine("        return Draws[drawID];");
+            sb.AppendLine("    return XRE_DefaultDrawMetadata(drawID);");
+            sb.AppendLine("}");
+        }
+
+        private static void AppendDrawMetadataBufferReferenceGlsl(StringBuilder sb)
+        {
+            AppendDrawMetadataStructGlsl(sb);
+            sb.AppendLine("layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer XRE_DrawMetadataBufferRef { DrawMetadata Draws[]; };");
+            sb.AppendLine($"uniform uvec2 {SceneDatabaseDrawMetadataAddressUniform};");
+            sb.AppendLine($"uniform uint {SceneDatabaseDrawMetadataCountUniform};");
+            sb.AppendLine();
+            sb.AppendLine("DrawMetadata XRE_LoadDrawMetadata(uint drawID)");
+            sb.AppendLine("{");
+            sb.AppendLine($"    if ({SceneDatabaseDrawMetadataAddressUniform}.x == 0u && {SceneDatabaseDrawMetadataAddressUniform}.y == 0u)");
+            sb.AppendLine("        return XRE_DefaultDrawMetadata(drawID);");
+            sb.AppendLine($"    if (drawID >= {SceneDatabaseDrawMetadataCountUniform})");
+            sb.AppendLine("        return XRE_DefaultDrawMetadata(drawID);");
+            sb.AppendLine($"    XRE_DrawMetadataBufferRef bufferRef = XRE_DrawMetadataBufferRef(XRE_PackDeviceAddress({SceneDatabaseDrawMetadataAddressUniform}));");
+            sb.AppendLine("    return bufferRef.Draws[drawID];");
+            sb.AppendLine("}");
+        }
+
+        private static void AppendTransformBufferGlsl(StringBuilder sb)
+        {
+            sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) readonly buffer TransformBuffer {{ float instanceWorld[]; }};");
+        }
+
+        private static void AppendTransformBufferReferenceGlsl(StringBuilder sb)
+        {
+            sb.AppendLine("layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer XRE_TransformBufferRef { float instanceWorld[]; };");
+            sb.AppendLine($"uniform uvec2 {SceneDatabaseTransformAddressUniform};");
+            sb.AppendLine($"uniform uint {SceneDatabaseTransformFloatCountUniform};");
         }
 
         private static XRShader CreateMaterialTableFragmentShader(bool bindless, MaterialBindingLayout layout)
@@ -2980,18 +3042,37 @@ namespace XREngine.Rendering
             XRMeshRenderer? vaoRenderer,
             bool emitTransformId,
             bool emitLodTransitionRole,
-            bool emitMaterialId = false)
+            bool emitMaterialId = false,
+            bool useSceneDatabaseDeviceAddresses = false)
         {
+            bool useDeviceAddressSceneDatabase = useSceneDatabaseDeviceAddresses && ShouldUseVulkanSceneDatabaseDeviceAddresses();
+
             // Build a vertex shader compatible with the engine's default fragment shader expectations,
             // but sourcing ModelMatrix from the culled command buffer via gl_BaseInstance.
             var sb = new StringBuilder();
             sb.AppendLine("#version 460");
+            if (useDeviceAddressSceneDatabase)
+            {
+                sb.AppendLine("#extension GL_EXT_buffer_reference : require");
+                sb.AppendLine("#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require");
+            }
             sb.AppendLine();
             sb.AppendLine($"// GPU indirect: per-draw command data (float[{IndirectCommandFloatCount}])");
             sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) readonly buffer CulledCommandsBuffer {{ float culled[]; }};");
-            sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) readonly buffer TransformBuffer {{ float instanceWorld[]; }};");
+            if (useDeviceAddressSceneDatabase)
+            {
+                sb.AppendLine("uint64_t XRE_PackDeviceAddress(uvec2 address) { return uint64_t(address.x) | (uint64_t(address.y) << 32); }");
+                AppendTransformBufferReferenceGlsl(sb);
+            }
+            else
+            {
+                AppendTransformBufferGlsl(sb);
+            }
             sb.AppendLine($"layout(std430, binding = {InstanceSourceIndexSsboBinding}) readonly buffer InstanceSourceIndexBuffer {{ uint instanceSourceIndex[]; }};");
-            AppendDrawMetadataGlsl(sb);
+            if (useDeviceAddressSceneDatabase)
+                AppendDrawMetadataBufferReferenceGlsl(sb);
+            else
+                AppendDrawMetadataGlsl(sb);
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
             sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
             sb.AppendLine($"const uint XRE_LEGACY_BASEINSTANCE_FLAG = 0x{IndirectLegacyBaseInstanceFlag:X8}u;");
@@ -3061,21 +3142,31 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine("uint LoadTransformId(uint drawID)");
             sb.AppendLine("{");
-            sb.AppendLine("    if (drawID < uint(Draws.length()))");
-            sb.AppendLine("        return Draws[drawID].TransformID;");
-            sb.AppendLine("    return 0u;");
+            sb.AppendLine("    return XRE_LoadDrawMetadata(drawID).TransformID;");
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("mat4 LoadWorldMatrixFromTransforms(uint transformID)");
             sb.AppendLine("{");
             sb.AppendLine("    int base = int(transformID) * INSTANCE_MATRIX_FLOATS;");
-            sb.AppendLine("    if (base + 15 >= instanceWorld.length())");
-            sb.AppendLine("        return mat4(1.0);");
+            if (useDeviceAddressSceneDatabase)
+            {
+                sb.AppendLine($"    if ({SceneDatabaseTransformAddressUniform}.x == 0u && {SceneDatabaseTransformAddressUniform}.y == 0u)");
+                sb.AppendLine("        return mat4(1.0);");
+                sb.AppendLine($"    if (uint(base + 15) >= {SceneDatabaseTransformFloatCountUniform})");
+                sb.AppendLine("        return mat4(1.0);");
+                sb.AppendLine($"    XRE_TransformBufferRef transforms = XRE_TransformBufferRef(XRE_PackDeviceAddress({SceneDatabaseTransformAddressUniform}));");
+            }
+            else
+            {
+                sb.AppendLine("    if (base + 15 >= instanceWorld.length())");
+                sb.AppendLine("        return mat4(1.0);");
+            }
             sb.AppendLine("    // CPU Matrix4x4 rows are intentionally reinterpreted as GLSL columns, matching uniform upload.");
-            sb.AppendLine("    vec4 c0 = vec4(instanceWorld[base+0],  instanceWorld[base+1],  instanceWorld[base+2],  instanceWorld[base+3]);");
-            sb.AppendLine("    vec4 c1 = vec4(instanceWorld[base+4],  instanceWorld[base+5],  instanceWorld[base+6],  instanceWorld[base+7]);");
-            sb.AppendLine("    vec4 c2 = vec4(instanceWorld[base+8],  instanceWorld[base+9],  instanceWorld[base+10], instanceWorld[base+11]);");
-            sb.AppendLine("    vec4 c3 = vec4(instanceWorld[base+12], instanceWorld[base+13], instanceWorld[base+14], instanceWorld[base+15]);");
+            string transformAccess = useDeviceAddressSceneDatabase ? "transforms.instanceWorld" : "instanceWorld";
+            sb.AppendLine($"    vec4 c0 = vec4({transformAccess}[base+0],  {transformAccess}[base+1],  {transformAccess}[base+2],  {transformAccess}[base+3]);");
+            sb.AppendLine($"    vec4 c1 = vec4({transformAccess}[base+4],  {transformAccess}[base+5],  {transformAccess}[base+6],  {transformAccess}[base+7]);");
+            sb.AppendLine($"    vec4 c2 = vec4({transformAccess}[base+8],  {transformAccess}[base+9],  {transformAccess}[base+10], {transformAccess}[base+11]);");
+            sb.AppendLine($"    vec4 c3 = vec4({transformAccess}[base+12], {transformAccess}[base+13], {transformAccess}[base+14], {transformAccess}[base+15]);");
             sb.AppendLine("    return mat4(c0, c1, c2, c3);");
             sb.AppendLine("}");
             sb.AppendLine();
@@ -3110,7 +3201,7 @@ namespace XREngine.Rendering
             if (emitLodTransitionRole)
                 sb.AppendLine($"    {FragLodTransitionRoleName} = (rawBaseInstance & XRE_PREVIOUS_LOD_BASEINSTANCE_FLAG) != 0u ? 1u : 0u;");
             if (emitMaterialId)
-                sb.AppendLine($"    {FragMaterialIdName} = commandIndex < uint(Draws.length()) ? Draws[commandIndex].MaterialID : 0u;");
+                sb.AppendLine($"    {FragMaterialIdName} = XRE_LoadDrawMetadata(commandIndex).MaterialID;");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -4890,6 +4981,113 @@ namespace XREngine.Rendering
             return renderer.TrySyncMeshRendererIndexBuffer(vaoRenderer, indices, scene.GetAtlasIndexElementSize(tier));
         }
 
+        private static bool TryBindSceneDatabaseDeviceAddressUniforms(
+            XRRenderProgram graphicsProgram,
+            XRDataBuffer drawMetadataBuffer,
+            XRDataBuffer? instanceTransformBuffer,
+            bool useInstanceTransformBuffer,
+            string consumer)
+        {
+            if (!graphicsProgram.HasUniform(SceneDatabaseDrawMetadataAddressUniform))
+                return true;
+
+            if (AbstractRenderer.Current is not VulkanRenderer renderer)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.SceneDatabaseBda.NonVulkan.{consumer}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Scene-database buffer-device-address shader '{0}' is active, but the current renderer is not Vulkan.",
+                    consumer);
+                return false;
+            }
+
+            if (!renderer.SupportsBufferDeviceAddress)
+            {
+                XREngine.Debug.RenderingWarningEvery(
+                    $"RenderDispatch.SceneDatabaseBda.Unsupported.{consumer}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] Scene-database buffer-device-address shader '{0}' is active, but bufferDeviceAddress is unavailable.",
+                    consumer);
+                return false;
+            }
+
+            graphicsProgram.Uniform(SceneDatabaseDrawMetadataCountUniform, drawMetadataBuffer.ElementCount);
+            if (!TryBindSceneDatabaseBufferDeviceAddress(
+                renderer,
+                graphicsProgram,
+                drawMetadataBuffer,
+                SceneDatabaseDrawMetadataAddressUniform,
+                consumer,
+                required: true))
+            {
+                return false;
+            }
+
+            if (!useInstanceTransformBuffer || instanceTransformBuffer is null)
+            {
+                graphicsProgram.Uniform(SceneDatabaseTransformAddressUniform, new UVector2(0u, 0u));
+                graphicsProgram.Uniform(SceneDatabaseTransformFloatCountUniform, 0u);
+                return true;
+            }
+
+            graphicsProgram.Uniform(SceneDatabaseTransformFloatCountUniform, instanceTransformBuffer.Length / (uint)sizeof(float));
+            return TryBindSceneDatabaseBufferDeviceAddress(
+                renderer,
+                graphicsProgram,
+                instanceTransformBuffer,
+                SceneDatabaseTransformAddressUniform,
+                consumer,
+                required: true);
+        }
+
+        private static bool TryBindSceneDatabaseBufferDeviceAddress(
+            VulkanRenderer renderer,
+            XRRenderProgram program,
+            XRDataBuffer buffer,
+            string uniformName,
+            string consumer,
+            bool required)
+        {
+            if (renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true) is not VulkanRenderer.VkDataBuffer vkBuffer)
+            {
+                renderer.RecordSceneDatabaseDeviceAddressConsumer(buffer, 0ul, consumer, consumed: false, "wrapper-unavailable");
+                if (required)
+                    WarnSceneDatabaseDeviceAddressUnavailable(buffer, consumer, "wrapper-unavailable");
+                return !required;
+            }
+
+            vkBuffer.Generate();
+            if (!vkBuffer.TryGetDeviceAddress(out ulong address) || address == 0ul)
+            {
+                vkBuffer.PushData();
+                vkBuffer.TryGetDeviceAddress(out address);
+            }
+
+            bool consumed = address != 0ul;
+            renderer.RecordSceneDatabaseDeviceAddressConsumer(buffer, address, consumer, consumed, consumed ? "resolved" : "address-unresolved");
+            if (!consumed)
+            {
+                if (required)
+                    WarnSceneDatabaseDeviceAddressUnavailable(buffer, consumer, "address-unresolved");
+                return !required;
+            }
+
+            program.Uniform(uniformName, PackDeviceAddress(address));
+            return true;
+        }
+
+        private static UVector2 PackDeviceAddress(ulong address)
+            => new((uint)(address & 0xFFFFFFFFul), (uint)(address >> 32));
+
+        private static void WarnSceneDatabaseDeviceAddressUnavailable(XRDataBuffer buffer, string consumer, string reason)
+            => XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.SceneDatabaseBda.Unresolved.{consumer}.{buffer.AttributeName}.{reason}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] Scene-database buffer-device-address consumer '{0}' cannot resolve buffer '{1}' ({2}); skipping this Vulkan prototype draw bucket instead of falling back silently.",
+                consumer,
+                buffer.AttributeName,
+                reason);
+
         private static void DispatchRenderIndirectCountBucket(
             XRDataBuffer indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
@@ -4938,6 +5136,15 @@ namespace XREngine.Rendering
             instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
             materialTableBuffer?.BindTo(graphicsProgram, MaterialTableSsboBinding);
             materialTextureHandleBuffer?.BindTo(graphicsProgram, MaterialTextureHandleTableSsboBinding);
+            if (!TryBindSceneDatabaseDeviceAddressUniforms(
+                graphicsProgram,
+                drawMetadataBuffer,
+                instanceTransformBuffer,
+                useInstanceTransformBuffer,
+                "ZeroReadbackMaterialTable"))
+            {
+                return;
+            }
             graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
             renderer.SetEngineUniforms(graphicsProgram, camera);
             graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToStringFast(), modelMatrix);

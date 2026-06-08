@@ -399,7 +399,7 @@ namespace XREngine.Rendering.OpenGL
                     ? "Ready"
                     : (buffersBound ? "BuffersNotReady" : "BuffersPending");
                 _lastPrepareResult = prepareResult;
-                _lastPrepareDetail = string.Empty;
+                _lastPrepareDetail = BuildPreparationDetail(material, buffersBound, buffersReady);
                 LogSlowTryPrepare(
                     prepareResult,
                     ElapsedMilliseconds(methodStart),
@@ -413,6 +413,34 @@ namespace XREngine.Rendering.OpenGL
                     bindBuffersMs,
                     dynamicRenderDataMs);
                 return ready;
+            }
+
+            private string BuildPreparationDetail(GLMaterial material, bool buffersBound, bool buffersReady)
+                => "bufferData=" + (buffersReady ? "Ready" : "Pending") +
+                   "; shaderProgram=" + ((_combinedProgram?.IsLinked == true || _separatedVertexProgram?.IsLinked == true) ? "Ready" : "Pending") +
+                   "; materialTextureBindings=" + material.Data.Textures.Count +
+                   "; renderState=" + (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.DebugName ?? "<none>") +
+                   "; pipelineStateKey=" + ComputeOpenGLPipelineStateKey(material).ToString("X16") +
+                   "; textureResidency=DeferredToMaterial" +
+                   "; passMetadata=" + (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true ? "Shadow" : "Standard") +
+                   "; buffersBound=" + buffersBound +
+                   "; layout=" + _geometryLayoutSignature.DebugSummary;
+
+            private ulong ComputeOpenGLPipelineStateKey(GLMaterial material)
+            {
+                HashCode hash = new();
+                hash.Add(_combinedProgram?.BindingId ?? 0u);
+                hash.Add(_separatedVertexProgram?.BindingId ?? 0u);
+                hash.Add(BindingId);
+                hash.Add(material.BindingId);
+                hash.Add(material.Data.BindingLayoutVersion);
+                hash.Add(material.Data.RenderOptions?.GetHashCode() ?? 0);
+                hash.Add((int)(Mesh?.Type ?? EPrimitiveType.Triangles));
+                hash.Add(_geometryLayoutSignature.StableHash);
+                hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false);
+                hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false);
+                hash.Add(RuntimeEngine.Rendering.Settings.ShaderConfigVersion);
+                return unchecked((ulong)hash.ToHashCode());
             }
 
             private string BuildProgramsPendingDetail(GLMaterial material)

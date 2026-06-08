@@ -25,6 +25,7 @@ namespace XREngine.Rendering.OpenGL
             /// Cache of program binding ID -> SSBO resource index to avoid expensive glGetProgramResourceIndex calls every frame.
             /// </summary>
             private readonly Dictionary<uint, uint> _ssboResourceIndexCache = [];
+            public uint UploadedByteCount => _lastPushedLength;
 
             protected override void UnlinkData()
             {
@@ -107,20 +108,42 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 Debug.OpenGL(
-                    $"[BufferUploadAudit] route={route} " +
-                    $"sizeBytes={Data.Length} " +
-                    $"thresholdBytes={AsyncUploadThreshold} " +
-                    $"target={Data.Target} " +
-                    $"attribute='{Data.AttributeName ?? string.Empty}' " +
-                    $"resizable={Data.Resizable} " +
-                    $"immutableStorage={ShouldUseImmutableStorage()} " +
-                    $"queueEnabled={Renderer.UploadQueue.Enabled} " +
-                    $"name='{GetDescribingName()}'.");
+                    "[GLBufferUpload] name='{0}' target={1} usage={2} bytes={3} allocated={4} uploaded={5} ready={6} route={7} generated={8} resident={9} mapped={10} bindingReady={11} readbackReady={12} resizable={13} storage={14} range={15} immutableStorage={16} queueEnabled={17}.",
+                    GetDescribingName(),
+                    Data.Target,
+                    Data.Usage,
+                    Data.Length,
+                    _allocatedVRAMBytes,
+                    _lastPushedLength,
+                    IsReadyForRendering,
+                    route,
+                    IsGenerated,
+                    _allocatedVRAMBytes > 0,
+                    Data.ActivelyMapping.Contains(this),
+                    Data.BindingIndexOverride.HasValue || !string.IsNullOrWhiteSpace(Data.AttributeName),
+                    HasReadbackIntent(),
+                    Data.Resizable,
+                    Data.StorageFlags,
+                    Data.RangeFlags,
+                    ShouldUseImmutableStorage(),
+                    Renderer.UploadQueue.Enabled);
             }
 
             private string RangeFlagsString() => Data.RangeFlags.ToString();
             private string StorageFlagsString() => Data.StorageFlags.ToString();
             private string BufferNameOrTarget() => string.IsNullOrWhiteSpace(Data.AttributeName) ? Data.Target.ToString() : Data.AttributeName;
+            private bool HasReadbackIntent()
+                => Data.StorageFlags.HasFlag(EBufferMapStorageFlags.Read) ||
+                   Data.RangeFlags.HasFlag(EBufferMapRangeFlags.Read) ||
+                   Data.Usage is EBufferUsage.StaticRead or EBufferUsage.DynamicRead or EBufferUsage.StreamRead;
+
+            private void RecordMappedReadbackBytes(uint bytes)
+            {
+                if (!HasReadbackIntent() || bytes == 0u)
+                    return;
+
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(bytes);
+            }
 
             public void BindToRenderer(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
             {
@@ -1018,6 +1041,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 GPUSideSource = new DataSource(addr, length);
                 Data.ActivelyMapping.Add(this);
+                RecordMappedReadbackBytes(length);
             }
 
             // ----- Added helpers for mapping/immutable storage -----

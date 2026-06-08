@@ -9,7 +9,6 @@ Design source:
 
 - [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
 - [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md)
-- [Dynamic Indirect Material Bindings TODO](../dynamic-indirect-material-bindings-todo.md)
 - [Texture Runtime Streaming And Virtual Texturing Design](../../../design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 
 ## Goal
@@ -32,7 +31,7 @@ render correctly while the profiler reports the active rung.
 ## Non-Goals
 
 - Do not duplicate pass-declared row layout generation already tracked by
-  [Dynamic Indirect Material Bindings TODO](../dynamic-indirect-material-bindings-todo.md).
+  [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md).
 - Do not treat texture arrays as the generic solution for arbitrary material
   diversity.
 - Do not assume `ARB_bindless_texture` is fast or available on every OpenGL
@@ -51,7 +50,7 @@ render correctly while the profiler reports the active rung.
 - [ ] Inventory every profiler field that reports material or texture binding
   mode.
 - [ ] Confirm overlap and ownership boundaries with
-  [Dynamic Indirect Material Bindings TODO](../dynamic-indirect-material-bindings-todo.md).
+  [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md).
 
 Acceptance criteria:
 

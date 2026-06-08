@@ -69,8 +69,9 @@ public unsafe partial class VulkanRenderer
 			_generatedProgram?.Destroy();
 			_generatedProgram = new XRRenderProgram(linkNow: false, separable: false, shaders);
 			string generatedProgramName = BuildGeneratedProgramName(material, shaders);
+			string generatedProgramAxes = BuildGeneratedProgramAxes(material);
 			_generatedProgram.Name = generatedProgramName;
-			_generatedProgram.UsageTag = $"VulkanCombinedMeshProgram | material={material.Name ?? "<unnamed>"} | mesh={Mesh?.Name ?? "<unnamed>"} | renderer={MeshRenderer?.Name ?? "<unnamed>"}";
+			_generatedProgram.UsageTag = $"VulkanCombinedMeshProgram | material={material.Name ?? "<unnamed>"} | mesh={Mesh?.Name ?? "<unnamed>"} | renderer={MeshRenderer?.Name ?? "<unnamed>"} | axes={generatedProgramAxes}";
 			_generatedProgram.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
 				material.Name,
 				MeshRenderer?.Name,
@@ -107,7 +108,32 @@ public unsafe partial class VulkanRenderer
 		}
 
 		private string BuildGeneratedProgramName(XRMaterial material, IReadOnlyList<XRShader> shaders)
-			=> $"VkCombined:{SanitizeProgramName(material.Name, "material")}:{SanitizeProgramName(Mesh?.Name, "mesh")}:{BuildShaderStageList(shaders)}";
+			=> $"VkCombined:{SanitizeProgramName(material.Name, "material")}:{SanitizeProgramName(Mesh?.Name, "mesh")}:{BuildGeneratedProgramAxes(material)}:{BuildShaderStageList(shaders)}";
+
+		private string BuildGeneratedProgramAxes(XRMaterial material)
+		{
+			XRMesh? mesh = Mesh;
+			bool useComputeSkinning = mesh?.HasSkinning == true &&
+				RuntimeEngine.Rendering.Settings.AllowSkinning &&
+				RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
+			bool useComputeBlendshapes = mesh?.BlendshapeCount > 0 &&
+				RuntimeEngine.Rendering.Settings.AllowBlendshapes &&
+				(RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+
+			return string.Join(";",
+				$"shaderConfig={RuntimeEngine.Rendering.Settings.ShaderConfigVersion}",
+				$"skinning={mesh?.HasSkinning == true}",
+				$"computeSkinning={useComputeSkinning}",
+				$"blendshapes={mesh?.BlendshapeCount > 0}",
+				$"computeBlendshapes={useComputeBlendshapes}",
+				$"precombineBlendshapes={RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass}",
+				$"meshDeform={MeshRenderer.MeshDeformEnabled}",
+				$"directionalShadow={material.DirectionalCascadeShadowMaterialKind}",
+				$"pointShadow={material.PointShadowMaterialKind}",
+				$"depthNormal={RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false}",
+				$"clipDepth={RuntimeEngine.Rendering.EffectiveClipDepthRange}",
+				$"clipY={RuntimeEngine.Rendering.Settings.ClipSpaceYDirection}");
+		}
 
 		private static string BuildShaderStageList(IReadOnlyList<XRShader> shaders)
 		{
@@ -152,21 +178,45 @@ public unsafe partial class VulkanRenderer
 		{
 			List<VertexInputBindingDescription> bindings = [];
 			List<VertexInputAttributeDescription> attributes = [];
+			List<KeyValuePair<string, VkDataBuffer>> vertexBuffers = [];
+			List<KeyValuePair<string, XRDataBuffer>> layoutBuffers = [];
 			_vertexBuffersByBinding.Clear();
 
 			bool resolveByName = _program is not null && _program.HasReflectedVertexInputs;
 
 			uint nextBinding = 0;
 			uint nextLocation = 0;
+			HashSet<uint> usedBindings = [];
 
-			foreach (var pair in _bufferCache
-				.Where(p => p.Value.Data.Target != EBufferTarget.ShaderStorageBuffer)
-				.OrderBy(p => p.Value.Data.BindingIndexOverride ?? uint.MaxValue))
+			foreach (var pair in _bufferCache)
+			{
+				layoutBuffers.Add(new(pair.Key, pair.Value.Data));
+				if (pair.Value.Data.Target == EBufferTarget.ArrayBuffer)
+					vertexBuffers.Add(pair);
+			}
+
+			vertexBuffers.Sort(static (a, b) =>
+			{
+				uint aBinding = a.Value.Data.BindingIndexOverride ?? uint.MaxValue;
+				uint bBinding = b.Value.Data.BindingIndexOverride ?? uint.MaxValue;
+				int bindingCompare = aBinding.CompareTo(bBinding);
+				return bindingCompare != 0
+					? bindingCompare
+					: string.Compare(a.Key, b.Key, StringComparison.Ordinal);
+			});
+
+			foreach (var pair in vertexBuffers)
 			{
 				string bufferName = pair.Key;
 				VkDataBuffer buffer = pair.Value;
 
-				uint binding = buffer.Data.BindingIndexOverride ?? nextBinding++;
+				uint binding = buffer.Data.BindingIndexOverride ?? AllocateNextVertexBinding(usedBindings, ref nextBinding);
+				if (!usedBindings.Add(binding))
+				{
+					WarnOnce($"Skipping duplicate Vulkan vertex binding {binding} for buffer '{bufferName}' on mesh '{Mesh?.Name ?? "UnnamedMesh"}'.");
+					continue;
+				}
+
 				bool interleaved = buffer.Data.InterleavedAttributes is { Length: > 0 };
 				uint stride = interleaved && Mesh is not null ? Mesh.InterleavedStride : buffer.Data.ElementSize;
 
@@ -183,13 +233,16 @@ public unsafe partial class VulkanRenderer
 					foreach (var attr in buffer.Data.InterleavedAttributes)
 					{
 						if (!TryResolveVertexAttributeLocation(attr.AttributeName, attr.AttribIndexOverride, resolveByName, ref nextLocation, out uint location))
+						{
+							WarnMissingVertexAttribute(buffer, attr.AttributeName, attr.AttribIndexOverride, buffer.Data.Normalize, interleaved: true);
 							continue;
+						}
 
 						attributes.Add(new VertexInputAttributeDescription
 						{
 							Location = location,
 							Binding = binding,
-							Format = ToFormat(attr.Type, attr.Count, attr.Integral),
+							Format = ToFormat(attr.Type, attr.Count, attr.Integral, buffer.Data.Normalize),
 							Offset = attr.Offset
 						});
 					}
@@ -197,13 +250,16 @@ public unsafe partial class VulkanRenderer
 				else
 				{
 					if (!TryResolveVertexAttributeLocation(bufferName, null, resolveByName, ref nextLocation, out uint location))
+					{
+						WarnMissingVertexAttribute(buffer, bufferName, null, buffer.Data.Normalize, interleaved: false);
 						continue;
+					}
 
 					attributes.Add(new VertexInputAttributeDescription
 					{
 						Location = location,
 						Binding = binding,
-						Format = ToFormat(buffer.Data.ComponentType, buffer.Data.ComponentCount, buffer.Data.Integral),
+						Format = ToFormat(buffer.Data.ComponentType, buffer.Data.ComponentCount, buffer.Data.Integral, buffer.Data.Normalize),
 						Offset = 0
 					});
 				}
@@ -211,6 +267,108 @@ public unsafe partial class VulkanRenderer
 
 			_vertexBindings = [.. bindings];
 			_vertexAttributes = [.. attributes];
+			_geometryLayoutSignature = MeshGeometryLayoutSignatureBuilder.Create(
+				Mesh,
+				MeshRenderer,
+				layoutBuffers,
+				ResolvePrimaryIndexSizeForLayout(out bool hasIndexBuffers),
+				hasIndexBuffers,
+				hasIndexBuffers ? "IndexBuffer" : "VertexCount");
+
+			if (_vertexBindings.Length > 0 && _vertexAttributes.Length == 0)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.VertexInput.NoAttributes.{_program?.Data?.Name ?? "UnknownProgram"}.{Mesh?.Name ?? "UnnamedMesh"}",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] No vertex attributes were bound for program='{0}' mesh='{1}'. layout={2}",
+					_program?.Data?.Name ?? "<unnamed program>",
+					Mesh?.Name ?? "<unnamed mesh>",
+					_geometryLayoutSignature.DebugSummary);
+			}
+		}
+
+		private static uint AllocateNextVertexBinding(HashSet<uint> usedBindings, ref uint nextBinding)
+		{
+			while (usedBindings.Contains(nextBinding))
+				nextBinding++;
+
+			return nextBinding++;
+		}
+
+		private IndexSize ResolvePrimaryIndexSizeForLayout(out bool hasIndexBuffers)
+		{
+			if (HasIndexData(_triangleIndexBuffer))
+			{
+				hasIndexBuffers = true;
+				return _triangleIndexSize;
+			}
+
+			if (HasIndexData(_lineIndexBuffer))
+			{
+				hasIndexBuffers = true;
+				return _lineIndexSize;
+			}
+
+			if (HasIndexData(_pointIndexBuffer))
+			{
+				hasIndexBuffers = true;
+				return _pointIndexSize;
+			}
+
+			hasIndexBuffers = false;
+			return IndexSize.FourBytes;
+		}
+
+		private static ulong ComputeMaterialLayoutHash(XRMaterial material)
+		{
+			HashCode hash = new();
+			hash.Add(material.BindingLayoutVersion);
+			hash.Add(material.Textures.Count);
+			hash.Add(material.Parameters.Length);
+			hash.Add(material.ShaderPipelineProgram?.GetHashCode() ?? 0);
+			hash.Add((int)material.DirectionalCascadeShadowMaterialKind);
+			hash.Add((int)material.PointShadowMaterialKind);
+			hash.Add(material.ShadowUniformSourceMaterial?.BindingLayoutVersion ?? 0UL);
+			hash.Add(material.RenderOptions?.GetHashCode() ?? 0);
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private static ulong ComputePassMetadataHash(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex)
+		{
+			HashCode hash = new();
+			hash.Add(passIndex);
+			hash.Add(passMetadata?.Count ?? 0);
+			if (passMetadata is not null)
+			{
+				foreach (RenderPassMetadata metadata in passMetadata)
+				{
+					hash.Add(metadata.PassIndex);
+					hash.Add(metadata.Name, StringComparer.Ordinal);
+					hash.Add((int)metadata.Stage);
+					hash.Add(metadata.DescriptorSchemas.Count);
+					foreach (string schema in metadata.DescriptorSchemas)
+						hash.Add(schema, StringComparer.Ordinal);
+				}
+			}
+
+			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false);
+			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false);
+			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false);
+			hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.PointLightLayeredShadowPass ?? false);
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private ulong ComputeFeatureProfileHash()
+		{
+			HashCode hash = new();
+			hash.Add(_pipelineShaderConfigVersion);
+			hash.Add(_pipelineUsesShaderClipDepthRemap);
+			hash.Add(_pipelineUsesNativeDepthClipControl);
+			hash.Add(RuntimeEngine.Rendering.EffectiveClipDepthRange);
+			hash.Add(RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+			hash.Add(RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl);
+			hash.Add(Renderer.SupportsIndexTypeUint8);
+			return unchecked((ulong)hash.ToHashCode());
 		}
 
 
@@ -234,6 +392,35 @@ public unsafe partial class VulkanRenderer
 
 			location = nextLocation++;
 			return true;
+		}
+
+		private void WarnMissingVertexAttribute(
+			VkDataBuffer buffer,
+			string? attributeName,
+			uint? attributeIndexOverride,
+			bool normalized,
+			bool interleaved)
+		{
+			string name = string.IsNullOrWhiteSpace(attributeName) ? "<unnamed>" : attributeName;
+			Debug.VulkanWarningEvery(
+				$"Vulkan.VertexAttribute.Missing.{_program?.Data?.Name ?? "UnknownProgram"}.{name}",
+				TimeSpan.FromSeconds(2),
+				"[Vulkan] Missing vertex attribute '{0}' for program='{1}' shader='{2}' mesh='{3}' renderer='{4}' buffer='{5}' bindingOverride={6} attribOverride={7} interleaved={8} componentType={9} componentCount={10} integral={11} normalized={12} instanceDivisor={13} layout={14}.",
+				name,
+				_program?.Data?.Name ?? "<unnamed program>",
+				_program?.Data?.UsageTag ?? "<unknown shader>",
+				Mesh?.Name ?? "<unnamed mesh>",
+				MeshRenderer?.Name ?? "<unnamed renderer>",
+				buffer.Data.AttributeName,
+				buffer.Data.BindingIndexOverride?.ToString() ?? "<auto>",
+				attributeIndexOverride?.ToString() ?? "<auto>",
+				interleaved,
+				buffer.Data.ComponentType,
+				buffer.Data.ComponentCount,
+				buffer.Data.Integral,
+				normalized,
+				buffer.Data.InstanceDivisor,
+				_geometryLayoutSignature.DebugSummary);
 		}
 
 		#endregion // Vertex Input State
@@ -289,6 +476,13 @@ public unsafe partial class VulkanRenderer
 
 			ulong programPipelineHash = _program!.ComputeGraphicsPipelineFingerprint();
 			ulong vertexLayoutHash = ComputeVertexLayoutHash();
+			ulong descriptorLayoutHash = ComputeDescriptorSchemaFingerprint(
+				_program.DescriptorBindings,
+				_program.DescriptorSetLayouts.Count,
+				Renderer.swapChainImages?.Length ?? 0);
+			ulong materialLayoutHash = ComputeMaterialLayoutHash(material);
+			ulong passMetadataHash = ComputePassMetadataHash(passMetadata, passIndex);
+			ulong featureProfileHash = ComputeFeatureProfileHash();
 			bool useNativeNegativeOneToOneDepth = RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;
 
 			PipelineKey key = new(
@@ -299,6 +493,10 @@ public unsafe partial class VulkanRenderer
 				useDynamicRendering ? depthAttachmentFormat : Format.Undefined,
 				programPipelineHash,
 				vertexLayoutHash,
+				descriptorLayoutHash,
+				materialLayoutHash,
+				passMetadataHash,
+				featureProfileHash,
 				effectiveDraw.RasterizationSamples,
 				effectiveDraw.DepthTestEnabled,
 				effectiveDraw.DepthWriteEnabled,

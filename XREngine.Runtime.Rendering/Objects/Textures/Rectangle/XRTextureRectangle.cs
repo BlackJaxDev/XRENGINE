@@ -133,13 +133,20 @@ namespace XREngine.Rendering
 
         public override Vector3 WidthHeightDepth => new(Width, Height, 1);
 
+        [field: MemoryPackIgnore]
+        public event Action? Resized;
+
         public void Resize(uint width, uint height)
         {
             if (!Resizable)
                 return;
 
+            uint previousWidth = Width;
+            uint previousHeight = Height;
             Width = width;
             Height = height;
+            if (Width != previousWidth || Height != previousHeight)
+                Resized?.Invoke();
         }
     }
 }

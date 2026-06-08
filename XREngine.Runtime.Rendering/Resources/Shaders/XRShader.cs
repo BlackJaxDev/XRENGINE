@@ -28,6 +28,8 @@ namespace XREngine.Rendering
         private string? _uiManifestCachePath;
         private string? _uiManifestCacheText;
 
+        public event Action<XRShader>? SourceChanged;
+
         internal EShaderType _type = EShaderType.Fragment;
         public EShaderType Type
         {
@@ -179,6 +181,11 @@ namespace XREngine.Rendering
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(Type):
+                    InvalidateResolvedSourceCache();
+                    MarkDirty();
+                    SourceChanged?.Invoke(this);
+                    break;
                 case nameof(Source):
                     InvalidateResolvedSourceCache();
                     if (field is TextFile newSource)
@@ -194,6 +201,7 @@ namespace XREngine.Rendering
 
             //When the source text changes, we need to mark the shader as dirty so it can be recompiled
             MarkDirty();
+            SourceChanged?.Invoke(this);
         }
 
         private void InvalidateResolvedSourceCache()
