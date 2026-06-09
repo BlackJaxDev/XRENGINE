@@ -213,6 +213,23 @@ public unsafe partial class VulkanRenderer
                     hash.Add(meshDraw.Draw.MaterialOverride?.GetHashCode() ?? 0);
                     hash.Add(meshDraw.Draw.Instances);
                     hash.Add((int)meshDraw.Draw.BillboardMode);
+                    hash.Add(meshDraw.Draw.IsStereoPass);
+                    hash.Add(meshDraw.Draw.UseUnjitteredProjection);
+                    hash.Add(meshDraw.Draw.TransformId);
+                    hash.Add(meshDraw.Draw.ViewMatrix.GetHashCode());
+                    hash.Add(meshDraw.Draw.InverseViewMatrix.GetHashCode());
+                    hash.Add(meshDraw.Draw.ProjectionMatrix.GetHashCode());
+                    hash.Add(meshDraw.Draw.InverseProjectionMatrix.GetHashCode());
+                    hash.Add(meshDraw.Draw.RightEyeViewMatrix.GetHashCode());
+                    hash.Add(meshDraw.Draw.RightEyeInverseViewMatrix.GetHashCode());
+                    hash.Add(meshDraw.Draw.RightEyeProjectionMatrix.GetHashCode());
+                    hash.Add(meshDraw.Draw.RightEyeInverseProjectionMatrix.GetHashCode());
+                    hash.Add(meshDraw.Draw.CameraPosition);
+                    hash.Add(meshDraw.Draw.CameraForward);
+                    hash.Add(meshDraw.Draw.CameraUp);
+                    hash.Add(meshDraw.Draw.CameraRight);
+                    hash.Add(meshDraw.Draw.RenderAreaWidth);
+                    hash.Add(meshDraw.Draw.RenderAreaHeight);
                     break;
                 case BlitOp blit:
                     hash.Add(blit.InFbo?.GetHashCode() ?? 0);
@@ -302,13 +319,19 @@ public unsafe partial class VulkanRenderer
         XRCamera? StereoRightEyeCamera,
         bool IsStereoPass,
         bool UseUnjitteredProjection,
-        // Camera transform-derived matrices/vectors are snapshotted at enqueue time
+        uint TransformId,
+        // Camera matrices/vectors are snapshotted at enqueue time
         // while the camera is still the active rendering camera. The command buffer is
         // recorded later, after the pipeline camera stack has been popped, so reading
-        // Camera.Transform.* at record time would yield stale/identity values.
+        // Camera.* at record time can yield stale values.
         Matrix4x4 ViewMatrix,
         Matrix4x4 InverseViewMatrix,
+        Matrix4x4 ProjectionMatrix,
+        Matrix4x4 InverseProjectionMatrix,
+        Matrix4x4 RightEyeViewMatrix,
         Matrix4x4 RightEyeInverseViewMatrix,
+        Matrix4x4 RightEyeProjectionMatrix,
+        Matrix4x4 RightEyeInverseProjectionMatrix,
         Vector3 CameraPosition,
         Vector3 CameraForward,
         Vector3 CameraUp,
@@ -383,6 +406,19 @@ public unsafe partial class VulkanRenderer
             ColorComponentFlags ColorWriteMask,
             bool NativeNegativeOneToOneDepth);
 
+        private readonly Dictionary<GraphicsPipelineLibraryKey, Pipeline> _graphicsPipelineLibraries = new();
+        private enum GraphicsPipelineLibrarySubset : byte
+        {
+            VertexInputInterface,
+            PreRasterizationShaders,
+            FragmentShader,
+            FragmentOutputInterface,
+        }
+
+        private readonly record struct GraphicsPipelineLibraryKey(
+            GraphicsPipelineLibrarySubset Subset,
+            PipelineKey Pipeline);
+
         private VkRenderProgram? _program;
         private XRRenderProgram? _generatedProgram;
         private string? _activeProgramIdentity;
@@ -412,6 +448,7 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
         private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
         private const string VertexUniformSuffix = "_VTX";
+        private const string TransformIdUniformName = "TransformId";
         private const string FallbackDescriptorUniformName = "__FallbackDescriptorBuffer";
         private const uint FallbackDescriptorUniformSize = 1024u;
         private const uint ComputeInterleavedBinding = 9u;
@@ -714,19 +751,33 @@ public unsafe partial class VulkanRenderer
                 ? ToVulkanColorWriteMask(matOpts)
                 : Renderer.GetColorWriteMask();
 
-            // Snapshot camera transform-derived matrices/vectors now, while the
-            // rendering camera is active. The command buffer is recorded later (after
-            // the camera stack is popped), so reading Camera.Transform.* at record time
-            // would resolve to stale/identity values and collapse all geometry.
+            // Snapshot camera matrices/vectors now, while the rendering camera is
+            // active. The command buffer is recorded later, after the camera stack is
+            // popped, so reading live camera state can resolve to stale values.
             XRCamera? snapshotCamera = RuntimeEngine.Rendering.State.RenderingCamera;
             XRCamera? snapshotRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+            bool useUnjitteredProjectionSnapshot = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
             Matrix4x4 viewMatrixSnapshot = snapshotCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 inverseViewMatrixSnapshot = snapshotCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 projectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
+                ? snapshotCamera.ProjectionMatrixUnjittered
+                : snapshotCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 inverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
+                ? snapshotCamera.InverseProjectionMatrixUnjittered
+                : snapshotCamera?.InverseProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 rightEyeViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.InverseRenderMatrix ?? viewMatrixSnapshot;
             Matrix4x4 rightEyeInverseViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrixSnapshot;
+            Matrix4x4 rightEyeProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
+                ? snapshotRightEyeCamera.ProjectionMatrixUnjittered
+                : snapshotRightEyeCamera?.ProjectionMatrix ?? projectionMatrixSnapshot;
+            Matrix4x4 rightEyeInverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
+                ? snapshotRightEyeCamera.InverseProjectionMatrixUnjittered
+                : snapshotRightEyeCamera?.InverseProjectionMatrix ?? inverseProjectionMatrixSnapshot;
             Vector3 cameraPositionSnapshot = snapshotCamera?.Transform.RenderTranslation ?? Vector3.Zero;
             Vector3 cameraForwardSnapshot = snapshotCamera?.Transform.RenderForward ?? Vector3.UnitZ;
             Vector3 cameraUpSnapshot = snapshotCamera?.Transform.RenderUp ?? Vector3.UnitY;
             Vector3 cameraRightSnapshot = snapshotCamera?.Transform.RenderRight ?? Vector3.UnitX;
+            uint transformIdSnapshot = RuntimeEngine.Rendering.State.CurrentTransformId;
             // Snapshot the render-area dimensions now (the live RenderArea is reset to Empty by
             // deferred record time). For debug-primitive draws the pipeline render-region can
             // already be Empty even at enqueue time, so fall back to the bound draw framebuffer's
@@ -780,10 +831,16 @@ public unsafe partial class VulkanRenderer
                 snapshotCamera,
                 snapshotRightEyeCamera,
                 RuntimeEngine.Rendering.State.IsStereoPass,
-                RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false,
+                useUnjitteredProjectionSnapshot,
+                transformIdSnapshot,
                 viewMatrixSnapshot,
                 inverseViewMatrixSnapshot,
+                projectionMatrixSnapshot,
+                inverseProjectionMatrixSnapshot,
+                rightEyeViewMatrixSnapshot,
                 rightEyeInverseViewMatrixSnapshot,
+                rightEyeProjectionMatrixSnapshot,
+                rightEyeInverseProjectionMatrixSnapshot,
                 cameraPositionSnapshot,
                 cameraForwardSnapshot,
                 cameraUpSnapshot,

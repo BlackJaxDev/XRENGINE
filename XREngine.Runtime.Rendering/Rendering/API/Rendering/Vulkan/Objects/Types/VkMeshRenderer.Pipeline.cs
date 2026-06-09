@@ -36,19 +36,27 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool EnsureProgram(XRMaterial material)
 		{
-			var shaders = new List<XRShader>();
-			bool hasVertex = false;
+			var sourceShaders = new List<XRShader>();
 			string? generatedVertexIdentity = null;
 
 			foreach (var shader in material.Shaders)
 			{
 				if (shader is null)
 					continue;
-				shaders.Add(shader);
-				hasVertex |= shader.Type == EShaderType.Vertex;
+				sourceShaders.Add(shader);
 			}
 
-			if (!hasVertex)
+			bool hasNoVertexShaders = material.VertexShaders.Count == 0;
+			XRShader? suppliedVertexShader = hasNoVertexShaders
+				? null
+				: FindVertexShader(sourceShaders, Data.VertexShaderSelector);
+
+			XRShader vertexShader;
+			if (suppliedVertexShader is not null)
+			{
+				vertexShader = suppliedVertexShader;
+			}
+			else
 			{
 				string? vsSource = Data.VertexShaderSource;
 				if (string.IsNullOrWhiteSpace(vsSource))
@@ -56,17 +64,19 @@ public unsafe partial class VulkanRenderer
 					Debug.RenderingWarningEvery(
 						$"Vulkan.MeshRenderer.{GetHashCode()}.MissingVertexShader",
 						TimeSpan.FromSeconds(2),
-						"[Vulkan] MeshRenderer '{0}' cannot render: no vertex shader. Material='{1}' Mesh='{2}'",
+						"[Vulkan] MeshRenderer '{0}' cannot render: no compatible vertex shader. Material='{1}' Mesh='{2}' Version='{3}'",
 						MeshRenderer?.Name ?? "<unnamed>",
 						material?.Name ?? "<unnamed material>",
-						Mesh?.Name ?? "<unnamed mesh>");
+						Mesh?.Name ?? "<unnamed mesh>",
+						Data.VersionKindLabel);
 					return false;
 				}
 
 				generatedVertexIdentity = XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(vsSource);
-				shaders.Add(GenerateVertexShader(vsSource));
+				vertexShader = GenerateVertexShader(vsSource);
 			}
 
+			List<XRShader> shaders = BuildCombinedShaderList(sourceShaders, vertexShader);
 			string generatedProgramName = BuildGeneratedProgramName(material, shaders);
 			string generatedProgramAxes = BuildGeneratedProgramAxes(material);
 			string shaderStageList = BuildShaderStageList(shaders);
@@ -80,19 +90,20 @@ public unsafe partial class VulkanRenderer
 					generatedVertexIdentity: generatedVertexIdentity,
 					materialVariantKind: material.ActiveUberVariant.IsEmpty ? null : "MaterialVariant",
 					materialVariantHash: material.ActiveUberVariant.VariantHash,
-					vertexLayoutIdentity: Data.GetType().Name,
+					vertexLayoutIdentity: BuildCombinedProgramVertexLayoutIdentity(generatedVertexIdentity),
 					topologyKind: "VulkanCombinedMesh");
 
 				XRRenderProgram generatedProgram = new(linkNow: false, separable: false, shaders)
 				{
 					Name = generatedProgramName,
-					UsageTag = $"VulkanCombinedMeshProgram | material={material.Name ?? "<unnamed>"} | mesh={Mesh?.Name ?? "<unnamed>"} | renderer={MeshRenderer?.Name ?? "<unnamed>"} | axes={generatedProgramAxes}",
+					UsageTag = $"VulkanCombinedMeshProgram | variant={Data.VersionKindLabel} | material={material.Name ?? "<unnamed>"} | mesh={Mesh?.Name ?? "<unnamed>"} | renderer={MeshRenderer?.Name ?? "<unnamed>"} | axes={generatedProgramAxes}",
+					Priority = Data.ProgramPriority,
 					ProgramDescriptor = descriptor,
 				};
 				generatedProgram.SetShaderProgramDiagnosticMetadata(new XRRenderProgram.ShaderProgramDiagnosticMetadata(
 					material.Name,
 					MeshRenderer?.Name,
-					Data.GetType().Name,
+					Data.VersionKindLabel,
 					"VulkanCombinedMesh",
 					Mesh?.Name,
 					shaderStageList));
@@ -141,6 +152,34 @@ public unsafe partial class VulkanRenderer
 
 			return linked;
 		}
+
+		private static List<XRShader> BuildCombinedShaderList(IReadOnlyList<XRShader> sourceShaders, XRShader vertexShader)
+		{
+			List<XRShader> shaders = new(sourceShaders.Count + 1);
+			foreach (XRShader shader in sourceShaders)
+				if (shader.Type != EShaderType.Vertex)
+					shaders.Add(shader);
+
+			shaders.Add(vertexShader);
+			return shaders;
+		}
+
+		private static XRShader? FindVertexShader(IEnumerable<XRShader> shaders, Func<XRShader, bool> vertexShaderSelector)
+		{
+			foreach (XRShader shader in shaders)
+				if (shader.Type == EShaderType.Vertex && vertexShaderSelector(shader))
+					return shader;
+
+			return null;
+		}
+
+		private string BuildCombinedProgramVertexLayoutIdentity(string? generatedVertexIdentity)
+			=> string.Concat(
+				Data.GetType().Name,
+				"|",
+				Data.VersionKindLabel,
+				"|generated=",
+				generatedVertexIdentity ?? string.Empty);
 
 		private static readonly ConcurrentDictionary<string, XRShader> _generatedVertexShaderCache = new(StringComparer.Ordinal);
 
@@ -779,7 +818,7 @@ public unsafe partial class VulkanRenderer
 
 						try
 						{
-							pipeline = program.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
+							pipeline = CreateGraphicsPipeline(program, ref pipelineInfo, key, colorAttachmentCount, pipelineName);
 						}
 						catch (InvalidOperationException ex)
 						{
@@ -806,6 +845,229 @@ public unsafe partial class VulkanRenderer
 			}
 
 			return success;
+		}
+
+		private bool ShouldUseGraphicsPipelineLibraries()
+			=> RuntimeEngine.Rendering.Settings.AllowShaderPipelines &&
+			   Data.AllowShaderPipelines &&
+			   Renderer.SupportsGraphicsPipelineLibrary;
+
+		private Pipeline CreateGraphicsPipeline(
+			VkRenderProgram program,
+			ref GraphicsPipelineCreateInfo pipelineInfo,
+			PipelineKey key,
+			uint colorAttachmentCount,
+			string pipelineName)
+		{
+			if (!ShouldUseGraphicsPipelineLibraries())
+				return program.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
+
+			try
+			{
+				return CreateGraphicsPipelineFromLibraries(program, ref pipelineInfo, key, colorAttachmentCount);
+			}
+			catch (InvalidOperationException ex)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.PipelineLibrary.Fallback.{program.Data.Name ?? "UnknownProgram"}",
+					TimeSpan.FromSeconds(5),
+					"[Vulkan] Graphics pipeline library creation failed for pipeline '{0}' program='{1}'; falling back to monolithic pipeline. {2}",
+					pipelineName,
+					program.Data.Name ?? "<unnamed program>",
+					ex.Message);
+				return program.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
+			}
+		}
+
+		private Pipeline CreateGraphicsPipelineFromLibraries(
+			VkRenderProgram program,
+			ref GraphicsPipelineCreateInfo pipelineInfo,
+			PipelineKey key,
+			uint colorAttachmentCount)
+		{
+			PipelineShaderStageCreateInfo[] preRasterStages = GetGraphicsPipelineLibraryStages(
+				program,
+				EProgramStageMask.VertexShaderBit |
+				EProgramStageMask.TessControlShaderBit |
+				EProgramStageMask.TessEvaluationShaderBit |
+				EProgramStageMask.GeometryShaderBit |
+				EProgramStageMask.TaskShaderBit |
+				EProgramStageMask.MeshShaderBit,
+				colorAttachmentCount);
+
+			if (preRasterStages.Length == 0)
+				throw new InvalidOperationException("graphics pipeline libraries require a pre-rasterization shader stage.");
+
+			if (!preRasterStages.Any(static stage => stage.Stage == ShaderStageFlags.VertexBit))
+				throw new InvalidOperationException("graphics pipeline library path currently supports vertex-input mesh pipelines only.");
+
+			Pipeline vertexInput = EnsureGraphicsPipelineLibrary(
+				new GraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.VertexInputInterface, key),
+				ref pipelineInfo,
+				Array.Empty<PipelineShaderStageCreateInfo>(),
+				GraphicsPipelineLibraryFlagsEXT.VertexInputInterfaceBitExt);
+
+			Pipeline preRasterization = EnsureGraphicsPipelineLibrary(
+				new GraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.PreRasterizationShaders, key),
+				ref pipelineInfo,
+				preRasterStages,
+				GraphicsPipelineLibraryFlagsEXT.PreRasterizationShadersBitExt);
+
+			List<Pipeline> libraries =
+			[
+				vertexInput,
+				preRasterization,
+			];
+
+			PipelineShaderStageCreateInfo[] fragmentStages = GetGraphicsPipelineLibraryStages(
+				program,
+				EProgramStageMask.FragmentShaderBit,
+				colorAttachmentCount);
+			if (fragmentStages.Length > 0)
+			{
+				Pipeline fragmentShader = EnsureGraphicsPipelineLibrary(
+					new GraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.FragmentShader, key),
+					ref pipelineInfo,
+					fragmentStages,
+					GraphicsPipelineLibraryFlagsEXT.FragmentShaderBitExt);
+				libraries.Add(fragmentShader);
+			}
+
+			Pipeline fragmentOutput = EnsureGraphicsPipelineLibrary(
+				new GraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.FragmentOutputInterface, key),
+				ref pipelineInfo,
+				Array.Empty<PipelineShaderStageCreateInfo>(),
+				GraphicsPipelineLibraryFlagsEXT.FragmentOutputInterfaceBitExt);
+			libraries.Add(fragmentOutput);
+
+			Pipeline[] libraryArray = [.. libraries];
+			fixed (Pipeline* librariesPtr = libraryArray)
+			{
+				PipelineLibraryCreateInfoKHR libraryInfo = new()
+				{
+					SType = StructureType.PipelineLibraryCreateInfoKhr,
+					PNext = pipelineInfo.PNext,
+					LibraryCount = (uint)libraryArray.Length,
+					PLibraries = librariesPtr,
+				};
+
+				GraphicsPipelineCreateInfo linkedInfo = pipelineInfo;
+				linkedInfo.PNext = &libraryInfo;
+				linkedInfo.StageCount = 0;
+				linkedInfo.PStages = null;
+				linkedInfo.PVertexInputState = null;
+				linkedInfo.PInputAssemblyState = null;
+				linkedInfo.PViewportState = null;
+				linkedInfo.PRasterizationState = null;
+				linkedInfo.PMultisampleState = null;
+				linkedInfo.PDepthStencilState = null;
+				linkedInfo.PColorBlendState = null;
+				linkedInfo.PDynamicState = null;
+				linkedInfo.Layout = program.PipelineLayout;
+
+				Result result = Api!.CreateGraphicsPipelines(Device, Renderer.ActivePipelineCache, 1, ref linkedInfo, null, out Pipeline pipeline);
+				if (result != Result.Success)
+					throw new InvalidOperationException($"failed to link graphics pipeline libraries ({result}).");
+
+				Renderer.NotifyVulkanPipelineCreated("graphics-library-linked");
+				return pipeline;
+			}
+		}
+
+		private Pipeline EnsureGraphicsPipelineLibrary(
+			GraphicsPipelineLibraryKey key,
+			ref GraphicsPipelineCreateInfo baseInfo,
+			PipelineShaderStageCreateInfo[] stages,
+			GraphicsPipelineLibraryFlagsEXT libraryFlags)
+		{
+			if (_graphicsPipelineLibraries.TryGetValue(key, out Pipeline cachedLibrary) &&
+				cachedLibrary.Handle != 0)
+			{
+				return cachedLibrary;
+			}
+
+			VkRenderProgram program = _program ?? throw new InvalidOperationException("Graphics program was not initialized.");
+
+			fixed (PipelineShaderStageCreateInfo* stagesPtr = stages)
+			{
+				GraphicsPipelineLibraryCreateInfoEXT libraryInfo = new()
+				{
+					SType = StructureType.GraphicsPipelineLibraryCreateInfoExt,
+					PNext = baseInfo.PNext,
+					Flags = libraryFlags,
+				};
+
+				GraphicsPipelineCreateInfo libraryPipelineInfo = baseInfo;
+				libraryPipelineInfo.Flags |= PipelineCreateFlags.CreateLibraryBitKhr;
+				libraryPipelineInfo.PNext = &libraryInfo;
+				libraryPipelineInfo.StageCount = (uint)stages.Length;
+				libraryPipelineInfo.PStages = stages.Length > 0 ? stagesPtr : null;
+				libraryPipelineInfo.Layout = program.PipelineLayout;
+
+				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset);
+
+				Result result = Api!.CreateGraphicsPipelines(Device, Renderer.ActivePipelineCache, 1, ref libraryPipelineInfo, null, out Pipeline library);
+				if (result != Result.Success)
+					throw new InvalidOperationException($"failed to create {key.Subset} graphics pipeline library ({result}).");
+
+				_graphicsPipelineLibraries[key] = library;
+				Renderer.NotifyVulkanPipelineCreated($"graphics-library:{key.Subset}");
+				return library;
+			}
+		}
+
+		private static PipelineShaderStageCreateInfo[] GetGraphicsPipelineLibraryStages(
+			VkRenderProgram program,
+			EProgramStageMask mask,
+			uint colorAttachmentCount)
+		{
+			PipelineShaderStageCreateInfo[] stages = program.GetShaderStages(mask).ToArray();
+			if (colorAttachmentCount == 0)
+				stages = stages.Where(static stage => stage.Stage != ShaderStageFlags.FragmentBit).ToArray();
+
+			return stages;
+		}
+
+		private static void ApplyGraphicsPipelineLibrarySubset(
+			ref GraphicsPipelineCreateInfo pipelineInfo,
+			GraphicsPipelineLibrarySubset subset)
+		{
+			switch (subset)
+			{
+				case GraphicsPipelineLibrarySubset.VertexInputInterface:
+					pipelineInfo.PViewportState = null;
+					pipelineInfo.PRasterizationState = null;
+					pipelineInfo.PMultisampleState = null;
+					pipelineInfo.PDepthStencilState = null;
+					pipelineInfo.PColorBlendState = null;
+					pipelineInfo.PDynamicState = null;
+					break;
+				case GraphicsPipelineLibrarySubset.PreRasterizationShaders:
+					pipelineInfo.PVertexInputState = null;
+					pipelineInfo.PInputAssemblyState = null;
+					pipelineInfo.PMultisampleState = null;
+					pipelineInfo.PDepthStencilState = null;
+					pipelineInfo.PColorBlendState = null;
+					break;
+				case GraphicsPipelineLibrarySubset.FragmentShader:
+					pipelineInfo.PVertexInputState = null;
+					pipelineInfo.PInputAssemblyState = null;
+					pipelineInfo.PViewportState = null;
+					pipelineInfo.PRasterizationState = null;
+					pipelineInfo.PColorBlendState = null;
+					pipelineInfo.PDynamicState = null;
+					break;
+				case GraphicsPipelineLibrarySubset.FragmentOutputInterface:
+					pipelineInfo.StageCount = 0;
+					pipelineInfo.PStages = null;
+					pipelineInfo.PVertexInputState = null;
+					pipelineInfo.PInputAssemblyState = null;
+					pipelineInfo.PViewportState = null;
+					pipelineInfo.PRasterizationState = null;
+					pipelineInfo.PDepthStencilState = null;
+					pipelineInfo.PDynamicState = null;
+					break;
+			}
 		}
 
 		private static PendingMeshDraw ResolveAttachmentCompatibleDrawState(
@@ -906,6 +1168,14 @@ public unsafe partial class VulkanRenderer
 			}
 
 			_pipelines.Clear();
+
+			foreach (var library in _graphicsPipelineLibraries.Values)
+			{
+				if (library.Handle != 0)
+					Renderer.RetirePipeline(library);
+			}
+
+			_graphicsPipelineLibraries.Clear();
 		}
 
 		private void DestroyGeneratedPrograms()

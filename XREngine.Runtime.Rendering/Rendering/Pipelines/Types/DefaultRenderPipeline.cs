@@ -315,7 +315,11 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public DeferredDebugViewMode DeferredDebugView
     {
         get => _deferredDebugView;
-        set => SetField(ref _deferredDebugView, value);
+        set
+        {
+            SetField(ref _deferredDebugView, value);
+            RenderDiagnosticsFlags.SetDeferredDebugView((int)value);
+        }
     }
 
     /// <summary>
@@ -3438,9 +3442,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return ambient;
     }
 
+    private static int ResolveDeferredDebugMode()
+    {
+        int debugMode = RenderDiagnosticsFlags.DeferredDebugView;
+        return debugMode >= 0 && debugMode <= 5 ? debugMode : (int)DeferredDebugViewMode.Disabled;
+    }
+
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
     {
-        program.Uniform("DeferredDebugMode", (int)DeferredDebugView);
+        program.Uniform("DeferredDebugMode", ResolveDeferredDebugMode());
         program.Uniform("GlobalAmbient", ResolveGlobalAmbient());
 
         bool useAo = ShouldUseAmbientOcclusion();

@@ -352,6 +352,10 @@ void main()
         float depth = texture(DepthView, uv).r;
         vec3 InLo = max(texture(LightingTexture, uv).rgb, vec3(0.0f));
 #endif
+        // Show raw depth before the far-depth discard so XRE_DEFERRED_DEBUG=5 can
+        // distinguish an empty G-buffer from valid geometry with no lighting.
+        if (DeferredDebugMode == 5) { OutLo = vec4(vec3(depth), 1.0f); return; }
+
         if (depth >= 1.0f)
         {
                 OutLo = vec4(0.0f);
@@ -365,7 +369,6 @@ void main()
                 if (DeferredDebugMode == 2) { OutLo = vec4(InLo, 1.0f); return; }              // Light volume accumulation
                 if (DeferredDebugMode == 3) { OutLo = vec4(rmse.rgb, 1.0f); return; }          // RMSE (roughness, metallic, specular)
                 if (DeferredDebugMode == 4) { OutLo = vec4(normal * 0.5f + 0.5f, 1.0f); return; } // Decoded normal
-                if (DeferredDebugMode == 5) { OutLo = vec4(vec3(depth), 1.0f); return; }       // Raw depth
         }
 
         vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);

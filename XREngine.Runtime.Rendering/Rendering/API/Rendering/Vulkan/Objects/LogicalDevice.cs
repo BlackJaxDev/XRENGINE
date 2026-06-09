@@ -433,6 +433,30 @@ public unsafe partial class VulkanRenderer
         meshShaderSupported = meshShaderFeatures.MeshShader;
     }
 
+    private unsafe void QueryGraphicsPipelineLibraryCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceGraphicsPipelineLibraryFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &graphicsPipelineLibraryFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = graphicsPipelineLibraryFeatures.GraphicsPipelineLibrary;
+    }
+
     /// <summary>
     /// Creates a logical device interface to the physical device with specific 
     /// queue families and extensions.
@@ -657,6 +681,14 @@ public unsafe partial class VulkanRenderer
             taskShaderFeatureSupported &&
             meshShaderFeatureSupported;
 
+        bool graphicsPipelineLibraryExtensionEnabled = extensionsArray.Contains("VK_EXT_graphics_pipeline_library");
+        QueryGraphicsPipelineLibraryCapabilities(
+            graphicsPipelineLibraryExtensionEnabled,
+            out bool graphicsPipelineLibraryFeatureSupported);
+        bool enableGraphicsPipelineLibraryFeature =
+            graphicsPipelineLibraryExtensionEnabled &&
+            graphicsPipelineLibraryFeatureSupported;
+
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
@@ -752,6 +784,13 @@ public unsafe partial class VulkanRenderer
             MeshShader = enableMeshShaderFeature,
         };
 
+        PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT graphicsPipelineLibraryFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceGraphicsPipelineLibraryFeaturesExt,
+            PNext = null,
+            GraphicsPipelineLibrary = enableGraphicsPipelineLibraryFeature,
+        };
+
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing)
         {
@@ -825,6 +864,12 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &meshShaderFeatureEnable;
         }
 
+        if (enableGraphicsPipelineLibraryFeature)
+        {
+            graphicsPipelineLibraryFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &graphicsPipelineLibraryFeatureEnable;
+        }
+
         PhysicalDeviceFeatures2 featureChain = new()
         {
             SType = StructureType.PhysicalDeviceFeatures2,
@@ -847,14 +892,9 @@ public unsafe partial class VulkanRenderer
             PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensionsArray)
         };
 
-        // Enable validation layers if debugging is enabled
-        if (EnableValidationLayers)
-        {
-            createInfo.EnabledLayerCount = (uint)validationLayers.Length;
-            createInfo.PpEnabledLayerNames = (byte**)SilkMarshal.StringArrayToPtr(validationLayers);
-        }
-        else
-            createInfo.EnabledLayerCount = 0;
+        // Device layers are deprecated/invalid in modern Vulkan. Validation is enabled at instance creation.
+        createInfo.EnabledLayerCount = 0;
+        createInfo.PpEnabledLayerNames = null;
 
         // Create the logical device
         if (Api!.CreateDevice(_physicalDevice, in createInfo, null, out device) != Result.Success)
@@ -869,6 +909,7 @@ public unsafe partial class VulkanRenderer
         _supportsTimelineSemaphores = enableTimelineSemaphoreFeature;
         _supportsSynchronization2 = enableSynchronization2Feature;
         _supportsDepthClipControl = enableDepthClipControlFeature;
+        _supportsGraphicsPipelineLibrary = enableGraphicsPipelineLibraryFeature;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
         RuntimeEngine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
@@ -974,6 +1015,12 @@ public unsafe partial class VulkanRenderer
                     meshShaderFeatureSupported);
             }
 
+            if (graphicsPipelineLibraryExtensionEnabled && !enableGraphicsPipelineLibraryFeature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] VK_EXT_graphics_pipeline_library present but disabled because the graphicsPipelineLibrary feature bit is unavailable.");
+            }
+
         // Load optional extensions
         LoadOptionalDeviceExtensions(extensionsArray);
 
@@ -987,10 +1034,6 @@ public unsafe partial class VulkanRenderer
         Api!.GetDeviceQueue(device, indices.PresentFamilyIndex!.Value, 0, out presentQueue);
         Api!.GetDeviceQueue(device, indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value, 0, out computeQueue);
         Api!.GetDeviceQueue(device, indices.TransferFamilyIndex ?? indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value, 0, out transferQueue);
-
-        // Clean up allocated memory for validation layer names
-        if (EnableValidationLayers)
-            SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
 
         // Clean up allocated memory for extension names
         SilkMarshal.Free((nint)createInfo.PpEnabledExtensionNames);

@@ -56,7 +56,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public DeferredDebugViewMode DeferredDebugView
     {
         get => _deferredDebugView;
-        set => SetField(ref _deferredDebugView, value);
+        set
+        {
+            SetField(ref _deferredDebugView, value);
+            RenderDiagnosticsFlags.SetDeferredDebugView((int)value);
+        }
     }
 
     private const float TemporalFeedbackMin = 0.16f;
@@ -1408,6 +1412,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public DefaultRenderPipeline2(bool stereo = false) : base(true)
     {
         Stereo = stereo;
+        // Honor the deferred-debug pref (seeded from XRE_DEFERRED_DEBUG, also settable from the
+        // editor Diagnostics preferences). 0..5: Disabled/RawAlbedo/DirectLighting/Rmse/Normal/Depth.
+        int debugMode = RenderDiagnosticsFlags.DeferredDebugView;
+        if (debugMode >= 0 && debugMode <= 5)
+            _deferredDebugView = (DeferredDebugViewMode)debugMode;
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
         WarmDeferredLightingShaders();
         WarmFirstRenderShaders();
@@ -1743,9 +1752,15 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         return ambient;
     }
 
+    private static int ResolveDeferredDebugMode()
+    {
+        int debugMode = RenderDiagnosticsFlags.DeferredDebugView;
+        return debugMode >= 0 && debugMode <= 5 ? debugMode : (int)DeferredDebugViewMode.Disabled;
+    }
+
     private void ApplyLightCombineProgramBindings(XRRenderProgram program)
     {
-        program.Uniform("DeferredDebugMode", (int)DeferredDebugView);
+        program.Uniform("DeferredDebugMode", ResolveDeferredDebugMode());
         program.Uniform("GlobalAmbient", ResolveGlobalAmbient());
 
         bool useAo = ShouldUseAmbientOcclusion();
