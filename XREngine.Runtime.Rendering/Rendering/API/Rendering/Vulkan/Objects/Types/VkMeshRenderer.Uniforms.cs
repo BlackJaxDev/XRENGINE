@@ -474,7 +474,8 @@ public unsafe partial class VulkanRenderer
 		/// <summary>
 		/// Resolves an engine uniform value by name from the current rendering state.
 		/// Handles matrices, camera properties, screen dimensions, UI bounds, etc.
-		/// Falls back to program-level uniform overrides if present.
+		/// Engine-owned values come from the draw snapshot; UI bounds may still come
+		/// from program-level overrides because they are authored per program.
 		/// </summary>
 		private bool TryResolveEngineUniformValue(string name, in PendingMeshDraw draw, out object? value, out EShaderVarType type)
 		{
@@ -484,9 +485,7 @@ public unsafe partial class VulkanRenderer
 			// Use camera state captured at enqueue time; by the time the command
 			// buffer is recorded the pipeline camera stack has already been popped.
 			XRCamera? camera = draw.Camera;
-			XRCamera? rightEyeCamera = draw.StereoRightEyeCamera;
 			bool stereoPass = draw.IsStereoPass;
-			bool useUnjittered = draw.UseUnjitteredProjection;
 
 			Matrix4x4 prevModelMatrix = draw.PreviousModelMatrix;
 			if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(draw.ModelMatrix))
@@ -495,36 +494,38 @@ public unsafe partial class VulkanRenderer
 			Matrix4x4 inverseModel = Matrix4x4.Identity;
 			Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
 
-			// Transform-derived camera matrices/vectors come from the draw snapshot captured
-			// at enqueue time. Reading camera.Transform.* here (deferred record time) would be
-			// stale/identity because the pipeline camera stack has already been popped.
+			// Camera matrices/vectors come from the draw snapshot captured at enqueue time.
+			// Reading live camera state here can be stale because the pipeline camera stack
+			// has already been popped.
 			Matrix4x4 viewMatrix = draw.ViewMatrix;
 			Matrix4x4 inverseViewMatrix = draw.InverseViewMatrix;
-			Matrix4x4 projMatrix = useUnjittered && camera is not null
-				? camera.ProjectionMatrixUnjittered
-				: camera?.ProjectionMatrix ?? Matrix4x4.Identity;
-			Matrix4x4 inverseProjMatrix = useUnjittered && camera is not null
-				? camera.InverseProjectionMatrixUnjittered
-				: camera?.InverseProjectionMatrix ?? Matrix4x4.Identity;
-			Matrix4x4 rightEyeProjMatrix = useUnjittered && rightEyeCamera is not null
-				? rightEyeCamera.ProjectionMatrixUnjittered
-				: rightEyeCamera?.ProjectionMatrix ?? projMatrix;
-			Matrix4x4 rightEyeInverseProjMatrix = useUnjittered && rightEyeCamera is not null
-				? rightEyeCamera.InverseProjectionMatrixUnjittered
-				: rightEyeCamera?.InverseProjectionMatrix ?? inverseProjMatrix;
-
-			if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue programValue))
-			{
-				value = programValue.Value;
-				type = programValue.Type;
-				return true;
-			}
+			Matrix4x4 projMatrix = draw.ProjectionMatrix;
+			Matrix4x4 inverseProjMatrix = draw.InverseProjectionMatrix;
+			Matrix4x4 rightEyeViewMatrix = draw.RightEyeViewMatrix;
+			Matrix4x4 rightEyeProjMatrix = draw.RightEyeProjectionMatrix;
+			Matrix4x4 rightEyeInverseProjMatrix = draw.RightEyeInverseProjectionMatrix;
 
 			switch (normalized)
 			{
 				case nameof(EEngineUniform.UpdateDelta):
 					value = RuntimeEngine.Time.Timer.Update.Delta;
 					type = EShaderVarType._float;
+					return true;
+				case nameof(EEngineUniform.RenderTime):
+					value = this.Renderer._materialUniformSecondsLive;
+					type = EShaderVarType._float;
+					return true;
+				case nameof(EEngineUniform.EngineTime):
+					value = RuntimeEngine.ElapsedTime;
+					type = EShaderVarType._float;
+					return true;
+				case nameof(EEngineUniform.DeltaTime):
+					value = RuntimeEngine.Time.Timer.Render.Delta;
+					type = EShaderVarType._float;
+					return true;
+				case TransformIdUniformName:
+					value = draw.TransformId;
+					type = EShaderVarType._uint;
 					return true;
 				case nameof(EEngineUniform.ModelMatrix):
 					value = draw.ModelMatrix;
@@ -540,11 +541,14 @@ public unsafe partial class VulkanRenderer
 					return true;
 				case nameof(EEngineUniform.ViewMatrix):
 				case nameof(EEngineUniform.LeftEyeViewMatrix):
-				case nameof(EEngineUniform.RightEyeViewMatrix):
 				case nameof(EEngineUniform.PrevViewMatrix):
 				case nameof(EEngineUniform.PrevLeftEyeViewMatrix):
-				case nameof(EEngineUniform.PrevRightEyeViewMatrix):
 					value = viewMatrix;
+					type = EShaderVarType._mat4;
+					return true;
+				case nameof(EEngineUniform.RightEyeViewMatrix):
+				case nameof(EEngineUniform.PrevRightEyeViewMatrix):
+					value = rightEyeViewMatrix;
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.InverseViewMatrix):
@@ -587,7 +591,7 @@ public unsafe partial class VulkanRenderer
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.RightEyeViewProjectionMatrix):
-					value = rightEyeCamera?.ViewProjectionMatrix ?? (viewMatrix * projMatrix);
+					value = rightEyeViewMatrix * rightEyeProjMatrix;
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.LeftEyeProjMatrix):
@@ -1010,9 +1014,7 @@ public unsafe partial class VulkanRenderer
 				return ClearEngineUniformBuffer(buffer);
 
 			XRCamera? camera = draw.Camera;
-			XRCamera? rightEyeCamera = draw.StereoRightEyeCamera;
 			bool stereoPass = draw.IsStereoPass;
-			bool useUnjittered = draw.UseUnjitteredProjection;
 
 			// Fallback: if previous model matrix was never captured, assume static
 			// to avoid injecting false motion into the velocity buffer (causes
@@ -1025,37 +1027,29 @@ public unsafe partial class VulkanRenderer
 			Matrix4x4 inverseModel = Matrix4x4.Identity;
 			Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
 
-			// Transform-derived camera matrices/vectors come from the draw snapshot captured
-			// at enqueue time. Reading camera.Transform.* here (deferred record time) would be
-			// stale/identity because the pipeline camera stack has already been popped.
+			// Camera matrices/vectors come from the draw snapshot captured at enqueue time.
+			// Reading live camera state here can be stale because the pipeline camera stack
+			// has already been popped.
 			Matrix4x4 viewMatrix = draw.ViewMatrix;
 			Matrix4x4 inverseViewMatrix = draw.InverseViewMatrix;
-			Matrix4x4 projMatrix = useUnjittered && camera is not null
-				? camera.ProjectionMatrixUnjittered
-				: camera?.ProjectionMatrix ?? Matrix4x4.Identity;
-			Matrix4x4 inverseProjMatrix = useUnjittered && camera is not null
-				? camera.InverseProjectionMatrixUnjittered
-				: camera?.InverseProjectionMatrix ?? Matrix4x4.Identity;
-			Matrix4x4 rightEyeInverseProjMatrix = useUnjittered && rightEyeCamera is not null
-				? rightEyeCamera.InverseProjectionMatrixUnjittered
-				: rightEyeCamera?.InverseProjectionMatrix ?? inverseProjMatrix;
-			Matrix4x4 rightEyeProjMatrix = useUnjittered && rightEyeCamera is not null
-				? rightEyeCamera.ProjectionMatrixUnjittered
-				: rightEyeCamera?.ProjectionMatrix ?? projMatrix;
-
-			if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue programValue))
-				return UploadProgramUniform(buffer, programValue);
+			Matrix4x4 projMatrix = draw.ProjectionMatrix;
+			Matrix4x4 inverseProjMatrix = draw.InverseProjectionMatrix;
+			Matrix4x4 rightEyeViewMatrix = draw.RightEyeViewMatrix;
+			Matrix4x4 rightEyeInverseProjMatrix = draw.RightEyeInverseProjectionMatrix;
+			Matrix4x4 rightEyeProjMatrix = draw.RightEyeProjectionMatrix;
 
 			switch (normalized)
 			{
 				case nameof(EEngineUniform.UpdateDelta):
 					return UploadUniform(buffer, RuntimeEngine.Time.Timer.Update.Delta);
 				case nameof(EEngineUniform.RenderTime):
-					return UploadUniform(buffer, 0f); // Per-material accumulator; set by Drawing.RenderState
+					return UploadUniform(buffer, this.Renderer._materialUniformSecondsLive);
 				case nameof(EEngineUniform.EngineTime):
 					return UploadUniform(buffer, RuntimeEngine.ElapsedTime);
 				case nameof(EEngineUniform.DeltaTime):
 					return UploadUniform(buffer, RuntimeEngine.Time.Timer.Render.Delta);
+				case TransformIdUniformName:
+					return UploadUniform(buffer, draw.TransformId);
 				case nameof(EEngineUniform.ModelMatrix):
 					return UploadUniform(buffer, draw.ModelMatrix);
 				case nameof(EEngineUniform.PrevModelMatrix):
@@ -1064,11 +1058,12 @@ public unsafe partial class VulkanRenderer
 					return UploadUniform(buffer, inverseModel);
 				case nameof(EEngineUniform.ViewMatrix):
 				case nameof(EEngineUniform.LeftEyeViewMatrix):
-				case nameof(EEngineUniform.RightEyeViewMatrix):
 				case nameof(EEngineUniform.PrevViewMatrix):
 				case nameof(EEngineUniform.PrevLeftEyeViewMatrix):
-				case nameof(EEngineUniform.PrevRightEyeViewMatrix):
 					return UploadUniform(buffer, viewMatrix);
+				case nameof(EEngineUniform.RightEyeViewMatrix):
+				case nameof(EEngineUniform.PrevRightEyeViewMatrix):
+					return UploadUniform(buffer, rightEyeViewMatrix);
 				case nameof(EEngineUniform.InverseViewMatrix):
 					return UploadUniform(buffer, inverseViewMatrix);
 				case nameof(EEngineUniform.InverseProjMatrix):
@@ -1091,7 +1086,7 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.RightEyeInverseProjMatrix):
 					return UploadUniform(buffer, rightEyeInverseProjMatrix);
 				case nameof(EEngineUniform.RightEyeViewProjectionMatrix):
-					return UploadUniform(buffer, rightEyeCamera?.ViewProjectionMatrix ?? (viewMatrix * projMatrix));
+					return UploadUniform(buffer, rightEyeViewMatrix * rightEyeProjMatrix);
 				case nameof(EEngineUniform.LeftEyeProjMatrix):
 					return UploadUniform(buffer, projMatrix);
 				case nameof(EEngineUniform.RightEyeProjMatrix):
@@ -1197,7 +1192,7 @@ public unsafe partial class VulkanRenderer
 			{
 				nameof(EEngineUniform.ModelMatrix) or nameof(EEngineUniform.PrevModelMatrix) or nameof(EEngineUniform.ViewMatrix) or nameof(EEngineUniform.LeftEyeViewMatrix) or nameof(EEngineUniform.RightEyeViewMatrix) or nameof(EEngineUniform.InverseViewMatrix) or nameof(EEngineUniform.InverseProjMatrix) or nameof(EEngineUniform.ProjMatrix) or nameof(EEngineUniform.ViewProjectionMatrix) or nameof(EEngineUniform.LeftEyeViewProjectionMatrix) or nameof(EEngineUniform.RightEyeViewProjectionMatrix) or nameof(EEngineUniform.LeftEyeInverseViewMatrix) or nameof(EEngineUniform.RightEyeInverseViewMatrix) or nameof(EEngineUniform.LeftEyeInverseProjMatrix) or nameof(EEngineUniform.RightEyeInverseProjMatrix) or nameof(EEngineUniform.LeftEyeProjMatrix) or nameof(EEngineUniform.RightEyeProjMatrix) or nameof(EEngineUniform.PrevViewMatrix) or nameof(EEngineUniform.PrevLeftEyeViewMatrix) or nameof(EEngineUniform.PrevRightEyeViewMatrix) or nameof(EEngineUniform.PrevProjMatrix) or nameof(EEngineUniform.PrevLeftEyeProjMatrix) or nameof(EEngineUniform.PrevRightEyeProjMatrix) or nameof(EEngineUniform.RootInvModelMatrix) => (uint)Unsafe.SizeOf<Matrix4x4>(),
 				nameof(EEngineUniform.CameraPosition) or nameof(EEngineUniform.CameraForward) or nameof(EEngineUniform.CameraUp) or nameof(EEngineUniform.CameraRight) => 16u,
-				nameof(EEngineUniform.CameraNearZ) or nameof(EEngineUniform.CameraFarZ) or nameof(EEngineUniform.CameraFovX) or nameof(EEngineUniform.CameraFovY) or nameof(EEngineUniform.CameraAspect) or nameof(EEngineUniform.ScreenWidth) or nameof(EEngineUniform.ScreenHeight) or nameof(EEngineUniform.UpdateDelta) or nameof(EEngineUniform.DepthMode) or nameof(EEngineUniform.ClipSpaceYDirection) or nameof(EEngineUniform.ClipDepthRange) or nameof(EEngineUniform.UIX) or nameof(EEngineUniform.UIY) or nameof(EEngineUniform.UIWidth) or nameof(EEngineUniform.UIHeight) => 4u,
+				nameof(EEngineUniform.CameraNearZ) or nameof(EEngineUniform.CameraFarZ) or nameof(EEngineUniform.CameraFovX) or nameof(EEngineUniform.CameraFovY) or nameof(EEngineUniform.CameraAspect) or nameof(EEngineUniform.ScreenWidth) or nameof(EEngineUniform.ScreenHeight) or nameof(EEngineUniform.UpdateDelta) or nameof(EEngineUniform.RenderTime) or nameof(EEngineUniform.EngineTime) or nameof(EEngineUniform.DeltaTime) or nameof(EEngineUniform.DepthMode) or nameof(EEngineUniform.ClipSpaceYDirection) or nameof(EEngineUniform.ClipDepthRange) or nameof(EEngineUniform.UIX) or nameof(EEngineUniform.UIY) or nameof(EEngineUniform.UIWidth) or nameof(EEngineUniform.UIHeight) or TransformIdUniformName => 4u,
 				nameof(EEngineUniform.ScreenOrigin) => 8u,
 				nameof(EEngineUniform.BillboardMode) or nameof(EEngineUniform.VRMode) => 4u,
 				nameof(EEngineUniform.UIXYWH) => 16u,

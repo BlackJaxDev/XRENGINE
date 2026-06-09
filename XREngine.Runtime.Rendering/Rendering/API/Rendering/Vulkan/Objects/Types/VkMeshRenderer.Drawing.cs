@@ -219,9 +219,6 @@ public unsafe partial class VulkanRenderer
 
 		private void NotifyDrawUniforms(XRMaterial material, XRRenderProgram programData, in PendingMeshDraw draw)
 		{
-			if (draw.Camera is not null)
-				Renderer.SetEngineUniforms(programData, draw.Camera);
-
 			Renderer.SetMaterialUniforms(material, programData);
 			MeshRenderer.OnSettingUniforms(programData, programData);
 			MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);
