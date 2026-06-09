@@ -92,6 +92,8 @@ namespace XREngine.Rendering.Vulkan
             DestroyDanglingRenderProgramPipelineWrappers();
             DestroyDanglingRenderProgramWrappers();
             DestroyDanglingDataBufferWrappers();
+            DestroyDanglingFrameBufferWrappers();
+            DestroyDanglingTextureWrappers();
             DestroyRemainingTrackedMeshUniformBuffers();
 
             // Drain all deferred-deletion queues now that the GPU is idle.
@@ -118,6 +120,8 @@ namespace XREngine.Rendering.Vulkan
             DestroyDanglingRenderProgramPipelineWrappers();
             DestroyDanglingRenderProgramWrappers();
             DestroyDanglingDataBufferWrappers();
+            DestroyDanglingFrameBufferWrappers();
+            DestroyDanglingTextureWrappers();
             DestroyRemainingTrackedMeshUniformBuffers();
             ForceFlushAllRetiredResources();
             DestroyRemainingTrackedBufferAllocations();
@@ -214,6 +218,47 @@ namespace XREngine.Rendering.Vulkan
                 }
                 catch
                 {
+                }
+            }
+        }
+
+        private void DestroyDanglingFrameBufferWrappers()
+        {
+            DestroyCachedWrappers(VkObject<XRFrameBuffer>.Cache.Values.ToArray(), "framebuffer");
+            DestroyCachedWrappers(VkObject<XRRenderBuffer>.Cache.Values.ToArray(), "renderbuffer");
+        }
+
+        private void DestroyDanglingTextureWrappers()
+        {
+            DestroyCachedWrappers(VkObject<XRTexture1D>.Cache.Values.ToArray(), "texture1D");
+            DestroyCachedWrappers(VkObject<XRTexture1DArray>.Cache.Values.ToArray(), "texture1DArray");
+            DestroyCachedWrappers(VkObject<XRTexture2D>.Cache.Values.ToArray(), "texture2D");
+            DestroyCachedWrappers(VkObject<XRTexture2DArray>.Cache.Values.ToArray(), "texture2DArray");
+            DestroyCachedWrappers(VkObject<XRTexture3D>.Cache.Values.ToArray(), "texture3D");
+            DestroyCachedWrappers(VkObject<XRTextureCube>.Cache.Values.ToArray(), "textureCube");
+            DestroyCachedWrappers(VkObject<XRTextureCubeArray>.Cache.Values.ToArray(), "textureCubeArray");
+            DestroyCachedWrappers(VkObject<XRTextureRectangle>.Cache.Values.ToArray(), "textureRectangle");
+            DestroyCachedWrappers(VkObject<XRTextureBuffer>.Cache.Values.ToArray(), "textureBuffer");
+            DestroyCachedWrappers(VkObject<XRTextureViewBase>.Cache.Values.ToArray(), "textureView");
+            DestroyCachedWrappers(VkObject<XRSampler>.Cache.Values.ToArray(), "sampler");
+        }
+
+        private static void DestroyCachedWrappers<T>(VkObject<T>[] wrappers, string label)
+            where T : GenericRenderObject
+        {
+            foreach (var wrapper in wrappers)
+            {
+                try
+                {
+                    wrapper?.Destroy();
+                }
+                catch (Exception ex)
+                {
+                    Debug.VulkanWarning(
+                        "[Vulkan] Failed to destroy cached {0} wrapper '{1}'. {2}",
+                        label,
+                        wrapper?.GetType().Name ?? "<null>",
+                        ex.Message);
                 }
             }
         }

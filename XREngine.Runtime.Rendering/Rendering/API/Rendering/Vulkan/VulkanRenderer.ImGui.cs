@@ -1002,6 +1002,7 @@ public unsafe partial class VulkanRenderer
         pipelineKeyHash.Add(SupportsDynamicRendering);
         pipelineKeyHash.Add(_renderPass.Handle);
         pipelineKeyHash.Add((int)swapChainImageFormat);
+        pipelineKeyHash.Add((int)swapChainImageColorSpace);
         pipelineKeyHash.Add((int)_swapchainDepthFormat);
         ulong currentPipelineSignature = unchecked((ulong)pipelineKeyHash.ToHashCode());
 
@@ -1503,10 +1504,13 @@ public unsafe partial class VulkanRenderer
         };
 
     private bool ShouldEmulateOpenGlImGuiSrgbPassthrough()
-        => IsSrgbSwapchainFormat(swapChainImageFormat);
+        => IsSrgbSwapchainFormat(swapChainImageFormat) || IsLinearSrgbSwapchainColorSpace(swapChainImageColorSpace);
 
     private static bool IsSrgbSwapchainFormat(Format format)
         => format is Format.B8G8R8A8Srgb or Format.R8G8B8A8Srgb;
+
+    private static bool IsLinearSrgbSwapchainColorSpace(ColorSpaceKHR colorSpace)
+        => colorSpace is ColorSpaceKHR.SpaceExtendedSrgbLinearExt;
 
     private DescriptorSet ResolveImGuiDescriptorSet(nint textureId)
     {

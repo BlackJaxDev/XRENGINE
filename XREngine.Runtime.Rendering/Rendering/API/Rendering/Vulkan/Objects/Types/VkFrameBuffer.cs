@@ -13,6 +13,7 @@ public unsafe partial class VulkanRenderer
         private Framebuffer _frameBuffer = default;
         private RenderPass _renderPass = default;
         private FrameBufferAttachmentSignature[]? _attachmentSignature;
+        private ImageView[]? _attachmentViews;
 
         public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
         public override bool IsGenerated => IsActive;
@@ -32,6 +33,29 @@ public unsafe partial class VulkanRenderer
         public uint FramebufferHeight { get; private set; }
 
         internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
+
+        internal void EnsureCurrent()
+        {
+            if (!IsActive)
+            {
+                Generate();
+                return;
+            }
+
+            AttachmentBuildInfo[] attachments = BuildAttachmentInfos();
+            var (fbWidth, fbHeight) = ResolveFramebufferExtent();
+            if (AttachmentStateMatches(attachments, fbWidth, fbHeight))
+                return;
+
+            Debug.VulkanWarningEvery(
+                $"Vulkan.FrameBuffer.Stale.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Rebuilding framebuffer '{0}' before render pass because attachment views or dimensions changed.",
+                DescribeFrameBuffer());
+
+            Destroy();
+            Generate();
+        }
 
         internal RenderPass ResolveRenderPassForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
         {
@@ -366,6 +390,7 @@ public unsafe partial class VulkanRenderer
             _frameBuffer = default;
             _renderPass = default;
             _attachmentSignature = null;
+            _attachmentViews = null;
             FramebufferWidth = 0;
             FramebufferHeight = 0;
             PostDeleted();
@@ -387,23 +412,7 @@ public unsafe partial class VulkanRenderer
             _renderPass = renderPass;
             _attachmentSignature = signatures;
 
-            // Compute framebuffer dimensions accounting for mip-level targets.
-            // When an FBO targets a specific mip level (e.g. bloom downsample), the
-            // VkFramebuffer width/height must match the mip-level extent, not the base.
-            uint fbWidth = Math.Max(Data.Width, 1u);
-            uint fbHeight = Math.Max(Data.Height, 1u);
-            var targets = Data.Targets;
-            if (targets is not null && targets.Length > 0)
-            {
-                int maxMip = 0;
-                foreach (var (_, _, mip, _) in targets)
-                    maxMip = Math.Max(maxMip, mip);
-                if (maxMip > 0)
-                {
-                    fbWidth = Math.Max(fbWidth >> maxMip, 1u);
-                    fbHeight = Math.Max(fbHeight >> maxMip, 1u);
-                }
-            }
+            var (fbWidth, fbHeight) = ResolveFramebufferExtent();
 
             fixed (ImageView* viewsPtr = views)
             {
@@ -428,8 +437,60 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
+            _attachmentViews = (ImageView[])views.Clone();
             return CacheObject(this);
         }
+
+        private bool AttachmentStateMatches(AttachmentBuildInfo[] attachments, uint fbWidth, uint fbHeight)
+        {
+            if (_attachmentViews is null || _attachmentSignature is null)
+                return false;
+
+            if (_attachmentViews.Length != attachments.Length || _attachmentSignature.Length != attachments.Length)
+                return false;
+
+            if (FramebufferWidth != fbWidth || FramebufferHeight != fbHeight)
+                return false;
+
+            for (int i = 0; i < attachments.Length; i++)
+            {
+                if (_attachmentViews[i].Handle != attachments[i].View.Handle)
+                    return false;
+
+                if (!_attachmentSignature[i].Equals(attachments[i].Signature))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private (uint Width, uint Height) ResolveFramebufferExtent()
+        {
+            // Compute framebuffer dimensions accounting for mip-level targets.
+            // When an FBO targets a specific mip level (e.g. bloom downsample), the
+            // VkFramebuffer width/height must match the mip-level extent, not the base.
+            uint fbWidth = Math.Max(Data.Width, 1u);
+            uint fbHeight = Math.Max(Data.Height, 1u);
+            var targets = Data.Targets;
+            if (targets is not null && targets.Length > 0)
+            {
+                int maxMip = 0;
+                foreach (var (_, _, mip, _) in targets)
+                    maxMip = Math.Max(maxMip, mip);
+                if (maxMip > 0)
+                {
+                    fbWidth = Math.Max(fbWidth >> maxMip, 1u);
+                    fbHeight = Math.Max(fbHeight >> maxMip, 1u);
+                }
+            }
+
+            return (fbWidth, fbHeight);
+        }
+
+        private string DescribeFrameBuffer()
+            => string.IsNullOrWhiteSpace(Data.Name)
+                ? $"FBO[{Data.GetHashCode()}]"
+                : Data.Name!;
 
         private FrameBufferAttachmentSignature[] BuildPlannedAttachmentSignature(RenderPassMetadata pass, string frameBufferName)
         {
@@ -805,14 +866,15 @@ public unsafe partial class VulkanRenderer
                 throw new InvalidOperationException("Render buffer is not backed by a Vulkan object.");
 
             vkRenderBuffer.Generate();
-                return new AttachmentSource(
-                    vkRenderBuffer.View,
-                    vkRenderBuffer.Format,
-                    vkRenderBuffer.Samples,
-                    vkRenderBuffer.Aspect,
-                    (vkRenderBuffer.Aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0
-                        ? ImageUsageFlags.DepthStencilAttachmentBit
-                        : ImageUsageFlags.ColorAttachmentBit);
+            vkRenderBuffer.RefreshIfStale();
+            return new AttachmentSource(
+                vkRenderBuffer.View,
+                vkRenderBuffer.Format,
+                vkRenderBuffer.Samples,
+                vkRenderBuffer.Aspect,
+                (vkRenderBuffer.Aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0
+                    ? ImageUsageFlags.DepthStencilAttachmentBit
+                    : ImageUsageFlags.ColorAttachmentBit);
         }
 
         private AttachmentSource ResolveTextureAttachment(XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)

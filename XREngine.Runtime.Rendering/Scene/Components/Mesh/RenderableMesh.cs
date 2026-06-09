@@ -183,8 +183,9 @@ namespace XREngine.Components.Scene.Mesh
             }
             else
             {
-                _rc.WorldMatrix = Component.Transform.RenderMatrix;
-                RenderInfo.CullingOffsetMatrix = Component.Transform.WorldMatrix;
+                Matrix4x4 matrix = GetCurrentTransformMatrix(Component.Transform);
+                _rc.WorldMatrix = matrix;
+                RenderInfo.CullingOffsetMatrix = GetCurrentCullingBasisMatrix(Component.Transform);
             }
 
             CaptureRenderDeformationSettings(IsSkinned);
@@ -271,8 +272,10 @@ namespace XREngine.Components.Scene.Mesh
             }
             else
             {
+                Matrix4x4 basis = GetCurrentCullingBasisMatrix(Component.Transform);
+                _rc.WorldMatrix = basis;
                 RenderInfo.LocalCullingVolume = _bindPoseBounds;
-                RenderInfo.CullingOffsetMatrix = GetCurrentCullingBasisMatrix(Component.Transform);
+                RenderInfo.CullingOffsetMatrix = basis;
             }
 
             _rc.Mesh = rend;
@@ -433,7 +436,7 @@ namespace XREngine.Components.Scene.Mesh
                         var rend = CurrentLODRenderer;
                         bool skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
                         CaptureRenderDeformationSettings(skinned);
-                        _rc.WorldMatrix = skinned ? Matrix4x4.Identity : Component.Transform.RenderMatrix;
+                        _rc.WorldMatrix = skinned ? Matrix4x4.Identity : GetCurrentTransformMatrix(Component.Transform);
                     }
                     break;
             }

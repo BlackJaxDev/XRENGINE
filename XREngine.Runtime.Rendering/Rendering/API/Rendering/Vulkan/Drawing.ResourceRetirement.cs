@@ -442,8 +442,8 @@ namespace XREngine.Rendering.Vulkan
                 DrainRetiredDescriptorPools();
                 DrainRetiredPipelines();
                 DrainRetiredBuffers();
-                DrainRetiredImages();
                 DrainRetiredFramebuffers();
+                DrainRetiredImages();
             }
             currentFrame = saved;
         }

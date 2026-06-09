@@ -72,14 +72,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             return this;
         }
 
-        private string ResolveDestinationLabel(XRRenderPipelineInstance? activeInstance)
+        protected string ResolveDestinationLabel(XRRenderPipelineInstance? activeInstance)
             => DestinationFBOName
                 ?? (RenderToSourceFrameBuffer ? SourceQuadFBOName : null)
                 ?? activeInstance?.RenderState.CurrentRenderTargetBinding?.Name
                 ?? activeInstance?.RenderState.OutputFBO?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
-        private XRFrameBuffer? ResolveDestinationFbo(XRRenderPipelineInstance? activeInstance, XRQuadFrameBuffer? sourceFBO)
+        protected XRFrameBuffer? ResolveDestinationFbo(XRRenderPipelineInstance? activeInstance, XRQuadFrameBuffer? sourceFBO)
         {
             if (DestinationFBOName is not null)
                 return activeInstance?.GetFBO<XRFrameBuffer>(DestinationFBOName);
@@ -96,6 +96,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             return activeInstance?.RenderState.CurrentRenderTargetBinding?.FrameBuffer
                 ?? activeInstance?.RenderState.OutputFBO;
         }
+
+        protected static string BuildQuadBlitPassName(string sourceFboName, string destination)
+            => $"QuadBlit_{sourceFboName}_to_{destination}";
 
         private string ResolveShaderLabel(XRRenderPipelineInstance? activeInstance)
         {
@@ -152,7 +155,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             string destination = ResolveDestinationLabel(activeInstance);
 
-            string passName = $"QuadBlit_{SourceQuadFBOName}_to_{destination}";
+            string passName = BuildQuadBlitPassName(SourceQuadFBOName, destination);
             int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
             if (passIndex == int.MinValue && hasRenderGraphMetadata)
             {
@@ -215,7 +218,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             sourceFBO.Render(destFBO);
         }
 
-        private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
+        protected int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
         {
             var metadata = ParentPipeline?.PassMetadata;
             if (metadata is not { Count: > 0 } renderPasses)
@@ -247,7 +250,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? context.CurrentRenderTarget?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
-            var builder = context.GetOrCreateSyntheticPass($"QuadBlit_{SourceQuadFBOName}_to_{destination}");
+            var builder = context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(SourceQuadFBOName, destination));
             builder.WithStage(ERenderGraphPassStage.Graphics);
             builder.SampleTexture(MakeFboColorResource(SourceQuadFBOName));
 
@@ -272,7 +275,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 access = bound.ColorAccess;
             }
 
-            builder.UseColorAttachment(MakeFboColorResource(destination), access, colorLoad, colorStore);
+            builder.UseColorAttachment(MakeColorTargetResource(destination), access, colorLoad, colorStore);
         }
     }
 }

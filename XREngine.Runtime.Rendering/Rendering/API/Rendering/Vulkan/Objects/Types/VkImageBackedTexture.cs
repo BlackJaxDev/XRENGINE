@@ -714,14 +714,9 @@ public unsafe partial class VulkanRenderer
             if (Data.RequiresStorageUsage)
                 Usage |= ImageUsageFlags.StorageBit;
 
-            // Recreate the primary view against the new image.
-            DestroyView(ref _view);
-            foreach ((_, ImageView attachmentView) in _attachmentViews)
-            {
-                if (attachmentView.Handle != 0)
-                    Api!.DestroyImageView(Device, attachmentView, null);
-            }
-            _attachmentViews.Clear();
+            // Recreate the views against the new image. Old views may still be
+            // referenced by retired framebuffers or in-flight command buffers.
+            DestroyAllViews();
             ResetAttachmentLayoutTracking();
             CreateImageView(default);
             _currentImageLayout = _physicalGroup.LastKnownLayout;
@@ -886,7 +881,13 @@ public unsafe partial class VulkanRenderer
         {
             if (view.Handle != 0)
             {
-                Api!.DestroyImageView(Device, view, null);
+                Renderer.RetireImageResources(new RetiredImageResources(
+                    default,
+                    default,
+                    view,
+                    [],
+                    default,
+                    0));
                 view = default;
             }
         }
@@ -894,12 +895,32 @@ public unsafe partial class VulkanRenderer
         /// <summary>Destroys the primary view and all cached attachment views.</summary>
         private void DestroyAllViews()
         {
-            DestroyView(ref _view);
-            foreach ((_, ImageView attachmentView) in _attachmentViews)
+            ImageView primaryView = _view;
+            ImageView[] attachmentViews;
+            if (_attachmentViews.Count > 0)
             {
-                if (attachmentView.Handle != 0)
-                    Api!.DestroyImageView(Device, attachmentView, null);
+                attachmentViews = new ImageView[_attachmentViews.Count];
+                int index = 0;
+                foreach ((_, ImageView attachmentView) in _attachmentViews)
+                    attachmentViews[index++] = attachmentView;
             }
+            else
+            {
+                attachmentViews = [];
+            }
+
+            if (primaryView.Handle != 0 || attachmentViews.Length != 0)
+            {
+                Renderer.RetireImageResources(new RetiredImageResources(
+                    default,
+                    default,
+                    primaryView,
+                    attachmentViews,
+                    default,
+                    0));
+            }
+
+            _view = default;
             _attachmentViews.Clear();
         }
 
