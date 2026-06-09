@@ -1,3 +1,4 @@
+using System;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -69,6 +70,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected static string MakeFboColorResource(string fboName)
             => RenderGraphResourceNames.MakeFboColor(fboName);
+
+        protected static string MakeColorTargetResource(string targetName)
+            => string.Equals(targetName, RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase)
+                ? RenderGraphResourceNames.OutputRenderTarget
+                : MakeFboColorResource(targetName);
 
         protected static string MakeFboDepthResource(string fboName)
             => RenderGraphResourceNames.MakeFboDepth(fboName);

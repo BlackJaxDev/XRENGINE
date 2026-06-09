@@ -208,6 +208,7 @@ namespace XREngine.Components.Scene.Mesh
                 }
 
                 ApplyRenderInfoDefaults(ri);
+                meshes[i].QueueCurrentRenderMatrixUpdate();
                 combined[count++] = ri;
                 RegisterRenderInfoWithWorldIfActive(ri);
             }

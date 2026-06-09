@@ -433,8 +433,11 @@ public sealed class VulkanP0ValidationTests
 
         source.ShouldContain("ShouldEmulateOpenGlImGuiSrgbPassthrough()");
         source.ShouldContain("private static bool IsSrgbSwapchainFormat(Format format)");
+        source.ShouldContain("private static bool IsLinearSrgbSwapchainColorSpace(ColorSpaceKHR colorSpace)");
         source.ShouldContain("Format.B8G8R8A8Srgb");
         source.ShouldContain("Format.R8G8B8A8Srgb");
+        source.ShouldContain("ColorSpaceKHR.SpaceExtendedSrgbLinearExt");
+        source.ShouldContain("pipelineKeyHash.Add((int)swapChainImageColorSpace);");
         source.ShouldContain("vec3 SrgbToLinear(vec3 c)");
         source.ShouldContain("color.rgb = SrgbToLinear(color.rgb * color.a);");
         source.ShouldContain("SrcColorBlendFactor = emulateOpenGlSrgbPassthrough ? BlendFactor.One : BlendFactor.SrcAlpha");

@@ -529,6 +529,9 @@ public unsafe partial class VulkanRenderer
         if (supportedFeatures.SampleRateShading)
             deviceFeatures.SampleRateShading = Vk.True;
 
+        if (supportedFeatures.IndependentBlend)
+            deviceFeatures.IndependentBlend = Vk.True;
+
         _availableDeviceExtensions = EnumerateAvailableDeviceExtensions();
         var availableExtensionSet = new HashSet<string>(_availableDeviceExtensions, StringComparer.Ordinal);
 

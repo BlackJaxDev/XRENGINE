@@ -271,10 +271,7 @@ void main()
                 _fallbackSourceTexture = colorTexture;
                 _fallbackApplySharpen = false;
                 _fallbackSharpenStrength = 0.0f;
-                _fallbackQuad?.Render(
-                    TargetFrameBufferName is not null
-                        ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
-                        : null);
+                RenderFallbackQuad();
                 return;
             }
 
@@ -301,10 +298,49 @@ void main()
             _fallbackSourceTexture = colorTexture;
             _fallbackApplySharpen = false;
             _fallbackSharpenStrength = 0.0f;
-            _fallbackQuad.Render(
-                TargetFrameBufferName is not null
-                    ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
-                    : null);
+            RenderFallbackQuad();
+        }
+
+        private void RenderFallbackQuad()
+        {
+            if (_fallbackQuad is null || FrameBufferName is null)
+                return;
+
+            XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            if (activeInstance is null)
+            {
+                Debug.RenderingWarningEvery(
+                    $"VendorUpscale.FallbackMissingPipeline.{FrameBufferName}.{TargetFrameBufferName}",
+                    TimeSpan.FromSeconds(5),
+                    "[RenderDiag] Skipping vendor-upscale fallback blit from '{0}' to '{1}': no active render pipeline instance.",
+                    FrameBufferName,
+                    TargetFrameBufferName ?? "<current>");
+                return;
+            }
+
+            string destination = ResolveDestinationLabel(activeInstance);
+            string passName = BuildQuadBlitPassName(FrameBufferName, destination);
+            int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
+            if (passIndex == int.MinValue && hasRenderGraphMetadata)
+            {
+                Debug.RenderingWarningEvery(
+                    $"VendorUpscale.FallbackMissingRenderGraphPass.{passName}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDiag] Skipping vendor-upscale fallback blit '{0}': no matching render-graph pass metadata was generated.",
+                    passName);
+                return;
+            }
+
+            XRQuadFrameBuffer? sourceFbo = activeInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
+            XRFrameBuffer? destFbo = ResolveDestinationFbo(activeInstance, sourceFbo);
+            if (_diagEnabled && TargetFrameBufferName is not null && destFbo is null)
+                Debug.RenderingWarning($"[VendorUpscaleDiag] Dest FBO '{TargetFrameBufferName}' not found.");
+
+            using var passScope = passIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
+
+            _fallbackQuad.Render(destFbo);
         }
 
         private void FallbackSettingUniforms(XRRenderProgram program)

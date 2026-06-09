@@ -1537,7 +1537,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 var vkFrameBuffer = GenericToAPI<VkFrameBuffer>(target) ?? throw new InvalidOperationException("Failed to resolve Vulkan framebuffer for target.");
-                vkFrameBuffer.Generate();
+                vkFrameBuffer.EnsureCurrent();
 
                 string fboName = string.IsNullOrWhiteSpace(target.Name)
                     ? $"FBO[{target.GetHashCode()}]"

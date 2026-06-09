@@ -275,8 +275,8 @@ namespace XREngine.Rendering.Vulkan
             DrainRetiredDescriptorPools();
             DrainRetiredPipelines();
             DrainRetiredBuffers();
-            DrainRetiredImages();
             DrainRetiredFramebuffers();
+            DrainRetiredImages();
 
             // Helpful when tracking down DPI / resize issues.
             Debug.VulkanEvery(

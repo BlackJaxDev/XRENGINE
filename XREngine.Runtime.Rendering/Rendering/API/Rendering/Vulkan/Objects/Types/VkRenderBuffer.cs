@@ -57,11 +57,7 @@ public unsafe partial class VulkanRenderer
                     // don't use a destroyed VkImage.
                     if (_image.Handle != 0)
                     {
-                        if (_view.Handle != 0)
-                        {
-                            Api!.DestroyImageView(Device, _view, null);
-                            _view = default;
-                        }
+                        RetireView();
                         _image = default;
                         _memory = default;
                     }
@@ -74,11 +70,7 @@ public unsafe partial class VulkanRenderer
                 return;
 
             // Physical group was reallocated — refresh our cached handles.
-            if (_view.Handle != 0)
-            {
-                Api!.DestroyImageView(Device, _view, null);
-                _view = default;
-            }
+            RetireView();
 
             _image = _physicalGroup.Image;
             _memory = _physicalGroup.Memory;
@@ -104,33 +96,28 @@ public unsafe partial class VulkanRenderer
 
         protected override void DeleteObjectInternal()
         {
-            if (_view.Handle != 0)
+            ImageView retiredView = _view;
+            Image retiredImage = _ownsImage ? _image : default;
+            DeviceMemory retiredMemory = _ownsImage ? _memory : default;
+
+            if (_ownsImage && _allocatedVRAMBytes > 0)
             {
-                Api!.DestroyImageView(Device, _view, null);
-                _view = default;
+                RuntimeEngine.Rendering.Stats.Vram.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
+                _allocatedVRAMBytes = 0;
             }
 
-            if (_ownsImage)
+            if (retiredView.Handle != 0 || retiredImage.Handle != 0 || retiredMemory.Handle != 0)
             {
-                // Track VRAM deallocation
-                if (_allocatedVRAMBytes > 0)
-                {
-                    RuntimeEngine.Rendering.Stats.Vram.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
-                    _allocatedVRAMBytes = 0;
-                }
-
-                if (_image.Handle != 0)
-                {
-                    Api!.DestroyImage(Device, _image, null);
-                    if (Renderer._imageAllocations.TryRemove(_image.Handle, out VulkanMemoryAllocation alloc))
-                        Renderer.FreeMemoryAllocation(alloc);
-                    else if (_memory.Handle != 0)
-                        Api!.FreeMemory(Device, _memory, null);
-                }
-                else if (_memory.Handle != 0)
-                    Api!.FreeMemory(Device, _memory, null);
+                Renderer.RetireImageResources(new RetiredImageResources(
+                    retiredImage,
+                    retiredMemory,
+                    retiredView,
+                    [],
+                    default,
+                    0));
             }
 
+            _view = default;
             _image = default;
             _memory = default;
             _physicalGroup = null;
@@ -217,11 +204,7 @@ public unsafe partial class VulkanRenderer
 
         private void CreateImageView()
         {
-            if (_view.Handle != 0)
-            {
-                Api!.DestroyImageView(Device, _view, null);
-                _view = default;
-            }
+            RetireView();
 
             ImageViewCreateInfo viewInfo = new()
             {
@@ -241,6 +224,21 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                 throw new Exception("Failed to create render buffer image view.");
+        }
+
+        private void RetireView()
+        {
+            if (_view.Handle == 0)
+                return;
+
+            Renderer.RetireImageResources(new RetiredImageResources(
+                default,
+                default,
+                _view,
+                [],
+                default,
+                0));
+            _view = default;
         }
 
         private static Format ResolveFormat(ERenderBufferStorage storage) => storage switch
