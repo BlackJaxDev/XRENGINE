@@ -1,6 +1,6 @@
 # Vulkan Manual Validation Guide
 
-Last updated: 2026-04-28
+Last updated: 2026-06-09
 
 This document is now the manual validation plan for making Vulkan a dependable day-to-day render API in XRENGINE. Code-side P0/P1 guard rails and the remaining source-verifiable P2 items are implemented: black-frame diagnostics, final-output checks, descriptor fallback/failure telemetry, descriptor update templates, immutable samplers, push constants, dynamic UBO pressure counters, fence-retired resource-plan replacement, swapchain recovery diagnostics, queue-ownership source coverage, pipeline miss summaries, and the engine-level pipeline prewarm manifest.
 
@@ -370,3 +370,26 @@ Vulkan can move from opt-in to regular development use when:
 - [ ] Black-frame diagnostics have not been needed to explain routine failures across repeated validation runs.
 
 Keep legacy allocator/sync fallbacks for one stable milestone after promotion, then remove them only after repeated validation shows they are no longer needed.
+
+## Modernization Roadmap (Design-Tracked)
+
+These are forward-looking architecture efforts tracked in dedicated design docs, not manual-validation items. They are listed here so the backlog is discoverable from the Vulkan validation guide. Each is gated on capability queries, a runtime toggle, no silent CPU/accelerated fallback, no hot-path allocations, and preservation of the Vulkan 1.3 baseline.
+
+Prerequisite chain: dynamic rendering becomes the default first, then shader objects, then the GPU-driven/bindless/RT follow-ups build on both.
+
+- [ ] Dynamic rendering becomes the default Vulkan graphics path, legacy `VkRenderPass`/`VkFramebuffer` retained behind a runtime toggle. See [Vulkan Dynamic Rendering Migration](../design/rendering/vulkan-dynamic-rendering-migration-design.md).
+- [ ] Program-binding backend with toggleable `VkPipeline` vs `VK_EXT_shader_object` paths. See [Vulkan Shader Object Pipeline Replacement](../design/rendering/vulkan-shader-object-pipeline-replacement-design.md).
+- [ ] Vulkan 1.4 opt-in capability tier (local read, push descriptor, host image copy, maintenance5/6, line rasterization, uint8 indices).
+- [ ] Dynamic rendering local read for on-tile deferred (mobile/Quest/Apple bandwidth win).
+- [ ] Foveated rendering + variable rate shading (`fragment_density_map`, vendor/Meta foveation, `fragment_shading_rate`) — highest-value VR follow-up.
+- [ ] Modern sync and frame pacing: `synchronization2` everywhere, timeline semaphores, `present_wait`/`present_id`, `swapchain_maintenance1`, calibrated timestamps.
+- [ ] Memory residency: `memory_budget` + `pageable_device_local_memory`.
+- [ ] Attachment modernization: MSAA-to-single-sampled, feedback-loop layouts, HDR output.
+- [ ] Bindless resources + descriptor buffers + buffer device address.
+- [ ] GPU-driven submission: indirect-count, multi-draw, device-generated commands, GPU culling/LOD.
+- [ ] Mesh/task shaders with meshlet-level culling.
+- [ ] Ray tracing / hybrid via ray query (RT pipelines stay as `VkPipeline`).
+- [ ] Pipeline binary caching (`VK_KHR_pipeline_binary`).
+- [ ] Cooperative matrix/vector for in-engine ML (denoisers, neural upscalers).
+
+The capability-tier query, `XRE_VK_*` toggle convention, and per-program/per-pass selection seam are shared across these efforts; see the "Modern Follow-On Opportunities" section in each design doc for detail.
