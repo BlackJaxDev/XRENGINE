@@ -149,10 +149,15 @@ public static class BootstrapWorldFactory
                 renderSettings.MaxShadowTilesRenderedPerFrame = previousMaxShadowTilesRenderedPerFrame;
                 renderSettings.MaxShadowRenderMilliseconds = previousMaxShadowRenderMilliseconds;
                 Debug.Out("[BootstrapWorldFactory] Restored shadow atlas settings after startup model imports completed.");
+                BootstrapRenderSettings.ReapplyEditorRenderStateAfterBootstrap("startup model imports completed");
             };
         }
 
-        BootstrapModelBuilder.ImportModels(desktopDir, rootNode, characterPawnModelParentNode ?? rootNode, restoreRuntimeShadowSettings);
+        BootstrapModelBuilder.ImportModels(
+            desktopDir,
+            rootNode,
+            characterPawnModelParentNode ?? rootNode,
+            restoreRuntimeShadowSettings ?? (() => BootstrapRenderSettings.ReapplyEditorRenderStateAfterBootstrap("startup model import phase completed")));
 
         return CreateBootstrapWorld("Default World", scene);
     }

@@ -802,7 +802,8 @@ public unsafe partial class VulkanRenderer
 
 		// ── Scalar and Vector Write Helpers ───────────────────────────────────
 		// Each helper writes a specific type into a byte span at the given offset.
-		// Vector3 types write as Vector4 (std140 alignment) with W=0.
+		// std140 aligns vec3 members to 16 bytes but still lets the next scalar use
+		// the fourth lane, so vec3 writes must only touch xyz.
 
 		private static bool TryWriteScalar<T>(Span<byte> data, uint offset, object value, Func<object, T> converter) where T : unmanaged
 		{
@@ -844,13 +845,13 @@ public unsafe partial class VulkanRenderer
 		{
 			if (TryConvertVector3(value, out Vector3 v3))
 			{
-				Vector4 v4 = new(v3, 0f);
-				Unsafe.WriteUnaligned(ref data[(int)offset], v4);
+				Unsafe.WriteUnaligned(ref data[(int)offset], v3);
 				return true;
 			}
 			if (TryConvertVector4(value, out Vector4 v4b))
 			{
-				Unsafe.WriteUnaligned(ref data[(int)offset], v4b);
+				Vector3 v3b = new(v4b.X, v4b.Y, v4b.Z);
+				Unsafe.WriteUnaligned(ref data[(int)offset], v3b);
 				return true;
 			}
 			return false;
@@ -930,13 +931,13 @@ public unsafe partial class VulkanRenderer
 		{
 			if (value is IVector3 v3)
 			{
-				IVector4 v4 = new(v3.X, v3.Y, v3.Z, 0);
-				Unsafe.WriteUnaligned(ref data[(int)offset], v4);
+				Unsafe.WriteUnaligned(ref data[(int)offset], v3);
 				return true;
 			}
 			if (value is IVector4 v4b)
 			{
-				Unsafe.WriteUnaligned(ref data[(int)offset], v4b);
+				IVector3 v3b = new(v4b.X, v4b.Y, v4b.Z);
+				Unsafe.WriteUnaligned(ref data[(int)offset], v3b);
 				return true;
 			}
 			return false;
@@ -966,13 +967,13 @@ public unsafe partial class VulkanRenderer
 		{
 			if (value is UVector3 v3)
 			{
-				UVector4 v4 = new(v3.X, v3.Y, v3.Z, 0);
-				Unsafe.WriteUnaligned(ref data[(int)offset], v4);
+				Unsafe.WriteUnaligned(ref data[(int)offset], v3);
 				return true;
 			}
 			if (value is UVector4 v4b)
 			{
-				Unsafe.WriteUnaligned(ref data[(int)offset], v4b);
+				UVector3 v3b = new(v4b.X, v4b.Y, v4b.Z);
+				Unsafe.WriteUnaligned(ref data[(int)offset], v3b);
 				return true;
 			}
 			return false;

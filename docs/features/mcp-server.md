@@ -41,6 +41,8 @@ The MCP server settings are located in the **Global Editor Preferences** panel u
 | `McpServerRateLimitRequests` | Max requests allowed per client in each window | `120` |
 | `McpServerRateLimitWindowSeconds` | Rate-limit window duration in seconds | `60` |
 | `McpServerIncludeStatusInPing` | Include expanded health/status payload in `ping` response | `true` |
+| `McpPermissionPolicy` | Auto-approve threshold for MCP tool permission prompts | `AllowReadOnly` |
+| `McpDispatchMode` | Default thread dispatch mode for MCP tools without explicit affinity | `Direct` |
 
 Changes take effect immediately - the server will start or stop based on the `McpServerEnabled` setting, and will restart on a new port if `McpServerPort` is changed while running.
 
@@ -49,11 +51,14 @@ Changes take effect immediately - the server will start or stop based on the `Mc
 Command-line arguments can be used to override preferences at startup:
 
 ```bash
-XREngine.Editor.exe --mcp                    # Enable MCP server (sets preference to true)
-XREngine.Editor.exe --mcp --mcp-port 8080    # Enable on custom port
+XREngine.Editor.exe --mcp                                      # Enable MCP server (sets preference to true)
+XREngine.Editor.exe --mcp --mcp-port 8080                      # Enable on custom port
+XREngine.Editor.exe --mcp --mcp-allow-all                      # Enable unattended local tool calls
+XREngine.Editor.exe --mcp --mcp-permission-policy AllowMutate  # Set a specific auto-approve threshold
 ```
 
 > **Note:** Command-line arguments set the corresponding preferences, so the server state persists after startup.
+> Use `--mcp-allow-all` only for trusted local automation, because it bypasses every MCP permission prompt.
 
 ### Default Endpoint
 

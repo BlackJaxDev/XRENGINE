@@ -259,9 +259,9 @@ public unsafe partial class VulkanRenderer
 		}
 
 		/// <summary>
-		/// Binds descriptor sets for the current draw. First attempts VkMaterial-level
-		/// binding; if unavailable, falls back to the per-renderer descriptor sets
-		/// managed by this class.
+		/// Binds descriptor sets for the current mesh draw. Mesh draws must use the
+		/// renderer-owned descriptor path because it carries per-draw engine and auto
+		/// uniform buffers in addition to material resources.
 		/// </summary>
 		private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw)
 		{
@@ -279,10 +279,6 @@ public unsafe partial class VulkanRenderer
 			int imageIndex = ResolveCommandBufferIndex(commandBuffer);
 			if (imageIndex < 0)
 				imageIndex = 0;
-
-			if (Renderer.GetOrCreateAPIRenderObject(material, generateNow: true) is VkMaterial vkMaterial &&
-				vkMaterial.TryBindDescriptorSets(commandBuffer, _program, imageIndex))
-				return true;
 
 			if (!EnsureDescriptorSets(material))
 			{

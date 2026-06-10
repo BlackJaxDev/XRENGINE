@@ -699,6 +699,8 @@ namespace XREngine.Rendering.Vulkan
 
             byte[] rgba = new byte[4];
             bool converted = TryConvertColorPixelsToRgba8(mappedPtr, swapChainImageFormat, 1, rgba);
+            if (converted && !withTransparency)
+                ForceOpaqueAlpha(rgba);
 
             UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
@@ -710,10 +712,10 @@ namespace XREngine.Rendering.Vulkan
 
         // =========== Screenshot Readback ===========
 
+        public override bool ScreenshotRequiresVerticalFlip => false;
+
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
-            _ = withTransparency; // Vulkan path always reads resolved color output.
-
             if (_boundReadFrameBuffer is not null)
             {
                 ClampReadbackRegion(region, _boundReadFrameBuffer.Width, _boundReadFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
@@ -729,6 +731,9 @@ namespace XREngine.Rendering.Vulkan
                         isSource: true) &&
                     TryReadColorRegionRgba8(colorSource, fboX, fboY, fboW, fboH, out byte[] rgbaPixels))
                 {
+                    if (!withTransparency)
+                        ForceOpaqueAlpha(rgbaPixels);
+
                     try
                     {
                         var magickImage = new MagickImage(rgbaPixels, new MagickReadSettings
@@ -838,6 +843,9 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
+                if (!withTransparency)
+                    ForceOpaqueAlpha(pixels);
+
                 var magickImage = new MagickImage(pixels, new MagickReadSettings
                 {
                     Width = (uint)w,
@@ -858,6 +866,12 @@ namespace XREngine.Rendering.Vulkan
                 UnmapBufferMemory(stagingBuffer, stagingMemory);
                 DestroyBuffer(stagingBuffer, stagingMemory);
             }
+        }
+
+        private static void ForceOpaqueAlpha(byte[] rgbaPixels)
+        {
+            for (int i = 3; i < rgbaPixels.Length; i += 4)
+                rgbaPixels[i] = 255;
         }
 
         // =========== Dot Luminance Computation ===========

@@ -27,12 +27,18 @@ namespace XREngine.Scene
         private const uint ForwardSpotLightsBinding = 26;
         private const uint ForwardPointShadowMetadataBinding = 27;
         private const uint ForwardSpotShadowMetadataBinding = 28;
+        private const uint ForwardPlusLocalLightsBinding = 20;
+        private const uint ForwardPlusVisibleIndicesBinding = 21;
+        private const int ForwardPlusFallbackTileSize = 16;
+        private const int ForwardPlusFallbackMaxLightsPerTile = 1024;
 
         private XRDataBuffer? _forwardDirectionalLightsBuffer;
         private XRDataBuffer? _forwardPointLightsBuffer;
         private XRDataBuffer? _forwardSpotLightsBuffer;
         private XRDataBuffer? _forwardPointShadowMetadataBuffer;
         private XRDataBuffer? _forwardSpotShadowMetadataBuffer;
+        private XRDataBuffer? _emptyForwardPlusLocalLightsBuffer;
+        private XRDataBuffer? _emptyForwardPlusVisibleIndicesBuffer;
 
         // Frame tokens used to gate redundant per-material-program re-uploads.
         // SetForwardLightingUniforms runs once per material program per pass, but
@@ -168,6 +174,17 @@ namespace XREngine.Scene
             public Vector4 Params6;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ForwardPlusLocalLightGpu
+        {
+            public Vector4 PositionWS;
+            public Vector4 DirectionWS_Exponent;
+            public Vector4 Color_Type;
+            public Vector4 Params;
+            public Vector4 SpotAngles;
+            public IVector4 Indices;
+        }
+
         private static XRDataBuffer CreateForwardLightBuffer<T>(string name, uint elementCount) where T : unmanaged
         {
             var buffer = new XRDataBuffer(
@@ -248,6 +265,83 @@ namespace XREngine.Scene
             program.BindBuffer(_forwardSpotLightsBuffer!, ForwardSpotLightsBinding);
             program.BindBuffer(_forwardPointShadowMetadataBuffer!, ForwardPointShadowMetadataBinding);
             program.BindBuffer(_forwardSpotShadowMetadataBuffer!, ForwardSpotShadowMetadataBinding);
+        }
+
+        private void EnsureEmptyForwardPlusBuffers()
+        {
+            if (_emptyForwardPlusLocalLightsBuffer is null)
+            {
+                _emptyForwardPlusLocalLightsBuffer = new XRDataBuffer(
+                    "ForwardPlusLocalLightsEmpty",
+                    EBufferTarget.ShaderStorageBuffer,
+                    1u,
+                    EComponentType.Struct,
+                    (uint)Unsafe.SizeOf<ForwardPlusLocalLightGpu>(),
+                    normalize: false,
+                    integral: false)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    PadEndingToVec4 = true,
+                };
+                _emptyForwardPlusLocalLightsBuffer.Set(0u, default(ForwardPlusLocalLightGpu));
+                _emptyForwardPlusLocalLightsBuffer.PushData();
+            }
+
+            if (_emptyForwardPlusVisibleIndicesBuffer is null)
+            {
+                _emptyForwardPlusVisibleIndicesBuffer = new XRDataBuffer(
+                    "ForwardPlusVisibleIndicesEmpty",
+                    EBufferTarget.ShaderStorageBuffer,
+                    1u,
+                    EComponentType.Int,
+                    1u,
+                    normalize: false,
+                    integral: true)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    PadEndingToVec4 = true,
+                };
+                _emptyForwardPlusVisibleIndicesBuffer.SetDataRawAtIndex(0u, -1);
+                _emptyForwardPlusVisibleIndicesBuffer.PushData();
+            }
+        }
+
+        private void BindForwardPlusBuffers(XRRenderProgram program)
+        {
+            bool forwardPlusEnabled = RuntimeEngine.Rendering.State.ForwardPlusEnabled;
+            program.Uniform("ForwardPlusEnabled", forwardPlusEnabled);
+
+            if (forwardPlusEnabled)
+            {
+                program.Uniform("ForwardPlusScreenSize", RuntimeEngine.Rendering.State.ForwardPlusScreenSize);
+                program.Uniform("ForwardPlusTileSize", RuntimeEngine.Rendering.State.ForwardPlusTileSize);
+                program.Uniform("ForwardPlusTileCountX", RuntimeEngine.Rendering.State.ForwardPlusTileCountX);
+                program.Uniform("ForwardPlusTileCountY", RuntimeEngine.Rendering.State.ForwardPlusTileCountY);
+                program.Uniform("ForwardPlusMaxLightsPerTile", RuntimeEngine.Rendering.State.ForwardPlusMaxLightsPerTile);
+
+                program.BindBuffer(RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer!, ForwardPlusLocalLightsBinding);
+                program.BindBuffer(RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer!, ForwardPlusVisibleIndicesBinding);
+            }
+            else
+            {
+                EnsureEmptyForwardPlusBuffers();
+                var area = RuntimeEngine.Rendering.State.RenderArea;
+                int width = Math.Max(area.Width, 1);
+                int height = Math.Max(area.Height, 1);
+                int tileCountX = Math.Max((width + ForwardPlusFallbackTileSize - 1) / ForwardPlusFallbackTileSize, 1);
+                int tileCountY = Math.Max((height + ForwardPlusFallbackTileSize - 1) / ForwardPlusFallbackTileSize, 1);
+
+                program.Uniform("ForwardPlusScreenSize", new Vector2(width, height));
+                program.Uniform("ForwardPlusTileSize", ForwardPlusFallbackTileSize);
+                program.Uniform("ForwardPlusTileCountX", tileCountX);
+                program.Uniform("ForwardPlusTileCountY", tileCountY);
+                program.Uniform("ForwardPlusMaxLightsPerTile", ForwardPlusFallbackMaxLightsPerTile);
+
+                program.BindBuffer(_emptyForwardPlusLocalLightsBuffer!, ForwardPlusLocalLightsBinding);
+                program.BindBuffer(_emptyForwardPlusVisibleIndicesBuffer!, ForwardPlusVisibleIndicesBinding);
+            }
+
+            program.Uniform("ForwardPlusEyeCount", RuntimeEngine.Rendering.State.IsStereoPass ? 2 : 1);
         }
 
         private void UploadForwardLightBuffers(int directionalLightCount, int pointLightCount, int spotLightCount)
@@ -625,21 +719,8 @@ namespace XREngine.Scene
             UploadForwardLightBuffers(directionalLightCount, pointLightCount, spotLightCount);
             BindForwardLightBuffers(program);
 
-            // Forward+ bindings (optional). Shaders may ignore these if they don't declare Forward+ support.
-            program.Uniform("ForwardPlusEnabled", RuntimeEngine.Rendering.State.ForwardPlusEnabled);
-            if (RuntimeEngine.Rendering.State.ForwardPlusEnabled)
-            {
-                program.Uniform("ForwardPlusScreenSize", RuntimeEngine.Rendering.State.ForwardPlusScreenSize);
-                program.Uniform("ForwardPlusTileSize", RuntimeEngine.Rendering.State.ForwardPlusTileSize);
-                program.Uniform("ForwardPlusTileCountX", RuntimeEngine.Rendering.State.ForwardPlusTileCountX);
-                program.Uniform("ForwardPlusTileCountY", RuntimeEngine.Rendering.State.ForwardPlusTileCountY);
-                program.Uniform("ForwardPlusMaxLightsPerTile", RuntimeEngine.Rendering.State.ForwardPlusMaxLightsPerTile);
-
-                // Keep bindings in sync with the compute shader: 20 (local lights), 21 (visible indices).
-                program.BindBuffer(RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer!, 20u);
-                program.BindBuffer(RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer!, 21u);
-            }
-            program.Uniform("ForwardPlusEyeCount", RuntimeEngine.Rendering.State.IsStereoPass ? 2 : 1);
+            // Keep bindings in sync with the compute shader: 20 (local lights), 21 (visible indices).
+            BindForwardPlusBuffers(program);
 
             SetForwardAmbientOcclusionUniforms(program);
             var currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;

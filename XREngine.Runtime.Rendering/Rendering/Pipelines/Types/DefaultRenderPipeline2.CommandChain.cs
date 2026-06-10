@@ -147,6 +147,7 @@ public partial class DefaultRenderPipeline2
             c.Add<VPRC_DepthTest>().Enable = false;
             if (!Stereo)
             {
+                AppendPostProcessCompositeInputDefaults(c);
                 AppendAtmosphericScattering(c);
                 AppendVolumetricFog(c);
             }
@@ -978,6 +979,44 @@ public partial class DefaultRenderPipeline2
             NeedsRecreatePostProcessFbo)
             .UseLifetime(RenderResourceLifetime.Transient);
 
+    }
+
+    private void AppendPostProcessCompositeInputDefaults(ViewportRenderCommandContainer c)
+    {
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AtmosphereColorTextureName,
+            CreateAtmosphereColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogColorTextureName,
+            CreateVolumetricFogColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereUpscaleFBOName,
+            CreateAtmosphereUpscaleFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateAtmosphereUpscaleFbo);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogUpscaleFBOName,
+            CreateVolumetricFogUpscaleFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateVolumetricFogUpscaleFbo);
+
+        c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, null, null);
+        using (c.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(AtmosphereUpscaleFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: false)))
+        {
+        }
+
+        using (c.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(VolumetricFogUpscaleFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: false)))
+        {
+        }
     }
 
     /// <summary>Caches debug visualization FBOs (transform ID, transparency, overdraw, depth peeling).</summary>

@@ -420,6 +420,22 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     }
 
     [Test]
+    public void ForwardLightingUpload_BindsExplicitDisabledForwardPlusBuffers()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs");
+
+        source.ShouldContain("ForwardPlusLocalLightsBinding = 20");
+        source.ShouldContain("ForwardPlusVisibleIndicesBinding = 21");
+        source.ShouldContain("ForwardPlusLocalLightsEmpty");
+        source.ShouldContain("ForwardPlusVisibleIndicesEmpty");
+        source.ShouldContain("BindForwardPlusBuffers(program);");
+        source.ShouldContain("program.BindBuffer(_emptyForwardPlusLocalLightsBuffer!, ForwardPlusLocalLightsBinding)");
+        source.ShouldContain("program.BindBuffer(_emptyForwardPlusVisibleIndicesBuffer!, ForwardPlusVisibleIndicesBinding)");
+        source.ShouldContain("program.BindBuffer(RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer!, ForwardPlusLocalLightsBinding)");
+        source.ShouldContain("program.BindBuffer(RuntimeEngine.Rendering.State.ForwardPlusVisibleIndicesBuffer!, ForwardPlusVisibleIndicesBinding)");
+    }
+
+    [Test]
     public void ForwardLightingUpload_DoesNotEnableDirectionalAtlasShadowsUntilAtlasIsSampleable()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs")

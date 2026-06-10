@@ -28,6 +28,7 @@ namespace XREngine.Editor.Mcp
 
         private Task? _listenerTask;
         private int _port;
+        private int _pendingServerStateRefresh;
         private DateTimeOffset _startedUtc;
         private long _requestCounter;
         private readonly McpRateLimiter _rateLimiter = new();
@@ -115,15 +116,24 @@ namespace XREngine.Editor.Mcp
             bool cliEnabled = args.Any(arg => string.Equals(arg, "--mcp", StringComparison.OrdinalIgnoreCase) ||
                                               string.Equals(arg, "--mcp-server", StringComparison.OrdinalIgnoreCase));
             int? cliPort = TryReadPort(args, out var parsedPort) ? parsedPort : null;
+            McpPermissionPolicy? cliPermissionPolicy = HasArgument(args, "--mcp-allow-all", "--mcp-no-prompts")
+                ? McpPermissionPolicy.AllowAll
+                : TryReadPermissionPolicy(args, out var parsedPolicy) ? parsedPolicy : null;
+
+            // Apply CLI settings through the project/sandbox override layer. The
+            // effective preferences object is recomputed whenever editor debug
+            // settings change, so writing only to Engine.EditorPreferences would
+            // be lost and could stop the MCP server during unattended runs.
+            var overrides = Engine.EditorPreferencesOverrides;
+            if (cliPort.HasValue)
+                SetCliOverride(overrides.McpServerPortOverride, cliPort.Value);
+            if (cliPermissionPolicy.HasValue)
+                SetCliOverride(overrides.McpPermissionPolicyOverride, cliPermissionPolicy.Value);
+            if (cliEnabled)
+                SetCliOverride(overrides.McpServerEnabledOverride, true);
 
             // Subscribe to preference changes
             Engine.EditorPreferences.PropertyChanged += Instance.OnPreferencesChanged;
-
-            // Apply CLI overrides if specified
-            if (cliEnabled)
-                Engine.EditorPreferences.McpServerEnabled = true;
-            if (cliPort.HasValue)
-                Engine.EditorPreferences.McpServerPort = cliPort.Value;
 
             // Start if enabled in preferences (or via CLI)
             Instance.UpdateServerState();
@@ -151,7 +161,7 @@ namespace XREngine.Editor.Mcp
                 or nameof(EditorPreferences.McpServerRateLimitRequests)
                 or nameof(EditorPreferences.McpServerRateLimitWindowSeconds)
                 or nameof(EditorPreferences.McpServerIncludeStatusInPing))
-                UpdateServerState();
+                ScheduleServerStateRefresh();
 
             if (toolsListChanged && IsRunning)
                 _ = BroadcastToolsListChangedAsync(e.PropertyName ?? "policy_change");
@@ -161,6 +171,31 @@ namespace XREngine.Editor.Mcp
 
             if (promptsListChanged && IsRunning)
                 _ = BroadcastPromptsListChangedAsync(e.PropertyName ?? "server_state_change");
+        }
+
+        private void ScheduleServerStateRefresh()
+        {
+            if (Interlocked.Exchange(ref _pendingServerStateRefresh, 1) != 0)
+                return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // Preference recomputation copies globals and then applies overrides.
+                    // Waiting one tick avoids reacting to the transient pre-override values.
+                    await Task.Delay(25).ConfigureAwait(false);
+                    UpdateServerState();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _pendingServerStateRefresh, 0);
+                }
+            });
         }
 
         private void UpdateServerState()
@@ -885,6 +920,8 @@ namespace XREngine.Editor.Mcp
                     readOnly = prefs.McpServerReadOnly,
                     allowedToolsCount = allowed.Length,
                     deniedToolsCount = denied.Length,
+                    permissionPolicy = prefs.McpPermissionPolicy.ToString(),
+                    dispatchMode = prefs.McpDispatchMode.ToString(),
                     rateLimit = new
                     {
                         enabled = prefs.McpServerRateLimitEnabled,
@@ -1550,20 +1587,82 @@ namespace XREngine.Editor.Mcp
         {
             Debug.Out($"[MCP] methods={string.Join(",", s_supportedMethods)} capabilities=tools/resources/prompts static_list_changed=false");
             Debug.Out($"[MCP] security auth_required={prefs.McpServerRequireAuth} auth_token_configured={!string.IsNullOrWhiteSpace(prefs.McpServerAuthToken)} read_only={prefs.McpServerReadOnly} cors_allowlist='{prefs.McpServerCorsAllowlist}'");
-            Debug.Out($"[MCP] policy allowed='{prefs.McpServerAllowedTools}' denied='{prefs.McpServerDeniedTools}' rate_limit_enabled={prefs.McpServerRateLimitEnabled} rate_limit={prefs.McpServerRateLimitRequests}/{prefs.McpServerRateLimitWindowSeconds}s");
+            Debug.Out($"[MCP] policy permission={prefs.McpPermissionPolicy} dispatch={prefs.McpDispatchMode} allowed='{prefs.McpServerAllowedTools}' denied='{prefs.McpServerDeniedTools}' rate_limit_enabled={prefs.McpServerRateLimitEnabled} rate_limit={prefs.McpServerRateLimitRequests}/{prefs.McpServerRateLimitWindowSeconds}s");
+        }
+
+        private static void SetCliOverride<T>(OverrideableSetting<T> setting, T value)
+        {
+            setting.Value = value;
+            if (!setting.HasOverride)
+                setting.HasOverride = true;
         }
 
         private static bool TryReadPort(string[] args, out int port)
         {
             port = 0;
-            for (int i = 0; i < args.Length - 1; i++)
+            return TryReadArgumentValue(args, "--mcp-port", out string value) &&
+                   int.TryParse(value, out port);
+        }
+
+        private static bool TryReadPermissionPolicy(string[] args, out McpPermissionPolicy policy)
+        {
+            policy = default;
+            if (!TryReadArgumentValue(args, "--mcp-permission-policy", out string value))
+                return false;
+
+            string normalizedValue = NormalizeArgumentToken(value);
+            foreach (McpPermissionPolicy candidate in Enum.GetValues<McpPermissionPolicy>())
             {
-                if (!string.Equals(args[i], "--mcp-port", StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(normalizedValue, NormalizeArgumentToken(candidate.ToString()), StringComparison.Ordinal))
                     continue;
 
-                return int.TryParse(args[i + 1], out port);
+                policy = candidate;
+                return true;
             }
+
+            Debug.LogWarning($"[MCP] Ignoring invalid --mcp-permission-policy '{value}'. Expected one of: {string.Join(", ", Enum.GetNames<McpPermissionPolicy>())}.");
             return false;
+        }
+
+        private static bool HasArgument(string[] args, params string[] names)
+            => args.Any(arg => names.Any(name => string.Equals(arg, name, StringComparison.OrdinalIgnoreCase)));
+
+        private static bool TryReadArgumentValue(string[] args, string name, out string value)
+        {
+            value = string.Empty;
+            string prefix = $"{name}=";
+            for (int i = 0; i < args.Length; i++)
+            {
+                string arg = args[i];
+                if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = arg[prefix.Length..];
+                    return true;
+                }
+
+                if (!string.Equals(arg, name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (i + 1 >= args.Length)
+                    return false;
+
+                value = args[i + 1];
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string NormalizeArgumentToken(string value)
+        {
+            StringBuilder builder = new(value.Length);
+            foreach (char ch in value)
+            {
+                if (char.IsLetterOrDigit(ch))
+                    builder.Append(char.ToUpperInvariant(ch));
+            }
+
+            return builder.ToString();
         }
 
         private readonly record struct McpError(int Code, string Message);

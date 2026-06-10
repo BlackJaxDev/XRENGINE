@@ -47,6 +47,8 @@ namespace XREngine
         private OverrideableSetting<int> _mcpServerRateLimitRequestsOverride = new();
         private OverrideableSetting<int> _mcpServerRateLimitWindowSecondsOverride = new();
         private OverrideableSetting<bool> _mcpServerIncludeStatusInPingOverride = new();
+        private OverrideableSetting<McpPermissionPolicy> _mcpPermissionPolicyOverride = new();
+        private OverrideableSetting<McpDispatchMode> _mcpDispatchModeOverride = new();
 
         // Importer overrides
         private OverrideableSetting<FbxImportBackend> _fbxImporterBackendOverride = new();
@@ -256,6 +258,22 @@ namespace XREngine
         {
             get => _mcpServerIncludeStatusInPingOverride;
             set => SetField(ref _mcpServerIncludeStatusInPingOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for the MCP auto-approval permission policy.")]
+        public OverrideableSetting<McpPermissionPolicy> McpPermissionPolicyOverride
+        {
+            get => _mcpPermissionPolicyOverride;
+            set => SetField(ref _mcpPermissionPolicyOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for the default MCP tool dispatch mode.")]
+        public OverrideableSetting<McpDispatchMode> McpDispatchModeOverride
+        {
+            get => _mcpDispatchModeOverride;
+            set => SetField(ref _mcpDispatchModeOverride, value ?? new());
         }
 
         [Category("Importer Overrides")]

@@ -200,6 +200,7 @@ namespace XREngine.Rendering
             }
 
             Resized?.Invoke();
+            AbstractRenderer.Current?.NotifyRenderResourcesChanged();
         }
 
         public void SetRenderTargets(XRMaterial? material)

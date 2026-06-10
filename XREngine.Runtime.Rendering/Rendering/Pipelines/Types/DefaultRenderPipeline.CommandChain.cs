@@ -123,6 +123,7 @@ public partial class DefaultRenderPipeline
             // still matches the jittered depth buffer after PopJitter.
             if (!Stereo)
             {
+                AppendPostProcessCompositeInputDefaults(c);
                 AppendAtmosphericScattering(c);
                 AppendVolumetricFog(c);
             }
@@ -733,6 +734,44 @@ public partial class DefaultRenderPipeline
             .UseLifetime(RenderResourceLifetime.Transient);
     }
 
+    private void AppendPostProcessCompositeInputDefaults(ViewportRenderCommandContainer c)
+    {
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AtmosphereColorTextureName,
+            CreateAtmosphereColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VolumetricFogColorTextureName,
+            CreateVolumetricFogColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            AtmosphereUpscaleFBOName,
+            CreateAtmosphereUpscaleFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateAtmosphereUpscaleFbo);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            VolumetricFogUpscaleFBOName,
+            CreateVolumetricFogUpscaleFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateVolumetricFogUpscaleFbo);
+
+        c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, null, null);
+        using (c.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(AtmosphereUpscaleFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: false)))
+        {
+        }
+
+        using (c.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(VolumetricFogUpscaleFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: false)))
+        {
+        }
+    }
+
     private void AppendDebugVisualizationCaching(ViewportRenderCommandContainer c)
     {
         if (EnableTransformIdVisualization)
@@ -889,7 +928,8 @@ public partial class DefaultRenderPipeline
             tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
             {
                 var tsrUpscale = new ViewportRenderCommandContainer(this);
-                tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true);
+                using (tsrUpscale.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = TsrUpscaleFBO_SettingUniforms))
+                    tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true);
                 tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
                     TsrUpscaleFBOName,
                     TsrHistoryColorFBOName,
@@ -932,6 +972,7 @@ public partial class DefaultRenderPipeline
         c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
 
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        using (c.AddUsing<VPRC_PushProgramBindings>(t => t.ApplyUniforms = PostProcessFBO_SettingUniforms))
         {
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
         }
@@ -965,6 +1006,7 @@ public partial class DefaultRenderPipeline
     private void AppendFinalPostProcess(ViewportRenderCommandContainer c)
     {
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = FinalPostProcessFBO_SettingUniforms))
         {
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName);
         }
@@ -1267,6 +1309,9 @@ public partial class DefaultRenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                c.Add<VPRC_DepthTest>().Enable = false;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 c.Add<VPRC_RenderQuadToFBO>().SetOptions(ForwardPassFBOName);
                 AppendDebugOverlay(c);
             }
@@ -1282,6 +1327,9 @@ public partial class DefaultRenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                c.Add<VPRC_DepthTest>().Enable = false;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 AppendFullOverdrawOrStandardFinalOutput(c, bypassVendorUpscale);
             }
         }

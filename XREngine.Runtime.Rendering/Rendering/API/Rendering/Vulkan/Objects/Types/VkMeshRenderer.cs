@@ -669,6 +669,10 @@ public unsafe partial class VulkanRenderer
             uint drawInstances = MeshRenderMaterialResolver.ResolveLayeredShadowInstanceCount(effectiveMaterial, instances);
             if (!TryPrepareForRendering(effectiveMaterial, out string prepareReason))
             {
+                // A skipped draw means the recorded frame is incomplete. Keep the
+                // command buffers invalid until the pending program/buffers/descriptors
+                // are ready so startup frames do not get stuck on a black recording.
+                Renderer.MarkCommandBuffersDirty();
                 Debug.VulkanWarningEvery(
                     $"Vulkan.MeshRenderer.PrepareSkip.{MeshRenderer.Name ?? "UnnamedRenderer"}.{prepareReason}",
                     TimeSpan.FromSeconds(2),

@@ -5509,7 +5509,8 @@ Conversation transcript:
 
                 try
                 {
-                    img.Flip();
+                    if (renderer.ScreenshotRequiresVerticalFlip)
+                        img.Flip();
                     tcs.TrySetResult(img.ToByteArray(ImageMagick.MagickFormat.Png));
                 }
                 catch (Exception ex)
@@ -5607,7 +5608,8 @@ Conversation transcript:
 
                 try
                 {
-                    img.Flip();
+                    if (renderer.ScreenshotRequiresVerticalFlip)
+                        img.Flip();
                     img.Write(path);
                     tcs.TrySetResult(path);
                 }

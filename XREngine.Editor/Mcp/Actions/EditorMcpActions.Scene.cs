@@ -781,8 +781,8 @@ namespace XREngine.Editor.Mcp
 
             return Task.FromResult(new McpToolResponse("Updated editor camera view.", new
             {
-                targetPosition,
-                targetRotation,
+                targetPosition = ToMcpVector3(targetPosition),
+                targetRotation = ToMcpQuaternion(targetRotation),
                 durationSeconds
             }));
         }
@@ -1017,9 +1017,9 @@ namespace XREngine.Editor.Mcp
             var rotator = Rotator.FromQuaternion(transform.WorldRotation);
             var info = new
             {
-                translation = transform.WorldTranslation,
+                translation = ToMcpVector3(transform.WorldTranslation),
                 rotation = new { pitch = rotator.Pitch, yaw = rotator.Yaw, roll = rotator.Roll },
-                scale = transform.LossyWorldScale
+                scale = ToMcpVector3(transform.LossyWorldScale)
             };
 
             return Task.FromResult(new McpToolResponse($"Retrieved world transform for '{nodeId}'.", info));

@@ -112,12 +112,41 @@ public sealed class VulkanDynamicRenderingMigrationTests
         meshRenderer.ShouldNotContain("PipelineKey Pipeline");
         meshPipeline.ShouldContain("CreateGraphicsPipelineLibraryKey(GraphicsPipelineLibrarySubset.VertexInputInterface, key)");
         meshPipeline.ShouldContain("hasProgram = subset is GraphicsPipelineLibrarySubset.PreRasterizationShaders or GraphicsPipelineLibrarySubset.FragmentShader");
-        meshPipeline.ShouldContain("hasDepthStencil = subset == GraphicsPipelineLibrarySubset.FragmentShader");
+        meshPipeline.ShouldContain("hasDepthStencil = subset is GraphicsPipelineLibrarySubset.FragmentShader or GraphicsPipelineLibrarySubset.FragmentOutputInterface");
         meshPipeline.ShouldContain("hasBlendState = subset == GraphicsPipelineLibrarySubset.FragmentOutputInterface");
+        meshPipeline.ShouldContain("ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset, key.UseDynamicRendering)");
+        meshPipeline.ShouldContain("bool preserveDynamicRenderingAttachmentState = useDynamicRendering;");
+        meshPipeline.ShouldContain("key.Subset == GraphicsPipelineLibrarySubset.FragmentOutputInterface");
+        meshPipeline.ShouldContain("PNext = includeDynamicRenderingInfo ? baseInfo.PNext : null");
+        meshPipeline.ShouldContain("linkedRenderingInfo.PNext = &libraryInfo;");
+        meshPipeline.ShouldContain("linkedInfo.PNext = &linkedRenderingInfo;");
+        meshPipeline.ShouldNotContain("PNext = pipelineInfo.PNext");
+        meshPipeline.ShouldContain("if (!preserveDynamicRenderingAttachmentState)");
+        meshPipeline.ShouldNotContain("linkedInfo.PDepthStencilState = null;");
+        meshPipeline.ShouldNotContain("linkedInfo.PColorBlendState = null;");
 
         meshPipeline.ShouldContain("XRRenderProgram.ShaderProgramBackendStatus backend = _program.Data.ShaderMetadata.Backend");
         meshPipeline.ShouldContain("backend.Stage == XRRenderProgram.EShaderProgramBackendStage.Failed");
         meshPipeline.ShouldContain("program link failed");
+    }
+
+    [Test]
+    public void DynamicRenderingDepthOnlyPasses_CreatePipelinesInsteadOfSkippingDraws()
+    {
+        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
+
+        meshPipeline.ShouldContain("ResolveAttachmentCompatibleDrawState(");
+        meshPipeline.ShouldContain("colorAttachmentCount == 0");
+        meshPipeline.ShouldContain("ColorWriteMask = 0");
+        meshPipeline.ShouldContain("BlendEnabled = false");
+        meshPipeline.ShouldContain("AlphaToCoverageEnabled = false");
+        meshPipeline.ShouldContain("if (colorAttachmentCount == 0)");
+        meshPipeline.ShouldContain("stages = stages.Where(static stage => stage.Stage != ShaderStageFlags.FragmentBit).ToArray();");
+        meshPipeline.ShouldContain("Vulkan.PipelineLibrary.DepthOnlyMonolithic");
+        meshPipeline.ShouldContain("graphics pipeline libraries are bypassed for zero-color pipelines");
+        meshPipeline.ShouldContain("return program.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);");
+        meshPipeline.ShouldNotContain("Vulkan.MeshRenderer.SkipDraw.NoColorAttachment");
+        meshPipeline.ShouldNotContain("dynamic rendering has undefined color attachment format while color writes are enabled");
     }
 
     [Test]
