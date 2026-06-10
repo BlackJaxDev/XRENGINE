@@ -370,7 +370,7 @@ namespace XREngine.Scene.Transforms
 
         /// <summary>
         /// Snapshot of cached basis vectors and rotations for a spatial coordinate space.
-        /// Zero heap allocations — this is a value type copied under lock.
+        /// Zero heap allocations ï¿½ this is a value type copied under lock.
         /// </summary>
         public readonly struct SpaceSnapshot
         {
@@ -1043,11 +1043,23 @@ namespace XREngine.Scene.Transforms
             if (recalcWorld)
                 RecalcWorld();
 
-            if (setRenderMatrixNow || World is null)
+            // The global override can force every render-matrix publish to be deferred or synchronous,
+            // regardless of what the caller requested. A transform with no world always publishes
+            // synchronously because it has no world queue to defer through.
+            bool syncNow = ResolveRenderMatrixSync(setRenderMatrixNow);
+            if (syncNow || World is null)
                 SetRenderMatrix(WorldMatrix, false).Wait();
 
             return recalcWorld;
         }
+
+        private static bool ResolveRenderMatrixSync(bool requested)
+            => (RuntimeTransformServices.Current?.RenderMatrixUpdateMode ?? ERenderMatrixUpdateMode.Default) switch
+            {
+                ERenderMatrixUpdateMode.ForceSynchronous => true,
+                ERenderMatrixUpdateMode.ForceDeferred => false,
+                _ => requested,
+            };
 
         /// <summary>
         /// Recalculates the local and world matrices for this transform and all children.

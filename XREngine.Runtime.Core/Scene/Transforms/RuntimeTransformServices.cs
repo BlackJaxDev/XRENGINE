@@ -16,6 +16,7 @@ public interface IRuntimeTransformServices
     bool IsShadowPass { get; }
     bool IsRenderThread { get; }
     ELoopType ChildRecalculationLoopType { get; }
+    ERenderMatrixUpdateMode RenderMatrixUpdateMode { get; }
     float UpdateDeltaSeconds { get; }
     float SmoothedDilatedUpdateDeltaSeconds { get; }
     float TargetUpdateFrequency { get; }

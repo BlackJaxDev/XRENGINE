@@ -487,6 +487,7 @@ namespace XREngine
                 private bool _useIntegerUniformsInShaders = true;
                 private bool _tickGroupedItemsInParallel = true;
                 private ELoopType _recalcChildMatricesLoopType = ELoopType.Asynchronous;
+                private ERenderMatrixUpdateMode _renderMatrixUpdateMode = ERenderMatrixUpdateMode.Default;
                 private uint _lightProbeResolution = 512u;
                 private bool _lightProbesCaptureDepth = false;
                 private bool _allowBinaryProgramCaching = true;
@@ -1038,6 +1039,21 @@ namespace XREngine
                 {
                     get => _recalcChildMatricesLoopType;
                     set => SetField(ref _recalcChildMatricesLoopType, value);
+                }
+
+                /// <summary>
+                /// Global override for how transforms publish their render matrix.
+                /// Default lets each call decide via its setRenderMatrixNow argument.
+                /// ForceDeferred routes every update through the render-matrix queue.
+                /// ForceSynchronous publishes every update immediately on the calling tick (diagnostic;
+                /// may fire RenderMatrixChanged off the render thread when child recalculation runs in parallel).
+                /// </summary>
+                [Category("Performance")]
+                [Description("Global override for how transforms publish their render matrix. Default lets each call decide via its setRenderMatrixNow argument; ForceDeferred routes every update through the render-matrix queue; ForceSynchronous publishes every update immediately on the calling tick (diagnostic; may fire RenderMatrixChanged off the render thread when child recalculation runs in parallel).")]
+                public ERenderMatrixUpdateMode RenderMatrixUpdateMode
+                {
+                    get => _renderMatrixUpdateMode;
+                    set => SetField(ref _renderMatrixUpdateMode, value);
                 }
 
                 /// <summary>

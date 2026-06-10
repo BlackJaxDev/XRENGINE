@@ -2132,13 +2132,17 @@ public static class Undo
             switch (target)
             {
                 case TransformBase transform:
-                    // Recalculate immediately so editor-visible transforms update even if the world tick is paused
-                    transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+                    // Push the render matrix immediately. A deferred render-matrix change relies on the
+                    // double-buffer swap firing RenderMatrixChanged on a later tick, which does not reliably
+                    // happen for editor-only worlds / cached camera view-projection matrices. Forcing the
+                    // synchronous push guarantees RenderMatrixChanged fires now, so the rendered view (and any
+                    // skinning that samples render matrices) updates on undo/redo. Matches the inspector edit path.
+                    transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
                     break;
                 case SceneNode node when string.Equals(propertyName, nameof(SceneNode.Transform), StringComparison.Ordinal):
                     // If the SceneNode's Transform property changed, refresh the new transform
                     if (node.Transform is TransformBase nodeTransform)
-                        nodeTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+                        nodeTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
                     break;
             }
         }

@@ -2246,7 +2246,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (durationSeconds <= 0.0f)
         {
             tfm.SetWorldTranslationRotation(targetPosition, normalizedTargetRotation);
-            RecalculateCameraWorldMatrix(tfm);
+            // Discrete one-shot move (e.g. set_editor_camera_view / focus with duration 0). Push the
+            // render matrix synchronously: the deferred world->render queue only carries a single
+            // enqueue for a one-shot change, and that enqueue can be cleared by the next frame's
+            // PreUpdate before the swap consumes it (the change only appeared after subsequent manual
+            // input re-dirtied the camera). Continuous drags re-push every frame and so never need this.
+            RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: true);
             SyncYawPitchWithRotation(normalizedTargetRotation);
             _cameraFocusLerp = null;
             return;
@@ -2289,8 +2294,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         Vector3 position = Vector3.Lerp(lerp.StartPosition, lerp.TargetPosition, eased);
         Quaternion rotation = Quaternion.Normalize(Quaternion.Slerp(lerp.StartRotation, lerp.TargetRotation, eased));
         tfm.SetWorldTranslationRotation(position, rotation);
-        RecalculateCameraWorldMatrix(tfm);
-        if (t >= FocusCompletionThreshold)
+        bool completing = t >= FocusCompletionThreshold;
+        // On the final settle frame, push synchronously so the resting pose can't be lost in the
+        // deferred world->render queue (same one-shot loss as the instant path). Mid-lerp frames
+        // re-push every tick and so stay on the cheap deferred path.
+        RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: completing);
+        if (completing)
         {
             _cameraFocusLerp = null; SyncYawPitchWithRotation(rotation);
         }
