@@ -26,6 +26,7 @@ internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
     public bool IsShadowPass => Engine.Rendering.State.IsShadowPass;
     public bool IsRenderThread => Engine.IsRenderThread;
     public ELoopType ChildRecalculationLoopType => Engine.Rendering.Settings.RecalcChildMatricesLoopType;
+    public ERenderMatrixUpdateMode RenderMatrixUpdateMode => Engine.Rendering.Settings.RenderMatrixUpdateMode;
     public float UpdateDeltaSeconds => Engine.Time.Timer.Update.Delta;
     public float SmoothedDilatedUpdateDeltaSeconds => Engine.Time.Timer.Update.SmoothedDilatedDelta;
     public float TargetUpdateFrequency => Engine.Time.Timer.TargetUpdateFrequency;

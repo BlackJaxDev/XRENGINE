@@ -742,12 +742,9 @@ namespace XREngine.Rendering
         private void ApplyRenderMatrixChanges()
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.ApplyRenderMatrixChanges");
-            
-            //var arr = ArrayPool<(TransformBase tfm, Matrix4x4 renderMatrix)>.Shared.Rent(_pushToRenderSnapshot.Count);
-            //await Task.WhenAll(_pushToRenderSnapshot.Select(x => x.tfm.SetRenderMatrix(x.renderMatrix, false)));
-            //_pushToRenderSnapshot.Clear();
+
             int applied = 0;
-            while (_pushToRenderSnapshot.TryDequeue(out (TransformBase tfm, Matrix4x4 renderMatrix) item))
+            while (_pendingRenderMatrixChanges.TryDequeue(out (TransformBase tfm, Matrix4x4 renderMatrix) item))
             {
                 item.tfm.SetRenderMatrix(item.renderMatrix, false);
                 applied++;
@@ -831,7 +828,11 @@ namespace XREngine.Rendering
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.PreUpdate");
 
-            _pushToRenderWrite.Clear();
+            // NOTE: the render-matrix queue is intentionally NOT cleared here. It is an
+            // accumulate-until-consumed queue drained by the render thread in
+            // ApplyRenderMatrixChanges. Clearing it (or double-buffer swapping it) here
+            // could discard a one-shot change that was enqueued but not yet consumed when
+            // the update thread runs multiple catch-up iterations per render frame.
             // NOTE: _invalidTransforms is cleared in PostUpdate *after* processing,
             // not here. Clearing here would discard dirty transforms added
             // asynchronously (e.g. MCP/HTTP threads) between PostUpdate and PreUpdate.
@@ -844,7 +845,7 @@ namespace XREngine.Rendering
             var loopType = Engine.Rendering.Settings.RecalcChildMatricesLoopType;
 
             //Sequentially iterate through each depth of modified transforms, in order
-            //This will set each transforms' WorldMatrix, which will push it into the _pushToRenderWrite queue
+            //This will set each transforms' WorldMatrix, which will push it into the _pendingRenderMatrixChanges queue
             int minDepth = Volatile.Read(ref _dirtyMinDepth);
             int maxDepth = Volatile.Read(ref _dirtyMaxDepth);
             if (minDepth <= maxDepth)
@@ -877,8 +878,11 @@ namespace XREngine.Rendering
                     UpdateDirtyDepthRange(kvp.Key);
             }
 
-            //Capture of a snapshot of the queue to be processed in the render thread
-            _pushToRenderWrite = Interlocked.Exchange(ref _pushToRenderSnapshot, _pushToRenderWrite);
+            // The render-matrix changes produced above stay in the single accumulate-until-consumed
+            // queue (_pendingRenderMatrixChanges) until the render thread drains them in
+            // ApplyRenderMatrixChanges. No buffer swap here: a swap combined with the per-iteration
+            // PreUpdate clear used to bounce un-consumed entries back into the write buffer and then
+            // discard them, dropping one-shot transform changes (undo/redo, inspector edits, MCP).
         }
 
         public void EnqueueRenderTransformChange(TransformBase transform, Matrix4x4 worldMatrix)
@@ -886,7 +890,7 @@ namespace XREngine.Rendering
             if (!transform.ShouldEnqueueRenderMatrix(worldMatrix))
                 return;
 
-            _pushToRenderWrite.Enqueue((transform, worldMatrix));
+            _pendingRenderMatrixChanges.Enqueue((transform, worldMatrix));
             AnyTransformWorldMatrixChanged?.Invoke(this, transform, worldMatrix);
         }
 
@@ -926,8 +930,14 @@ namespace XREngine.Rendering
             }
         }
 
-        private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderWrite = new();
-        private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderSnapshot = new();
+        // Single accumulate-until-consumed queue. Producers (update / async threads) enqueue render
+        // matrix changes; the render thread drains them in ApplyRenderMatrixChanges. ConcurrentQueue is
+        // safe for concurrent enqueue/dequeue, so no double-buffer swap is needed. The previous
+        // write+snapshot swap (plus the PreUpdate clear) had a data-loss window: when the update thread
+        // ran multiple catch-up iterations per render frame, the second swap pushed un-consumed entries
+        // back into the write buffer and the next PreUpdate clear discarded them, stranding one-shot
+        // changes (undo/redo, inspector edits, MCP) until the transform was dirtied again.
+        private readonly ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pendingRenderMatrixChanges = new();
         private readonly ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> _invalidTransforms = [];
         private int _dirtyMinDepth = int.MaxValue;
         private int _dirtyMaxDepth = int.MinValue;

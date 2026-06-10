@@ -40,9 +40,16 @@ public sealed class StandardTransformEditor : IXRTransformEditor
         if (!edited)
             return;
 
-        standard.Translation = translation;
+        // Mutate + recalc on the update thread only (via the queue). Mutating on the render
+        // thread here would make the queued set below a no-op (value already equal, so the
+        // setter early-outs and never marks the transform dirty) and would race the update
+        // thread, producing the "jumps randomly or not at all" symptom for editor-camera edits.
         var queued = translation;
-        EnqueueSceneEdit(() => standard.Translation = queued);
+        EnqueueSceneEdit(() =>
+        {
+            standard.Translation = queued;
+            ApplyInspectorTransformEdit(standard);
+        });
     }
 
     private static void DrawRotation(Transform standard, string transformLabel)
@@ -59,8 +66,11 @@ public sealed class StandardTransformEditor : IXRTransformEditor
         rotator.Yaw = rotation.Y;
         rotator.Roll = rotation.Z;
         var queued = rotator;
-        standard.Rotator = queued;
-        EnqueueSceneEdit(() => standard.Rotator = queued);
+        EnqueueSceneEdit(() =>
+        {
+            standard.Rotator = queued;
+            ApplyInspectorTransformEdit(standard);
+        });
     }
 
     private static void DrawScale(Transform standard, string transformLabel)
@@ -72,9 +82,12 @@ public sealed class StandardTransformEditor : IXRTransformEditor
         if (!edited)
             return;
 
-        standard.Scale = scale;
         var queued = scale;
-        EnqueueSceneEdit(() => standard.Scale = queued);
+        EnqueueSceneEdit(() =>
+        {
+            standard.Scale = queued;
+            ApplyInspectorTransformEdit(standard);
+        });
     }
 
     private static void DrawTransformOrder(Transform standard, string transformLabel)
@@ -94,7 +107,24 @@ public sealed class StandardTransformEditor : IXRTransformEditor
             return;
 
         var newOrder = OrderValues[orderIndex];
-        standard.Order = newOrder;
-        EnqueueSceneEdit(() => standard.Order = newOrder);
+        EnqueueSceneEdit(() =>
+        {
+            standard.Order = newOrder;
+            ApplyInspectorTransformEdit(standard);
+        });
     }
+
+    // The Editor View camera lives in a separate editor-only world instance (its
+    // TransformBase.World is non-null but distinct from the simulated scene world). A discrete
+    // inspector edit pushed only through the deferred double-buffer (RecalcWorld -> enqueue ->
+    // PostUpdate swap -> render consume) can land "randomly or not at all", so the camera's
+    // cached view-projection matrix is never invalidated and the view stays frozen until later
+    // input (a right-click drag) forces another recalc. Forcing setRenderMatrixNow makes
+    // SetRenderMatrix run on this same update-thread tick, which fires RenderMatrixChanged
+    // immediately and invalidates the camera VP - frame-accurate with no swap-chain dependency.
+    // This runs on the update thread (queued via EnqueueSceneEdit), not the render thread, and
+    // only on a discrete user edit (not a per-frame hot path), so the momentary render-thread
+    // read race the pawn movement path avoids is not a concern here.
+    private static void ApplyInspectorTransformEdit(Transform standard)
+        => standard.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
 }

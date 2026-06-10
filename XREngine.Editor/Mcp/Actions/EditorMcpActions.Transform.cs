@@ -91,6 +91,13 @@ namespace XREngine.Editor.Mcp
             if (scaleX.HasValue || scaleY.HasValue || scaleZ.HasValue)
                 transform.Scale = scale;
 
+            // Push the world->render matrix update on this tick. Without setRenderMatrixNow a
+            // discrete edit relies on the deferred double-buffer, which can land late or be
+            // dropped, leaving a camera's cached view-projection (invalidated only on
+            // RenderMatrixChanged) stale until later input. Discrete MCP edits are not a
+            // per-frame hot path, so the synchronous push is the robust, frame-accurate choice.
+            transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
             return Task.FromResult(new McpToolResponse($"Updated transform for '{nodeId}'."));
         }
 
@@ -125,6 +132,9 @@ namespace XREngine.Editor.Mcp
 
             var rotator = new Rotator(pitch, yaw, roll);
             transform.ApplyRotation(rotator.ToQuaternion());
+
+            // Push the world->render matrix update on this tick (see SetTransformAsync).
+            transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
 
             return Task.FromResult(new McpToolResponse($"Applied rotation to '{nodeId}'.", new
             {
