@@ -68,7 +68,8 @@ namespace XREngine.Editor.Mcp
 
                     try
                     {
-                        img.Flip();
+                        if (renderer.ScreenshotRequiresVerticalFlip)
+                            img.Flip();
                         img.Write(path);
                         tcs.TrySetResult(path);
                     }

@@ -161,10 +161,10 @@ namespace XREngine.Editor.Mcp
         /// Modifies an editor preference on the <see cref="Engine.GlobalEditorPreferences"/> object.
         /// </summary>
         [XRMcp(Name = "set_editor_preference", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies editor preferences.")]
-        [Description("Set an editor preference by property name (writes to the global default).")]
+        [Description("Set an editor preference by property name or dotted path (writes to the global default).")]
         public static Task<McpToolResponse> SetEditorPreferenceAsync(
             McpToolContext context,
-            [McpName("property_name"), Description("Property name (case-insensitive).")]
+            [McpName("property_name"), Description("Property name or dotted path (case-insensitive), e.g. 'Debug.RenderMesh3DBounds'.")]
             string propertyName,
             [McpName("value"), Description("JSON value to assign.")]
             object value)
@@ -172,7 +172,11 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(propertyName))
                 return Task.FromResult(new McpToolResponse("property_name is required.", isError: true));
 
-            return SetSettingsProperty(Engine.GlobalEditorPreferences, propertyName, value);
+            Task<McpToolResponse> result = SetSettingsProperty(Engine.GlobalEditorPreferences, propertyName, value);
+            if (!result.Result.IsError)
+                Engine.RefreshEffectiveEditorPreferences();
+
+            return result;
         }
 
         // ───────────────────────────────────────────────────────────────────
@@ -457,9 +461,12 @@ namespace XREngine.Editor.Mcp
         /// Sets a property on a settings object by name, using <see cref="McpToolRegistry.TryConvertValue"/>
         /// and <see cref="Undo.TrackChange"/> for undo support.
         /// </summary>
-        private static Task<McpToolResponse> SetSettingsProperty(XRBase target, string propertyName, object value)
+        private static Task<McpToolResponse> SetSettingsProperty(XRBase target, string propertyPath, object value)
         {
-            var targetType = target.GetType();
+            if (!TryResolvePropertyPathTarget(target, propertyPath, out XRBase? owner, out string propertyName, out string resolvedPath, out var pathError))
+                return Task.FromResult(pathError!);
+
+            var targetType = owner!.GetType();
             var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
 
             var property = targetType.GetProperty(propertyName, flags);
@@ -475,17 +482,89 @@ namespace XREngine.Editor.Mcp
                     convError ?? $"Unable to convert value for '{property.Name}'.", isError: true));
             }
 
-            using var _ = Undo.TrackChange($"MCP Set {property.Name}", target);
-            property.SetValue(target, converted);
+            using var _ = Undo.TrackChange($"MCP Set {resolvedPath}", owner);
+            property.SetValue(owner, converted);
 
             return Task.FromResult(new McpToolResponse(
-                $"Set '{property.Name}' on '{targetType.Name}'.",
+                $"Set '{resolvedPath}' on '{targetType.Name}'.",
                 new
                 {
                     settingsType = targetType.FullName ?? targetType.Name,
+                    propertyPath = resolvedPath,
                     property = property.Name,
                     propertyType = FormatTypeName(property.PropertyType)
                 }));
+        }
+
+        private static bool TryResolvePropertyPathTarget(
+            XRBase root,
+            string propertyPath,
+            out XRBase? owner,
+            out string propertyName,
+            out string resolvedPath,
+            out McpToolResponse? error)
+        {
+            owner = root;
+            propertyName = propertyPath;
+            resolvedPath = propertyPath;
+            error = null;
+
+            string[] segments = propertyPath
+                .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (segments.Length == 0)
+            {
+                error = new McpToolResponse("property_name is required.", isError: true);
+                return false;
+            }
+
+            propertyName = segments[^1];
+            var resolvedSegments = new List<string>();
+
+            object? current = root;
+            Type currentType = root.GetType();
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+
+            for (int i = 0; i < segments.Length - 1; i++)
+            {
+                string segment = segments[i];
+                var property = currentType.GetProperty(segment, flags);
+                if (property is null || !property.CanRead || property.GetIndexParameters().Length != 0)
+                {
+                    error = new McpToolResponse(
+                        $"Readable property '{segment}' not found on '{currentType.Name}' while resolving '{propertyPath}'.",
+                        isError: true);
+                    return false;
+                }
+
+                current = property.GetValue(current);
+                if (current is null)
+                {
+                    error = new McpToolResponse(
+                        $"Null value at '{resolvedPath}' while resolving '{propertyPath}'.",
+                        isError: true);
+                    return false;
+                }
+
+                if (current is not XRBase currentBase)
+                {
+                    error = new McpToolResponse(
+                        $"Property path owner '{resolvedPath}' resolved to '{current.GetType().Name}', not XRBase.",
+                        isError: true);
+                    return false;
+                }
+
+                owner = currentBase;
+                currentType = current.GetType();
+                resolvedSegments.Add(property.Name);
+            }
+
+            if (segments.Length == 1)
+                resolvedPath = segments[0];
+            else
+                resolvedPath = string.Join('.', resolvedSegments.Append(propertyName));
+
+            return true;
         }
 
         /// <summary>

@@ -1303,6 +1303,9 @@ public unsafe partial class VulkanRenderer
             _commandBufferDirtyFlags[i] = true;
     }
 
+    internal override void NotifyRenderResourcesChanged()
+        => MarkCommandBuffersDirty();
+
     internal int EnsureValidPassIndex(
         int passIndex,
         string opName,

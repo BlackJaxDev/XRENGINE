@@ -2171,13 +2171,23 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         var tfm = TransformAs<Transform>(); if (tfm is null) return;
         _scrollSmoothTarget = null;
+        Quaternion normalizedTargetRotation = Quaternion.Normalize(targetRotation);
+        if (durationSeconds <= 0.0f)
+        {
+            tfm.SetWorldTranslationRotation(targetPosition, normalizedTargetRotation);
+            RecalculateCameraWorldMatrix(tfm);
+            SyncYawPitchWithRotation(normalizedTargetRotation);
+            _cameraFocusLerp = null;
+            return;
+        }
+
         float clampedDuration = MathF.Max(0.01f, durationSeconds);
         _cameraFocusLerp = new CameraFocusLerpState
         {
             StartPosition = tfm.WorldTranslation,
             TargetPosition = targetPosition,
             StartRotation = tfm.WorldRotation,
-            TargetRotation = Quaternion.Normalize(targetRotation),
+            TargetRotation = normalizedTargetRotation,
             StartTime = Engine.Time.Timer.Time(),
             Duration = clampedDuration
         };

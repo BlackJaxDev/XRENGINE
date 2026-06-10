@@ -617,17 +617,15 @@ public unsafe partial class VulkanRenderer
 				return false;
 
 			bool pipelineInvalidated = _pipelineDirty;
-			PendingMeshDraw effectiveDraw = ResolveAttachmentCompatibleDrawState(draw, passIndex, passMetadata, depthStencilReadOnly);
-
-			if (useDynamicRendering && dynamicRenderingFormats.ColorAttachmentCount == 0 && draw.ColorWriteMask != 0)
-			{
-				Debug.VulkanWarningEvery(
-					$"Vulkan.MeshRenderer.SkipDraw.NoColorAttachment.{_program?.Data?.Name ?? "UnknownProgram"}",
-					TimeSpan.FromSeconds(2),
-					"[Vulkan] Skipping pipeline creation for program '{0}': dynamic rendering has undefined color attachment format while color writes are enabled.",
-					_program?.Data?.Name ?? "UnknownProgram");
-				return false;
-			}
+			uint colorAttachmentCount = useDynamicRendering
+				? dynamicRenderingFormats.ColorAttachmentCount
+				: Renderer.GetRenderPassColorAttachmentCount(renderPass);
+			PendingMeshDraw effectiveDraw = ResolveAttachmentCompatibleDrawState(
+				draw,
+				passIndex,
+				passMetadata,
+				depthStencilReadOnly,
+				colorAttachmentCount);
 
 			BuildVertexInputState();
 
@@ -787,10 +785,6 @@ public unsafe partial class VulkanRenderer
 					DstAlphaBlendFactor = effectiveDraw.DstAlphaBlendFactor,
 				};
 
-				uint colorAttachmentCount = useDynamicRendering
-					? dynamicRenderingFormats.ColorAttachmentCount
-					: Renderer.GetRenderPassColorAttachmentCount(renderPass);
-
 				Debug.VulkanEvery(
 					$"Vulkan.Pipeline.CacheMiss.{_program!.Data?.Name ?? "Unknown"}.{renderPass.Handle:X}.{colorAttachmentCount}",
 					TimeSpan.FromSeconds(2),
@@ -920,6 +914,17 @@ public unsafe partial class VulkanRenderer
 			uint colorAttachmentCount,
 			string pipelineName)
 		{
+			if (key.UseDynamicRendering && colorAttachmentCount == 0)
+			{
+				Debug.VulkanWarningEvery(
+					"Vulkan.PipelineLibrary.DepthOnlyMonolithic",
+					TimeSpan.FromSeconds(5),
+					"[Vulkan] Using monolithic dynamic-rendering pipeline for depth-only pass '{0}' program='{1}'; graphics pipeline libraries are bypassed for zero-color pipelines to keep depth/stencil validation correct.",
+					pipelineName,
+					program.Data.Name ?? "<unnamed program>");
+				return program.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
+			}
+
 			if (!ShouldUseGraphicsPipelineLibraries())
 				return program.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
 
@@ -1011,22 +1016,31 @@ public unsafe partial class VulkanRenderer
 				PipelineLibraryCreateInfoKHR libraryInfo = new()
 				{
 					SType = StructureType.PipelineLibraryCreateInfoKhr,
-					PNext = pipelineInfo.PNext,
 					LibraryCount = (uint)libraryArray.Length,
 					PLibraries = librariesPtr,
 				};
 
+				bool linkUsesDynamicRenderingInfo =
+					key.UseDynamicRendering &&
+					pipelineInfo.PNext != null &&
+					((PipelineRenderingCreateInfo*)pipelineInfo.PNext)->SType == StructureType.PipelineRenderingCreateInfo;
+				PipelineRenderingCreateInfo linkedRenderingInfo = default;
+				if (linkUsesDynamicRenderingInfo)
+				{
+					linkedRenderingInfo = *((PipelineRenderingCreateInfo*)pipelineInfo.PNext);
+					linkedRenderingInfo.PNext = &libraryInfo;
+				}
+
 				GraphicsPipelineCreateInfo linkedInfo = pipelineInfo;
 				linkedInfo.PNext = &libraryInfo;
+				if (linkUsesDynamicRenderingInfo)
+					linkedInfo.PNext = &linkedRenderingInfo;
 				linkedInfo.StageCount = 0;
 				linkedInfo.PStages = null;
 				linkedInfo.PVertexInputState = null;
 				linkedInfo.PInputAssemblyState = null;
 				linkedInfo.PViewportState = null;
 				linkedInfo.PRasterizationState = null;
-				linkedInfo.PMultisampleState = null;
-				linkedInfo.PDepthStencilState = null;
-				linkedInfo.PColorBlendState = null;
 				linkedInfo.PDynamicState = null;
 				linkedInfo.Layout = program.PipelineLayout;
 
@@ -1047,7 +1061,7 @@ public unsafe partial class VulkanRenderer
 			bool hasTopology = subset == GraphicsPipelineLibrarySubset.VertexInputInterface;
 			bool hasProgram = subset is GraphicsPipelineLibrarySubset.PreRasterizationShaders or GraphicsPipelineLibrarySubset.FragmentShader;
 			bool hasVertexLayout = subset == GraphicsPipelineLibrarySubset.VertexInputInterface;
-			bool hasDepthStencil = subset == GraphicsPipelineLibrarySubset.FragmentShader;
+			bool hasDepthStencil = subset is GraphicsPipelineLibrarySubset.FragmentShader or GraphicsPipelineLibrarySubset.FragmentOutputInterface;
 			bool hasRasterState = subset == GraphicsPipelineLibrarySubset.PreRasterizationShaders;
 			bool hasBlendState = subset == GraphicsPipelineLibrarySubset.FragmentOutputInterface;
 			bool hasSampleState = subset is GraphicsPipelineLibrarySubset.FragmentShader or GraphicsPipelineLibrarySubset.FragmentOutputInterface;
@@ -1099,10 +1113,13 @@ public unsafe partial class VulkanRenderer
 
 			fixed (PipelineShaderStageCreateInfo* stagesPtr = stages)
 			{
+				bool includeDynamicRenderingInfo =
+					!key.UseDynamicRendering ||
+					key.Subset == GraphicsPipelineLibrarySubset.FragmentOutputInterface;
 				GraphicsPipelineLibraryCreateInfoEXT libraryInfo = new()
 				{
 					SType = StructureType.GraphicsPipelineLibraryCreateInfoExt,
-					PNext = baseInfo.PNext,
+					PNext = includeDynamicRenderingInfo ? baseInfo.PNext : null,
 					Flags = libraryFlags,
 				};
 
@@ -1113,7 +1130,7 @@ public unsafe partial class VulkanRenderer
 				libraryPipelineInfo.PStages = stages.Length > 0 ? stagesPtr : null;
 				libraryPipelineInfo.Layout = program.PipelineLayout;
 
-				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset);
+				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset, key.UseDynamicRendering);
 
 				Result result = Api!.CreateGraphicsPipelines(Device, Renderer.ActivePipelineCache, 1, ref libraryPipelineInfo, null, out Pipeline library);
 				if (result != Result.Success)
@@ -1139,31 +1156,42 @@ public unsafe partial class VulkanRenderer
 
 		private static void ApplyGraphicsPipelineLibrarySubset(
 			ref GraphicsPipelineCreateInfo pipelineInfo,
-			GraphicsPipelineLibrarySubset subset)
+			GraphicsPipelineLibrarySubset subset,
+			bool useDynamicRendering)
 		{
+			// When dynamic rendering state is chained, validation still requires the
+			// attachment-dependent structs to remain valid on subset libraries.
+			bool preserveDynamicRenderingAttachmentState = useDynamicRendering;
 			switch (subset)
 			{
 				case GraphicsPipelineLibrarySubset.VertexInputInterface:
 					pipelineInfo.PViewportState = null;
 					pipelineInfo.PRasterizationState = null;
-					pipelineInfo.PMultisampleState = null;
-					pipelineInfo.PDepthStencilState = null;
-					pipelineInfo.PColorBlendState = null;
+					if (!preserveDynamicRenderingAttachmentState)
+					{
+						pipelineInfo.PMultisampleState = null;
+						pipelineInfo.PDepthStencilState = null;
+						pipelineInfo.PColorBlendState = null;
+					}
 					pipelineInfo.PDynamicState = null;
 					break;
 				case GraphicsPipelineLibrarySubset.PreRasterizationShaders:
 					pipelineInfo.PVertexInputState = null;
 					pipelineInfo.PInputAssemblyState = null;
-					pipelineInfo.PMultisampleState = null;
-					pipelineInfo.PDepthStencilState = null;
-					pipelineInfo.PColorBlendState = null;
+					if (!preserveDynamicRenderingAttachmentState)
+					{
+						pipelineInfo.PMultisampleState = null;
+						pipelineInfo.PDepthStencilState = null;
+						pipelineInfo.PColorBlendState = null;
+					}
 					break;
 				case GraphicsPipelineLibrarySubset.FragmentShader:
 					pipelineInfo.PVertexInputState = null;
 					pipelineInfo.PInputAssemblyState = null;
 					pipelineInfo.PViewportState = null;
 					pipelineInfo.PRasterizationState = null;
-					pipelineInfo.PColorBlendState = null;
+					if (!preserveDynamicRenderingAttachmentState)
+						pipelineInfo.PColorBlendState = null;
 					pipelineInfo.PDynamicState = null;
 					break;
 				case GraphicsPipelineLibrarySubset.FragmentOutputInterface:
@@ -1173,7 +1201,6 @@ public unsafe partial class VulkanRenderer
 					pipelineInfo.PInputAssemblyState = null;
 					pipelineInfo.PViewportState = null;
 					pipelineInfo.PRasterizationState = null;
-					pipelineInfo.PDepthStencilState = null;
 					pipelineInfo.PDynamicState = null;
 					break;
 			}
@@ -1183,21 +1210,40 @@ public unsafe partial class VulkanRenderer
 			in PendingMeshDraw draw,
 			int passIndex,
 			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
-			bool depthStencilReadOnly)
+			bool depthStencilReadOnly,
+			uint colorAttachmentCount)
 		{
+			PendingMeshDraw effective = draw;
+			if (colorAttachmentCount == 0 &&
+				(draw.ColorWriteMask != 0 || draw.BlendEnabled || draw.AlphaToCoverageEnabled))
+			{
+				effective = effective with
+				{
+					ColorWriteMask = 0,
+					BlendEnabled = false,
+					AlphaToCoverageEnabled = false,
+					ColorBlendOp = default,
+					AlphaBlendOp = default,
+					SrcColorBlendFactor = default,
+					DstColorBlendFactor = default,
+					SrcAlphaBlendFactor = default,
+					DstAlphaBlendFactor = default,
+				};
+			}
+
 			if (!depthStencilReadOnly && !PassUsesReadOnlyDepthStencil(passIndex, passMetadata))
-				return draw;
+				return effective;
 
-			bool hasStencilWrites = draw.StencilTestEnabled &&
-				(StencilStateWrites(draw.FrontStencilState) || StencilStateWrites(draw.BackStencilState) || draw.StencilWriteMask != 0);
-			if (!draw.DepthWriteEnabled && !hasStencilWrites)
-				return draw;
+			bool hasStencilWrites = effective.StencilTestEnabled &&
+				(StencilStateWrites(effective.FrontStencilState) || StencilStateWrites(effective.BackStencilState) || effective.StencilWriteMask != 0);
+			if (!effective.DepthWriteEnabled && !hasStencilWrites)
+				return effective;
 
-			return draw with
+			return effective with
 			{
 				DepthWriteEnabled = false,
-				FrontStencilState = MakeStencilReadOnly(draw.FrontStencilState),
-				BackStencilState = MakeStencilReadOnly(draw.BackStencilState),
+				FrontStencilState = MakeStencilReadOnly(effective.FrontStencilState),
+				BackStencilState = MakeStencilReadOnly(effective.BackStencilState),
 				StencilWriteMask = 0,
 			};
 		}

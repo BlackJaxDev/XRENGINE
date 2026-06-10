@@ -295,7 +295,7 @@ namespace XREngine.Rendering.Commands
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
                 // the last publish. _swapQueued dedups across multiple AddCPU calls for the same
                 // command this frame (multi-camera, multi-pipeline, multi-pass).
-                if (item._dirty && !item._swapQueued)
+                if ((item._dirty || !item.HasSwappedBuffers) && !item._swapQueued)
                 {
                     item._swapQueued = true;
                     _updatingSwapQueue.Add(item);
@@ -1244,7 +1244,7 @@ namespace XREngine.Rendering.Commands
                     var cmd = queue[i];
                     if (cmd is null)
                         continue;
-                    if (cmd._dirty)
+                    if (cmd._dirty || !cmd.HasSwappedBuffers)
                         cmd.SwapBuffers();
                     else
                         cmd._swapQueued = false;

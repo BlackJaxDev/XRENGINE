@@ -152,14 +152,61 @@ void main()
         size.ShouldBe(304u);
     }
 
+    [Test]
+    public void Rewrite_ComputesStd140Vec3ScalarPacking()
+    {
+        const string source = """
+#version 460
+struct ColorGradeStruct
+{
+    vec3 Tint;
+    float Exposure;
+    float Contrast;
+    float Gamma;
+    float Hue;
+    float Saturation;
+    float Brightness;
+};
+uniform bool OutputHDR;
+uniform ColorGradeStruct ColorGrade;
+uniform vec3 Samples[2];
+uniform float AfterSamples;
+layout(location = 0) out vec4 OutColor;
+void main()
+{
+    OutColor = vec4(ColorGrade.Tint * ColorGrade.Exposure + Samples[1] + vec3(AfterSamples), 1.0);
+}
+""";
+
+        object blockInfo = RewriteForVulkanAutoUniformBlockInfo(source, EShaderType.Fragment);
+        uint size = GetProperty<uint>(blockInfo, "Size");
+        object outputHdr = GetMember(blockInfo, "OutputHDR");
+        object colorGrade = GetMember(blockInfo, "ColorGrade");
+        object samples = GetMember(blockInfo, "Samples");
+        object afterSamples = GetMember(blockInfo, "AfterSamples");
+
+        GetProperty<uint>(outputHdr, "Offset").ShouldBe(0u);
+        GetProperty<uint>(colorGrade, "Offset").ShouldBe(16u);
+        GetProperty<uint>(colorGrade, "Size").ShouldBe(48u);
+
+        GetProperty<uint>(GetStructMember(colorGrade, "Tint"), "Offset").ShouldBe(0u);
+        GetProperty<uint>(GetStructMember(colorGrade, "Exposure"), "Offset").ShouldBe(12u);
+        GetProperty<uint>(GetStructMember(colorGrade, "Contrast"), "Offset").ShouldBe(16u);
+        GetProperty<uint>(GetStructMember(colorGrade, "Brightness"), "Offset").ShouldBe(32u);
+
+        GetProperty<uint>(samples, "Offset").ShouldBe(64u);
+        GetProperty<uint>(samples, "ArrayStride").ShouldBe(16u);
+        GetProperty<uint>(samples, "Size").ShouldBe(32u);
+        GetProperty<uint>(afterSamples, "Offset").ShouldBe(96u);
+        size.ShouldBe(112u);
+    }
+
     private static string RewriteForVulkanFragment(string source)
     {
         Type? autoUniformType = typeof(VulkanShaderCompiler).Assembly
             .GetType("XREngine.Rendering.Vulkan.VulkanShaderAutoUniforms", throwOnError: true);
 
-        MethodInfo? rewriteMethod = autoUniformType!.GetMethod(
-            "Rewrite",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        MethodInfo? rewriteMethod = GetRewriteMethod(autoUniformType!);
 
         rewriteMethod.ShouldNotBeNull();
 
@@ -185,9 +232,7 @@ void main()
         Type? autoUniformType = typeof(VulkanShaderCompiler).Assembly
             .GetType("XREngine.Rendering.Vulkan.VulkanShaderAutoUniforms", throwOnError: true);
 
-        MethodInfo? rewriteMethod = autoUniformType!.GetMethod(
-            "Rewrite",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        MethodInfo? rewriteMethod = GetRewriteMethod(autoUniformType!);
 
         rewriteMethod.ShouldNotBeNull();
 
@@ -218,6 +263,22 @@ void main()
         throw new InvalidOperationException($"Auto uniform member '{memberName}' was not found.");
     }
 
+    private static object GetStructMember(object member, string fieldName)
+    {
+        object? members = GetProperty<object?>(member, "StructMembers");
+        members.ShouldNotBeNull();
+
+        foreach (object field in (System.Collections.IEnumerable)members!)
+        {
+            string? name = GetProperty<string>(field, "Name");
+            if (name == fieldName)
+                return field;
+        }
+
+        Assert.Fail($"Auto uniform struct member '{fieldName}' was not found.");
+        throw new InvalidOperationException($"Auto uniform struct member '{fieldName}' was not found.");
+    }
+
     private static T? GetProperty<T>(object instance, string propertyName)
     {
         PropertyInfo? property = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
@@ -230,9 +291,7 @@ void main()
         Type? autoUniformType = typeof(VulkanShaderCompiler).Assembly
             .GetType("XREngine.Rendering.Vulkan.VulkanShaderAutoUniforms", throwOnError: true);
 
-        MethodInfo? rewriteMethod = autoUniformType!.GetMethod(
-            "Rewrite",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        MethodInfo? rewriteMethod = GetRewriteMethod(autoUniformType!);
 
         rewriteMethod.ShouldNotBeNull();
 
@@ -273,6 +332,14 @@ void main()
 
         throw new DirectoryNotFoundException("Could not locate Build/CommonAssets/Shaders from test base directory.");
     }
+
+    private static MethodInfo? GetRewriteMethod(Type autoUniformType)
+        => autoUniformType.GetMethod(
+            "Rewrite",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(string), typeof(EShaderType)],
+            modifiers: null);
 
     private readonly record struct LoadedShaderSource(string FullPath, string Source);
 }

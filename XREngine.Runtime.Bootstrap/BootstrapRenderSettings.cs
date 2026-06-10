@@ -77,6 +77,23 @@ public static class BootstrapRenderSettings
         EnsureEmulatedVRStereoPreviewRenderingHooked();
     }
 
+    public static void ReapplyEditorRenderStateAfterBootstrap(string reason)
+    {
+        try
+        {
+            Engine.Rendering.ApplyEditorPreferencesChange(null);
+
+            foreach (var window in Engine.Windows)
+                window.RequestRenderStateRecheck(resetCircuitBreaker: true);
+
+            Debug.Rendering($"[BootstrapRenderSettings] Reapplied editor render state after bootstrap ({reason}).");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, $"[BootstrapRenderSettings] Failed to reapply editor render state after bootstrap ({reason}).");
+        }
+    }
+
     public static void ApplyOpenGLShaderLinkSettings(UnitTestingWorldSettings settings)
     {
         var renderSettings = Engine.Rendering.Settings;

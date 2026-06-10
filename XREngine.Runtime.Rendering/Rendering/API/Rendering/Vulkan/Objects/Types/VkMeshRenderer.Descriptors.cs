@@ -841,6 +841,14 @@ public unsafe partial class VulkanRenderer
 			return bindingName;
 		}
 
+		private static bool IsOptionalPipelineStorageBuffer(DescriptorBindingInfo binding)
+			=> binding.DescriptorType is DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic &&
+			   binding.Name is ("LightProbePositions" or
+				   "LightProbeTetrahedra" or
+				   "LightProbeParameters" or
+				   "LightProbeGridCells" or
+				   "LightProbeGridIndices");
+
 		private bool TryResolveFallbackDescriptorBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
 		{
 			bufferInfo = default;
@@ -856,7 +864,7 @@ public unsafe partial class VulkanRenderer
 			if (target.Buffer.Handle == 0)
 				return false;
 
-			if (!string.IsNullOrWhiteSpace(binding.Name))
+			if (!string.IsNullOrWhiteSpace(binding.Name) && !IsOptionalPipelineStorageBuffer(binding))
 				WarnOnce($"Using fallback descriptor buffer for unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
 			RecordDescriptorFallback(binding);
 			bufferInfo = new DescriptorBufferInfo
@@ -1123,7 +1131,8 @@ public unsafe partial class VulkanRenderer
 				uint size = GetEngineUniformSize(name);
 				if (size == 0)
 				{
-					WarnOnce($"Descriptor binding '{name}' could not be matched to an engine uniform.");
+					if (!IsOptionalPipelineStorageBuffer(binding))
+						WarnOnce($"Descriptor binding '{name}' could not be matched to an engine uniform.");
 					return false;
 				}
 

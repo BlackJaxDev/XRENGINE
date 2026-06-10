@@ -83,6 +83,8 @@ namespace XREngine.Rendering.Commands
         internal volatile bool _dirty = true;
         internal volatile bool _swapQueued = false;
 
+        internal bool HasSwappedBuffers => _hasSwappedBuffers;
+
         /// <summary>
         /// Whether this command should be collected for rendering.
         /// Updated during Tick/Update, swapped to RenderEnabled during SwapBuffers.

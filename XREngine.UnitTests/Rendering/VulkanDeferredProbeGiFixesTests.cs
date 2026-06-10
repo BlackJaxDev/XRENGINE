@@ -51,6 +51,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
     {
         string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Descriptors.cs");
         string preparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Preparation.cs");
+        string renderingStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderingState.cs");
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
         string rendererStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
 
@@ -61,8 +62,12 @@ public sealed class VulkanDeferredProbeGiFixesTests
         descriptorSource.ShouldContain("TryResolveProgramBoundBuffer(binding, out buffer)");
         descriptorSource.ShouldContain("_program.TryGetBoundBuffer(binding.Binding");
         descriptorSource.ShouldContain("Renderer.TrackBufferBinding(dataBuffer)");
-        preparationSource.ShouldContain("ApplyScopedProgramBindingsForPreparation();");
+        descriptorSource.ShouldContain("IsOptionalPipelineStorageBuffer");
+        descriptorSource.ShouldContain("\"LightProbePositions\"");
+        descriptorSource.ShouldContain("!IsOptionalPipelineStorageBuffer(binding)");
+        preparationSource.ShouldContain("ApplyScopedProgramBindingsForPreparation(material);");
         preparationSource.ShouldContain("ApplyScopedProgramBindings(program)");
+        renderingStateSource.ShouldContain("RuntimeEngine.Rendering.State.CurrentRenderingPipeline");
 
         programSource.ShouldContain("_buffersByBinding[index] = buffer");
         programSource.ShouldContain("internal bool TryGetBoundBuffer");
@@ -71,6 +76,70 @@ public sealed class VulkanDeferredProbeGiFixesTests
 
         rendererStateSource.ShouldContain("internal void TrackBufferBinding(XRDataBuffer buffer)");
         rendererStateSource.ShouldContain("internal void TrackTextureBinding(XRTexture texture)");
+    }
+
+    [Test]
+    public void VulkanPreparation_PreBindsDescriptorAffectingLightingResources()
+    {
+        string preparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Preparation.cs");
+
+        int prebindIndex = preparationSource.IndexOf("ApplyScopedProgramBindingsForPreparation(material);", StringComparison.Ordinal);
+        int descriptorIndex = preparationSource.IndexOf("EnsureDescriptorSets(material)", StringComparison.Ordinal);
+
+        prebindIndex.ShouldBeGreaterThanOrEqualTo(0);
+        descriptorIndex.ShouldBeGreaterThan(prebindIndex);
+        preparationSource.ShouldContain("EUniformRequirements.Lights");
+        preparationSource.ShouldContain("SetForwardLightingUniforms(program)");
+        preparationSource.ShouldContain("EUniformRequirements.AmbientOcclusion");
+        preparationSource.ShouldContain("Lights3DCollection.SetForwardAmbientOcclusionUniforms(program)");
+    }
+
+    [Test]
+    public void VulkanMeshDrawDescriptors_DoNotBypassPerDrawUniformUploads()
+    {
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs");
+
+        drawingSource.ShouldContain("renderer-owned descriptor path");
+        drawingSource.ShouldNotContain("vkMaterial.TryBindDescriptorSets(commandBuffer, _program, imageIndex)");
+
+        int engineUploadIndex = drawingSource.IndexOf("UpdateEngineUniformBuffersForDraw(imageIndex, draw);", StringComparison.Ordinal);
+        int autoUploadIndex = drawingSource.IndexOf("UpdateAutoUniformBuffersForDraw(imageIndex, material, draw);", StringComparison.Ordinal);
+        int bindIndex = drawingSource.IndexOf("Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, _program.PipelineLayout, 0, sets);", StringComparison.Ordinal);
+
+        engineUploadIndex.ShouldBeGreaterThanOrEqualTo(0);
+        autoUploadIndex.ShouldBeGreaterThan(engineUploadIndex);
+        bindIndex.ShouldBeGreaterThan(autoUploadIndex);
+    }
+
+    [Test]
+    public void PostProcessCompositeInputs_AreConcreteAndClearedBeforeOptionalFogPasses()
+    {
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
+
+        AssertPostProcessCompositeInputDefaults(pipelineSource);
+        AssertPostProcessCompositeInputDefaults(pipeline2Source);
+    }
+
+    private static void AssertPostProcessCompositeInputDefaults(string source)
+    {
+        source.ShouldContain("AppendPostProcessCompositeInputDefaults(c);");
+        source.ShouldContain("AtmosphereColorTextureName");
+        source.ShouldContain("VolumetricFogColorTextureName");
+        source.ShouldContain("AtmosphereUpscaleFBOName");
+        source.ShouldContain("VolumetricFogUpscaleFBOName");
+        source.ShouldContain("ColorF4.Transparent");
+        source.ShouldContain("clearColor: true, clearDepth: false, clearStencil: false");
+
+        int defaultsIndex = source.IndexOf("AppendPostProcessCompositeInputDefaults(c);", StringComparison.Ordinal);
+        int atmosphereIndex = source.IndexOf("AppendAtmosphericScattering(c);", defaultsIndex, StringComparison.Ordinal);
+        int fogIndex = source.IndexOf("AppendVolumetricFog(c);", atmosphereIndex, StringComparison.Ordinal);
+        int postProcessIndex = source.IndexOf("AppendPostProcessResourceCaching(c);", fogIndex, StringComparison.Ordinal);
+
+        defaultsIndex.ShouldBeGreaterThanOrEqualTo(0);
+        atmosphereIndex.ShouldBeGreaterThan(defaultsIndex);
+        fogIndex.ShouldBeGreaterThan(atmosphereIndex);
+        postProcessIndex.ShouldBeGreaterThan(fogIndex);
     }
 
     [Test]
@@ -129,6 +198,31 @@ public sealed class VulkanDeferredProbeGiFixesTests
         source.ShouldContain("TryResolveAllLayerAttachmentLayout");
         source.ShouldContain("return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;");
         source.ShouldContain("BeginPartialAttachmentLayoutTracking()");
+    }
+
+    [Test]
+    public void PartialAttachmentLayoutTracking_DoesNotPromoteMissingLayersToWholeImageLayout()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkImageBackedTexture.cs");
+
+        source.ShouldContain("if (_hasPartialAttachmentLayouts)");
+        source.ShouldContain("return TryResolveAllLayerAttachmentLayout(mipLevel, out ImageLayout layout)");
+        source.ShouldContain("return ImageLayout.Undefined;");
+
+        int descriptorPartialCheck = source.IndexOf("ImageLayout IVkImageDescriptorSource.TrackedImageLayout", StringComparison.Ordinal);
+        int descriptorUndefinedFallback = source.IndexOf(": ImageLayout.Undefined;", descriptorPartialCheck, StringComparison.Ordinal);
+        int attachmentQuery = source.IndexOf("ImageLayout IVkFrameBufferAttachmentSource.GetAttachmentTrackedLayout", StringComparison.Ordinal);
+        int attachmentPartialFallback = source.IndexOf("return ImageLayout.Undefined;", attachmentQuery, StringComparison.Ordinal);
+        int wholeImageFallback = source.IndexOf(
+            "return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;",
+            attachmentPartialFallback,
+            StringComparison.Ordinal);
+
+        descriptorPartialCheck.ShouldBeGreaterThanOrEqualTo(0);
+        descriptorUndefinedFallback.ShouldBeGreaterThan(descriptorPartialCheck);
+        attachmentQuery.ShouldBeGreaterThan(descriptorPartialCheck);
+        attachmentPartialFallback.ShouldBeGreaterThan(descriptorPartialCheck);
+        wholeImageFallback.ShouldBeGreaterThan(attachmentPartialFallback);
     }
 
     [Test]
@@ -219,6 +313,31 @@ public sealed class VulkanDeferredProbeGiFixesTests
         compilerSource.ShouldContain("op.Context.PassMetadata is { Count: > 0 } metadata");
         compilerSource.ShouldContain("RenderGraphSynchronizationPlanner.TopologicallySort(metadata)");
         compilerSource.ShouldContain("rank is resolved from each op's own context metadata");
+    }
+
+    [Test]
+    public void RuntimeRenderingCamera_FallsBackToPipelineFrameContextForDeferredVulkanWork()
+    {
+        string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngineFacade.cs");
+        string engineStateSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.State.cs");
+        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
+        string materialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.RenderState.cs");
+
+        runtimeSource.ShouldContain("XRRenderPipelineInstance? pipeline = CurrentRenderingPipeline;");
+        runtimeSource.ShouldContain("?? pipeline?.RenderState.RenderingCamera");
+        runtimeSource.ShouldContain("?? pipeline?.RenderState.SceneCamera");
+        runtimeSource.ShouldContain("?? pipeline?.LastSceneCamera");
+        runtimeSource.ShouldContain("?? pipeline?.LastRenderingCamera");
+
+        engineStateSource.ShouldContain("?? CurrentRenderingPipeline?.RenderState.RenderingCamera");
+        engineStateSource.ShouldContain("?? CurrentRenderingPipeline?.RenderState.SceneCamera");
+        engineStateSource.ShouldContain("?? CurrentRenderingPipeline?.LastSceneCamera");
+        engineStateSource.ShouldContain("?? CurrentRenderingPipeline?.LastRenderingCamera");
+
+        meshRendererSource.ShouldContain("RuntimeEngine.Rendering.State.RenderingCamera");
+        programSource.ShouldContain("RuntimeEngine.Rendering.State.RenderingCamera");
+        materialSource.ShouldContain("RuntimeEngine.Rendering.State.RenderingCamera?.SetUniforms(program, true);");
     }
 
     [Test]

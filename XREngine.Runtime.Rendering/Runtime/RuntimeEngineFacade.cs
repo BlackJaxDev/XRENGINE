@@ -1990,7 +1990,18 @@ internal static partial class RuntimeEngine
             public XRRenderPipelineInstance.RenderingState? RenderingPipelineState => CurrentRenderingPipeline?.RenderState;
             public XRViewport? RenderingViewport => CurrentRenderingPipeline?.RenderState.WindowViewport ?? CurrentRenderingPipeline?.LastWindowViewport;
             public IRuntimeRenderWorld? RenderingWorld => RenderingViewport?.World;
-            public XRCamera? RenderingCamera => RenderingCameraOverride ?? RenderingPipelineState?.RenderingCamera;
+            public XRCamera? RenderingCamera
+            {
+                get
+                {
+                    XRRenderPipelineInstance? pipeline = CurrentRenderingPipeline;
+                    return RenderingCameraOverride
+                        ?? pipeline?.RenderState.RenderingCamera
+                        ?? pipeline?.RenderState.SceneCamera
+                        ?? pipeline?.LastSceneCamera
+                        ?? pipeline?.LastRenderingCamera;
+                }
+            }
             public XRCamera? RenderingCameraOverride
             {
                 get => _cameraOverrides.Count == 0 ? null : _cameraOverrides.Peek();

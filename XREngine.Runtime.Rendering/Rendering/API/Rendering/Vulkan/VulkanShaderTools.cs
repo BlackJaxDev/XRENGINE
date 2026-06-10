@@ -1915,6 +1915,9 @@ vec4 XRENGINE_RemapVulkanClipDepth(vec4 position)
             case "ivec3":
             case "uvec3":
             case "bvec3":
+                alignment = 16;
+                size = 12;
+                return true;
             case "vec4":
             case "ivec4":
             case "uvec4":
@@ -1923,6 +1926,9 @@ vec4 XRENGINE_RemapVulkanClipDepth(vec4 position)
                 size = 16;
                 return true;
             case "dvec3":
+                alignment = 32;
+                size = 24;
+                return true;
             case "dvec4":
                 alignment = 32;
                 size = 32;

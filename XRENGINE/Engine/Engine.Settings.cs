@@ -591,6 +591,13 @@ namespace XREngine
             => _editorPreferences?.ApplyRuntimeSideEffects();
 
         /// <summary>
+        /// Recomputes effective editor preferences from global defaults and project/runtime overrides,
+        /// then reapplies their runtime side effects.
+        /// </summary>
+        public static void RefreshEffectiveEditorPreferences()
+            => UpdateEffectiveEditorPreferences();
+
+        /// <summary>
         /// Applies all runtime-effective settings (called when settings change globally).
         /// </summary>
         private static void ApplyEffectiveSettingsRuntime()

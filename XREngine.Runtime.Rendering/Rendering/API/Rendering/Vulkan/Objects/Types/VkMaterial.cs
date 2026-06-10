@@ -1267,7 +1267,7 @@ namespace XREngine.Rendering.Vulkan
 
             /// <summary>
             /// Returns the GPU-side byte size for a given <see cref="ShaderVar"/> type.
-            /// vec3 types are padded to 16 bytes (vec4 alignment) per std140/std430 rules.
+            /// vec3 types are 12 bytes with 16-byte alignment; arrays use the aligned stride.
             /// Returns <c>0</c> for unsupported types.
             /// </summary>
             private static uint GetShaderVarSize(ShaderVar parameter)
@@ -1287,9 +1287,11 @@ namespace XREngine.Rendering.Vulkan
                     EShaderVarType._float or EShaderVarType._int or EShaderVarType._uint or EShaderVarType._bool => 4,
                     EShaderVarType._double => 8,
                     EShaderVarType._vec2 or EShaderVarType._ivec2 or EShaderVarType._uvec2 or EShaderVarType._bvec2 => 8,
-                    EShaderVarType._vec3 or EShaderVarType._vec4 or EShaderVarType._ivec3 or EShaderVarType._ivec4 or EShaderVarType._uvec3 or EShaderVarType._uvec4 or EShaderVarType._bvec3 or EShaderVarType._bvec4 => 16,
+                    EShaderVarType._vec3 or EShaderVarType._ivec3 or EShaderVarType._uvec3 or EShaderVarType._bvec3 => 12,
+                    EShaderVarType._vec4 or EShaderVarType._ivec4 or EShaderVarType._uvec4 or EShaderVarType._bvec4 => 16,
                     EShaderVarType._dvec2 => 16,
-                    EShaderVarType._dvec3 or EShaderVarType._dvec4 => 32,
+                    EShaderVarType._dvec3 => 24,
+                    EShaderVarType._dvec4 => 32,
                     EShaderVarType._mat3 => 48,
                     EShaderVarType._mat4 => 64,
                     _ => 0,
@@ -1307,8 +1309,8 @@ namespace XREngine.Rendering.Vulkan
             /// <summary>
             /// Serializes the current value of <paramref name="parameter"/> into <paramref name="destination"/>.
             /// The destination span must have been pre-cleared and be at least as large as
-            /// <see cref="GetShaderVarSize"/> reports. vec3 types are written as vec4 (w = 0)
-            /// to satisfy GPU alignment requirements.
+            /// <see cref="GetShaderVarSize"/> reports. vec3 types write only xyz; any std140
+            /// padding lane remains available to a following scalar.
             /// </summary>
             /// <param name="destination">Target byte span (typically a mapped Vulkan buffer region).</param>
             /// <param name="parameter">The shader variable whose value is to be written.</param>
@@ -1346,16 +1348,16 @@ namespace XREngine.Rendering.Vulkan
                         Unsafe.WriteUnaligned(ref start, v2);
                         return true;
                     case EShaderVarType._vec3 when value is Vector3 v3:
-                        Unsafe.WriteUnaligned(ref start, new Vector4(v3, 0f));
+                        Unsafe.WriteUnaligned(ref start, v3);
                         return true;
                     case EShaderVarType._vec3 when value is Vector4 v3From4:
-                        Unsafe.WriteUnaligned(ref start, v3From4);
+                        Unsafe.WriteUnaligned(ref start, new Vector3(v3From4.X, v3From4.Y, v3From4.Z));
                         return true;
                     case EShaderVarType._vec3 when value is ColorF3 c3:
-                        Unsafe.WriteUnaligned(ref start, new Vector4(c3.R, c3.G, c3.B, 0f));
+                        Unsafe.WriteUnaligned(ref start, new Vector3(c3.R, c3.G, c3.B));
                         return true;
                     case EShaderVarType._vec3 when value is ColorF4 c3From4:
-                        Unsafe.WriteUnaligned(ref start, new Vector4(c3From4.R, c3From4.G, c3From4.B, 0f));
+                        Unsafe.WriteUnaligned(ref start, new Vector3(c3From4.R, c3From4.G, c3From4.B));
                         return true;
                     case EShaderVarType._vec4 when value is Vector4 v4:
                         Unsafe.WriteUnaligned(ref start, v4);
@@ -1373,7 +1375,7 @@ namespace XREngine.Rendering.Vulkan
                         Unsafe.WriteUnaligned(ref start, iv2);
                         return true;
                     case EShaderVarType._ivec3 when value is IVector3 iv3:
-                        Unsafe.WriteUnaligned(ref start, new IVector4(iv3.X, iv3.Y, iv3.Z, 0));
+                        Unsafe.WriteUnaligned(ref start, iv3);
                         return true;
                     case EShaderVarType._ivec4 when value is IVector4 iv4:
                         Unsafe.WriteUnaligned(ref start, iv4);
@@ -1382,7 +1384,7 @@ namespace XREngine.Rendering.Vulkan
                         Unsafe.WriteUnaligned(ref start, uv2);
                         return true;
                     case EShaderVarType._uvec3 when value is UVector3 uv3:
-                        Unsafe.WriteUnaligned(ref start, new UVector4(uv3.X, uv3.Y, uv3.Z, 0));
+                        Unsafe.WriteUnaligned(ref start, uv3);
                         return true;
                     case EShaderVarType._uvec4 when value is UVector4 uv4:
                         Unsafe.WriteUnaligned(ref start, uv4);
@@ -1400,7 +1402,7 @@ namespace XREngine.Rendering.Vulkan
                         Unsafe.WriteUnaligned(ref start, dv2);
                         return true;
                     case EShaderVarType._dvec3 when value is DVector3 dv3:
-                        Unsafe.WriteUnaligned(ref start, new DVector4(dv3.X, dv3.Y, dv3.Z, 0.0));
+                        Unsafe.WriteUnaligned(ref start, dv3);
                         return true;
                     case EShaderVarType._dvec4 when value is DVector4 dv4:
                         Unsafe.WriteUnaligned(ref start, dv4);

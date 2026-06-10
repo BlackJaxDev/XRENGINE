@@ -338,6 +338,14 @@ public unsafe partial class VulkanRenderer
             get
             {
                 RefreshPhysicalGroupImageIfStale();
+                if (_hasPartialAttachmentLayouts)
+                {
+                    uint mipLevel = 0u;
+                    return TryResolveAllLayerAttachmentLayout(mipLevel, out ImageLayout layout)
+                        ? layout
+                        : ImageLayout.Undefined;
+                }
+
                 if (_physicalGroup is not null)
                     return _physicalGroup.LastKnownLayout;
                 return _currentImageLayout;
@@ -390,6 +398,9 @@ public unsafe partial class VulkanRenderer
 
             if (layerIndex < 0 && TryResolveAllLayerAttachmentLayout((uint)Math.Max(mipLevel, 0), out layout))
                 return layout;
+
+            if (_hasPartialAttachmentLayouts)
+                return ImageLayout.Undefined;
 
             return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;
         }

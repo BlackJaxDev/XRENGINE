@@ -311,13 +311,32 @@ namespace XREngine.Editor.Mcp
             var renderState = Engine.Rendering.State.RenderingPipelineState;
             var camera = Engine.Rendering.State.RenderingCamera;
             var cameraNode = camera?.Transform?.SceneNode;
+            var cameraTransform = camera?.Transform;
             var viewport = Engine.Rendering.State.RenderingViewport;
             var stateViewport = renderState?.WindowViewport;
+            var activeViewport = viewport
+                ?? stateViewport
+                ?? pipeline?.LastWindowViewport
+                ?? Engine.EnumerateActiveViewports().FirstOrDefault();
+            var activeCamera = camera
+                ?? renderState?.SceneCamera
+                ?? activeViewport?.ActiveCamera;
+            var activeCameraTransform = activeCamera?.Transform ?? activeViewport?.CameraComponent?.Transform;
+            var activeCameraNode = activeCameraTransform?.SceneNode;
+            var viewportCameraComponent = activeViewport?.CameraComponent;
+            var viewportCameraTransform = viewportCameraComponent?.Transform;
+            var viewportCameraNode = viewportCameraTransform?.SceneNode;
+            var mainPawn = Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent;
+            var pawnCamera = mainPawn?.GetCamera();
+            var pawnCameraTransform = pawnCamera?.Transform;
+            var pawnNode = mainPawn?.SceneNode;
+            var pawnTransform = pawnNode?.Transform;
+            var renderArea = Engine.Rendering.State.RenderArea;
 
             var data = new
             {
                 renderFrameId = Engine.Rendering.State.RenderFrameId,
-                renderArea = Engine.Rendering.State.RenderArea,
+                renderArea = ToMcpRectangle(renderArea),
                 isShadowPass = Engine.Rendering.State.IsShadowPass,
                 isStereoPass = Engine.Rendering.State.IsStereoPass,
                 isMirrorPass = Engine.Rendering.State.IsMirrorPass,
@@ -328,6 +347,31 @@ namespace XREngine.Editor.Mcp
                 renderingCameraType = camera?.GetType().FullName,
                 renderingCameraNodeId = cameraNode?.ID,
                 renderingCameraNodeName = cameraNode?.Name,
+                renderingCameraWorldPosition = cameraTransform is null ? null : ToMcpVector3(cameraTransform.WorldTranslation),
+                renderingCameraWorldForward = cameraTransform is null ? null : ToMcpVector3(cameraTransform.WorldForward),
+                activeViewportIndex = activeViewport?.Index,
+                activeViewportSize = activeViewport is null ? null : new { width = activeViewport.Width, height = activeViewport.Height },
+                activeViewportInternalSize = activeViewport is null ? null : new { width = activeViewport.InternalWidth, height = activeViewport.InternalHeight },
+                activeCameraType = activeCamera?.GetType().FullName,
+                activeCameraNodeId = activeCameraNode?.ID,
+                activeCameraNodeName = activeCameraNode?.Name,
+                activeCameraWorldPosition = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldTranslation),
+                activeCameraWorldForward = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldForward),
+                viewportCameraComponentId = viewportCameraComponent?.ID,
+                viewportCameraComponentName = viewportCameraComponent?.Name,
+                viewportCameraNodeId = viewportCameraNode?.ID,
+                viewportCameraNodeName = viewportCameraNode?.Name,
+                viewportCameraWorldPosition = viewportCameraTransform is null ? null : ToMcpVector3(viewportCameraTransform.WorldTranslation),
+                viewportCameraWorldForward = viewportCameraTransform is null ? null : ToMcpVector3(viewportCameraTransform.WorldForward),
+                mainPawnComponentId = mainPawn?.ID,
+                mainPawnNodeId = pawnNode?.ID,
+                mainPawnNodeName = pawnNode?.Name,
+                mainPawnWorldPosition = pawnTransform is null ? null : ToMcpVector3(pawnTransform.WorldTranslation),
+                mainPawnWorldForward = pawnTransform is null ? null : ToMcpVector3(pawnTransform.WorldForward),
+                mainPawnCameraComponentId = pawnCamera?.ID,
+                mainPawnCameraComponentName = pawnCamera?.Name,
+                mainPawnCameraWorldPosition = pawnCameraTransform is null ? null : ToMcpVector3(pawnCameraTransform.WorldTranslation),
+                mainPawnCameraWorldForward = pawnCameraTransform is null ? null : ToMcpVector3(pawnCameraTransform.WorldForward),
                 pipelineDebugName = pipeline?.Pipeline?.DebugName,
                 pipelineType = pipeline?.Pipeline?.GetType().FullName,
                 pipelineDescriptor = pipeline?.DebugDescriptor,

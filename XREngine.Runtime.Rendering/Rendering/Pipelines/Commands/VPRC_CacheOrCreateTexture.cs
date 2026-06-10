@@ -87,6 +87,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                         if (!stillInvalid)
                         {
                             RegisterDescriptor(texture);
+                            ActivePipelineInstance.NotifyRenderResourcesChanged();
                             return;
                         }
                     }

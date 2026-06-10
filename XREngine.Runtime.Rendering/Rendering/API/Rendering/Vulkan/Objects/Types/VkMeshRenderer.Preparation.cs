@@ -1,5 +1,6 @@
 using System;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Scene;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -60,7 +61,7 @@ public unsafe partial class VulkanRenderer
 			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
 				return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
-			ApplyScopedProgramBindingsForPreparation();
+			ApplyScopedProgramBindingsForPreparation(material);
 			BuildVertexInputState();
 
 			if (!EnsureDescriptorSets(material))
@@ -70,12 +71,29 @@ public unsafe partial class VulkanRenderer
 			return SetPrepareResult(true, "Ready", $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors=Ready; pipeline=DeferredUntilPass; layout={layoutSummary}", out reason);
 		}
 
-		private void ApplyScopedProgramBindingsForPreparation()
+		private void ApplyScopedProgramBindingsForPreparation(XRMaterial material)
 		{
 			if (_program?.Data is not { } program)
 				return;
 
 			RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
+
+			EUniformRequirements reqs =
+				(material.RenderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
+				program.GetActiveEngineUniformRequirements();
+
+			bool lightingUniformsBound = false;
+			if (reqs.HasFlag(EUniformRequirements.Lights))
+			{
+				RuntimeEngine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program);
+				lightingUniformsBound = RuntimeEngine.Rendering.State.RenderingWorld?.Lights is not null;
+			}
+
+			if (reqs.HasFlag(EUniformRequirements.AmbientOcclusion) && !lightingUniformsBound)
+				Lights3DCollection.SetForwardAmbientOcclusionUniforms(program);
+
+			if (!RuntimeEngine.Rendering.State.IsShadowPass)
+				RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
 		}
 
 		private bool ProgramUsesShaderGeneratedVertices()
@@ -126,9 +144,17 @@ public unsafe partial class VulkanRenderer
 
 		private bool SetPrepareResult(bool ready, string result, string detail, out string reason)
 		{
+			string previousResult = _lastPrepareResult;
+			string previousDetail = _lastPrepareDetail;
 			_lastPrepareResult = result;
 			_lastPrepareDetail = detail;
 			reason = result;
+
+			if (!string.Equals(previousResult, result, StringComparison.Ordinal) ||
+			    !string.Equals(previousDetail, detail, StringComparison.Ordinal))
+			{
+				Renderer.MarkCommandBuffersDirty();
+			}
 
 			if (!ready)
 			{

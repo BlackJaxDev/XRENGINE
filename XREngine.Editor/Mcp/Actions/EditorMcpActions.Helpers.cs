@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
+using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -288,6 +291,28 @@ namespace XREngine.Editor.Mcp
             parts.Reverse();
             return string.Join("/", parts);
         }
+
+        private static object ToMcpVector2(Vector2 value)
+            => new { x = value.X, y = value.Y };
+
+        private static object ToMcpVector2(IVector2 value)
+            => new { x = value.X, y = value.Y };
+
+        private static object ToMcpVector3(Vector3 value)
+            => new { x = value.X, y = value.Y, z = value.Z };
+
+        private static object ToMcpQuaternion(Quaternion value)
+            => new { x = value.X, y = value.Y, z = value.Z, w = value.W };
+
+        private static object ToMcpRectangle(BoundingRectangle value)
+            => new
+            {
+                x = value.X,
+                y = value.Y,
+                width = value.Width,
+                height = value.Height,
+                localOriginPercentage = ToMcpVector2(value.LocalOriginPercentage)
+            };
 
         private static void CollectNodes(SceneNode node, ICollection<object> list, int depth, int? maxDepth)
         {

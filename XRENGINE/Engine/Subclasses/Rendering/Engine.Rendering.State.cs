@@ -123,7 +123,12 @@ namespace XREngine
                 /// Returns RenderingCameraOverride if set, otherwise the pipeline's rendering camera.
                 /// This determines view and projection matrices for the current render pass.
                 /// </summary>
-                public static XRCamera? RenderingCamera => RenderingCameraOverride ?? RenderingPipelineState?.RenderingCamera;
+                public static XRCamera? RenderingCamera
+                    => RenderingCameraOverride
+                    ?? CurrentRenderingPipeline?.RenderState.RenderingCamera
+                    ?? CurrentRenderingPipeline?.RenderState.SceneCamera
+                    ?? CurrentRenderingPipeline?.LastSceneCamera
+                    ?? CurrentRenderingPipeline?.LastRenderingCamera;
 
                 /// <summary>
                 /// The right eye camera for stereo/VR rendering.

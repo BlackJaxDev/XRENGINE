@@ -108,6 +108,10 @@ namespace XREngine.Rendering
             _frameBufferInvalidated = true;
         }
 
+        internal virtual void NotifyRenderResourcesChanged()
+        {
+        }
+
         protected bool _frameBufferInvalidated = false;
         #endregion
 
@@ -532,6 +536,8 @@ namespace XREngine.Rendering
         public abstract void DisableSampleShading();
 
         public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
+
+        public virtual bool ScreenshotRequiresVerticalFlip => true;
 
         public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);
 

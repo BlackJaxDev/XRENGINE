@@ -608,7 +608,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (!ReferenceEquals(existingTexture, texture) && _pipeline is DefaultRenderPipeline pipeline)
             pipeline.LogTextureBinding(this, name, texture, existingTexture);
 
+        bool bindingChanged = !ReferenceEquals(existingTexture, texture);
         Resources.BindTexture(texture, descriptor);
+        if (bindingChanged)
+            NotifyRenderResourcesChanged();
     }
 
     public XRDataBuffer? GetBuffer(string name)
@@ -633,7 +636,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
         }
 
-        if (!RuntimeEngine.IsRenderThread && Resources.TryGetBuffer(name, out XRDataBuffer? existingBuffer) && !ReferenceEquals(existingBuffer, buffer))
+        Resources.TryGetBuffer(name, out XRDataBuffer? existingBuffer);
+        if (!RuntimeEngine.IsRenderThread && existingBuffer is not null && !ReferenceEquals(existingBuffer, buffer))
         {
             RuntimeEngine.EnqueueRenderThreadTask(
                 () => SetBuffer(buffer, descriptor),
@@ -642,7 +646,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
         }
 
+        bool bindingChanged = !ReferenceEquals(existingBuffer, buffer);
         Resources.BindBuffer(buffer, descriptor);
+        if (bindingChanged)
+            NotifyRenderResourcesChanged();
     }
 
     public T? GetFBO<T>(string name) where T : XRFrameBuffer
@@ -680,8 +687,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (!ReferenceEquals(existingFbo, fbo) && _pipeline is DefaultRenderPipeline pipeline)
             pipeline.LogFrameBufferBinding(this, name, fbo, existingFbo);
 
+        bool bindingChanged = !ReferenceEquals(existingFbo, fbo);
         Resources.BindFrameBuffer(fbo, descriptor);
+        if (bindingChanged)
+            NotifyRenderResourcesChanged();
     }
+
+    internal void NotifyRenderResourcesChanged()
+        => AbstractRenderer.Current?.NotifyRenderResourcesChanged();
 
     private void LogDefaultRenderPipelineResourceDestruction(string reason)
     {

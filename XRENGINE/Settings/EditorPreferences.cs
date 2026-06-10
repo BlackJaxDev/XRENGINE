@@ -934,6 +934,12 @@ namespace XREngine
             if (overrides.McpServerIncludeStatusInPingOverride is { HasOverride: true } mcpStatusPingOverride)
                 McpServerIncludeStatusInPing = mcpStatusPingOverride.Value;
 
+            if (overrides.McpPermissionPolicyOverride is { HasOverride: true } mcpPermissionPolicyOverride)
+                McpPermissionPolicy = mcpPermissionPolicyOverride.Value;
+
+            if (overrides.McpDispatchModeOverride is { HasOverride: true } mcpDispatchModeOverride)
+                McpDispatchMode = mcpDispatchModeOverride.Value;
+
             if (overrides.FbxImporterBackendOverride is { HasOverride: true } fbxBackendOverride)
                 FbxImporterBackend = fbxBackendOverride.Value;
 
