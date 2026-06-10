@@ -859,9 +859,23 @@ namespace XREngine.Rendering
                 }
             }
 
-            // Reset dirty depth range after processing.
+            // Reset the dirty depth range, then re-fold any transforms that are still pending.
+            // Async producers (e.g. MCP/HTTP threads) can call AddDirtyTransform after we
+            // snapshot the range above but before this reset; their depth-range contribution
+            // would otherwise be wiped here, stranding the transform in _invalidTransforms
+            // until a future dirty mark at the same depth happened to bump the range again
+            // (observed as a programmatic camera move that only appeared after subsequent input).
+            // Re-folding every still-populated bag via UpdateDirtyDepthRange (which only ever
+            // expands the range via CAS) keeps the range consistent with the actual pending work,
+            // and is race-free: any add not yet visible to this scan runs its own
+            // UpdateDirtyDepthRange after these resets, so it cannot be lost.
             Volatile.Write(ref _dirtyMinDepth, int.MaxValue);
             Volatile.Write(ref _dirtyMaxDepth, int.MinValue);
+            foreach (var kvp in _invalidTransforms)
+            {
+                if (kvp.Value.Count > 0)
+                    UpdateDirtyDepthRange(kvp.Key);
+            }
 
             //Capture of a snapshot of the queue to be processed in the render thread
             _pushToRenderWrite = Interlocked.Exchange(ref _pushToRenderSnapshot, _pushToRenderWrite);

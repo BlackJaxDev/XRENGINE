@@ -692,6 +692,7 @@ namespace XREngine.Editor.Mcp
         /// Focuses the editor camera on a scene node.
         /// </summary>
         [XRMcp(Name = "focus_node_in_view")]
+        [McpThreadAffinity(McpThreadAffinity.Update)]
         [Description("Focus the editor camera on a scene node.")]
         public static Task<McpToolResponse> FocusNodeInViewAsync(
             McpToolContext context,
@@ -713,6 +714,7 @@ namespace XREngine.Editor.Mcp
         /// Moves the editor camera to an explicit view pose using smooth interpolation.
         /// </summary>
         [XRMcp(Name = "set_editor_camera_view", Permission = McpPermissionLevel.Mutate, PermissionReason = "Moves and rotates the editor camera view.")]
+        [McpThreadAffinity(McpThreadAffinity.Update)]
         [Description("Set the editor camera view with interpolation using position plus look-at or Euler rotation.")]
         public static Task<McpToolResponse> SetEditorCameraViewAsync(
             McpToolContext context,
