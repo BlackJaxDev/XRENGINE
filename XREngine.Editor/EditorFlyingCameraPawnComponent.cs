@@ -1854,6 +1854,17 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         set => SetField(ref _scrollSmoothSpeed, MathF.Max(1.0f, value));
     }
 
+    private bool _smoothScrollEnabled = true;
+    /// <summary>
+    /// When true, scroll-zoom interpolates smoothly toward the target for both depth-hit and
+    /// no-depth-hit (sky) scrolls. When false, both apply the movement instantly.
+    /// </summary>
+    public bool SmoothScrollEnabled
+    {
+        get => _smoothScrollEnabled;
+        set => SetField(ref _smoothScrollEnabled, value);
+    }
+
     private void ApplyTransformations(XRViewport vp)
     {
         var tfm = TransformAs<Transform>();
@@ -1885,11 +1896,22 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (hasNonScrollInput)
             _scrollSmoothTarget = null;
 
+        // True only when a discrete instant zoom (non-smooth) actually moved the camera this
+        // frame. Instant zoom applies the transform once, so its render matrix must reach the
+        // render thread immediately - if it is left to the deferred double-buffer push it can be
+        // dropped/delayed across a swap boundary, which surfaces as the camera occasionally not
+        // updating after a scroll. Smooth zoom re-pushes every frame, so it self-heals and does
+        // not need this.
+        bool instantScrollApplied = false;
         bool waitingForScrollDepthHit = _depthQueryRequested && _pendingScrollDeltas.Count > 0;
         if (!waitingForScrollDepthHit)
         {
             while (_pendingScrollDeltas.Count > 0)
-                transformChanged |= ApplyScrollTransformation(vp, tfm, _pendingScrollDeltas.Dequeue());
+            {
+                bool scrollChanged = ApplyScrollTransformation(vp, tfm, _pendingScrollDeltas.Dequeue());
+                instantScrollApplied |= scrollChanged;
+                transformChanged |= scrollChanged;
+            }
 
             transformChanged |= UpdateScrollSmooth(tfm);
         }
@@ -1919,7 +1941,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (transformChanged)
         {
             InvalidateView();
-            RecalculateCameraWorldMatrix(tfm);
+            RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: instantScrollApplied);
         }
     }
 
@@ -1934,16 +1956,49 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             float moveAmount = MathF.Sign(scrollDelta) * dist * DistancePercentagePerScroll;
             if (ShiftPressed)
                 moveAmount *= ShiftSpeedModifier;
-            _scrollSmoothTarget = Segment.PointAtLineDistance(origin, worldCoord, moveAmount);
-            return false;
+            Vector3 destination = Segment.PointAtLineDistance(origin, worldCoord, moveAmount);
+            if (SmoothScrollEnabled)
+            {
+                _scrollSmoothTarget = destination;
+                return false;
+            }
+
+            // Instant zoom: apply the destination directly and report the change.
+            _scrollSmoothTarget = null;
+            tfm.SetWorldTranslation(destination);
+            return true;
         }
-        else
+        else if (CameraComponent?.Camera?.Parameters is XROrthographicCameraParameters)
         {
+            // Orthographic scroll zooms by scaling the view rather than translating, so there is
+            // nothing to interpolate; keep the immediate path.
             _scrollSmoothTarget = null;
             if (ShiftPressed)
                 scrollDelta *= ShiftSpeedModifier;
             base.OnScrolled(scrollDelta);
-            return CameraComponent?.Camera?.Parameters is not XROrthographicCameraParameters;
+            return false;
+        }
+        else
+        {
+            // Perspective scroll with no depth hit (e.g. scrolling while pointed at empty sky).
+            // Move along the camera's forward axis. When smoothing is enabled, build a smooth
+            // target so UpdateScrollSmooth interpolates it the same way as the depth-hit zoom;
+            // otherwise apply the translation instantly.
+            float moveAmount = scrollDelta * ScrollSpeed * ScrollSpeedModifier;
+            if (ShiftPressed)
+                moveAmount *= ShiftSpeedModifier;
+            Vector3 forward = Vector3.Transform(Globals.Forward, tfm.WorldRotation);
+            if (SmoothScrollEnabled)
+            {
+                // Compound from the current smooth target if one is already animating.
+                Vector3 origin = _scrollSmoothTarget ?? tfm.WorldTranslation;
+                _scrollSmoothTarget = origin + forward * moveAmount;
+                return false;
+            }
+
+            _scrollSmoothTarget = null;
+            tfm.SetWorldTranslation(tfm.WorldTranslation + forward * moveAmount);
+            return true;
         }
     }
 
@@ -1969,8 +2024,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return true;
     }
 
-    private static void RecalculateCameraWorldMatrix(Transform tfm)
-        => tfm.RecalculateMatrices(forceWorldRecalc: true);
+    // forceRenderMatrixNow pushes the render matrix synchronously instead of relying solely on the
+    // deferred per-frame swap. Used for discrete one-shot changes (instant scroll zoom) so a single
+    // update cannot be lost in the double-buffer handshake. Continuous drags leave it false to avoid
+    // mid-frame render-matrix tearing during sustained motion.
+    private static void RecalculateCameraWorldMatrix(Transform tfm, bool forceRenderMatrixNow = false)
+        => tfm.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: forceRenderMatrixNow);
 
     protected override void OnRightClick(bool pressed)
     {
@@ -2059,6 +2118,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void MouseRotate(float x, float y)
     {
         InvalidateView();
+        // Any camera rotation cancels an in-progress scroll-zoom interpolation. This must happen
+        // here (not only via ApplyTransformations' hasNonScrollInput check) because the base
+        // fallback path below never sets _lastRotateDelta, so a drag started while zooming over
+        // empty sky (no depth hit) would otherwise keep interpolating to the old zoom target.
+        if (x != 0.0f || y != 0.0f)
+            _scrollSmoothTarget = null;
         if (_arcballRotationPosition is not null)
             _lastRotateDelta = new Vector2(-x * MouseRotateSpeed, y * MouseRotateSpeed);
         else
@@ -2091,6 +2156,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void MouseTranslate(float x, float y)
     {
         InvalidateView();
+        // Any camera translation cancels an in-progress scroll-zoom interpolation. Handled here so
+        // the base fallback path (taken when there is no depth hit, e.g. dragging after a sky zoom)
+        // also cancels the interpolation; that path never sets _lastMouseTranslationDelta, so
+        // ApplyTransformations' hasNonScrollInput check alone would miss it.
+        if (Math.Abs(x) >= 0.00001f || Math.Abs(y) >= 0.00001f)
+            _scrollSmoothTarget = null;
         if (WorldDragPoint.HasValue)
         {
             if (Math.Abs(x) <0.00001f && Math.Abs(y) <0.00001f)

@@ -975,11 +975,21 @@ public unsafe partial class VulkanRenderer
                     ? ImageLayout.DepthStencilReadOnlyOptimal
                     : ImageLayout.DepthStencilAttachmentOptimal;
 
+            // The reference layout is the layout the attachment holds WHILE the framebuffer
+            // is bound for rendering. Depth/stencil attachments must be writable during
+            // rendering so the geometry passes that populate them (deferred GBuffer, forward
+            // opaque/masked) can clear and write depth — even when the texture is also sampled
+            // by later passes through a DepthView alias. Forcing a read-only reference layout
+            // here silently drops every depth write, which leaves the shared depth buffer empty
+            // and lets the forward skybox overwrite all deferred geometry.
+            //
+            // The final layout above still transitions sampled depth to read-only at pass end,
+            // so subsequent sampled descriptors match the image layout. Passes that genuinely
+            // require read-only depth (sampling the same depth they test against) opt in via
+            // render-pass metadata, which overrides this reference layout to read-only.
             ImageLayout referenceLayout = role == AttachmentRole.Color
                 ? ImageLayout.ColorAttachmentOptimal
-                : finalLayout == ImageLayout.DepthStencilReadOnlyOptimal
-                    ? ImageLayout.DepthStencilReadOnlyOptimal
-                    : ImageLayout.DepthStencilAttachmentOptimal;
+                : ImageLayout.DepthStencilAttachmentOptimal;
 
             return new FrameBufferAttachmentSignature(
                 source.Format,
