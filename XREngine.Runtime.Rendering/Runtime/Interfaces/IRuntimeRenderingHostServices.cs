@@ -748,9 +748,19 @@ public interface IRuntimeRenderingHostServices
     void EnqueueRenderThreadTask(Action task);
 
     /// <summary>
+    /// Queues work for execution on the host render thread with explicit render-thread intent.
+    /// </summary>
+    void EnqueueRenderThreadTask(Action task, RenderThreadJobKind renderThreadKind);
+
+    /// <summary>
     /// Queues named work for execution on the host render thread.
     /// </summary>
     void EnqueueRenderThreadTask(Action task, string reason);
+
+    /// <summary>
+    /// Queues named work for execution on the host render thread with explicit render-thread intent.
+    /// </summary>
+    void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind);
 
     /// <summary>
     /// Queues work for execution on the host application/update thread. Use this for
@@ -769,9 +779,19 @@ public interface IRuntimeRenderingHostServices
     void EnqueueRenderThreadCoroutine(Func<bool> task);
 
     /// <summary>
+    /// Queues a render-thread coroutine with explicit render-thread intent.
+    /// </summary>
+    void EnqueueRenderThreadCoroutine(Func<bool> task, RenderThreadJobKind renderThreadKind);
+
+    /// <summary>
     /// Queues a named render-thread coroutine that returns <see langword="true"/> when it should continue.
     /// </summary>
     void EnqueueRenderThreadCoroutine(Func<bool> task, string reason);
+
+    /// <summary>
+    /// Queues a named render-thread coroutine with explicit render-thread intent.
+    /// </summary>
+    void EnqueueRenderThreadCoroutine(Func<bool> task, string reason, RenderThreadJobKind renderThreadKind);
 
     /// <summary>
     /// Processes pending render-thread tasks through the host task pump.

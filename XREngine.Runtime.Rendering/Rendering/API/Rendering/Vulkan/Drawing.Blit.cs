@@ -84,9 +84,10 @@ namespace XREngine.Rendering.Vulkan
                 EnsureFrameBufferAttachmentsRegistered(outFBO);
             }
 
+            FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             EnqueueFrameOp(new BlitOp(
-                EnsureValidPassIndex(passIndex, "Blit"),
+                EnsureValidPassIndex(passIndex, "Blit", context.PassMetadata),
                 inFBO,
                 outFBO,
                 inX,
@@ -102,7 +103,7 @@ namespace XREngine.Rendering.Vulkan
                 depthBit,
                 stencilBit,
                 linearFilter,
-                CaptureFrameOpContext()));
+                context));
         }
 
         public override void BlitWithDrawBuffer(

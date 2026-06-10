@@ -3379,6 +3379,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private XRDataBuffer? _probeParamBuffer;
     private XRDataBuffer? _probeGridCellBuffer;
     private XRDataBuffer? _probeGridIndexBuffer;
+    private const string LightProbePositionBufferName = "LightProbePositions";
+    private const string LightProbeParamBufferName = "LightProbeParameters";
+    private const string LightProbeTetraBufferName = "LightProbeTetrahedra";
+    private const string LightProbeGridCellBufferName = "LightProbeGridCells";
+    private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
+    private const string LightProbeIrradianceArrayName = "LightProbeIrradianceArray";
+    private const string LightProbePrefilterArrayName = "LightProbePrefilterArray";
     private Vector3 _probeGridOrigin;
     private float _probeGridCellSize;
     private IVector3 _probeGridDims;
@@ -3750,6 +3757,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void BuildProbeGrid(IReadOnlyList<ProbePositionData> positions, IReadOnlyList<ProbeParamData> parameters, IReadOnlyList<ProbeTetraData>? tetraData = null)
     {
+        RemoveProbeBufferResource(LightProbeGridCellBufferName);
+        RemoveProbeBufferResource(LightProbeGridIndexBufferName);
         DestroyProbeBuffer(ref _probeGridCellBuffer);
         DestroyProbeBuffer(ref _probeGridIndexBuffer);
         _probeGridOrigin = Vector3.Zero;
@@ -3836,19 +3845,21 @@ public partial class DefaultRenderPipeline : RenderPipeline
             });
         }
 
-        _probeGridCellBuffer = new XRDataBuffer("LightProbeGridCells", EBufferTarget.ShaderStorageBuffer, (uint)offsets.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeGridCell>(), false, false)
+        _probeGridCellBuffer = new XRDataBuffer(LightProbeGridCellBufferName, EBufferTarget.ShaderStorageBuffer, (uint)offsets.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeGridCell>(), false, false)
         {
             BindingIndexOverride = 3,
         };
         _probeGridCellBuffer.SetDataRaw(offsets);
         _probeGridCellBuffer.PushData();
+        RegisterProbeBuffer(_probeGridCellBuffer);
 
-        _probeGridIndexBuffer = new XRDataBuffer("LightProbeGridIndices", EBufferTarget.ShaderStorageBuffer, (uint)indices.Count, EComponentType.Int, sizeof(int), false, false)
+        _probeGridIndexBuffer = new XRDataBuffer(LightProbeGridIndexBufferName, EBufferTarget.ShaderStorageBuffer, (uint)indices.Count, EComponentType.Int, sizeof(int), false, false)
         {
             BindingIndexOverride = 4,
         };
         _probeGridIndexBuffer.SetDataRaw(indices);
         _probeGridIndexBuffer.PushData();
+        RegisterProbeBuffer(_probeGridIndexBuffer);
     }
 
     private static void GetProbeInfluenceBounds(ProbePositionData position, ProbeParamData parameters, out Vector3 min, out Vector3 max)
@@ -4091,9 +4102,19 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void ClearProbeResources()
     {
-        _probeIrradianceArray?.Destroy();
+        bool removedIrradiance = RemoveProbeTextureResource(LightProbeIrradianceArrayName);
+        bool removedPrefilter = RemoveProbeTextureResource(LightProbePrefilterArrayName);
+        RemoveProbeBufferResource(LightProbePositionBufferName);
+        RemoveProbeBufferResource(LightProbeParamBufferName);
+        RemoveProbeBufferResource(LightProbeTetraBufferName);
+        RemoveProbeBufferResource(LightProbeGridCellBufferName);
+        RemoveProbeBufferResource(LightProbeGridIndexBufferName);
+
+        if (!removedIrradiance)
+            _probeIrradianceArray?.Destroy();
         _probeIrradianceArray = null;
-        _probePrefilterArray?.Destroy();
+        if (!removedPrefilter)
+            _probePrefilterArray?.Destroy();
         _probePrefilterArray = null;
         DestroyProbeBuffer(ref _probePositionBuffer);
         DestroyProbeBuffer(ref _probeParamBuffer);
@@ -4186,7 +4207,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         _probeIrradianceArray = new XRTexture2DArray([.. irrTextures])
         {
-            Name = "LightProbeIrradianceArray",
+            Name = LightProbeIrradianceArrayName,
             MinFilter = ETexMinFilter.Linear,
             MagFilter = ETexMagFilter.Linear,
             SizedInternalFormat = ESizedInternalFormat.Rgb16f,
@@ -4194,26 +4215,29 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         _probePrefilterArray = new XRTexture2DArray([.. preTextures])
         {
-            Name = "LightProbePrefilterArray",
+            Name = LightProbePrefilterArrayName,
             MinFilter = ETexMinFilter.LinearMipmapLinear,
             MagFilter = ETexMagFilter.Linear,
             SizedInternalFormat = ESizedInternalFormat.Rgb16f,  // Match prefilter texture format
         };
+        RegisterProbeTextureArrays();
         PushProbeTextureArrays();
 
-        _probePositionBuffer = new XRDataBuffer("LightProbePositions", EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
+        _probePositionBuffer = new XRDataBuffer(LightProbePositionBufferName, EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
         {
             BindingIndexOverride = 0,
         };
         _probePositionBuffer.SetDataRaw<ProbePositionData>(positions);
         _probePositionBuffer.PushData();
+        RegisterProbeBuffer(_probePositionBuffer);
 
-        _probeParamBuffer = new XRDataBuffer("LightProbeParameters", EBufferTarget.ShaderStorageBuffer, (uint)parameters.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeParamData>(), false, false)
+        _probeParamBuffer = new XRDataBuffer(LightProbeParamBufferName, EBufferTarget.ShaderStorageBuffer, (uint)parameters.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeParamData>(), false, false)
         {
             BindingIndexOverride = 2,
         };
         _probeParamBuffer.SetDataRaw<ProbeParamData>(parameters);
         _probeParamBuffer.PushData();
+        RegisterProbeBuffer(_probeParamBuffer);
 
         _cachedProbePositionData = [.. positions];
         _cachedProbeParamData = [.. parameters];
@@ -4245,6 +4269,46 @@ public partial class DefaultRenderPipeline : RenderPipeline
             renderer?.GetOrCreateAPIRenderObject(_probePrefilterArray, generateNow: true);
             _probePrefilterArray.PushData();
         }
+    }
+
+    private void RegisterProbeTextureArrays()
+    {
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is null)
+            return;
+
+        if (_probeIrradianceArray is not null)
+            pipeline.SetTexture(_probeIrradianceArray);
+        if (_probePrefilterArray is not null)
+            pipeline.SetTexture(_probePrefilterArray);
+    }
+
+    private static void RegisterProbeBuffer(XRDataBuffer? buffer)
+    {
+        if (buffer is null)
+            return;
+
+        RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.SetBuffer(buffer);
+    }
+
+    private static bool RemoveProbeBufferResource(string name)
+    {
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is null || !pipeline.Resources.TryGetBuffer(name, out _))
+            return false;
+
+        pipeline.Resources.RemoveBuffer(name);
+        return true;
+    }
+
+    private static bool RemoveProbeTextureResource(string name)
+    {
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is null || !pipeline.Resources.TryGetTexture(name, out _))
+            return false;
+
+        pipeline.Resources.RemoveTexture(name);
+        return true;
     }
 
     private void ReportProbeResourceRefresh(bool structuralRefresh, int readyProbeCount, TimeSpan elapsed, bool deferredByBatchCapture)
@@ -4386,6 +4450,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         if (generation != _probeTessellationGeneration)
             return;
 
+        RemoveProbeBufferResource(LightProbeTetraBufferName);
         DestroyProbeBuffer(ref _probeTetraBuffer);
         if (tetraData.Count == 0)
         {
@@ -4397,12 +4462,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         List<ProbeTetraData> tetraList = tetraData as List<ProbeTetraData> ?? [.. tetraData];
 
-        _probeTetraBuffer = new XRDataBuffer("LightProbeTetra", EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
+        _probeTetraBuffer = new XRDataBuffer(LightProbeTetraBufferName, EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
         {
             BindingIndexOverride = 1,
         };
         _probeTetraBuffer.SetDataRaw(tetraList);
         _probeTetraBuffer.PushData();
+        RegisterProbeBuffer(_probeTetraBuffer);
         _probeTetraProbeCount = probeCount;
 
         if (_useProbeGridAcceleration && _cachedProbePositionData.Length == probeCount && _cachedProbeParamData.Length == probeCount)

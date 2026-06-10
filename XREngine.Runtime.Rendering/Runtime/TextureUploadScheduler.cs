@@ -9,8 +9,14 @@ namespace XREngine.Rendering;
 /// </summary>
 internal sealed class TextureUploadScheduler
 {
-    private const int MaxConcurrentProgressiveOpenGlUploads = 1;
-    private const long ProgressiveOpenGlUploadBytesPerFrame = 4L * 1024L * 1024L;
+    // Progressive uploads run as render-thread coroutines, so these budgets trade
+    // streaming latency against per-frame stall risk. The original 1 upload / 4 MB
+    // budget serialized streaming so aggressively that, with ~100+ textures and
+    // plenty of free VRAM, queue waits grew into tens of seconds. Allow a couple of
+    // concurrent uploads and a larger byte budget while still bounding each frame's
+    // synchronous upload work.
+    private const int MaxConcurrentProgressiveOpenGlUploads = 2;
+    private const long ProgressiveOpenGlUploadBytesPerFrame = 16L * 1024L * 1024L;
     private const long CaptureDeferralBacklogBytesPerFrame = 24L * 1024L * 1024L;
 
     private readonly ConcurrentDictionary<XRTexture2D, TextureUploadWorkItem> _progressiveUploads = [];

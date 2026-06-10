@@ -532,7 +532,11 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            int passIndex = EnsureValidPassIndex(RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, "DispatchCompute");
+            FrameOpContext context = CaptureFrameOpContextOrLastActive();
+            int passIndex = EnsureValidPassIndex(
+                RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+                "DispatchCompute",
+                context.PassMetadata);
             if (passIndex == int.MinValue)
             {
                 Debug.VulkanWarningEvery(
@@ -550,7 +554,7 @@ namespace XREngine.Rendering.Vulkan
                 y,
                 z,
                 vkProgram.CaptureComputeSnapshot(),
-                CaptureFrameOpContext()));
+                context));
         }
         public override void WaitForGpu()
         {
@@ -617,6 +621,7 @@ namespace XREngine.Rendering.Vulkan
 
             _state.SetClearState(color, depth, stencil);
 
+            FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
             Rect2D rect = _state.GetCroppingEnabled()
@@ -624,7 +629,7 @@ namespace XREngine.Rendering.Vulkan
                 : new Rect2D(new Offset2D(0, 0), _state.GetCurrentTargetExtent());
 
             EnqueueFrameOp(new ClearOp(
-                EnsureValidPassIndex(passIndex, "Clear"),
+                EnsureValidPassIndex(passIndex, "Clear", context.PassMetadata),
                 target,
                 color,
                 depth,
@@ -633,7 +638,7 @@ namespace XREngine.Rendering.Vulkan
                 _state.GetClearDepthValue(),
                 _state.GetClearStencilValue(),
                 rect,
-                CaptureFrameOpContext()));
+                context));
         }
         public override byte GetStencilIndex(float x, float y)
         {
@@ -691,7 +696,7 @@ namespace XREngine.Rendering.Vulkan
             Result result = Api!.DeviceWaitIdle(device);
             if (result == Result.ErrorDeviceLost)
             {
-                _deviceLost = true;
+                MarkDeviceLost();
                 Debug.VulkanWarning("[Vulkan] DeviceWaitIdle returned ErrorDeviceLost. Device state is irrecoverable.");
                 // Don't throw — allow callers (e.g. RecreateSwapChain) to proceed with
                 // teardown/recreation even after the device is lost, rather than getting

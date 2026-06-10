@@ -169,39 +169,74 @@ public unsafe partial class VulkanRenderer
 		/// flips <see cref="_buffersDirty"/> back to true so the next EnsureBuffers call
 		/// picks up the now-cached buffer without stalling the render thread.
 		/// </summary>
-		private void EnsureBuffers()
+		private void EnsureBuffers(bool skipIndexBuffers = false)
 		{
 			EnsureRuntimeDeformationBuffersCurrent();
 
-			if (!_buffersDirty)
+			if (skipIndexBuffers)
+			{
+				ClearIndexBufferBindings();
+				_indexBuffersSkippedForShaderGeneratedVertices = true;
+			}
+
+			bool needIndexRebuild = _indexBuffersSkippedForShaderGeneratedVertices && !skipIndexBuffers;
+			if (!_buffersDirty && !needIndexRebuild && AreCachedBuffersReadyForRendering(out _))
 				return;
 
-			foreach (var buffer in _bufferCache.Values)
-				buffer.Generate();
+			if (!_buffersDirty)
+			{
+				_descriptorDirty = true;
+				Renderer.MarkCommandBuffersDirty();
+			}
 
-			if (Mesh is not null)
+			foreach (var buffer in _bufferCache.Values)
+				buffer.EnsureReadyForRendering();
+
+			if (skipIndexBuffers)
+			{
+				ClearIndexBufferBindings();
+				_indexBuffersSkippedForShaderGeneratedVertices = true;
+			}
+			else if (Mesh is not null)
 			{
 				var tri = Mesh.GetIndexBuffer(EPrimitiveType.Triangles, out _triangleIndexSize, EBufferTarget.ElementArrayBuffer, OnAsyncIndexBufferReady);
 				_triangleIndexBuffer = tri is not null ? Renderer.GenericToAPI<VkDataBuffer>(tri) : null;
-				_triangleIndexBuffer?.Generate();
+				_triangleIndexBuffer?.EnsureReadyForRendering();
 
 				var line = Mesh.GetIndexBuffer(EPrimitiveType.Lines, out _lineIndexSize, EBufferTarget.ElementArrayBuffer, OnAsyncIndexBufferReady);
 				_lineIndexBuffer = line is not null ? Renderer.GenericToAPI<VkDataBuffer>(line) : null;
-				_lineIndexBuffer?.Generate();
+				_lineIndexBuffer?.EnsureReadyForRendering();
 
 				var point = Mesh.GetIndexBuffer(EPrimitiveType.Points, out _pointIndexSize, EBufferTarget.ElementArrayBuffer, OnAsyncIndexBufferReady);
 				_pointIndexBuffer = point is not null ? Renderer.GenericToAPI<VkDataBuffer>(point) : null;
-				_pointIndexBuffer?.Generate();
+				_pointIndexBuffer?.EnsureReadyForRendering();
+				_indexBuffersSkippedForShaderGeneratedVertices = false;
+			}
+			else
+			{
+				ClearIndexBufferBindings();
+				_indexBuffersSkippedForShaderGeneratedVertices = false;
 			}
 
 			_buffersDirty = false;
+		}
+
+		private void ClearIndexBufferBindings()
+		{
+			_triangleIndexBuffer = null;
+			_lineIndexBuffer = null;
+			_pointIndexBuffer = null;
+			_triangleIndexSize = IndexSize.FourBytes;
+			_lineIndexSize = IndexSize.FourBytes;
+			_pointIndexSize = IndexSize.FourBytes;
 		}
 
 		private void OnAsyncIndexBufferReady(XRDataBuffer buffer, IndexSize elementSize)
 		{
 			RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
 				MarkIndexBuffersDirty,
-				"VkMeshRenderer.AsyncIndexBufferReady");
+				"VkMeshRenderer.AsyncIndexBufferReady",
+				RenderThreadJobKind.MeshUpload);
 		}
 
 		private void MarkIndexBuffersDirty()
@@ -221,7 +256,7 @@ public unsafe partial class VulkanRenderer
 		{
 			_triangleIndexBuffer = buffer;
 			_triangleIndexSize = elementType;
-			_triangleIndexBuffer?.Generate();
+			_triangleIndexBuffer?.EnsureReadyForRendering();
 		}
 
 		/// <summary>
@@ -286,7 +321,7 @@ public unsafe partial class VulkanRenderer
 			if (!HasIndexData(buffer))
 				return false;
 
-			buffer!.Generate();
+			buffer!.EnsureReadyForRendering();
 			if (buffer.BufferHandle is not { } bufferHandle)
 				return false;
 

@@ -25,6 +25,10 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     private XRDataBuffer? _aabbBuffer;
     private XRDataBuffer? _triangleIndexBuffer;
     private XRDataBuffer? _packedTriangleBuffer;
+    private XRDataBuffer? _storagePositionSource;
+    private XRDataBuffer? _storagePositionBuffer;
+    private XRDataBuffer? _storageInterleavedSource;
+    private XRDataBuffer? _storageInterleavedBuffer;
     private XRShader? _triangleAabbShader;
     private XRShader? _packedTriangleShader;
     private XRRenderProgram? _triangleAabbProgram;
@@ -69,6 +73,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _built = false;
         _staticAabbsUploaded = false;
         _packedTrianglesUploaded = false;
+        ReleaseStaticStorageViews();
         _tree.MarkDirty();
     }
 
@@ -277,9 +282,65 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 
     private bool PackStaticTriangles(XRMesh mesh, uint triangleCount)
     {
-        XRDataBuffer? positions = mesh.Interleaved ? null : mesh.PositionsBuffer;
-        XRDataBuffer? interleaved = mesh.Interleaved ? mesh.InterleavedVertexBuffer : null;
+        XRDataBuffer? positions = mesh.Interleaved
+            ? null
+            : GetOrCreateStorageView(
+                mesh.PositionsBuffer,
+                "GpuMeshBvh_Positions_Storage",
+                ref _storagePositionSource,
+                ref _storagePositionBuffer);
+        XRDataBuffer? interleaved = mesh.Interleaved
+            ? GetOrCreateStorageView(
+                mesh.InterleavedVertexBuffer,
+                "GpuMeshBvh_Interleaved_Storage",
+                ref _storageInterleavedSource,
+                ref _storageInterleavedBuffer)
+            : null;
         return PackTriangles(mesh, triangleCount, positions, interleaved, applyTransform: false, Matrix4x4.Identity);
+    }
+
+    private static XRDataBuffer? GetOrCreateStorageView(
+        XRDataBuffer? source,
+        string name,
+        ref XRDataBuffer? cachedSource,
+        ref XRDataBuffer? cachedView)
+    {
+        if (source is null)
+            return null;
+
+        bool stale = cachedView is null ||
+            !ReferenceEquals(cachedSource, source) ||
+            cachedView.Length != source.Length ||
+            cachedView.ElementCount != source.ElementCount;
+        if (!stale)
+            return cachedView;
+
+        cachedView?.Destroy();
+        cachedView?.Dispose();
+
+        XRDataBuffer view = source.Clone(cloneBuffer: true, target: EBufferTarget.ShaderStorageBuffer);
+        view.AttributeName = name;
+        view.ShouldMap = false;
+        view.DisposeOnPush = false;
+        view.Resizable = source.Resizable;
+        view.PadEndingToVec4 = source.PadEndingToVec4;
+        view.PushData();
+
+        cachedSource = source;
+        cachedView = view;
+        return view;
+    }
+
+    private void ReleaseStaticStorageViews()
+    {
+        _storagePositionBuffer?.Destroy();
+        _storagePositionBuffer?.Dispose();
+        _storageInterleavedBuffer?.Destroy();
+        _storageInterleavedBuffer?.Dispose();
+        _storagePositionSource = null;
+        _storagePositionBuffer = null;
+        _storageInterleavedSource = null;
+        _storageInterleavedBuffer = null;
     }
 
     private bool PackTriangles(
@@ -434,6 +495,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     public void Dispose()
     {
         _tree.Dispose();
+        ReleaseStaticStorageViews();
         _aabbBuffer?.Dispose();
         _triangleIndexBuffer?.Dispose();
         _packedTriangleBuffer?.Dispose();

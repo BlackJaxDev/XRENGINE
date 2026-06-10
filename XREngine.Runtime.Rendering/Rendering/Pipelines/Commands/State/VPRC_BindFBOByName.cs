@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -29,6 +31,16 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// overriding <see cref="ClearDepth"/>.
         /// </summary>
         public Func<bool>? DynamicClearDepth { get; set; }
+
+        private sealed class TopologicalPassOrderCacheEntry
+        {
+            public TopologicalPassOrderCacheEntry(IReadOnlyCollection<RenderPassMetadata> metadata)
+                => Passes = RenderGraphSynchronizationPlanner.TopologicallySort(metadata);
+
+            public IReadOnlyList<RenderPassMetadata> Passes { get; }
+        }
+
+        private static readonly ConditionalWeakTable<IReadOnlyCollection<RenderPassMetadata>, TopologicalPassOrderCacheEntry> TopologicalPassOrderCache = new();
 
         public void SetOptions(string frameBufferName, bool write = true, bool clearColor = true, bool clearDepth = true, bool clearStencil = true)
         {
@@ -70,9 +82,71 @@ namespace XREngine.Rendering.Pipelines.Commands
                 if (clearStencil)
                     RuntimeEngine.Rendering.State.StencilMask(0xFF);
 
+                int clearPassIndex = ResolveClearPassIndex(name, clearColor, clearDepth, clearStencil);
+                using var passScope = clearPassIndex != int.MinValue
+                    ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(clearPassIndex)
+                    : default;
+
                 RuntimeEngine.Rendering.State.ClearByBoundFBO(clearColor, clearDepth, clearStencil);
             }
         }
+
+        private int ResolveClearPassIndex(string frameBufferName, bool clearColor, bool clearDepth, bool clearStencil)
+        {
+            if (ParentPipeline?.PassMetadata is not { Count: > 0 } metadata)
+                return int.MinValue;
+
+            int passIndex = ResolveClearPassIndexForName(metadata, frameBufferName, clearColor, clearDepth, clearStencil);
+            if (passIndex != int.MinValue)
+                return passIndex;
+
+            return string.IsNullOrWhiteSpace(FrameBufferName) || string.Equals(FrameBufferName, frameBufferName, StringComparison.Ordinal)
+                ? int.MinValue
+                : ResolveClearPassIndexForName(metadata, FrameBufferName!, clearColor, clearDepth, clearStencil);
+        }
+
+        private static int ResolveClearPassIndexForName(
+            IReadOnlyCollection<RenderPassMetadata> metadata,
+            string frameBufferName,
+            bool clearColor,
+            bool clearDepth,
+            bool clearStencil)
+        {
+            string colorResource = MakeFboColorResource(frameBufferName);
+            string depthResource = MakeFboDepthResource(frameBufferName);
+
+            foreach (RenderPassMetadata pass in GetTopologicalPassOrder(metadata))
+            {
+                for (int i = 0; i < pass.ResourceUsages.Count; i++)
+                {
+                    RenderPassResourceUsage usage = pass.ResourceUsages[i];
+                    if (usage.LoadOp != ERenderPassLoadOp.Clear)
+                        continue;
+
+                    if (clearColor &&
+                        usage.ResourceType == ERenderPassResourceType.ColorAttachment &&
+                        string.Equals(usage.ResourceName, colorResource, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return pass.PassIndex;
+                    }
+
+                    if ((clearDepth || clearStencil) &&
+                        (usage.ResourceType == ERenderPassResourceType.DepthAttachment ||
+                         usage.ResourceType == ERenderPassResourceType.StencilAttachment) &&
+                        string.Equals(usage.ResourceName, depthResource, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return pass.PassIndex;
+                    }
+                }
+            }
+
+            return int.MinValue;
+        }
+
+        private static IReadOnlyList<RenderPassMetadata> GetTopologicalPassOrder(IReadOnlyCollection<RenderPassMetadata> metadata)
+            => TopologicalPassOrderCache.GetValue(
+                metadata,
+                static key => new TopologicalPassOrderCacheEntry(key)).Passes;
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {

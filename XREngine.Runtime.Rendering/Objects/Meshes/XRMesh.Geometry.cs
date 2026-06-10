@@ -252,7 +252,7 @@ public partial class XRMesh
                 (uint)((resolution.X + ls - 1) / ls),
                 (uint)((resolution.Y + ls - 1) / ls),
                 (uint)((resolution.Z + ls - 1) / ls));
-        });
+        }, RenderThreadJobKind.RequiresGraphicsContext);
     }
 
     // Index buffer helpers

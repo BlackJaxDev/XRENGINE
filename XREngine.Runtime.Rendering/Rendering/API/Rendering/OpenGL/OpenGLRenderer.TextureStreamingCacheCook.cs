@@ -34,7 +34,8 @@ public partial class OpenGLRenderer
         {
             RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
                 () => TryBuildTexture2DMipChainRgba8Async(texture, callback),
-                "OpenGL.TextureStreamingCacheGpuCook");
+                "OpenGL.TextureStreamingCacheGpuCook",
+                RenderThreadJobKind.TextureUpload);
             return;
         }
 
@@ -198,7 +199,8 @@ public partial class OpenGLRenderer
 
             RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
                 () => PollTextureStreamingCacheMipChainReadback(pending),
-                "OpenGL.TextureStreamingCacheMipReadback");
+                "OpenGL.TextureStreamingCacheMipReadback",
+                RenderThreadJobKind.Readback);
             return true;
         }
         catch (Exception ex)

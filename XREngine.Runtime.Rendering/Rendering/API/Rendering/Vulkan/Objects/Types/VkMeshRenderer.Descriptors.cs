@@ -214,6 +214,7 @@ public unsafe partial class VulkanRenderer
 			// participate in image descriptor resolution, so changes to them must rewrite
 			// the descriptor sets.
 			_program?.AddSamplerResourceFingerprint(ref hash);
+			_program?.AddBoundBufferResourceFingerprint(ref hash);
 
 			return unchecked((ulong)hash.ToHashCode());
 		}
@@ -622,6 +623,10 @@ public unsafe partial class VulkanRenderer
 			{
 				// found by name — use it directly
 			}
+			else if (TryResolvePipelineResourceBuffer(binding, out buffer))
+			{
+				// found by render-pipeline resource name
+			}
 			else
 			{
 				// Step 1.5: For SSBOs, prefer explicit binding-index mapping from XRDataBuffer.
@@ -629,6 +634,9 @@ public unsafe partial class VulkanRenderer
 				// vary by compiler/optimization path.
 				if (binding.DescriptorType == DescriptorType.StorageBuffer)
 				{
+					if (TryResolveProgramBoundBuffer(binding, out buffer))
+						goto BufferResolved;
+
 					buffer = _bufferCache.Values.FirstOrDefault(b =>
 						b.Data.Target == EBufferTarget.ShaderStorageBuffer &&
 						b.Data.BindingIndexOverride == binding.Binding);
@@ -664,7 +672,10 @@ public unsafe partial class VulkanRenderer
 
 		BufferResolved:
 
-			buffer.Generate();
+			if (buffer is null)
+				return TryResolveFallbackDescriptorBuffer(binding, frameIndex, out bufferInfo);
+
+			buffer.EnsureReadyForRendering();
 			if (buffer.BufferHandle is not { } bufferHandle || bufferHandle.Handle == 0)
 			{
 				WarnOnce($"[BufferResolve] Buffer '{binding.Name}' resolved (set={binding.Set}, binding={binding.Binding}) but VkBuffer is not allocated (Length={buffer.Data.Length}, Resizable={buffer.Data.Resizable}, Target={buffer.Data.Target}).");
@@ -691,6 +702,83 @@ public unsafe partial class VulkanRenderer
 				Range = requestedRange,
 			};
 
+			return true;
+		}
+
+		private bool TryResolvePipelineResourceBuffer(DescriptorBindingInfo binding, out VkDataBuffer? buffer)
+		{
+			buffer = null;
+			if (string.IsNullOrWhiteSpace(binding.Name))
+				return false;
+
+			XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+			if (pipeline is null)
+				return false;
+
+			if (!TryResolvePipelineResourceDataBuffer(pipeline, binding.Name, binding.DescriptorType, out XRDataBuffer dataBuffer))
+			{
+				string trimmedName = TrimDescriptorBufferSuffix(binding.Name);
+				if (string.Equals(trimmedName, binding.Name, StringComparison.Ordinal) ||
+					!TryResolvePipelineResourceDataBuffer(pipeline, trimmedName, binding.DescriptorType, out dataBuffer))
+				{
+					return false;
+				}
+			}
+
+			Renderer.TrackBufferBinding(dataBuffer);
+			if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: true) is not VkDataBuffer vkBuffer)
+				return false;
+
+			buffer = vkBuffer;
+			return true;
+		}
+
+		private static bool TryResolvePipelineResourceDataBuffer(
+			XRRenderPipelineInstance pipeline,
+			string name,
+			DescriptorType descriptorType,
+			out XRDataBuffer dataBuffer)
+		{
+			dataBuffer = null!;
+			if (!pipeline.TryGetBuffer(name, out XRDataBuffer? buffer) || buffer is null)
+				return false;
+
+			if (!IsDescriptorCompatibleBufferTarget(descriptorType, buffer.Target))
+				return false;
+
+			dataBuffer = buffer;
+			return true;
+		}
+
+		private static bool IsDescriptorCompatibleBufferTarget(DescriptorType descriptorType, EBufferTarget target)
+			=> descriptorType switch
+			{
+				DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic => target == EBufferTarget.ShaderStorageBuffer,
+				DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic => target == EBufferTarget.UniformBuffer,
+				_ => false,
+			};
+
+		private bool TryResolveProgramBoundBuffer(DescriptorBindingInfo binding, out VkDataBuffer? buffer)
+		{
+			buffer = null;
+			if (_program is null || !_program.TryGetBoundBuffer(binding.Binding, out XRDataBuffer? dataBuffer) || dataBuffer is null)
+				return false;
+
+			bool targetMatches = binding.DescriptorType switch
+			{
+				DescriptorType.StorageBuffer => dataBuffer.Target == EBufferTarget.ShaderStorageBuffer,
+				DescriptorType.UniformBuffer => dataBuffer.Target == EBufferTarget.UniformBuffer,
+				_ => false,
+			};
+
+			if (!targetMatches)
+				return false;
+
+			Renderer.TrackBufferBinding(dataBuffer);
+			if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: true) is not VkDataBuffer vkBuffer)
+				return false;
+
+			buffer = vkBuffer;
 			return true;
 		}
 

@@ -187,12 +187,25 @@ namespace XREngine.Rendering.Vulkan
             /// </summary>
             public DeviceMemory? MemoryHandle => _vkMemory;
             public ulong AllocatedByteSize => _bufferSize;
+            internal BufferUsageFlags LastUsageFlags => _lastUsageFlags;
             public ulong DeviceAddress { get; private set; }
             public ulong UploadedByteCount => _uploadedByteCount;
             public bool HasPendingUpload => _hasPendingUpload;
             public bool IsReadyForRendering => IsGenerated && !_hasPendingUpload && _uploadedByteCount >= (ulong)Data.Length && _bufferSize >= (ulong)Data.Length;
             public string LastUploadRoute => _lastUploadRoute;
             public string LastBindingName => _lastBindingName;
+
+            internal void EnsureReadyForRendering()
+            {
+                if (!IsActive)
+                {
+                    Generate();
+                    return;
+                }
+
+                if (!IsReadyForRendering)
+                    PushData();
+            }
 
             public bool TryGetDeviceAddress(out ulong address)
             {
@@ -216,6 +229,8 @@ namespace XREngine.Rendering.Vulkan
             /// </summary>
             public void PushData()
             {
+                if (SkipUploadBecauseDeviceLost("PushData"))
+                    return;
                 if (HasBlockingActiveMapping())
                     return;
                 if (RuntimeEngine.InvokeOnMainThread(PushData, "VkDataBuffer.PushData"))
@@ -394,6 +409,8 @@ namespace XREngine.Rendering.Vulkan
             /// </summary>
             public void PushSubData(int offset, uint length)
             {
+                if (SkipUploadBecauseDeviceLost("PushSubData"))
+                    return;
                 if (HasBlockingActiveMapping())
                     return;
                 if (RuntimeEngine.InvokeOnMainThread(() => PushSubData(offset, length), "VkDataBuffer.PushSubData"))
@@ -630,6 +647,8 @@ namespace XREngine.Rendering.Vulkan
             /// </summary>
             public void MapBufferData()
             {
+                if (Renderer.IsDeviceLost)
+                    return;
                 if (Data.ActivelyMapping.Count > 0)
                 {
                     Debug.VulkanWarning($"Buffer {GetDescribingName()} is already mapped.");
@@ -643,6 +662,8 @@ namespace XREngine.Rendering.Vulkan
             }
             public void MapToClientSide()
             {
+                if (Renderer.IsDeviceLost)
+                    return;
                 if (_vkBuffer == null || _vkMemory == null)
                     EnsureStorageAllocatedForGpuUse();
                 if (_vkBuffer == null || _vkMemory == null)
@@ -670,6 +691,8 @@ namespace XREngine.Rendering.Vulkan
             }
             public void MapToClientSide(int offset, uint length)
             {
+                if (Renderer.IsDeviceLost)
+                    return;
                 if (_vkBuffer == null || _vkMemory == null)
                     EnsureStorageAllocatedForGpuUse();
                 if (_vkBuffer == null || _vkMemory == null)
@@ -834,6 +857,20 @@ namespace XREngine.Rendering.Vulkan
 
             public VoidPtr? GetMappedAddress() => GPUSideSource?.Address;
 
+            internal bool SupportsDescriptorType(DescriptorType descriptorType)
+                => descriptorType switch
+                {
+                    DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic
+                        => _lastUsageFlags.HasFlag(BufferUsageFlags.StorageBufferBit),
+                    DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic
+                        => _lastUsageFlags.HasFlag(BufferUsageFlags.UniformBufferBit),
+                    DescriptorType.UniformTexelBuffer
+                        => _lastUsageFlags.HasFlag(BufferUsageFlags.UniformTexelBufferBit),
+                    DescriptorType.StorageTexelBuffer
+                        => _lastUsageFlags.HasFlag(BufferUsageFlags.StorageTexelBufferBit),
+                    _ => true,
+                };
+
             // --- Helper: Should use device-local + staging for static/immutable buffers ---
             private bool AllowsUpdatesWhileMapped()
                 => Data.StorageFlags.HasFlag(EBufferMapStorageFlags.Persistent) ||
@@ -864,6 +901,22 @@ namespace XREngine.Rendering.Vulkan
                     projectedBytes,
                     budgetBytes);
                 return false;
+            }
+
+            private bool SkipUploadBecauseDeviceLost(string operation)
+            {
+                if (!Renderer.IsDeviceLost)
+                    return false;
+
+                _hasPendingUpload = true;
+                _lastUploadRoute = "SkippedDeviceLost";
+                Debug.VulkanWarningEvery(
+                    $"VkDataBuffer.DeviceLost.{operation}.{GetDescribingName()}",
+                    TimeSpan.FromSeconds(2),
+                    "[VkDataBuffer] {0} skipped for '{1}' because the Vulkan device is lost.",
+                    operation,
+                    GetDescribingName());
+                return true;
             }
 
             private static bool ShouldUseDeviceLocal(XRDataBuffer data)
@@ -1148,6 +1201,9 @@ namespace XREngine.Rendering.Vulkan
 
         private void CopyBuffer(Buffer? stagingBuffer, Buffer? vkBuffer, uint length, ulong offset)
         {
+            if (_deviceLost)
+                return;
+
             if (stagingBuffer is null || vkBuffer is null)
                 throw new ArgumentNullException("Buffers cannot be null for copy operation.");
 
@@ -1159,6 +1215,9 @@ namespace XREngine.Rendering.Vulkan
 
         private void UpdateBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length, void* addr)
         {
+            if (_deviceLost)
+                return;
+
             if (vkBuffer is null || vkMemory is null || addr is null)
                 throw new ArgumentNullException("Buffer, memory, or address cannot be null for update operation.");
 
@@ -1186,6 +1245,9 @@ namespace XREngine.Rendering.Vulkan
             Buffer? deviceBuffer,
             ulong bufferSize)
         {
+            if (_deviceLost)
+                return;
+
             if (stagingBuffer is null || deviceBuffer is null)
                 throw new ArgumentNullException("Buffers cannot be null for copy operation.");
 
@@ -1202,6 +1264,9 @@ namespace XREngine.Rendering.Vulkan
             ulong sourceOffset,
             ulong destinationOffset)
         {
+            if (_deviceLost)
+                return;
+
             QueueFamilyIndices queueFamilies = FamilyQueueIndices;
             uint graphicsFamily = queueFamilies.GraphicsFamilyIndex ?? 0u;
             uint transferFamily = queueFamilies.TransferFamilyIndex ?? graphicsFamily;
@@ -1330,6 +1395,20 @@ namespace XREngine.Rendering.Vulkan
                 GetReadbackMemoryProperties(),
                 null);
 
+        private void ThrowIfDeviceLostForResourceCreation(string operation)
+        {
+            if (!_deviceLost)
+                return;
+
+            Debug.VulkanWarningEvery(
+                $"Vulkan.DeviceLost.ResourceCreation.{operation}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] {0} skipped because the Vulkan device is lost.",
+                operation);
+
+            throw new InvalidOperationException($"Cannot {operation} after the Vulkan device was lost.");
+        }
+
         public (Buffer stagingBuffer, DeviceMemory stagingMemory) CreateBuffer(
             ulong bufferSize,
             BufferUsageFlags stagingUsage,
@@ -1337,6 +1416,8 @@ namespace XREngine.Rendering.Vulkan
             VoidPtr dataPtr,
             bool enableDeviceAddress = false)
         {
+            ThrowIfDeviceLostForResourceCreation("CreateBuffer");
+
             ulong requestedSize = bufferSize;
             ulong allocationSize = Math.Max(requestedSize, 1UL);
 
@@ -1365,6 +1446,8 @@ namespace XREngine.Rendering.Vulkan
             MemoryPropertyFlags properties,
             bool enableDeviceAddress = false)
         {
+            ThrowIfDeviceLostForResourceCreation("CreateBufferRaw");
+
             bufferSize = Math.Max(bufferSize, 1UL);
 
             if (enableDeviceAddress)
@@ -1461,6 +1544,9 @@ namespace XREngine.Rendering.Vulkan
 
         internal unsafe void UploadBufferMemory(Buffer buffer, DeviceMemory memory, ulong size, void* source)
         {
+            if (_deviceLost)
+                return;
+
             if (source == null || size == 0)
                 return;
 
@@ -1502,6 +1588,9 @@ namespace XREngine.Rendering.Vulkan
         {
             stagingBuffer = default;
             stagingMemory = default;
+
+            if (_deviceLost)
+                return false;
 
             if (string.IsNullOrWhiteSpace(filePath) || length <= 0)
                 return false;

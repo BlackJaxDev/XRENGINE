@@ -264,7 +264,8 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                 else
                     RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
                         ApplyResidentDataOnRenderThreadBudgeted,
-                        $"TextureStreaming.ApplyResidentData[{target.Name}]");
+                        $"TextureStreaming.ApplyResidentData[{target.Name}]",
+                        RenderThreadJobKind.TextureUpload);
             }
             catch (OperationCanceledException)
             {
@@ -649,7 +650,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                                 else
                                     RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
                                         () => CompleteSparseTransition(transitionResult),
-                                        $"TextureStreaming.CompleteSparseTransition[{target.Name}]");
+                                        $"TextureStreaming.CompleteSparseTransition[{target.Name}]",
+                                        RenderThreadJobKind.TextureUpload);
                             },
                             ex =>
                             {
@@ -692,7 +694,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                 else
                     RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
                         ContinueOnRenderThreadBudgeted,
-                        $"TextureStreaming.ScheduleSparseTransition[{target.Name}]");
+                        $"TextureStreaming.ScheduleSparseTransition[{target.Name}]",
+                        RenderThreadJobKind.TextureUpload);
             }
             catch (OperationCanceledException)
             {

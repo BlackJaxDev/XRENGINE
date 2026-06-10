@@ -222,7 +222,8 @@ public partial class XRTexture2D
 
                     renderer.TryBuildTexture2DMipChainRgba8Async(sourceTexture, Complete);
                 },
-                "XRTexture2D.TextureStreamingCacheGpuCook");
+                "XRTexture2D.TextureStreamingCacheGpuCook",
+                RenderThreadJobKind.TextureUpload);
 
             if (!completed.Wait(TextureStreamingGpuCacheCookTimeoutMilliseconds))
             {

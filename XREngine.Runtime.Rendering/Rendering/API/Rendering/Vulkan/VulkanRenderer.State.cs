@@ -20,6 +20,7 @@ public unsafe partial class VulkanRenderer
     private readonly VulkanResourceAllocator _resourceAllocator = new();
     private readonly VulkanBarrierPlanner _barrierPlanner = new();
     private VulkanCompiledRenderGraph _compiledRenderGraph = VulkanCompiledRenderGraph.Empty;
+    private FrameOpContext? _lastActiveFrameOpContext;
     private ulong _resourcePlannerSignature = ulong.MaxValue;
     private ulong _resourcePlannerRevision;
     private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
@@ -549,12 +550,26 @@ public unsafe partial class VulkanRenderer
     {
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
-        return new FrameOpContext(
+        FrameOpContext context = new(
             pipeline?.GetHashCode() ?? 0,
             viewport?.GetHashCode() ?? 0,
             pipeline,
             pipeline?.Resources,
             pipeline?.Pipeline?.PassMetadata);
+
+        if (pipeline is not null)
+            _lastActiveFrameOpContext = context;
+
+        return context;
+    }
+
+    internal FrameOpContext CaptureFrameOpContextOrLastActive()
+    {
+        FrameOpContext context = CaptureFrameOpContext();
+        if (context.PipelineInstance is not null || context.PassMetadata is { Count: > 0 })
+            return context;
+
+        return _lastActiveFrameOpContext ?? context;
     }
 
     internal static bool RequiresResourcePlannerRebuild(in FrameOpContext previous, in FrameOpContext next)
@@ -1413,6 +1428,31 @@ public unsafe partial class VulkanRenderer
                     registry.BindTexture(texture);
             }
         }
+    }
+
+    internal void TrackTextureBinding(XRTexture texture)
+    {
+        if (texture is null)
+            return;
+
+        string? name = texture.Name;
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        RenderResourceRegistry? registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
+        if (registry is null)
+            return;
+
+        if (registry.TextureRecords.TryGetValue(name, out RenderTextureResource? record))
+        {
+            if (ReferenceEquals(record.Instance, texture))
+                return;
+
+            registry.BindTexture(texture, record.Descriptor);
+            return;
+        }
+
+        registry.BindTexture(texture);
     }
 
     internal void TrackBufferBinding(XRDataBuffer buffer)

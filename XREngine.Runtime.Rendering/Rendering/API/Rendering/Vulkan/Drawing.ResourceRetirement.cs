@@ -351,13 +351,84 @@ namespace XREngine.Rendering.Vulkan
         private readonly List<RetiredImageResources>[] _retiredImages =
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
+        private readonly HashSet<ulong>[] _retiredImageHandles =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        private readonly HashSet<ulong>[] _retiredImageMemoryHandles =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        private readonly HashSet<ulong>[] _retiredImageViewHandles =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        private readonly HashSet<ulong>[] _retiredSamplerHandles =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
         /// <summary>
         /// Queues image resources for deferred destruction.  The resources will be
         /// destroyed the next time this frame slot is reused (after the timeline
         /// wait guarantees the GPU is done with them).
         /// </summary>
         internal void RetireImageResources(in RetiredImageResources resources)
-            => _retiredImages[currentFrame].Add(resources);
+        {
+            int frameSlot = currentFrame;
+
+            lock (_retiredResourceLock)
+            {
+                Image image = resources.Image;
+                DeviceMemory memory = resources.Memory;
+                ImageView primaryView = resources.PrimaryView;
+                Sampler sampler = resources.Sampler;
+
+                if (image.Handle != 0 && !_retiredImageHandles[frameSlot].Add(image.Handle))
+                    image = default;
+
+                if (memory.Handle != 0 && !_retiredImageMemoryHandles[frameSlot].Add(memory.Handle))
+                    memory = default;
+
+                if (primaryView.Handle != 0 && !_retiredImageViewHandles[frameSlot].Add(primaryView.Handle))
+                    primaryView = default;
+
+                ImageView[] attachmentViews = FilterRetiredAttachmentViews(resources.AttachmentViews, frameSlot);
+
+                if (sampler.Handle != 0 && !_retiredSamplerHandles[frameSlot].Add(sampler.Handle))
+                    sampler = default;
+
+                if (image.Handle == 0 &&
+                    memory.Handle == 0 &&
+                    primaryView.Handle == 0 &&
+                    attachmentViews.Length == 0 &&
+                    sampler.Handle == 0)
+                {
+                    return;
+                }
+
+                _retiredImages[frameSlot].Add(new RetiredImageResources(
+                    image,
+                    memory,
+                    primaryView,
+                    attachmentViews,
+                    sampler,
+                    resources.AllocatedVRAMBytes));
+            }
+        }
+
+        private ImageView[] FilterRetiredAttachmentViews(ImageView[]? views, int frameSlot)
+        {
+            if (views is null || views.Length == 0)
+                return [];
+
+            List<ImageView>? filtered = null;
+            foreach (ImageView view in views)
+            {
+                if (view.Handle == 0 || !_retiredImageViewHandles[frameSlot].Add(view.Handle))
+                    continue;
+
+                filtered ??= new List<ImageView>(views.Length);
+                filtered.Add(view);
+            }
+
+            return filtered is null ? [] : [.. filtered];
+        }
 
         internal void RetireSampler(Sampler sampler)
         {
@@ -379,35 +450,58 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private void DrainRetiredImages()
         {
-            var list = _retiredImages[currentFrame];
-            if (list.Count == 0)
-                return;
+            int frameSlot = currentFrame;
+            RetiredImageResources[] retired;
 
-            foreach (var r in list)
+            lock (_retiredResourceLock)
             {
-                if (r.Sampler.Handle != 0)
+                var list = _retiredImages[frameSlot];
+                if (list.Count == 0)
+                    return;
+
+                retired = [.. list];
+                list.Clear();
+                _retiredImageHandles[frameSlot].Clear();
+                _retiredImageMemoryHandles[frameSlot].Clear();
+                _retiredImageViewHandles[frameSlot].Clear();
+                _retiredSamplerHandles[frameSlot].Clear();
+            }
+
+            HashSet<ulong> destroyedImages = new();
+            HashSet<ulong> freedMemories = new();
+            HashSet<ulong> destroyedViews = new();
+            HashSet<ulong> destroyedSamplers = new();
+
+            foreach (var r in retired)
+            {
+                bool hasTrackedImageAllocation = false;
+                VulkanMemoryAllocation trackedImageAllocation = default;
+                if (r.Image.Handle != 0)
+                    hasTrackedImageAllocation = _imageAllocations.TryRemove(r.Image.Handle, out trackedImageAllocation);
+
+                if (r.Sampler.Handle != 0 && destroyedSamplers.Add(r.Sampler.Handle))
                     Api!.DestroySampler(device, r.Sampler, null);
-                if (r.PrimaryView.Handle != 0)
+                if (r.PrimaryView.Handle != 0 && destroyedViews.Add(r.PrimaryView.Handle))
                     Api!.DestroyImageView(device, r.PrimaryView, null);
                 if (r.AttachmentViews is not null)
                 {
                     foreach (ImageView v in r.AttachmentViews)
-                        if (v.Handle != 0)
+                        if (v.Handle != 0 && destroyedViews.Add(v.Handle))
                             Api!.DestroyImageView(device, v, null);
                 }
-                if (r.Image.Handle != 0)
+                if (r.Image.Handle != 0 && destroyedImages.Add(r.Image.Handle))
                     Api!.DestroyImage(device, r.Image, null);
 
                 // Free through allocator if tracked, otherwise direct FreeMemory.
-                if (r.Memory.Handle != 0)
+                DeviceMemory memory = hasTrackedImageAllocation ? trackedImageAllocation.Memory : r.Memory;
+                if (memory.Handle != 0 && freedMemories.Add(memory.Handle))
                 {
-                    if (_imageAllocations.TryRemove(r.Image.Handle, out VulkanMemoryAllocation allocation))
-                        FreeMemoryAllocation(allocation);
+                    if (hasTrackedImageAllocation)
+                        FreeMemoryAllocation(trackedImageAllocation);
                     else
-                        Api!.FreeMemory(device, r.Memory, null);
+                        Api!.FreeMemory(device, memory, null);
                 }
             }
-            list.Clear();
         }
 
         /// <summary>

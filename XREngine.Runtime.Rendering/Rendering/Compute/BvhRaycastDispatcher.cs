@@ -45,6 +45,12 @@ public sealed class BvhRaycastDispatcher
         if (!_enabled)
             return false;
 
+        if (!IsBackendSupported())
+        {
+            WarnUnsupportedBackend();
+            return false;
+        }
+
         if (request.RayCount == 0 || request.HitBuffer is null || request.RayBuffer is null || request.NodeBuffer is null || request.TriangleBuffer is null)
             return false;
 
@@ -80,7 +86,13 @@ public sealed class BvhRaycastDispatcher
         if (renderer is null)
             return;
 
-        var glRenderer = renderer as OpenGLRenderer;
+        if (renderer is not OpenGLRenderer glRenderer)
+        {
+            WarnUnsupportedBackend();
+            Reset("renderer backend does not support GPU BVH raycast fences/readback");
+            return;
+        }
+
         int budget = _pendingRequests.Count;
 
         while (budget-- > 0 && _pendingRequests.TryDequeue(out var request))
@@ -118,6 +130,13 @@ public sealed class BvhRaycastDispatcher
             return;
 
         var glRenderer = AbstractRenderer.Current as OpenGLRenderer;
+        if (glRenderer is null && _inFlight.Count > 0)
+        {
+            WarnUnsupportedBackend();
+            Reset("renderer backend changed while GPU BVH raycasts were in flight");
+            return;
+        }
+
         for (int i = _inFlight.Count - 1; i >= 0; --i)
         {
             var entry = _inFlight[i];
@@ -190,13 +209,20 @@ public sealed class BvhRaycastDispatcher
                 glRenderer.RawGL.DeleteSync(entry.Fence);
         }
 
+        // Only treat this as a meaningful clear (and warn) when there was actually
+        // outstanding work. On unsupported backends (e.g. Vulkan) Reset is invoked
+        // every frame; warning unconditionally floods the meshes log with hundreds
+        // of identical lines. Enqueue already rejects requests on those backends, so
+        // after the first clear the queues stay empty and we go quiet.
+        int clearedWork = _inFlight.Count + _pendingRequests.Count + _completedResults.Count + _completedCallbacks.Count;
+
         _inFlight.Clear();
 
         while (_pendingRequests.TryDequeue(out _)) { }
         while (_completedResults.TryDequeue(out _)) { }
         while (_completedCallbacks.TryDequeue(out _)) { }
 
-        if (!string.IsNullOrWhiteSpace(reason))
+        if (clearedWork > 0 && !string.IsNullOrWhiteSpace(reason))
             Debug.MeshesWarning($"[BvhRaycastDispatcher] Cleared GPU BVH raycasts ({reason}).");
     }
 
@@ -205,7 +231,10 @@ public sealed class BvhRaycastDispatcher
         if (request.CpuDependency is not null && !request.CpuDependency())
             return false;
 
-        if (glRenderer is null || request.DependencyFences is null)
+        if (glRenderer is null)
+            return false;
+
+        if (request.DependencyFences is null)
             return true;
 
         foreach (IntPtr fence in request.DependencyFences)
@@ -223,6 +252,9 @@ public sealed class BvhRaycastDispatcher
 
     private void Dispatch(BvhRaycastRequest request, OpenGLRenderer? glRenderer, XRRenderProgram program)
     {
+        if (glRenderer is null)
+            return;
+
         if (request.HitBuffer is null || request.RayBuffer is null || request.NodeBuffer is null || request.TriangleBuffer is null)
             return;
 
@@ -248,9 +280,7 @@ public sealed class BvhRaycastDispatcher
         using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Raycast, request.RayCount))
             program.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 
-        IntPtr fence = IntPtr.Zero;
-        if (glRenderer is not null)
-            fence = glRenderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+        IntPtr fence = glRenderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
 
         uint stride = request.HitStrideBytes ?? (uint)Unsafe.SizeOf<GpuRaycastHit>();
         ulong requestedBytes = request.BytesToRead ?? ((ulong)stride * request.RayCount);
@@ -271,7 +301,10 @@ public sealed class BvhRaycastDispatcher
 
     private static bool IsFenceComplete(IntPtr fence, OpenGLRenderer? glRenderer)
     {
-        if (fence == IntPtr.Zero || glRenderer is null)
+        if (glRenderer is null)
+            return false;
+
+        if (fence == IntPtr.Zero)
             return true;
 
         var status = glRenderer.RawGL.ClientWaitSync(fence, 0u, 0u);
@@ -280,7 +313,7 @@ public sealed class BvhRaycastDispatcher
 
     private static void EnsureReadbackMapping(XRDataBuffer buffer)
     {
-        if (buffer.ActivelyMapping.Count > 0)
+        if (buffer.IsMapped)
             return;
 
         buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
@@ -310,6 +343,16 @@ public sealed class BvhRaycastDispatcher
 
         return data;
     }
+
+    private static bool IsBackendSupported()
+        => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL &&
+           AbstractRenderer.Current is OpenGLRenderer;
+
+    private static void WarnUnsupportedBackend()
+        => Debug.RenderingWarningEvery(
+            "BvhRaycastDispatcher.UnsupportedBackend",
+            TimeSpan.FromSeconds(5),
+            "[BvhRaycastDispatcher] GPU BVH raycast is currently OpenGL-only because Vulkan fence/readback integration is not implemented. Falling back to CPU mesh picking.");
 
     private readonly record struct InFlightRaycast(BvhRaycastRequest Request, IntPtr Fence, uint ExpectedBytes);
 }

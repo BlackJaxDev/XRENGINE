@@ -237,7 +237,10 @@ public unsafe partial class VulkanRenderer
                 new XRShader(EShaderType.Compute, AutoExposureComputeShaderSource2D)
                 {
                     Name = "VulkanAutoExposure2D.comp"
-                });
+                })
+            {
+                Name = "VulkanAutoExposure2D"
+            };
 
             _autoExposureComputeProgram2DArray = new XRRenderProgram(
                 linkNow: true,
@@ -245,7 +248,10 @@ public unsafe partial class VulkanRenderer
                 new XRShader(EShaderType.Compute, AutoExposureComputeShaderSource2DArray)
                 {
                     Name = "VulkanAutoExposure2DArray.comp"
-                });
+                })
+            {
+                Name = "VulkanAutoExposure2DArray"
+            };
 
             _autoExposureComputeInitialized = true;
         }

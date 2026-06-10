@@ -17,6 +17,36 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {
+        private const string LightProbeIrradianceArrayTextureName = "LightProbeIrradianceArray";
+        private const string LightProbePrefilterArrayTextureName = "LightProbePrefilterArray";
+        private const string LightProbePositionBufferName = "LightProbePositions";
+        private const string LightProbeTetraBufferName = "LightProbeTetrahedra";
+        private const string LightProbeParamBufferName = "LightProbeParameters";
+        private const string LightProbeGridCellBufferName = "LightProbeGridCells";
+        private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
+
+        private static readonly string[] DeferredLightCombineTextureInputs =
+        [
+            DefaultRenderPipeline.AlbedoOpacityTextureName,
+            DefaultRenderPipeline.NormalTextureName,
+            DefaultRenderPipeline.RMSETextureName,
+            DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
+            DefaultRenderPipeline.DepthViewTextureName,
+            DefaultRenderPipeline.DiffuseTextureName,
+            DefaultRenderPipeline.BRDFTextureName,
+            LightProbeIrradianceArrayTextureName,
+            LightProbePrefilterArrayTextureName,
+        ];
+
+        private static readonly string[] DeferredLightCombineBufferInputs =
+        [
+            LightProbePositionBufferName,
+            LightProbeTetraBufferName,
+            LightProbeParamBufferName,
+            LightProbeGridCellBufferName,
+            LightProbeGridIndexBufferName,
+        ];
+
         private static bool _diagEnabled => RenderDiagnosticsFlags.DiagQuadBlit;
 
         public string? SourceQuadFBOName { get; set; }
@@ -257,6 +287,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) &&
                 string.Equals(destination, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal))
             {
+                DescribeDeferredLightCombineInputs(builder);
                 builder.DependsOn((int)EDefaultRenderPass.DeferredDecals);
                 context.Metadata
                     .ForPass((int)EDefaultRenderPass.Background, EDefaultRenderPass.Background.ToString(), ERenderGraphPassStage.Graphics)
@@ -276,6 +307,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             builder.UseColorAttachment(MakeColorTargetResource(destination), access, colorLoad, colorStore);
+        }
+
+        private static void DescribeDeferredLightCombineInputs(RenderPassBuilder builder)
+        {
+            foreach (string textureName in DeferredLightCombineTextureInputs)
+                builder.SampleTexture(MakeTextureResource(textureName));
+
+            foreach (string bufferName in DeferredLightCombineBufferInputs)
+                builder.ReadBuffer(bufferName);
         }
     }
 }

@@ -366,7 +366,10 @@ namespace XREngine.Rendering.OpenGL
                     if (RuntimeEngine.IsRenderThread)
                         PushDataImmediate();
                     else
-                        RuntimeEngine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushData.Fallback");
+                        RuntimeEngine.EnqueueMainThreadTask(
+                            PushDataImmediate,
+                            "GLDataBuffer.PushData.Fallback",
+                            RenderThreadJobKind.BufferUpload);
                     return;
                 }
 
@@ -398,7 +401,10 @@ namespace XREngine.Rendering.OpenGL
 
                         CancelQueuedUpload();
                         Debug.OpenGLWarning($"[GLDataBuffer] Failed to snapshot queued upload for '{GetDescribingName()}' ({dataLength} bytes): {ex.GetType().Name}: {ex.Message}. Falling back to immediate upload.");
-                        RuntimeEngine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushDataQueued.Fallback");
+                        RuntimeEngine.EnqueueMainThreadTask(
+                            PushDataImmediate,
+                            "GLDataBuffer.PushDataQueued.Fallback",
+                            RenderThreadJobKind.BufferUpload);
                     }
                 }
 

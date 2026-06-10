@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -233,6 +234,7 @@ namespace XREngine.Components.Lights
         {
             _environmentTextureCubemap?.Destroy();
             _environmentTextureCubemap = CreateEnvironmentColorCubemap(Resolution);
+            InitializeCaptureTextureContents(_environmentTextureCubemap);
             //_envTex.Generate();
 
             if (CaptureDepthCubeMap)
@@ -274,6 +276,14 @@ namespace XREngine.Components.Lights
                 Viewports[i] = null;
 
             PrepareCaptureViewportForFace(_currentFace);
+        }
+
+        private static void InitializeCaptureTextureContents(XRTextureCube cubemap)
+        {
+            // Progressive capture renders one face at a time; initialize every face before
+            // Vulkan descriptors can observe the cubemap between face renders.
+            AbstractRenderer.Current?.GetOrCreateAPIRenderObject(cubemap, generateNow: true);
+            cubemap.Clear(ColorF4.Black);
         }
 
         private XRViewport GetOrCreateSharedCaptureViewport()

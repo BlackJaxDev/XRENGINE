@@ -57,6 +57,7 @@ namespace XREngine
 
         public JobPriority Priority { get; internal set; } = JobPriority.Normal;
         public JobAffinity Affinity { get; internal set; } = JobAffinity.Any;
+        public RenderThreadJobKind RenderThreadKind { get; internal set; } = RenderThreadJobKind.Unknown;
 
         protected Job()
         {

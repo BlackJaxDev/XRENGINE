@@ -88,6 +88,9 @@ public unsafe partial class VulkanRenderer
         /// <returns><c>true</c> if the upload succeeded.</returns>
         internal bool UploadVideoFrameData(ReadOnlySpan<byte> pixelData, uint width, uint height)
         {
+            if (Renderer.IsDeviceLost)
+                return false;
+
             if (pixelData.IsEmpty || width == 0 || height == 0)
                 return false;
 

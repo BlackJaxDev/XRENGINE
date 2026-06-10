@@ -23,14 +23,19 @@ public unsafe partial class VulkanRenderer
     private static void WarnBroadBarrierStages(
         PipelineStageFlags srcStage,
         PipelineStageFlags dstStage,
-        [CallerMemberName] string? caller = null)
+        string? caller = null)
     {
         if ((srcStage & PipelineStageFlags.AllCommandsBit) != 0 ||
             (dstStage & PipelineStageFlags.AllCommandsBit) != 0)
         {
-            Debug.VulkanWarning(
-                $"[Vulkan][BarrierAudit] Broad AllCommandsBit barrier in {caller}. " +
-                "Consider narrowing src/dst stages for performance.");
+            string site = string.IsNullOrEmpty(caller) ? "<unknown>" : caller;
+            // Throttle per originating call site: a single over-broad barrier site
+            // would otherwise emit hundreds of identical lines per second.
+            Debug.VulkanWarningEvery(
+                $"Vulkan.BarrierAudit.{site}",
+                TimeSpan.FromSeconds(10),
+                "[Vulkan][BarrierAudit] Broad AllCommandsBit barrier originating from {0}. Consider narrowing src/dst stages for performance.",
+                site);
         }
     }
 
@@ -187,9 +192,10 @@ public unsafe partial class VulkanRenderer
         uint bufferBarrierCount,
         BufferMemoryBarrier* bufferBarriers,
         uint imageBarrierCount,
-        ImageMemoryBarrier* imageBarriers)
+        ImageMemoryBarrier* imageBarriers,
+        [CallerMemberName] string? caller = null)
     {
-        WarnBroadBarrierStages(srcStageMask, dstStageMask);
+        WarnBroadBarrierStages(srcStageMask, dstStageMask, caller);
 
         if (!UsesSynchronization2)
         {

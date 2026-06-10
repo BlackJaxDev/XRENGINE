@@ -182,6 +182,7 @@ namespace XREngine.Rendering.Vulkan
             "VK_KHR_dynamic_rendering",
             "VK_KHR_maintenance4",
             VulkanDepthClipControlExt.ExtensionName,
+            "VK_KHR_pipeline_library",
             "VK_EXT_graphics_pipeline_library",
             "VK_EXT_mesh_shader",
             "VK_NV_memory_decompression",

@@ -431,7 +431,8 @@ namespace XREngine.Rendering
             {
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
                     UploadAction,
-                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.UploadMipmaps"));
+                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.UploadMipmaps"),
+                    RenderThreadJobKind.TextureUpload);
             }
         }
 
@@ -527,7 +528,8 @@ namespace XREngine.Rendering
 
                         StartProgressiveCoroutine(texture, uploadToken, workItem, cancellationToken, onCompleted);
                     },
-                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadRetry"));
+                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadRetry"),
+                    RenderThreadJobKind.TextureUpload);
                 return;
             }
 
@@ -536,7 +538,8 @@ namespace XREngine.Rendering
             else
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
                     () => StartProgressiveCoroutine(texture, uploadToken, workItem, cancellationToken, onCompleted),
-                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadStart"));
+                    GetRenderThreadTextureJobLabel(texture, "XRTexture2D.ProgressiveUploadStart"),
+                    RenderThreadJobKind.TextureUpload);
         }
 
         private static bool HasHigherPriorityProgressiveUpload(XRTexture2D currentTexture, TextureUploadWorkItem current)
@@ -787,7 +790,10 @@ namespace XREngine.Rendering
                     return true;
                 }
             }
-            RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(UploadProgressive);
+            RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+                UploadProgressive,
+                GetRenderThreadTextureJobLabel(texture, "XRTexture2D.UploadProgressive"),
+                RenderThreadJobKind.TextureUpload);
         }
 
         private static bool HasAssetExtension(string filePath)

@@ -236,12 +236,14 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
                 void CompleteAsyncTransition(SparseTextureStreamingTransitionResult result)
                     => Engine.EnqueueRenderThreadTask(
                         () => onCompleted(result),
-                        $"XRTexture2D.CompleteSparseTransition[{textureName}]");
+                        $"XRTexture2D.CompleteSparseTransition[{textureName}]",
+                        RenderThreadJobKind.TextureUpload);
 
                 void ReportAsyncTransitionError(Exception ex)
                     => Engine.EnqueueRenderThreadTask(
                         () => onError?.Invoke(ex),
-                        $"XRTexture2D.FailSparseTransition[{textureName}]");
+                        $"XRTexture2D.FailSparseTransition[{textureName}]",
+                        RenderThreadJobKind.TextureUpload);
 
                 if (!glTexture.TryScheduleSparseTextureStreamingTransitionAsync(request, cancellationToken, CompleteAsyncTransition, ReportAsyncTransitionError))
                     onCompleted(texture.ApplySparseTextureStreamingTransition(request));
@@ -250,7 +252,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             {
                 onError?.Invoke(ex);
             }
-        }, $"XRTexture2D.ScheduleSparseTransition[{textureName}]");
+        }, $"XRTexture2D.ScheduleSparseTransition[{textureName}]", RenderThreadJobKind.TextureUpload);
 
         return true;
     }
@@ -340,8 +342,14 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void EnqueueRenderThreadTask(Action task)
         => Engine.EnqueueRenderThreadTask(task);
 
+    public void EnqueueRenderThreadTask(Action task, RenderThreadJobKind renderThreadKind)
+        => Engine.EnqueueRenderThreadTask(task, renderThreadKind);
+
     public void EnqueueRenderThreadTask(Action task, string reason)
         => Engine.EnqueueRenderThreadTask(task, reason);
+
+    public void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind)
+        => Engine.EnqueueRenderThreadTask(task, reason, renderThreadKind);
 
     public void EnqueueAppThreadTask(Action task)
         => Engine.EnqueueAppThreadTask(task);
@@ -352,8 +360,14 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void EnqueueRenderThreadCoroutine(Func<bool> task)
         => Engine.AddRenderThreadCoroutine(task);
 
+    public void EnqueueRenderThreadCoroutine(Func<bool> task, RenderThreadJobKind renderThreadKind)
+        => Engine.AddRenderThreadCoroutine(task, renderThreadKind);
+
     public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
         => Engine.AddRenderThreadCoroutine(task, reason);
+
+    public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason, RenderThreadJobKind renderThreadKind)
+        => Engine.AddRenderThreadCoroutine(task, reason, renderThreadKind);
 
     public void ProcessRenderThreadTasks()
         => Engine.ProcessMainThreadTasks();

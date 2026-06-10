@@ -120,8 +120,8 @@ internal sealed class VulkanPipelinePrewarmDatabase
         PrimitiveTopology topology,
         bool useDynamicRendering,
         string renderPassSignature,
-        Format colorAttachmentFormat,
-        Format depthAttachmentFormat,
+        string colorAttachmentFormats,
+        string depthAttachmentFormat,
         ulong programPipelineHash,
         ulong vertexLayoutHash,
         SampleCountFlags rasterizationSamples,
@@ -141,8 +141,8 @@ internal sealed class VulkanPipelinePrewarmDatabase
             topology.ToString(),
             useDynamicRendering.ToString(),
             renderPassSignature,
-            colorAttachmentFormat.ToString(),
-            depthAttachmentFormat.ToString(),
+            colorAttachmentFormats,
+            depthAttachmentFormat,
             programPipelineHash.ToString("X16"),
             vertexLayoutHash.ToString("X16"),
             rasterizationSamples.ToString(),
@@ -166,8 +166,8 @@ internal sealed class VulkanPipelinePrewarmDatabase
             Topology = topology.ToString(),
             UseDynamicRendering = useDynamicRendering,
             RenderPassSignature = renderPassSignature,
-            ColorAttachmentFormat = colorAttachmentFormat.ToString(),
-            DepthAttachmentFormat = depthAttachmentFormat.ToString(),
+            ColorAttachmentFormat = colorAttachmentFormats,
+            DepthAttachmentFormat = depthAttachmentFormat,
             ProgramPipelineHash = programPipelineHash,
             VertexLayoutHash = vertexLayoutHash,
             RasterizationSamples = rasterizationSamples.ToString(),
@@ -330,8 +330,7 @@ public unsafe partial class VulkanRenderer
         PrimitiveTopology topology,
         bool useDynamicRendering,
         RenderPass renderPass,
-        Format colorAttachmentFormat,
-        Format depthAttachmentFormat,
+        DynamicRenderingFormatSignature dynamicRenderingFormats,
         ulong programPipelineHash,
         ulong vertexLayoutHash,
         SampleCountFlags rasterizationSamples,
@@ -347,8 +346,14 @@ public unsafe partial class VulkanRenderer
         string effectName = ResolveMaterialEffectName(material);
         string profileName = VulkanFeatureProfile.ActiveProfile.ToString();
         string renderPassSignature = useDynamicRendering
-            ? BuildDynamicRenderingSignature(colorAttachmentFormat, depthAttachmentFormat)
+            ? BuildDynamicRenderingSignature(dynamicRenderingFormats)
             : GetRenderPassSemanticSignature(renderPass);
+        string colorAttachmentFormats = useDynamicRendering
+            ? dynamicRenderingFormats.DescribeColorFormats()
+            : Format.Undefined.ToString();
+        string depthAttachmentFormat = useDynamicRendering
+            ? dynamicRenderingFormats.DepthAttachmentFormat.ToString()
+            : Format.Undefined.ToString();
 
         VulkanPipelinePrewarmEntry entry = VulkanPipelinePrewarmDatabase.CreateGraphicsEntry(
             passIndex,
@@ -361,7 +366,7 @@ public unsafe partial class VulkanRenderer
             topology,
             useDynamicRendering,
             renderPassSignature,
-            colorAttachmentFormat,
+            colorAttachmentFormats,
             depthAttachmentFormat,
             programPipelineHash,
             vertexLayoutHash,
@@ -428,10 +433,4 @@ public unsafe partial class VulkanRenderer
             shader.Type.ToString()));
     }
 
-    private static string BuildDynamicRenderingSignature(Format colorAttachmentFormat, Format depthAttachmentFormat)
-        => string.Join(
-            "|",
-            "RenderPass:DynamicRendering",
-            $"color={colorAttachmentFormat}",
-            $"depth={depthAttachmentFormat}");
 }

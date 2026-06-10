@@ -54,6 +54,14 @@ namespace XREngine.Rendering
                 Debug.Out($"[GpuMeshBvhPick] {message}");
         }
 
+        private static bool CanUseGpuMeshBvhPicking()
+            => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL;
+
+        private static void WarnGpuMeshBvhPickUnsupportedBackend()
+            => Debug.RenderingWarningEvery(
+                "GpuMeshBvhPick.UnsupportedBackend",
+                TimeSpan.FromSeconds(5),
+                "[GpuMeshBvhPick] GPU mesh BVH picking is currently OpenGL-only; using CPU mesh picking for this backend.");
 
         public static Dictionary<XRWorld, XRWorldInstance> WorldInstances { get; } = [];
 
@@ -1365,41 +1373,45 @@ namespace XREngine.Rendering
 
             if (TryGetGpuMeshBvhPickSubMesh(component, mesh, out _))
             {
-                // Meshes that opt in to a GPU mesh BVH are picked exclusively by traversing
-                // that BVH on the GPU (the CPU skinned-BVH readback can't track realtime
-                // GPU skinning, so it is intentionally not used here).
+                // Meshes that opt in to a GPU mesh BVH are picked through that BVH
+                // only on backends with implemented GPU readback/fence support.
                 if (!(Engine.EditorPreferences?.GpuMeshBvhClickPickEnabled ?? true))
                     return false;
 
-                if (!GpuMeshBvhPickRayIntersectsRequestBounds(mesh, worldSegment, out float boundsDistance))
-                    return false;
-
-                GpuMeshBvhPickCandidate candidate = QueueGpuMeshBvhPick(component, info, mesh, worldSegment, boundsDistance, hitMode, out GpuMeshBvhPickCandidate? lastHit);
-
-                if (candidate.IsComplete)
+                if (CanUseGpuMeshBvhPicking())
                 {
-                    // The current ray has a definitive answer for this mesh.
-                    if (!candidate.HasHit)
+                    if (!GpuMeshBvhPickRayIntersectsRequestBounds(mesh, worldSegment, out float boundsDistance))
                         return false;
 
-                    distance = candidate.Distance;
-                    result = candidate.PickResult ?? candidate;
+                    GpuMeshBvhPickCandidate candidate = QueueGpuMeshBvhPick(component, info, mesh, worldSegment, boundsDistance, hitMode, out GpuMeshBvhPickCandidate? lastHit);
+
+                    if (candidate.IsComplete)
+                    {
+                        // The current ray has a definitive answer for this mesh.
+                        if (!candidate.HasHit)
+                            return false;
+
+                        distance = candidate.Distance;
+                        result = candidate.PickResult ?? candidate;
+                        return true;
+                    }
+
+                    // Pending GPU readback: surface the most recent exact hit (one-frame latency)
+                    // so hover highlighting tracks the cursor smoothly instead of snapping to the
+                    // coarse bounding-volume distance while a fresh raycast is in flight.
+                    if (lastHit is { HasHit: true })
+                    {
+                        distance = lastHit.Distance;
+                        result = lastHit.PickResult ?? lastHit;
+                        return true;
+                    }
+
+                    distance = candidate.CandidateDistance;
+                    result = candidate;
                     return true;
                 }
 
-                // Pending GPU readback: surface the most recent exact hit (one-frame latency)
-                // so hover highlighting tracks the cursor smoothly instead of snapping to the
-                // coarse bounding-volume distance while a fresh raycast is in flight.
-                if (lastHit is { HasHit: true })
-                {
-                    distance = lastHit.Distance;
-                    result = lastHit.PickResult ?? lastHit;
-                    return true;
-                }
-
-                distance = candidate.CandidateDistance;
-                result = candidate;
-                return true;
+                WarnGpuMeshBvhPickUnsupportedBackend();
             }
 
             if (!TryIntersectRenderableMesh(mesh, worldSegment, out distance, out Triangle worldTriangle, out Vector3 hitPoint, out IndexTriangle triangleIndices, out int triangleIndex))
@@ -1947,7 +1959,7 @@ namespace XREngine.Rendering
                     Resizable = false,
                     DisposeOnPush = false,
                     PadEndingToVec4 = true,
-                    ShouldMap = true,
+                    ShouldMap = false,
                     StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
                     RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
                 };

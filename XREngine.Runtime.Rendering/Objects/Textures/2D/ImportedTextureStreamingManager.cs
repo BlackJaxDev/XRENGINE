@@ -449,7 +449,8 @@ internal sealed class ImportedTextureStreamingManager
                             Volatile.Write(ref _sparseFinalizeScheduled, 0);
                         }
                     },
-                    "TextureStreaming.FinalizeSparseTransitions");
+                    "TextureStreaming.FinalizeSparseTransitions",
+                    RenderThreadJobKind.TextureUpload);
             }
 
             return;

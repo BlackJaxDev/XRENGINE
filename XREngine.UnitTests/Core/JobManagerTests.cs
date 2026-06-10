@@ -44,6 +44,44 @@ public sealed class JobManagerTests
     }
 
     [Test]
+    [NonParallelizable]
+    public void ProcessMainThreadJobs_PassesRenderThreadJobKindToObserver()
+    {
+        var manager = new JobManager(workerCount: 1);
+        Action<JobAffinity, string, RenderThreadJobKind>? previousObserver = JobManager.JobDispatchObserver;
+        JobAffinity observedAffinity = JobAffinity.Any;
+        string? observedLabel = null;
+        RenderThreadJobKind observedKind = RenderThreadJobKind.Unknown;
+
+        try
+        {
+            JobManager.JobDispatchObserver = (affinity, label, kind) =>
+            {
+                observedAffinity = affinity;
+                observedLabel = label;
+                observedKind = kind;
+            };
+
+            manager.Schedule(
+                new LabeledActionJob(() => { }, "TextureUploadTest"),
+                JobPriority.Normal,
+                JobAffinity.RenderThread,
+                renderThreadKind: RenderThreadJobKind.TextureUpload);
+
+            manager.ProcessMainThreadJobs(maxJobs: 1);
+
+            observedAffinity.ShouldBe(JobAffinity.RenderThread);
+            observedLabel.ShouldBe("Invoke:TextureUploadTest");
+            observedKind.ShouldBe(RenderThreadJobKind.TextureUpload);
+        }
+        finally
+        {
+            JobManager.JobDispatchObserver = previousObserver;
+            manager.Shutdown(waitForWorkers: false);
+        }
+    }
+
+    [Test]
     public void Shutdown_ReturnsEvenWhenWorkerJobIgnoresCancellation()
     {
         using ManualResetEventSlim releaseWorker = new(false);

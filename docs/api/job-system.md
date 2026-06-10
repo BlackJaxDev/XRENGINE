@@ -6,6 +6,7 @@ High-level documentation for the cooperative job system that powers async work a
 - **Cooperative stepping**: Jobs are enumerator-driven (`IEnumerator`/`IEnumerable`). Each dispatch calls `Job.Step()` which advances the iterator, handles yielded values, and requeues when needed.
 - **Thread pool owned by the manager**: `JobManager` spins up background worker threads (default: CPU count minus 4 reserved, capped at 16) and drives work without relying on .NET thread pool heuristics.
 - **Affinities**: Jobs choose one of four lanes: `Any` (worker threads), `MainThread` (polled by `Engine.Jobs.ProcessMainThreadJobs()`), `CollectVisibleSwap` (polled during render/collect-visible swap), and `Remote` (dispatched through a transport for out-of-process work).
+- **Render-thread intent**: render-thread jobs can carry a `RenderThreadJobKind` such as `TextureUpload`, `BufferUpload`, `Readback`, or `RenderPipelineResource`. Debug dispatch diagnostics use this metadata instead of relying on profiler-label string guesses.
 - **Priorities**: Five priority buckets (`Lowest`..`Highest`) exist per affinity. Aging prevents starvation by picking the longest-waiting job (over ~2s) before raw priority order.
 - **Bounded queue (optional)**: When enabled, a semaphore gates total enqueued jobs (default cap 8192, warn at 2048). Slots free on completion.
 - **Remote dispatch**: If `RemoteTransport` is set, `ScheduleRemote` wraps a request into a job that lives in the remote affinity lane.
@@ -36,6 +37,8 @@ High-level documentation for the cooperative job system that powers async work a
 - **MainThread**: Enqueued jobs run when `Engine.Jobs.ProcessMainThreadJobs()` is called (e.g., from the main thread pump in `Engine.ProcessPendingMainThreadWork`). Use for UI, scene graph, or API calls that must be on the main thread.
 - **CollectVisibleSwap**: Consumed inside `EngineTimer.CollectVisibleThread` before swap buffers. Use for render-graph prep that must synchronize with collect-visible/swap cadence.
 - **Remote**: Uses `IRemoteJobTransport` to send `RemoteJobRequest` and await `RemoteJobResponse`. A dedicated loop exists only while work is queued.
+
+For work that specifically requires the graphics context, prefer the render-thread helpers that accept `RenderThreadJobKind`. Keep scene, editor, networking, and other non-GPU work on `AppThread`/update-thread paths so it does not stall `RenderFrame`.
 
 ## Progress, Callbacks, and Payloads
 - `Job.ProgressChanged` and `Job.ProgressWithPayload` fire on the job's `SynchronizationContext` (captured at construction unless overridden).
@@ -89,6 +92,12 @@ IEnumerable DownloadAndStreamAssets()
 Engine.Jobs.Schedule(new ActionJob(() => SceneGraph.AddNode(node)),
     JobPriority.Normal,
     JobAffinity.MainThread);
+
+// Render-thread GPU work with explicit intent metadata
+Engine.EnqueueRenderThreadTask(
+    () => texture.PushData(),
+    "XRTexture2D.UploadMipmaps",
+    RenderThreadJobKind.TextureUpload);
 
 // Remote job
 var response = await Engine.Jobs.ScheduleRemote(new RemoteJobRequest

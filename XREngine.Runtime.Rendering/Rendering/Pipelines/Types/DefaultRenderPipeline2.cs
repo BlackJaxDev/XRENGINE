@@ -1684,7 +1684,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private XRDataBuffer? _probeGridIndexBuffer;
     private const string LightProbePositionBufferName = "LightProbePositions";
     private const string LightProbeParamBufferName = "LightProbeParameters";
-    private const string LightProbeTetraBufferName = "LightProbeTetra";
+    private const string LightProbeTetraBufferName = "LightProbeTetrahedra";
     private const string LightProbeGridCellBufferName = "LightProbeGridCells";
     private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
     private const string LightProbeIrradianceArrayName = "LightProbeIrradianceArray";

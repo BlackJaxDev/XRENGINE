@@ -202,7 +202,8 @@ namespace XREngine.Rendering
             else
                 RuntimeEngine.EnqueueRenderThreadTask(
                     () => ApplyVSyncModeOnRenderThread(globalVSyncMode),
-                    $"XRWindow.ApplyVSync[{GetHashCode()}]");
+                    $"XRWindow.ApplyVSync[{GetHashCode()}]",
+                    RenderThreadJobKind.RequiresGraphicsContext);
         }
 
         public void RequestClose()
@@ -218,7 +219,8 @@ namespace XREngine.Rendering
 
             RuntimeEngine.EnqueueRenderThreadTask(
                 RequestCloseOnRenderThread,
-                $"Viewport.CloseWindow[{GetHashCode()}]");
+                $"Viewport.CloseWindow[{GetHashCode()}]",
+                RenderThreadJobKind.RequiresGraphicsContext);
         }
 
         private void ApplyVSyncModeOnRenderThread(EVSyncMode globalVSyncMode)

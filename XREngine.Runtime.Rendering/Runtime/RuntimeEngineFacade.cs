@@ -63,11 +63,29 @@ internal static partial class RuntimeEngine
     public static void ProcessMainThreadTasks()
         => RuntimeRenderingHostServices.Current.ProcessRenderThreadTasks();
 
-    public static void EnqueueMainThreadTask(Action action, string? name = null)
-        => RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(action, name ?? "main-thread facade task");
+    public static void EnqueueMainThreadTask(
+        Action action,
+        string? name = null,
+        RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
+        => RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+            action,
+            name ?? "main-thread facade task",
+            renderThreadKind);
 
-    public static void EnqueueRenderThreadTask(Action action, string? name = null)
-        => RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(action, name ?? "render-thread facade task");
+    public static void EnqueueMainThreadTask(Action action, RenderThreadJobKind renderThreadKind)
+        => EnqueueMainThreadTask(action, name: null, renderThreadKind);
+
+    public static void EnqueueRenderThreadTask(
+        Action action,
+        string? name = null,
+        RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
+        => RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
+            action,
+            name ?? "render-thread facade task",
+            renderThreadKind);
+
+    public static void EnqueueRenderThreadTask(Action action, RenderThreadJobKind renderThreadKind)
+        => EnqueueRenderThreadTask(action, name: null, renderThreadKind);
 
     public static void EnqueueAppThreadTask(Action action, string? name = null)
         => RuntimeRenderingHostServices.Current.EnqueueAppThreadTask(action, name ?? "app-thread facade task");
@@ -91,11 +109,29 @@ internal static partial class RuntimeEngine
         return true;
     }
 
-    public static void AddMainThreadCoroutine(Func<bool> step, string? name = null)
-        => EnqueueMainThreadTask(() => step(), name);
+    public static void AddMainThreadCoroutine(
+        Func<bool> step,
+        string? name = null,
+        RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
+        => RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+            step,
+            name ?? "main-thread facade coroutine",
+            renderThreadKind);
 
-    public static void AddRenderThreadCoroutine(Func<bool> step, string? name = null)
-        => EnqueueRenderThreadTask(() => step(), name);
+    public static void AddMainThreadCoroutine(Func<bool> step, RenderThreadJobKind renderThreadKind)
+        => AddMainThreadCoroutine(step, name: null, renderThreadKind);
+
+    public static void AddRenderThreadCoroutine(
+        Func<bool> step,
+        string? name = null,
+        RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
+        => RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(
+            step,
+            name ?? "render-thread facade coroutine",
+            renderThreadKind);
+
+    public static void AddRenderThreadCoroutine(Func<bool> step, RenderThreadJobKind renderThreadKind)
+        => AddRenderThreadCoroutine(step, name: null, renderThreadKind);
 
     public static string GetStackTrace() => Environment.StackTrace;
     public static void LogWarning(string message, EOutputVerbosity verbosity = EOutputVerbosity.Normal, ELogCategory category = ELogCategory.General)
@@ -105,8 +141,13 @@ internal static partial class RuntimeEngine
 
     public static partial class Rendering
     {
-        private static readonly Stack<XRRenderPipelineInstance> PipelineStack = new();
-        private static readonly Stack<XRRenderPipelineInstance?> PipelineOverrideStack = new();
+        [ThreadStatic]
+        private static Stack<XRRenderPipelineInstance>? t_pipelineStack;
+        [ThreadStatic]
+        private static Stack<XRRenderPipelineInstance?>? t_pipelineOverrideStack;
+
+        private static Stack<XRRenderPipelineInstance> PipelineStack => t_pipelineStack ??= new();
+        private static Stack<XRRenderPipelineInstance?> PipelineOverrideStack => t_pipelineOverrideStack ??= new();
 
         public static RuntimeRenderSettings Settings { get; } = new();
         private static RuntimeRenderingState StateData { get; } = new();

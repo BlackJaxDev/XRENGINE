@@ -61,7 +61,7 @@ namespace XREngine.Rendering.OpenGL
                     DeleteObject();
                 else
                 {
-                    RuntimeEngine.EnqueueMainThreadTask(Destroy);
+                    RuntimeEngine.EnqueueMainThreadTask(Destroy, RenderThreadJobKind.RequiresGraphicsContext);
                     return;
                 }
 
@@ -137,7 +137,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!RuntimeEngine.IsRenderThread)
                 {
                     Debug.OpenGLWarning("Attempted to generate OpenGL object from non-render thread. Enqueuing task to main thread, but this may break subsequent generation-dependent calls on the current thread.");
-                    RuntimeEngine.EnqueueMainThreadTask(Generate);
+                    RuntimeEngine.EnqueueMainThreadTask(Generate, RenderThreadJobKind.RequiresGraphicsContext);
                     return;
                 }
 

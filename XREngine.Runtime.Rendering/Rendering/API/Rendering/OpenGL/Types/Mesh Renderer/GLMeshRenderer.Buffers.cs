@@ -88,7 +88,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
                     RefreshIndexBuffersFromCache,
-                    "GLMeshRenderer.RefreshIndexBuffersFromCache");
+                    "GLMeshRenderer.RefreshIndexBuffersFromCache",
+                    RenderThreadJobKind.MeshUpload);
             }
 
             /// <summary>

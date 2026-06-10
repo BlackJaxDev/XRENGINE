@@ -26,6 +26,12 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Swapchain image views must be created before framebuffers.");
 
         swapChainFramebuffers = new Framebuffer[swapChainImageViews.Length];
+        if (UseDynamicRenderingRenderTargets)
+        {
+            AllocateCommandBufferDirtyFlags();
+            return;
+        }
+
         ImageView[] attachments = new ImageView[2];
 
         for (int i = 0; i < swapChainImageViews.Length; i++)

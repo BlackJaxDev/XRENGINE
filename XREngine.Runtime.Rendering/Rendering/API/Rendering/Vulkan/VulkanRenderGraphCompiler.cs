@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
@@ -27,6 +28,23 @@ public unsafe partial class VulkanRenderer
             int SchedulingIdentity,
             Type OpType,
             FrameOpContext Context);
+
+        private sealed class PassOrderCacheEntry
+        {
+            public PassOrderCacheEntry(IReadOnlyCollection<RenderPassMetadata> metadata)
+            {
+                IReadOnlyList<RenderPassMetadata> orderedPasses = RenderGraphSynchronizationPlanner.TopologicallySort(metadata);
+                Dictionary<int, int> passOrder = new(orderedPasses.Count);
+                for (int i = 0; i < orderedPasses.Count; i++)
+                    passOrder[orderedPasses[i].PassIndex] = i;
+
+                PassOrder = passOrder;
+            }
+
+            public IReadOnlyDictionary<int, int> PassOrder { get; }
+        }
+
+        private static readonly ConditionalWeakTable<IReadOnlyCollection<RenderPassMetadata>, PassOrderCacheEntry> PassOrderCache = new();
 
         /// <summary>
         /// Compiles the high-level pass metadata into:
@@ -84,13 +102,17 @@ public unsafe partial class VulkanRenderer
 
         /// <summary>
         /// Sorts frame operations deterministically by:
-        /// 1) first-occurrence scheduling group,
-        /// 2) compiled pass topological order,
+        /// 1) compiled pass topological order,
+        /// 2) first-occurrence scheduling group,
         /// 3) original index (stable tie-breaker).
         /// </summary>
         /// <remarks>
-        /// Using first occurrence instead of raw scheduling hash preserves inter-pipeline enqueue
-        /// order while still grouping same-context operations together.
+        /// Pass order must dominate scheduling groups so consumers cannot be recorded before
+        /// producers when different pipeline/viewport contexts enqueue related work. The pass
+        /// rank is resolved from each op's own context metadata because a frame can contain
+        /// DefaultRenderPipeline work and probe/scene-capture work at the same time.
+        /// First occurrence is still used as the group tie-breaker instead of raw scheduling hash
+        /// so same-pass operations preserve inter-pipeline enqueue order.
         /// </remarks>
         /// <param name="ops">Operations to sort.</param>
         /// <param name="graph">Compiled pass-order metadata.</param>
@@ -115,22 +137,35 @@ public unsafe partial class VulkanRenderer
             }
 
             // If pass order is unavailable, pass rank falls back to int.MaxValue.
-            bool hasPassOrder = graph.PassOrder.Count > 0;
-
             return [.. ops
                 .Select((op, index) => new
                 {
                     Operation = op,
                     OriginalIndex = index,
                     GroupOrder = firstOccurrence[op.Context.SchedulingIdentity],
-                    PassOrder = hasPassOrder && graph.PassOrder.TryGetValue(op.PassIndex, out int order)
-                        ? order
-                        : int.MaxValue
+                    PassOrder = ResolvePassOrder(op, graph)
                 })
-                .OrderBy(x => x.GroupOrder)
-                .ThenBy(x => x.PassOrder)
+                .OrderBy(x => x.PassOrder)
+                .ThenBy(x => x.GroupOrder)
                 .ThenBy(x => x.OriginalIndex)
                 .Select(x => x.Operation)];
+        }
+
+        private static int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
+        {
+            if (op.Context.PassMetadata is { Count: > 0 } metadata)
+            {
+                IReadOnlyDictionary<int, int> contextPassOrder = PassOrderCache.GetValue(
+                    metadata,
+                    static key => new PassOrderCacheEntry(key)).PassOrder;
+
+                if (contextPassOrder.TryGetValue(op.PassIndex, out int contextOrder))
+                    return contextOrder;
+            }
+
+            return graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder)
+                ? graphOrder
+                : int.MaxValue;
         }
 
         /// <summary>
@@ -270,7 +305,7 @@ public unsafe partial class VulkanRenderer
         /// Determines whether an op type participates in secondary command recording buckets.
         /// </summary>
         private static bool IsSecondaryBucketEligible(FrameOp op)
-            => op is BlitOp or IndirectDrawOp or ComputeDispatchOp;
+            => op is BlitOp or IndirectDrawOp;
 
         /// <summary>
         /// Determines whether a pass can be merged into an existing compiled batch.
