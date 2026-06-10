@@ -163,7 +163,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private readonly struct FrameBufferAttachmentSignature : IEquatable<FrameBufferAttachmentSignature>
+    internal readonly struct FrameBufferAttachmentSignature : IEquatable<FrameBufferAttachmentSignature>
     {
         public FrameBufferAttachmentSignature(
             Format format,
@@ -261,7 +261,7 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private enum AttachmentRole
+    internal enum AttachmentRole
     {
         Color,
         Depth,

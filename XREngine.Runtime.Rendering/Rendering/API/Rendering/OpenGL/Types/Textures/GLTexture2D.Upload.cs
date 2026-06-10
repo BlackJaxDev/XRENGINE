@@ -406,7 +406,7 @@ public partial class GLTexture2D
             Unbind();
             CleanupSchedulerRegistration();
             return true; // Done.
-        }, progressiveUploadLabel);
+        }, progressiveUploadLabel, RenderThreadJobKind.TextureUpload);
     }
 
     private unsafe bool TryPushProgressiveMipChunk(
@@ -522,7 +522,8 @@ public partial class GLTexture2D
             string textureName = string.IsNullOrWhiteSpace(Data.Name) ? "UnnamedTexture" : Data.Name;
             RuntimeEngine.EnqueueMainThreadTask(
                 () => PushPreparedMipLevel(mipIndex),
-                $"GLTexture2D.PushPreparedMipLevel[{textureName}].Mip{mipIndex}");
+                $"GLTexture2D.PushPreparedMipLevel[{textureName}].Mip{mipIndex}",
+                RenderThreadJobKind.TextureUpload);
             return false;
         }
 

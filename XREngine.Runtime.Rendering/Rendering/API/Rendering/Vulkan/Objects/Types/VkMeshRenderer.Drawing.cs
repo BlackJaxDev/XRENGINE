@@ -38,15 +38,12 @@ public unsafe partial class VulkanRenderer
 			in PendingMeshDraw draw,
 			RenderPass renderPass,
 			bool useDynamicRendering,
-			Format colorAttachmentFormat,
-			Format depthAttachmentFormat,
+			DynamicRenderingFormatSignature dynamicRenderingFormats,
 			int passIndex,
 			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 			bool depthStencilReadOnly,
 			string pipelineName)
 		{
-			EnsureBuffers();
-
 			var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 			if (!TryPrepareForRendering(material, out string prepareReason))
 			{
@@ -97,11 +94,11 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
+				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
 				{
 					if (verboseTrace)
-						Debug.MeshesWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colorFmt={3} depthFmt={4}",
-							Mesh?.Name ?? "?", topology, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat);
+						Debug.MeshesWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colors={3} depthFmt={4}",
+							Mesh?.Name ?? "?", topology, useDynamicRendering, dynamicRenderingFormats.DescribeColorFormats(), dynamicRenderingFormats.DepthAttachmentFormat);
 					return false;
 				}
 
@@ -192,7 +189,7 @@ public unsafe partial class VulkanRenderer
 					return;
 				}
 
-				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
+				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
 				{
 					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
@@ -247,7 +244,7 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				sourceBuffer.Generate();
+				sourceBuffer.EnsureReadyForRendering();
 				if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
 				{
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not allocated.");

@@ -477,6 +477,18 @@ namespace XREngine.Rendering.Vulkan
             DestroyDeferredSecondaryCommandBuffers();
             DestroyComputeDescriptorCaches();
 
+            if (_deviceLost)
+            {
+                foreach (CommandBuffer commandBuffer in _commandBuffers)
+                    RemoveCommandBufferBindState(commandBuffer);
+
+                _commandBuffers = null;
+                _commandBufferDirtyFlags = null;
+                _commandBufferFrameOpSignatures = null;
+                _commandBufferPlannerRevisions = null;
+                return;
+            }
+
             fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
             {
                 if (_commandBuffers.Length > 0)
@@ -514,6 +526,12 @@ namespace XREngine.Rendering.Vulkan
                 CommandBuffer secondary = entry.CommandBuffer;
                 if (secondary.Handle == 0 || entry.Pool.Handle == 0)
                     continue;
+
+                if (_deviceLost)
+                {
+                    RemoveCommandBufferBindState(secondary);
+                    continue;
+                }
 
                 Api!.FreeCommandBuffers(device, entry.Pool, 1, ref secondary);
                 RemoveCommandBufferBindState(secondary);
@@ -993,13 +1011,10 @@ namespace XREngine.Rendering.Vulkan
             // keep their original context for correct barrier/resource planning.
             VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
 
-            // Always sort frame ops by (GroupOrder, PassOrder, OriginalIndex).
-            // GroupOrder preserves inter-pipeline enqueue order while grouping ops
-            // from the same pipeline together.  Previously sorting was limited to
-            // single-context frames, but multi-context frames (e.g.
-            // DebugOpaqueRenderPipeline + UserInterfaceRenderPipeline) also need
-            // correct pass ordering to avoid render-pass restarts that clear
-            // composited swapchain content (e.g. the skybox turning black).
+            // Always sort frame ops by (PassOrder, GroupOrder, OriginalIndex).
+            // Render graph pass order preserves producer/consumer dependencies
+            // across pipeline/viewport contexts, while GroupOrder keeps same-pass
+            // operations grouped by their original context order.
             ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
 
             IReadOnlyList<VulkanRenderGraphCompiler.SecondaryRecordingBucket> secondaryBuckets =
@@ -1215,6 +1230,8 @@ namespace XREngine.Rendering.Vulkan
             XRFrameBuffer? activeTarget = null;
             RenderPass activeRenderPass = default;
             Framebuffer activeFramebuffer = default;
+            DynamicRenderingFormatSignature activeDynamicRenderingFormats = default;
+            FrameBufferAttachmentSignature[]? activeFboAttachmentSignature = null;
             Rect2D activeRenderArea = default;
             bool activeDepthStencilReadOnly = false;
             int activePassIndex = int.MinValue;
@@ -1316,6 +1333,18 @@ namespace XREngine.Rendering.Vulkan
                         if (finalClose)
                             TransitionSwapchainToPresent();
                     }
+                    else if (activeTarget is not null && activeFboAttachmentSignature is not null)
+                    {
+                        TransitionFboAttachmentsForDynamicRendering(
+                            commandBuffer,
+                            activeTarget,
+                            activeFboAttachmentSignature,
+                            beginRendering: false);
+
+                        ImageLayout[] finalLayouts = VkFrameBuffer.GetFinalLayouts(activeFboAttachmentSignature);
+                        UpdatePhysicalGroupLayoutsForFbo(activeTarget, finalLayouts);
+                        fboLayoutTracking[activeTarget] = finalLayouts;
+                    }
                 }
                 else
                 {
@@ -1349,6 +1378,8 @@ namespace XREngine.Rendering.Vulkan
                 activeTarget = null;
                 activeRenderPass = default;
                 activeFramebuffer = default;
+                activeDynamicRenderingFormats = default;
+                activeFboAttachmentSignature = null;
                 activeRenderArea = default;
                 activeDepthStencilReadOnly = false;
             }
@@ -1358,7 +1389,7 @@ namespace XREngine.Rendering.Vulkan
                 // Assumes no active render pass.
                 if (target is null)
                 {
-                    bool useDynamicRendering = SupportsDynamicRendering &&
+                    bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
                         swapChainImageViews is not null &&
                         swapChainImages is not null &&
                         imageIndex < swapChainImageViews.Length &&
@@ -1493,6 +1524,8 @@ namespace XREngine.Rendering.Vulkan
                         activeTarget = null;
                         activeRenderPass = default;
                         activeFramebuffer = default;
+                        activeDynamicRenderingFormats = CreateSwapchainDynamicRenderingFormatSignature(swapChainImageFormat, _swapchainDepthFormat);
+                        activeFboAttachmentSignature = null;
                         activeRenderArea = renderingInfo.RenderArea;
                         activeDepthStencilReadOnly = false;
                         swapchainClearedThisFrame = true;
@@ -1530,6 +1563,8 @@ namespace XREngine.Rendering.Vulkan
                     activeTarget = null;
                     activeRenderPass = selectedRenderPass;
                     activeFramebuffer = swapChainFramebuffers![imageIndex];
+                    activeDynamicRenderingFormats = default;
+                    activeFboAttachmentSignature = null;
                     activeRenderArea = renderPassInfo.RenderArea;
                     activeDepthStencilReadOnly = false;
                     swapchainClearedThisFrame = true;
@@ -1542,7 +1577,7 @@ namespace XREngine.Rendering.Vulkan
                 string fboName = string.IsNullOrWhiteSpace(target.Name)
                     ? $"FBO[{target.GetHashCode()}]"
                     : target.Name!;
-                CmdBeginLabel(commandBuffer, $"RenderPass:{fboName}");
+                CmdBeginLabel(commandBuffer, $"{(UseDynamicRenderingRenderTargets ? "Rendering" : "RenderPass")}:{fboName}");
                 renderPassLabelActive = true;
 
                 // Look up the CURRENT tracked layout of each attachment so the render
@@ -1564,8 +1599,118 @@ namespace XREngine.Rendering.Vulkan
                 // same layouts we resolved here.
                 if (trackedLayouts is not null)
                     fboLayoutTracking[target] = trackedLayouts;
-                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts);
+                FrameBufferAttachmentSignature[] fboSignature = vkFrameBuffer.ResolveAttachmentSignatureForPass(passIndex, context.PassMetadata, trackedLayouts);
                 bool passDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(passIndex, context.PassMetadata, trackedLayouts);
+                Rect2D fboRenderArea = new()
+                {
+                    Offset = new Offset2D(0, 0),
+                    // Use the actual target dimensions (may be smaller when
+                    // targeting a mip level > 0, e.g. bloom downsample FBOs).
+                    Extent = new Extent2D(
+                        vkFrameBuffer.FramebufferWidth > 0 ? vkFrameBuffer.FramebufferWidth : Math.Max(target.Width, 1u),
+                        vkFrameBuffer.FramebufferHeight > 0 ? vkFrameBuffer.FramebufferHeight : Math.Max(target.Height, 1u))
+                };
+
+                if (UseDynamicRenderingRenderTargets)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.BeginRendering.FBO.{fboName}.{fboSignature.Length}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] BeginRendering FBO='{0}' pass={1} attachments={2} fbDims={3}x{4} trackedLayouts={5}",
+                        fboName,
+                        passIndex,
+                        fboSignature.Length,
+                        vkFrameBuffer.FramebufferWidth,
+                        vkFrameBuffer.FramebufferHeight,
+                        trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null");
+
+                    TransitionFboAttachmentsForDynamicRendering(
+                        commandBuffer,
+                        target,
+                        fboSignature,
+                        beginRendering: true);
+
+                    uint dynamicAttachmentCountFbo = Math.Max((uint)fboSignature.Length, 1u);
+                    ClearValue* dynamicClearValuesFbo = stackalloc ClearValue[(int)dynamicAttachmentCountFbo];
+                    vkFrameBuffer.WriteClearValues(dynamicClearValuesFbo, dynamicAttachmentCountFbo, fboSignature);
+
+                    uint colorAttachmentCount = 0;
+                    for (int i = 0; i < fboSignature.Length; i++)
+                    {
+                        if (fboSignature[i].Role == AttachmentRole.Color)
+                            colorAttachmentCount++;
+                    }
+
+                    RenderingAttachmentInfo* colorAttachments = stackalloc RenderingAttachmentInfo[(int)Math.Max(colorAttachmentCount, 1u)];
+                    uint colorAttachmentIndex = 0;
+                    RenderingAttachmentInfo depthAttachment = default;
+                    RenderingAttachmentInfo stencilAttachment = default;
+                    bool hasDepthAttachment = false;
+                    bool hasStencilAttachment = false;
+
+                    for (int i = 0; i < fboSignature.Length; i++)
+                    {
+                        if (!vkFrameBuffer.TryGetAttachmentView(i, out ImageView view))
+                            throw new InvalidOperationException($"Framebuffer '{fboName}' attachment {i} has no valid Vulkan image view.");
+
+                        FrameBufferAttachmentSignature signature = fboSignature[i];
+                        RenderingAttachmentInfo attachmentInfo = new()
+                        {
+                            SType = StructureType.RenderingAttachmentInfo,
+                            ImageView = view,
+                            ImageLayout = signature.ReferenceLayout,
+                            LoadOp = signature.LoadOp,
+                            StoreOp = signature.StoreOp,
+                            ClearValue = dynamicClearValuesFbo[i],
+                        };
+
+                        if (signature.Role == AttachmentRole.Color)
+                        {
+                            colorAttachments[colorAttachmentIndex++] = attachmentInfo;
+                            continue;
+                        }
+
+                        if ((signature.AspectMask & ImageAspectFlags.DepthBit) != 0)
+                        {
+                            depthAttachment = attachmentInfo;
+                            hasDepthAttachment = true;
+                        }
+
+                        if ((signature.AspectMask & ImageAspectFlags.StencilBit) != 0)
+                        {
+                            stencilAttachment = attachmentInfo;
+                            stencilAttachment.LoadOp = signature.StencilLoadOp;
+                            stencilAttachment.StoreOp = signature.StencilStoreOp;
+                            hasStencilAttachment = true;
+                        }
+                    }
+
+                    RenderingInfo renderingInfo = new()
+                    {
+                        SType = StructureType.RenderingInfo,
+                        RenderArea = fboRenderArea,
+                        LayerCount = 1,
+                        ColorAttachmentCount = colorAttachmentCount,
+                        PColorAttachments = colorAttachmentCount > 0 ? colorAttachments : null,
+                        PDepthAttachment = hasDepthAttachment ? &depthAttachment : null,
+                        PStencilAttachment = hasStencilAttachment ? &stencilAttachment : null,
+                    };
+
+                    Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
+
+                    renderPassActive = true;
+                    activeDynamicRendering = true;
+                    activeTarget = target;
+                    activeRenderPass = default;
+                    activeFramebuffer = default;
+                    activeDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(fboSignature);
+                    activeFboAttachmentSignature = fboSignature;
+                    activeRenderArea = renderingInfo.RenderArea;
+                    activeDepthStencilReadOnly = passDepthStencilReadOnly;
+                    return;
+                }
+
+                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts);
 
                 Debug.VulkanEvery(
                     $"Vulkan.BeginRP.FBO.{fboName}.{passRenderPass.Handle:X}",
@@ -1583,15 +1728,7 @@ namespace XREngine.Rendering.Vulkan
                     SType = StructureType.RenderPassBeginInfo,
                     RenderPass = passRenderPass,
                     Framebuffer = vkFrameBuffer.FrameBuffer,
-                    RenderArea = new Rect2D
-                    {
-                        Offset = new Offset2D(0, 0),
-                        // Use the actual VkFramebuffer dimensions (may be smaller when
-                        // targeting a mip level > 0, e.g. bloom downsample FBOs).
-                        Extent = new Extent2D(
-                            vkFrameBuffer.FramebufferWidth > 0 ? vkFrameBuffer.FramebufferWidth : Math.Max(target.Width, 1u),
-                            vkFrameBuffer.FramebufferHeight > 0 ? vkFrameBuffer.FramebufferHeight : Math.Max(target.Height, 1u))
-                    }
+                    RenderArea = fboRenderArea
                 };
 
                 uint attachmentCountFbo = Math.Max(vkFrameBuffer.AttachmentCount, 1u);
@@ -1607,6 +1744,8 @@ namespace XREngine.Rendering.Vulkan
                 activeTarget = target;
                 activeRenderPass = passRenderPass;
                 activeFramebuffer = vkFrameBuffer.FrameBuffer;
+                activeDynamicRenderingFormats = default;
+                activeFboAttachmentSignature = null;
                 activeRenderArea = fboPassInfo.RenderArea;
                 activeDepthStencilReadOnly = passDepthStencilReadOnly;
             }
@@ -1930,9 +2069,8 @@ namespace XREngine.Rendering.Vulkan
                             commandBuffer,
                             drawOp.Draw,
                             activeRenderPass,
-                            activeDynamicRendering && drawOp.Target is null,
-                            swapChainImageFormat,
-                            _swapchainDepthFormat,
+                            activeDynamicRendering,
+                            activeDynamicRenderingFormats,
                             opPassIndex,
                             drawOp.Context.PassMetadata,
                             activeDepthStencilReadOnly,
@@ -2994,15 +3132,182 @@ namespace XREngine.Rendering.Vulkan
         /// subpass layout to <c>finalLayout</c> at <c>CmdEndRenderPass</c>.
         /// We must track the <b>finalLayout</b>, not the subpass layout.
         /// </summary>
+        private void TransitionFboAttachmentsForDynamicRendering(
+            CommandBuffer commandBuffer,
+            XRFrameBuffer fbo,
+            FrameBufferAttachmentSignature[] signatures,
+            bool beginRendering)
+        {
+            var targets = fbo.Targets;
+            if (targets is null || targets.Length == 0 || signatures.Length == 0)
+                return;
+
+            int barrierCapacity = Math.Min(targets.Length, signatures.Length);
+            if (barrierCapacity <= 0)
+                return;
+
+            ImageMemoryBarrier* barriers = stackalloc ImageMemoryBarrier[barrierCapacity];
+            uint barrierCount = 0;
+            PipelineStageFlags srcStages = 0;
+            PipelineStageFlags dstStages = 0;
+
+            for (int i = 0; i < barrierCapacity; i++)
+            {
+                FrameBufferAttachmentSignature signature = signatures[i];
+                ImageLayout oldLayout = beginRendering ? signature.InitialLayout : signature.ReferenceLayout;
+                ImageLayout newLayout = beginRendering ? signature.ReferenceLayout : signature.FinalLayout;
+                if (newLayout == ImageLayout.Undefined || oldLayout == newLayout)
+                    continue;
+
+                var (target, _, mipLevel, layerIndex) = targets[i];
+                if (target is null)
+                    continue;
+
+                ImageAspectFlags aspectMask = NormalizeBarrierAspectMask(signature.Format, signature.AspectMask);
+                if (!TryResolveAttachmentImage(target, mipLevel, layerIndex, aspectMask, out BlitImageInfo info) ||
+                    info.Image.Handle == 0)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.DynamicRendering.FboTransition.Unresolved.{fbo.GetHashCode()}.{i}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Skipping dynamic-rendering FBO transition for '{0}' attachment {1}: image handle could not be resolved.",
+                        fbo.Name ?? "<unnamed>",
+                        i);
+                    continue;
+                }
+
+                bool oldLayoutIsRenderAttachment = !beginRendering;
+                bool newLayoutIsRenderAttachment = beginRendering;
+                PipelineStageFlags srcStage = oldLayout == ImageLayout.Undefined
+                    ? PipelineStageFlags.TopOfPipeBit
+                    : ResolveFboAttachmentStage(oldLayout, signature, oldLayoutIsRenderAttachment);
+                PipelineStageFlags dstStage = ResolveFboAttachmentStage(newLayout, signature, newLayoutIsRenderAttachment);
+
+                ImageMemoryBarrier barrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = oldLayout == ImageLayout.Undefined
+                        ? 0
+                        : ResolveFboAttachmentAccess(oldLayout, signature, oldLayoutIsRenderAttachment),
+                    DstAccessMask = ResolveFboAttachmentAccess(newLayout, signature, newLayoutIsRenderAttachment),
+                    OldLayout = oldLayout,
+                    NewLayout = newLayout,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = info.Image,
+                    SubresourceRange = new ImageSubresourceRange
+                    {
+                        AspectMask = aspectMask,
+                        BaseMipLevel = info.MipLevel,
+                        LevelCount = 1,
+                        BaseArrayLayer = info.BaseArrayLayer,
+                        LayerCount = info.LayerCount
+                    }
+                };
+
+                barriers[barrierCount++] = barrier;
+                srcStages |= srcStage;
+                dstStages |= dstStage;
+            }
+
+            if (barrierCount == 0)
+                return;
+
+            CmdPipelineBarrierTracked(
+                commandBuffer,
+                NormalizePipelineStages(srcStages),
+                NormalizePipelineStages(dstStages),
+                DependencyFlags.None,
+                0,
+                null,
+                0,
+                null,
+                barrierCount,
+                barriers);
+        }
+
+        private static PipelineStageFlags ResolveFboAttachmentStage(
+            ImageLayout layout,
+            FrameBufferAttachmentSignature signature,
+            bool asRenderAttachment)
+        {
+            if (layout == ImageLayout.ShaderReadOnlyOptimal)
+                return PipelineStageFlags.FragmentShaderBit;
+
+            if (layout is ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal)
+                return PipelineStageFlags.TransferBit;
+
+            if (layout == ImageLayout.ColorAttachmentOptimal ||
+                (asRenderAttachment && signature.Role == AttachmentRole.Color))
+                return PipelineStageFlags.ColorAttachmentOutputBit;
+
+            if (layout is ImageLayout.DepthStencilAttachmentOptimal ||
+                (asRenderAttachment && signature.Role is AttachmentRole.Depth or AttachmentRole.Stencil or AttachmentRole.DepthStencil))
+            {
+                return PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
+            }
+
+            if (layout is ImageLayout.DepthStencilReadOnlyOptimal
+                    or ImageLayout.DepthReadOnlyOptimal
+                    or ImageLayout.StencilReadOnlyOptimal)
+            {
+                PipelineStageFlags stages = PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
+                if (!asRenderAttachment)
+                    stages |= PipelineStageFlags.FragmentShaderBit;
+                return stages;
+            }
+
+            return PipelineStageFlags.AllGraphicsBit;
+        }
+
+        private static AccessFlags ResolveFboAttachmentAccess(
+            ImageLayout layout,
+            FrameBufferAttachmentSignature signature,
+            bool asRenderAttachment)
+        {
+            if (layout == ImageLayout.ShaderReadOnlyOptimal)
+                return AccessFlags.ShaderReadBit;
+
+            if (layout == ImageLayout.TransferSrcOptimal)
+                return AccessFlags.TransferReadBit;
+
+            if (layout == ImageLayout.TransferDstOptimal)
+                return AccessFlags.TransferWriteBit;
+
+            if (layout == ImageLayout.ColorAttachmentOptimal ||
+                (asRenderAttachment && signature.Role == AttachmentRole.Color))
+                return AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit;
+
+            if (layout is ImageLayout.DepthStencilReadOnlyOptimal
+                    or ImageLayout.DepthReadOnlyOptimal
+                    or ImageLayout.StencilReadOnlyOptimal)
+            {
+                AccessFlags access = AccessFlags.DepthStencilAttachmentReadBit;
+                if (!asRenderAttachment)
+                    access |= AccessFlags.ShaderReadBit;
+                return access;
+            }
+
+            if (layout == ImageLayout.DepthStencilAttachmentOptimal ||
+                (asRenderAttachment && signature.Role is AttachmentRole.Depth or AttachmentRole.Stencil or AttachmentRole.DepthStencil))
+            {
+                return AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit;
+            }
+
+            return AccessFlags.MemoryReadBit;
+        }
+
         private void UpdatePhysicalGroupLayoutsForFbo(XRFrameBuffer fbo)
+        {
+            var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
+            UpdatePhysicalGroupLayoutsForFbo(fbo, vkFbo?.GetFinalLayouts());
+        }
+
+        private void UpdatePhysicalGroupLayoutsForFbo(XRFrameBuffer fbo, ImageLayout[]? finalLayouts)
         {
             var targets = fbo.Targets;
             if (targets is null)
                 return;
-
-            // Get the actual final layouts from the render pass signature.
-            var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
-            ImageLayout[]? finalLayouts = vkFbo?.GetFinalLayouts();
 
             int attachmentIndex = 0;
             foreach (var (target, attachment, mipLevel, layerIndex) in targets)
@@ -3538,6 +3843,9 @@ namespace XREngine.Rendering.Vulkan
 
         private CommandBuffer CommandsStart(bool useTransferQueue)
         {
+            if (_deviceLost)
+                throw new InvalidOperationException("Cannot allocate a Vulkan one-shot command buffer after the device was lost.");
+
             CommandPool pool = useTransferQueue
                 ? GetThreadTransferCommandPool()
                 : GetThreadCommandPool();
@@ -3569,6 +3877,12 @@ namespace XREngine.Rendering.Vulkan
 
         private void CommandsStop(CommandBuffer commandBuffer, bool useTransferQueue)
         {
+            if (_deviceLost)
+            {
+                RemoveCommandBufferBindState(commandBuffer);
+                return;
+            }
+
             Api!.EndCommandBuffer(commandBuffer);
 
             // Use a per-submission fence instead of QueueWaitIdle so we wait only
@@ -3603,8 +3917,11 @@ namespace XREngine.Rendering.Vulkan
                 Result submitResult = SubmitToQueueTracked(submitQueue, ref submitInfo, submitFence);
                 if (submitResult != Result.Success)
                 {
+                    if (submitResult == Result.ErrorDeviceLost)
+                        MarkDeviceLost();
+
                     Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");
-                    if (submitFence.Handle != 0 && submitResult != Result.ErrorDeviceLost)
+                    if (submitFence.Handle != 0)
                         Api!.DestroyFence(device, submitFence, null);
                     RemoveCommandBufferBindState(commandBuffer);
                     return;
@@ -3614,6 +3931,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     Result waitResult = Api!.WaitForFences(device, 1, &submitFence, true, ulong.MaxValue);
                     waitSucceeded = waitResult == Result.Success;
+                    if (waitResult == Result.ErrorDeviceLost)
+                        MarkDeviceLost();
                     if (!waitSucceeded)
                         Debug.VulkanWarning($"[Vulkan] WaitForFences for one-shot submit failed (result={waitResult}). Command buffer will not be freed to avoid use-after-free.");
                 }
@@ -3622,6 +3941,8 @@ namespace XREngine.Rendering.Vulkan
                     // Fence creation failed — fall back to QueueWaitIdle.
                     Result waitResult = Api!.QueueWaitIdle(submitQueue);
                     waitSucceeded = waitResult == Result.Success;
+                    if (waitResult == Result.ErrorDeviceLost)
+                        MarkDeviceLost();
                     if (!waitSucceeded)
                         Debug.VulkanWarning($"[Vulkan] QueueWaitIdle fallback failed (result={waitResult}). Command buffer will not be freed.");
                 }

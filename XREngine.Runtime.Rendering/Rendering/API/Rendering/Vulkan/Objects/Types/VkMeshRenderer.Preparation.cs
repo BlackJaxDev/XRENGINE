@@ -50,14 +50,17 @@ public unsafe partial class VulkanRenderer
 				MeshRenderer.OnPreparingRenderData();
 
 			EnsureRuntimeDeformationBuffersCurrent();
-			EnsureBuffers();
-
-			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
-				return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
 			if (!EnsureProgram(material))
 				return SetPrepareResult(false, "ProgramsPending", "No compatible Vulkan render program is available yet.", out reason);
 
+			bool skipIndexBuffers = ProgramUsesShaderGeneratedVertices();
+			EnsureBuffers(skipIndexBuffers);
+
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+				return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
+
+			ApplyScopedProgramBindingsForPreparation();
 			BuildVertexInputState();
 
 			if (!EnsureDescriptorSets(material))
@@ -66,6 +69,19 @@ public unsafe partial class VulkanRenderer
 			string layoutSummary = _geometryLayoutSignature.DebugSummary;
 			return SetPrepareResult(true, "Ready", $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors=Ready; pipeline=DeferredUntilPass; layout={layoutSummary}", out reason);
 		}
+
+		private void ApplyScopedProgramBindingsForPreparation()
+		{
+			if (_program?.Data is not { } program)
+				return;
+
+			RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
+		}
+
+		private bool ProgramUsesShaderGeneratedVertices()
+			=> _program is not null &&
+			   _program.TryGetVertexStageInputCount(out int vertexInputCount) &&
+			   vertexInputCount == 0;
 
 		private bool AreCachedBuffersReadyForRendering(out string detail)
 		{

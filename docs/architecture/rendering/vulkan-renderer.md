@@ -67,7 +67,7 @@ The renderer targets **Vulkan 1.3** (instance) with a **1.1 minimum** API versio
 | `PhysicalDevice.cs` | GPU selection, suitability checks, ray tracing probe |
 | `Extensions.cs` | Extension flags, required/optional device extension lists |
 | `Validation.cs` | Debug messenger, validation layers |
-| `FrameBufferRenderPasses.cs` | FBO-specific render pass creation/caching |
+| `FrameBufferRenderPasses.cs` | Legacy FBO-specific render pass creation/caching |
 | `VulkanRenderer.State.cs` | `VulkanStateTracker`, pipeline state, barrier planner, frame ops |
 | `VulkanRenderer.ImGui.cs` | Full ImGui backend (context, font atlas, pipeline, draw commands) |
 | `VulkanRenderer.DebugTriangle.cs` | Debug visualization pipeline |
@@ -81,6 +81,7 @@ The renderer targets **Vulkan 1.3** (instance) with a **1.1 minimum** API versio
 | `VulkanDescriptorContracts.cs` | Descriptor binding contracts |
 | `VulkanComputeDescriptors.cs` | Compute shader descriptor management |
 | `VulkanFeatureProfile.cs` | Feature toggles/profile configuration |
+| `VulkanRenderTargetMode.cs` | Dynamic-rendering vs legacy render-pass target selection |
 | `VulkanShaderTools.cs` | Shader compilation utilities (GLSL → SPIR-V) |
 | `VulkanAutoExposure.cs` | Auto-exposure compute resources |
 | `VulkanRaytracing.cs` | Ray tracing support |
@@ -97,8 +98,8 @@ The renderer targets **Vulkan 1.3** (instance) with a **1.1 minimum** API versio
 | `CommandPool.cs` | Per-thread command pool creation |
 | `CommandBuffers.cs` | Command buffer allocation, recording, bind tracking (~2000 lines) |
 | `SyncObjects.cs` | Semaphores + fences creation |
-| `RenderPasses.cs` | Swapchain render pass (color + depth) |
-| `FrameBuffers.cs` | Swapchain framebuffer creation |
+| `RenderPasses.cs` | Legacy swapchain render pass creation |
+| `FrameBuffers.cs` | Legacy swapchain framebuffer creation or dynamic-mode command-buffer slot placeholders |
 | `ImageViews.cs` | Swapchain image view creation |
 | `DescriptorSetLayout.cs` | Global UBO descriptor layout |
 | `DescriptorPool.cs` | Per-swapchain descriptor pool |
@@ -225,6 +226,18 @@ DeviceCreateInfo
 - `VK_NV_memory_decompression`
 - `VK_NV_copy_memory_indirect`
 
+**Render target mode:**
+
+After logical-device feature resolution, Vulkan selects a render target path from `XRE_VK_RENDER_TARGET_MODE`:
+
+| Value | Behavior |
+|-------|----------|
+| `Auto` | Uses dynamic rendering when `dynamicRendering` is supported; otherwise uses the retained legacy render-pass/framebuffer path. |
+| `DynamicRendering` | Requires dynamic rendering support and fails visibly at initialization if unavailable. |
+| `LegacyRenderPass` | Routes swapchain, FBO, and ImGui graphics targets through the retained `VkRenderPass` / `VkFramebuffer` path. |
+
+Startup diagnostics report the requested mode, resolved mode, and dynamic-rendering feature support.
+
 ### Command Pool
 
 From `Objects/CommandPool.cs`:
@@ -255,6 +268,8 @@ CreateAllSwapChainObjects()
   ├─ CreateDescriptorSets()   — Per-swapchain descriptor sets
   └─ CreateCommandBuffers()   — One primary command buffer per swapchain image
 ```
+
+In dynamic-rendering mode, `CreateRenderPass()` leaves the swapchain render-pass handles empty and `CreateFramebuffers()` creates only placeholder slots for command-buffer ownership. In legacy mode, those calls create the retained Vulkan `VkRenderPass` and `VkFramebuffer` objects used by the fallback command-buffer branch.
 
 ### Synchronization Objects
 
@@ -358,6 +373,8 @@ RecordCommandBuffer(imageIndex)
 │
 └─ EndCommandBuffer
 ```
+
+Graphics targets are selected through the resolved render target mode. Dynamic mode records swapchain and `XRFrameBuffer` targets with `vkCmdBeginRendering` / `vkCmdEndRendering`; legacy mode records through `vkCmdBeginRenderPass` / `vkCmdEndRenderPass`. Dynamic FBO scopes reuse `VkFrameBuffer` attachment signatures for image views, formats, load/store ops, clear values, and explicit begin/end layout barriers.
 
 ### The Render Graph
 
@@ -576,7 +593,7 @@ Metadata:      Build/Cache/Vulkan/ShaderArtifacts/{artifactIdentity}.spv.json
 
 - Capture is enabled with `XRE_VK_PIPELINE_PREWARM_CAPTURE=1`.
 - The manifest is stored under `%LOCALAPPDATA%/XREngine/Vulkan/PipelinePrewarm/`.
-- Persistent keys use shader artifact identities, descriptor/vertex/material/pass fingerprints, fixed-function state, attachment formats, and render-pass semantic signatures.
+- Persistent keys use shader artifact identities, descriptor/vertex/material/pass fingerprints, fixed-function state, ordered dynamic color formats, depth/stencil formats, and render-pass semantic signatures.
 - Persistent keys do not include transient Vulkan handles such as `VkRenderPass`, `VkShaderModule`, or `VkPipelineLayout`.
 - The manifest currently records and classifies known startup misses. Concrete ahead-of-first-draw pipeline creation still requires scene/material-specific prewarm orchestration.
 

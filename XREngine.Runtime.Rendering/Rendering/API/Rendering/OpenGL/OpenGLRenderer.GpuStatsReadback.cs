@@ -40,7 +40,10 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!RuntimeEngine.IsRenderThread)
             {
-                RuntimeEngine.EnqueueMainThreadTask(PollGpuRenderStatsReadbacks, "OpenGLRenderer.PollGpuRenderStatsReadbacks");
+                RuntimeEngine.EnqueueMainThreadTask(
+                    PollGpuRenderStatsReadbacks,
+                    "OpenGLRenderer.PollGpuRenderStatsReadbacks",
+                    RenderThreadJobKind.Readback);
                 return;
             }
 
@@ -97,7 +100,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 RuntimeEngine.EnqueueMainThreadTask(
                     () => QueueGpuRenderStatsReadback(sourceBuffer, sourceByteOffset, byteCount, elementCount, kind, publishDraws, publishTriangles),
-                    "OpenGLRenderer.QueueGpuRenderStatsReadback");
+                    "OpenGLRenderer.QueueGpuRenderStatsReadback",
+                    RenderThreadJobKind.Readback);
                 return false;
             }
 

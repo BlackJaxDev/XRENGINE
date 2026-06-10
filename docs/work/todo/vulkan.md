@@ -45,6 +45,18 @@ Useful diagnostics:
 | `XRE_VK_TRACE_SWAPDRAW=1` | Logs swapchain-targeted draw recording details. |
 | `XRE_VK_TRACE_PIPECREATE=1` | Logs pipeline creation details. |
 | `XRE_VK_PIPELINE_PREWARM_CAPTURE=1` | Writes observed pipeline permutations to `%LOCALAPPDATA%\XREngine\Vulkan\PipelinePrewarm\prewarm_*.json` on shutdown. |
+| `XRE_VK_RENDER_TARGET_MODE=Auto|DynamicRendering|LegacyRenderPass` | Selects dynamic rendering or retained legacy `VkRenderPass`/`VkFramebuffer` target recording. |
+
+Render target mode smoke commands:
+
+```powershell
+$env:XRE_VK_RENDER_TARGET_MODE='DynamicRendering'
+dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
+
+$env:XRE_VK_RENDER_TARGET_MODE='LegacyRenderPass'
+dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
+Remove-Item Env:XRE_VK_RENDER_TARGET_MODE
+```
 
 ## Fast Software Checks
 
@@ -377,7 +389,7 @@ These are forward-looking architecture efforts tracked in dedicated design docs,
 
 Prerequisite chain: dynamic rendering becomes the default first, then shader objects, then the GPU-driven/bindless/RT follow-ups build on both.
 
-- [ ] Dynamic rendering becomes the default Vulkan graphics path, legacy `VkRenderPass`/`VkFramebuffer` retained behind a runtime toggle. See [Vulkan Dynamic Rendering Migration](../design/rendering/vulkan-dynamic-rendering-migration-design.md).
+- [x] Dynamic rendering becomes the default Vulkan graphics path, legacy `VkRenderPass`/`VkFramebuffer` retained behind a runtime toggle. See [Vulkan Dynamic Rendering Migration](../design/rendering/vulkan-dynamic-rendering-migration-design.md).
 - [ ] Program-binding backend with toggleable `VkPipeline` vs `VK_EXT_shader_object` paths. See [Vulkan Shader Object Pipeline Replacement](../design/rendering/vulkan-shader-object-pipeline-replacement-design.md).
 - [ ] Vulkan 1.4 opt-in capability tier (local read, push descriptor, host image copy, maintenance5/6, line rasterization, uint8 indices).
 - [ ] Dynamic rendering local read for on-tile deferred (mobile/Quest/Apple bandwidth win).

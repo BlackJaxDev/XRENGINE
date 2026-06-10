@@ -21,6 +21,7 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
     private long _totalAllocatedBytes;
     private bool _disposed;
     private readonly ConcurrentDictionary<nint, int> _mapCounts = new();
+    private readonly object _mapCountsGate = new();
 
     public VulkanVmaAllocator(
         Instance instance,
@@ -138,12 +139,14 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
             return;
         }
 
-        ThrowIfDisposed();
-
         try
         {
-            DrainMappedAllocation(allocation.NativeAllocation);
-            VulkanVmaNative.Free(_allocator, allocation.NativeAllocation);
+            lock (_mapCountsGate)
+            {
+                ThrowIfDisposed();
+                DrainMappedAllocation_NoLock(allocation.NativeAllocation);
+                VulkanVmaNative.Free(_allocator, allocation.NativeAllocation);
+            }
         }
         catch (Exception ex) when (IsNativeBridgeException(ex))
         {
@@ -177,17 +180,20 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
             return true;
         }
 
-        ThrowIfDisposed();
-
         try
         {
-            Result result = VulkanVmaNative.MapMemory(_allocator, allocation.NativeAllocation, out nint allocationPtr);
-            if (result != Result.Success || allocationPtr == 0)
-                return false;
+            lock (_mapCountsGate)
+            {
+                ThrowIfDisposed();
 
-            _mapCounts.AddOrUpdate(allocation.NativeAllocation, 1, static (_, count) => count + 1);
-            mappedPtr = (byte*)allocationPtr + offset;
-            return true;
+                Result result = VulkanVmaNative.MapMemory(_allocator, allocation.NativeAllocation, out nint allocationPtr);
+                if (result != Result.Success || allocationPtr == 0)
+                    return false;
+
+                _mapCounts.AddOrUpdate(allocation.NativeAllocation, 1, static (_, count) => count + 1);
+                mappedPtr = (byte*)allocationPtr + offset;
+                return true;
+            }
         }
         catch (Exception ex) when (IsNativeBridgeException(ex))
         {
@@ -206,28 +212,31 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
             return;
         }
 
-        ThrowIfDisposed();
-
         try
         {
-            if (_mapCounts.TryGetValue(allocation.NativeAllocation, out int count))
+            lock (_mapCountsGate)
             {
-                if (count <= 1)
-                    _mapCounts.TryRemove(allocation.NativeAllocation, out _);
-                else
-                    _mapCounts[allocation.NativeAllocation] = count - 1;
-            }
-            else
-            {
-                Debug.VulkanWarningEvery(
-                    $"Vulkan.VMA.UnmapUntracked.{allocation.NativeAllocation}",
-                    TimeSpan.FromSeconds(5),
-                    "[Vulkan] VMA unmap requested for allocation 0x{0:X} without a tracked map count.",
-                    allocation.NativeAllocation);
-                return;
-            }
+                ThrowIfDisposed();
 
-            VulkanVmaNative.UnmapMemory(_allocator, allocation.NativeAllocation);
+                if (_mapCounts.TryGetValue(allocation.NativeAllocation, out int count))
+                {
+                    if (count <= 1)
+                        _mapCounts.TryRemove(allocation.NativeAllocation, out _);
+                    else
+                        _mapCounts[allocation.NativeAllocation] = count - 1;
+                }
+                else
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.VMA.UnmapUntracked.{allocation.NativeAllocation}",
+                        TimeSpan.FromSeconds(5),
+                        "[Vulkan] VMA unmap requested for allocation 0x{0:X} without a tracked map count.",
+                        allocation.NativeAllocation);
+                    return;
+                }
+
+                VulkanVmaNative.UnmapMemory(_allocator, allocation.NativeAllocation);
+            }
         }
         catch (Exception ex) when (IsNativeBridgeException(ex))
         {
@@ -262,13 +271,33 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
 
         if (_allocator != 0)
         {
-            DrainAllMappedAllocations();
-            VulkanVmaNative.DestroyAllocator(_allocator);
-            _allocator = 0;
+            lock (_mapCountsGate)
+            {
+                DrainAllMappedAllocations_NoLock();
+                int activeAllocations = Volatile.Read(ref _activeAllocationCount);
+                if (activeAllocations != 0)
+                {
+                    Debug.VulkanWarning(
+                        "[Vulkan] Skipping VMA allocator destruction because {0} allocation(s) remain live ({1} bytes tracked). The process is shutting down after an unrecoverable Vulkan resource leak/device-loss path.",
+                        activeAllocations,
+                        Volatile.Read(ref _totalAllocatedBytes));
+                    _allocator = 0;
+                    return;
+                }
+
+                VulkanVmaNative.DestroyAllocator(_allocator);
+                _allocator = 0;
+            }
         }
     }
 
     private void DrainMappedAllocation(nint allocation)
+    {
+        lock (_mapCountsGate)
+            DrainMappedAllocation_NoLock(allocation);
+    }
+
+    private void DrainMappedAllocation_NoLock(nint allocation)
     {
         if (allocation == 0 || !_mapCounts.TryRemove(allocation, out int mapCount))
             return;
@@ -282,8 +311,14 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
 
     private void DrainAllMappedAllocations()
     {
+        lock (_mapCountsGate)
+            DrainAllMappedAllocations_NoLock();
+    }
+
+    private void DrainAllMappedAllocations_NoLock()
+    {
         foreach (nint allocation in _mapCounts.Keys)
-            DrainMappedAllocation(allocation);
+            DrainMappedAllocation_NoLock(allocation);
     }
 
     private bool TryCreateManagedAllocation(

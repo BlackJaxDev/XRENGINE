@@ -57,10 +57,10 @@ public unsafe partial class VulkanRenderer
             Generate();
         }
 
-        internal RenderPass ResolveRenderPassForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
+        internal FrameBufferAttachmentSignature[] ResolveAttachmentSignatureForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
         {
             if (_attachmentSignature is null || _attachmentSignature.Length == 0)
-                return _renderPass;
+                return [];
 
             // When initial-layout overrides are provided (from per-frame FBO tracking),
             // always build a planned signature so that the render pass uses the correct
@@ -70,24 +70,18 @@ public unsafe partial class VulkanRenderer
             if (passMetadata is null || passMetadata.Count == 0)
             {
                 if (!hasLayoutOverrides)
-                    return _renderPass;
+                    return _attachmentSignature;
 
                 // No metadata but we have layout overrides — apply them to the base signature.
-                FrameBufferAttachmentSignature[] overridden = ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
-                if (SignatureEquals(_attachmentSignature, overridden))
-                    return _renderPass;
-                return Renderer.GetOrCreateFrameBufferRenderPass(overridden);
+                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
             }
 
             string? frameBufferName = Data.Name;
             if (string.IsNullOrWhiteSpace(frameBufferName))
             {
                 if (!hasLayoutOverrides)
-                    return _renderPass;
-                FrameBufferAttachmentSignature[] overridden = ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
-                if (SignatureEquals(_attachmentSignature, overridden))
-                    return _renderPass;
-                return Renderer.GetOrCreateFrameBufferRenderPass(overridden);
+                    return _attachmentSignature;
+                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
             }
 
             RenderPassMetadata? pass = null;
@@ -103,11 +97,8 @@ public unsafe partial class VulkanRenderer
             if (pass is null)
             {
                 if (!hasLayoutOverrides)
-                    return _renderPass;
-                FrameBufferAttachmentSignature[] overridden = ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
-                if (SignatureEquals(_attachmentSignature, overridden))
-                    return _renderPass;
-                return Renderer.GetOrCreateFrameBufferRenderPass(overridden);
+                    return _attachmentSignature;
+                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
             }
 
             bool referencesFrameBuffer = false;
@@ -127,11 +118,8 @@ public unsafe partial class VulkanRenderer
             if (!referencesFrameBuffer)
             {
                 if (!hasLayoutOverrides)
-                    return _renderPass;
-                FrameBufferAttachmentSignature[] overridden = ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
-                if (SignatureEquals(_attachmentSignature, overridden))
-                    return _renderPass;
-                return Renderer.GetOrCreateFrameBufferRenderPass(overridden);
+                    return _attachmentSignature;
+                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
             }
 
             FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName);
@@ -140,7 +128,16 @@ public unsafe partial class VulkanRenderer
             if (hasLayoutOverrides)
                 planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!);
 
-            if (SignatureEquals(_attachmentSignature, planned))
+            return planned;
+        }
+
+        internal RenderPass ResolveRenderPassForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
+        {
+            if (_attachmentSignature is null || _attachmentSignature.Length == 0)
+                return _renderPass;
+
+            FrameBufferAttachmentSignature[] planned = ResolveAttachmentSignatureForPass(passIndex, passMetadata, initialLayoutOverrides);
+            if (planned.Length == 0 || SignatureEquals(_attachmentSignature, planned))
                 return _renderPass;
 
             return Renderer.GetOrCreateFrameBufferRenderPass(planned);
@@ -205,14 +202,30 @@ public unsafe partial class VulkanRenderer
         /// in the order they appear in the framebuffer's attachment array.
         /// </summary>
         internal ImageLayout[] GetFinalLayouts()
+            => GetFinalLayouts(_attachmentSignature);
+
+        internal static ImageLayout[] GetFinalLayouts(FrameBufferAttachmentSignature[]? signatures)
         {
-            if (_attachmentSignature is null || _attachmentSignature.Length == 0)
+            if (signatures is null || signatures.Length == 0)
                 return [];
 
-            ImageLayout[] layouts = new ImageLayout[_attachmentSignature.Length];
-            for (int i = 0; i < _attachmentSignature.Length; i++)
-                layouts[i] = _attachmentSignature[i].FinalLayout;
+            ImageLayout[] layouts = new ImageLayout[signatures.Length];
+            for (int i = 0; i < signatures.Length; i++)
+                layouts[i] = signatures[i].FinalLayout;
             return layouts;
+        }
+
+        internal bool TryGetAttachmentView(int attachmentIndex, out ImageView view)
+        {
+            if (_attachmentViews is not null &&
+                (uint)attachmentIndex < (uint)_attachmentViews.Length)
+            {
+                view = _attachmentViews[attachmentIndex];
+                return view.Handle != 0;
+            }
+
+            view = default;
+            return false;
         }
 
         private static FrameBufferAttachmentSignature[] ApplyInitialLayoutOverrides(
@@ -261,18 +274,21 @@ public unsafe partial class VulkanRenderer
         }
 
         internal void WriteClearValues(ClearValue* destination, uint clearValueCount)
+            => WriteClearValues(destination, clearValueCount, _attachmentSignature);
+
+        internal void WriteClearValues(ClearValue* destination, uint clearValueCount, FrameBufferAttachmentSignature[]? signatures)
         {
-            if (_attachmentSignature is null || clearValueCount == 0)
+            if (signatures is null || clearValueCount == 0)
                 return;
 
             var clearColor = Renderer.GetClearColorValue();
             float clearDepth = Renderer.GetClearDepthValue();
             uint clearStencil = Renderer.GetClearStencilValue();
 
-            uint count = Math.Min(clearValueCount, (uint)_attachmentSignature.Length);
+            uint count = Math.Min(clearValueCount, (uint)signatures.Length);
             for (uint i = 0; i < count; i++)
             {
-                var sig = _attachmentSignature[i];
+                var sig = signatures[i];
                 if (sig.Role == AttachmentRole.Color)
                 {
                     destination[i] = new ClearValue
@@ -408,11 +424,22 @@ public unsafe partial class VulkanRenderer
                 signatures[i] = attachments[i].Signature;
             }
 
-            RenderPass renderPass = Renderer.GetOrCreateFrameBufferRenderPass(signatures);
-            _renderPass = renderPass;
             _attachmentSignature = signatures;
 
             var (fbWidth, fbHeight) = ResolveFramebufferExtent();
+            FramebufferWidth = fbWidth;
+            FramebufferHeight = fbHeight;
+
+            if (Renderer.UseDynamicRenderingRenderTargets)
+            {
+                _renderPass = default;
+                _frameBuffer = default;
+                _attachmentViews = (ImageView[])views.Clone();
+                return CacheObject(this);
+            }
+
+            RenderPass renderPass = Renderer.GetOrCreateFrameBufferRenderPass(signatures);
+            _renderPass = renderPass;
 
             fixed (ImageView* viewsPtr = views)
             {
@@ -426,9 +453,6 @@ public unsafe partial class VulkanRenderer
                     Height = fbHeight,
                     Layers = 1,
                 };
-
-                FramebufferWidth = fbWidth;
-                FramebufferHeight = fbHeight;
 
                 fixed (Framebuffer* frameBufferPtr = &_frameBuffer)
                 {

@@ -391,7 +391,7 @@ public unsafe partial class VulkanRenderer
             if (layerIndex < 0 && TryResolveAllLayerAttachmentLayout((uint)Math.Max(mipLevel, 0), out layout))
                 return layout;
 
-            return ImageLayout.Undefined;
+            return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;
         }
 
         /// <inheritdoc />
@@ -1309,6 +1309,9 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         internal void TransitionImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
         {
+            if (Renderer.IsDeviceLost || Image.Handle == 0)
+                return;
+
             RefreshPhysicalGroupImageIfStale();
 
             oldLayout = CoerceLayoutForUsage(oldLayout);
@@ -1779,6 +1782,9 @@ public unsafe partial class VulkanRenderer
             if (RuntimeEngine.InvokeOnMainThread(PushData, "VkTexture.PushData"))
                 return;
 
+            if (Renderer.IsDeviceLost)
+                return;
+
             PushTextureData();
             if (IsGenerated)
                 MarkUploaded();
@@ -1790,6 +1796,9 @@ public unsafe partial class VulkanRenderer
         public override void GenerateMipmaps()
         {
             if (RuntimeEngine.InvokeOnMainThread(GenerateMipmaps, "VkTexture.GenerateMipmaps"))
+                return;
+
+            if (Renderer.IsDeviceLost)
                 return;
 
             GenerateMipmapsGPU();

@@ -1,9 +1,9 @@
-# Vulkan Dynamic Rendering Migration Todo
+# Vulkan Dynamic Rendering Migration Todo (Remaining Work)
 
 Last Updated: 2026-06-09
 Owner: Rendering
-Status: Todo extracted from the dynamic-rendering design. Dynamic rendering is already used for the swapchain main path when supported; the remaining work is to make it the default Vulkan graphics target path for every target while keeping the legacy `VkRenderPass` / `VkFramebuffer` path behind one runtime toggle for fallback and regression bisection.
-Target Branch: `vulkan-dynamic-rendering-migration`
+Status: Core migration is implemented and the audited completed items verified against source on 2026-06-09. `Auto` resolves to dynamic rendering when supported, explicit legacy remains selectable, and explicit dynamic fails visibly when unsupported. The three source-verifiable migration tests pass (3/3). This document now tracks only the work that remains.
+Target Branch: intentionally skipped; user requested not to branch.
 
 Design sources:
 
@@ -16,77 +16,29 @@ Design sources:
 
 ## Goal
 
-Make explicit dynamic rendering the default Vulkan graphics target path for swapchain, offscreen FBO, post-process, shadow, capture, VR mirror, debug, and ImGui rendering.
-
-The migration does **not** delete the legacy render-pass/framebuffer path. The legacy path remains selectable through a single runtime toggle so regressions can be bisected and devices without dynamic-rendering support can still render. Unsupported or incorrect dynamic-rendering states must fail visibly with diagnostics; the only sanctioned automatic fallback is selecting the legacy path when dynamic rendering is unsupported, and that selection must be logged.
+Finish hardening explicit dynamic rendering across every Vulkan graphics target (swapchain, offscreen FBO, post-process, shadow, capture, VR mirror, debug, ImGui) and validate it under the Vulkan validation layers. The legacy render-pass/framebuffer path stays selectable through the runtime toggle and is not removed.
 
 High-level engine render-pass concepts remain unchanged. `RenderPassMetadata`, `RenderPassBuilder`, `EDefaultRenderPass`, and pass indices describe engine graph scheduling and resource usage, not Vulkan `VkRenderPass` objects.
 
-## Current Baseline
+## Audit Summary (2026-06-09)
 
-- `Objects/LogicalDevice.cs` queries and enables `PhysicalDeviceDynamicRenderingFeatures` when Vulkan 1.3 core support or `VK_KHR_dynamic_rendering` is available.
-- `Extensions.cs` exposes `SupportsDynamicRendering`.
-- `Objects/CommandBuffers.cs` already uses `CmdBeginRendering` / `CmdEndRendering` for the swapchain main path when supported.
-- Swapchain dynamic rendering explicitly transitions the swapchain image to `ColorAttachmentOptimal`, renders, then transitions to `PresentSrcKhr` on final close.
-- Swapchain fallback still uses `_renderPass`, `_renderPassLoad`, `swapChainFramebuffers`, and `CmdBeginRenderPass`.
-- Offscreen `XRFrameBuffer` targets still use `VkFrameBuffer.ResolveRenderPassForPass`, `VkFramebuffer`, and `CmdBeginRenderPass`.
-- `FrameBufferRenderPasses.cs` owns the FBO-specific `VkRenderPass` cache and attachment-signature planning.
-- `Objects/RenderPasses.cs` creates swapchain `VkRenderPass` objects.
-- `Objects/FrameBuffers.cs` creates swapchain `VkFramebuffer` objects.
-- `VkMeshRenderer.Pipeline.cs` already supports dynamic rendering pipeline creation with `PipelineRenderingCreateInfo`.
-- ImGui already creates a dynamic-rendering-compatible graphics pipeline when `SupportsDynamicRendering` is true.
+Verified directly against source and confirmed correctly implemented:
 
-## Operating Rules
+- Runtime target mode enum, `XRE_VK_RENDER_TARGET_MODE` override, and visible unsupported-dynamic failure in `VulkanRenderTargetMode.cs`.
+- `Auto` selects dynamic when supported and legacy only when unsupported; startup diagnostics report requested/resolved mode (`[Vulkan] Render target mode:`).
+- Swapchain and FBO dynamic paths record `CmdBeginRendering` / `CmdEndRendering` with explicit layout barriers; legacy `CmdBeginRenderPass` is mode-gated.
+- Swapchain present transition to `PresentSrcKhr` occurs exactly once per dynamic frame and is runtime-asserted.
+- Dynamic-path pipeline and prewarm keys use `DynamicRenderingFormatSignature` (ordered color formats, depth, stencil, sample count) with no `VkRenderPass` handle.
+- `RenderPasses.cs` / `FrameBuffers.cs` create swapchain `VkRenderPass` / `VkFramebuffer` only in legacy mode.
+- Source-verifiable migration tests pass: `VulkanDynamicRenderingMigrationTests` 3/3.
 
-- [ ] Preserve the legacy render-pass/framebuffer path behind a runtime toggle.
-- [ ] Keep the OpenGL backend unaffected.
-- [ ] Do not replace `VkPipeline` in this work; shader-object replacement remains a separate design.
-- [ ] Do not rewrite `DefaultRenderPipeline` or `DefaultRenderPipeline2` as part of this migration.
-- [ ] Do not add CPU fallback rendering paths.
-- [ ] Keep load/store/clear behavior identical between dynamic and legacy paths unless a deliberate bug fix is documented.
-- [ ] Keep transient Vulkan handles out of dynamic-path graphics pipeline keys and prewarm manifests.
+Phases 0, 1, and 10 are fully complete and are not reproduced below.
+
+## Operating Rules (Open)
+
 - [ ] Avoid heap allocations in per-frame command recording, target planning, and draw submission hot paths.
-- [ ] Prefer explicit diagnostics over silent fallback.
 
-## Phase 0 - Branch And Inventory
-
-- [ ] **0.1** Create a dedicated branch for this work, for example `vulkan-dynamic-rendering-migration`.
-- [ ] **0.2** Capture a fresh inventory of production `VkRenderPass` and `VkFramebuffer` usage:
-
-  ```powershell
-  rg -n "CreateRenderPass|DestroyRenderPass|CreateFramebuffer|DestroyFramebuffer|CmdBeginRenderPass|CmdEndRenderPass|RenderPassBeginInfo|FramebufferCreateInfo" XREngine.Runtime.Rendering\Rendering\API\Rendering\Vulkan
-  ```
-
-- [ ] **0.3** Classify every hit as one of:
-  - legacy path to keep behind the runtime toggle
-  - dynamic path code that must be migrated
-  - high-level engine render-pass concept that should stay
-  - documentation or diagnostic reference
-- [ ] **0.4** Add source-verifiable tests that prevent accidental new dynamic-path dependencies on `VkRenderPass` / `VkFramebuffer`.
-- [ ] **0.5** Add allowlist comments or test exemptions for the intentionally retained legacy path.
-- [ ] **0.6** Audit current docs and logs for wording that conflates engine render passes with Vulkan `VkRenderPass`.
-- [ ] **0.7** Decide the exact runtime toggle name and setting location.
-- [ ] **0.8** Document the toggle in this todo and later in `docs/architecture/rendering/vulkan-renderer.md`.
-
-## Phase 1 - Runtime Path Selection
-
-- [ ] **1.1** Add a Vulkan rendering target mode enum:
-  - `DynamicRendering`
-  - `LegacyRenderPass`
-  - `Auto`
-- [ ] **1.2** Add a user/developer setting and environment override for the mode, for example `XRE_VK_RENDER_TARGET_MODE`.
-- [ ] **1.3** Make `Auto` select dynamic rendering when `SupportsDynamicRendering` is true.
-- [ ] **1.4** Make `Auto` select the legacy path only when dynamic rendering is unsupported.
-- [ ] **1.5** Make explicit dynamic mode fail visibly when dynamic rendering is unsupported.
-- [ ] **1.6** Make explicit legacy mode route all supported graphics targets through the retained render-pass/framebuffer path.
-- [ ] **1.7** Add startup diagnostics reporting:
-  - requested mode
-  - resolved mode
-  - dynamic-rendering feature support
-  - whether the legacy path is active
-  - fallback reason, if any
-- [ ] **1.8** Update the current dynamic-rendering debug message so it describes the default dynamic path plus retained legacy toggle.
-- [ ] **1.9** Add tests for explicit dynamic unsupported behavior and explicit legacy selection behavior where source-verifiable.
+All other operating rules were satisfied during the core migration.
 
 ## Phase 2 - Shared Dynamic Rendering Scope
 
@@ -143,33 +95,19 @@ High-level engine render-pass concepts remain unchanged. `RenderPassMetadata`, `
 - [ ] **3.8** Validate ImGui overlay still renders in dynamic mode.
 - [ ] **3.9** Validate explicit legacy mode still renders the swapchain through `_renderPass` / `_renderPassLoad`.
 
-## Phase 4 - Dynamic Rendering For Simple FBOs
+## Phase 4 - Dynamic Rendering For Simple FBOs (Open Items)
 
-- [ ] **4.1** Add dynamic FBO planning behind the runtime path selection.
-- [ ] **4.2** Support one color attachment with optional depth attachment.
-- [ ] **4.3** Convert `VkFrameBuffer` attachment signatures into dynamic rendering attachment plans.
-- [ ] **4.4** Preserve `VkFrameBuffer.WriteClearValues` behavior.
-- [ ] **4.5** Preserve FBO extent resolution, including mip-level FBO dimensions.
-- [ ] **4.6** Preserve current attachment identity recreation predicates.
-- [ ] **4.7** Route FBO dynamic pipelines through `PipelineRenderingCreateInfo`.
-- [ ] **4.8** Ensure simple dynamic FBO pipeline keys include color format, depth format, and sample count.
-- [ ] **4.9** Keep legacy FBO render-pass creation and `CmdBeginRenderPass` behavior available through the runtime mode.
-- [ ] **4.10** Add visible diagnostics for unsupported attachment layouts or target shapes.
+Planning, conversion, pipeline keying, and diagnostics for simple FBOs are implemented. Remaining items are runtime validation:
+
 - [ ] **4.11** Validate Unit Testing World with dynamic swapchain plus simple dynamic FBOs.
 - [ ] **4.12** Validate `ForwardPassFBO` and deferred GBuffer writes survive compute/blit interruptions and render-scope re-entry.
 
-## Phase 5 - Full FBO Coverage
+## Phase 5 - Full FBO Coverage (Open Items)
 
-- [ ] **5.1** Support multiple color attachments.
-- [ ] **5.2** Support colorless depth-only targets.
-- [ ] **5.3** Support depth/stencil targets.
-- [ ] **5.4** Support stencil-only behavior where Vulkan and the engine target shape allow it.
-- [ ] **5.5** Support mip-level targets.
-- [ ] **5.6** Support texture array layer targets.
-- [ ] **5.7** Support cubemap face targets.
+Multiple color attachments, depth-only, depth/stencil, stencil-only, mip-level, array-layer, cubemap-face, and read-only depth/stencil targets are implemented. Remaining:
+
 - [ ] **5.8** Support resolve attachments with dynamic rendering resolve fields.
 - [ ] **5.9** Support transient attachments.
-- [ ] **5.10** Support read-only depth/stencil passes.
 - [ ] **5.11** Support shadow map targets.
 - [ ] **5.12** Support bloom/downsample/upsample targets.
 - [ ] **5.13** Support cubemap and texture-array capture targets.
@@ -178,52 +116,30 @@ High-level engine render-pass concepts remain unchanged. `RenderPassMetadata`, `
 - [ ] **5.16** Validate DefaultRenderPipeline2 in dynamic mode when applicable.
 - [ ] **5.17** Validate explicit legacy mode still renders the same FBO scenarios.
 
-## Phase 6 - Synchronization And Layout Tracking
+## Phase 6 - Synchronization And Layout Tracking (Open Items)
 
-- [ ] **6.1** Move all dynamic-path implicit render-pass layout transitions into explicit barriers.
+Explicit barriers, attachment entry/exit layouts, dynamic-scope final states, and compute/blit interruption handling are implemented. Remaining:
+
 - [ ] **6.2** Reuse `VulkanBarrierPlanner` and `RenderGraphSynchronizationPlanner` where possible.
-- [ ] **6.3** Ensure dynamic attachments enter:
-  - `ColorAttachmentOptimal`
-  - `DepthStencilAttachmentOptimal`
-  - read-only depth/stencil layout when required
-- [ ] **6.4** Ensure dynamic attachments leave rendering in the layout expected by the next resource usage.
 - [ ] **6.5** Make the planner aware of swapchain target resources.
 - [ ] **6.6** Make the planner aware of FBO attachments using stable semantic resource identities.
-- [ ] **6.7** Replace dynamic-path dependence on `VkFrameBuffer.GetFinalLayouts()` with final states from the dynamic scope plan.
-- [ ] **6.8** Preserve `QueryCurrentAttachmentLayouts` behavior for shared physical image groups.
-- [ ] **6.9** Preserve `fboLayoutTracking` behavior or replace it with equivalent per-subresource tracking.
-- [ ] **6.10** Ensure compute/blit interruptions end active dynamic rendering, transition resources, and resume with preserved contents when required.
-- [ ] **6.11** Add diagnostics for old/render/final layout decisions.
 - [ ] **6.12** Validate no layout errors under Vulkan validation layers.
 
-## Phase 7 - Pipeline Signature And Prewarm Cleanup
+## Phase 7 - Pipeline Signature And Prewarm Cleanup (Open Items)
 
-- [ ] **7.1** Make dynamic-path graphics pipelines always use `PipelineRenderingCreateInfo`.
-- [ ] **7.2** Keep `GraphicsPipelineCreateInfo.RenderPass = default` for dynamic-path graphics pipelines.
-- [ ] **7.3** Keep legacy-path pipelines compatible with real `VkRenderPass` handles.
-- [ ] **7.4** Split dynamic-path and legacy-path pipeline keys cleanly.
-- [ ] **7.5** Remove `VkRenderPass` handles from dynamic-path pipeline keys.
-- [ ] **7.6** Add ordered color attachment formats to dynamic-path keys.
-- [ ] **7.7** Add color attachment count to dynamic-path keys.
-- [ ] **7.8** Add depth format to dynamic-path keys.
-- [ ] **7.9** Add stencil format to dynamic-path keys.
-- [ ] **7.10** Add sample count to dynamic-path keys.
+Dynamic-path keys, format/sample-count fields, semantic prewarm signatures, and diagnostics are implemented. Remaining:
+
 - [ ] **7.11** Add view mask to dynamic-path keys.
-- [ ] **7.12** Include depth/stencil read-only state if it changes pipeline depth/stencil writes.
-- [ ] **7.13** Convert dynamic-path prewarm signatures to semantic attachment signatures.
-- [ ] **7.14** Ensure prewarm manifests do not include transient `VkRenderPass` or `VkFramebuffer` handles for dynamic entries.
-- [ ] **7.15** Update pipeline diagnostics to report attachment signatures instead of render-pass handles in dynamic mode.
 - [ ] **7.16** Verify pipeline cache miss summaries trend toward zero after warmup in dynamic mode.
 
-## Phase 8 - Secondary Command Buffer Support
+## Phase 8 - Secondary Command Buffer Support (Open Items)
 
-- [ ] **8.1** Audit all secondary command buffer recording paths.
-- [ ] **8.2** Identify any path that still relies on render-pass inheritance.
+2026-06-09 audit note: current secondary buckets are limited to `BlitOp` and `IndirectDrawOp`, and the primary command buffer ends active rendering before those paths execute. `ComputeDispatchOp` records on the primary path so per-program descriptor state is not touched by parallel secondary workers. No secondary graphics recording currently runs inside dynamic rendering; the inheritance items below remain open for any future secondary graphics path.
+
 - [ ] **8.3** Add `CommandBufferInheritanceRenderingInfo` for secondary graphics command buffers recorded inside dynamic rendering.
 - [ ] **8.4** Ensure inherited formats match active color/depth/stencil formats.
 - [ ] **8.5** Ensure inherited sample count matches active rendering scope.
 - [ ] **8.6** Ensure inherited view mask matches active rendering scope.
-- [ ] **8.7** Disable or keep legacy-only any secondary graphics recording path that cannot be made dynamic-safe yet.
 - [ ] **8.8** Validate parallel/secondary recording in dynamic mode if enabled.
 
 ## Phase 9 - Resolve, Multiview, And Stereo
@@ -239,22 +155,6 @@ High-level engine render-pass concepts remain unchanged. `RenderPassMetadata`, `
 - [ ] **9.9** Ensure stereo target planning does not infer view count from texture array length alone.
 - [ ] **9.10** Validate stereo, OpenVR mirror, and OpenXR-related paths that use Vulkan targets.
 
-## Phase 10 - Make Dynamic Rendering The Default
-
-- [ ] **10.1** Flip `Auto` mode to dynamic rendering for all supported Vulkan graphics targets.
-- [ ] **10.2** Keep explicit legacy mode functional and documented.
-- [ ] **10.3** Ensure unsupported dynamic rendering in `Auto` mode logs a legacy fallback reason.
-- [ ] **10.4** Ensure unsupported dynamic rendering in explicit dynamic mode fails visibly.
-- [ ] **10.5** Update `docs/architecture/rendering/vulkan-renderer.md`.
-- [ ] **10.6** Update `docs/work/todo/vulkan.md` manual validation guidance with the new mode/toggle.
-- [ ] **10.7** Update diagnostics and profiler labels to distinguish:
-  - engine render pass
-  - dynamic rendering scope
-  - legacy Vulkan `VkRenderPass`
-- [ ] **10.8** Add source tests that dynamic path command recording uses `CmdBeginRendering`.
-- [ ] **10.9** Add source tests that legacy `CmdBeginRenderPass` calls remain isolated behind the runtime mode.
-- [ ] **10.10** Add source tests that dynamic-path pipeline keys do not include render-pass handles.
-
 ## Phase 11 - Optional Vulkan 1.4 Local Read
 
 - [ ] **11.1** Inventory passes that would benefit from framebuffer-local dependencies.
@@ -265,7 +165,7 @@ High-level engine render-pass concepts remain unchanged. `RenderPassMetadata`, `
 
 ## Phase 12 - Modern Follow-On Backlog
 
-These are not required to flip the dynamic rendering default, but should stay visible because they share capability plumbing with this migration and the later shader-object work.
+These are not required to keep the dynamic rendering default, but should stay visible because they share capability plumbing with this migration and the later shader-object work.
 
 - [ ] **12.1** Define a Vulkan 1.4 opt-in baseline tier.
 - [ ] **12.2** Add startup reporting for Vulkan 1.3, Vulkan 1.4, dynamic rendering, local read, synchronization2, timeline semaphore, descriptor indexing, buffer device address, mesh shader, fragment shading rate, and graphics pipeline library support.
@@ -278,31 +178,19 @@ These are not required to flip the dynamic rendering default, but should stay vi
 - [ ] **12.9** Add attachment transient/lazily allocated policy for depth and temporary color targets where supported.
 - [ ] **12.10** Share capability plumbing with the shader-object design.
 
-## Validation Checklist
+## Validation Checklist (Remaining)
 
-### Static Validation
-
-- [ ] Dynamic-path code has no unintended `CreateRenderPass` calls.
-- [ ] Dynamic-path code has no unintended `CreateFramebuffer` calls.
-- [ ] Dynamic-path command recording has no unintended `CmdBeginRenderPass` calls.
-- [ ] Dynamic-path graphics pipelines always receive `PipelineRenderingCreateInfo`.
-- [ ] Dynamic-path pipeline keys include attachment formats and sample count.
-- [ ] Dynamic-path prewarm signatures do not include transient handles.
-- [ ] Legacy render-pass/framebuffer usage is isolated behind the runtime mode.
+Static validation (no unintended `CreateRenderPass` / `CreateFramebuffer` / `CmdBeginRenderPass` in the dynamic path, `PipelineRenderingCreateInfo` always present, attachment-format keys, legacy isolation) is complete and verified by `VulkanDynamicRenderingMigrationTests`.
 
 ### Build And Unit Tests
-
-- [ ] Run the targeted Vulkan build:
-
-  ```powershell
-  dotnet build .\XREngine.Editor\XREngine.Editor.csproj
-  ```
 
 - [ ] Run targeted Vulkan tests:
 
   ```powershell
   dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter Vulkan
   ```
+
+  2026-06-09 note: `--filter VulkanDynamicRenderingMigrationTests` passed 3/3. A broader Vulkan-focused filter passed 59 tests and failed 10 stale source-path assertions that still look under `XRENGINE\Rendering\API\Rendering\Vulkan\...` instead of `XREngine.Runtime.Rendering\Rendering\API\Rendering\Vulkan\...`. Fix the stale source-path assertions before relying on the broad filter.
 
 - [ ] Before final promotion, run:
 
@@ -386,28 +274,14 @@ Each diagnostic should include the relevant subset of:
 
 Keep high-frequency logs behind existing throttles or explicit trace flags.
 
-## Files Expected To Change
+## Files Expected To Change (Remaining)
 
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkFrameBuffer.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs`
 - [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs`
 - [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanBarrierPlanner.cs`
 - [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderGraphCompiler.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanPipelinePrewarmDatabase.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.ImGui.cs`
 - [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Extensions.cs`
-- [ ] `XREngine.UnitTests/Rendering/*Vulkan*`
-- [ ] `docs/architecture/rendering/vulkan-renderer.md`
-- [ ] `docs/work/todo/vulkan.md`
 
-Legacy files expected to remain, but become runtime-mode-isolated:
-
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/RenderPasses.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/FrameBuffers.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/FrameBufferRenderPasses.cs`
+Already-changed files (`CommandBuffers.cs`, `LogicalDevice.cs`, `VkFrameBuffer.cs`, `VkMeshRenderer.Pipeline.cs`, `VkMeshRenderer.Drawing.cs`, `VulkanRenderTargetMode.cs`, `VulkanPipelinePrewarmDatabase.cs`, `VulkanRenderer.ImGui.cs`, the Vulkan unit tests, and the architecture/todo docs) plus the runtime-mode-isolated legacy files (`RenderPasses.cs`, `FrameBuffers.cs`, `FrameBufferRenderPasses.cs`) are complete.
 
 ## Risks To Track
 
@@ -430,22 +304,20 @@ Legacy files expected to remain, but become runtime-mode-isolated:
 - [ ] Should render graph metadata become the only source of load/store behavior, or should `XRFrameBuffer` keep explicit overrides for hand-authored target flows?
 - [ ] Should source files be renamed away from "RenderPass" after dynamic mode is default, even though the legacy path is retained?
 
-## Final Promotion
+## Final Promotion (Remaining)
 
 - [ ] **F.1** Confirm every acceptance criterion below is satisfied.
 - [ ] **F.2** Update PR notes with what changed, why, validation performed, risks, and follow-ups.
-- [ ] **F.3** Merge the dedicated branch back into `main` after implementation and validation.
 
-Acceptance criteria:
+Acceptance criteria still open:
 
-- [ ] Dynamic rendering is the default Vulkan graphics target path in `Auto` mode when supported.
-- [ ] Explicit legacy mode still renders through the retained `VkRenderPass` / `VkFramebuffer` path.
-- [ ] Explicit dynamic mode fails visibly when dynamic rendering is unsupported.
-- [ ] All dynamic-path graphics command recording uses `CmdBeginRendering` / `CmdEndRendering`.
-- [ ] All dynamic-path graphics pipelines are created with `PipelineRenderingCreateInfo`.
-- [ ] Dynamic-path pipeline and prewarm keys do not include `VkRenderPass` or `VkFramebuffer` handles.
-- [ ] Legacy-path pipeline keys still retain all compatibility data needed by real render-pass objects.
-- [ ] Swapchain present layout transition still occurs exactly once per submitted dynamic-rendering frame.
 - [ ] Unit Testing World and default editor startup render correctly in dynamic mode under Vulkan validation.
 - [ ] Unit Testing World and default editor startup render correctly in explicit legacy mode under Vulkan validation.
-- [ ] Relevant Vulkan architecture docs and manual validation docs are updated.
+
+Acceptance criteria already satisfied (kept for reference):
+
+- Dynamic rendering is the default in `Auto` mode when supported; explicit legacy still renders through the retained `VkRenderPass` / `VkFramebuffer` path; explicit dynamic fails visibly when unsupported.
+- All dynamic-path graphics recording uses `CmdBeginRendering` / `CmdEndRendering` and all dynamic-path pipelines use `PipelineRenderingCreateInfo`.
+- Dynamic-path pipeline and prewarm keys exclude `VkRenderPass` / `VkFramebuffer` handles; legacy keys retain render-pass compatibility.
+- Swapchain present transition occurs exactly once per submitted dynamic frame.
+- Relevant Vulkan architecture and manual-validation docs are updated.

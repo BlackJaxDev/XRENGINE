@@ -999,7 +999,7 @@ public unsafe partial class VulkanRenderer
     private void EnsureImGuiPipeline()
     {
         HashCode pipelineKeyHash = new();
-        pipelineKeyHash.Add(SupportsDynamicRendering);
+        pipelineKeyHash.Add(UseDynamicRenderingRenderTargets);
         pipelineKeyHash.Add(_renderPass.Handle);
         pipelineKeyHash.Add((int)swapChainImageFormat);
         pipelineKeyHash.Add((int)swapChainImageColorSpace);
@@ -1213,14 +1213,14 @@ public unsafe partial class VulkanRenderer
             PipelineColorBlendAttachmentState* blendSlots = stackalloc PipelineColorBlendAttachmentState[(int)kDynRenderColorSlots];
             blendSlots[0] = colorAttachment;
 
-            uint imguiBlendCount = SupportsDynamicRendering ? kDynRenderColorSlots : 1;
+            uint imguiBlendCount = UseDynamicRenderingRenderTargets ? kDynRenderColorSlots : 1;
 
             PipelineColorBlendStateCreateInfo colorBlendState = new()
             {
                 SType = StructureType.PipelineColorBlendStateCreateInfo,
                 LogicOpEnable = Vk.False,
                 AttachmentCount = imguiBlendCount,
-                PAttachments = SupportsDynamicRendering ? blendSlots : &colorAttachment
+                PAttachments = UseDynamicRenderingRenderTargets ? blendSlots : &colorAttachment
             };
 
             DynamicState* dynamicStates = stackalloc DynamicState[2];
@@ -1248,11 +1248,11 @@ public unsafe partial class VulkanRenderer
                 PColorBlendState = &colorBlendState,
                 PDynamicState = &dynamicState,
                 Layout = _imguiPipelineLayout,
-                RenderPass = SupportsDynamicRendering ? default : _renderPass,
+                RenderPass = UseDynamicRenderingRenderTargets ? default : _renderPass,
                 Subpass = 0,
             };
 
-            if (SupportsDynamicRendering)
+            if (UseDynamicRenderingRenderTargets)
             {
                 Format* colorFormats = stackalloc Format[(int)kDynRenderColorSlots];
                 colorFormats[0] = swapChainImageFormat;

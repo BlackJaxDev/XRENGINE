@@ -26,6 +26,21 @@ public unsafe partial class VulkanRenderer
     /// forever with cascading failures.
     /// </summary>
     private volatile bool _deviceLost;
+    internal bool IsDeviceLost => _deviceLost;
+
+    private void MarkDeviceLost()
+    {
+        _deviceLost = true;
+
+        // Device loss means pending timeline signals will never arrive. Clear
+        // them so teardown/recovery paths do not block on dead semaphore values.
+        if (_frameSlotTimelineValues is not null)
+            Array.Clear(_frameSlotTimelineValues);
+        if (_swapchainImageTimelineValues is not null)
+            Array.Clear(_swapchainImageTimelineValues);
+        _acquireTimelineValue = 0;
+        _graphicsTimelineValue = 0;
+    }
 
     private void EnsureSwapchainTimelineState()
     {
@@ -62,16 +77,7 @@ public unsafe partial class VulkanRenderer
         Result waitResult = Api!.WaitSemaphores(device, &waitInfo, ulong.MaxValue);
         if (waitResult == Result.ErrorDeviceLost)
         {
-            _deviceLost = true;
-
-            // Device is irrecoverably lost. Reset all timeline values so subsequent
-            // frames don't block forever waiting for a semaphore the GPU will never signal.
-            if (_frameSlotTimelineValues is not null)
-                Array.Clear(_frameSlotTimelineValues);
-            if (_swapchainImageTimelineValues is not null)
-                Array.Clear(_swapchainImageTimelineValues);
-            _acquireTimelineValue = 0;
-            _graphicsTimelineValue = 0;
+            MarkDeviceLost();
 
             throw new InvalidOperationException(
                 $"Vulkan device lost while waiting for timeline value {value}. Timeline state has been reset.");

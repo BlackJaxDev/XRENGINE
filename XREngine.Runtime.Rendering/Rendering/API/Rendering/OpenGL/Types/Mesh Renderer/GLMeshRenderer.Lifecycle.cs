@@ -171,7 +171,8 @@ namespace XREngine.Rendering.OpenGL
                 {
                     RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(
                         RefreshCollectedBuffersFromCollections,
-                        "GLMeshRenderer.BuffersChanged");
+                        "GLMeshRenderer.BuffersChanged",
+                        RenderThreadJobKind.MeshUpload);
                 }
             }
 

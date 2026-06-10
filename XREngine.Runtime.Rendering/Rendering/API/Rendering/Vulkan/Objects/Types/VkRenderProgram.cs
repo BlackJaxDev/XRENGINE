@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -80,7 +81,7 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<string, XRTexture> _samplersByName = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, ProgramImageBinding> _imagesByUnit = new();
         private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
-        private readonly HashSet<string> _computeWarnings = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
         private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
         private Pipeline _computePipeline;
         private bool _descriptorSetsRequireUpdateAfterBind;
@@ -470,6 +471,8 @@ public unsafe partial class VulkanRenderer
                 if (!string.IsNullOrWhiteSpace(name))
                     _samplersByName[name] = xrTexture;
             }
+
+            Renderer.TrackTextureBinding(xrTexture);
         }
 
         private void Sampler(int location, IRenderTextureResource texture, int textureUnit)
@@ -482,6 +485,8 @@ public unsafe partial class VulkanRenderer
 
             lock (_bindingLock)
                 _imagesByUnit[unit] = new ProgramImageBinding(xrTexture, level, layered, layer, access, format);
+
+            Renderer.TrackTextureBinding(xrTexture);
         }
 
         private void BindBuffer(uint index, XRDataBuffer buffer)
@@ -727,6 +732,25 @@ public unsafe partial class VulkanRenderer
                && vertexShader.VertexInputLocations.Count > 0;
 
         /// <summary>
+        /// When a vertex stage is present, reports how many input attribute locations it
+        /// reflects. A present vertex stage that reflects zero inputs (e.g. the fullscreen
+        /// triangle which derives clip positions from <c>gl_VertexID</c>) consumes no
+        /// vertex buffers, so binding any would trip the validation layer.
+        /// </summary>
+        internal bool TryGetVertexStageInputCount(out int inputCount)
+        {
+            if (_stageLookup.TryGetValue(EProgramStageMask.VertexShaderBit, out VkShader? vertexShader))
+            {
+                inputCount = vertexShader.VertexInputLocations.Count;
+                return true;
+            }
+
+            inputCount = 0;
+            return false;
+        }
+
+
+        /// <summary>
         /// Resolves the vertex input attribute location declared in the vertex shader
         /// for the given attribute name. Mirrors the OpenGL by-name binding path.
         /// </summary>
@@ -763,6 +787,21 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        internal bool TryGetBoundBuffer(uint binding, out XRDataBuffer? buffer)
+        {
+            lock (_bindingLock)
+            {
+                if (_buffersByBinding.TryGetValue(binding, out XRDataBuffer? found))
+                {
+                    buffer = found;
+                    return true;
+                }
+            }
+
+            buffer = null;
+            return false;
+        }
+
         /// <summary>
         /// Folds the program-bound named samplers into a descriptor resource fingerprint so
         /// descriptor sets are rewritten when an FBO/engine sampler binding changes.
@@ -781,6 +820,42 @@ public unsafe partial class VulkanRenderer
                     {
                         hash.Add(source.DescriptorView.Handle);
                         hash.Add(source.DescriptorSampler.Handle);
+                    }
+                    else
+                    {
+                        hash.Add(0UL);
+                    }
+                }
+            }
+        }
+
+        internal void AddBoundBufferResourceFingerprint(ref HashCode hash)
+        {
+            lock (_bindingLock)
+            {
+                hash.Add(_buffersByBinding.Count);
+                foreach (KeyValuePair<uint, XRDataBuffer> pair in _buffersByBinding.OrderBy(static p => p.Key))
+                {
+                    hash.Add(pair.Key);
+
+                    XRDataBuffer? buffer = pair.Value;
+                    hash.Add(buffer?.GetHashCode() ?? 0);
+                    if (buffer is null)
+                    {
+                        hash.Add(0UL);
+                        continue;
+                    }
+
+                    hash.Add(buffer.AttributeName, StringComparer.Ordinal);
+                    hash.Add(buffer.Name, StringComparer.Ordinal);
+                    hash.Add(buffer.Length);
+                    hash.Add((int)buffer.Target);
+                    hash.Add(buffer.BindingIndexOverride ?? uint.MaxValue);
+
+                    if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false) is VkDataBuffer vkBuffer)
+                    {
+                        hash.Add(vkBuffer.BufferHandle?.Handle ?? 0UL);
+                        hash.Add(vkBuffer.AllocatedByteSize);
                     }
                     else
                     {
@@ -1248,6 +1323,7 @@ public unsafe partial class VulkanRenderer
             List<DescriptorBufferInfo> bufferInfos = [];
             List<DescriptorImageInfo> imageInfos = [];
             List<BufferView> texelBufferViews = [];
+            bool hasUnresolvedBinding = false;
 
             foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
             {
@@ -1261,8 +1337,9 @@ public unsafe partial class VulkanRenderer
                     case DescriptorType.StorageBuffer:
                         if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, out DescriptorBufferInfo bufferInfo))
                         {
-                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will proceed with incomplete descriptors.");
-                            RecordComputeDescriptorFailure(binding, "buffer resolution failed", skippedDispatch: false);
+                            hasUnresolvedBinding = true;
+                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
+                            RecordComputeDescriptorFailure(binding, "buffer resolution failed", skippedDispatch: true);
                             continue;
                         }
 
@@ -1279,8 +1356,9 @@ public unsafe partial class VulkanRenderer
                     case DescriptorType.StorageImage:
                         if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo imageInfo))
                         {
-                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} image binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will proceed with incomplete descriptors.");
-                            RecordComputeDescriptorFailure(binding, "image resolution failed", skippedDispatch: false);
+                            hasUnresolvedBinding = true;
+                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} image binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
+                            RecordComputeDescriptorFailure(binding, "image resolution failed", skippedDispatch: true);
                             continue;
                         }
 
@@ -1295,8 +1373,9 @@ public unsafe partial class VulkanRenderer
                     case DescriptorType.StorageTexelBuffer:
                         if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView texelView))
                         {
-                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} texel binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will proceed with incomplete descriptors.");
-                            RecordComputeDescriptorFailure(binding, "texel buffer resolution failed", skippedDispatch: false);
+                            hasUnresolvedBinding = true;
+                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} texel binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will be skipped.");
+                            RecordComputeDescriptorFailure(binding, "texel buffer resolution failed", skippedDispatch: true);
                             continue;
                         }
 
@@ -1307,6 +1386,20 @@ public unsafe partial class VulkanRenderer
                         pendingWrites.Add(PendingDescriptorWrite.Texel(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, texelStart));
                         break;
                 }
+            }
+
+            if (hasUnresolvedBinding)
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+                    Data.Name,
+                    "descriptor-set",
+                    "<compute-required-binding>",
+                    0,
+                    0,
+                    skippedDraw: false,
+                    skippedDispatch: true,
+                    "compute descriptor build had unresolved required bindings");
+                return false;
             }
 
             if (pendingWrites.Count == 0)
@@ -1635,12 +1728,10 @@ public unsafe partial class VulkanRenderer
             bufferInfo = default;
 
             if (snapshot.Buffers.TryGetValue(binding.Binding, out XRDataBuffer? boundBuffer))
-                return TryCreateDescriptorBufferInfo(boundBuffer, out bufferInfo);
+                return TryCreateDescriptorBufferInfo(binding, boundBuffer, out bufferInfo);
 
             if (binding.DescriptorType == DescriptorType.UniformBuffer &&
-                !string.IsNullOrWhiteSpace(binding.Name) &&
-                _autoUniformBlocks.TryGetValue(binding.Name, out AutoUniformBlockInfo? block) &&
-                block is not null)
+                TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
             {
                 if (TryGetOrUpdateComputeAutoUniformBuffer(imageIndex, binding, snapshot, block, out bufferInfo))
                     return true;
@@ -1650,7 +1741,7 @@ public unsafe partial class VulkanRenderer
             {
                 XRDataBuffer? namedBuffer = snapshot.Buffers.Values.FirstOrDefault(
                     b => string.Equals(b.AttributeName, binding.Name, StringComparison.Ordinal));
-                if (namedBuffer is not null && TryCreateDescriptorBufferInfo(namedBuffer, out bufferInfo))
+                if (namedBuffer is not null && TryCreateDescriptorBufferInfo(binding, namedBuffer, out bufferInfo))
                     return true;
             }
 
@@ -1802,7 +1893,10 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        private bool TryCreateDescriptorBufferInfo(XRDataBuffer dataBuffer, out DescriptorBufferInfo bufferInfo)
+        private bool TryCreateDescriptorBufferInfo(
+            DescriptorBindingInfo binding,
+            XRDataBuffer dataBuffer,
+            out DescriptorBufferInfo bufferInfo)
         {
             bufferInfo = default;
             if (Renderer.GetOrCreateAPIRenderObject(dataBuffer) is not VkDataBuffer vkBuffer)
@@ -1821,6 +1915,13 @@ public unsafe partial class VulkanRenderer
 
             if (handle.Handle == 0 || vkBuffer.AllocatedByteSize < requestedRange)
                 return false;
+
+            if (!vkBuffer.SupportsDescriptorType(binding.DescriptorType))
+            {
+                WarnComputeOnce(
+                    $"Skipping Vulkan compute binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}) because buffer '{dataBuffer.AttributeName}' was created for {dataBuffer.Target}/{vkBuffer.LastUsageFlags}, not {binding.DescriptorType}. Compute dispatch will be skipped.");
+                return false;
+            }
 
             bufferInfo = new DescriptorBufferInfo
             {
@@ -2294,7 +2395,7 @@ public unsafe partial class VulkanRenderer
 
         private void WarnComputeOnce(string message)
         {
-            if (_computeWarnings.Add(message))
+            if (_computeWarnings.TryAdd(message, 0))
                 Debug.VulkanWarning($"[VkCompute:{Data.Name ?? "UnnamedProgram"}] {message}");
         }
 

@@ -15,15 +15,31 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyRenderPasses()
     {
-        UnregisterRenderPass(_renderPass);
-        Api!.DestroyRenderPass(device, _renderPass, null);
+        if (_renderPass.Handle != 0)
+        {
+            UnregisterRenderPass(_renderPass);
+            Api!.DestroyRenderPass(device, _renderPass, null);
+        }
 
-        UnregisterRenderPass(_renderPassLoad);
-        Api!.DestroyRenderPass(device, _renderPassLoad, null);
+        if (_renderPassLoad.Handle != 0)
+        {
+            UnregisterRenderPass(_renderPassLoad);
+            Api!.DestroyRenderPass(device, _renderPassLoad, null);
+        }
+
+        _renderPass = default;
+        _renderPassLoad = default;
     }
 
     private void CreateRenderPass()
     {
+        if (UseDynamicRenderingRenderTargets)
+        {
+            _renderPass = default;
+            _renderPassLoad = default;
+            return;
+        }
+
         _renderPass = CreateSwapchainRenderPass(AttachmentLoadOp.Clear);
         RegisterRenderPassColorAttachmentFormats(_renderPass, [swapChainImageFormat], BuildSwapchainRenderPassSignature(AttachmentLoadOp.Clear));
 

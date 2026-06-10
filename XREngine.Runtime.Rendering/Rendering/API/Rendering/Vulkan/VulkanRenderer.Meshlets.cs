@@ -58,16 +58,17 @@ public unsafe partial class VulkanRenderer
         vkIndirectBuffer.Generate();
         vkCountBuffer.Generate();
 
+        FrameOpContext context = CaptureFrameOpContext();
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         EnqueueFrameOp(new MeshTaskDispatchIndirectCountOp(
-            EnsureValidPassIndex(passIndex, "MeshTaskDispatchIndirectCount"),
+            EnsureValidPassIndex(passIndex, "MeshTaskDispatchIndirectCount", context.PassMetadata),
             vkIndirectBuffer,
             vkCountBuffer,
             maxDrawCount,
             stride,
             byteOffset,
             countByteOffset,
-            CaptureFrameOpContext()));
+            context));
 
         failureReason = string.Empty;
         return true;

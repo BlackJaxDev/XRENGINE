@@ -563,6 +563,15 @@ public unsafe partial class VulkanRenderer
         var extensionsToEnable = new List<string>(deviceExtensions);
         foreach (var optionalExt in optionalDeviceExtensions)
         {
+            if (optionalExt == "VK_EXT_graphics_pipeline_library" &&
+                !availableExtensionSet.Contains("VK_KHR_pipeline_library"))
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Optional extension {0} skipped because required dependency VK_KHR_pipeline_library is unavailable.",
+                    optionalExt);
+                continue;
+            }
+
             if (availableExtensionSet.Contains(optionalExt))
             {
                 extensionsToEnable.Add(optionalExt);
@@ -681,7 +690,10 @@ public unsafe partial class VulkanRenderer
             taskShaderFeatureSupported &&
             meshShaderFeatureSupported;
 
-        bool graphicsPipelineLibraryExtensionEnabled = extensionsArray.Contains("VK_EXT_graphics_pipeline_library");
+        bool graphicsPipelineLibraryDependencyEnabled = extensionsArray.Contains("VK_KHR_pipeline_library");
+        bool graphicsPipelineLibraryExtensionEnabled =
+            graphicsPipelineLibraryDependencyEnabled &&
+            extensionsArray.Contains("VK_EXT_graphics_pipeline_library");
         QueryGraphicsPipelineLibraryCapabilities(
             graphicsPipelineLibraryExtensionEnabled,
             out bool graphicsPipelineLibraryFeatureSupported);
@@ -912,6 +924,7 @@ public unsafe partial class VulkanRenderer
         _supportsGraphicsPipelineLibrary = enableGraphicsPipelineLibraryFeature;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
+        ResolveRenderTargetMode();
         RuntimeEngine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = enableDepthClipControlFeature;
@@ -1150,16 +1163,12 @@ public unsafe partial class VulkanRenderer
             _nvCopyMemoryIndirectSupportedQueues = 0;
         }
 
-        if (_supportsDynamicRendering)
-        {
-            Debug.Vulkan(
-                "[Vulkan] Dynamic rendering capability available; swapchain main path uses dynamic rendering with render-pass fallback for non-swapchain targets.");
-        }
-        else
-        {
-            Debug.Vulkan(
-                "[Vulkan] Dynamic rendering capability unavailable on this runtime/profile combination.");
-        }
+        Debug.Vulkan(
+            "[Vulkan] Render target mode: requested={0} resolved={1} dynamicRenderingFeature={2}. Override with {3}=Auto|DynamicRendering|LegacyRenderPass.",
+            _requestedRenderTargetMode,
+            UseDynamicRenderingRenderTargets ? "DynamicRendering" : "LegacyRenderPass",
+            _supportsDynamicRendering,
+            VulkanRenderTargetModeEnvVar);
 
         CreateVulkanPipelineCache();
 

@@ -572,7 +572,13 @@ public sealed class RuntimeRenderingHostServicesTests
         public void EnqueueRenderThreadTask(Action task)
             => task();
 
+        public void EnqueueRenderThreadTask(Action task, RenderThreadJobKind renderThreadKind)
+            => task();
+
         public void EnqueueRenderThreadTask(Action task, string reason)
+            => task();
+
+        public void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind)
             => task();
 
         public void EnqueueAppThreadTask(Action task)
@@ -584,7 +590,13 @@ public sealed class RuntimeRenderingHostServicesTests
         public void EnqueueRenderThreadCoroutine(Func<bool> task)
             => task();
 
+        public void EnqueueRenderThreadCoroutine(Func<bool> task, RenderThreadJobKind renderThreadKind)
+            => task();
+
         public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason)
+            => task();
+
+        public void EnqueueRenderThreadCoroutine(Func<bool> task, string reason, RenderThreadJobKind renderThreadKind)
             => task();
 
         public void ProcessRenderThreadTasks()

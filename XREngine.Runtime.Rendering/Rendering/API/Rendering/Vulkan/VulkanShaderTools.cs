@@ -879,6 +879,7 @@ internal static class VulkanShaderAutoUniforms
         var conditionalRanges = GetPreprocessorConditionalRanges(source);
 
         var toHoist = new List<(int Start, int Length, string Line)>();
+        HashSet<string> neededConstantNames = new(StringComparer.Ordinal);
         foreach (Match match in OpaqueUniformRegex.Matches(source))
         {
             if (match.Index < firstFuncIndex)
@@ -893,26 +894,28 @@ internal static class VulkanShaderAutoUniforms
             if (IsInsideConditionalRange(match.Index, conditionalRanges))
                 continue;
 
-            toHoist.Add((match.Index, match.Length, match.Value.Trim()));
+            string line = match.Value.Trim();
+            toHoist.Add((match.Index, match.Length, line));
+            CollectArrayBoundConstantNames(line, neededConstantNames);
         }
 
         if (toHoist.Count == 0)
             return source;
 
+        List<Match> constantsToHoist = FindConstantDeclarationsToMove(source, neededConstantNames, firstFuncIndex);
+
         // Remove declarations from original positions (reverse order preserves indices).
         var sb = new StringBuilder(source);
-        for (int i = toHoist.Count - 1; i >= 0; i--)
-        {
-            int start = toHoist[i].Start;
-            int end = start + toHoist[i].Length;
-            // Consume trailing newline so we don't leave blank lines.
-            if (end < sb.Length && sb[end] == '\r') end++;
-            if (end < sb.Length && sb[end] == '\n') end++;
-            sb.Remove(start, end - start);
-        }
+        var removals = new List<(int Start, int Length)>(constantsToHoist.Count + toHoist.Count);
+        removals.AddRange(constantsToHoist.Select(static constant => (constant.Index, constant.Length)));
+        removals.AddRange(toHoist.Select(static uniform => (uniform.Start, uniform.Length)));
+        foreach (var (start, length) in removals.OrderByDescending(static removal => removal.Start))
+            RemoveMatchAndTrailingNewline(sb, start, length);
 
         // Build the hoisted block.
         var hoisted = new StringBuilder();
+        foreach (Match constant in constantsToHoist.OrderBy(static match => match.Index))
+            hoisted.AppendLine(constant.Value.Trim());
         foreach (var (_, _, line) in toHoist)
             hoisted.AppendLine(line);
 
@@ -924,6 +927,97 @@ internal static class VulkanShaderAutoUniforms
             insertPos = modified.Length;
 
         return InsertAtPreferredLocation(modified, hoisted.ToString().TrimEnd(), insertPos);
+    }
+
+    private static void RemoveMatchAndTrailingNewline(StringBuilder source, int start, int length)
+    {
+        int end = start + length;
+        if (end < source.Length && source[end] == '\r')
+            end++;
+        if (end < source.Length && source[end] == '\n')
+            end++;
+
+        source.Remove(start, end - start);
+    }
+
+    private static void CollectArrayBoundConstantNames(string declaration, HashSet<string> names)
+    {
+        foreach (Match arrayBound in ArrayRegex.Matches(declaration))
+        {
+            string sizeToken = arrayBound.Groups["size"].Value.Trim();
+            sizeToken = sizeToken.TrimEnd('u', 'U');
+            if (!uint.TryParse(sizeToken, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                names.Add(sizeToken);
+        }
+    }
+
+    private static List<Match> FindConstantDeclarationsToMove(string source, HashSet<string> initialNames, int threshold)
+    {
+        List<Match> constantsToMove = [];
+        if (initialNames.Count == 0)
+            return constantsToMove;
+
+        HashSet<string> pending = new(initialNames, StringComparer.Ordinal);
+        HashSet<string> moved = new(StringComparer.Ordinal);
+
+        bool movedAny;
+        do
+        {
+            movedAny = false;
+
+            foreach (Match constMatch in ConstIntegralRegex.Matches(source))
+            {
+                if (!TryQueueConstantDeclaration(constMatch, source, threshold, pending, moved, constantsToMove))
+                    continue;
+
+                string expression = constMatch.Groups["value"].Value;
+                CollectIdentifierTokens(expression, pending, moved);
+                movedAny = true;
+            }
+
+            foreach (Match defineMatch in DefineIntegralRegex.Matches(source))
+            {
+                if (!TryQueueConstantDeclaration(defineMatch, source, threshold, pending, moved, constantsToMove))
+                    continue;
+
+                string expression = defineMatch.Groups["value"].Value;
+                CollectIdentifierTokens(expression, pending, moved);
+                movedAny = true;
+            }
+        }
+        while (movedAny);
+
+        return constantsToMove;
+    }
+
+    private static bool TryQueueConstantDeclaration(
+        Match match,
+        string source,
+        int threshold,
+        HashSet<string> pending,
+        HashSet<string> moved,
+        List<Match> constantsToMove)
+    {
+        if (!match.Success || match.Index < threshold)
+            return false;
+
+        string name = match.Groups["name"].Value;
+        if (string.IsNullOrWhiteSpace(name) || !pending.Contains(name) || !moved.Add(name))
+            return false;
+
+        pending.Remove(name);
+        constantsToMove.Add(match);
+        return true;
+    }
+
+    private static void CollectIdentifierTokens(string expression, HashSet<string> pending, HashSet<string> moved)
+    {
+        foreach (Match identifier in Regex.Matches(expression, @"\b[A-Za-z_][A-Za-z0-9_]*\b"))
+        {
+            string name = identifier.Value;
+            if (!moved.Contains(name))
+                pending.Add(name);
+        }
     }
 
     private static string ApplyVulkanSourceFixups(string source, EShaderType shaderType, bool useVulkanClipDepthRemap)

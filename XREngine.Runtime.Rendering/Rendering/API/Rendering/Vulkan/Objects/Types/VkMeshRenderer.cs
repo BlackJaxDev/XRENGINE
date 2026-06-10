@@ -371,14 +371,14 @@ public unsafe partial class VulkanRenderer
         private IndexSize _triangleIndexSize;
         private IndexSize _lineIndexSize;
         private IndexSize _pointIndexSize;
+        private bool _indexBuffersSkippedForShaderGeneratedVertices;
 
         private readonly Dictionary<PipelineKey, Pipeline> _pipelines = new();
         private readonly record struct PipelineKey(
             PrimitiveTopology Topology,
             bool UseDynamicRendering,
             ulong RenderPassHandle,
-            Format ColorAttachmentFormat,
-            Format DepthAttachmentFormat,
+            DynamicRenderingFormatSignature DynamicRenderingFormats,
             ulong ProgramPipelineHash,
             ulong VertexLayoutHash,
             ulong DescriptorLayoutHash,
@@ -417,7 +417,34 @@ public unsafe partial class VulkanRenderer
 
         private readonly record struct GraphicsPipelineLibraryKey(
             GraphicsPipelineLibrarySubset Subset,
-            PipelineKey Pipeline);
+            bool UseDynamicRendering,
+            ulong RenderPassHandle,
+            DynamicRenderingFormatSignature DynamicRenderingFormats,
+            PrimitiveTopology Topology,
+            ulong ProgramPipelineHash,
+            ulong VertexLayoutHash,
+            ulong DescriptorLayoutHash,
+            ulong FeatureProfileHash,
+            SampleCountFlags RasterizationSamples,
+            bool DepthTestEnabled,
+            bool DepthWriteEnabled,
+            CompareOp DepthCompareOp,
+            bool StencilTestEnabled,
+            StencilOpState FrontStencilState,
+            StencilOpState BackStencilState,
+            uint StencilWriteMask,
+            CullModeFlags CullMode,
+            FrontFace FrontFace,
+            bool BlendEnabled,
+            bool AlphaToCoverageEnabled,
+            BlendOp ColorBlendOp,
+            BlendOp AlphaBlendOp,
+            BlendFactor SrcColorBlendFactor,
+            BlendFactor DstColorBlendFactor,
+            BlendFactor SrcAlphaBlendFactor,
+            BlendFactor DstAlphaBlendFactor,
+            ColorComponentFlags ColorWriteMask,
+            bool NativeNegativeOneToOneDepth);
 
         private VkRenderProgram? _program;
         private XRRenderProgram? _generatedProgram;
@@ -534,6 +561,7 @@ public unsafe partial class VulkanRenderer
             _triangleIndexBuffer = null;
             _lineIndexBuffer = null;
             _pointIndexBuffer = null;
+            _indexBuffersSkippedForShaderGeneratedVertices = false;
         }
 
         private void OnBuffersChanged() => InvalidateGeometryLayout("RendererBuffersChanged", collectBuffers: true);
@@ -608,6 +636,7 @@ public unsafe partial class VulkanRenderer
             _triangleIndexBuffer = null;
             _lineIndexBuffer = null;
             _pointIndexBuffer = null;
+            _indexBuffersSkippedForShaderGeneratedVertices = false;
             _geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
             _lastPrepareResult = reason;
             _lastPrepareDetail = "Geometry layout changed.";
@@ -848,11 +877,12 @@ public unsafe partial class VulkanRenderer
                 renderAreaWidthSnapshot,
                 renderAreaHeightSnapshot);
 
+            FrameOpContext context = Renderer.CaptureFrameOpContext();
             Renderer.EnqueueFrameOp(new MeshDrawOp(
-                Renderer.EnsureValidPassIndex(passIndex, "MeshDraw"),
+                Renderer.EnsureValidPassIndex(passIndex, "MeshDraw", context.PassMetadata),
                 target,
                 draw,
-                Renderer.CaptureFrameOpContext()));
+                context));
         }
 
         private static SampleCountFlags ResolveRasterizationSamples(XRFrameBuffer? target)

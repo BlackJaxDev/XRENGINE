@@ -23,7 +23,7 @@ namespace XREngine
 
         public static Action<string>? LogMessage { get; set; }
         public static Func<string, IDisposable?>? ProfilerScopeFactory { get; set; }
-        public static Action<JobAffinity, string>? JobDispatchObserver { get; set; }
+        public static Action<JobAffinity, string, RenderThreadJobKind>? JobDispatchObserver { get; set; }
 
         private const int PriorityLevels = 5; // Matches JobPriority enum
         private const int DefaultWorkerCap = 16;
@@ -212,7 +212,12 @@ namespace XREngine
         public JobHandle Schedule(Job job, CancellationToken cancellationToken)
             => Schedule(job, JobPriority.Normal, JobAffinity.Any, cancellationToken);
 
-        public JobHandle Schedule(Job job, JobPriority priority, JobAffinity affinity = JobAffinity.Any, CancellationToken cancellationToken = default)
+        public JobHandle Schedule(
+            Job job,
+            JobPriority priority,
+            JobAffinity affinity = JobAffinity.Any,
+            CancellationToken cancellationToken = default,
+            RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
         {
             ArgumentNullException.ThrowIfNull(job);
 
@@ -221,6 +226,9 @@ namespace XREngine
 
             job.Priority = priority;
             job.Affinity = affinity;
+            job.RenderThreadKind = affinity == JobAffinity.RenderThread
+                ? renderThreadKind
+                : RenderThreadJobKind.Unknown;
             job.LinkCancellationToken(cancellationToken);
 
             var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -937,7 +945,7 @@ namespace XREngine
             {
                 RecordWait(job, bucket);
                 string label = job.GetProfilerLabel();
-                JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label);
+                JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label, job.RenderThreadKind);
                 long jobStart = Stopwatch.GetTimestamp();
                 using (StartProfilerScope($"MainThreadJobs.{job.Priority}.{label}"))
                 {

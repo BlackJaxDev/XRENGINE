@@ -393,7 +393,7 @@ namespace XREngine.Rendering.Vulkan
             if (bridgeResult != Result.Success)
             {
                 if (bridgeResult == Result.ErrorDeviceLost)
-                    _deviceLost = true;
+                    MarkDeviceLost();
 
                 throw new Exception($"Failed to bridge swapchain acquire semaphore to timeline ({bridgeResult}).");
             }
@@ -487,7 +487,7 @@ namespace XREngine.Rendering.Vulkan
             if (submitResult != Result.Success)
             {
                 if (submitResult == Result.ErrorDeviceLost)
-                    _deviceLost = true;
+                    MarkDeviceLost();
 
                 throw new Exception($"Failed to submit draw command buffer ({submitResult}).");
             }
