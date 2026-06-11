@@ -95,6 +95,7 @@ public unsafe partial class VulkanRenderer
     internal sealed record ComputeDispatchSnapshot(
         Dictionary<string, ProgramUniformValue> Uniforms,
         Dictionary<uint, XRTexture> Samplers,
+        Dictionary<string, XRTexture> SamplersByName,
         Dictionary<uint, ProgramImageBinding> Images,
         Dictionary<uint, XRDataBuffer> Buffers);
 
@@ -274,6 +275,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(compute.GroupsZ);
                     hash.Add(compute.Snapshot.Uniforms.Count);
                     hash.Add(compute.Snapshot.Samplers.Count);
+                    hash.Add(compute.Snapshot.SamplersByName.Count);
                     hash.Add(compute.Snapshot.Images.Count);
                     hash.Add(compute.Snapshot.Buffers.Count);
                     break;
@@ -342,7 +344,8 @@ public unsafe partial class VulkanRenderer
         // is recorded, so ScreenWidth/ScreenHeight engine uniforms (used by the debug
         // line/point geometry shaders) must read these snapshots instead.
         int RenderAreaWidth,
-        int RenderAreaHeight);
+        int RenderAreaHeight,
+        ComputeDispatchSnapshot? ProgramBindingSnapshot);
 
     private static bool ViewportEquals(in Viewport a, in Viewport b)
         => a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height && a.MinDepth == b.MinDepth && a.MaxDepth == b.MaxDepth;
@@ -833,6 +836,8 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
+            ComputeDispatchSnapshot? programBindingSnapshot = CaptureProgramBindingSnapshot(effectiveMaterial);
+
             var draw = new PendingMeshDraw(
                 this,
                 Renderer.GetCurrentViewport(),
@@ -879,7 +884,8 @@ public unsafe partial class VulkanRenderer
                 cameraUpSnapshot,
                 cameraRightSnapshot,
                 renderAreaWidthSnapshot,
-                renderAreaHeightSnapshot);
+                renderAreaHeightSnapshot,
+                programBindingSnapshot);
 
             FrameOpContext context = Renderer.CaptureFrameOpContext();
             Renderer.EnqueueFrameOp(new MeshDrawOp(
@@ -887,6 +893,20 @@ public unsafe partial class VulkanRenderer
                 target,
                 draw,
                 context));
+        }
+
+        private ComputeDispatchSnapshot? CaptureProgramBindingSnapshot(XRMaterial material)
+        {
+            if (!MeshRenderer.CaptureUniformsOnRender || !MeshRenderer.HasSettingUniformsHandlers)
+                return null;
+
+            if (_program is not { Data: { } programData } program)
+                return null;
+
+            Renderer.SetMaterialUniforms(material, programData);
+            MeshRenderer.OnSettingUniforms(programData, programData);
+            MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);
+            return program.CaptureComputeSnapshot();
         }
 
         private static SampleCountFlags ResolveRasterizationSamples(XRFrameBuffer? target)

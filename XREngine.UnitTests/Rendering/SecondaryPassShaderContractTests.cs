@@ -385,6 +385,16 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
+    public void BackgroundSkyMaterials_DisableBlendStateInheritance()
+    {
+        string skyboxSource = ReadWorkspaceFile(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Misc", "SkyboxComponent.cs"));
+        string atmosphereSource = ReadWorkspaceFile(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Environment", "AtmosphericScatteringComponent.cs"));
+
+        skyboxSource.ShouldContain("BlendModeAllDrawBuffers = BlendMode.Disabled()");
+        atmosphereSource.ShouldContain("BlendModeAllDrawBuffers = BlendMode.Disabled()");
+    }
+
+    [Test]
     public void SkyboxComponent_FallbackDynamicSource_AvoidsZeroVectorNormalization()
     {
         string source = ReadWorkspaceFile(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Misc", "SkyboxComponent.cs"));

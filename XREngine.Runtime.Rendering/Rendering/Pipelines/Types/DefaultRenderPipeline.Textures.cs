@@ -546,8 +546,14 @@ public partial class DefaultRenderPipeline
     }
 
     private XRTexture CreateLightingTexture()
+        => CreateLightingTexture(DiffuseTextureName, DiffuseTextureName);
+
+    private XRTexture CreateLightingAccumTexture()
+        => CreateLightingTexture(LightingAccumTextureName, DiffuseTextureName);
+
+    private XRTexture CreateLightingTexture(string textureName, string samplerName)
     {
-        // Deferred lighting accumulation. R11fG11fB10f is true 32-bit storage
+        // Deferred HDR lighting/output. R11fG11fB10f is true 32-bit storage
         // (vs RGB16F which most GL drivers promote to 64-bit RGBA16F) and
         // covers the full HDR range needed for direct lighting + emissive.
         // MSAA variant keeps Rgb16f because R11fG11fB10f MSAA support is
@@ -563,8 +569,8 @@ public partial class DefaultRenderPipeline
             t.OVRMultiViewParameters = new(0, 2u);
             t.Resizable = false;
             t.SizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
-            t.Name = DiffuseTextureName;
-            t.SamplerName = DiffuseTextureName;
+            t.Name = textureName;
+            t.SamplerName = samplerName;
             return t;
         }
         else
@@ -575,8 +581,8 @@ public partial class DefaultRenderPipeline
                 EPixelFormat.Rgb,
                 EPixelType.Float);
             t.SizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
-            t.Name = DiffuseTextureName;
-            t.SamplerName = DiffuseTextureName;
+            t.Name = textureName;
+            t.SamplerName = samplerName;
             return t;
         }
     }

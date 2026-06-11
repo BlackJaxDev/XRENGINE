@@ -98,6 +98,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (ActivePipelineInstance.RenderState.Scene is null)
                 return;
 
+            int passIndex = ResolvePassIndex(nameof(VPRC_LightCombinePass), out bool hasRenderGraphMetadata);
+            if (passIndex == int.MinValue && hasRenderGraphMetadata)
+            {
+                Debug.RenderingWarningEvery(
+                    $"LightCombine.MissingRenderGraphPass.{nameof(VPRC_LightCombinePass)}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDiag] Skipping light combine: no matching render-graph pass metadata was generated for '{0}'.",
+                    nameof(VPRC_LightCombinePass));
+                return;
+            }
+
             var viewport = ActivePipelineInstance.RenderState.WindowViewport;
             var world = viewport?.World;
 
@@ -204,6 +215,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
 */
 
+            using var passScope = passIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
+
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {
                 if (msaaActive)
@@ -261,15 +276,31 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void RenderLight(XRMeshRenderer renderer, LightComponent comp)
         {
             _currentLightComponent = comp;
-            ConfigureLightVolumeCullMode(renderer, comp);
-            renderer.Render(comp.LightMeshMatrix, comp.LightMeshMatrix, null);
-            _currentLightComponent = null;
+            try
+            {
+                ConfigureLightVolumeCullMode(renderer, comp);
+
+                if (comp is DirectionalLightComponent)
+                    renderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null);
+                else
+                    renderer.Render(comp.LightMeshMatrix, comp.LightMeshMatrix, null);
+            }
+            finally
+            {
+                _currentLightComponent = null;
+            }
         }
 
         private void ConfigureLightVolumeCullMode(XRMeshRenderer renderer, LightComponent comp)
         {
             if (renderer.Material?.RenderOptions is not { } renderOptions)
                 return;
+
+            if (comp is DirectionalLightComponent)
+            {
+                renderOptions.CullMode = ECullMode.None;
+                return;
+            }
 
             if (comp is not SpotLightComponent spotLight)
             {
@@ -400,9 +431,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                         : Lights3DCollection.DummyPointShadowMap,
                     4);
             }
-            else if (_currentLightComponent is SpotLightComponent)
+            else if (_currentLightComponent is SpotLightComponent spotLight)
             {
-                SpotLightComponent spotLight = (SpotLightComponent)_currentLightComponent;
                 bool useSpotAtlas = spotLight.UsesSpotShadowAtlasForCurrentEncoding;
                 bool atlasBound = false;
                 ShadowFallbackMode atlasFallback = ShadowFallbackMode.Lit;
@@ -518,10 +548,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                         faceIndex,
                         out ShadowAtlasAllocation allocation,
                         out int recordIndex))
-                    {
                         continue;
-                    }
-
+                    
                     ShadowFallbackMode fallback = allocation.ActiveFallback != ShadowFallbackMode.None
                         ? allocation.ActiveFallback
                         : ShadowFallbackMode.Lit;
@@ -747,25 +775,30 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRShader spotLightShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DeferredLightingSpot.fs"), EShaderType.Fragment);
             XRShader dirLightShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DeferredLightingDir.fs"), EShaderType.Fragment);
 
-            RenderingParameters additiveRenderParams = GetAdditiveParameters();
-            XRMaterial pointLightMat = new(lightRefs, pointLightShader) { RenderOptions = additiveRenderParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
-            XRMaterial spotLightMat = new(lightRefs, spotLightShader) { RenderOptions = additiveRenderParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
-            XRMaterial dirLightMat = new(lightRefs, dirLightShader) { RenderOptions = additiveRenderParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial pointLightMat = new(lightRefs, pointLightShader) { RenderOptions = GetAdditiveParameters(), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial spotLightMat = new(lightRefs, spotLightShader) { RenderOptions = GetAdditiveParameters(), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial dirLightMat = CreateFullscreenDirectionalLightMaterial(lightRefs, dirLightShader, GetFullscreenAdditiveParameters());
 
             XRMesh pointLightMesh = PointLightComponent.GetVolumeMesh();
             XRMesh spotLightMesh = SpotLightComponent.GetVolumeMesh();
 
             // Phase C: deferred-light combine renderers must be ready on the
             // first frame their pipeline pass runs; opt out of async default.
-            PointLightRenderer = new XRMeshRenderer(pointLightMesh, pointLightMat) { GenerateAsync = false };
+            PointLightRenderer = new XRMeshRenderer(pointLightMesh, pointLightMat)
+            {
+                GenerateAsync = false,
+                CaptureUniformsOnRender = true,
+            };
             PointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            SpotLightRenderer = new XRMeshRenderer(spotLightMesh, spotLightMat) { GenerateAsync = false };
+            SpotLightRenderer = new XRMeshRenderer(spotLightMesh, spotLightMat)
+            {
+                GenerateAsync = false,
+                CaptureUniformsOnRender = true,
+            };
             SpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            XRMesh dirLightMesh = DirectionalLightComponent.GetVolumeMesh();
-
-            DirectionalLightRenderer = new XRMeshRenderer(dirLightMesh, dirLightMat) { GenerateAsync = false };
+            DirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(dirLightMat);
             DirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
             // Invalidate MSAA renderers since the simple phase depends on the resolved GBuffer.
@@ -840,12 +873,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRShader msaaSpotShader = ShaderHelper.CreateDefinedShaderVariant(baseSpot, MsaaDeferredDefine) ?? baseSpot;
             XRShader msaaDirShader = ShaderHelper.CreateDefinedShaderVariant(baseDir, MsaaDeferredDefine) ?? baseDir;
 
-            RenderingParameters simpleParams = GetAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Nequal);
-            RenderingParameters complexParams = GetAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Equal);
-
-            XRMaterial simplePointMat = new(simpleLightRefs, basePoint) { RenderOptions = simpleParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
-            XRMaterial simpleSpotMat = new(simpleLightRefs, baseSpot) { RenderOptions = simpleParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
-            XRMaterial simpleDirMat = new(simpleLightRefs, baseDir) { RenderOptions = simpleParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial simplePointMat = new(simpleLightRefs, basePoint) { RenderOptions = GetAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Nequal), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial simpleSpotMat = new(simpleLightRefs, baseSpot) { RenderOptions = GetAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Nequal), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial simpleDirMat = CreateFullscreenDirectionalLightMaterial(simpleLightRefs, baseDir, GetFullscreenAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Nequal));
 
             XRTexture?[] msaaLightRefs =
             [
@@ -855,34 +885,83 @@ namespace XREngine.Rendering.Pipelines.Commands
                 _msaaDepthViewTextureCache,
             ];
 
-            XRMaterial msaaPointMat = new(msaaLightRefs, msaaPointShader) { RenderOptions = complexParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
-            XRMaterial msaaSpotMat = new(msaaLightRefs, msaaSpotShader) { RenderOptions = complexParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
-            XRMaterial msaaDirMat = new(msaaLightRefs, msaaDirShader) { RenderOptions = complexParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial msaaPointMat = new(msaaLightRefs, msaaPointShader) { RenderOptions = GetAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Equal), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial msaaSpotMat = new(msaaLightRefs, msaaSpotShader) { RenderOptions = GetAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Equal), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial msaaDirMat = CreateFullscreenDirectionalLightMaterial(msaaLightRefs, msaaDirShader, GetFullscreenAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Equal));
 
             XRMesh pointMesh = PointLightComponent.GetVolumeMesh();
             XRMesh spotMesh = SpotLightComponent.GetVolumeMesh();
 
-            XRMesh dirMesh = DirectionalLightComponent.GetVolumeMesh();
-
             // Phase C: MSAA combine renderers must be ready on the first
             // pipeline frame they run; opt out of async default.
-            MsaaSimplePointLightRenderer = new XRMeshRenderer(pointMesh, simplePointMat) { GenerateAsync = false };
+            MsaaSimplePointLightRenderer = new XRMeshRenderer(pointMesh, simplePointMat)
+            {
+                GenerateAsync = false,
+                CaptureUniformsOnRender = true,
+            };
             MsaaSimplePointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaSimpleSpotLightRenderer = new XRMeshRenderer(spotMesh, simpleSpotMat) { GenerateAsync = false };
+            MsaaSimpleSpotLightRenderer = new XRMeshRenderer(spotMesh, simpleSpotMat)
+            {
+                GenerateAsync = false,
+                CaptureUniformsOnRender = true,
+            };
             MsaaSimpleSpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaSimpleDirectionalLightRenderer = new XRMeshRenderer(dirMesh, simpleDirMat) { GenerateAsync = false };
+            MsaaSimpleDirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(simpleDirMat);
             MsaaSimpleDirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaComplexPointLightRenderer = new XRMeshRenderer(pointMesh, msaaPointMat) { GenerateAsync = false };
+            MsaaComplexPointLightRenderer = new XRMeshRenderer(pointMesh, msaaPointMat)
+            {
+                GenerateAsync = false,
+                CaptureUniformsOnRender = true,
+            };
             MsaaComplexPointLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
 
-            MsaaComplexSpotLightRenderer = new XRMeshRenderer(spotMesh, msaaSpotMat) { GenerateAsync = false };
+            MsaaComplexSpotLightRenderer = new XRMeshRenderer(spotMesh, msaaSpotMat)
+            {
+                GenerateAsync = false,
+                CaptureUniformsOnRender = true,
+            };
             MsaaComplexSpotLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
 
-            MsaaComplexDirectionalLightRenderer = new XRMeshRenderer(dirMesh, msaaDirMat) { GenerateAsync = false };
+            MsaaComplexDirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(msaaDirMat);
             MsaaComplexDirectionalLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
+        }
+
+        private static XRMaterial CreateFullscreenDirectionalLightMaterial(XRTexture?[] lightRefs, XRShader fragmentShader, RenderingParameters renderOptions)
+        {
+            XRMaterial material = new(lightRefs, fragmentShader)
+            {
+                RenderOptions = renderOptions,
+                RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+            };
+            material.SetShader(
+                EShaderType.Vertex,
+                XRShader.EngineShader(Path.Combine(SceneShaderPath, "FullscreenTri.vs"), EShaderType.Vertex));
+            return material;
+        }
+
+        private static XRMeshRenderer CreateFullscreenDirectionalLightRenderer(XRMaterial material)
+        {
+            XRMeshRenderer renderer = new(CreateFullscreenTriangle(), material)
+            {
+                GenerateAsync = false,
+                CaptureUniformsOnRender = true,
+                GenerationPriority = EMeshGenerationPriority.RenderPipeline,
+            };
+            renderer.SetShaderPipelinesAllowedForAllVersions(false);
+            renderer.EnsureRenderPipelineVersionsCreated();
+            return renderer;
+        }
+
+        private static XRMesh CreateFullscreenTriangle()
+        {
+            VertexTriangle triangle = new(
+                new Vector3(-1, -1, 0),
+                new Vector3( 3, -1, 0),
+                new Vector3(-1,  3, 0));
+            return XRMesh.Create(triangle);
         }
 
         private static RenderingParameters GetAdditiveParameters()
@@ -914,6 +993,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             };
             return additiveRenderParams;
+        }
+
+        private static RenderingParameters GetFullscreenAdditiveParameters()
+        {
+            RenderingParameters renderParams = GetAdditiveParameters();
+            renderParams.CullMode = ECullMode.None;
+            return renderParams;
         }
 
         private static string DescribeTexture(XRTexture? texture)
@@ -968,6 +1054,33 @@ namespace XREngine.Rendering.Pipelines.Commands
             };
         }
 
+        private static RenderingParameters GetFullscreenAdditiveParametersWithStencil(uint stencilBit, EComparison comparison)
+        {
+            RenderingParameters renderParams = GetAdditiveParametersWithStencil(stencilBit, comparison);
+            renderParams.CullMode = ECullMode.None;
+            return renderParams;
+        }
+
+        private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
+        {
+            var metadata = ParentPipeline?.PassMetadata;
+            if (metadata is not { Count: > 0 } renderPasses)
+            {
+                hasRenderGraphMetadata = false;
+                return int.MinValue;
+            }
+
+            hasRenderGraphMetadata = true;
+
+            foreach (RenderPassMetadata pass in renderPasses)
+            {
+                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
+                    return pass.PassIndex;
+            }
+
+            return int.MinValue;
+        }
+
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {
             base.DescribeRenderPass(context);
@@ -979,7 +1092,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             builder.SampleTexture(MakeTextureResource(DepthViewTexture));
 
             if (context.CurrentRenderTarget is { } target)
-                builder.UseColorAttachment(MakeFboColorResource(target.Name), target.ColorAccess, target.ConsumeColorLoadOp(), target.GetColorStoreOp());
+            {
+                target.ConsumeColorLoadOp();
+                builder.UseColorAttachment(
+                    MakeFboColorResource(target.Name),
+                    target.ColorAccess,
+                    ERenderPassLoadOp.Clear,
+                    target.GetColorStoreOp());
+            }
         }
     }
 }

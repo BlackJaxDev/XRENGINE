@@ -298,10 +298,27 @@ namespace XREngine.Components
             set => SetField(ref _directionalShadowRenderingMode, value);
         }
 
-        // ==================== Forward+ Debug Visualization ====================
         // These proxy properties write straight through to the underlying XRCamera, which
-        // is what the renderer reads each frame. Exposing them here keeps the camera-component
-        // editor a single place to discover and toggle debug overlays at runtime.
+        // is what the renderer reads each frame. Exposing them here keeps camera-level
+        // runtime controls available to the inspector and MCP component tools.
+
+        [Category("Rendering")]
+        [DisplayName("Anti-Aliasing Override")]
+        [Description("Optional per-camera anti-aliasing override. Null uses the global settings cascade.")]
+        public EAntiAliasingMode? AntiAliasingModeOverride
+        {
+            get => Camera.AntiAliasingModeOverride;
+            set
+            {
+                EAntiAliasingMode? previous = Camera.AntiAliasingModeOverride;
+                if (previous == value)
+                    return;
+                Camera.AntiAliasingModeOverride = value;
+                OnPropertyChanged(nameof(AntiAliasingModeOverride), previous, value);
+            }
+        }
+
+        // ==================== Forward+ Debug Visualization ====================
 
         [Category("Debug (Forward+)")]
         [DisplayName("Light Culling Debug Mode")]

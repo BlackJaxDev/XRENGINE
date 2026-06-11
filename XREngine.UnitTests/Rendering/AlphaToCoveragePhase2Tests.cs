@@ -281,20 +281,34 @@ public sealed class AlphaToCoveragePhase2Tests
     [Test]
     public void LightCombineQuad_UsesMaterialIdentityPredicate_InsteadOfSizeOnlyCache()
     {
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("private bool NeedsRecreateLightCombineFbo(XRFrameBuffer fbo)");
         pipelineSource.ShouldContain("if (!HasSingleColorTarget(fbo, DiffuseTextureName))");
-        pipelineSource.ShouldContain("!ReferenceEquals(textures[5], GetTexture<XRTexture>(DiffuseTextureName))");
+        pipelineSource.ShouldContain("!ReferenceEquals(textures[5], GetTexture<XRTexture>(LightingAccumTextureName))");
+        pipelineSource.ShouldContain("private bool NeedsRecreateLightingAccumFbo(XRFrameBuffer fbo)");
+        pipelineSource.ShouldContain("return !HasSingleColorTarget(fbo, LightingAccumTextureName);");
 
-        string pipelineCommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        string pipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
+        pipelineFboSource.ShouldContain("BlendModeAllDrawBuffers = BlendMode.Disabled()");
+
+        string pipelineCommandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
+        pipelineCommandChainSource.ShouldContain("LightingAccumFBOName,\n            CreateLightingAccumFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightingAccumFbo)");
+        pipelineCommandChainSource.ShouldContain("x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)");
         pipelineCommandChainSource.ShouldContain("LightCombineFBOName,\n            CreateLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightCombineFbo)\n            .UseLifetime(RenderResourceLifetime.Transient);");
 
-        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("private bool NeedsRecreateLightCombineFbo(XRFrameBuffer fbo)");
         pipeline2Source.ShouldContain("var (target, attachment, mipLevel, layerIndex) = targets[0];");
-        pipeline2Source.ShouldContain("!ReferenceEquals(textures[5], GetTexture<XRTexture>(DiffuseTextureName))");
+        pipeline2Source.ShouldContain("!ReferenceEquals(textures[5], GetTexture<XRTexture>(LightingAccumTextureName))");
+        pipeline2Source.ShouldContain("private bool NeedsRecreateLightingAccumFbo(XRFrameBuffer fbo)");
+        pipeline2Source.ShouldContain("return !HasSingleColorTarget(fbo, LightingAccumTextureName);");
 
-        string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        string pipeline2FboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs").Replace("\r\n", "\n");
+        pipeline2FboSource.ShouldContain("BlendModeAllDrawBuffers = BlendMode.Disabled()");
+
+        string pipeline2CommandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
+        pipeline2CommandChainSource.ShouldContain("LightingAccumFBOName,\n            CreateLightingAccumFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightingAccumFbo)");
+        pipeline2CommandChainSource.ShouldContain("x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)");
         pipeline2CommandChainSource.ShouldContain("LightCombineFBOName,\n            CreateLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightCombineFbo)\n            .UseLifetime(RenderResourceLifetime.Transient);");
     }
 

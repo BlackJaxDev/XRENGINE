@@ -392,6 +392,33 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        internal void ApplyBindingSnapshot(ComputeDispatchSnapshot snapshot)
+        {
+            lock (_bindingLock)
+            {
+                _uniformValues.Clear();
+                _samplersByUnit.Clear();
+                _samplersByName.Clear();
+                _imagesByUnit.Clear();
+                _buffersByBinding.Clear();
+
+                foreach (var pair in snapshot.Uniforms)
+                    _uniformValues[pair.Key] = pair.Value;
+
+                foreach (var pair in snapshot.Samplers)
+                    _samplersByUnit[pair.Key] = pair.Value;
+
+                foreach (var pair in snapshot.SamplersByName)
+                    _samplersByName[pair.Key] = pair.Value;
+
+                foreach (var pair in snapshot.Images)
+                    _imagesByUnit[pair.Key] = pair.Value;
+
+                foreach (var pair in snapshot.Buffers)
+                    _buffersByBinding[pair.Key] = pair.Value;
+            }
+        }
+
         internal ComputeDispatchSnapshot CaptureComputeSnapshot()
         {
             lock (_bindingLock)
@@ -399,6 +426,7 @@ public unsafe partial class VulkanRenderer
                 return new ComputeDispatchSnapshot(
                     new Dictionary<string, ProgramUniformValue>(_uniformValues, StringComparer.Ordinal),
                     new Dictionary<uint, XRTexture>(_samplersByUnit),
+                    new Dictionary<string, XRTexture>(_samplersByName, StringComparer.Ordinal),
                     new Dictionary<uint, ProgramImageBinding>(_imagesByUnit),
                     new Dictionary<uint, XRDataBuffer>(_buffersByBinding));
             }

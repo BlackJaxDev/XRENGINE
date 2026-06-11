@@ -33,6 +33,7 @@ internal static class RenderPipelineAntiAliasingResources
     [
         // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
         // so it must not be destroyed here - the AO pass owns its lifecycle.
+        DefaultRenderPipeline.LightingAccumFBOName,
         DefaultRenderPipeline.LightCombineFBOName,
         DefaultRenderPipeline.ForwardPassFBOName,
         DefaultRenderPipeline.PostProcessOutputFBOName,
@@ -69,6 +70,7 @@ internal static class RenderPipelineAntiAliasingResources
         DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
         DefaultRenderPipeline.DepthViewTextureName,
         DefaultRenderPipeline.StencilViewTextureName,
+        DefaultRenderPipeline.LightingAccumTextureName,
         DefaultRenderPipeline.DiffuseTextureName,
         DefaultRenderPipeline.HDRSceneTextureName,
         DefaultRenderPipeline.BloomBlurTextureName,

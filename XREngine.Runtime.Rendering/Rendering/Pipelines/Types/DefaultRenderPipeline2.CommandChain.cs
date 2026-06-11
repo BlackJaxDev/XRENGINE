@@ -419,6 +419,13 @@ public partial class DefaultRenderPipeline2
         BeginGpuScope(c, "Lighting");
         c.Add<VPRC_SyncLightProbeResources>();
 
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            LightingAccumFBOName,
+            CreateLightingAccumFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateLightingAccumFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
         //LightCombine FBO
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             LightCombineFBOName,
@@ -447,10 +454,10 @@ public partial class DefaultRenderPipeline2
             }
         }
 
-        // Render the GBuffer to the lighting FBO.
+        // Render the GBuffer lighting into the accumulation FBO consumed by LightCombine.
         // When MSAA deferred is active, light volumes render into the MSAA Lighting FBO
         // using two-pass (simple + complex with per-sample shading).
-        // Otherwise, light volumes render into the standard LightCombine FBO.
+        // Otherwise, light volumes render into the standard accumulation FBO.
         {
             var msaaLightingBranch = c.Add<VPRC_IfElse>();
             msaaLightingBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
@@ -464,27 +471,27 @@ public partial class DefaultRenderPipeline2
                 using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbePositionBufferName;
-                    x.BindingLocation = 0u;
+                    x.BindingLocation = LightProbePositionBufferBinding;
                 }))
                 using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbeTetraBufferName;
-                    x.BindingLocation = 1u;
+                    x.BindingLocation = LightProbeTetraBufferBinding;
                 }))
                 using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbeParamBufferName;
-                    x.BindingLocation = 2u;
+                    x.BindingLocation = LightProbeParamBufferBinding;
                 }))
                 using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbeGridCellBufferName;
-                    x.BindingLocation = 3u;
+                    x.BindingLocation = LightProbeGridCellBufferBinding;
                 }))
                 using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbeGridIndexBufferName;
-                    x.BindingLocation = 4u;
+                    x.BindingLocation = LightProbeGridIndexBufferBinding;
                 }))
                 using (msaaLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
                 {
@@ -500,7 +507,7 @@ public partial class DefaultRenderPipeline2
                 // Resolve MSAA lighting â†’ non-MSAA DiffuseTexture
                 msaaLightCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
                     MsaaLightingFBOName,
-                    LightCombineFBOName,
+                    LightingAccumFBOName,
                     EReadBufferMode.ColorAttachment0,
                     blitColor: true,
                     blitDepth: false,
@@ -509,33 +516,33 @@ public partial class DefaultRenderPipeline2
                 msaaLightingBranch.TrueCommands = msaaLightCmds;
             }
             {
-                // Non-MSAA path: render lights directly into LightCombine FBO
+                // Non-MSAA path: render lights into the accumulation FBO consumed by LightCombine.
                 var stdLightCmds = new ViewportRenderCommandContainer(this);
-                using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightCombineFBOName)))
+                using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)))
                 using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbePositionBufferName;
-                    x.BindingLocation = 0u;
+                    x.BindingLocation = LightProbePositionBufferBinding;
                 }))
                 using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbeTetraBufferName;
-                    x.BindingLocation = 1u;
+                    x.BindingLocation = LightProbeTetraBufferBinding;
                 }))
                 using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbeParamBufferName;
-                    x.BindingLocation = 2u;
+                    x.BindingLocation = LightProbeParamBufferBinding;
                 }))
                 using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbeGridCellBufferName;
-                    x.BindingLocation = 3u;
+                    x.BindingLocation = LightProbeGridCellBufferBinding;
                 }))
                 using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
                 {
                     x.BufferName = LightProbeGridIndexBufferName;
-                    x.BindingLocation = 4u;
+                    x.BindingLocation = LightProbeGridIndexBufferBinding;
                 }))
                 using (stdLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
                 {
@@ -718,27 +725,27 @@ public partial class DefaultRenderPipeline2
             using (c.AddUsing<VPRC_BindBuffer>(x =>
             {
                 x.BufferName = LightProbePositionBufferName;
-                x.BindingLocation = 0u;
+                x.BindingLocation = LightProbePositionBufferBinding;
             }))
             using (c.AddUsing<VPRC_BindBuffer>(x =>
             {
                 x.BufferName = LightProbeTetraBufferName;
-                x.BindingLocation = 1u;
+                x.BindingLocation = LightProbeTetraBufferBinding;
             }))
             using (c.AddUsing<VPRC_BindBuffer>(x =>
             {
                 x.BufferName = LightProbeParamBufferName;
-                x.BindingLocation = 2u;
+                x.BindingLocation = LightProbeParamBufferBinding;
             }))
             using (c.AddUsing<VPRC_BindBuffer>(x =>
             {
                 x.BufferName = LightProbeGridCellBufferName;
-                x.BindingLocation = 3u;
+                x.BindingLocation = LightProbeGridCellBufferBinding;
             }))
             using (c.AddUsing<VPRC_BindBuffer>(x =>
             {
                 x.BufferName = LightProbeGridIndexBufferName;
-                x.BindingLocation = 4u;
+                x.BindingLocation = LightProbeGridIndexBufferBinding;
             }))
             using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
                 c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
@@ -1866,6 +1873,15 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             DiffuseTextureName,
             CreateLightingTexture,
+            t =>
+                NeedsRecreateTextureInternalSize(t) ||
+                t is not IFrameBufferAttachement ||
+                (Stereo ? t is not XRTexture2DArray : t is not XRTexture2D),
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            LightingAccumTextureName,
+            CreateLightingAccumTexture,
             t =>
                 NeedsRecreateTextureInternalSize(t) ||
                 t is not IFrameBufferAttachement ||
