@@ -761,6 +761,18 @@ public unsafe partial class VulkanRenderer
 					AlphaToCoverageEnable = effectiveDraw.AlphaToCoverageEnabled ? Vk.True : Vk.False,
 				};
 
+				// [XRE-DIAG] Trace depth-stencil pipeline state per program/pass to diagnose
+				// why deferred GBuffer geometry does not write depth under Vulkan.
+				Debug.Out(
+					"[XRE-DIAG] Pipeline depth-stencil: program='{0}' pass={1} dsReadOnly={2} drawDepthWrite={3} effTest={4} effWrite={5} cmp={6}",
+					_program!.Data?.Name ?? "Unknown",
+					passIndex,
+					depthStencilReadOnly,
+					draw.DepthWriteEnabled,
+					effectiveDraw.DepthTestEnabled,
+					effectiveDraw.DepthWriteEnabled,
+					effectiveDraw.DepthCompareOp);
+
 				PipelineDepthStencilStateCreateInfo depthStencil = new()
 				{
 					SType = StructureType.PipelineDepthStencilStateCreateInfo,
