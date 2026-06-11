@@ -355,6 +355,8 @@ void main()
         // Show raw depth before the far-depth discard so XRE_DEFERRED_DEBUG=5 can
         // distinguish an empty G-buffer from valid geometry with no lighting.
         if (DeferredDebugMode == 5) { OutLo = vec4(vec3(depth), 1.0f); return; }
+        // [XRE-DIAG] Unconditional depth visualization (bypasses uniform plumbing).
+        OutLo = vec4(vec3(depth), 1.0f); return;
 
         if (depth >= 1.0f)
         {
