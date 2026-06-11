@@ -135,6 +135,13 @@ void main()
     if (uv.x > 1.0f || uv.y > 1.0f)
         discard;
     uv = uv * 0.5f + 0.5f;
+#ifdef XRENGINE_VULKAN
+    // gl_FragCoord is top-left origin on Vulkan, so the fullscreen-triangle NDC-derived
+    // UV is vertically inverted relative to the gl_FragCoord/XRENGINE_ScreenUV convention
+    // that DeferredLightCombine uses to sample this AO target. Flip to match so the AO
+    // is oriented consistently with the rest of the composite (holds for both Y-up/Y-down).
+    uv.y = 1.0f - uv.y;
+#endif
 
     // Precompute fast reconstruction constants once per pixel
     float invProjX = 1.0f / ProjMatrix[0][0];

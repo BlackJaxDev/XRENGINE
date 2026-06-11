@@ -11,6 +11,11 @@ push, subdata, mapping, flush, storage flags, range flags, binding, SSBO/UBO
 resolution, diagnostics, resize/growth handling, and a clear split between
 API-object generation and data readiness.
 
+Follow-up RHI ergonomics and higher-level write/readback work is tracked in
+`docs/work/todo/rendering/xrdatabuffer-rhi-write-model-todo.md`. That document
+builds on this parity layer instead of treating the remaining work as
+Vulkan-only.
+
 ## Source Inventory
 
 Shared:

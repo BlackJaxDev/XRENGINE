@@ -88,7 +88,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     if (grading.UseGpuAutoExposureThisFrame)
                         return;
 
-                    Debug.Rendering("[ExposureUpdate] GPU exposure update failed, falling back to CPU");
+                    Debug.Rendering("[ExposureUpdate] GPU exposure update not ready; using CPU exposure for this frame");
                 }
                 else
                 {

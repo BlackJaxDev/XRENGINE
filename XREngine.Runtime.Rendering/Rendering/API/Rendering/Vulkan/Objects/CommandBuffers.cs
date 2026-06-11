@@ -2969,15 +2969,6 @@ namespace XREngine.Rendering.Vulkan
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
         }
 
-        private void ApplyDynamicState(CommandBuffer commandBuffer)
-        {
-            Viewport viewport = _state.GetViewport();
-            Api!.CmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-            Rect2D scissor = _state.GetScissor();
-            Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
-        }
-
         private void EmitPendingMemoryBarriers(CommandBuffer commandBuffer)
         {
             var pendingMask = _state.PendingMemoryBarrierMask;

@@ -226,14 +226,18 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (!Use())
                 {
+                    if (IsAsyncBuildPending || !Data.LinkReady)
+                        return;
+
                     if (Debug.ShouldLogEvery(ComputeDispatchNotLinkedLogKey, ComputeDispatchNotLinkedLogInterval))
                     {
+                        uint bindingId = TryGetBindingId(out uint id) ? id : 0u;
                         Debug.OpenGL(
                             "[WARN] Cannot dispatch compute shader because program '{0}' is not linked yet. hash={1} linkReady={2} binding={3}",
                             GetProgramDebugName(),
                             Hash,
                             Data.LinkReady,
-                            BindingId);
+                            bindingId);
                     }
                     return;
                 }
@@ -287,7 +291,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
                 catch { }
-                return $"<prog#{BindingId}>";
+                return TryGetBindingId(out uint id) ? $"<prog#{id}>" : "<prog#unlinked>";
             }
 
             private static bool _dispatchTraceEnabled => RenderDiagnosticsFlags.DispatchTrace;
@@ -773,7 +777,7 @@ namespace XREngine.Rendering.OpenGL
                     return true;
 
                 return RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload &&
-                       Renderer.ProgramBinaryUploadQueue is { IsAvailable: true };
+                       Renderer.ProgramBinaryUploadQueue is { IsAvailable: true, IsDisabledAfterFailures: false };
             }
 
             private void InvalidatePreparedLinkData()
@@ -2889,7 +2893,8 @@ namespace XREngine.Rendering.OpenGL
                     }
 
                     GLProgramBinaryUploadQueue? uploadQueue = Renderer.ProgramBinaryUploadQueue;
-                    bool binaryUploadQueueUnavailable = uploadQueue is not { IsAvailable: true };
+                    bool binaryUploadQueueUnavailable = uploadQueue is not { IsAvailable: true } ||
+                        uploadQueue.IsDisabledAfterFailures;
                     if (!binaryUploadQueueUnavailable && uploadQueue is not null)
                     {
                         if (!uploadQueue.CanEnqueue || uploadQueue.IsCacheKeyReserved(sharedCandidate.CacheKey))
@@ -2960,6 +2965,8 @@ namespace XREngine.Rendering.OpenGL
                         }
                         else
                         {
+                            string failedCacheKey = _cachedProgram?.CacheKey ?? asyncResult.CacheKey;
+                            uint failedBinaryBytes = _cachedProgram?.Length ?? 0u;
                             Debug.OpenGLWarning($"Async program binary upload failed for hash {Hash}: {asyncResult.ErrorLog ?? "unknown error"}. Falling back to source compilation.");
                             PublishBackendStatus(
                                 EShaderProgramBackendStage.BinaryUploadFailed,
@@ -2973,11 +2980,12 @@ namespace XREngine.Rendering.OpenGL
                                 asyncResult.ErrorLog ?? "cached binary failed final link validation",
                                 asyncResult.CacheKey,
                                 pendingId,
-                                binaryBytes: _cachedProgram?.Length ?? 0,
+                                binaryBytes: failedBinaryBytes,
                                 binaryFormat: asyncResult.Format.ToString());
                             RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                             CompleteBuildTelemetry(false, binaryLoadMilliseconds: asyncResult.LoadMilliseconds, failureReason: asyncResult.ErrorLog);
-                            DeleteFromBinaryShaderCache(_cachedProgram?.CacheKey ?? asyncResult.CacheKey, asyncResult.Format);
+                            DeleteFromBinaryShaderCache(failedCacheKey, asyncResult.Format);
+                            _cachedProgram = null;
                             // Fall through to compile from source below.
                         }
                     }
@@ -3154,6 +3162,25 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
+                if (isCached && Renderer.ProgramBinaryUploadQueue?.IsDisabledAfterFailures == true)
+                {
+                    GLEnum format = binProg.Format;
+                    PublishBackendStatus(
+                        EShaderProgramBackendStage.CacheMiss,
+                        "BinaryCache",
+                        "cached binary upload disabled for this session",
+                        fingerprint: binProg.CacheKey);
+                    LogRenderingProgramBuildEvent(
+                        "BINARY_CACHE_SKIPPED_ASYNC_UPLOAD_DISABLED",
+                        "BinaryCache",
+                        "cached binary upload disabled for this session",
+                        binProg.CacheKey,
+                        bindingId,
+                        binaryBytes: binProg.Length,
+                        binaryFormat: format.ToString());
+                    isCached = false;
+                }
+
                 if (isCached)
                 {
                     _asyncCompileDuplicateHashWaitPending = false;
@@ -3196,7 +3223,7 @@ namespace XREngine.Rendering.OpenGL
                             RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching,
                             RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload,
                             HasBinaryCacheHit: true,
-                            BinaryUploadAvailable: uploadQueue is { IsAvailable: true },
+                            BinaryUploadAvailable: uploadQueue is { IsAvailable: true, IsDisabledAfterFailures: false },
                             BinaryUploadCanEnqueue: uploadQueue is { CanEnqueue: true },
                             DriverParallelAvailable: Renderer.UseDriverParallelShaderCompile,
                             SharedContextCompileAvailable: Renderer.ProgramCompileLinkQueue is { IsAvailable: true },
@@ -3515,7 +3542,7 @@ namespace XREngine.Rendering.OpenGL
                         RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching,
                         RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload,
                         HasBinaryCacheHit: false,
-                        BinaryUploadAvailable: Renderer.ProgramBinaryUploadQueue is { IsAvailable: true },
+                        BinaryUploadAvailable: Renderer.ProgramBinaryUploadQueue is { IsAvailable: true, IsDisabledAfterFailures: false },
                         BinaryUploadCanEnqueue: Renderer.ProgramBinaryUploadQueue is { CanEnqueue: true },
                         DriverParallelAvailable: driverParallelSourceAvailable,
                         SharedContextCompileAvailable: sharedContextCompileAvailable,

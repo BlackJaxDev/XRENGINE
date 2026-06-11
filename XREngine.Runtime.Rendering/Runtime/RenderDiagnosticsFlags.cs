@@ -199,7 +199,7 @@ public static class RenderDiagnosticsFlags
         try
         {
             string? raw = Environment.GetEnvironmentVariable("XRE_DEFERRED_DEBUG");
-            if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out int mode) && mode >= 0 && mode <= 5)
+            if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out int mode) && mode >= 0 && mode <= 6)
                 DeferredDebugView = mode;
         }
         catch
