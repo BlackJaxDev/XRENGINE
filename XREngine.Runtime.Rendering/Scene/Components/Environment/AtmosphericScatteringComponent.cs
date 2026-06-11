@@ -458,6 +458,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
             },
             RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.RenderTime,
             ExcludeFromGpuIndirect = true,
+            BlendModeAllDrawBuffers = BlendMode.Disabled(),
         };
 
         _material = new XRMaterial(vertexShader, fragmentShader)

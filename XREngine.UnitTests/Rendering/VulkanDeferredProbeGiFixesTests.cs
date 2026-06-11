@@ -34,16 +34,44 @@ public sealed class VulkanDeferredProbeGiFixesTests
         commandSource.ShouldContain("DefaultRenderPipeline.NormalTextureName");
         commandSource.ShouldContain("DefaultRenderPipeline.RMSETextureName");
         commandSource.ShouldContain("DefaultRenderPipeline.DepthViewTextureName");
+        commandSource.ShouldContain("DefaultRenderPipeline.LightingAccumTextureName");
         commandSource.ShouldContain("LightProbeIrradianceArray");
         commandSource.ShouldContain("LightProbePrefilterArray");
         commandSource.ShouldContain("builder.SampleTexture(MakeTextureResource(textureName))");
         commandSource.ShouldContain("builder.ReadBuffer(bufferName)");
 
-        shaderSource.ShouldContain("layout(std430, binding = 0) buffer LightProbePositions");
-        shaderSource.ShouldContain("layout(std430, binding = 1) buffer LightProbeTetrahedra");
-        shaderSource.ShouldContain("layout(std430, binding = 2) buffer LightProbeParameters");
-        shaderSource.ShouldContain("layout(std430, binding = 3) buffer LightProbeGridCells");
-        shaderSource.ShouldContain("layout(std430, binding = 4) buffer LightProbeGridIndices");
+        shaderSource.ShouldContain("layout(std430, binding = 20) buffer LightProbePositions");
+        shaderSource.ShouldContain("layout(std430, binding = 21) buffer LightProbeTetrahedra");
+        shaderSource.ShouldContain("layout(std430, binding = 22) buffer LightProbeParameters");
+        shaderSource.ShouldContain("layout(std430, binding = 23) buffer LightProbeGridCells");
+        shaderSource.ShouldContain("layout(std430, binding = 24) buffer LightProbeGridIndices");
+    }
+
+    [Test]
+    public void DeferredLightCombine_ProbeStorageBindings_DoNotOverlapGBufferSamplers()
+    {
+        string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs");
+        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
+
+        shaderSource.ShouldContain("layout(binding = 0) uniform sampler2D AlbedoOpacity");
+        shaderSource.ShouldContain("layout(binding = 1) uniform sampler2D Normal");
+        shaderSource.ShouldContain("layout(binding = 2) uniform sampler2D RMSE");
+        shaderSource.ShouldContain("layout(binding = 5) uniform sampler2D LightingTexture");
+        shaderSource.ShouldContain("layout(std430, binding = 20) buffer LightProbePositions");
+        shaderSource.ShouldContain("layout(std430, binding = 24) buffer LightProbeGridIndices");
+
+        pipelineSource.ShouldContain("private const uint LightProbePositionBufferBinding = 20u");
+        pipelineSource.ShouldContain("private const uint LightProbeTetraBufferBinding = 21u");
+        pipelineSource.ShouldContain("private const uint LightProbeParamBufferBinding = 22u");
+        pipelineSource.ShouldContain("private const uint LightProbeGridCellBufferBinding = 23u");
+        pipelineSource.ShouldContain("private const uint LightProbeGridIndexBufferBinding = 24u");
+
+        commandSource.ShouldContain("x.BindingLocation = LightProbePositionBufferBinding;");
+        commandSource.ShouldContain("x.BindingLocation = LightProbeTetraBufferBinding;");
+        commandSource.ShouldContain("x.BindingLocation = LightProbeParamBufferBinding;");
+        commandSource.ShouldContain("x.BindingLocation = LightProbeGridCellBufferBinding;");
+        commandSource.ShouldContain("x.BindingLocation = LightProbeGridIndexBufferBinding;");
     }
 
     [Test]

@@ -1061,6 +1061,7 @@ public partial class DefaultRenderPipeline2
     private XRFrameBuffer CreateLightCombineFBO()
     {
         var diffuseTexture = GetTexture<XRTexture>(DiffuseTextureName)!;
+        var lightingAccumTexture = GetTexture<XRTexture>(LightingAccumTextureName)!;
 
         XRTexture[] lightCombineTextures = [
             GetTexture<XRTexture>(AlbedoOpacityTextureName)!,
@@ -1068,7 +1069,7 @@ public partial class DefaultRenderPipeline2
             GetTexture<XRTexture>(RMSETextureName)!,
             GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName)!,
             GetTexture<XRTexture>(DepthViewTextureName)!,
-            diffuseTexture,
+            lightingAccumTexture,
             GetTexture<XRTexture>(BRDFTextureName)!,
         ];
         XRShader lightCombineShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()), EShaderType.Fragment);
@@ -1082,7 +1083,8 @@ public partial class DefaultRenderPipeline2
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                RequiredEngineUniforms = EUniformRequirements.Camera
+                RequiredEngineUniforms = EUniformRequirements.Camera,
+                BlendModeAllDrawBuffers = BlendMode.Disabled()
             }
         };
 
@@ -1097,6 +1099,16 @@ public partial class DefaultRenderPipeline2
         lightCombineFBO.SetRenderTargets((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
 
         return lightCombineFBO;
+    }
+
+    private XRFrameBuffer CreateLightingAccumFBO()
+    {
+        IFrameBufferAttachement lightingAttach = EnsureTextureAttachment(LightingAccumTextureName, CreateLightingAccumTexture);
+
+        return new XRFrameBuffer((lightingAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = LightingAccumFBOName
+        };
     }
 
     private XRFrameBuffer CreateRestirCompositeFBO()

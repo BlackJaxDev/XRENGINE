@@ -1127,6 +1127,7 @@ namespace XREngine.Components.Scene.Mesh
                 // Skybox uses a specialized vertex shader that outputs clip-space positions directly.
                 // GPU indirect dispatch would replace it with a model-matrix-based shader, breaking rendering.
                 ExcludeFromGpuIndirect = true,
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
             };
 
             _material = new XRMaterial(tex is not null ? [tex] : [], vertexShader, fragmentShader)

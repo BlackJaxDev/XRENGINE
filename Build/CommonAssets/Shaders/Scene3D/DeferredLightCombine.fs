@@ -38,12 +38,12 @@ layout(binding = 6) uniform sampler2D BRDF;
 layout(binding = 7) uniform sampler2DArray IrradianceArray;
 layout(binding = 8) uniform sampler2DArray PrefilterArray;
 
-layout(std430, binding = 0) buffer LightProbePositions
+layout(std430, binding = 20) buffer LightProbePositions
 {
         vec4 ProbePositions[];
 };
 
-layout(std430, binding = 1) buffer LightProbeTetrahedra
+layout(std430, binding = 21) buffer LightProbeTetrahedra
 {
         vec4 TetraIndices[];
 };
@@ -58,7 +58,7 @@ struct ProbeParam
         vec4 ProxyRotation;        // xyzw quaternion
 };
 
-layout(std430, binding = 2) buffer LightProbeParameters
+layout(std430, binding = 22) buffer LightProbeParameters
 {
         ProbeParam ProbeParams[];
 };
@@ -70,12 +70,12 @@ struct ProbeGridCell
         ivec4 FallbackIndices;  // up to four nearest probes for empty/stale cells
 };
 
-layout(std430, binding = 3) buffer LightProbeGridCells
+layout(std430, binding = 23) buffer LightProbeGridCells
 {
         ProbeGridCell GridCells[];
 };
 
-layout(std430, binding = 4) buffer LightProbeGridIndices
+layout(std430, binding = 24) buffer LightProbeGridIndices
 {
         int CellTetraIndices[];
 };
@@ -355,9 +355,6 @@ void main()
         // Show raw depth before the far-depth discard so XRE_DEFERRED_DEBUG=5 can
         // distinguish an empty G-buffer from valid geometry with no lighting.
         if (DeferredDebugMode == 5) { OutLo = vec4(vec3(depth), 1.0f); return; }
-        // [XRE-DIAG] Unconditional depth visualization (bypasses uniform plumbing).
-        OutLo = vec4(vec3(depth), 1.0f); return;
-
         if (depth >= 1.0f)
         {
                 OutLo = vec4(0.0f);

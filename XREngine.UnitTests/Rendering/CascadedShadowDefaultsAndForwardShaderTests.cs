@@ -1490,10 +1490,14 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         lightComponentSource.ShouldContain("ShadowMap?.Destroy();");
         lightComponentSource.ShouldContain("ShadowMap = null;");
 
-        string lightCombineSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
+        string lightCombineSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
         lightCombineSource.ShouldContain("public XRMeshRenderer? DirectionalLightRenderer { get; private set; }");
-        lightCombineSource.ShouldContain("RenderLight(DirectionalLightRenderer!, c);");
-        lightCombineSource.ShouldContain("DirectionalLightRenderer = new XRMeshRenderer(dirLightMesh, dirLightMat);");
+        lightCombineSource.ShouldContain("RenderLight(DirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);");
+        lightCombineSource.ShouldContain("DirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(dirLightMat);");
+        lightCombineSource.ShouldContain("Path.Combine(SceneShaderPath, \"FullscreenTri.vs\")");
+        lightCombineSource.ShouldContain("ResolvePassIndex(nameof(VPRC_LightCombinePass), out bool hasRenderGraphMetadata)");
+        lightCombineSource.ShouldContain("RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)");
+        lightCombineSource.ShouldContain("context.GetOrCreateSyntheticPass(nameof(VPRC_LightCombinePass), ERenderGraphPassStage.Graphics)");
         lightCombineSource.ShouldContain("materialProgram.Uniform(\"LightHasShadowMap\", directionalHasShadowMap);");
         lightCombineSource.ShouldContain("else if (_currentLightComponent is DirectionalLightComponent)");
         lightCombineSource.ShouldContain("selectedShadowMap as XRTexture2D ?? DummyShadowMap, 4");

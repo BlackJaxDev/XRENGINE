@@ -32,7 +32,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             DefaultRenderPipeline.RMSETextureName,
             DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
             DefaultRenderPipeline.DepthViewTextureName,
-            DefaultRenderPipeline.DiffuseTextureName,
+            DefaultRenderPipeline.LightingAccumTextureName,
             DefaultRenderPipeline.BRDFTextureName,
             LightProbeIrradianceArrayTextureName,
             LightProbePrefilterArrayTextureName,
@@ -293,6 +293,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                     .ForPass((int)EDefaultRenderPass.Background, EDefaultRenderPass.Background.ToString(), ERenderGraphPassStage.Graphics)
                     .DependsOn(builder.PassIndex);
             }
+            else if (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.PostProcessFBOName, StringComparison.Ordinal) &&
+                     string.Equals(destination, DefaultRenderPipeline.PostProcessOutputFBOName, StringComparison.Ordinal))
+            {
+                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.DepthViewTextureName));
+            }
 
             ERenderPassLoadOp colorLoad = ERenderPassLoadOp.Load;
             ERenderPassStoreOp colorStore = ERenderPassStoreOp.Store;
@@ -307,6 +312,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             builder.UseColorAttachment(MakeColorTargetResource(destination), access, colorLoad, colorStore);
+
+            if (SamplesSharedDepthView(SourceQuadFBOName, destination))
+            {
+                builder.UseDepthAttachment(
+                    MakeFboDepthResource(destination),
+                    ERenderGraphAccess.Read,
+                    ERenderPassLoadOp.Load,
+                    ERenderPassStoreOp.Store);
+            }
         }
 
         private static void DescribeDeferredLightCombineInputs(RenderPassBuilder builder)
@@ -317,5 +331,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             foreach (string bufferName in DeferredLightCombineBufferInputs)
                 builder.ReadBuffer(bufferName);
         }
+
+        private static bool SamplesSharedDepthView(string sourceFboName, string destinationFboName)
+            => (string.Equals(sourceFboName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) &&
+                string.Equals(destinationFboName, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal))
+            || (string.Equals(sourceFboName, DefaultRenderPipeline.PostProcessFBOName, StringComparison.Ordinal) &&
+                string.Equals(destinationFboName, DefaultRenderPipeline.PostProcessOutputFBOName, StringComparison.Ordinal));
     }
 }

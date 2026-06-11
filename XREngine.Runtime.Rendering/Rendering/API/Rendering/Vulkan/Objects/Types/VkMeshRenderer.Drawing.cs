@@ -216,6 +216,12 @@ public unsafe partial class VulkanRenderer
 
 		private void NotifyDrawUniforms(XRMaterial material, XRRenderProgram programData, in PendingMeshDraw draw)
 		{
+			if (draw.ProgramBindingSnapshot is { } snapshot && _program is not null)
+			{
+				_program.ApplyBindingSnapshot(snapshot);
+				return;
+			}
+
 			Renderer.SetMaterialUniforms(material, programData);
 			MeshRenderer.OnSettingUniforms(programData, programData);
 			MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);

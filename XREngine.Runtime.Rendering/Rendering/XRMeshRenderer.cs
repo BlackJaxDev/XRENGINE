@@ -473,6 +473,18 @@ namespace XREngine.Rendering
             set => SetField(ref _generateAsync, value);
         }
 
+        private bool _captureUniformsOnRender;
+        /// <summary>
+        /// When true, queued render backends snapshot renderer uniform callbacks when
+        /// <see cref="Render(Matrix4x4, Matrix4x4, XRMaterial?, uint, bool, RenderingParameters?)"/>
+        /// is called, instead of waiting until command recording.
+        /// </summary>
+        public bool CaptureUniformsOnRender
+        {
+            get => _captureUniformsOnRender;
+            set => SetField(ref _captureUniformsOnRender, value);
+        }
+
         public delegate void DelSetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram);
         /// <summary>
         /// Subscribe to this event to send your own uniforms to the material.
@@ -485,6 +497,8 @@ namespace XREngine.Rendering
             add => _settingUniforms += value;
             remove => _settingUniforms -= value;
         }
+
+        internal bool HasSettingUniformsHandlers => _settingUniforms is not null;
 
         public delegate void DelPrepareRenderData();
         /// <summary>

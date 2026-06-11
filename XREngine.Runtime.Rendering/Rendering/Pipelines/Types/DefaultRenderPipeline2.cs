@@ -478,7 +478,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(RMSETextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(DepthViewTextureName))
-            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(DiffuseTextureName))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(LightingAccumTextureName))
             || !ReferenceEquals(textures[6], GetTexture<XRTexture>(BRDFTextureName)))
             return true;
 
@@ -490,6 +490,14 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateLightingAccumFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        return !HasSingleColorTarget(fbo, LightingAccumTextureName);
     }
 
     private bool NeedsRecreateForwardPassFbo(XRFrameBuffer fbo)
@@ -1233,6 +1241,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string GTAOBlurIntermediateFBOName = "GTAOBlurIntermediateFBO";
     public const string DeferredGBufferFBOName = "DeferredGBufferFBO";
     public const string GBufferFBOName = "GBufferFBO";
+    public const string LightingAccumFBOName = "LightingAccumFBO";
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
@@ -1333,6 +1342,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string DeferredGBufferPreForwardDepthStencilTextureName = "DeferredGBufferPreForwardDepthStencil";
     public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
     public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
+    public const string LightingAccumTextureName = "LightingAccumTexture";
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
     public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
@@ -1689,6 +1699,11 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
     private const string LightProbeIrradianceArrayName = "LightProbeIrradianceArray";
     private const string LightProbePrefilterArrayName = "LightProbePrefilterArray";
+    private const uint LightProbePositionBufferBinding = 20u;
+    private const uint LightProbeTetraBufferBinding = 21u;
+    private const uint LightProbeParamBufferBinding = 22u;
+    private const uint LightProbeGridCellBufferBinding = 23u;
+    private const uint LightProbeGridIndexBufferBinding = 24u;
     private Vector3 _probeGridOrigin;
     private float _probeGridCellSize;
     private IVector3 _probeGridDims;

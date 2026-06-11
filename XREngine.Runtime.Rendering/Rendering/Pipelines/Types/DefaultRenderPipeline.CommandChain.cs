@@ -375,6 +375,13 @@ public partial class DefaultRenderPipeline
         c.Add<VPRC_SyncLightProbeResources>();
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            LightingAccumFBOName,
+            CreateLightingAccumFBO,
+            GetDesiredFBOSizeInternal,
+            NeedsRecreateLightingAccumFbo)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             LightCombineFBOName,
             CreateLightCombineFBO,
             GetDesiredFBOSizeInternal,
@@ -415,7 +422,7 @@ public partial class DefaultRenderPipeline
 
             msaaLightCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
                 MsaaLightingFBOName,
-                LightCombineFBOName,
+                LightingAccumFBOName,
                 EReadBufferMode.ColorAttachment0,
                 blitColor: true,
                 blitDepth: false,
@@ -425,7 +432,7 @@ public partial class DefaultRenderPipeline
         }
         {
             var stdLightCmds = new ViewportRenderCommandContainer(this);
-            using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightCombineFBOName)))
+            using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)))
             {
                 stdLightCmds.Add<VPRC_StencilMask>().Set(~0u);
                 stdLightCmds.Add<VPRC_LightCombinePass>().SetOptions(
@@ -540,9 +547,10 @@ public partial class DefaultRenderPipeline
         {
             x.FrameBufferName = ForwardPassFBOName;
             x.Write = true;
-            x.ClearStencil = true;
             x.DynamicName = () => RuntimeEnableMsaa ? ForwardPassMsaaFBOName : ForwardPassFBOName;
             x.ClearColor = true;
+            x.ClearDepth = false;
+            x.ClearStencil = false;
             x.DynamicClearDepth = () => RuntimeEnableMsaa;
         }))
         {

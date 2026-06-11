@@ -484,7 +484,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(RMSETextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(DepthViewTextureName))
-            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(DiffuseTextureName))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(LightingAccumTextureName))
             || !ReferenceEquals(textures[6], GetTexture<XRTexture>(BRDFTextureName)))
             return true;
 
@@ -496,6 +496,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
             Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
+    }
+
+    private bool NeedsRecreateLightingAccumFbo(XRFrameBuffer fbo)
+    {
+        if (!fbo.IsLastCheckComplete)
+            return true;
+
+        return !HasSingleColorTarget(fbo, LightingAccumTextureName);
     }
 
     private bool NeedsRecreateForwardPassFbo(XRFrameBuffer fbo)
@@ -1234,6 +1242,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string GTAOBlurIntermediateFBOName = "GTAOBlurIntermediateFBO";
     public const string DeferredGBufferFBOName = "DeferredGBufferFBO";
     public const string GBufferFBOName = "GBufferFBO";
+    public const string LightingAccumFBOName = "LightingAccumFBO";
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
@@ -1334,6 +1343,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string DeferredGBufferPreForwardDepthStencilTextureName = "DeferredGBufferPreForwardDepthStencil";
     public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
     public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
+    public const string LightingAccumTextureName = "LightingAccumTexture";
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
     public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
@@ -1890,6 +1900,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
             c.Add<VPRC_SyncLightProbeResources>();
 
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                LightingAccumFBOName,
+                CreateLightingAccumFBO,
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateLightingAccumFbo)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
             //LightCombine FBO
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 LightCombineFBOName,
@@ -1919,10 +1936,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 }
             }
 
-            // Render the GBuffer to the lighting FBO.
+            // Render the GBuffer lighting into the accumulation FBO consumed by LightCombine.
             // When MSAA deferred is active, light volumes render into the MSAA Lighting FBO
             // using two-pass (simple + complex with per-sample shading).
-            // Otherwise, light volumes render into the standard LightCombine FBO.
+            // Otherwise, light volumes render into the standard accumulation FBO.
             {
                 var msaaLightingBranch = c.Add<VPRC_IfElse>();
                 msaaLightingBranch.Label = "MSAA Deferred Lighting";
@@ -1947,7 +1964,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     // Resolve MSAA lighting → non-MSAA DiffuseTexture
                     msaaLightCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
                         MsaaLightingFBOName,
-                        LightCombineFBOName,
+                        LightingAccumFBOName,
                         EReadBufferMode.ColorAttachment0,
                         blitColor: true,
                         blitDepth: false,
@@ -1956,9 +1973,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     msaaLightingBranch.TrueCommands = msaaLightCmds;
                 }
                 {
-                    // Non-MSAA path: render lights directly into LightCombine FBO
+                    // Non-MSAA path: render lights into the accumulation FBO consumed by LightCombine.
                     var stdLightCmds = new ViewportRenderCommandContainer(this);
-                    using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightCombineFBOName)))
+                    using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)))
                     {
                         stdLightCmds.Add<VPRC_StencilMask>().Set(~0u);
                         stdLightCmds.Add<VPRC_LightCombinePass>().SetOptions(
@@ -2761,6 +2778,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             DiffuseTextureName,
             CreateLightingTexture,
+            t =>
+                NeedsRecreateTextureInternalSize(t) ||
+                t is not IFrameBufferAttachement ||
+                (Stereo ? t is not XRTexture2DArray : t is not XRTexture2D),
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            LightingAccumTextureName,
+            CreateLightingAccumTexture,
             t =>
                 NeedsRecreateTextureInternalSize(t) ||
                 t is not IFrameBufferAttachement ||
