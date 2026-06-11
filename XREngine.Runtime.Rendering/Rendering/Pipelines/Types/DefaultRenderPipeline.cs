@@ -3478,7 +3478,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private static int ResolveDeferredDebugMode()
     {
         int debugMode = RenderDiagnosticsFlags.DeferredDebugView;
-        return debugMode >= 0 && debugMode <= 5 ? debugMode : (int)DeferredDebugViewMode.Disabled;
+        return debugMode >= 0 && debugMode <= 6 ? debugMode : (int)DeferredDebugViewMode.Disabled;
     }
 
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)

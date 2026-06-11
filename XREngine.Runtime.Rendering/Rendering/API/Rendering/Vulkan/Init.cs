@@ -624,9 +624,10 @@ namespace XREngine.Rendering.Vulkan
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
+            Extent2D clearTargetExtent = ResolveCurrentDrawTargetExtent();
             Rect2D rect = _state.GetCroppingEnabled()
-                ? _state.GetScissor()
-                : new Rect2D(new Offset2D(0, 0), _state.GetCurrentTargetExtent());
+                ? _state.GetScissor(clearTargetExtent)
+                : new Rect2D(new Offset2D(0, 0), clearTargetExtent);
 
             EnqueueFrameOp(new ClearOp(
                 EnsureValidPassIndex(passIndex, "Clear", context.PassMetadata),

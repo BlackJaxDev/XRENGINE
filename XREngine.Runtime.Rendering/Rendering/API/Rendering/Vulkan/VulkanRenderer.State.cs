@@ -52,10 +52,24 @@ public unsafe partial class VulkanRenderer
         TimeSpan FrameDelta);
 
     internal Viewport GetCurrentViewport()
-        => _state.GetViewport();
+        => _state.GetViewport(ResolveCurrentDrawTargetExtent());
 
     internal Rect2D GetCurrentScissor()
-        => _state.GetScissor();
+        => _state.GetScissor(ResolveCurrentDrawTargetExtent());
+
+    /// <summary>
+    /// Extent of the draw target that is actually bound right now. Quad-blit style
+    /// passes bind FBOs through <see cref="XRFrameBuffer.BindForWriting"/> (engine-side
+    /// stack) without invoking <see cref="BindFrameBuffer"/>, so the tracker's
+    /// last-bound extent can be stale; prefer the live engine binding.
+    /// </summary>
+    internal Extent2D ResolveCurrentDrawTargetExtent()
+    {
+        XRFrameBuffer? fbo = GetCurrentDrawFrameBuffer();
+        if (fbo is not null && fbo.Width > 0 && fbo.Height > 0)
+            return new Extent2D(fbo.Width, fbo.Height);
+        return _state.GetCurrentTargetExtent();
+    }
 
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
         => XRFrameBuffer.BoundForWriting ?? _boundDrawFrameBuffer;
@@ -225,8 +239,8 @@ public unsafe partial class VulkanRenderer
         private Extent2D _swapchainExtent;
         private Extent2D _currentTargetExtent;
         private bool _viewportExplicitlySet;
-        private Viewport _viewport;
-        private Rect2D _scissor;
+        private BoundingRectangle _viewportRegion;
+        private BoundingRectangle _scissorRegion;
 
         public VulkanStateTracker()
         {
@@ -315,48 +329,45 @@ public unsafe partial class VulkanRenderer
             _swapchainExtent = extent;
             if (_currentTargetExtent.Width == 0 && _currentTargetExtent.Height == 0)
                 _currentTargetExtent = extent;
-            if (!_viewportExplicitlySet)
-            {
-                _viewport = DefaultViewport(_currentTargetExtent);
-            }
-
-            if (!CroppingEnabled)
-            {
-                _scissor = DefaultScissor(_currentTargetExtent);
-            }
         }
 
         public void SetCurrentTargetExtent(Extent2D extent)
-        {
-            _currentTargetExtent = extent;
-            if (!_viewportExplicitlySet)
-                _viewport = DefaultViewport(extent);
-
-            if (!CroppingEnabled)
-                _scissor = DefaultScissor(extent);
-        }
+            => _currentTargetExtent = extent;
 
         public Extent2D GetCurrentTargetExtent()
             => _currentTargetExtent;
 
-        public Viewport GetViewport()
-            => _viewportExplicitlySet ? _viewport : DefaultViewport(_currentTargetExtent);
+        // Viewport/scissor regions are stored in engine bottom-left coordinates and
+        // converted to Vulkan coordinates lazily, against the extent of the target
+        // bound at read (draw-enqueue) time. Eager conversion at Set time used
+        // whatever target was bound then; pipeline code sets the render area before
+        // binding the destination FBO, which produced viewports computed against the
+        // previous pass's target height (off-target rasterization on half-res passes).
+        public Viewport GetViewport(Extent2D targetExtent)
+            => _viewportExplicitlySet
+                ? CreateVulkanViewport(_viewportRegion, targetExtent)
+                : CreateVulkanViewport(targetExtent);
 
         public void SetViewport(BoundingRectangle region)
         {
             // Engine regions remain bottom-left rectangles. The clip-space policy chooses
             // whether Vulkan uses a negative-height GL-style viewport or native Y-down mapping.
-            _viewport = CreateVulkanViewport(region, _currentTargetExtent);
+            _viewportRegion = region;
             _viewportExplicitlySet = true;
         }
 
-        public Rect2D GetScissor()
-            => CroppingEnabled ? _scissor : DefaultScissor(_currentTargetExtent);
+        public Rect2D GetScissor(Extent2D targetExtent)
+            => CroppingEnabled
+                ? CreateVulkanScissor(_scissorRegion, targetExtent)
+                : DefaultScissor(targetExtent);
 
         public void SetScissor(BoundingRectangle region)
+            => _scissorRegion = region;
+
+        private static Rect2D CreateVulkanScissor(BoundingRectangle region, Extent2D targetExtent)
         {
-            int targetWidth = (int)Math.Max(_currentTargetExtent.Width, 1u);
-            int targetHeight = (int)Math.Max(_currentTargetExtent.Height, 1u);
+            int targetWidth = (int)Math.Max(targetExtent.Width, 1u);
+            int targetHeight = (int)Math.Max(targetExtent.Height, 1u);
 
             int clampedX = Math.Clamp(region.X, 0, targetWidth);
             int clampedBottomY = Math.Clamp(region.Y, 0, targetHeight);
@@ -369,7 +380,7 @@ public unsafe partial class VulkanRenderer
 
             // Convert bottom-left origin to Vulkan's top-left scissor origin after clamping.
             int yTopLeft = targetHeight - (clampedBottomY + clampedHeight);
-            _scissor = new Rect2D
+            return new Rect2D
             {
                 Offset = new Offset2D(clampedX, Math.Max(yTopLeft, 0)),
                 Extent = new Extent2D((uint)clampedWidth, (uint)clampedHeight)
@@ -377,11 +388,7 @@ public unsafe partial class VulkanRenderer
         }
 
         public void SetCroppingEnabled(bool enabled)
-        {
-            CroppingEnabled = enabled;
-            if (!enabled)
-                _scissor = DefaultScissor(_currentTargetExtent);
-        }
+            => CroppingEnabled = enabled;
 
         public bool GetDepthTestEnabled() => DepthTestEnabled;
         public bool GetDepthWriteEnabled() => DepthWriteEnabled;
@@ -405,9 +412,6 @@ public unsafe partial class VulkanRenderer
         public bool GetStencilTestEnabled() => StencilTestEnabled;
         public StencilOpState GetFrontStencilState() => FrontStencilState;
         public StencilOpState GetBackStencilState() => BackStencilState;
-
-        private static Viewport DefaultViewport(Extent2D extent)
-            => CreateVulkanViewport(extent);
 
         private static Rect2D DefaultScissor(Extent2D extent)
             => new()

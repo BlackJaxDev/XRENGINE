@@ -48,13 +48,19 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public const int MaxInFlight = 32;
 
+            private const int ConsecutiveFailureDisableThreshold = 3;
+
+            private int _consecutiveFailures;
+            private int _disabledAfterConsecutiveFailures;
+
             public bool IsAvailable => _sharedContext.IsRunning;
+            public bool IsDisabledAfterFailures => Volatile.Read(ref _disabledAfterConsecutiveFailures) != 0;
 
             /// <summary>
             /// Returns <c>true</c> if the in-flight count is below <see cref="MaxInFlight"/>
             /// and a new upload can be enqueued without risking VRAM exhaustion.
             /// </summary>
-            public bool CanEnqueue => Volatile.Read(ref _inFlight) < MaxInFlight;
+            public bool CanEnqueue => !IsDisabledAfterFailures && Volatile.Read(ref _inFlight) < MaxInFlight;
 
             /// <summary>Number of uploads queued or completed but not yet consumed.</summary>
             public int InFlightCount => Volatile.Read(ref _inFlight);
@@ -245,9 +251,22 @@ namespace XREngine.Rendering.OpenGL
                         errorLog);
                     bool success = error == GLEnum.NoError && linkStatus != 0;
                     if (success)
+                    {
                         Interlocked.Increment(ref _completedCount);
+                        Interlocked.Exchange(ref _consecutiveFailures, 0);
+                    }
                     else
+                    {
                         Interlocked.Increment(ref _failedCount);
+                        int consecutiveFailures = Interlocked.Increment(ref _consecutiveFailures);
+                        if (consecutiveFailures >= ConsecutiveFailureDisableThreshold &&
+                            Interlocked.Exchange(ref _disabledAfterConsecutiveFailures, 1) == 0)
+                        {
+                            Debug.OpenGLWarning(
+                                "[ShaderCache] Async program binary upload disabled for this session after {0} consecutive cached binary failures. Source compilation will refresh programs instead.",
+                                consecutiveFailures);
+                        }
+                    }
                     if (_cancelledProgramIds.TryRemove(programId, out _))
                     {
                         CompleteCancelledUpload(programId, cacheKey);

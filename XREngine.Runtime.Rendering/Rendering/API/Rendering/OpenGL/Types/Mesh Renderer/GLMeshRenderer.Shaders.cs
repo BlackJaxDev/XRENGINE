@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
@@ -432,7 +433,8 @@ namespace XREngine.Rendering.OpenGL
                 hash.Add(_combinedProgram?.BindingId ?? 0u);
                 hash.Add(_separatedVertexProgram?.BindingId ?? 0u);
                 hash.Add(BindingId);
-                hash.Add(material.BindingId);
+                hash.Add(RuntimeHelpers.GetHashCode(material.Data));
+                hash.Add(material.Data.ShaderStateRevision);
                 hash.Add(material.Data.BindingLayoutVersion);
                 hash.Add(material.Data.RenderOptions?.GetHashCode() ?? 0);
                 hash.Add((int)(Mesh?.Type ?? EPrimitiveType.Triangles));

@@ -1990,7 +1990,7 @@ namespace XREngine
             get => _deferredDebugView;
             set
             {
-                int clamped = value < 0 ? 0 : (value > 5 ? 5 : value);
+                int clamped = value < 0 ? 0 : (value > 6 ? 6 : value);
                 if (SetField(ref _deferredDebugView, clamped))
                     XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(clamped);
             }

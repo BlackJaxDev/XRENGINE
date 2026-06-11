@@ -886,6 +886,9 @@ void main()
         // Attempt a deferred link here, mirroring what UseRequested does.
         if (!glProgram.Use())
         {
+            if (glProgram.IsAsyncBuildPending || !glProgram.LinkReady)
+                return false;
+
             Debug.OpenGLWarningEvery(
                 $"AutoExposure.ProgramNotReady.{glProgram.Hash}",
                 TimeSpan.FromSeconds(1),
