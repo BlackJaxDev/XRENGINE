@@ -7048,23 +7048,18 @@ bodyEnd
                     }
                 }
 
-                // Append structured data (e.g. { id, path }) so the model can
-                // reference created resource IDs in subsequent tool calls.
+                // The structured data is already embedded as a JSON text block inside the
+                // `content` array by the server, so it has been captured above. We still
+                // inspect the legacy top-level `data` field purely to detect an image path
+                // (e.g. screenshot results include "path") for multimodal feedback.
                 if (resultEl.TryGetProperty("data", out JsonElement dataEl)
-                    && dataEl.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                    && dataEl.ValueKind == JsonValueKind.Object
+                    && dataEl.TryGetProperty("path", out var pathEl)
+                    && pathEl.ValueKind == JsonValueKind.String)
                 {
-                    if (sb.Length > 0) sb.Append('\n');
-                    sb.Append(dataEl.GetRawText());
-
-                    // Check for image path in data (e.g. screenshot results include "path")
-                    if (dataEl.ValueKind == JsonValueKind.Object
-                        && dataEl.TryGetProperty("path", out var pathEl)
-                        && pathEl.ValueKind == JsonValueKind.String)
-                    {
-                        string? p = pathEl.GetString();
-                        if (p is not null && IsImageFilePath(p))
-                            dataImagePath = p;
-                    }
+                    string? p = pathEl.GetString();
+                    if (p is not null && IsImageFilePath(p))
+                        dataImagePath = p;
                 }
 
                 if (sb.Length > 0)

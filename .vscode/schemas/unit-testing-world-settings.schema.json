@@ -491,6 +491,18 @@
       "markdownDescription": "Supported values: `OpenGL`, `Vulkan`.",
       "description": "Selects the RenderAPI enum value."
     },
+    "CameraAntiAliasingModeOverride": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/EAntiAliasingMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "When set, forces this anti-aliasing mode on the constructed unit-testing main camera via the per-camera AntiAliasingModeOverride, bypassing the global/game-settings AA. Null leaves the camera on the global setting.",
+      "markdownDescription": "Supported values: `None`, `Msaa`, `Fxaa`, `Smaa`, `Taa`, `Tsr`."
+    },
     "PhysicsAPI": {
       "$ref": "#/definitions/EPhysicsLibrary",
       "markdownDescription": "Supported values: `PhysX`, `Jolt`, `Jitter`.",
@@ -846,6 +858,18 @@
         "Vulkan"
       ],
       "markdownDescription": "Supported values: `OpenGL`, `Vulkan`."
+    },
+    "EAntiAliasingMode": {
+      "type": "string",
+      "enum": [
+        "None",
+        "Msaa",
+        "Fxaa",
+        "Smaa",
+        "Taa",
+        "Tsr"
+      ],
+      "markdownDescription": "Supported values: `None`, `Msaa`, `Fxaa`, `Smaa`, `Taa`, `Tsr`."
     },
     "EPhysicsLibrary": {
       "type": "string",

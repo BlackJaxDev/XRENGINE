@@ -311,6 +311,7 @@ public class UnitTestingWorldSettings
     public bool RenderMeshBounds = true;
 
     public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;
+    public EAntiAliasingMode? CameraAntiAliasingModeOverride = null;
     public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
     public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;
     public bool TickGroupedItemsInParallel = true;
