@@ -536,19 +536,26 @@ All tool responses follow this structure:
       {
         "type": "text",
         "text": "Human-readable message describing the result"
+      },
+      {
+        "type": "text",
+        "text": "{ /* JSON-serialized structured data, present only when the tool returns data */ }"
       }
     ],
     "isError": false,
-    "data": { /* Optional structured data */ }
+    "structuredContent": { /* Optional structured data */ },
+    "data": { /* Optional structured data (legacy mirror of structuredContent) */ }
   }
 }
 ```
 
-| Field     | Type      | Description                                         |
-|-----------|-----------|-----------------------------------------------------|
-| `content` | `array`   | Array of content blocks (currently text only)       |
-| `isError` | `boolean` | `true` if the operation failed                      |
-| `data`    | `object`  | Optional structured data returned by the tool       |
+| Field               | Type      | Description                                                                                     |
+|---------------------|-----------|-------------------------------------------------------------------------------------------------|
+| `content`           | `array`   | Content blocks. The first text block is the human-readable message; when a tool returns structured data, a second text block carries that data as JSON so spec-compliant clients (which only read `content`) can see it. |
+| `isError`           | `boolean` | `true` if the operation failed                                                                  |
+| `structuredContent` | `object`  | Optional structured data, populated for MCP clients that consume `structuredContent`            |
+| `data`              | `object`  | Optional structured data; legacy mirror of `structuredContent` kept for existing integrations   |
+
 
 ---
 
@@ -592,6 +599,7 @@ When a tool executes but encounters an error, `isError` is set to `true`:
       }
     ],
     "isError": true,
+    "structuredContent": null,
     "data": null
   }
 }

@@ -452,6 +452,8 @@ public static partial class EditorUnitTests
             if (cameraNode.TryAddComponent(out camComp, EditorViewCameraName))
             {
                 camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
+                if (Toggles.CameraAntiAliasingModeOverride.HasValue)
+                    camComp.AntiAliasingModeOverride = Toggles.CameraAntiAliasingModeOverride.Value;
                 ConfigureCameraPostProcessing(camComp);
             }
             else

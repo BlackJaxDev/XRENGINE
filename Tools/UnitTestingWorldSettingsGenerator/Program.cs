@@ -1054,6 +1054,9 @@ static class JsoncWriter
 
         if (member.IsEnum && !member.IsFlagsEnum)
         {
+            if (member.AllowsNull && value.Type == JTokenType.Null)
+                return "null";
+
             string enumValue = SettingsDocumentGenerator.NormalizeEnumForWrite(member, value);
             return JsonConvert.ToString(enumValue);
         }

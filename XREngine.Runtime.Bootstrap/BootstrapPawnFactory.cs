@@ -361,6 +361,8 @@ public static class BootstrapPawnFactory
         if (cameraNode.TryAddComponent(out camComp, EditorViewCameraName))
         {
             camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
+            if (RuntimeBootstrapState.Settings.CameraAntiAliasingModeOverride.HasValue)
+                camComp.AntiAliasingModeOverride = RuntimeBootstrapState.Settings.CameraAntiAliasingModeOverride.Value;
             ConfigureCameraPostProcessing(camComp);
         }
         else

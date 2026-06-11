@@ -340,6 +340,7 @@ public static partial class EditorUnitTests
         public bool RenderMeshBounds = true;
 
         public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;
+        public EAntiAliasingMode? CameraAntiAliasingModeOverride = null; //When set, forces this anti-aliasing mode on the constructed unit-testing main camera via the per-camera AntiAliasingModeOverride, bypassing the global/game-settings AA. Null leaves the camera on the global setting.
         public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
         public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;
         public bool TickGroupedItemsInParallel = true;

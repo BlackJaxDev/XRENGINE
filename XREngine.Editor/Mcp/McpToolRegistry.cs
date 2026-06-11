@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Components;
@@ -15,7 +16,11 @@ namespace XREngine.Editor.Mcp
     {
         private static readonly JsonSerializerOptions s_jsonOptions = new()
         {
-            PropertyNameCaseInsensitive = true
+            PropertyNameCaseInsensitive = true,
+            // Accept "6" for numeric targets and enum names (e.g. "Fxaa") for enum targets
+            // so loosely-typed MCP clients can set values without exact JSON types.
+            NumberHandling = JsonNumberHandling.AllowReadingFromString,
+            Converters = { new JsonStringEnumConverter() }
         };
 
         private static readonly Lazy<IReadOnlyDictionary<string, Type>> s_componentTypeCache
@@ -131,11 +136,7 @@ namespace XREngine.Editor.Mcp
                 }
 
                 if (value is JsonElement element)
-                {
-                    converted = JsonSerializer.Deserialize(element.GetRawText(), targetType, s_jsonOptions);
-                    error = null;
-                    return true;
-                }
+                    return TryConvertJsonElement(element, targetType, out converted, out error);
 
                 string json = JsonSerializer.Serialize(value, s_jsonOptions);
                 converted = JsonSerializer.Deserialize(json, targetType, s_jsonOptions);
@@ -148,6 +149,59 @@ namespace XREngine.Editor.Mcp
                 error = ex.Message;
                 return false;
             }
+        }
+
+        private static bool TryConvertJsonElement(JsonElement element, Type targetType, out object? converted, out string? error)
+        {
+            try
+            {
+                converted = JsonSerializer.Deserialize(element.GetRawText(), targetType, s_jsonOptions);
+                error = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // Clients whose schemas constrain object-typed arguments often wrap scalars as
+                // {"value": ...}. If direct deserialization failed and the payload is exactly that
+                // single-property wrapper, retry with the inner value so e.g. {"value": false}
+                // converts to a bool target. Types that genuinely have a 'Value' property succeed
+                // on the direct attempt above and never reach this fallback.
+                if (element.ValueKind == JsonValueKind.Object && TryGetWrapperValue(element, out JsonElement inner))
+                {
+                    try
+                    {
+                        converted = JsonSerializer.Deserialize(inner.GetRawText(), targetType, s_jsonOptions);
+                        error = null;
+                        return true;
+                    }
+                    catch (Exception innerEx)
+                    {
+                        converted = null;
+                        error = $"{ex.Message} (also tried unwrapped 'value': {innerEx.Message})";
+                        return false;
+                    }
+                }
+
+                converted = null;
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryGetWrapperValue(JsonElement element, out JsonElement inner)
+        {
+            inner = default;
+            int count = 0;
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                if (++count > 1)
+                    return false;
+                if (!string.Equals(property.Name, "value", StringComparison.OrdinalIgnoreCase))
+                    return false;
+                inner = property.Value;
+            }
+
+            return count == 1;
         }
 
         /// <summary>
@@ -262,7 +316,12 @@ namespace XREngine.Editor.Mcp
 
         private static object BuildParameterSchema(Type parameterType, string title, string? description)
         {
-            var schema = new Dictionary<string, object?> { ["type"] = MapJsonType(parameterType) };
+            var schema = new Dictionary<string, object?>();
+            // object-typed parameters accept any JSON value. Omitting "type" lets clients pass
+            // scalars (booleans, numbers, strings) directly instead of being forced by schema
+            // validation to wrap them in a JSON object.
+            if (parameterType != typeof(object))
+                schema["type"] = MapJsonType(parameterType);
             if (!string.IsNullOrWhiteSpace(description))
                 schema["description"] = description;
             if (!string.IsNullOrWhiteSpace(title))
@@ -275,18 +334,25 @@ namespace XREngine.Editor.Mcp
             if (underlying.IsArray)
             {
                 Type elementType = underlying.GetElementType()!;
-                schema["items"] = new Dictionary<string, object?> { ["type"] = MapJsonType(elementType) };
+                schema["items"] = BuildItemsSchema(elementType);
             }
             else if (underlying != typeof(string) && typeof(System.Collections.IEnumerable).IsAssignableFrom(underlying))
             {
                 // For generic collections like List<T>, extract T.
                 Type[] genericArgs = underlying.GetGenericArguments();
-                string itemType = genericArgs.Length > 0 ? MapJsonType(genericArgs[0]) : "string";
-                schema["items"] = new Dictionary<string, object?> { ["type"] = itemType };
+                schema["items"] = genericArgs.Length > 0
+                    ? BuildItemsSchema(genericArgs[0])
+                    : new Dictionary<string, object?> { ["type"] = "string" };
             }
 
             return schema;
         }
+
+        private static Dictionary<string, object?> BuildItemsSchema(Type elementType)
+            // object-typed elements accept any JSON value; an empty schema imposes no constraint.
+            => elementType == typeof(object)
+                ? []
+                : new Dictionary<string, object?> { ["type"] = MapJsonType(elementType) };
 
         private static string MapJsonType(Type parameterType)
         {
@@ -384,20 +450,7 @@ namespace XREngine.Editor.Mcp
         }
 
         private static bool TryDeserialize(JsonElement element, Type targetType, out object? value, out string? error)
-        {
-            try
-            {
-                value = JsonSerializer.Deserialize(element.GetRawText(), targetType, s_jsonOptions);
-                error = null;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                value = null;
-                error = ex.Message;
-                return false;
-            }
-        }
+            => TryConvertJsonElement(element, targetType, out value, out error);
 
         private static bool IsSupportedReturnType(Type returnType)
         {

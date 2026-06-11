@@ -115,6 +115,30 @@ Tool categories include Setup, Build, Editor, Repo, Docs, Reports, and Deps. `Ex
 - Regenerate settings/schema with `Tools/Generate-UnitTestingWorldSettings.ps1` or `Generate-UnitTestingWorldSettings` after settings type changes.
 - Pose/networking tests use `XRE_UNIT_TEST_WORLD_KIND=NetworkingPose` plus role env vars: `server`, `sender`, `receiver`.
 
+## Iterating On The Editor
+
+"Iterate on the editor" (a.k.a. "iterate on the editor") means driving a tight, evidence-based debug loop against a live editor process using the MCP server and the per-run logs, instead of guessing from source alone. Use it for rendering, scene, transform, and other visually observable issues. Each iteration is one full pass through the loop below.
+
+The loop:
+
+1. Build the editor (`Build-Editor` task or `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`) so the running process reflects current source.
+2. Launch the editor with the Unit Testing World and MCP enabled:
+
+   ```powershell
+   dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
+   ```
+
+   Run it as a background/async process so the loop can keep working while it stays open. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
+3. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
+4. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Captures land in `McpCaptures/` by default; pass `output_dir` to control the location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
+5. Determine what the issue looks like and whether it still exists by inspecting the image(s), not by trusting tool return values.
+6. Close the editor (kill the launch terminal).
+7. Review the last run's logs under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/` — for rendering work this is primarily `log_vulkan.log`, `log_opengl.log`, and `log_rendering.log`. Distinguish steady-state messages from shutdown-only teardown noise (for example `VUID-vkDestroyDevice-device-05137` is teardown, not a render bug). Group/filter validation errors, warnings, and the render-pass (`BeginRendering FBO=...`) sequence.
+8. Form or refine a hypothesis, change exactly one variable (a setting, a toggle, or a targeted code fix), and repeat from step 1 until the issue is understood or resolved.
+
+Notes:
+- Record durable findings (symptoms, ruled-out causes, render-pass order, next isolation step) so later iterations build on earlier ones instead of repeating them.
+
 ## Testing Policy
 
 1. Run the most targeted tests for the changed subsystem.

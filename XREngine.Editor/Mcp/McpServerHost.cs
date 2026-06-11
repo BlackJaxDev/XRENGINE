@@ -1197,13 +1197,28 @@ namespace XREngine.Editor.Mcp
             McpThreadAffinity affinity = tool!.ThreadAffinity ?? ResolveDefaultAffinity(dispatchMode);
             var response = await DispatchToolAsync(tool, context, argsElement, affinity, token);
 
+            // Build the content array. Spec-compliant MCP clients (e.g. VS Code / Copilot)
+            // only surface the `content` text blocks to the model and ignore non-standard
+            // top-level fields, so the structured data must be embedded here as a JSON text
+            // block to be visible. `structuredContent` is also populated for clients that
+            // understand it, and the legacy top-level `data` field is preserved for the
+            // in-editor assistant and any existing integrations.
+            var contentBlocks = new List<object>
+            {
+                new { type = "text", text = response.Message }
+            };
+
+            if (response.Data is not null)
+            {
+                string dataJson = JsonSerializer.Serialize(response.Data, _serializerOptions);
+                contentBlocks.Add(new { type = "text", text = dataJson });
+            }
+
             var toolResponse = new
             {
-                content = new[]
-                {
-                    new { type = "text", text = response.Message }
-                },
+                content = contentBlocks,
                 isError = response.IsError,
+                structuredContent = response.Data,
                 data = response.Data
             };
 
