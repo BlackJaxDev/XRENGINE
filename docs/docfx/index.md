@@ -1,24 +1,18 @@
 # XRENGINE Documentation
 
-Welcome to the XRENGINE documentation site. This site contains hand-written guides, architecture documentation, and auto-generated API reference from the C# projects in `XRENGINE.sln`.
+Welcome to the XRENGINE documentation site. This site contains handwritten user guides, developer guides, architecture documentation, work docs, and generated API reference from the C# projects in `XRENGINE.sln`.
 
 ## Quick Links
 
-### Documentation
-- [API Guides](../api/engine.md) - Engine concepts and usage guides
-- [Architecture](../architecture/README.md) - System design and architecture docs
-- [Features](../features/gi/light-volumes.md) - Feature-specific documentation
-- [Dependencies](../DEPENDENCIES.md) - Third-party dependencies
-
-### Reference
-- [API Reference](api/index.md) - Auto-generated API documentation
-- [Guides](guides.md) - Getting started guides
-
-### External
-- [GitHub Repository](https://github.com/BlackJaxDev/XRENGINE)
+- [User Guide](../user-guide/README.md): surface-level engine concepts, settings, and workflows.
+- [Developer Guides](../developer-guides/README.md): code-facing feature integration, diagnostics, and implementation references.
+- [Architecture](../architecture/README.md): engine internals, design tradeoffs, lifecycle, threading, and data flow.
+- [Work Docs](../work/README.md): active designs, TODOs, audits, and validation notes.
+- [Dependencies](../DEPENDENCIES.md): third-party dependency and license inventory.
+- [API Reference](apiref/index.md): generated reference from C# XML documentation.
 
 ## Tips
-- Use the left sidebar to browse documentation sections
-- Use the top navigation to switch between docs and API reference
-- Search is indexed across all documentation and API pages
-- Keep XML doc comments up to date for better API reference quality
+
+- Use the left sidebar to browse documentation sections.
+- Use the top navigation to switch between guides and generated API reference.
+- Keep XML doc comments up to date for better generated reference pages.

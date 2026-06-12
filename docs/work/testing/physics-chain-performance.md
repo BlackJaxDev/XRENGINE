@@ -52,5 +52,5 @@ Coverage includes zero-readback contracts, stale generation/submission rejection
 
 ## Related Documentation
 
-- [Physics Chain Performance](../../features/physics-chain-performance.md)
+- [Physics Chain Performance](../../developer-guides/rendering/physics-chain-performance.md)
 - [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../design/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)

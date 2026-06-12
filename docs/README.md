@@ -1,86 +1,91 @@
 # Documentation Index
 
-A map of the XRENGINE docs. Start here to explore architecture overviews, API guides, rendering notes, and open backlogs.
+Start here for XRENGINE documentation. The main handwritten docs are split by audience:
+
+- [Architecture](architecture/README.md): engine internals, subsystem boundaries, lifecycle, data flow, invariants, and design tradeoffs.
+- [Developer Guides](developer-guides/README.md): code-facing guides for implemented features, extension points, diagnostics, tests, and implementation references.
+- [User Guide](user-guide/README.md): surface-level engine concepts, editor-facing settings, workflows, and common usage.
+- [Work Docs](work/README.md): active design docs, TODOs, audits, testing notes, and historical implementation plans.
 
 ## Architecture
+
 - [Architecture Overview](architecture/README.md)
 - [Getting Started In The Codebase](architecture/getting-started-in-codebase.md)
-- [GPU-Driven Animation Architecture](work/design/gpu-driven-animation.md)
-- [Modeling XRMesh Editing Architecture](architecture/modeling-xrmesh-editing.md)
-- [Play Mode Architecture](architecture/play-mode-architecture.md)
-- [Load Balancer](architecture/load-balancer.md)
-- [Job System](api/job-system.md)
-- [Networking Overview](architecture/networking-overview.md)
-- [Editor Undo System](architecture/undo-system.md)
+- [Rendering Architecture](architecture/rendering/README.md)
+- [Rendering Runtime Overview](architecture/rendering/runtime-overview.md)
+- [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
+- [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
+- [Scene Architecture](architecture/scene/overview.md)
+- [Transform Architecture](architecture/scene/transforms.md)
+- [Physics Architecture](architecture/physics/overview.md)
+- [Audio Architecture](architecture/audio/audio-architecture.md)
+- [Networking Overview](architecture/networking/overview.md)
+- [Modeling XRMesh Editing](architecture/modeling/xrmesh-editing.md)
+- [Play Mode Architecture](architecture/editor/play-mode-architecture.md)
+- [Editor Undo System](architecture/editor/undo-system.md)
 
-## API Guides
-- [Engine API](api/engine.md)
-- [Scene System](api/scene.md)
-- [Component System](api/components.md)
-- [Transform Architecture](api/transforms.md)
-- [Animation System](api/animation.md)
-- [Physics Architecture](api/physics.md)
-- [Rendering Architecture](api/rendering.md)
-- [VR Development](api/vr-development.md)
-- [Prefab Workflow](api/prefab-workflow.md)
+## Developer Guides
 
-## Rendering
-- [Default Render Pipeline Notes (Known Issues & Invariants)](architecture/rendering/default-render-pipeline-notes.md)
-- [Rendering Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
-- [Render Pipeline Resource Lifecycle](work/design/rendering/render-pipeline-resource-lifecycle-design.md)
-- [Uber Shader Varianting](architecture/rendering/uber-shader-varianting.md)
-- [CoACD Integration](architecture/CoACD.md)
-- [GPU Render Pass Pipeline](work/design/gpu-render-pass-pipeline.md)
-- [Atmospheric Scattering Component Design](work/design/rendering/atmospheric-scattering-component-design.md)
-- [Volumetric Fog Production Design](work/design/rendering/volumetric-fog-production-design.md)
-- [DDGI Integration Plan](work/design/ddgi-integration-plan.md)
-- [VSM And EVSM Shadow Filtering Plan](work/design/shadow-filtering-vsm-evsm-plan.md)
-- [Dynamic Shadow Atlas And LOD Allocation Plan](work/design/dynamic-shadow-atlas-lod-plan.md)
-- [Post-v1 Advanced Shadow Features Plan](work/design/post-v1-advanced-shadow-features-plan.md)
-- [Advanced Flat Mirror Rendering Design](work/design/advanced-flat-mirror-rendering-design.md)
-- [Texture Runtime, Streaming, And Virtual Texturing Design](work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
-- [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md)
-- [Light Volumes](features/gi/light-volumes.md)
-- [Secondary GPU Context](architecture/secondary-gpu-context.md)
+- [MCP Server Implementation](developer-guides/ai/mcp-server.md)
+- [MCP Assistant](developer-guides/ai/mcp-assistant.md)
+- [Animation API](developer-guides/animation/animation-api.md)
+- [Model Import](developer-guides/assets/model-import.md)
+- [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
+- [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)
+- [Component API](developer-guides/components/component-api.md)
+- [Atmospheric Scattering Component](developer-guides/components/atmospheric-scattering.md)
+- [Global Illumination](developer-guides/gi/global-illumination.md)
+- [Networking](developer-guides/networking/networking.md)
+- [Physics API](developer-guides/physics/physics-api.md)
+- [Scene Graph Developer Guide](developer-guides/scene/scene-graph.md)
+- [Engine API](developer-guides/runtime/engine-api.md)
+- [Job System](developer-guides/runtime/job-system.md)
+- [Skinning](developer-guides/rendering/skinning.md)
+- [Blendshaping](developer-guides/rendering/blendshaping.md)
+- [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)
+- [OpenXR Runtime](developer-guides/vr/openxr-runtime.md)
+- [VR Developer Guide](developer-guides/vr/vr-development.md)
 
-## Physics and Simulation
-- [Physics Chain Performance](features/physics-chain-performance.md)
-- [GPU Physics Chain Zero-Readback Skinned Mesh Plan](work/design/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
-- [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md)
+## User Guide
 
-## Features
-- [Audio2Face-3D Component](features/audio2face-3d.md)
-- [Audio2Face-3D Engine Setup](features/audio2face-3d-engine-setup.md)
-- [Atmospheric Scattering Component](features/components/atmospheric-scattering.md)
-- [Bootstrap And First-Time Setup](features/bootstrap.md)
-- [Control Plane](features/control-plane.md)
-- [Default Render Pipeline Script Export](features/default-render-pipeline.xrs)
-- [Ambient Occlusion](features/gi/ambient-occlusion.md)
-- [Gizmo Rendering](features/gizmo-rendering.md)
-- [Model Import](features/model-import.md)
-- [Native Dependencies](features/native-dependencies.md)
-- [Networking](features/networking.md)
-- [Octahedral Billboard Capture](features/octahedral-billboard-capture.md)
-- [ImGui Shader Editor](features/shader-editor.md)
-- [Steam Audio Integration](features/steam-audio.md)
-- [Unity Conversion Integrations](features/unity-conversion-integrations.md)
-- [Uber Shader Materials](features/uber-shader-materials.md)
-- [Vulkan Upscale Bridge](features/vulkan-upscale-bridge.md)
-- [Physics Chain Performance](features/physics-chain-performance.md)
-- [Tick-Based Animation Timing](features/tick-based-animation-timing.md)
-- [Unit Testing World](features/unit-testing-world.md)
+- [Engine](user-guide/engine.md)
+- [MCP Server And Assistant](user-guide/ai/mcp-server.md)
+- [Scene System](user-guide/scene.md)
+- [Component System](user-guide/components.md)
+- [Transforms](user-guide/transforms.md)
+- [Animation](user-guide/animation.md)
+- [Physics](user-guide/physics.md)
+- [Rendering](user-guide/rendering.md)
+- [VR Development](user-guide/vr-development.md)
+- [Shader Editor](user-guide/editor/shader-editor.md)
+- [Prefab Workflow](user-guide/prefab-workflow.md)
+- [Job System](user-guide/job-system.md)
 
-## Work Docs (WIP / TODO / Design)
+## Work Docs
+
 - [Work Docs Index](work/README.md)
-- Active TODOs and design docs are tracked from [Work Docs Index](work/README.md).
-- Representative design docs: [GPU-Driven Animation Architecture](work/design/gpu-driven-animation.md), [Advanced Flat Mirror Rendering Design](work/design/advanced-flat-mirror-rendering-design.md), [Affine Matrix Integration Plan](work/design/affine-matrix-integration-plan.md), [Texture Runtime, Streaming, And Virtual Texturing Design](work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md), [Transparency And OIT Implementation Plan](work/design/transparency-and-oit-implementation-plan.md), [GPU Softbody Mesh Rigging Plan](work/design/gpu-softbody-mesh-rigging-plan.md), [Runtime Modularization And Bootstrap Extraction Plan](work/design/runtime-modularization-plan.md)
-- Representative TODOs: [GPU-Driven Animation TODO](work/todo/gpu-driven-animation-todo.md)
-
-## Tips
-- Most API docs cross-link to related systems. Use "Related Documentation" sections at the bottom of each page for deeper dives.
-- Many backlog files list outstanding tasks; check them before starting major refactors.
+- [Design Doc Implementation Audit](work/design-doc-implementation-audit-2026-06-12.md)
+- [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)
+- [Texture Runtime, Streaming, And Virtual Texturing Design](work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
+- [Transparency And OIT Implementation Plan](work/design/rendering/transparency-and-oit-implementation-plan.md)
+- [GPU Softbody Mesh Rigging Plan](work/design/rendering/gpu/gpu-softbody-mesh-rigging-plan.md)
+- [Production Rendering Pipeline Roadmap](work/todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 
 ## Generated API Reference
-- The DocFX project lives in `docs/docfx/docfx.json` and targets `XRENGINE.sln` to produce a browsable API site from XML doc comments.
-- Build the site: `dotnet tool restore` then `dotnet docfx docs/docfx/docfx.json`. Output stays in `docs/docfx/_site` (ignored by git).
-- Preview locally: `dotnet docfx docs/docfx/docfx.json --serve --port 8080` and open the served URL.
+
+The DocFX project lives in `docs/docfx/docfx.json` and targets `XRENGINE.sln` to produce browsable API reference from XML doc comments.
+
+Build the site:
+
+```powershell
+dotnet tool restore
+dotnet docfx docs/docfx/docfx.json
+```
+
+Preview locally:
+
+```powershell
+dotnet docfx docs/docfx/docfx.json --serve --port 8080
+```
+
+Generated output stays in `docs/docfx/_site`, which is ignored by Git.

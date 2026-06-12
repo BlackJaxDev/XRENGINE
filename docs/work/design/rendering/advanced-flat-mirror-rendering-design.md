@@ -17,7 +17,7 @@ The repository already contains pieces that point toward this feature:
 - `GPUViewSet` already models multiple views, including `GPUViewFlags.Mirror`, per-view constants, per-view visible lists, and a 64-view hard cap.
 - `RenderCommandCollection` already configures a GPU view set for stereo, foveated views, and desktop VR mirroring.
 - `Engine.Rendering.State.PushMirrorPass()` and `ReverseCulling` already model odd reflection passes.
-- `docs/api/rendering.md` explicitly describes mirrors and other secondary views as plugging into `CollectRenderedItems`.
+- `docs/user-guide/rendering.md` explicitly describes mirrors and other secondary views as plugging into `CollectRenderedItems`.
 
 The missing piece is not mirror math. The missing piece is an owned renderer feature that can discover visible mirror surfaces, schedule reflection views, render them into managed targets, and composite those targets correctly in forward, deferred, CPU, GPU, mono, and stereo paths.
 

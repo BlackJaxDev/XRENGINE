@@ -1,6 +1,6 @@
 # XREngine Dedicated Server Instance & Matchmaking Design Plan
 
-Stable engine networking guide: [../../features/networking.md](../../features/networking.md)
+Stable engine networking guide: [../../developer-guides/networking/networking.md](../../developer-guides/networking/networking.md)
 
 Peer-to-peer host switching roadmap: [peer-to-peer-host-switching.md](peer-to-peer-host-switching.md)
 

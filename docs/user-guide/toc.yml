@@ -1,0 +1,28 @@
+- name: Overview
+  href: README.md
+- name: MCP Server And Assistant
+  href: ai/mcp-server.md
+- name: Engine
+  href: engine.md
+- name: Bootstrap And First-Time Setup
+  href: setup/bootstrap.md
+- name: Scene System
+  href: scene.md
+- name: Component System
+  href: components.md
+- name: Transforms
+  href: transforms.md
+- name: Animation
+  href: animation.md
+- name: Physics
+  href: physics.md
+- name: Rendering
+  href: rendering.md
+- name: VR Development
+  href: vr-development.md
+- name: Shader Editor
+  href: editor/shader-editor.md
+- name: Prefab Workflow
+  href: prefab-workflow.md
+- name: Job System
+  href: job-system.md

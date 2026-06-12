@@ -588,9 +588,9 @@ Use this list when tracing the system in code.
 
 ## Related Documents
 
-- [Rendering Architecture](../../api/rendering.md)
+- [Rendering Architecture](../../user-guide/rendering.md)
 - [Rendering Architecture index](README.md)
-- [Rendering Code Map](RenderingCodeMap.md)
+- [Rendering Code Map](code-map.md)
 - [OpenGL Renderer](opengl-renderer.md)
 - [Vulkan Renderer](vulkan-renderer.md)
 - [OpenXR VR Rendering](openxr-vr-rendering.md)

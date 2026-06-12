@@ -192,7 +192,7 @@ Acceptance criteria:
 - [ ] Evaluate whether motion blur and DoF can share the same ping-pong
   infrastructure.
 - [ ] Preserve the current pass order unless Phase 0 explicitly changes it.
-- [ ] Update `docs/features/default-render-pipeline.xrs` after the pass graph
+- [ ] Update `docs/developer-guides/rendering/render-pipelines/default-render-pipeline.xrs` after the pass graph
   changes.
 
 Acceptance criteria:

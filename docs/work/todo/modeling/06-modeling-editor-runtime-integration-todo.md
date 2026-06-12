@@ -15,7 +15,7 @@ Related docs:
 - [Core Modeling Tools TODO](03-core-modeling-tools-todo.md)
 - [Geometry Nodes Foundation TODO](02-geometry-nodes-foundation-todo.md)
 - [GPU Modeling Preview TODO](04-gpu-modeling-preview-todo.md)
-- [MCP server](../../../features/mcp-server.md)
+- [MCP server](../../../developer-guides/ai/mcp-server.md)
 
 ## Parent Roadmap Contract
 
@@ -55,7 +55,7 @@ Expose the modeling system through the ImGui editor path first, bridge committed
 - `XREngine.Runtime.Rendering/Objects/Meshes/`
 - `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/`
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/`
-- `docs/features/mcp-server.md`
+- `docs/developer-guides/ai/mcp-server.md`
 - `XREngine.UnitTests/Modeling/`
 - `XREngine.UnitTests/Rendering/`
 
@@ -189,7 +189,7 @@ Expose the modeling system through the ImGui editor path first, bridge committed
 pwsh Tools/Reports/generate_mcp_docs.ps1
 ```
 
-- [ ] Update `docs/features/mcp-server.md`.
+- [ ] Update `docs/developer-guides/ai/mcp-server.md`.
 
 ### Exit Criteria
 

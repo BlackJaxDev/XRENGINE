@@ -398,4 +398,4 @@ AbstractRenderer<TAPI> where TAPI : NativeAPI
 
 - [OpenGL Renderer](opengl-renderer.md) — OpenGL-specific initialization and render loop details
 - [Vulkan Renderer](vulkan-renderer.md) — Vulkan-specific initialization and render loop details
-- [Rendering Code Map](RenderingCodeMap.md) — Full source file inventory
+- [Rendering Code Map](code-map.md) — Full source file inventory

@@ -13,8 +13,8 @@ Related docs:
 
 - `bindless-deferred-texturing-plan.md`
 - `../rendering/zero-readback-gpu-driven-rendering-plan.md`
-- `docs/features/gi/light-volumes.md`
-- `docs/features/gi/global-illumination.md`
+- `docs/developer-guides/gi/light-volumes.md`
+- `docs/developer-guides/gi/global-illumination.md`
 
 ---
 

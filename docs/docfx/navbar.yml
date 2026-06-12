@@ -1,10 +1,13 @@
 - name: Home
   href: index.md
-- name: API Guides
-  href: ../api/engine.md
+- name: User Guide
+  href: ../user-guide/README.md
+- name: Developer Guides
+  href: ../developer-guides/README.md
 - name: Architecture
   href: ../architecture/README.md
 - name: API Reference
   href: apiref/index.md
 - name: GitHub
   href: https://github.com/BlackJaxDev/XRENGINE
+

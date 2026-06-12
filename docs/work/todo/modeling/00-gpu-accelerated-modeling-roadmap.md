@@ -21,7 +21,7 @@ Child trackers:
 Related docs:
 
 - [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
-- [MCP server](../../../features/mcp-server.md)
+- [MCP server](../../../developer-guides/ai/mcp-server.md)
 - [GPU meshlet zero-readback rendering design](../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Model import binary cache design](../../design/assets/model-import-binary-cache-design.md)
 

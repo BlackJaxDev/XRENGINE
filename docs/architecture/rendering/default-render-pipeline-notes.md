@@ -4,6 +4,32 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ---
 
+## Resource Generation Lifecycle
+
+`DefaultRenderPipeline` declares stable pipeline-owned resources through
+`DescribeResources(...)`. `XRRenderPipelineInstance` materializes those specs
+into a pending `RenderResourceGeneration`, validates required resources,
+texture-view source identity, and framebuffer attachment identity/size/sample
+compatibility, then atomically commits the generation before frame command
+execution.
+
+Resize, HDR-output changes, and AA/MSAA changes must request a replacement
+generation instead of emptying the active registry. A failed pending generation
+logs diagnostics and leaves the active generation rendering. Both OpenGL and
+Vulkan consume the same generation-owned descriptors; OpenGL creates concrete
+objects through the existing factories, while Vulkan sees the committed
+descriptors through the existing planner sync path.
+
+Compatibility cache commands still exist for dynamic or branch-local resources
+such as bloom chains, atmosphere/fog half-resolution chains, SMAA,
+exact-transparency scratch resources, and command-local fullscreen materials.
+Do not add new stable core render targets to cache commands without also adding
+them to the declared resource layout.
+
+Full contract: [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md).
+
+---
+
 ## Selecting `DefaultRenderPipeline2`
 
 `DefaultRenderPipeline` remains the default production path. To opt into the parallel V2 pipeline for local validation, launch the editor or client with:
@@ -306,7 +332,7 @@ The old deferred screen-space contact-shadow march did not use a shared receiver
 ### Fix
 
 - Route deferred directional, spot, and point contact shadows through `XRENGINE_SampleContactShadowScreenSpace` using G-buffer depth.
-- Route forward directional, spot, and point contact shadows through `XRENGINE_SampleForwardContactShadowScreenSpace` when `ForwardDepthPrePassEnabled` has produced a stable `ForwardContactDepthView`/`ForwardContactNormal` snapshot. The snapshot is copied from the completed forward depth-normal merge prepass before the forward color pass binds the main depth attachment, avoiding an OpenGL framebuffer feedback loop where the Uber shader samples the same depth texture it is rendering into. Mono uses 2D samplers; stereo uses layered array samplers selected by the forward view index. Forward falls back to the older light-space contact helpers when those pre-pass textures are unavailable.
+- Route forward directional, spot, and point contact shadows through `XRENGINE_SampleForwardContactShadowScreenSpace` when the active default render pipeline's `ForwardDepthPrePassEnabled` setting has produced a stable `ForwardContactDepthView`/`ForwardContactNormal` snapshot. The snapshot is copied from the completed forward depth-normal merge prepass before the forward color pass binds the main depth attachment, avoiding an OpenGL framebuffer feedback loop where the Uber shader samples the same depth texture it is rendering into. Mono uses 2D samplers; stereo uses layered array samplers selected by the forward view index. Forward falls back to the older light-space contact helpers when those pre-pass textures are unavailable.
 - Reconstruct contact-shadow scene positions from raw depth with the matching `InverseProjMatrix`; do not flip reversed-Z depth before inverse projection. Only the far-depth validity check is depth-mode aware.
 - Keep the screen-space march in the shared snippet, not per-light local shader code, so all light types use the same bias clamp, normal offset, ray-thickness rejection, MSAA depth sampling, screen-edge fade, and optional pre-pass normal rejection.
 - Reuse `XRENGINE_ResolveContactShadowSampleCount` so forward and deferred scale contact-shadow step counts identically.

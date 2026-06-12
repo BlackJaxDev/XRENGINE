@@ -2,7 +2,7 @@
 
 Last Updated: 2026-05-09
 Current Status: implemented for the OpenGL mono pipeline; visual/profiler validation and stereo/platform parity remain follow-up work.
-Stable doc: [Atmospheric Scattering Component](../../../features/components/atmospheric-scattering.md)
+Stable doc: [Atmospheric Scattering Component](../../../developer-guides/components/atmospheric-scattering.md)
 Design doc: [Atmospheric Scattering Component Design](../../design/rendering/atmospheric-scattering-component-design.md)
 
 ## Completed Implementation

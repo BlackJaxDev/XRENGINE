@@ -4,7 +4,7 @@ Status: **Implemented (core refactor landed; follow-up tests pending)**
 Owner: Asset Pipeline
 Related: [fbx-import-export-todo.md](fbx-import-export-todo.md), [glTF import testing](../testing/gltf-import.md)
 
-> **Update:** The two-pass Discover / PreAssign / Write refactor is implemented in [`AssetManager.ThirdPartyImport.cs`](../../../XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs). `KindOrder` is now leaves-first, `AnimationClip` is an externalizable kind (written to `Animations/`), and [`AnimationClipYamlTypeConverter`](../../../XRENGINE/Core/Engine/AnimationClipSerialization.cs) now emits compact `{ID}` references when `SourceAsset == self && File.Exists(FilePath)`, mirroring `XRAssetYamlConverter`. On-disk layout is documented in [`docs/features/model-import.md`](../../features/model-import.md#on-disk-externalization-layout). Placeholder files are created during Phase B and rolled back on exception. Remaining: regression tests (FBX re-import, shared-asset dedup, failure-rollback) and an audit sweep of other `XRAsset`-derived types (font glyph sets, shaders) for the same reference-emission pattern.
+> **Update:** The two-pass Discover / PreAssign / Write refactor is implemented in [`AssetManager.ThirdPartyImport.cs`](../../../XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs). `KindOrder` is now leaves-first, `AnimationClip` is an externalizable kind (written to `Animations/`), and [`AnimationClipYamlTypeConverter`](../../../XRENGINE/Core/Engine/AnimationClipSerialization.cs) now emits compact `{ID}` references when `SourceAsset == self && File.Exists(FilePath)`, mirroring `XRAssetYamlConverter`. On-disk layout is documented in [`docs/developer-guides/assets/model-import.md`](../../../developer-guides/assets/model-import.md#on-disk-externalization-layout). Placeholder files are created during Phase B and rolled back on exception. Remaining: regression tests (FBX re-import, shared-asset dedup, failure-rollback) and an audit sweep of other `XRAsset`-derived types (font glyph sets, shaders) for the same reference-emission pattern.
 
 ---
 
@@ -133,7 +133,7 @@ Keep the current four-condition gate. The refactor satisfies all four conditions
 ## 6. Rollout
 
 - Gate the new path behind a preference during initial landing (e.g. `EditorPreferences.TwoPassAssetExternalization`, default `true`) so we can A/B against the legacy path for one milestone. Remove the flag before v1 ships.
-- Update [docs/features/model-import.md](../../features/model-import.md) with the new on-disk layout description.
+- Update [docs/developer-guides/assets/model-import.md](../../../developer-guides/assets/model-import.md) with the new on-disk layout description.
 
 ## 7. Acceptance Criteria
 
@@ -155,7 +155,7 @@ Keep the current four-condition gate. The refactor satisfies all four conditions
 - [ ] Add FBX re-import regression test.
 - [ ] Add shared-asset dedup test.
 - [ ] Add failure-rollback test.
-- [ ] Update `docs/features/model-import.md` on-disk layout section.
+- [ ] Update `docs/developer-guides/assets/model-import.md` on-disk layout section.
 - [ ] Release note entry.
 
 ## 9. Out of Scope (Follow-ups)

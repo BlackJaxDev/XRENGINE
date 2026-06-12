@@ -31,7 +31,7 @@ That bootstrap flow:
 
 It is the closest thing the repo currently has to a one-command setup.
 
-It does not automatically provision every optional dependency or proprietary SDK. If you need optional features such as NVIDIA SDK integrations or some Audio2Face-related prerequisites, check `docs/features/bootstrap.md` and the dependency/setup docs after bootstrap finishes.
+It does not automatically provision every optional dependency or proprietary SDK. If you need optional integrations such as NVIDIA SDK integrations or some Audio2Face-related prerequisites, check `docs/user-guide/setup/bootstrap.md` and the dependency/setup docs after bootstrap finishes.
 
 ## High-value projects
 
@@ -54,7 +54,7 @@ Other projects such as `XREngine.Animation`, `XREngine.Audio`, `XREngine.Input`,
 Start with:
 
 - `XREngine/`
-- `docs/api/rendering.md`
+- `docs/user-guide/rendering.md`
 - `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md`
 
 Typical things to trace:
@@ -67,9 +67,9 @@ Typical things to trace:
 
 Start with:
 
-- `docs/api/scene.md`
-- `docs/api/components.md`
-- `docs/api/transforms.md`
+- `docs/user-guide/scene.md`
+- `docs/user-guide/components.md`
+- `docs/user-guide/transforms.md`
 
 The engine uses a scene node hierarchy with components attached to nodes. If you are changing behavior propagation, transforms, or state updates, start there before touching rendering or editor code.
 
@@ -77,7 +77,7 @@ The engine uses a scene node hierarchy with components attached to nodes. If you
 
 Start with:
 
-- `docs/api/physics.md`
+- `docs/user-guide/physics.md`
 - the unit-testing world settings and physics-related toggles
 
 PhysX is the current default path, so changes there should be validated in the editor test world first.
@@ -86,7 +86,7 @@ PhysX is the current default path, so changes there should be validated in the e
 
 Start with:
 
-- `docs/api/vr-development.md`
+- `docs/user-guide/vr-development.md`
 - editor/unit-test-world XR toggles
 - `XREngine.VRClient/` if the change is client-specific
 
@@ -99,7 +99,7 @@ If you are touching runtime selection or controller/pose behavior, validate the 
 Start with:
 
 - `XREngine.Editor/`
-- `docs/architecture/undo-system.md`
+- `docs/architecture/editor/editor/editor/undo-system.md`
 
 The day-to-day editor UI is the ImGui path. There is also a native UI pipeline under active development, but it is not the default path for most tasks.
 
@@ -109,7 +109,7 @@ The ImGui editor enables Dear ImGui multi-viewports on the OpenGL backend, so do
 
 Start with:
 
-- `docs/architecture/networking-overview.md`
+- `docs/architecture/networking/overview.md`
 - the VS Code tasks for server/client and pose sync
 - the Unit Testing World networking pose setup
 
@@ -143,14 +143,14 @@ Some startup paths depend on the process working directory being the repo root, 
 ## Useful docs to bookmark
 
 - `docs/README.md`
-- `docs/api/engine.md`
-- `docs/api/scene.md`
-- `docs/api/components.md`
-- `docs/api/rendering.md`
-- `docs/api/physics.md`
-- `docs/api/vr-development.md`
-- `docs/features/bootstrap.md`
-- `docs/features/unit-testing-world.md`
+- `docs/user-guide/engine.md`
+- `docs/user-guide/scene.md`
+- `docs/user-guide/components.md`
+- `docs/user-guide/rendering.md`
+- `docs/user-guide/physics.md`
+- `docs/user-guide/vr-development.md`
+- `docs/user-guide/setup/bootstrap.md`
+- `docs/developer-guides/testing/unit-testing-world.md`
 
 ## Useful local workflows
 
@@ -174,4 +174,4 @@ Some startup paths depend on the process working directory being the repo root, 
 
 - [Documentation Index](../README.md)
 - [Architecture Overview](README.md)
-- [Unit Testing World](../features/unit-testing-world.md)
+- [Unit Testing World](../developer-guides/testing/unit-testing-world.md)

@@ -8,11 +8,11 @@ Primary reference: Morgan McGuire, Zander Majercik, Adam Marrs, "Dynamic Diffuse
 
 Related docs:
 
-- `docs/features/gi/global-illumination.md`
-- `docs/features/gi/light-probes.md`
-- `docs/features/gi/surfel-gi.md`
-- `docs/features/gi/restir-gi.md`
-- `docs/features/gi/voxel-cone-tracing.md`
+- `docs/developer-guides/gi/global-illumination.md`
+- `docs/developer-guides/gi/light-probes.md`
+- `docs/developer-guides/gi/surfel-gi.md`
+- `docs/developer-guides/gi/restir-gi.md`
+- `docs/developer-guides/gi/voxel-cone-tracing.md`
 - `docs/architecture/secondary-gpu-context.md`
 - `docs/work/design/vxao-implementation-plan.md`
 - `docs/work/todo/voxel-cone-tracing-and-vxao-implementation-todo.md`

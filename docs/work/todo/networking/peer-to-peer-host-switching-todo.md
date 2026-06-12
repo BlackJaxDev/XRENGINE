@@ -101,7 +101,7 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 - [ ] ImGui peer panel: subrole, local `PeerId`, host `PeerId`, `HostEpoch`, candidate priority, force-migration button, observability metrics (RTT, last-heard, election counters).
 - [ ] VS Code tasks: `Start-PeerHost-NoDebug`, `Start-PeerParticipant-NoDebug`, `Start-2Peers-NoDebug`, `Start-PeerHostMigration-NoDebug`.
 - [ ] Add `peer` mode to `Tools/Start-NetworkTest.bat`.
-- [ ] Update `docs/features/networking.md` with peer-mode overview, trust tiers, and Track-A flows.
+- [ ] Update `docs/developer-guides/networking/networking.md` with peer-mode overview, trust tiers, and Track-A flows.
 
 **Acceptance:** Developers run, observe, and force host migration locally without external tools.
 
@@ -183,7 +183,7 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 - [ ] Document the boundary contract for third-party control planes: DTOs, error codes, capability flags, idempotency, retry/backoff expectations, offline fallback semantics.
 - [ ] Integration test: equivocation \u2192 `IAbuseReportSink` \u2192 sample control plane revokes attestation \u2192 peer kicked on next `RosterDelta`.
 - [ ] ImGui `Public`-tier diagnostics panel: attestation expiry per peer, signature throughput, witness divergence count, commit-certificate verification metrics, abuse reports issued.
-- [ ] Update `docs/features/networking.md` with `Public`-tier flows.
+- [ ] Update `docs/developer-guides/networking/networking.md` with `Public`-tier flows.
 - [ ] Add `docs/architecture/networking/peer-mode-bft.md` covering trust model, election/commit invariants, equivocation handling, and the boundary contract.
 
 **Acceptance:** A third party can implement `IControlPlane` against the documented contract and host an XRENGINE `Public` session end-to-end using only the sample as reference.
@@ -226,7 +226,7 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
 ## Documentation Touchpoints
 
-- [ ] `docs/features/networking.md` \u2014 add peer-mode section, trust tiers, control-plane boundary summary.
+- [ ] `docs/developer-guides/networking/networking.md` \u2014 add peer-mode section, trust tiers, control-plane boundary summary.
 - [ ] `docs/architecture/networking/peer-mode-bft.md` \u2014 new doc covering trust model, election, commit certificates, equivocation, witness, determinism rules.
 - [ ] `docs/DEPENDENCIES.md` and `docs/licenses/` \u2014 refreshed when crypto deps land (Phase B0).
 - [ ] `README.md` \u2014 mention peer mode in supported networking modes once Track A ships.

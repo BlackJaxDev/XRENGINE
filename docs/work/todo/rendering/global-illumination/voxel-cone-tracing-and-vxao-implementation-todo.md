@@ -193,7 +193,7 @@ Acceptance criteria:
 - `XREngine/Rendering/Pipelines/Types/DefaultRenderPipeline.Textures.cs`
 - `XREngine/Rendering/Pipelines/Commands/Features/VPRC_VoxelConeTracingPass.cs`
 - `XREngine/Rendering/Camera/AmbientOcclusionSettings.cs`
-- `docs/features/gi/voxel-cone-tracing.md`
+- `docs/developer-guides/gi/voxel-cone-tracing.md`
 - `docs/work/design/vxao-implementation-plan.md`
 
 ## Suggested Next Step

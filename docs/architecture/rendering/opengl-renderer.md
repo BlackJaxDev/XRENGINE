@@ -426,4 +426,4 @@ ImGui rendering happens within the viewport render callback, managed by the base
 
 - [Window Creation & Renderer Initialization](window-creation-and-renderer-init.md) — How windows and renderers are created at startup
 - [Vulkan Renderer](vulkan-renderer.md) — Vulkan-specific initialization and render loop
-- [Rendering Code Map](RenderingCodeMap.md) — Full source file inventory
+- [Rendering Code Map](code-map.md) — Full source file inventory

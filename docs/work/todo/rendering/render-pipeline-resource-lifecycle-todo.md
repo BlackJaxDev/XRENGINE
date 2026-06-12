@@ -1,16 +1,30 @@
 # Render Pipeline Resource Lifecycle TODO
 
-Last Updated: 2026-06-11
+Last Updated: 2026-06-12
 Owner: Rendering
-Status: Proposed
-Target Branch: `rendering-resource-lifecycle`
+Status: Implemented - core generation milestone
+Target Branch: none; user requested no branch for implementation
 
 Design source:
 
 - [Render Pipeline Resource Lifecycle Design](../../design/rendering/render-pipeline-resource-lifecycle-design.md)
+- [Render Pipeline Resource Lifecycle Architecture](../../../architecture/rendering/render-pipeline-resource-lifecycle.md)
 - [DefaultRenderPipeline notes](../../../architecture/rendering/default-render-pipeline-notes.md)
 - [Vulkan Renderer](../../../architecture/rendering/vulkan-renderer.md)
 - [GPU Mesh BVH](../../../architecture/rendering/gpu-mesh-bvh.md)
+
+Implementation note:
+
+- `DefaultRenderPipeline` now declares stable core resources through
+  `DescribeResources(...)`; generations are materialized before command
+  execution and committed atomically.
+- Resize, rendering settings, and AA/MSAA changes request pending generations
+  instead of emptying the active registry.
+- OpenGL and Vulkan share the generation-owned descriptor contract; Vulkan keeps
+  using the existing planner sync bridge for physical resources.
+- Remaining compatibility commands are intentionally limited to dynamic or
+  branch-local resources such as bloom, atmosphere/fog half-resolution chains,
+  SMAA, exact transparency scratch resources, and command-local materials.
 
 ## Goal
 
@@ -95,21 +109,21 @@ The first production milestone should deliver:
 - [ ] Create dedicated branch `rendering-resource-lifecycle`.
 - [ ] Inventory current `DefaultRenderPipeline` cache commands by resource name,
   kind, size policy, format, sample count, attachment set, and feature predicate.
-- [ ] Record the current internal-resolution resize path:
+- [x] Record the current internal-resolution resize path:
   `XRViewport.SetInternalResolution(...) -> XRRenderPipelineInstance.InternalResolutionResized(...) -> InvalidatePhysicalResources()`.
-- [ ] Record the current display-region resize path:
+- [x] Record the current display-region resize path:
   `XRViewport.ResizeRenderPipeline() -> ViewportResized(...) -> DefaultRenderPipeline.HandleViewportResized(...)`.
 - [ ] Capture current resize behavior in the editor scene panel and main window,
   including black-frame or missing-resource symptoms if present.
 - [ ] Capture representative resource counts for the default profile
   (textures, renderbuffers, buffers, FBOs, texture views).
-- [ ] Decide the initial declared-resource coverage list. Start with
+- [x] Decide the initial declared-resource coverage list. Start with
   always-needed GBuffer, depth/stencil, forward, lighting, post-process, AA, and
   present-chain resources.
-- [ ] Decide which resources stay command-owned for the first milestone
+- [x] Decide which resources stay command-owned for the first milestone
   (fullscreen quad renderers, command-local materials, cached mesh renderers,
   branch-local helpers).
-- [ ] Add or update a short architecture note in
+- [x] Add or update a short architecture note in
   `docs/architecture/rendering/default-render-pipeline-notes.md` once
   implementation begins.
 
@@ -117,169 +131,169 @@ Acceptance criteria:
 
 - [ ] The baseline explains every cache-created core resource and both resize
   branches before behavior changes begin.
-- [ ] The first milestone resource coverage list is documented and intentionally
+- [x] The first milestone resource coverage list is documented and intentionally
   excludes only dynamic or branch-local resources.
 
 ## Phase 1 - Resource Spec Model And Layout Builder
 
-- [ ] Add `RenderPipeline.DescribeResources(RenderPipelineResourceLayoutBuilder builder)`
+- [x] Add `RenderPipeline.DescribeResources(RenderPipelineResourceLayoutBuilder builder)`
   as a protected virtual hook.
-- [ ] Add immutable `RenderPipelineResourceLayout`.
-- [ ] Add `RenderPipelineResourceLayoutBuilder`.
-- [ ] Add spec types:
+- [x] Add immutable `RenderPipelineResourceLayout`.
+- [x] Add `RenderPipelineResourceLayoutBuilder`.
+- [x] Add spec types:
   `TextureSpec`, `RenderBufferSpec`, `FrameBufferSpec`, `BufferSpec`,
   `TextureViewSpec`, and optional `QuadMaterialSpec`.
-- [ ] Add typed fields required by the design: name, kind, lifetime, size
+- [x] Add typed fields required by the design: name, kind, lifetime, size
   policy, format, samples, layers, mip policy, usage, dependencies, predicate,
   history policy, and debug label.
-- [ ] Keep `RenderResourceLifetime` limited to `Persistent`, `Transient`, and
+- [x] Keep `RenderResourceLifetime` limited to `Persistent`, `Transient`, and
   `External`; model history with persistent specs plus history policy.
-- [ ] Add lowering from specs into the existing `TextureResourceDescriptor`,
+- [x] Add lowering from specs into the existing `TextureResourceDescriptor`,
   `FrameBufferResourceDescriptor`, `RenderBufferResourceDescriptor`, and
   `BufferResourceDescriptor` records.
-- [ ] Add deterministic dependency ordering and validation for duplicate names,
+- [x] Add deterministic dependency ordering and validation for duplicate names,
   missing dependencies, invalid attachment references, and unsupported size
   policies.
-- [ ] Add resource profile inputs for output HDR, AA mode, MSAA sample count,
+- [x] Add resource profile inputs for output HDR, AA mode, MSAA sample count,
   feature set, display size, and internal size.
-- [ ] Add `ResourceGenerationKey` with mono desktop fields and reserved stereo
+- [x] Add `ResourceGenerationKey` with mono desktop fields and reserved stereo
   room for the later XR follow-up.
 
 Acceptance criteria:
 
-- [ ] A pipeline can produce a stable immutable resource layout without
+- [x] A pipeline can produce a stable immutable resource layout without
   executing render commands.
-- [ ] Invalid specs fail with actionable diagnostics that name the resource and
+- [x] Invalid specs fail with actionable diagnostics that name the resource and
   field.
-- [ ] Specs can be lowered to existing registry/planner descriptor records.
+- [x] Specs can be lowered to existing registry/planner descriptor records.
 
 ## Phase 2 - DefaultRenderPipeline Declared Descriptors
 
-- [ ] Teach `DefaultRenderPipeline` to declare depth/stencil, depth view,
+- [x] Teach `DefaultRenderPipeline` to declare depth/stencil, depth view,
   GBuffer textures, transform-id texture, deferred GBuffer FBO, forward FBO, and
   light-combine resources.
-- [ ] Declare MSAA deferred resources behind the effective MSAA profile
+- [x] Declare MSAA deferred resources behind the effective MSAA profile
   predicate.
 - [ ] Declare AO resources and FBOs behind the effective AO/profile predicate.
 - [ ] Declare post-process, bloom, motion blur, DoF, temporal accumulation, and
   final output resources that are stable enough for first migration coverage.
-- [ ] Declare AA/upscale resources for FXAA and TSR predicates.
-- [ ] Declare transparency resources that are stable and pipeline-owned; leave
+- [x] Declare AA/upscale resources for FXAA and TSR predicates.
+- [x] Declare transparency resources that are stable and pipeline-owned; leave
   branch-local experimental resources on cache commands when needed.
-- [ ] Add shared helpers or templates for repeated texture format, size, sample,
+- [x] Add shared helpers or templates for repeated texture format, size, sample,
   and lifetime boilerplate.
-- [ ] Keep `DefaultRenderPipeline2` unchanged.
-- [ ] Add descriptor parity diagnostics comparing declared layout descriptors
+- [x] Keep `DefaultRenderPipeline2` unchanged.
+- [x] Add descriptor parity diagnostics comparing declared layout descriptors
   with descriptors registered by existing cache commands.
-- [ ] Emit warnings for missing layout entries, format mismatches, size-policy
+- [x] Emit warnings for missing layout entries, format mismatches, size-policy
   mismatches, sample-count mismatches, lifetime mismatches, and attachment
   mismatches.
 
 Acceptance criteria:
 
-- [ ] Default pipeline resource layout covers the core steady-state graph
+- [x] Default pipeline resource layout covers the core steady-state graph
   resources for the default mono desktop profile.
 - [ ] Runtime behavior still uses cache commands for materialization in this
   phase.
-- [ ] Parity diagnostics are quiet for migrated resources or report clear,
+- [x] Parity diagnostics are quiet for migrated resources or report clear,
   intentional differences.
 
 ## Phase 3 - Generation Ownership Skeleton
 
-- [ ] Add `RenderResourceGeneration` with immutable key, layout, registry,
+- [x] Add `RenderResourceGeneration` with immutable key, layout, registry,
   validation status, diagnostics, backend handles/links, and retirement state.
-- [ ] Add `ActiveGeneration`, `PendingGeneration`, and `RetiredGenerations` to
+- [x] Add `ActiveGeneration`, `PendingGeneration`, and `RetiredGenerations` to
   `XRRenderPipelineInstance`.
-- [ ] Preserve the existing integer `ResourceGeneration` stamp during migration.
-- [ ] Ensure committing a new `RenderResourceGeneration` increments the existing
+- [x] Preserve the existing integer `ResourceGeneration` stamp during migration.
+- [x] Ensure committing a new `RenderResourceGeneration` increments the existing
   integer stamp.
-- [ ] Add active/pending/retired diagnostics, including generation key, status,
+- [x] Add active/pending/retired diagnostics, including generation key, status,
   build duration, resource count by kind, commit reason, and retirement reason.
-- [ ] Add a conservative retired-generation cap and a safe fallback sync path
+- [x] Add a conservative retired-generation cap and a safe fallback sync path
   when retired resources accumulate during resize.
 - [ ] Add generation lifetime tests for active, pending, commit, failed pending,
   retired, and superseded pending states.
 
 Acceptance criteria:
 
-- [ ] A pipeline instance can own generation objects without changing frame
+- [x] A pipeline instance can own generation objects without changing frame
   output yet.
-- [ ] Failed or canceled pending generations dispose partial resources without
+- [x] Failed or canceled pending generations dispose partial resources without
   touching the active generation.
-- [ ] Existing cache-command generation-stamp checks continue to observe
+- [x] Existing cache-command generation-stamp checks continue to observe
   committed generation changes.
 
 ## Phase 4 - Scoped Resource Build Context
 
-- [ ] Add a scoped pending-generation build context on `XRRenderPipelineInstance`.
-- [ ] Route size helpers such as internal width/height and full width/height
+- [x] Add a scoped pending-generation build context on `XRRenderPipelineInstance`.
+- [x] Route size helpers such as internal width/height and full width/height
   through the active build context when one is present.
-- [ ] Route `GetTexture`, `GetFBO`, `GetBuffer`, and `GetRenderBuffer` to the
+- [x] Route `GetTexture`, `GetFBO`, `GetBuffer`, and `GetRenderBuffer` to the
   pending registry first while materializing a pending generation.
-- [ ] Route `SetTexture`, `SetFBO`, `SetBuffer`, and `SetRenderBuffer` into the
+- [x] Route `SetTexture`, `SetFBO`, `SetBuffer`, and `SetRenderBuffer` into the
   pending registry while inside the build scope.
-- [ ] Keep active frame execution reads pointed at the active generation.
-- [ ] Add guardrails so nested or cross-thread build contexts fail loudly with
+- [x] Keep active frame execution reads pointed at the active generation.
+- [x] Add guardrails so nested or cross-thread build contexts fail loudly with
   diagnostics.
-- [ ] Preserve the existing render-thread mutation guard for physical object
+- [x] Preserve the existing render-thread mutation guard for physical object
   creation.
 
 Acceptance criteria:
 
-- [ ] Existing resource factories can build into a pending generation without
+- [x] Existing resource factories can build into a pending generation without
   mutating the active registry.
-- [ ] Active rendering remains stable while a pending build context exists.
-- [ ] Build-context misuse produces a clear error instead of corrupting the live
+- [x] Active rendering remains stable while a pending build context exists.
+- [x] Build-context misuse produces a clear error instead of corrupting the live
   registry.
 
 ## Phase 5 - Resource Manager Materialization
 
-- [ ] Add `RenderPipelineResourceManager`.
-- [ ] Materialize declared textures, texture views, renderbuffers, buffers, and
+- [x] Add `RenderPipelineResourceManager`.
+- [x] Materialize declared textures, texture views, renderbuffers, buffers, and
   FBOs into a generation registry before command execution.
 - [ ] Validate FBO attachments by same-generation identity, dimensions, sample
   counts, formats, and backend completeness.
 - [ ] Validate texture views by same-generation source texture identity, mip
   range, layer range, format/aspect, and target interpretation.
-- [ ] Validate required resources before a generation can commit.
+- [x] Validate required resources before a generation can commit.
 - [ ] Allow history resources to commit invalid/empty when their history policy
   permits seeding from the current frame.
-- [ ] Make cache commands no-op when a declared matching resource already exists
+- [x] Make cache commands no-op when a declared matching resource already exists
   in the active generation.
-- [ ] Keep cache commands functional for unmigrated dynamic resources.
+- [x] Keep cache commands functional for unmigrated dynamic resources.
 - [ ] Add focused tests for materialization order, missing dependency failure,
   FBO validation failure, texture-view validation failure, and cache-command
   compatibility no-ops.
 
 Acceptance criteria:
 
-- [ ] Declared resources can be created before render command execution.
-- [ ] Cache commands stop recreating migrated resources every frame.
-- [ ] Missing or incompatible required resources prevent pending commit and keep
+- [x] Declared resources can be created before render command execution.
+- [x] Cache commands stop recreating migrated resources every frame.
+- [x] Missing or incompatible required resources prevent pending commit and keep
   the active generation rendering.
 
 ## Phase 6 - Staged Resize And Coalescing
 
-- [ ] Add explicit requested internal size and active internal size tracking on
+- [x] Add explicit requested internal size and active internal size tracking on
   `XRViewport` or `XRRenderPipelineInstance`.
-- [ ] Funnel internal-resolution resize into `RequestResourceGeneration(...)`
+- [x] Funnel internal-resolution resize into `RequestResourceGeneration(...)`
   instead of destructive `InvalidatePhysicalResources()`.
-- [ ] Funnel display-region resize into the same generation request path instead
+- [x] Funnel display-region resize into the same generation request path instead
   of destructively evicting AA/post-process/present resources through
   `InvalidateViewportResizeResources(...)`.
-- [ ] Keep presentation using the current display region while render passes use
+- [x] Keep presentation using the current display region while render passes use
   the active generation size until pending commit.
 - [ ] Prepare pending generations incrementally at the requested size.
 - [ ] Time-slice physical resource creation and FBO completeness checks across
   frames.
 - [ ] Add resize debounce for interactive scene-panel and window drag
   (target 100-150 ms of no change, plus a maximum interval cap).
-- [ ] Supersede in-flight pending generations when a newer generation key is
+- [x] Supersede in-flight pending generations when a newer generation key is
   requested, disposing abandoned partial resources safely.
-- [ ] Commit pending generation atomically once all required resources validate.
-- [ ] Retire the old generation after GPU completion or through the conservative
+- [x] Commit pending generation atomically once all required resources validate.
+- [x] Retire the old generation after GPU completion or through the conservative
   bridge path.
-- [ ] Ensure pending generation failure records diagnostics and leaves active
+- [x] Ensure pending generation failure records diagnostics and leaves active
   rendering untouched.
 
 Acceptance criteria:
@@ -288,13 +302,13 @@ Acceptance criteria:
   replacement generation commits.
 - [ ] Main-window resize keeps displaying the active image until the replacement
   generation commits.
-- [ ] No resize path empties the active registry.
+- [x] No resize path empties the active registry.
 - [ ] Failed resize generation attempts never present a missing-resource or
   black-frame state.
 
 ## Phase 7 - Vulkan Prepare/Swap Physical Plan
 
-- [ ] Sync `VulkanResourcePlanner` from complete declared layouts before command
+- [x] Sync `VulkanResourcePlanner` from complete declared layouts before command
   execution.
 - [ ] Add Vulkan pending physical resource plan support.
 - [ ] Allocate pending Vulkan images, buffers, views, and framebuffers without
@@ -311,7 +325,7 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] Vulkan planning no longer depends on descriptors discovered during cache
+- [x] Vulkan planning no longer depends on descriptors discovered during cache
   command execution for migrated core resources.
 - [ ] Vulkan can prepare replacement physical resources without destroying the
   active plan first.
@@ -343,39 +357,39 @@ Acceptance criteria:
 
 ## Phase 9 - Diagnostics, Tests, And Documentation
 
-- [ ] Add diagnostics for active generation key.
-- [ ] Add diagnostics for pending generation key and status.
-- [ ] Add diagnostics for generation build duration.
-- [ ] Add diagnostics for resource count by kind.
-- [ ] Add diagnostics for missing required resources.
+- [x] Add diagnostics for active generation key.
+- [x] Add diagnostics for pending generation key and status.
+- [x] Add diagnostics for generation build duration.
+- [x] Add diagnostics for resource count by kind.
+- [x] Add diagnostics for missing required resources.
 - [ ] Add diagnostics for failed backend generation.
 - [ ] Add diagnostics for incomplete FBO name and attachment summary.
-- [ ] Add diagnostics for commit and retirement reasons.
+- [x] Add diagnostics for commit and retirement reasons.
 - [ ] Add diagnostics for old generation lifetime after commit.
 - [ ] Add tests for descriptor parity, spec lowering, dependency ordering,
   generation commit/failure, cache-command no-op compatibility, and resize
   generation requests.
-- [ ] Create or update
+- [x] Create or update
   `docs/architecture/rendering/render-pipeline-resource-lifecycle.md` after
   implementation details settle.
-- [ ] Update `docs/architecture/rendering/default-render-pipeline-notes.md` with
+- [x] Update `docs/architecture/rendering/default-render-pipeline-notes.md` with
   the final resource-layout and resize invariants.
 - [ ] Update Vulkan rendering docs if planner/allocation behavior changes.
 
 Acceptance criteria:
 
-- [ ] A failed pending generation log identifies the pipeline, target size,
+- [x] A failed pending generation log identifies the pipeline, target size,
   resource, reason, and active generation that remains in use.
 - [ ] Tests cover the resource lifecycle contract without depending on visual
   editor runs.
-- [ ] Architecture docs match the implemented behavior and name any remaining
+- [x] Architecture docs match the implemented behavior and name any remaining
   compatibility commands.
 
 ## Final Validation And Merge
 
-- [ ] Build the editor:
+- [x] Build the editor:
   `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`.
-- [ ] Run focused resource lifecycle/unit tests.
+- [x] Run focused resource lifecycle/unit tests.
 - [ ] Resize the editor scene panel continuously; confirm no black frames or
   missing-resource warnings.
 - [ ] Resize the main window continuously; confirm no black frames or

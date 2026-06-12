@@ -1,18 +1,96 @@
 - name: Overview
   href: README.md
-- name: CoACD
-  href: CoACD.md
-- name: Load Balancer
-  href: load-balancer.md
-- name: GPU-Driven Animation
-  href: ../work/design/gpu-driven-animation.md
-- name: Networking Overview
-  href: networking-overview.md
-- name: Modeling XRMesh Editing
-  href: modeling-xrmesh-editing.md
-- name: Play Mode Architecture
-  href: play-mode-architecture.md
-- name: Secondary GPU Context
-  href: secondary-gpu-context.md
-- name: Undo System
-  href: undo-system.md
+- name: Getting Started In The Codebase
+  href: getting-started-in-codebase.md
+
+- name: Assets
+  items:
+    - name: CoACD
+      href: assets/coacd.md
+    - name: Cooked Asset AOT And IO
+      href: assets/cooked-asset-aot-and-io.md
+
+- name: Audio
+  items:
+    - name: Audio Architecture
+      href: audio/audio-architecture.md
+
+- name: Editor
+  items:
+    - name: Play Mode Architecture
+      href: editor/play-mode-architecture.md
+    - name: Undo System
+      href: editor/undo-system.md
+
+- name: Modeling
+  items:
+    - name: XRMesh Editing
+      href: modeling/xrmesh-editing.md
+
+- name: Networking
+  items:
+    - name: Networking Overview
+      href: networking/overview.md
+
+- name: Physics
+  items:
+    - name: Physics Overview
+      href: physics/overview.md
+
+- name: Scene
+  items:
+    - name: Scene Overview
+      href: scene/overview.md
+    - name: Transforms
+      href: scene/transforms.md
+
+- name: Rendering
+  href: rendering/README.md
+  items:
+    - name: Runtime Overview
+      href: rendering/runtime-overview.md
+    - name: Code Map
+      href: rendering/code-map.md
+    - name: Default Render Pipeline Notes
+      href: rendering/default-render-pipeline-notes.md
+    - name: Frame Lifecycle And Dispatch Paths
+      href: rendering/frame-lifecycle-and-dispatch-paths.md
+    - name: GPU Mesh BVH
+      href: rendering/gpu-mesh-bvh.md
+    - name: Material Binding Policy
+      href: rendering/material-binding-policy.md
+    - name: Mesh Submission Strategies
+      href: rendering/mesh-submission-strategies.md
+    - name: OpenGL Renderer
+      href: rendering/opengl-renderer.md
+    - name: OpenVR Rendering
+      href: rendering/openvr-rendering.md
+    - name: OpenXR VR Rendering
+      href: rendering/openxr-vr-rendering.md
+    - name: Render Graph Migration
+      href: rendering/render-graph-migration.md
+    - name: Secondary GPU Context
+      href: rendering/secondary-gpu-context.md
+    - name: Uber Shader UI Annotations
+      href: rendering/uber-shader-ui-annotations.md
+    - name: Uber Shader Varianting
+      href: rendering/uber-shader-varianting.md
+    - name: Vulkan Renderer
+      href: rendering/vulkan-renderer.md
+    - name: Window Creation And Renderer Init
+      href: rendering/window-creation-and-renderer-init.md
+
+- name: Runtime
+  items:
+    - name: Load Balancer
+      href: runtime/load-balancer.md
+
+- name: UI
+  href: ui/README.md
+  items:
+    - name: Architecture
+      href: ui/01-architecture.md
+    - name: Transform Types
+      href: ui/02-transform-types.md
+    - name: Rendering Pipeline
+      href: ui/03-rendering-pipeline.md

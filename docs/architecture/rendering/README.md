@@ -7,11 +7,11 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | Document | Description |
 |----------|-------------|
 | [Window Creation & Renderer Initialization](window-creation-and-renderer-init.md) | How the engine creates OS windows on startup, selects OpenGL or Vulkan, instantiates renderers, and begins the render loop. Start here for the full picture. |
+| [Rendering Runtime Overview](runtime-overview.md) | How worlds, visibility collection, GPUScene, render pipelines, and pass execution fit together at runtime. |
 | [Rendering Frame Lifecycle And Dispatch Paths](frame-lifecycle-and-dispatch-paths.md) | The end-to-end `CollectVisible -> SwapBuffers -> Render` lifecycle, how worlds/viewports/scenes hand buffers across threads, and how CPU, GPU, BVH, octree, quadtree, and meshlet-related paths fit together. |
-| [Render Pipeline Resource Lifecycle](../../work/design/rendering/render-pipeline-resource-lifecycle-design.md) | Proposed v1 architecture for declared pipeline resources, generation-based materialization, staged resize, and atomic resource swaps. |
-| [World Shader Prewarm Graph](world-shader-prewarm-graph.md) | Design for collecting world, component, transform, asset, render-pipeline, shader, and material dependencies into prewarmable shader program combinations. |
+| [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md) | Implemented contract for declared pipeline resources, generation-based materialization, staged resize, and atomic resource swaps. Design source: [proposal](../../work/design/rendering/render-pipeline-resource-lifecycle-design.md). |
+| [World Shader Prewarm Graph](../../work/design/rendering/world-shader-prewarm-graph-design.md) | Design proposal for collecting world, component, transform, asset, render-pipeline, shader, and material dependencies into prewarmable shader program combinations. |
 | [Mesh Submission Strategies](mesh-submission-strategies.md) | The `EMeshSubmissionStrategy` contract for CPU direct, instrumented GPU indirect, zero-readback GPU indirect, and meshlet submission. |
-| [Compute Skinning "Explosion" Investigation](compute-skinning-explosion-investigation.md) | Intermittent compute-skinning corruption where a bad first dispatch is frozen by the output-reuse cache until a bone moves. Root mechanism, ruled-out hypotheses, implemented mitigations (input residency + pose-settle re-seed), and armed diagnostics. |
 | [Engine Rendering Optimization](../../work/design/rendering/engine-optimization-and-avatar-optimizer-design.md) | Design for renderer performance architecture, draw-call and CPU/GPU-driven tradeoffs, zero-readback rendering, meshlets, visibility buffers, stereo paths, and profiling. Execution roadmap: [engine-rendering-optimization-roadmap.md](../../work/todo/rendering/optimization/engine-rendering-optimization-roadmap.md). |
 | [Retinal Visibility Cache Rendering](../../work/design/rendering/retinal-visibility-cache-rendering-design.md) | Proposal for advanced OpenXR quad-view foveated VR rendering: compact visibility buffers, foveated shadelets, shared head-space lighting, stereo/layer reuse, and Forward+ transparency fallback. |
 | [Avatar Optimization And Virtualized Rendering](../../work/design/rendering/avatar-optimization-and-virtualized-rendering-design.md) | Design for automatic in-editor avatar optimization, generated variants, cluster-virtualized skinned rendering, and Gaussian-splat distant-crowd LOD. Execution roadmap: [avatar-optimization-roadmap.md](../../work/todo/avatar/avatar-optimization-roadmap.md). |
@@ -22,7 +22,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | [Vulkan Renderer](vulkan-renderer.md) | Vulkan 1.3 renderer initialization (instance → swapchain → sync), the explicit frame loop (acquire → record → submit → present), render graph compilation, and resource management. |
 | [OpenXR VR Rendering](openxr-vr-rendering.md) | OpenXR session lifecycle, graphics bindings (OpenGL / Vulkan), swapchain management, three-phase frame model, per-eye rendering, mirror blit pipeline, and late-pose updates. |
 | [OpenVR (SteamVR) Rendering](openvr-rendering.md) | SteamVR initialization, render target creation (two-pass / single-pass stereo), compositor submission via OpenGL texture handles, prediction timing, and frame statistics. |
-| [Rendering Code Map](RenderingCodeMap.md) | Source file organization for mesh rendering, meshlet rendering, GPU compute stages, and shared infrastructure. |
+| [Rendering Code Map](code-map.md) | Source file organization for mesh rendering, meshlet rendering, GPU compute stages, and shared infrastructure. |
 
 ## Quick Architecture Overview
 

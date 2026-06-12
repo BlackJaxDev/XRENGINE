@@ -14,7 +14,7 @@ Related docs:
 - [Dynamic indirect material bindings](dynamic-indirect-material-bindings.md)
 - [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
 - [Frame lifecycle and dispatch paths](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
-- [World shader prewarm graph](../../../architecture/rendering/world-shader-prewarm-graph.md)
+- [World shader prewarm graph](world-shader-prewarm-graph-design.md)
 - [Model import binary cache design](../assets/model-import-binary-cache-design.md)
 - [Texture runtime streaming and virtual texturing design](../texturing/texture-runtime-streaming-virtual-texturing-design.md)
 - [GPU-driven animation](gpu/gpu-driven-animation.md)

@@ -504,7 +504,7 @@ Implementation constraints:
 - Add ImGui component controls and debug view exposure through the schema.
 - Add optional ambient sync.
 - Add helpers for Earth-at-local-ground and primary-light binding.
-- Add docs under `docs/features/components/` once behavior is stable.
+- Add docs under `docs/developer-guides/components/` once behavior is stable.
 
 ### Phase 5 - XR And Quality Expansion
 
@@ -561,6 +561,6 @@ Acceptance criteria:
 ## References
 
 - Sean O'Neil, [GPU Gems 2 Chapter 16: Accurate Atmospheric Scattering](https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-16-accurate-atmospheric-scattering).
-- XRENGINE, [Procedural Skybox Ambient Lighting](../../features/components/procedural-skybox-ambient.md).
+- XRENGINE, [Procedural Skybox Ambient Lighting](../../../developer-guides/components/procedural-skybox-ambient.md).
 - XRENGINE, [Default Render Pipeline Known Issues And Lessons Learned](../../architecture/rendering/default-render-pipeline-notes.md).
 - XRENGINE, [Volumetric Fog Production Design](volumetric-fog-production-design.md).

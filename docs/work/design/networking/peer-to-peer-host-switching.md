@@ -516,7 +516,7 @@ Acceptance: remaining peers recover after host loss within the configured timeou
 - [ ] Add ImGui peer controls (peer mode, local peer id, current host, host epoch, candidate priority, force migration).
 - [ ] Add VS Code tasks: `Start-PeerHost-NoDebug`, `Start-PeerParticipant-NoDebug`, `Start-2Peers-NoDebug`, `Start-PeerHostMigration-NoDebug`.
 - [ ] Update `Tools\Start-NetworkTest.bat` with a `peer` mode.
-- [ ] Update `docs/features/networking.md`.
+- [ ] Update `docs/developer-guides/networking/networking.md`.
 
 Acceptance: developers can run, observe, and force host migration locally without external tools.
 
@@ -581,7 +581,7 @@ Acceptance: a witness peer detects and reports a host that publishes a `StateRoo
 - [ ] Document the boundary contract for third-party control planes (DTOs, error codes, capability flags, idempotency).
 - [ ] Add abuse-report flow integration test (equivocation → `IAbuseReportSink` → sample control plane revokes attestation → peer kicked on next roster delta).
 - [ ] Add ImGui panels for `Public`-tier diagnostics (attestation expiry, signature throughput, witness divergence count).
-- [ ] Update `docs/features/networking.md` and add `docs/architecture/networking/peer-mode-bft.md`.
+- [ ] Update `docs/developer-guides/networking/networking.md` and add `docs/architecture/networking/peer-mode-bft.md`.
 
 Acceptance: a third-party can implement `IControlPlane` against the documented contract and host an XRENGINE `Public` session end-to-end using only the sample as reference.
 

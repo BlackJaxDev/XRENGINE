@@ -39,12 +39,12 @@
         "files": [
           "DEPENDENCIES.md",
             "README.md",
-          "api/**/*.md",
-          "api/toc.yml",
+          "user-guide/**/*.md",
+          "user-guide/toc.yml",
           "architecture/**/*.md",
           "architecture/toc.yml",
-            "features/**/*.md",
-            "features/toc.yml",
+          "developer-guides/**/*.md",
+          "developer-guides/toc.yml",
             "work/**/*.md"
         ]
       },
