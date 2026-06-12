@@ -227,7 +227,11 @@ namespace XREngine.Rendering
         [YamlIgnore]
         private readonly Dictionary<XRShader, ShaderSubscription> _shaderSourceSubscriptions = new();
 
+        [YamlIgnore]
+        private readonly Dictionary<XRTransformFeedback, TransformFeedbackSubscription> _transformFeedbackSubscriptions = new();
+
         public event Action<XRRenderProgram>? ShaderInterfaceChanged;
+        public event Action<XRRenderProgram>? TransformFeedbackLayoutChanged;
 
         [Browsable(false)]
         [YamlIgnore]
@@ -258,6 +262,17 @@ namespace XREngine.Rendering
         /// </summary>
         public EventList<XRShader> Shaders { get; } = [];
 
+        /// <summary>
+        /// Transform feedback captures that this program must expose at link/compile time.
+        /// OpenGL consumes these as transform-feedback varyings before link; Vulkan uses
+        /// them to add SPIR-V XFB decorations while compiling the last pre-raster shader.
+        /// </summary>
+        public EventList<XRTransformFeedback> TransformFeedbacks { get; } = [];
+
+        [Browsable(false)]
+        [YamlIgnore]
+        public ulong TransformFeedbackLayoutVersion { get; private set; }
+
         [YamlIgnore]
         public IReadOnlyDictionary<string, ShaderUniformBinding> UniformBindings
         {
@@ -283,6 +298,10 @@ namespace XREngine.Rendering
             Shaders.PostAnythingAdded += OnShaderAdded;
             Shaders.PostAnythingRemoved += OnShaderRemoved;
             Shaders.PostIndexSet += OnShaderIndexSet;
+
+            TransformFeedbacks.PostAnythingAdded += OnTransformFeedbackAdded;
+            TransformFeedbacks.PostAnythingRemoved += OnTransformFeedbackRemoved;
+            TransformFeedbacks.PostIndexSet += OnTransformFeedbackIndexSet;
         }
 
         private void OnShaderAdded(XRShader shader)
@@ -413,12 +432,124 @@ namespace XREngine.Rendering
             _shaderSourceSubscriptions.Clear();
         }
 
+        private void OnTransformFeedbackAdded(XRTransformFeedback feedback)
+        {
+            if (feedback is null)
+                return;
+
+            XRRenderProgram? previousProgram = feedback.Program;
+            if (previousProgram is not null && !ReferenceEquals(previousProgram, this))
+                previousProgram.TransformFeedbacks.Remove(feedback);
+
+            feedback.SetProgramOwner(this);
+            SubscribeToTransformFeedback(feedback);
+            MarkTransformFeedbackLayoutChanged();
+        }
+
+        private void OnTransformFeedbackRemoved(XRTransformFeedback feedback)
+        {
+            if (feedback is null)
+                return;
+
+            UnsubscribeFromTransformFeedback(feedback);
+            if (ReferenceEquals(feedback.Program, this))
+                feedback.SetProgramOwner(null);
+            MarkTransformFeedbackLayoutChanged();
+        }
+
+        private void OnTransformFeedbackIndexSet(int index, XRTransformFeedback previousFeedback)
+        {
+            if (previousFeedback is not null)
+            {
+                UnsubscribeFromTransformFeedback(previousFeedback);
+                if (ReferenceEquals(previousFeedback.Program, this))
+                    previousFeedback.SetProgramOwner(null);
+            }
+
+            XRTransformFeedback? current = index >= 0 && index < TransformFeedbacks.Count ? TransformFeedbacks[index] : null;
+            if (current is not null)
+            {
+                XRRenderProgram? previousProgram = current.Program;
+                if (previousProgram is not null && !ReferenceEquals(previousProgram, this))
+                    previousProgram.TransformFeedbacks.Remove(current);
+
+                current.SetProgramOwner(this);
+                SubscribeToTransformFeedback(current);
+            }
+
+            MarkTransformFeedbackLayoutChanged();
+        }
+
+        private void SubscribeToTransformFeedback(XRTransformFeedback feedback)
+        {
+            if (_transformFeedbackSubscriptions.TryGetValue(feedback, out var existing))
+            {
+                existing.ReferenceCount++;
+                return;
+            }
+
+            XRPropertyChangedEventHandler propertyChanged = (_, args) =>
+            {
+                if (IsTransformFeedbackLayoutProperty(args.PropertyName))
+                    MarkTransformFeedbackLayoutChanged();
+            };
+
+            feedback.PropertyChanged += propertyChanged;
+            _transformFeedbackSubscriptions[feedback] = new TransformFeedbackSubscription
+            {
+                ReferenceCount = 1,
+                PropertyChangedHandler = propertyChanged
+            };
+        }
+
+        private void UnsubscribeFromTransformFeedback(XRTransformFeedback feedback)
+        {
+            if (!_transformFeedbackSubscriptions.TryGetValue(feedback, out var subscription))
+                return;
+
+            subscription.ReferenceCount--;
+            if (subscription.ReferenceCount > 0)
+                return;
+
+            if (subscription.PropertyChangedHandler is not null)
+                feedback.PropertyChanged -= subscription.PropertyChangedHandler;
+
+            _transformFeedbackSubscriptions.Remove(feedback);
+        }
+
+        private void ClearAllTransformFeedbackSubscriptions()
+        {
+            foreach (var (feedback, subscription) in _transformFeedbackSubscriptions.ToArray())
+            {
+                if (subscription.PropertyChangedHandler is not null)
+                    feedback.PropertyChanged -= subscription.PropertyChangedHandler;
+
+                if (ReferenceEquals(feedback.Program, this))
+                    feedback.SetProgramOwner(null);
+            }
+
+            _transformFeedbackSubscriptions.Clear();
+        }
+
+        private static bool IsTransformFeedbackLayoutProperty(string? propertyName)
+            => string.Equals(propertyName, nameof(XRTransformFeedback.BindingLocation), StringComparison.Ordinal) ||
+               string.Equals(propertyName, nameof(XRTransformFeedback.Names), StringComparison.Ordinal) ||
+               string.Equals(propertyName, nameof(XRTransformFeedback.Type), StringComparison.Ordinal);
+
+        private void MarkTransformFeedbackLayoutChanged()
+        {
+            TransformFeedbackLayoutVersion++;
+            SetBackendLinked(false);
+            TransformFeedbackLayoutChanged?.Invoke(this);
+        }
+
         private void MarkShaderInterfaceDirty()
             => _shaderInterfaceDirty = true;
 
         protected override void OnDestroying()
         {
             ClearAllShaderSubscriptions();
+            ClearAllTransformFeedbackSubscriptions();
             base.OnDestroying();
         }
 
@@ -443,6 +574,18 @@ namespace XREngine.Rendering
 
         public void SetShaderBuildTelemetry(ShaderProgramBuildTelemetry telemetry)
             => ShaderMetadata = ShaderMetadata with { LastBuild = telemetry ?? ShaderProgramBuildTelemetry.Empty };
+
+        public bool AttachTransformFeedback(XRTransformFeedback feedback)
+        {
+            ArgumentNullException.ThrowIfNull(feedback);
+            if (TransformFeedbacks.Contains(feedback))
+                return false;
+
+            return TransformFeedbacks.Add(feedback);
+        }
+
+        public bool DetachTransformFeedback(XRTransformFeedback feedback)
+            => feedback is not null && TransformFeedbacks.Remove(feedback);
 
         private void EnsureShaderInterfaceMetadata()
         {
@@ -1614,6 +1757,12 @@ namespace XREngine.Rendering
             public Action? TextChangedHandler;
             public XRPropertyChangedEventHandler? PropertyChangedHandler;
             public Action<XRShader>? SourceChangedHandler;
+            public int ReferenceCount;
+        }
+
+        private sealed class TransformFeedbackSubscription
+        {
+            public XRPropertyChangedEventHandler? PropertyChangedHandler;
             public int ReferenceCount;
         }
 

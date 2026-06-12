@@ -89,6 +89,7 @@ public unsafe partial class VulkanRenderer
         private int _linkedShaderConfigVersion = -1;
         private bool _linkedUsesVulkanClipDepthRemap;
         private EShaderType? _linkedVulkanClipDepthRemapStage;
+        private ulong _linkedTransformFeedbackLayoutVersion = ulong.MaxValue;
 
         public override VkObjectType Type => VkObjectType.Program;
         public override bool IsGenerated => IsActive;
@@ -200,6 +201,7 @@ public unsafe partial class VulkanRenderer
 
             Data.LinkRequested += OnLinkRequested;
             Data.UseRequested += OnUseRequested;
+            Data.TransformFeedbackLayoutChanged += OnTransformFeedbackLayoutChanged;
             Data.Shaders.PostAnythingAdded += ShaderAdded;
             Data.Shaders.PostAnythingRemoved += ShaderRemoved;
 
@@ -268,6 +270,7 @@ public unsafe partial class VulkanRenderer
 
             Data.LinkRequested -= OnLinkRequested;
             Data.UseRequested -= OnUseRequested;
+            Data.TransformFeedbackLayoutChanged -= OnTransformFeedbackLayoutChanged;
             Data.Shaders.PostAnythingAdded -= ShaderAdded;
             Data.Shaders.PostAnythingRemoved -= ShaderRemoved;
 
@@ -315,6 +318,21 @@ public unsafe partial class VulkanRenderer
                 Backend: "Vulkan",
                 Detail: $"shader invalidated: {shader.StageDebugLabel}",
                 Fingerprint: shader.CompileStatus.ArtifactIdentity));
+        }
+
+        private void OnTransformFeedbackLayoutChanged(XRRenderProgram program)
+        {
+            if (RuntimeEngine.InvokeOnMainThread(() => OnTransformFeedbackLayoutChanged(program), "VkRenderProgram.TransformFeedbackLayoutChanged"))
+                return;
+
+            DestroyLayouts();
+            _stageLookup.Clear();
+            _autoUniformBlocks.Clear();
+            IsLinked = false;
+            _linkedTransformFeedbackLayoutVersion = ulong.MaxValue;
+
+            if (Data.LinkReady && Renderer.IsLogicalDeviceReady)
+                Link();
         }
 
         private void OnLinkRequested(XRRenderProgram program)
@@ -556,7 +574,8 @@ public unsafe partial class VulkanRenderer
             if (IsLinked &&
                 _linkedShaderConfigVersion == shaderConfigVersion &&
                 _linkedUsesVulkanClipDepthRemap == usesVulkanClipDepthRemap &&
-                _linkedVulkanClipDepthRemapStage == vulkanClipDepthRemapStage)
+                _linkedVulkanClipDepthRemapStage == vulkanClipDepthRemapStage &&
+                _linkedTransformFeedbackLayoutVersion == Data.TransformFeedbackLayoutVersion)
                 return true;
 
             if (IsLinked)
@@ -587,6 +606,19 @@ public unsafe partial class VulkanRenderer
                     "program contains no shaders",
                     Backend: "Vulkan",
                     Detail: Data.Name));
+                return false;
+            }
+
+            if (!TryApplyTransformFeedbackCompilePlans(out string? transformFeedbackFailure))
+            {
+                IsLinked = false;
+                Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
+                    XRRenderProgram.EShaderProgramBackendStage.Failed,
+                    0.0,
+                    0.0,
+                    transformFeedbackFailure,
+                    Backend: "Vulkan",
+                    Detail: "transform feedback layout validation failed"));
                 return false;
             }
 
@@ -697,6 +729,7 @@ public unsafe partial class VulkanRenderer
             _linkedShaderConfigVersion = shaderConfigVersion;
             _linkedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
             _linkedVulkanClipDepthRemapStage = vulkanClipDepthRemapStage;
+            _linkedTransformFeedbackLayoutVersion = Data.TransformFeedbackLayoutVersion;
             linkWatch.Stop();
             buildWatch.Stop();
             Data.SetShaderBackendStatus(new XRRenderProgram.ShaderProgramBackendStatus(
@@ -708,6 +741,108 @@ public unsafe partial class VulkanRenderer
                 Detail: DescribeShaderStages(),
                 Fingerprint: ComputeProgramArtifactFingerprint()));
             return true;
+        }
+
+        private bool TryApplyTransformFeedbackCompilePlans(out string? failure)
+        {
+            failure = null;
+            VulkanTransformFeedbackCompilePlan? plan = null;
+            EShaderType? captureStage = null;
+
+            bool hasRequestedCaptures = Data.TransformFeedbacks.Any(static feedback =>
+                feedback.Names is { Length: > 0 } &&
+                feedback.Names.Any(static name => !string.IsNullOrWhiteSpace(name)));
+
+            if (hasRequestedCaptures)
+            {
+                if (!Renderer.SupportsTransformFeedback)
+                {
+                    failure = "VK_EXT_transform_feedback is not enabled on the active Vulkan device.";
+                    return false;
+                }
+
+                captureStage = ResolveTransformFeedbackCaptureStage();
+                if (!captureStage.HasValue)
+                {
+                    failure = "Vulkan transform feedback requires a vertex, tessellation evaluation, or geometry shader capture stage. Mesh/task shader capture is not supported by this wrapper.";
+                    return false;
+                }
+
+                if (!TryBuildTransformFeedbackCompilePlan(out plan, out failure))
+                    return false;
+            }
+
+            foreach (VkShader shader in _shaderCache.Values)
+            {
+                shader.SetTransformFeedbackCompilePlan(
+                    captureStage.HasValue && shader.Data.Type == captureStage.Value
+                        ? plan
+                        : null);
+            }
+
+            return true;
+        }
+
+        private bool TryBuildTransformFeedbackCompilePlan(
+            out VulkanTransformFeedbackCompilePlan? plan,
+            out string? failure)
+        {
+            plan = null;
+            failure = null;
+
+            List<VulkanTransformFeedbackBufferCapture> buffers = [];
+            HashSet<uint> bindings = [];
+            foreach (XRTransformFeedback feedback in Data.TransformFeedbacks.OrderBy(static feedback => feedback.BindingLocation))
+            {
+                string[] names = feedback.Names
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .ToArray();
+                if (names.Length == 0)
+                    continue;
+
+                if (feedback.BindingLocation >= Renderer.TransformFeedbackProperties.MaxTransformFeedbackBuffers)
+                {
+                    failure =
+                        $"Vulkan transform feedback binding {feedback.BindingLocation} exceeds device limit " +
+                        $"{Renderer.TransformFeedbackProperties.MaxTransformFeedbackBuffers}.";
+                    return false;
+                }
+
+                if (!bindings.Add(feedback.BindingLocation))
+                {
+                    failure =
+                        $"Vulkan transform feedback binding {feedback.BindingLocation} is used by more than one XRTransformFeedback object. " +
+                        "Use one XRTransformFeedback per binding.";
+                    return false;
+                }
+
+                if (feedback.Type == EFeedbackType.OutValues && names.Length != 1)
+                {
+                    failure =
+                        "Vulkan OutValues transform feedback captures require exactly one varying name per XRTransformFeedback. " +
+                        "Use PerVertex when multiple varyings should be interleaved into one feedback buffer.";
+                    return false;
+                }
+
+                buffers.Add(new VulkanTransformFeedbackBufferCapture(feedback.BindingLocation, feedback.Type, names));
+            }
+
+            plan = buffers.Count == 0
+                ? null
+                : new VulkanTransformFeedbackCompilePlan(buffers);
+            return true;
+        }
+
+        private EShaderType? ResolveTransformFeedbackCaptureStage()
+        {
+            if (HasShaderStage(EShaderType.Geometry))
+                return EShaderType.Geometry;
+            if (HasShaderStage(EShaderType.TessEvaluation))
+                return EShaderType.TessEvaluation;
+            if (HasShaderStage(EShaderType.Vertex))
+                return EShaderType.Vertex;
+
+            return null;
         }
 
         private EShaderType? ResolveVulkanClipDepthRemapStage()

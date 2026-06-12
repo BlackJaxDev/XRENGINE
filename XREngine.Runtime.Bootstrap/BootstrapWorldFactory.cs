@@ -106,7 +106,7 @@ public static class BootstrapWorldFactory
                     deferStartupCapture: addSkybox && settings.LightProbeCapture == LightProbeCaptureMode.Startup);
 
             if (addSkybox)
-                AddSkyboxEnvironment(rootNode, skyTextureName, deferredStartupProbeCapture, settings.ProceduralSky, sunDirectionalLight, moonDirectionalLight);
+                AddSkyboxEnvironment(rootNode, skyTextureName, deferredStartupProbeCapture, settings, sunDirectionalLight, moonDirectionalLight);
         }
 
         if (settings.Mirror)
@@ -218,7 +218,7 @@ public static class BootstrapWorldFactory
         SceneNode rootNode,
         string skyTextureName,
         Action? onSkyReady,
-        bool useProceduralSky = false,
+        UnitTestingWorldSettings settings,
         DirectionalLightComponent? sunDirectionalLight = null,
         DirectionalLightComponent? moonDirectionalLight = null)
     {
@@ -226,9 +226,11 @@ public static class BootstrapWorldFactory
         if (skyboxComp is null)
             return;
 
-        if (useProceduralSky)
+        if (settings.ProceduralSky)
         {
             skyboxComp.Mode = ESkyboxMode.DynamicProcedural;
+            skyboxComp.AutoCycle = settings.ProceduralSkyAutoCycle;
+            skyboxComp.TimeOfDay = settings.ProceduralSkyTimeOfDay;
             skyboxComp.SunDirectionalLight = sunDirectionalLight;
             skyboxComp.SyncDirectionalLightWithSun = sunDirectionalLight is not null;
             skyboxComp.MoonDirectionalLight = moonDirectionalLight;

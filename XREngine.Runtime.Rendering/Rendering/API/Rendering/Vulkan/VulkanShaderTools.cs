@@ -57,6 +57,42 @@ internal readonly record struct AutoUniformRewriteResult(
     string Source,
     AutoUniformBlockInfo? BlockInfo);
 
+internal sealed record VulkanTransformFeedbackBufferCapture(
+    uint Binding,
+    EFeedbackType Type,
+    IReadOnlyList<string> Names);
+
+internal sealed record VulkanTransformFeedbackCompilePlan(IReadOnlyList<VulkanTransformFeedbackBufferCapture> Buffers)
+{
+    public bool HasCaptures => Buffers.Count > 0;
+    public string Identity { get; } = BuildIdentity(Buffers);
+
+    public static VulkanTransformFeedbackCompilePlan Empty { get; } = new(Array.Empty<VulkanTransformFeedbackBufferCapture>());
+
+    private static string BuildIdentity(IReadOnlyList<VulkanTransformFeedbackBufferCapture> buffers)
+    {
+        if (buffers.Count == 0)
+            return "TransformFeedback=<none>";
+
+        StringBuilder builder = new("TransformFeedback=");
+        for (int i = 0; i < buffers.Count; i++)
+        {
+            if (i > 0)
+                builder.Append(';');
+
+            VulkanTransformFeedbackBufferCapture buffer = buffers[i];
+            builder
+                .Append(buffer.Binding.ToString(CultureInfo.InvariantCulture))
+                .Append(':')
+                .Append(buffer.Type)
+                .Append(':')
+                .AppendJoin('|', buffer.Names);
+        }
+
+        return builder.ToString();
+    }
+}
+
 internal sealed record GlslStructDefinition(
     string Name,
     IReadOnlyList<GlslStructField> Fields);
@@ -2040,6 +2076,389 @@ vec4 XRENGINE_RemapVulkanClipDepth(vec4 position)
            string.Equals(glslType, "atomic_uint", StringComparison.OrdinalIgnoreCase);
 }
 
+internal static class VulkanShaderTransformFeedback
+{
+    private static readonly Regex VersionDirectiveRegex = new(
+        @"^\s*#\s*version\b[^\r\n]*(?:\r?\n)?",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+    private static readonly Regex TransformFeedbackExtensionRegex = new(
+        @"^\s*#\s*extension\s+GL_EXT_transform_feedback\s*:\s*\w+\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+    private static readonly Regex OutputDeclarationRegex = new(
+        @"(?m)^(?<indent>\s*)(?<layout>layout\s*\((?<layoutArgs>[^)]*)\)\s*)?(?<qualifiers>(?:(?:flat|noperspective|smooth|centroid|sample|invariant|precise|patch|highp|mediump|lowp)\s+)*)out\s+(?<type>[A-Za-z_][A-Za-z0-9_]*)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)(?<array>\s*(?:\[[^\]]*\]\s*)*)\s*;",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex LocationQualifierRegex = new(
+        @"(?:^|,)\s*location\s*=\s*(?<location>\d+)\s*(?:,|$)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex XfbQualifierRegex = new(
+        @"\s*(?:xfb_buffer|xfb_offset|xfb_stride)\s*=\s*[^,]+,?",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex ArrayLengthRegex = new(
+        @"\[(?<length>\d+)u?\]",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private sealed record OutputDeclaration(
+        string Name,
+        string GlslType,
+        string ArraySuffix,
+        string? LayoutArgs,
+        Match Match);
+
+    private readonly record struct XfbVariableInfo(uint Buffer, uint Offset, uint Location);
+
+    public static string Rewrite(string source, EShaderType shaderType, VulkanTransformFeedbackCompilePlan? plan)
+    {
+        if (plan is not { HasCaptures: true })
+            return source;
+
+        if (!CanCarryTransformFeedback(shaderType))
+        {
+            throw new InvalidOperationException(
+                $"Vulkan transform feedback can be declared only on vertex, tessellation evaluation, or geometry shader outputs; got {shaderType}.");
+        }
+
+        Dictionary<string, OutputDeclaration> outputs = ParseOutputDeclarations(source);
+        if (outputs.Count == 0)
+            throw new InvalidOperationException("Vulkan transform feedback requested captures, but the capture shader declares no global output variables.");
+
+        Dictionary<string, XfbVariableInfo> variables = BuildVariableInfo(plan, outputs);
+        Dictionary<uint, uint> strides = BuildBufferStrides(plan, outputs);
+        string rewritten = OutputDeclarationRegex.Replace(source, match =>
+        {
+            string name = match.Groups["name"].Value;
+            if (!variables.TryGetValue(name, out XfbVariableInfo xfb))
+                return match.Value;
+
+            string layoutArgs = MergeLayoutQualifiers(
+                match.Groups["layoutArgs"].Success ? match.Groups["layoutArgs"].Value : null,
+                xfb.Buffer,
+                xfb.Offset,
+                xfb.Location);
+            string indent = match.Groups["indent"].Value;
+            string qualifiers = match.Groups["qualifiers"].Value;
+            string type = match.Groups["type"].Value;
+            string array = match.Groups["array"].Value;
+
+            return $"{indent}layout({layoutArgs}) {qualifiers}out {type} {name}{array};";
+        });
+
+        return InjectExtensionAndStrideLayouts(rewritten, strides);
+    }
+
+    private static bool CanCarryTransformFeedback(EShaderType shaderType)
+        => shaderType == EShaderType.Vertex ||
+           shaderType == EShaderType.TessEvaluation ||
+           shaderType == EShaderType.Geometry;
+
+    private static Dictionary<string, OutputDeclaration> ParseOutputDeclarations(string source)
+    {
+        Dictionary<string, OutputDeclaration> outputs = new(StringComparer.Ordinal);
+        foreach (Match match in OutputDeclarationRegex.Matches(source))
+        {
+            if (!match.Success)
+                continue;
+
+            string name = match.Groups["name"].Value;
+            outputs[name] = new OutputDeclaration(
+                name,
+                match.Groups["type"].Value,
+                match.Groups["array"].Value,
+                match.Groups["layoutArgs"].Success ? match.Groups["layoutArgs"].Value : null,
+                match);
+        }
+
+        return outputs;
+    }
+
+    private static Dictionary<string, XfbVariableInfo> BuildVariableInfo(
+        VulkanTransformFeedbackCompilePlan plan,
+        IReadOnlyDictionary<string, OutputDeclaration> outputs)
+    {
+        Dictionary<string, XfbVariableInfo> variables = new(StringComparer.Ordinal);
+        uint nextAutoLocation = ResolveNextAutoLocation(outputs.Values);
+
+        foreach (VulkanTransformFeedbackBufferCapture buffer in plan.Buffers)
+        {
+            uint offset = 0;
+            foreach (string name in buffer.Names)
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                if (!outputs.TryGetValue(name, out OutputDeclaration? declaration))
+                {
+                    throw new InvalidOperationException(
+                        $"Vulkan transform feedback varying '{name}' was requested but was not found as a global output in the capture shader.");
+                }
+
+                if (variables.ContainsKey(name))
+                    throw new InvalidOperationException($"Vulkan transform feedback varying '{name}' was requested more than once.");
+
+                uint location = TryGetExistingLocation(declaration.LayoutArgs, out uint existingLocation)
+                    ? existingLocation
+                    : nextAutoLocation++;
+                variables[name] = new XfbVariableInfo(buffer.Binding, offset, location);
+                offset += ResolveOutputByteSize(declaration);
+            }
+        }
+
+        return variables;
+    }
+
+    private static Dictionary<uint, uint> BuildBufferStrides(
+        VulkanTransformFeedbackCompilePlan plan,
+        IReadOnlyDictionary<string, OutputDeclaration> outputs)
+    {
+        Dictionary<uint, uint> strides = new();
+        foreach (VulkanTransformFeedbackBufferCapture buffer in plan.Buffers)
+        {
+            uint stride = 0;
+            foreach (string name in buffer.Names)
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                if (!outputs.TryGetValue(name, out OutputDeclaration? declaration))
+                    continue;
+
+                stride += ResolveOutputByteSize(declaration);
+            }
+
+            if (stride == 0)
+                continue;
+
+            if (!strides.TryAdd(buffer.Binding, stride))
+            {
+                throw new InvalidOperationException(
+                    $"Vulkan transform feedback binding {buffer.Binding} is declared by more than one XRTransformFeedback object.");
+            }
+        }
+
+        return strides;
+    }
+
+    private static uint ResolveNextAutoLocation(IEnumerable<OutputDeclaration> declarations)
+    {
+        uint next = 0;
+        foreach (OutputDeclaration declaration in declarations)
+        {
+            if (TryGetExistingLocation(declaration.LayoutArgs, out uint location))
+                next = Math.Max(next, location + 1);
+        }
+
+        return next;
+    }
+
+    private static bool TryGetExistingLocation(string? layoutArgs, out uint location)
+    {
+        location = 0;
+        if (string.IsNullOrWhiteSpace(layoutArgs))
+            return false;
+
+        Match match = LocationQualifierRegex.Match(layoutArgs);
+        if (!match.Success)
+            return false;
+
+        return uint.TryParse(match.Groups["location"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out location);
+    }
+
+    private static string MergeLayoutQualifiers(string? existingLayoutArgs, uint buffer, uint offset, uint location)
+    {
+        List<string> qualifiers = [];
+        bool hasLocation = false;
+        if (!string.IsNullOrWhiteSpace(existingLayoutArgs))
+        {
+            string cleaned = XfbQualifierRegex.Replace(existingLayoutArgs, string.Empty);
+            foreach (string qualifier in cleaned.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (qualifier.Length == 0)
+                    continue;
+
+                if (qualifier.StartsWith("location", StringComparison.OrdinalIgnoreCase))
+                    hasLocation = true;
+
+                qualifiers.Add(qualifier);
+            }
+        }
+
+        if (!hasLocation)
+            qualifiers.Add("location = " + location.ToString(CultureInfo.InvariantCulture));
+
+        qualifiers.Add("xfb_buffer = " + buffer.ToString(CultureInfo.InvariantCulture));
+        qualifiers.Add("xfb_offset = " + offset.ToString(CultureInfo.InvariantCulture));
+        return string.Join(", ", qualifiers);
+    }
+
+    private static string InjectExtensionAndStrideLayouts(string source, IReadOnlyDictionary<uint, uint> strides)
+    {
+        int insertionIndex = ResolveDirectiveInsertionIndex(source);
+        StringBuilder prefix = new();
+        if (!TransformFeedbackExtensionRegex.IsMatch(source))
+            prefix.AppendLine("#extension GL_EXT_transform_feedback : require");
+
+        foreach (KeyValuePair<uint, uint> stride in strides.OrderBy(static pair => pair.Key))
+        {
+            prefix
+                .Append("layout(xfb_buffer = ")
+                .Append(stride.Key.ToString(CultureInfo.InvariantCulture))
+                .Append(", xfb_stride = ")
+                .Append(stride.Value.ToString(CultureInfo.InvariantCulture))
+                .AppendLine(") out;");
+        }
+
+        if (prefix.Length == 0)
+            return source;
+
+        return source.Insert(insertionIndex, prefix.ToString());
+    }
+
+    private static int ResolveDirectiveInsertionIndex(string source)
+    {
+        Match versionMatch = VersionDirectiveRegex.Match(source);
+        int insertionIndex = versionMatch.Success
+            ? versionMatch.Index + versionMatch.Length
+            : 0;
+
+        while (insertionIndex < source.Length)
+        {
+            int lineEnd = source.IndexOf('\n', insertionIndex);
+            int lineLength = (lineEnd >= 0 ? lineEnd : source.Length) - insertionIndex;
+            ReadOnlySpan<char> line = source.AsSpan(insertionIndex, lineLength).TrimStart();
+            if (!line.StartsWith("#extension", StringComparison.OrdinalIgnoreCase))
+                break;
+
+            insertionIndex = lineEnd >= 0 ? lineEnd + 1 : source.Length;
+        }
+
+        return insertionIndex;
+    }
+
+    private static uint ResolveOutputByteSize(OutputDeclaration declaration)
+    {
+        if (!TryResolveScalarByteSize(declaration.GlslType, out uint baseSize, out uint componentCount))
+        {
+            throw new InvalidOperationException(
+                $"Vulkan transform feedback cannot infer byte size for output '{declaration.Name}' of type '{declaration.GlslType}'. " +
+                "Capture scalar, vector, or matrix GLSL outputs, or split complex outputs into supported variables.");
+        }
+
+        uint arrayLength = ResolveArrayElementCount(declaration.ArraySuffix);
+        return checked(baseSize * componentCount * arrayLength);
+    }
+
+    private static uint ResolveArrayElementCount(string arraySuffix)
+    {
+        if (string.IsNullOrWhiteSpace(arraySuffix))
+            return 1;
+
+        uint count = 1;
+        bool foundLength = false;
+        foreach (Match match in ArrayLengthRegex.Matches(arraySuffix))
+        {
+            foundLength = true;
+            if (!uint.TryParse(match.Groups["length"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint length) || length == 0)
+                throw new InvalidOperationException("Vulkan transform feedback array outputs must use constant positive integer lengths.");
+
+            count = checked(count * length);
+        }
+
+        if (!foundLength)
+            throw new InvalidOperationException("Vulkan transform feedback array outputs must use constant positive integer lengths.");
+
+        return count;
+    }
+
+    private static bool TryResolveScalarByteSize(string glslType, out uint scalarBytes, out uint componentCount)
+    {
+        scalarBytes = 4;
+        componentCount = 1;
+
+        switch (glslType)
+        {
+            case "bool":
+            case "int":
+            case "uint":
+            case "float":
+                return true;
+            case "double":
+                scalarBytes = 8;
+                return true;
+        }
+
+        if (TryResolveVector(glslType, "vec", 4, out scalarBytes, out componentCount) ||
+            TryResolveVector(glslType, "ivec", 4, out scalarBytes, out componentCount) ||
+            TryResolveVector(glslType, "uvec", 4, out scalarBytes, out componentCount) ||
+            TryResolveVector(glslType, "bvec", 4, out scalarBytes, out componentCount) ||
+            TryResolveVector(glslType, "dvec", 8, out scalarBytes, out componentCount))
+        {
+            return true;
+        }
+
+        if (TryResolveMatrix(glslType, "mat", 4, out scalarBytes, out componentCount) ||
+            TryResolveMatrix(glslType, "dmat", 8, out scalarBytes, out componentCount))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryResolveVector(string glslType, string prefix, uint bytes, out uint scalarBytes, out uint componentCount)
+    {
+        scalarBytes = bytes;
+        componentCount = 0;
+        if (!glslType.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        string suffix = glslType[prefix.Length..];
+        if (!uint.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint count) || count < 2 || count > 4)
+            return false;
+
+        componentCount = count;
+        return true;
+    }
+
+    private static bool TryResolveMatrix(string glslType, string prefix, uint bytes, out uint scalarBytes, out uint componentCount)
+    {
+        scalarBytes = bytes;
+        componentCount = 0;
+        if (!glslType.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        string suffix = glslType[prefix.Length..];
+        if (suffix.Length == 0)
+            return false;
+
+        uint columns;
+        uint rows;
+        int xIndex = suffix.IndexOf('x');
+        if (xIndex < 0)
+        {
+            if (!uint.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out columns) || columns < 2 || columns > 4)
+                return false;
+
+            rows = columns;
+        }
+        else
+        {
+            if (!uint.TryParse(suffix[..xIndex], NumberStyles.Integer, CultureInfo.InvariantCulture, out columns) ||
+                !uint.TryParse(suffix[(xIndex + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out rows) ||
+                columns < 2 || columns > 4 || rows < 2 || rows > 4)
+            {
+                return false;
+            }
+        }
+
+        componentCount = columns * rows;
+        return true;
+    }
+}
+
 internal static class VulkanShaderCompiler
 {
     private static readonly Shaderc ShadercApi = Shaderc.GetApi();
@@ -2109,6 +2528,12 @@ internal static class VulkanShaderCompiler
     }
 
     public static PreparedSource Prepare(XRShader shader, bool useVulkanClipDepthRemap)
+        => Prepare(shader, useVulkanClipDepthRemap, null);
+
+    public static PreparedSource Prepare(
+        XRShader shader,
+        bool useVulkanClipDepthRemap,
+        VulkanTransformFeedbackCompilePlan? transformFeedbackPlan)
     {
         string entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
@@ -2124,7 +2549,8 @@ internal static class VulkanShaderCompiler
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
 
         AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(source, shader.Type, useVulkanClipDepthRemap);
-        string rewrittenSource = InjectVulkanBackendDefine(rewrite.Source);
+        string transformFeedbackSource = VulkanShaderTransformFeedback.Rewrite(rewrite.Source, shader.Type, transformFeedbackPlan);
+        string rewrittenSource = InjectVulkanBackendDefine(transformFeedbackSource);
         return new PreparedSource(entryPoint, shader.Source?.Text ?? string.Empty, source, rewrittenSource, rewrite.BlockInfo);
     }
 
@@ -2227,7 +2653,7 @@ internal static class VulkanShaderCompiler
         builder.Append("ShaderConfigVersion=").Append(shaderConfigVersion.ToString(CultureInfo.InvariantCulture)).Append('\n');
         builder.Append("useVulkanClipDepthRemap=").Append(useVulkanClipDepthRemap ? '1' : '0').Append('\n');
         builder.Append("Optimizer=").Append(ResolvedShaderSourceOptimizer.BuildIdentitySegment()).Append('\n');
-        builder.AppendLine("Rewrite=VulkanShaderAutoUniforms+InjectVulkanBackendDefine:v1");
+        builder.AppendLine("Rewrite=VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine:v1");
 
         if (shader.TryGetResolvedShaderSource(out ResolvedShaderSource resolved, annotateIncludes: false, logFailures: false))
         {
@@ -2620,6 +3046,8 @@ internal static class VulkanShaderReflection
         if (string.IsNullOrWhiteSpace(source))
             return Array.Empty<DescriptorBindingInfo>();
 
+        source = FilterInactivePreprocessorBranches(source);
+
         List<DescriptorBindingInfo> bindings = new();
         foreach (Match match in LayoutRegex.Matches(source))
         {
@@ -2647,6 +3075,260 @@ internal static class VulkanShaderReflection
         }
 
         return bindings;
+    }
+
+    private readonly record struct SourcePreprocessorBranch(bool ParentActive, bool BranchActive, bool BranchTaken);
+
+    private static string FilterInactivePreprocessorBranches(string source)
+    {
+        if (!source.Contains("#if", StringComparison.Ordinal) &&
+            !source.Contains("#else", StringComparison.Ordinal) &&
+            !source.Contains("#endif", StringComparison.Ordinal))
+        {
+            return source;
+        }
+
+        HashSet<string> defines = new(StringComparer.Ordinal);
+        Stack<SourcePreprocessorBranch> stack = new();
+        StringBuilder builder = new(source.Length);
+        bool active = true;
+
+        int lineStart = 0;
+        while (lineStart < source.Length)
+        {
+            int lineEnd = source.IndexOf('\n', lineStart);
+            int nextLineStart = lineEnd >= 0 ? lineEnd + 1 : source.Length;
+            string line = source[lineStart..nextLineStart];
+            string trimmed = line.TrimStart();
+
+            if (TryParsePreprocessorDirective(trimmed, out string directive, out string argument))
+            {
+                ProcessPreprocessorDirective(directive, argument, defines, stack, ref active);
+                AppendInactiveSourceLine(builder, line);
+            }
+            else if (active)
+            {
+                builder.Append(line);
+            }
+            else
+            {
+                AppendInactiveSourceLine(builder, line);
+            }
+
+            lineStart = nextLineStart;
+        }
+
+        return builder.ToString();
+    }
+
+    private static void ProcessPreprocessorDirective(
+        string directive,
+        string argument,
+        HashSet<string> defines,
+        Stack<SourcePreprocessorBranch> stack,
+        ref bool active)
+    {
+        if (directive.Equals("define", StringComparison.OrdinalIgnoreCase))
+        {
+            if (active && TryReadPreprocessorIdentifier(argument, out string defineName))
+                defines.Add(defineName);
+            return;
+        }
+
+        if (directive.Equals("undef", StringComparison.OrdinalIgnoreCase))
+        {
+            if (active && TryReadPreprocessorIdentifier(argument, out string defineName))
+                defines.Remove(defineName);
+            return;
+        }
+
+        if (directive.Equals("ifdef", StringComparison.OrdinalIgnoreCase) ||
+            directive.Equals("ifndef", StringComparison.OrdinalIgnoreCase) ||
+            directive.Equals("if", StringComparison.OrdinalIgnoreCase))
+        {
+            bool parentActive = active;
+            bool condition = EvaluatePreprocessorCondition(directive, argument, defines);
+            bool branchActive = parentActive && condition;
+            stack.Push(new SourcePreprocessorBranch(parentActive, branchActive, condition));
+            active = branchActive;
+            return;
+        }
+
+        if (directive.Equals("elif", StringComparison.OrdinalIgnoreCase))
+        {
+            if (stack.Count == 0)
+                return;
+
+            SourcePreprocessorBranch previous = stack.Pop();
+            bool condition = !previous.BranchTaken && EvaluatePreprocessorCondition("if", argument, defines);
+            bool branchActive = previous.ParentActive && condition;
+            stack.Push(new SourcePreprocessorBranch(previous.ParentActive, branchActive, previous.BranchTaken || condition));
+            active = branchActive;
+            return;
+        }
+
+        if (directive.Equals("else", StringComparison.OrdinalIgnoreCase))
+        {
+            if (stack.Count == 0)
+                return;
+
+            SourcePreprocessorBranch previous = stack.Pop();
+            bool branchActive = previous.ParentActive && !previous.BranchTaken;
+            stack.Push(new SourcePreprocessorBranch(previous.ParentActive, branchActive, true));
+            active = branchActive;
+            return;
+        }
+
+        if (directive.Equals("endif", StringComparison.OrdinalIgnoreCase))
+        {
+            if (stack.Count == 0)
+                return;
+
+            stack.Pop();
+            active = stack.Count == 0 || stack.Peek().BranchActive;
+        }
+    }
+
+    private static bool TryParsePreprocessorDirective(string trimmedLine, out string directive, out string argument)
+    {
+        directive = string.Empty;
+        argument = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(trimmedLine) || trimmedLine[0] != '#')
+            return false;
+
+        int index = 1;
+        while (index < trimmedLine.Length && char.IsWhiteSpace(trimmedLine[index]))
+            index++;
+
+        int directiveStart = index;
+        while (index < trimmedLine.Length && char.IsLetter(trimmedLine[index]))
+            index++;
+
+        if (index == directiveStart)
+            return false;
+
+        directive = trimmedLine[directiveStart..index];
+        argument = index < trimmedLine.Length ? trimmedLine[index..].Trim() : string.Empty;
+        return true;
+    }
+
+    private static bool EvaluatePreprocessorCondition(string directive, string argument, HashSet<string> defines)
+    {
+        if (directive.Equals("ifdef", StringComparison.OrdinalIgnoreCase))
+            return TryReadPreprocessorIdentifier(argument, out string name) && defines.Contains(name);
+
+        if (directive.Equals("ifndef", StringComparison.OrdinalIgnoreCase))
+            return !TryReadPreprocessorIdentifier(argument, out string name) || !defines.Contains(name);
+
+        return TryEvaluateSimplePreprocessorIf(argument, defines, out bool result) ? result : true;
+    }
+
+    private static bool TryEvaluateSimplePreprocessorIf(string argument, HashSet<string> defines, out bool result)
+    {
+        result = true;
+        string expression = argument.Trim();
+        if (expression.Length == 0)
+            return false;
+
+        bool negate = false;
+        if (expression[0] == '!')
+        {
+            negate = true;
+            expression = expression[1..].TrimStart();
+        }
+
+        if (expression.Equals("0", StringComparison.Ordinal))
+        {
+            result = negate;
+            return true;
+        }
+
+        if (expression.Equals("1", StringComparison.Ordinal))
+        {
+            result = !negate;
+            return true;
+        }
+
+        string? definedName = TryExtractDefinedName(expression);
+        if (definedName is not null)
+        {
+            result = defines.Contains(definedName);
+            if (negate)
+                result = !result;
+            return true;
+        }
+
+        if (TryReadPreprocessorIdentifier(expression, out string identifier) && identifier.Length == expression.Length)
+        {
+            result = defines.Contains(identifier);
+            if (negate)
+                result = !result;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string? TryExtractDefinedName(string expression)
+    {
+        const string DefinedKeyword = "defined";
+        if (!expression.StartsWith(DefinedKeyword, StringComparison.Ordinal))
+            return null;
+
+        string remainder = expression[DefinedKeyword.Length..].TrimStart();
+        if (remainder.Length == 0)
+            return null;
+
+        if (remainder[0] == '(')
+        {
+            int closeIndex = remainder.IndexOf(')');
+            if (closeIndex <= 1)
+                return null;
+
+            string name = remainder[1..closeIndex].Trim();
+            return IsPreprocessorIdentifier(name) ? name : null;
+        }
+
+        return TryReadPreprocessorIdentifier(remainder, out string bareName) ? bareName : null;
+    }
+
+    private static bool TryReadPreprocessorIdentifier(string text, out string identifier)
+    {
+        identifier = string.Empty;
+        int index = 0;
+        while (index < text.Length && char.IsWhiteSpace(text[index]))
+            index++;
+
+        if (index >= text.Length || !(char.IsLetter(text[index]) || text[index] == '_'))
+            return false;
+
+        int start = index++;
+        while (index < text.Length && (char.IsLetterOrDigit(text[index]) || text[index] == '_'))
+            index++;
+
+        identifier = text[start..index];
+        return true;
+    }
+
+    private static bool IsPreprocessorIdentifier(string text)
+    {
+        if (text.Length == 0 || !(char.IsLetter(text[0]) || text[0] == '_'))
+            return false;
+
+        for (int i = 1; i < text.Length; i++)
+            if (!(char.IsLetterOrDigit(text[i]) || text[i] == '_'))
+                return false;
+
+        return true;
+    }
+
+    private static void AppendInactiveSourceLine(StringBuilder builder, string line)
+    {
+        if (line.EndsWith("\r\n", StringComparison.Ordinal))
+            builder.Append("\r\n");
+        else if (line.EndsWith('\n'))
+            builder.Append('\n');
     }
 
     private static bool TryParseQualifier(string qualifiers, string key, out uint value)

@@ -1,4 +1,28 @@
+#ifndef XRENGINE_AO_COMMON
+#define XRENGINE_AO_COMMON
+
+#ifndef XRENGINE_DEPTH_MODE_UNIFORM
+#define XRENGINE_DEPTH_MODE_UNIFORM
 uniform int DepthMode;
+#endif
+
+vec2 AOTextureUVFromClipXY(vec2 clipXY)
+{
+    vec2 uv = clipXY * 0.5f + 0.5f;
+#ifdef XRENGINE_VULKAN
+    // Fullscreen AO passes use NDC-derived UVs, while deferred composition
+    // samples AO by gl_FragCoord/XRENGINE_ScreenUV. Vulkan's framebuffer
+    // origin makes those conventions vertically opposite, so normalize every
+    // screen-space AO texture lookup through the same flip.
+    uv.y = 1.0f - uv.y;
+#endif
+    return uv;
+}
+
+vec2 AOTextureUVFromFragPos(vec3 fragPos)
+{
+    return AOTextureUVFromClipXY(fragPos.xy);
+}
 
 bool AOIsFarDepth(float depth)
 {
@@ -18,3 +42,5 @@ float AOGaussianWeight(float distanceSquared, float sigma)
     float safeSigma = max(sigma, 1e-5f);
     return exp(-0.5f * distanceSquared / (safeSigma * safeSigma));
 }
+
+#endif

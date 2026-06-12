@@ -33,7 +33,7 @@ float SampleAO(vec3 fragPosVS, vec3 samplePosVS)
 {
     vec4 offset = ProjMatrix * vec4(samplePosVS, 1.0f);
     offset.xyz /= offset.w;
-    vec2 sampleUV = offset.xy * 0.5f + 0.5f;
+    vec2 sampleUV = AOTextureUVFromClipXY(offset.xy);
     if (sampleUV.x < 0.0f || sampleUV.x > 1.0f || sampleUV.y < 0.0f || sampleUV.y > 1.0f)
         return 0.0f;
 
@@ -52,10 +52,9 @@ float SampleAO(vec3 fragPosVS, vec3 samplePosVS)
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
 
     vec3 normal = XRENGINE_ReadNormal(Normal, uv);
     float depth = texture(DepthView, uv).r;

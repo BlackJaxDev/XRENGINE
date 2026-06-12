@@ -122,6 +122,8 @@ public class UnitTestingWorldSettings
 
     public bool Skybox = true;
     public bool ProceduralSky = false;
+    public bool ProceduralSkyAutoCycle = true;
+    public float ProceduralSkyTimeOfDay = 0.25f;
     public bool Spline = false;
     public bool DeferredDecal = false;
     public bool AddCameraVRPickup = false;

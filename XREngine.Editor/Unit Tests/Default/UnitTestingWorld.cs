@@ -163,6 +163,8 @@ public static partial class EditorUnitTests
                     rootNode,
                     skyEquirect: null,
                     useProceduralSky: Toggles.ProceduralSky,
+                    proceduralSkyAutoCycle: Toggles.ProceduralSkyAutoCycle,
+                    proceduralSkyTimeOfDay: Toggles.ProceduralSkyTimeOfDay,
                     sunDirectionalLight: sunDirectionalLight,
                     moonDirectionalLight: moonDirectionalLight);
                 if (skyboxComp is not null && !Toggles.ProceduralSky)

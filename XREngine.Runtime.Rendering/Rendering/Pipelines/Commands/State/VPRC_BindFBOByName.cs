@@ -77,12 +77,38 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool clearDepth = DynamicClearDepth?.Invoke() ?? ClearDepth;
             bool clearStencil = ClearStencil;
 
+            if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(name))
+            {
+                XREngine.Debug.VulkanEvery(
+                    $"DeferredLighting.BindFBO.{name}",
+                    TimeSpan.FromSeconds(1),
+                    "[DeferredLightingDiag][BindFBO] name='{0}' write={1} clearColor={2} clearDepth={3} clearStencil={4}",
+                    name,
+                    Write,
+                    clearColor,
+                    clearDepth,
+                    clearStencil);
+            }
+
             if (clearColor || clearDepth || clearStencil)
             {
                 if (clearStencil)
                     RuntimeEngine.Rendering.State.StencilMask(0xFF);
 
                 int clearPassIndex = ResolveClearPassIndex(name, clearColor, clearDepth, clearStencil);
+                if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(name))
+                {
+                    XREngine.Debug.VulkanEvery(
+                        $"DeferredLighting.BindFBO.Clear.{name}",
+                        TimeSpan.FromSeconds(1),
+                        "[DeferredLightingDiag][BindFBO.Clear] name='{0}' clearPassIndex={1} color={2} depth={3} stencil={4}",
+                        name,
+                        clearPassIndex,
+                        clearColor,
+                        clearDepth,
+                        clearStencil);
+                }
+
                 using var passScope = clearPassIndex != int.MinValue
                     ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(clearPassIndex)
                     : default;

@@ -519,6 +519,14 @@ namespace XREngine.Rendering.OpenGL
                 ulong hash = 17ul;
                 hash = AccumulateHash(hash, Data.Separable ? "separable" : "monolithic");
                 hash = AccumulateHash(hash, ResolvedShaderSourceOptimizer.BuildIdentitySegment());
+                try
+                {
+                    hash = AccumulateHash(hash, BuildTransformFeedbackLinkInfo().ToIdentityString());
+                }
+                catch (Exception ex)
+                {
+                    hash = AccumulateHash(hash, "TransformFeedbackInvalid:" + ex.Message);
+                }
                 foreach (XRShader shaderData in Data.Shaders)
                 {
                     hash = AccumulateHash(hash, shaderData.Type.ToString());

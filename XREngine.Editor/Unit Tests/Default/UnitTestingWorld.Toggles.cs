@@ -125,6 +125,8 @@ public static partial class EditorUnitTests
         //Misc
         public bool Skybox = true; //Adds a skybox to the scene.
         public bool ProceduralSky = false; //Uses the dynamic procedural sky instead of loading the unit-test skybox texture. When enabled, the skybox syncs to the unit-test directional lights when present.
+        public bool ProceduralSkyAutoCycle = true; //When ProceduralSky is enabled, controls whether the procedural sky advances its day/night cycle over time.
+        public float ProceduralSkyTimeOfDay = 0.25f; //When ProceduralSky is enabled, sets the normalized time of day. 0.25 is noon, 0.75 is midnight.
         public bool Spline = false; //Adds a 3D spline to the scene.
         public bool DeferredDecal = false; //Adds a deferred decal to the scene.
         public bool AddCameraVRPickup = false; //Adds a camera pickup to the scene for testing VR camera pickup.

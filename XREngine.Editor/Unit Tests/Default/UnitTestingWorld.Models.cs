@@ -603,6 +603,8 @@ public static partial class EditorUnitTests
             SceneNode rootNode,
             XRTexture2D? skyEquirect,
             bool useProceduralSky = false,
+            bool proceduralSkyAutoCycle = true,
+            float proceduralSkyTimeOfDay = 0.25f,
             DirectionalLightComponent? sunDirectionalLight = null,
             DirectionalLightComponent? moonDirectionalLight = null)
         {
@@ -616,6 +618,8 @@ public static partial class EditorUnitTests
             if (useProceduralSky)
             {
                 skyboxComp.Mode = ESkyboxMode.DynamicProcedural;
+                skyboxComp.AutoCycle = proceduralSkyAutoCycle;
+                skyboxComp.TimeOfDay = proceduralSkyTimeOfDay;
                 skyboxComp.SunDirectionalLight = sunDirectionalLight;
                 skyboxComp.SyncDirectionalLightWithSun = sunDirectionalLight is not null;
                 skyboxComp.MoonDirectionalLight = moonDirectionalLight;

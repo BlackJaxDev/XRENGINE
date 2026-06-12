@@ -37,7 +37,8 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
                     Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
-                }
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled()
             }
         };
 
@@ -80,6 +81,22 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             _material.Textures.Add(sourceTexture);
         }
 
+        string destinationName = ResolveDestinationLabel(instance);
+        string passName = BuildPassName(destinationName);
+        int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
+        if (passIndex == int.MinValue && hasRenderGraphMetadata)
+        {
+            Debug.RenderingWarningEvery(
+                $"Fxaa.MissingRenderGraphPass.{passName}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDiag] Skipping FXAA pass '{0}': no matching render-graph pass metadata was generated.",
+                passName);
+            return;
+        }
+
+        using var passScope = passIndex != int.MinValue
+            ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+            : default;
         using var renderAreaScope = destination is { Width: > 0, Height: > 0 }
             ? instance.RenderState.PushRenderArea((int)destination.Width, (int)destination.Height)
             : default;
@@ -104,10 +121,38 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             ?? context.CurrentRenderTarget?.Name
             ?? RenderGraphResourceNames.OutputRenderTarget;
 
-        context.GetOrCreateSyntheticPass($"Fxaa_{GetSourceDisplayName()}_to_{destination}")
+        context.GetOrCreateSyntheticPass(BuildPassName(destination))
             .WithStage(ERenderGraphPassStage.Graphics)
             .SampleTexture(source)
             .UseColorAttachment(MakeFboColorResource(destination), ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
+    }
+
+    private string ResolveDestinationLabel(XRRenderPipelineInstance instance)
+        => DestinationFBOName
+            ?? instance.RenderState.CurrentRenderTargetBinding?.Name
+            ?? instance.RenderState.OutputFBO?.Name
+            ?? RenderGraphResourceNames.OutputRenderTarget;
+
+    private string BuildPassName(string destination)
+        => $"Fxaa_{GetSourceDisplayName()}_to_{destination}";
+
+    private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
+    {
+        var metadata = ParentPipeline?.PassMetadata;
+        if (metadata is not { Count: > 0 } renderPasses)
+        {
+            hasRenderGraphMetadata = false;
+            return int.MinValue;
+        }
+
+        hasRenderGraphMetadata = true;
+        foreach (var match in renderPasses)
+        {
+            if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
+                return match.PassIndex;
+        }
+
+        return int.MinValue;
     }
 
     private string GetSourceDisplayName()

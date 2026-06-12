@@ -1,5 +1,6 @@
 #version 450
 
+#include "AOCommon.glsl"
 #pragma snippet "NormalEncoding"
 #pragma snippet "DepthUtils"
 
@@ -29,12 +30,6 @@ uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 
 const uint VISIBILITY_BITMASK_SECTOR_COUNT = 32u;
-
-bool AOIsFarDepth(float depth)
-{
-    const float eps = 1e-6f;
-    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
-}
 
 // Fast polynomial acos approximation (max error ~0.02 rad)
 float FastAcos(float x)
@@ -131,17 +126,9 @@ uint AccumulateVisibilitySectors(vec3 deltaPos, vec3 viewDir, float normalAngle,
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    uv = uv * 0.5f + 0.5f;
-#ifdef XRENGINE_VULKAN
-    // gl_FragCoord is top-left origin on Vulkan, so the fullscreen-triangle NDC-derived
-    // UV is vertically inverted relative to the gl_FragCoord/XRENGINE_ScreenUV convention
-    // that DeferredLightCombine uses to sample this AO target. Flip to match so the AO
-    // is oriented consistently with the rest of the composite (holds for both Y-up/Y-down).
-    uv.y = 1.0f - uv.y;
-#endif
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
 
     // Precompute fast reconstruction constants once per pixel
     float invProjX = 1.0f / ProjMatrix[0][0];

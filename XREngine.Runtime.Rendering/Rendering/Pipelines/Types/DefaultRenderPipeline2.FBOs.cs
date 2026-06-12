@@ -72,6 +72,7 @@ public partial class DefaultRenderPipeline2
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime,
             }
         };
@@ -107,6 +108,7 @@ public partial class DefaultRenderPipeline2
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera,
             }
         };

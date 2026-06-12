@@ -1485,6 +1485,7 @@ namespace XREngine
         private bool _uploadStageLogging = XREngine.Rendering.RenderDiagnosticsFlags.UploadStageLogging;
         private bool _crashBreadcrumbs = XREngine.Rendering.RenderDiagnosticsFlags.CrashBreadcrumbs;
         private int _deferredDebugView = XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView;
+        private bool _diagDeferredLighting = XREngine.Rendering.RenderDiagnosticsFlags.DiagDeferredLighting;
         private bool _modelRenderDiagEnabled = XREngine.Rendering.RenderDiagnosticsFlags.ModelRenderDiagEnabled;
         private bool _directionalShadowAudit = XREngine.Rendering.RenderDiagnosticsFlags.DirectionalShadowAudit;
         private bool _skinningPrepassDiag = XREngine.Rendering.RenderDiagnosticsFlags.SkinningPrepassDiag;
@@ -1993,6 +1994,20 @@ namespace XREngine
                 int clamped = value < 0 ? 0 : (value > 6 ? 6 : value);
                 if (SetField(ref _deferredDebugView, clamped))
                     XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(clamped);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Deferred Lighting Diagnostics")]
+        [Description("Log Vulkan deferred-lighting FBO creation, texture binding, clear/load-op, and resource aliasing diagnostics to vulkan-deferred-lighting-diagnostics.log. Seed env: XRE_DIAG_DEFERRED_LIGHTING.")]
+        [DefaultValue(false)]
+        public bool DiagDeferredLighting
+        {
+            get => _diagDeferredLighting;
+            set
+            {
+                if (SetField(ref _diagDeferredLighting, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetDiagDeferredLighting(value);
             }
         }
 
@@ -2928,6 +2943,7 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetUploadStageLogging(_uploadStageLogging);
             XREngine.Rendering.RenderDiagnosticsFlags.SetCrashBreadcrumbs(_crashBreadcrumbs);
             XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(_deferredDebugView);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetDiagDeferredLighting(_diagDeferredLighting);
             XREngine.Rendering.RenderDiagnosticsFlags.SetModelRenderDiagEnabled(_modelRenderDiagEnabled);
             XREngine.Rendering.RenderDiagnosticsFlags.SetDirectionalShadowAudit(_directionalShadowAudit);
             XREngine.Rendering.RenderDiagnosticsFlags.SetSkinningPrepassDiag(_skinningPrepassDiag);
@@ -2989,6 +3005,7 @@ namespace XREngine
             UploadStageLogging = source.UploadStageLogging;
             CrashBreadcrumbs = source.CrashBreadcrumbs;
             DeferredDebugView = source.DeferredDebugView;
+            DiagDeferredLighting = source.DiagDeferredLighting;
             ModelRenderDiagEnabled = source.ModelRenderDiagEnabled;
             DirectionalShadowAudit = source.DirectionalShadowAudit;
             FirstChanceExceptionFilter = source.FirstChanceExceptionFilter;

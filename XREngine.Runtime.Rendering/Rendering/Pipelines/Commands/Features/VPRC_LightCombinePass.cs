@@ -178,6 +178,28 @@ namespace XREngine.Rendering.Pipelines.Commands
             int directionalLightCount = lights.DynamicDirectionalLights.Count;
             int pointLightCount = lights.DynamicPointLights.Count;
             int spotLightCount = lights.DynamicSpotLights.Count;
+            if (DeferredLightingDiagnostics.Enabled)
+            {
+                var targetBinding = ActivePipelineInstance.RenderState.CurrentRenderTargetBinding;
+                Debug.VulkanEvery(
+                    $"DeferredLighting.LightCombinePass.{ActivePipelineInstance.GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[DeferredLightingDiag][LightCombinePass] pass={0} hasMetadata={1} target='{2}' write={3} msaa={4} lights(D/P/S)={5}/{6}/{7} region={8}x{9} gbuffer={10} | {11} | {12} | {13}",
+                    passIndex,
+                    hasRenderGraphMetadata,
+                    targetBinding?.Name ?? "<none>",
+                    targetBinding?.Write ?? false,
+                    msaaActive,
+                    directionalLightCount,
+                    pointLightCount,
+                    spotLightCount,
+                    region.Width,
+                    region.Height,
+                    DescribeTexture(albOpacTex),
+                    DescribeTexture(normTex),
+                    DescribeTexture(rmseTex),
+                    DescribeTexture(depthViewTex));
+            }
 
 /*
             Debug.LightingEvery(

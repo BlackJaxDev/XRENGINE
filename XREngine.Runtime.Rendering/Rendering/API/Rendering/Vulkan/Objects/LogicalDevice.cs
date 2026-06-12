@@ -457,6 +457,51 @@ public unsafe partial class VulkanRenderer
         featureSupported = graphicsPipelineLibraryFeatures.GraphicsPipelineLibrary;
     }
 
+    private unsafe void QueryTransformFeedbackCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out bool geometryStreamsSupported,
+        out PhysicalDeviceTransformFeedbackPropertiesEXT properties)
+    {
+        featureSupported = false;
+        geometryStreamsSupported = false;
+        properties = default;
+
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceTransformFeedbackFeaturesEXT transformFeedbackFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceTransformFeedbackFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &transformFeedbackFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = transformFeedbackFeatures.TransformFeedback;
+        geometryStreamsSupported = transformFeedbackFeatures.GeometryStreams;
+
+        PhysicalDeviceTransformFeedbackPropertiesEXT queriedProperties = new()
+        {
+            SType = StructureType.PhysicalDeviceTransformFeedbackPropertiesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceProperties2 properties2 = new()
+        {
+            SType = StructureType.PhysicalDeviceProperties2,
+            PNext = &queriedProperties,
+        };
+
+        Api.GetPhysicalDeviceProperties2(_physicalDevice, &properties2);
+        properties = queriedProperties;
+    }
+
     /// <summary>
     /// Creates a logical device interface to the physical device with specific 
     /// queue families and extensions.
@@ -701,6 +746,16 @@ public unsafe partial class VulkanRenderer
             graphicsPipelineLibraryExtensionEnabled &&
             graphicsPipelineLibraryFeatureSupported;
 
+        bool transformFeedbackExtensionEnabled = extensionsArray.Contains(ExtTransformFeedback.ExtensionName);
+        QueryTransformFeedbackCapabilities(
+            transformFeedbackExtensionEnabled,
+            out bool transformFeedbackFeatureSupported,
+            out bool transformFeedbackGeometryStreamsSupported,
+            out PhysicalDeviceTransformFeedbackPropertiesEXT transformFeedbackProperties);
+        bool enableTransformFeedbackFeature =
+            transformFeedbackExtensionEnabled &&
+            transformFeedbackFeatureSupported;
+
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
@@ -803,6 +858,14 @@ public unsafe partial class VulkanRenderer
             GraphicsPipelineLibrary = enableGraphicsPipelineLibraryFeature,
         };
 
+        PhysicalDeviceTransformFeedbackFeaturesEXT transformFeedbackFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceTransformFeedbackFeaturesExt,
+            PNext = null,
+            TransformFeedback = enableTransformFeedbackFeature,
+            GeometryStreams = enableTransformFeedbackFeature && transformFeedbackGeometryStreamsSupported,
+        };
+
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing)
         {
@@ -882,6 +945,12 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &graphicsPipelineLibraryFeatureEnable;
         }
 
+        if (enableTransformFeedbackFeature)
+        {
+            transformFeedbackFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &transformFeedbackFeatureEnable;
+        }
+
         PhysicalDeviceFeatures2 featureChain = new()
         {
             SType = StructureType.PhysicalDeviceFeatures2,
@@ -922,6 +991,11 @@ public unsafe partial class VulkanRenderer
         _supportsSynchronization2 = enableSynchronization2Feature;
         _supportsDepthClipControl = enableDepthClipControlFeature;
         _supportsGraphicsPipelineLibrary = enableGraphicsPipelineLibraryFeature;
+        _supportsTransformFeedback = enableTransformFeedbackFeature;
+        _supportsTransformFeedbackGeometryStreams = enableTransformFeedbackFeature && transformFeedbackGeometryStreamsSupported;
+        _supportsTransformFeedbackQueries = enableTransformFeedbackFeature && transformFeedbackProperties.TransformFeedbackQueries;
+        _supportsTransformFeedbackDraw = enableTransformFeedbackFeature && transformFeedbackProperties.TransformFeedbackDraw;
+        _transformFeedbackProperties = enableTransformFeedbackFeature ? transformFeedbackProperties : default;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
         ResolveRenderTargetMode();
@@ -1034,6 +1108,13 @@ public unsafe partial class VulkanRenderer
                     "[Vulkan] VK_EXT_graphics_pipeline_library present but disabled because the graphicsPipelineLibrary feature bit is unavailable.");
             }
 
+            if (transformFeedbackExtensionEnabled && !enableTransformFeedbackFeature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] {0} present but disabled because the transformFeedback feature bit is unavailable.",
+                    ExtTransformFeedback.ExtensionName);
+            }
+
         // Load optional extensions
         LoadOptionalDeviceExtensions(extensionsArray);
 
@@ -1090,6 +1171,33 @@ public unsafe partial class VulkanRenderer
                     _supportsVulkanTaskShaderFeature,
                     _supportsVulkanMeshShaderFeature);
                 _supportsVulkanMeshTaskIndirectCount = false;
+            }
+        }
+
+        if (enabledExtensions.Contains(ExtTransformFeedback.ExtensionName))
+        {
+            if (_supportsTransformFeedback &&
+                Api!.TryGetDeviceExtension(instance, device, out _extTransformFeedback))
+            {
+                Debug.Vulkan(
+                    "[Vulkan] {0} loaded successfully (buffers={1}, maxBufferSize={2}, queries={3}, draw={4}, geometryStreams={5}).",
+                    ExtTransformFeedback.ExtensionName,
+                    _transformFeedbackProperties.MaxTransformFeedbackBuffers,
+                    _transformFeedbackProperties.MaxTransformFeedbackBufferSize,
+                    _supportsTransformFeedbackQueries,
+                    _supportsTransformFeedbackDraw,
+                    _supportsTransformFeedbackGeometryStreams);
+            }
+            else
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Failed to load {0} extension handle or feature was disabled.",
+                    ExtTransformFeedback.ExtensionName);
+                _supportsTransformFeedback = false;
+                _supportsTransformFeedbackGeometryStreams = false;
+                _supportsTransformFeedbackQueries = false;
+                _supportsTransformFeedbackDraw = false;
+                _transformFeedbackProperties = default;
             }
         }
 

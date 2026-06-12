@@ -909,6 +909,7 @@ public unsafe partial class VulkanRenderer
 				if (imageInfo.ImageView.Handle != 0)
 				{
 					LogPostProcessDescriptor(binding, arrayIndex, null, imageInfo, "placeholder-missing-texture");
+					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, null, null, imageInfo, "placeholder-missing-texture");
 					RecordDescriptorFallback(binding);
 					return true;
 				}
@@ -960,6 +961,7 @@ public unsafe partial class VulkanRenderer
 						Sampler = sampler,
 					};
 					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}/{aspectLabel}");
+					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}/{aspectLabel}");
 					return true;
 				}
 
@@ -976,6 +978,7 @@ public unsafe partial class VulkanRenderer
 				{
 					WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'. Using placeholder.");
 					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, "placeholder-view-type");
+					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-view-type");
 					RecordDescriptorFallback(binding);
 					return true;
 				}
@@ -995,6 +998,7 @@ public unsafe partial class VulkanRenderer
 				Sampler = descriptorSampler,
 			};
 			LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
+			LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
 			return imageInfo.ImageView.Handle != 0;
 		}
 
@@ -1049,6 +1053,40 @@ public unsafe partial class VulkanRenderer
 				imageInfo.ImageView.Handle,
 				imageInfo.Sampler.Handle,
 				detail);
+		}
+
+		private void LogDeferredLightingDescriptor(
+			DescriptorBindingInfo binding,
+			int arrayIndex,
+			MaterialTextureBindingResolution resolution,
+			XRTexture? texture,
+			IVkImageDescriptorSource? source,
+			DescriptorImageInfo imageInfo,
+			string detail)
+		{
+			if (!DeferredLightingDiagnostics.Enabled || !DeferredLightingDiagnostics.IsDeferredLightCombineSampler(binding.Name))
+				return;
+
+			string textureLabel = texture is null
+				? "<null>"
+				: $"{(string.IsNullOrWhiteSpace(texture.Name) ? texture.GetType().Name : texture.Name)}#{texture.GetHashCode():X8}";
+			string programName = _program?.Data?.Name ?? "<null>";
+			string meshName = Mesh?.Name ?? "<null>";
+			string sourceImage = source is null ? "<null>" : $"0x{source.DescriptorImage.Handle:X}";
+			string sourceView = source is null ? "<null>" : $"0x{source.DescriptorView.Handle:X}";
+			string sourceSampler = source is null ? "<null>" : $"0x{source.DescriptorSampler.Handle:X}";
+			string sourceLayout = source is null ? "<null>" : source.TrackedImageLayout.ToString();
+			string sourceUsage = source is null ? "<null>" : source.DescriptorUsage.ToString();
+			string sourceAllocator = source is null ? "<null>" : source.UsesAllocatorImage.ToString();
+
+			DeferredLightingDiagnostics.Write(
+				"[VkMeshRenderer.Descriptor] " +
+				$"program='{programName}' mesh='{meshName}' " +
+				$"name='{binding.Name ?? "<null>"}' set={binding.Set} binding={binding.Binding} arrayIndex={arrayIndex} type={binding.DescriptorType} " +
+				$"rung={resolution.Rung} resolvedIndex={resolution.TextureIndex} resolvedSampler='{resolution.SamplerName ?? "<null>"}' reason='{resolution.Reason}' " +
+				$"texture={textureLabel} imageInfoLayout={imageInfo.ImageLayout} imageInfoView=0x{imageInfo.ImageView.Handle:X} imageInfoSampler=0x{imageInfo.Sampler.Handle:X} " +
+				$"sourceImage={sourceImage} sourceView={sourceView} sourceSampler={sourceSampler} sourceLayout={sourceLayout} sourceUsage={sourceUsage} allocatorImage={sourceAllocator} " +
+				$"detail={detail}");
 		}
 
 		private static bool IsPostProcessSampler(string? name)

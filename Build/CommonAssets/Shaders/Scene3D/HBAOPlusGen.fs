@@ -76,10 +76,9 @@ float SampleOcclusion(vec3 centerPos, vec3 centerNormal, vec2 sampleUV, float ra
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
 
     float depth = texture(DepthView, uv).r;
     if (AOIsFarDepth(depth))

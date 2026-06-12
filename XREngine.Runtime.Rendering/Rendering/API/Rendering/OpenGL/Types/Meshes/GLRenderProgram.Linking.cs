@@ -116,6 +116,7 @@ namespace XREngine.Rendering.OpenGL
 
                 Data.LinkRequested += LinkRequested;
                 Data.UseRequested += UseRequested;
+                Data.TransformFeedbackLayoutChanged += TransformFeedbackLayoutChanged;
 
                 foreach (XRShader shader in Data.Shaders)
                     ShaderAdded(shader);
@@ -388,6 +389,7 @@ namespace XREngine.Rendering.OpenGL
 
                 Data.LinkRequested -= LinkRequested;
                 Data.UseRequested -= UseRequested;
+                Data.TransformFeedbackLayoutChanged -= TransformFeedbackLayoutChanged;
 
                 Data.Shaders.PostAnythingAdded -= ShaderAdded;
                 Data.Shaders.PostAnythingRemoved -= ShaderRemoved;
@@ -731,6 +733,125 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 return inputs;
+            }
+
+            private GLProgramCompileLinkQueue.TransformFeedbackLinkInfo BuildTransformFeedbackLinkInfo()
+            {
+                var feedbacks = Data.TransformFeedbacks;
+                if (feedbacks.Count == 0)
+                    return GLProgramCompileLinkQueue.TransformFeedbackLinkInfo.Empty;
+
+                List<XRTransformFeedback> captures = [];
+                foreach (XRTransformFeedback feedback in feedbacks)
+                {
+                    if (feedback.Names is { Length: > 0 })
+                        captures.Add(feedback);
+                }
+
+                if (captures.Count == 0)
+                    return GLProgramCompileLinkQueue.TransformFeedbackLinkInfo.Empty;
+
+                captures.Sort(static (left, right) => left.BindingLocation.CompareTo(right.BindingLocation));
+
+                EFeedbackType type = captures[0].Type;
+                for (int i = 1; i < captures.Count; i++)
+                {
+                    if (captures[i].Type != type)
+                    {
+                        throw new InvalidOperationException(
+                            "OpenGL transform feedback programs cannot mix PerVertex and OutValues captures in one link. " +
+                            "Use one mode per XRRenderProgram.");
+                    }
+                }
+
+                return type switch
+                {
+                    EFeedbackType.PerVertex => BuildInterleavedTransformFeedbackLinkInfo(captures),
+                    EFeedbackType.OutValues => BuildSeparateTransformFeedbackLinkInfo(captures),
+                    _ => GLProgramCompileLinkQueue.TransformFeedbackLinkInfo.Empty,
+                };
+            }
+
+            private static GLProgramCompileLinkQueue.TransformFeedbackLinkInfo BuildInterleavedTransformFeedbackLinkInfo(List<XRTransformFeedback> captures)
+            {
+                List<string> varyings = [];
+                HashSet<uint> seenBindings = [];
+                uint currentBinding = 0;
+                foreach (XRTransformFeedback feedback in captures)
+                {
+                    if (!seenBindings.Add(feedback.BindingLocation))
+                    {
+                        throw new InvalidOperationException(
+                            $"OpenGL PerVertex transform feedback binding {feedback.BindingLocation} is used by more than one XRTransformFeedback object. " +
+                            "Use one XRTransformFeedback per binding.");
+                    }
+
+                    while (currentBinding < feedback.BindingLocation)
+                    {
+                        varyings.Add("gl_NextBuffer");
+                        currentBinding++;
+                    }
+
+                    if (currentBinding != feedback.BindingLocation)
+                    {
+                        throw new InvalidOperationException(
+                            "OpenGL PerVertex transform feedback captures must be ordered by non-decreasing BindingLocation.");
+                    }
+
+                    foreach (string name in feedback.Names)
+                    {
+                        if (!string.IsNullOrWhiteSpace(name))
+                            varyings.Add(name);
+                    }
+                }
+
+                return varyings.Count == 0
+                    ? GLProgramCompileLinkQueue.TransformFeedbackLinkInfo.Empty
+                    : new GLProgramCompileLinkQueue.TransformFeedbackLinkInfo([.. varyings], GLEnum.InterleavedAttribs);
+            }
+
+            private static GLProgramCompileLinkQueue.TransformFeedbackLinkInfo BuildSeparateTransformFeedbackLinkInfo(List<XRTransformFeedback> captures)
+            {
+                List<string> varyings = [];
+                uint expectedBinding = 0;
+                foreach (XRTransformFeedback feedback in captures)
+                {
+                    if (feedback.Names.Length != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "OpenGL OutValues transform feedback captures require exactly one varying name per XRTransformFeedback, " +
+                            "because GL_SEPARATE_ATTRIBS maps varyings to sequential buffer bindings.");
+                    }
+
+                    if (feedback.BindingLocation != expectedBinding)
+                    {
+                        throw new InvalidOperationException(
+                            "OpenGL OutValues transform feedback captures must use dense BindingLocation values starting at zero.");
+                    }
+
+                    string name = feedback.Names[0];
+                    if (!string.IsNullOrWhiteSpace(name))
+                        varyings.Add(name);
+
+                    expectedBinding++;
+                }
+
+                return varyings.Count == 0
+                    ? GLProgramCompileLinkQueue.TransformFeedbackLinkInfo.Empty
+                    : new GLProgramCompileLinkQueue.TransformFeedbackLinkInfo([.. varyings], GLEnum.SeparateAttribs);
+            }
+
+            private void ApplyTransformFeedbackVaryings(uint programId, GLProgramCompileLinkQueue.TransformFeedbackLinkInfo transformFeedback, string phase)
+            {
+                if (!transformFeedback.HasVaryings)
+                    return;
+
+                string[] varyings = transformFeedback.Varyings!;
+                MeasureRenderingProgramGlCall(
+                    "glTransformFeedbackVaryings",
+                    programId,
+                    () => Api.TransformFeedbackVaryings(programId, (uint)varyings.Length, varyings, transformFeedback.BufferMode),
+                    phase);
             }
 
             private static bool ShouldPreferSharedContextForLargeSource(GLProgramCompileLinkQueue.ShaderInput[]? inputs)
@@ -1310,6 +1431,34 @@ namespace XREngine.Rendering.OpenGL
                             "driver-parallel link dispatched",
                             compileMilliseconds: compileMilliseconds);
                         EnsureProgramBinaryRetrievableHintForSourceBuild(bindingId, "DriverParallelSource");
+                        GLProgramCompileLinkQueue.TransformFeedbackLinkInfo transformFeedback;
+                        try
+                        {
+                            transformFeedback = BuildTransformFeedbackLinkInfo();
+                        }
+                        catch (Exception ex)
+                        {
+                            string message = "Invalid OpenGL transform feedback layout: " + ex.Message;
+                            Debug.OpenGLWarning(message);
+                            CompleteUberBackendTracking(false, message, compileMilliseconds, 0.0);
+                            PublishBackendStatus(
+                                EShaderProgramBackendStage.Failed,
+                                "TransformFeedback",
+                                "transform feedback layout validation failed",
+                                message,
+                                compileMilliseconds,
+                                0.0);
+                            CompleteBuildTelemetry(false, compileMilliseconds, failureReason: message);
+                            MarkHashFailed(message);
+                            InFlightCompilations.TryRemove(Hash, out _);
+                            CleanupAsyncLink();
+                            MarkBuildFailed();
+                            return IsLinked;
+                        }
+                        ApplyTransformFeedbackVaryings(
+                            bindingId,
+                            transformFeedback,
+                            "backend=DriverParallelSource phase=driver-parallel-transform-feedback-varyings");
                         MeasureRenderingProgramGlCall(
                             "glLinkProgram",
                             bindingId,
@@ -3535,6 +3684,33 @@ namespace XREngine.Rendering.OpenGL
                         sharedContextCompileAvailable &&
                         ShouldPreferSharedContextForLargeSource(Hash, inputs);
                     EProgramPriority priority = Data?.Priority ?? EProgramPriority.Main;
+                    GLProgramCompileLinkQueue.TransformFeedbackLinkInfo transformFeedback;
+                    try
+                    {
+                        transformFeedback = BuildTransformFeedbackLinkInfo();
+                    }
+                    catch (Exception ex)
+                    {
+                        InFlightCompilations.TryRemove(Hash, out _);
+                        string message = "Invalid OpenGL transform feedback layout: " + ex.Message;
+                        Debug.OpenGLWarning(message);
+                        PublishBackendStatus(
+                            EShaderProgramBackendStage.Failed,
+                            "TransformFeedback",
+                            "transform feedback layout validation failed",
+                            message,
+                            fingerprint: cacheKey);
+                        LogRenderingProgramBuildEvent(
+                            "TRANSFORM_FEEDBACK_LAYOUT_FAILED",
+                            "TransformFeedback",
+                            message,
+                            cacheKey,
+                            bindingId,
+                            inputs);
+                        CompleteBuildTelemetry(false, failureReason: message);
+                        MarkBuildFailed();
+                        return IsLinked;
+                    }
 
                     OpenGLShaderLinkBackendSelection sourceSelection = OpenGLShaderLinkBackendSelector.Select(new OpenGLShaderLinkBackendContext(
                         RuntimeEngine.Rendering.Settings.OpenGLShaderLinkStrategy,
@@ -3594,6 +3770,7 @@ namespace XREngine.Rendering.OpenGL
                             inputs,
                             priority,
                             setBinaryRetrievableHint,
+                            transformFeedback,
                             out string? rejectReason))
                         {
                             _asyncCompileLinkQueueWaitPending = true;
@@ -3856,6 +4033,10 @@ namespace XREngine.Rendering.OpenGL
                         long linkStartTimestamp = Stopwatch.GetTimestamp();
                         using var linkProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.DriverLinkProgram", ProfilerScopeKind.OneOffInvoke);
                         EnsureProgramBinaryRetrievableHintForSourceBuild(bindingId, _activeBuildBackend ?? "SynchronousSource");
+                        ApplyTransformFeedbackVaryings(
+                            bindingId,
+                            transformFeedback,
+                            $"backend={_activeBuildBackend ?? "SynchronousSource"} phase=source-sync-transform-feedback-varyings");
                         MeasureRenderingProgramGlCall(
                             "glLinkProgram",
                             bindingId,
@@ -3995,6 +4176,20 @@ namespace XREngine.Rendering.OpenGL
 
                 //If the source of a shader changes, we need to relink the program.
                 if (IsLinked)
+                    Relink();
+            }
+
+            private void TransformFeedbackLayoutChanged(XRRenderProgram program)
+            {
+                if (RuntimeEngine.InvokeOnMainThread(() => TransformFeedbackLayoutChanged(program), "GLRenderProgram.TransformFeedbackLayoutChanged"))
+                    return;
+
+                ReleaseAsyncLinkState();
+                InvalidatePreparedLinkData();
+                _hashComputed = false;
+                IsLinked = false;
+
+                if (Data.LinkReady)
                     Relink();
             }
 

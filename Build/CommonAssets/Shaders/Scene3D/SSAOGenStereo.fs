@@ -32,11 +32,9 @@ uniform mat4 RightEyeProjMatrix;
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    //Normalize uv from [-1, 1] to [0, 1]
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
     vec3 uvi = vec3(uv, gl_ViewID_OVR);
     bool leftEye = gl_ViewID_OVR == 0;
     mat4 ViewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
@@ -69,9 +67,9 @@ void main()
 
         offset = ProjMatrix * vec4(noiseSample, 1.0f);
         offset.xyz /= offset.w;
-        offset.xyz = offset.xyz * 0.5f + 0.5f;
+        vec2 sampleUV = AOTextureUVFromClipXY(offset.xy);
 
-        sampleDepth = AOViewPosFromDepth(texture(DepthView, vec3(offset.xy, gl_ViewID_OVR)).r, offset.xy, InverseProjMatrix).z;
+        sampleDepth = AOViewPosFromDepth(texture(DepthView, vec3(sampleUV, gl_ViewID_OVR)).r, sampleUV, InverseProjMatrix).z;
 
         occlusion += (sampleDepth >= noiseSample.z + bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
     }

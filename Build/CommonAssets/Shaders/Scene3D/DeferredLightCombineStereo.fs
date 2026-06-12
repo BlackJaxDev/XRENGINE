@@ -17,7 +17,7 @@ layout(binding = 1) uniform sampler2DArray Normal;
 layout(binding = 2) uniform sampler2DArray RMSE;
 layout(binding = 3) uniform sampler2DArray AmbientOcclusionTexture;
 layout(binding = 4) uniform sampler2DArray DepthView;
-layout(binding = 5) uniform sampler2DArray LightingTexture;
+layout(binding = 5) uniform sampler2DArray LightingAccumTexture;
 
 layout(binding = 6) uniform sampler2D BRDF;
 
@@ -68,7 +68,7 @@ void main()
 	vec3 rms = texture(RMSE, uvi).rgb;
 	float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uvi).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
 	float depth = texture(DepthView, uvi).r;
-	vec3 InLo = texture(LightingTexture, uvi).rgb;
+	vec3 InLo = texture(LightingAccumTexture, uvi).rgb;
 	vec3 irradianceColor = XRENGINE_SampleOcta(Irradiance, normal);
 	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 	//float fogDensity = noise3(fragPosWS);

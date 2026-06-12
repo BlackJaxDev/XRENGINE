@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal static class VulkanShaderArtifactCache
 {
-    internal const int SchemaVersion = 1;
+    internal const int SchemaVersion = 2;
     private const string CacheRootDirectoryName = "Build";
     private const string CacheSubDirectoryName = "Cache";
     private const string CacheApiDirectoryName = "Vulkan";
@@ -45,6 +45,27 @@ internal static class VulkanShaderArtifactCache
         string rewrittenSource,
         AutoUniformBlockInfo? autoUniformBlock,
         ShaderStageFlags stageFlags,
+        out VulkanRenderer.VulkanShaderArtifact artifact)
+        => TryRead(
+            artifactIdentity,
+            shader,
+            shaderConfigVersion,
+            usesVulkanClipDepthRemap,
+            rewrittenSource,
+            autoUniformBlock,
+            stageFlags,
+            string.Empty,
+            out artifact);
+
+    internal static bool TryRead(
+        string artifactIdentity,
+        XRShader shader,
+        int shaderConfigVersion,
+        bool usesVulkanClipDepthRemap,
+        string rewrittenSource,
+        AutoUniformBlockInfo? autoUniformBlock,
+        ShaderStageFlags stageFlags,
+        string transformFeedbackPlanIdentity,
         out VulkanRenderer.VulkanShaderArtifact artifact)
     {
         artifact = default!;
@@ -111,7 +132,8 @@ internal static class VulkanShaderArtifactCache
                 stageFlags,
                 shaderConfigVersion,
                 usesVulkanClipDepthRemap,
-                LoadedFromDiskCache: true);
+                LoadedFromDiskCache: true,
+                TransformFeedbackPlanIdentity: transformFeedbackPlanIdentity);
 
             Debug.Vulkan("[VulkanShaderCache] HIT key={0} stage={1} bytes={2}.", artifactIdentity, shader.Type, spirv.Length);
             return true;
@@ -326,7 +348,7 @@ internal static class VulkanShaderArtifactCache
             SourceLanguage: "GLSL",
             OptimizationLevel: OptimizationLevel.Performance.ToString(),
             OptimizerIdentity: ResolvedShaderSourceOptimizer.BuildIdentitySegment(),
-            RewriteIdentity: "VulkanShaderAutoUniforms+InjectVulkanBackendDefine:v1");
+            RewriteIdentity: "VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine+ReflectionSourcePreprocessor:v2");
 }
 
 internal sealed record VulkanShaderArtifactCacheMetadata

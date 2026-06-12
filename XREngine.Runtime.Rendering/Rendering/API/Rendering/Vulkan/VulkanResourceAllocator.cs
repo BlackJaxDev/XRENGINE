@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -125,7 +126,7 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanBufferAliasGroup group in _bufferAliasGroups.Values)
         {
-            BufferUsageFlags usage = InferBufferUsage(group, usageProfiles);
+            BufferUsageFlags usage = InferBufferUsage(group, usageProfiles, renderer.SupportsTransformFeedback);
             VulkanPhysicalBufferGroup physicalGroup = new(group, usage);
 
             foreach (VulkanBufferAllocation allocation in group.Allocations)
@@ -136,6 +137,8 @@ internal sealed class VulkanResourceAllocator
 
             _physicalBufferGroups[group.Key] = physicalGroup;
         }
+
+        LogDeferredLightingPhysicalPlan(passMetadata, planner);
     }
 
     public bool TryGetPhysicalGroup(VulkanAliasGroupKey key, out VulkanPhysicalImageGroup? group)
@@ -505,14 +508,15 @@ internal sealed class VulkanResourceAllocator
 
     private static BufferUsageFlags InferBufferUsage(
         VulkanBufferAliasGroup group,
-        IReadOnlyDictionary<string, VulkanUsageProfile> usageProfiles)
+        IReadOnlyDictionary<string, VulkanUsageProfile> usageProfiles,
+        bool supportsTransformFeedback)
     {
         BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit;
         bool matchedProfile = false;
 
         foreach (VulkanBufferAllocation allocation in group.Allocations)
         {
-            usage |= ToVkUsageFlags(allocation.Target);
+            usage |= ToVkUsageFlags(allocation.Target, supportsTransformFeedback);
             usage |= ToVkUsageFlags(allocation.Usage);
 
             if (!usageProfiles.TryGetValue(allocation.Name, out VulkanUsageProfile? profile))
@@ -541,7 +545,7 @@ internal sealed class VulkanResourceAllocator
         return usage;
     }
 
-    private static BufferUsageFlags ToVkUsageFlags(EBufferTarget target)
+    private static BufferUsageFlags ToVkUsageFlags(EBufferTarget target, bool supportsTransformFeedback)
         => target switch
         {
             EBufferTarget.ArrayBuffer => BufferUsageFlags.VertexBufferBit,
@@ -550,6 +554,10 @@ internal sealed class VulkanResourceAllocator
             EBufferTarget.PixelUnpackBuffer => BufferUsageFlags.TransferSrcBit,
             EBufferTarget.UniformBuffer => BufferUsageFlags.UniformBufferBit,
             EBufferTarget.TextureBuffer => BufferUsageFlags.UniformTexelBufferBit | BufferUsageFlags.StorageTexelBufferBit,
+            EBufferTarget.TransformFeedbackBuffer when supportsTransformFeedback =>
+                BufferUsageFlags.StorageBufferBit |
+                BufferUsageFlags.TransformFeedbackBufferBitExt |
+                BufferUsageFlags.TransformFeedbackCounterBufferBitExt,
             EBufferTarget.TransformFeedbackBuffer => BufferUsageFlags.StorageBufferBit,
             EBufferTarget.CopyReadBuffer => BufferUsageFlags.TransferSrcBit,
             EBufferTarget.CopyWriteBuffer => BufferUsageFlags.TransferDstBit,
@@ -573,6 +581,100 @@ internal sealed class VulkanResourceAllocator
             EBufferUsage.StaticCopy => BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
             _ => 0
         };
+
+    private void LogDeferredLightingPhysicalPlan(
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        VulkanResourcePlanner planner)
+    {
+        if (!DeferredLightingDiagnostics.Enabled)
+            return;
+
+        TryGetPhysicalGroupForResource(DefaultRenderPipeline.LightingAccumTextureName, out VulkanPhysicalImageGroup? accumGroup);
+        TryGetPhysicalGroupForResource(DefaultRenderPipeline.DiffuseTextureName, out VulkanPhysicalImageGroup? finalGroup);
+        bool sameLightingImageGroup = accumGroup is not null && ReferenceEquals(accumGroup, finalGroup);
+
+        DeferredLightingDiagnostics.Write(
+            "[VulkanResourceAllocator] Physical plan summary " +
+            $"lightingAccumGroup={DescribePhysicalGroupShort(accumGroup)} " +
+            $"lightingTextureGroup={DescribePhysicalGroupShort(finalGroup)} " +
+            $"samePhysicalGroup={sameLightingImageGroup}");
+
+        foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
+        {
+            if (!ContainsWatchedDeferredLightingResource(group))
+                continue;
+
+            DeferredLightingDiagnostics.Write(
+                "[VulkanResourceAllocator] Watched image group " +
+                $"key={group.Key} allowsAliasing={group.AllowsAliasing} allocated={group.IsAllocated} " +
+                $"image=0x{group.Image.Handle:X} extent={group.ResolvedExtent.Width}x{group.ResolvedExtent.Height}x{group.ResolvedExtent.Depth} " +
+                $"format={group.Format} usage={group.Usage} lastLayout={group.LastKnownLayout} " +
+                $"logical=[{DescribeLogicalImageAllocations(group.LogicalResources)}]");
+        }
+
+        if (passMetadata is null)
+            return;
+
+        foreach (RenderPassMetadata pass in passMetadata)
+        {
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                foreach (string resource in ExpandLogicalResources(usage, planner))
+                {
+                    if (!DeferredLightingDiagnostics.IsWatchedTextureName(resource))
+                        continue;
+
+                    DeferredLightingDiagnostics.Write(
+                        "[VulkanResourceAllocator] Watched render-pass usage " +
+                        $"pass={pass.PassIndex} name='{pass.Name}' stage={pass.Stage} resource='{resource}' " +
+                        $"declared='{usage.ResourceName}' type={usage.ResourceType} access={usage.Access} load={usage.LoadOp} store={usage.StoreOp}");
+                }
+            }
+        }
+    }
+
+    private static bool ContainsWatchedDeferredLightingResource(VulkanPhysicalImageGroup group)
+    {
+        foreach (VulkanImageAllocation allocation in group.LogicalResources)
+        {
+            if (DeferredLightingDiagnostics.IsWatchedTextureName(allocation.Name))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string DescribePhysicalGroupShort(VulkanPhysicalImageGroup? group)
+    {
+        if (group is null)
+            return "<null>";
+
+        return $"key={group.Key}; image=0x{group.Image.Handle:X}; logical=[{DescribeLogicalImageAllocations(group.LogicalResources)}]";
+    }
+
+    private static string DescribeLogicalImageAllocations(IReadOnlyList<VulkanImageAllocation> allocations)
+    {
+        if (allocations.Count == 0)
+            return "<none>";
+
+        StringBuilder builder = new();
+        for (int i = 0; i < allocations.Count; i++)
+        {
+            if (i > 0)
+                builder.Append("; ");
+
+            VulkanImageAllocation allocation = allocations[i];
+            builder
+                .Append(allocation.Name)
+                .Append("#").Append(allocation.GroupIndex)
+                .Append(" lifetime=").Append(allocation.Lifetime)
+                .Append(" alias=").Append(allocation.SupportsAliasing)
+                .Append(" format=").Append(allocation.Descriptor.FormatLabel ?? "<null>")
+                .Append(" size=").Append(allocation.SizePolicy);
+        }
+
+        return builder.ToString();
+    }
 
     internal static bool IsDepthStencilFormat(Format format)
         => format is Format.D16Unorm

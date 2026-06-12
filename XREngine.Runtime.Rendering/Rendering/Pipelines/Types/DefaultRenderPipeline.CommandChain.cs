@@ -955,14 +955,14 @@ public partial class DefaultRenderPipeline
                 {
                     var fxaaUpscale = new ViewportRenderCommandContainer(this);
                     var fxaa = fxaaUpscale.Add<VPRC_FXAA>();
-                    fxaa.SourceTextureName = FinalPostProcessOutputTextureName;
+                    fxaa.SourceFBOName = FinalPostProcessOutputFBOName;
                     fxaa.DestinationFBOName = FxaaFBOName;
                     postAaChoice.TrueCommands = fxaaUpscale;
                 }
                 {
                     var smaaUpscale = new ViewportRenderCommandContainer(this);
                     var smaa = smaaUpscale.Add<VPRC_SMAA>();
-                    smaa.SourceTextureName = FinalPostProcessOutputTextureName;
+                    smaa.SourceFBOName = FinalPostProcessOutputFBOName;
                     smaa.OutputTextureName = SmaaOutputTextureName;
                     smaa.OutputFBOName = SmaaFBOName;
                     postAaChoice.FalseCommands = smaaUpscale;

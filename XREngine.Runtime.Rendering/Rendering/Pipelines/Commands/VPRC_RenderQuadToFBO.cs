@@ -213,6 +213,24 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_diagEnabled && DestinationFBOName is not null && destFBO is null)
                 Debug.RenderingWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
 
+            if (DeferredLightingDiagnostics.Enabled &&
+                (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) ||
+                 string.Equals(SourceQuadFBOName, DefaultRenderPipeline.MsaaLightCombineFBOName, StringComparison.Ordinal)))
+            {
+                Debug.VulkanEvery(
+                    $"DeferredLighting.RenderQuadToFBO.{SourceQuadFBOName}.{destination}",
+                    TimeSpan.FromSeconds(1),
+                    "[DeferredLightingDiag][RenderQuadToFBO] passName='{0}' pass={1} hasMetadata={2} source='{3}' destination='{4}' destFbo='{5}' sourceTargets={6} destTargets={7}",
+                    passName,
+                    passIndex,
+                    hasRenderGraphMetadata,
+                    SourceQuadFBOName,
+                    destination,
+                    destFBO?.Name ?? "<current/null>",
+                    sourceFBO.Targets?.Length ?? 0,
+                    destFBO?.Targets?.Length ?? 0);
+            }
+
             if ((string.Equals(SourceQuadFBOName, DefaultRenderPipeline.PostProcessFBOName, StringComparison.Ordinal)
                     && string.Equals(DestinationFBOName, "PostProcessOutputFBO", StringComparison.Ordinal))
                 || (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.FxaaFBOName, StringComparison.Ordinal)
